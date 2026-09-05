@@ -45,6 +45,7 @@ mod element;
 mod grabs;
 mod layer;
 pub(crate) mod ssd;
+mod tiling;
 #[cfg(feature = "xwayland")]
 mod x11;
 mod xdg;
@@ -979,6 +980,13 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
 
         // Fullscreen/maximized windows own their geometry already.
         if window.is_fullscreen() || window.is_maximized() {
+            return;
+        }
+
+        // On a tiling workspace the tree owns the window's rectangle: it
+        // joins the tree next to whatever is focused and the relayout places
+        // it, so none of the floating placement below applies.
+        if self.tiling_adopt_window(window) {
             return;
         }
 

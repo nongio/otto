@@ -165,6 +165,24 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::MediaStop => {
                     self.handle_media_stop();
                 }
+                KeyAction::TilingToggle => {
+                    self.handle_tiling_toggle();
+                }
+                KeyAction::TilingFocus(dir) => {
+                    self.handle_tiling_focus(dir);
+                }
+                KeyAction::TilingMove(dir) => {
+                    self.handle_tiling_move(dir);
+                }
+                KeyAction::TilingSplit(axis) => {
+                    self.handle_tiling_split(axis);
+                }
+                KeyAction::TilingResize(axis, grow) => {
+                    self.handle_tiling_resize(axis, grow);
+                }
+                KeyAction::TilingEqualize => {
+                    self.handle_tiling_equalize();
+                }
 
                 action => match action {
                     KeyAction::None
@@ -415,6 +433,24 @@ impl Otto<UdevData> {
                 }
                 KeyAction::MediaStop => {
                     self.handle_media_stop();
+                }
+                KeyAction::TilingToggle => {
+                    self.handle_tiling_toggle();
+                }
+                KeyAction::TilingFocus(dir) => {
+                    self.handle_tiling_focus(dir);
+                }
+                KeyAction::TilingMove(dir) => {
+                    self.handle_tiling_move(dir);
+                }
+                KeyAction::TilingSplit(axis) => {
+                    self.handle_tiling_split(axis);
+                }
+                KeyAction::TilingResize(axis, grow) => {
+                    self.handle_tiling_resize(axis, grow);
+                }
+                KeyAction::TilingEqualize => {
+                    self.handle_tiling_equalize();
                 }
                 action => match action {
                     KeyAction::None

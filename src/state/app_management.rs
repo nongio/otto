@@ -348,6 +348,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         // which window of an app was used last; per-workspace stacking cannot say.
         self.workspaces.note_window_focused(&window.id());
 
+        // Directional focus, moves and resizes act relative to the focused
+        // leaf, so a focus change that lands on a tile updates the tree too.
+        self.tiling_note_focus(&window.id());
+
         let keyboard = self.seat.get_keyboard().unwrap();
         let serial = SERIAL_COUNTER.next_serial();
 

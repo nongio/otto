@@ -62,7 +62,6 @@ pub use dnd_view::DndView;
 pub use dock::{DockModel, DockView};
 pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
-pub use tiling::TilingState;
 pub use tiling_overlay::{zone_from_pointer, TileZone, TilingOverlayView};
 pub use workspace::WORKSPACE_SPACING;
 pub use workspace_selector::{WorkspaceSelectorView, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
@@ -2766,6 +2765,9 @@ impl Workspaces {
             return None;
         }
 
+        // A minimized window is out of the tree, exactly as a closed one is.
+        self.tiling_forget_window(&id);
+
         if let Some(window) = self.windows_map.get_mut(&id) {
             window.set_is_minimised(true);
         }
@@ -3319,6 +3321,11 @@ impl Workspaces {
     /// Returns the surface IDs from removed popups that need cleanup
     pub fn unmap_window(&mut self, window_id: &ObjectId) -> Vec<ObjectId> {
         tracing::info!("workspaces::unmap_window: {:?}", window_id);
+
+        // A window that goes away leaves its tiling tree; the surviving tiles
+        // take its share and the workspace is relaid out on the next
+        // event-loop iteration (see `Otto::flush_tiling_relayout`).
+        self.tiling_forget_window(window_id);
 
         let mut workspace_index = None;
 
@@ -5008,6 +5015,10 @@ impl Workspaces {
     ) {
         let location = location.into();
         let id = we.id();
+
+        // Leaving a workspace means leaving its tree. The destination's tree
+        // adopts the window when it maps there.
+        self.tiling_forget_window(&id);
 
         // Unmap from every space (and view) that currently holds the window.
         let mut source_indices: Vec<(String, usize)> = Vec::new();

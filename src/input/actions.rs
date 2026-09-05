@@ -17,6 +17,7 @@ use crate::{
         Config,
     },
     state::Backend,
+    workspaces::tiling::{Axis, Direction},
     Otto,
 };
 
@@ -60,6 +61,15 @@ pub enum KeyAction {
     MediaStop,
     /// Lock the session by launching the configured locker
     LockSession,
+    // ── Tiling ───────────────────────────────────────────────────────────
+    TilingToggle,
+    TilingFocus(crate::workspaces::tiling::Direction),
+    TilingMove(crate::workspaces::tiling::Direction),
+    TilingSplit(crate::workspaces::tiling::Axis),
+    /// Grow (`+`) or shrink (`-`) the focused cell along the given axis by
+    /// one `[tiling] resize_step`.
+    TilingResize(crate::workspaces::tiling::Axis, bool),
+    TilingEqualize,
     /// The hardware power button was pressed; `[power_management].on_power_button`
     /// decides what that means
     PowerButton,
@@ -479,11 +489,28 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     pub(crate) fn handle_tile_left(&mut self) {
+        // "The half-snap tiling commands have no effect in a tiled workspace
+        // beyond focusing the window in that direction" (specs/tiling.md).
+        if self.workspace_under_focus_tiles() {
+            self.handle_tiling_focus(crate::workspaces::tiling::Direction::Left);
+            return;
+        }
         self.tile_focused_window(crate::workspaces::TileZone::LeftHalf);
     }
 
     pub(crate) fn handle_tile_right(&mut self) {
+        if self.workspace_under_focus_tiles() {
+            self.handle_tiling_focus(crate::workspaces::tiling::Direction::Right);
+            return;
+        }
         self.tile_focused_window(crate::workspaces::TileZone::RightHalf);
+    }
+
+    /// Does the workspace a shortcut would act on tile?
+    fn workspace_under_focus_tiles(&self) -> bool {
+        self.tiling_output()
+            .map(|output| self.workspaces.output_tiles(&output))
+            .unwrap_or(false)
     }
 
     pub(crate) fn handle_close_window(&mut self) {
@@ -668,6 +695,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TileLeft => self.handle_tile_left(),
             KeyAction::TileRight => self.handle_tile_right(),
             KeyAction::CloseWindow => self.handle_close_window(),
+            KeyAction::TilingToggle => self.handle_tiling_toggle(),
+            KeyAction::TilingFocus(dir) => self.handle_tiling_focus(dir),
+            KeyAction::TilingMove(dir) => self.handle_tiling_move(dir),
+            KeyAction::TilingSplit(axis) => self.handle_tiling_split(axis),
+            KeyAction::TilingResize(axis, grow) => self.handle_tiling_resize(axis, grow),
+            KeyAction::TilingEqualize => self.handle_tiling_equalize(),
             other => self.process_common_key_action(other),
         }
     }
@@ -749,6 +782,24 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
             BuiltinAction::LockSession => Some(KeyAction::LockSession),
+            BuiltinAction::TilingToggle => Some(KeyAction::TilingToggle),
+            BuiltinAction::FocusLeft => Some(KeyAction::TilingFocus(Direction::Left)),
+            BuiltinAction::FocusRight => Some(KeyAction::TilingFocus(Direction::Right)),
+            BuiltinAction::FocusUp => Some(KeyAction::TilingFocus(Direction::Up)),
+            BuiltinAction::FocusDown => Some(KeyAction::TilingFocus(Direction::Down)),
+            BuiltinAction::MoveContainerLeft => Some(KeyAction::TilingMove(Direction::Left)),
+            BuiltinAction::MoveContainerRight => Some(KeyAction::TilingMove(Direction::Right)),
+            BuiltinAction::MoveContainerUp => Some(KeyAction::TilingMove(Direction::Up)),
+            BuiltinAction::MoveContainerDown => Some(KeyAction::TilingMove(Direction::Down)),
+            BuiltinAction::SplitHorizontal => Some(KeyAction::TilingSplit(Axis::Row)),
+            BuiltinAction::SplitVertical => Some(KeyAction::TilingSplit(Axis::Column)),
+            BuiltinAction::ResizeGrowWidth => Some(KeyAction::TilingResize(Axis::Row, true)),
+            BuiltinAction::ResizeShrinkWidth => Some(KeyAction::TilingResize(Axis::Row, false)),
+            BuiltinAction::ResizeGrowHeight => Some(KeyAction::TilingResize(Axis::Column, true)),
+            BuiltinAction::ResizeShrinkHeight => {
+                Some(KeyAction::TilingResize(Axis::Column, false))
+            }
+            BuiltinAction::EqualizeContainer => Some(KeyAction::TilingEqualize),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))
