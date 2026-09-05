@@ -46,7 +46,9 @@ man xkeyboard-config           # the full reference
 ./scripts/show-keys.sh         # print the keysym for whatever you press
 ```
 
-Layout changes apply at startup. Edit and restart the session to change them.
+Layout changes apply as you make them: the new keymap replaces the seat's and is
+sent to whichever window has the keyboard, so there is nothing to restart —
+whether you edit the file or change it in [Settings](settings.md).
 
 ### Mac-style modifiers
 

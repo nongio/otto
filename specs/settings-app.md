@@ -150,14 +150,31 @@ setting. Today these are reconciled with a changed configuration:
 - the appearance settings: `theme_scheme`, `accent_color`, `rounded_corners`,
   `window_controls_side`, `show_maximize_button`, `cursor_theme`,
   `cursor_size`, `icon_theme`, `background_image` and `background_color`;
-- the touchpad/pointer half of `input.*` — tap, tap-drag, drag lock, click
-  method, disable-while-typing, natural scroll, left-handed, middle-click
-  emulation, scroll speed, pointer acceleration speed and profile.
+- all of `input.*` — the touchpad and pointer settings by reconfiguring the
+  devices, and the keymap (`input.xkb_layout`, `input.xkb_variant`,
+  `input.xkb_options`) by replacing the seat's, which is sent to the clients
+  holding keyboard focus;
+- `keyboard_repeat_delay` and `keyboard_repeat_rate`, pushed to the seat's
+  keyboard;
+- `lock.auto_lock_timeout`, by re-arming the idle timer against the new value.
 
-Every other setting — including `screen_scale`, the display language,
-`font_family` and the keyboard `input.xkb_*` settings — is described as
-requiring a restart. Marking a setting `live` is a promise that it takes
-effect, so the schema is widened only as apply paths are written.
+A second group applies live with no reconciliation at all, because the code
+acting on them reads the live configuration at the moment it acts: the sound
+settings (`audio.*`, read as each interface sound is played), the power
+settings (`power_management.*`, read as the lid closes or the power button is
+pressed) and the locker command and its arguments (`lock.locker_command`,
+`lock.locker_args`, read when something asks for the session to be locked).
+These are `live` too. Reporting them as needing a restart would be as wrong as
+the opposite mistake: it puts a badge on a change that is already in force, and
+a badge the user can catch lying is a badge they stop reading.
+
+Only `screen_scale`, `font_family`, `gtk_theme`, the display language and
+`login.greeter_*` require a restart. The scale reaches the outputs, the bar and
+every maximized window's geometry, and nothing reconciles those; the font is
+baked into caches shared with the client toolkits; the language is read before
+anything is built; the greeter runs before this session exists. Marking a
+setting `live` is a promise that it takes effect, and marking one `restart` is
+a promise that a restart is what it takes.
 
 ### Reaching what already holds the value
 
@@ -523,8 +540,9 @@ edited by hand.
   leaves the user unable to unlock or unable to log in. Both must be validated
   as resolvable executables before being persisted, and offered as a choice
   among detected candidates rather than as free text where possible. A locker
-  change takes effect at the next lock, not immediately; a greeter change takes
-  effect at the next login and is reported as such.
+  change takes effect at the next lock rather than needing a restart, so it is
+  live; a greeter change takes effect at the next login and is reported as
+  requiring a restart.
 
 ## Rationale
 

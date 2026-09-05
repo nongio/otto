@@ -161,6 +161,12 @@ user. Any other `ext-session-lock-v1` client works too.
   twice.
 - Auto-lock is off in login mode: the greeter *is* the screen, and there is no
   session behind it to hide.
+- Changing `lock.auto_lock_timeout` re-arms the timer rather than waiting for a
+  restart: a running timer keeps the interval it was armed with, and a session
+  that started with auto-lock off has no timer at all, so the source is dropped
+  and a new one armed against the new value — including when the new value is
+  `0`, which arms nothing. The idle clock restarts with it, so a timeout the
+  user has just shortened runs from the change rather than expiring on the spot.
 - Launching the locker is the only mechanism; anything else that wants to lock
   (a suspend hook, an external idle daemon) runs the same command.
 

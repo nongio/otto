@@ -202,6 +202,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// When the user last did anything. Auto-lock (`lock.auto_lock_timeout`)
     /// measures idleness from here — see `Otto::note_input_activity`.
     pub lock_last_activity: std::time::Instant,
+    /// The auto-lock timer's event source, kept so that changing the timeout
+    /// can drop the old one: the timer holds its interval, so re-arming is the
+    /// only way to follow a new `lock.auto_lock_timeout`. `None` while
+    /// auto-locking is off, which is also its state when the timeout is 0.
+    pub auto_lock_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     pub workspaces: Workspaces,
 
     // smithay state
@@ -911,8 +916,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         #[cfg(feature = "debugger")]
         layers_engine.start_debugger();
 
-        // No-op unless `lock.auto_lock_timeout` is set.
-        Self::start_auto_lock_timer(&handle);
+        // `None` unless `lock.auto_lock_timeout` is set.
+        let auto_lock_timer = Self::start_auto_lock_timer(&handle);
 
         // Get backend name before moving backend_data
         #[cfg(feature = "metrics")]
@@ -946,6 +951,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             lock_last_spawn: None,
             lock_shade_until: None,
             lock_last_activity: std::time::Instant::now(),
+            auto_lock_timer,
             output_manager_state,
             primary_selection_state,
             data_control_state,

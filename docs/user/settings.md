@@ -34,10 +34,12 @@ written back to the config file. There is no file watcher, though: edit the file
 by hand while the app is open and the app will not notice — reopen it to see the
 change.
 
-Most settings apply the moment you change them: the Dock's size and behaviour,
-the touchpad and pointer options, appearance and accent colour. A few — the
-keyboard layout among them — are marked as needing a restart, and the app says
-so next to the control rather than pretending the change took.
+Nearly everything applies the moment you change it: the Dock's size and
+behaviour, the keyboard layout and repeat, the touchpad and pointer options,
+appearance and accent colour, the sound, power and lock settings. Only the
+interface font, the display scale, the GTK theme, the display language and the
+greeter need a restart, and the app badges those and only those — a badge you
+can catch lying is a badge you stop reading.
 
 ## Displays
 

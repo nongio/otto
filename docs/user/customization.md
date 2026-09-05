@@ -28,9 +28,8 @@ instead of flattening it to a silhouette.
 
 ![Otto Settings open on the same desktop, showing the accent as a hex swatch](images/rice-beton-brut-settings.jpg)
 
-All of these are in [Settings](settings.md) as well. `rounded_corners` and
-`window_controls_side` need a restart; the accent and the dock tint apply
-immediately.
+All of these are in [Settings](settings.md) as well, and all of them apply as
+soon as you save them.
 
 ## A dock down the side
 
@@ -106,22 +105,25 @@ so what a light tint has to work with is the source icon's luminance.
 | Setting | Where | Effect |
 |---------|-------|--------|
 | `background_image`, `background_color` | [Theming](theming.md#wallpaper) | The wallpaper, and what shows if it fails to load |
-| `theme_scheme` | [Theming](theming.md#light-and-dark) | Light or dark, for Otto's chrome *and* for GTK/Qt apps through the portal. Needs a restart |
+| `theme_scheme` | [Theming](theming.md#light-and-dark) | Light or dark, for Otto's chrome *and* for GTK/Qt apps through the portal |
 | `accent_color` | [Theming](theming.md#accent-colour) | Selection, highlights and controls. A palette name or a hex literal |
 | `font_family` | [Theming](theming.md#fonts) | Otto's own interface type. Needs a restart |
-| `icon_theme` | [Theming](theming.md#icon-theme) | The source icons, before any tint. Needs a restart |
-| `rounded_corners` | [Theming](theming.md#rounded-corners) | Rounded or squared window corners. Needs a restart |
-| `window_controls_side` | [Window Management](window-management.md#decorations) | Close/minimize/maximize on the left or right. Needs a restart |
+| `icon_theme` | [Theming](theming.md#icon-theme) | The source icons, before any tint |
+| `rounded_corners` | [Theming](theming.md#rounded-corners) | Rounded or squared window corners |
+| `window_controls_side` | [Window Management](window-management.md#decorations) | Close/minimize/maximize on the left or right |
 | `dock.position` | [Dock](dock.md#position) | Bottom, left or right |
 | `dock.size`, `dock.magnification` | [Dock](dock.md#size) | How big, and whether icons grow under the pointer |
 | `dock.colorize_*` | [Dock](dock.md#icon-colorization) | Tints every dock and switcher icon to one colour |
 | `workspaces.names` | [Workspaces](workspaces.md) | What the workspace strip is labelled with |
 | `workspaces.switch_duration`, `workspaces.switch_bounce` | [Workspaces](workspaces.md#configuring) | How fast, and how springy, the scroll between workspaces is |
 
-The wallpaper, the accent colour and every `dock.*` setting apply live. The
-rest — colour scheme, fonts, icon and cursor themes, corners, controls side and
-the interface scale — need a restart, and the settings app says so next to the
-control.
+Almost everything here applies live: the wallpaper, the accent colour, the
+colour scheme, corners, the controls side, the icon and cursor themes and every
+`dock.*` setting all change what is on screen as you save them. Only the
+interface font and the interface scale need a restart — the font is baked into
+caches shared with the client toolkits, and the scale reaches every output and
+every maximized window. The settings app puts a badge beside those two and
+nothing else.
 
 ## What Otto does not draw
 

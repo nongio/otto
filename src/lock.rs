@@ -144,50 +144,74 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Start the timer that locks the session after
     /// [`crate::config::LockConfig::auto_lock_timeout`] seconds without input.
     ///
-    /// Nothing is scheduled when the setting is off — config is read once at
-    /// startup, so a session that starts without auto-locking never gets it —
-    /// and each tick is scheduled from the time left rather than at a fixed
-    /// rate, so an idle session wakes once per timeout instead of once a second.
-    pub fn start_auto_lock_timer(handle: &smithay::reexports::calloop::LoopHandle<'static, Self>) {
+    /// Nothing is scheduled when the setting is off, and each tick is scheduled
+    /// from the time left rather than at a fixed rate, so an idle session wakes
+    /// once per timeout instead of once a second.
+    ///
+    /// The returned token is the timer's event source. It is what makes the
+    /// setting live: the interval is captured when the timer is armed, so
+    /// following a changed timeout means dropping this source and arming a new
+    /// one — see [`Otto::rearm_auto_lock_timer`].
+    pub fn start_auto_lock_timer(
+        handle: &smithay::reexports::calloop::LoopHandle<'static, Self>,
+    ) -> Option<smithay::reexports::calloop::RegistrationToken> {
         use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
         let timeout = crate::config::Config::with(|c| c.lock.auto_lock_timeout);
         if timeout == 0 {
-            return;
+            return None;
         }
         // In login mode the greeter *is* the screen: there is no session behind
         // it to hide, and the locker would authenticate a user who has not
         // logged in yet.
         if crate::login::is_login_mode() {
-            return;
+            return None;
         }
         let timeout = std::time::Duration::from_secs(timeout);
 
-        if handle
-            .insert_source(Timer::from_duration(timeout), move |_, _, data| {
-                // A client asking not to be considered idle (a video playing)
-                // both holds the lock off and restarts the clock, so the
-                // countdown runs from when it stops, not from the last time
-                // the user touched anything.
-                if data.idle_inhibited() {
-                    debug!("Auto-lock held off by an idle inhibitor");
-                    data.note_input_activity();
-                    return TimeoutAction::ToDuration(timeout);
-                }
-                let idle_for = data.lock_last_activity.elapsed();
-                let left = timeout.saturating_sub(idle_for);
-                if left.is_zero() {
-                    data.auto_lock_now(timeout);
-                    return TimeoutAction::ToDuration(timeout);
-                }
-                TimeoutAction::ToDuration(left)
-            })
-            .is_err()
-        {
-            warn!("failed to schedule the auto-lock timer; auto-locking is off");
-        } else {
-            info!(idle_secs = timeout.as_secs(), "Auto-lock armed");
+        match handle.insert_source(Timer::from_duration(timeout), move |_, _, data| {
+            // A client asking not to be considered idle (a video playing)
+            // both holds the lock off and restarts the clock, so the
+            // countdown runs from when it stops, not from the last time
+            // the user touched anything.
+            if data.idle_inhibited() {
+                debug!("Auto-lock held off by an idle inhibitor");
+                data.note_input_activity();
+                return TimeoutAction::ToDuration(timeout);
+            }
+            let idle_for = data.lock_last_activity.elapsed();
+            let left = timeout.saturating_sub(idle_for);
+            if left.is_zero() {
+                data.auto_lock_now(timeout);
+                return TimeoutAction::ToDuration(timeout);
+            }
+            TimeoutAction::ToDuration(left)
+        }) {
+            Ok(token) => {
+                info!(idle_secs = timeout.as_secs(), "Auto-lock armed");
+                Some(token)
+            }
+            Err(_) => {
+                warn!("failed to schedule the auto-lock timer; auto-locking is off");
+                None
+            }
         }
+    }
+
+    /// Re-arm the auto-lock timer against the current configuration.
+    ///
+    /// Called when `lock.auto_lock_timeout` changes. A running timer keeps the
+    /// interval it was armed with and would go on locking at the old one, so
+    /// the old source is removed before a new one is armed — including when the
+    /// new value is 0, which arms nothing and leaves auto-locking off. The
+    /// idle clock is restarted too: the countdown a user has just changed
+    /// should run from now rather than expire the moment they save it.
+    pub fn rearm_auto_lock_timer(&mut self) {
+        if let Some(token) = self.auto_lock_timer.take() {
+            self.handle.remove(token);
+        }
+        self.note_input_activity();
+        self.auto_lock_timer = Self::start_auto_lock_timer(&self.handle);
     }
 
     /// Whether a client is asking for the session not to be considered idle

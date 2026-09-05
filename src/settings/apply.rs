@@ -1,9 +1,15 @@
 //! Reconciling the running compositor with a changed configuration.
 //!
-//! The appearance settings, the dock, the switcher, the pointer, the icon
-//! theme and `input.*` are reconciled today, and the schema says so: a setting
-//! marked `live` here must genuinely take effect, and everything else is
-//! marked `restart` rather than being quietly accepted and ignored.
+//! Every setting the schema marks `live` passes through here, and must
+//! genuinely take effect. Some need work — a view rebuilt, a device
+//! reconfigured, a keymap pushed — and some need none at all, because the code
+//! that acts on them reads the live configuration at the moment it acts. Both
+//! are listed below: a setting with no work to do still gets an arm, so that
+//! "nothing to do" is a decision recorded next to the reason rather than an
+//! omission, and only a setting that a running session truly cannot follow is
+//! left `restart`.
+
+use smithay::input::keyboard::XkbConfig;
 
 use crate::config::Config;
 use crate::state::{Backend, Otto};
@@ -27,6 +33,16 @@ pub fn is_applied_live(id: &str) -> bool {
             | "dock.colorize_intensity"
             | "appswitcher.colorize_icons"
             | "appswitcher.follow_cursor"
+            | "keyboard_repeat_delay"
+            | "keyboard_repeat_rate"
+            | "audio.sound_enabled"
+            | "audio.sound_theme"
+            | "power_management.manage_lid_switch"
+            | "power_management.on_lid_close"
+            | "power_management.on_power_button"
+            | "lock.locker_command"
+            | "lock.locker_args"
+            | "lock.auto_lock_timeout"
             | "accent_color"
             | "background_image"
             | "background_color"
@@ -56,6 +72,19 @@ fn is_input_id(id: &str) -> bool {
             | "input.pointer_accel_speed"
             | "input.pointer_accel_profile"
             | "input.scroll_speed"
+            | "input.xkb_layout"
+            | "input.xkb_variant"
+            | "input.xkb_options"
+    )
+}
+
+/// Whether `id` is one of the XKB settings applied by rebuilding the seat's
+/// keymap. These reach the keyboard rather than the pointer devices, so they
+/// take a different path out of [`apply_live`] to the rest of `input.*`.
+fn is_xkb_id(id: &str) -> bool {
+    matches!(
+        id,
+        "input.xkb_layout" | "input.xkb_variant" | "input.xkb_options"
     )
 }
 
@@ -194,6 +223,69 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // every axis event (`input::pointer`), so there is nothing to push
         // anywhere — the next scroll already uses the new value.
         "input.scroll_speed" => Ok(()),
+        // The keymap belongs to the seat, not to the devices, and replacing it
+        // sends the new one to every client that has the keyboard focus — so
+        // the layout changes under the running applications rather than at the
+        // next login. The three settings are one keymap, so any of them
+        // rebuilds it from the whole live configuration.
+        //
+        // `input.mac_style_modifiers` and the `altwin:ctrl_win` fallback are
+        // read from the configuration on each shortcut match, so the modifier
+        // behaviour follows the new options with nothing else pushed.
+        id if is_xkb_id(id) => {
+            let Some(keyboard) = state.seat.get_keyboard() else {
+                return Err("the seat has no keyboard".to_string());
+            };
+            let (layout, variant, options) = Config::with(|c| {
+                (
+                    c.input.xkb_layout.clone().unwrap_or_default(),
+                    c.input.xkb_variant.clone().unwrap_or_default(),
+                    (!c.input.xkb_options.is_empty()).then(|| c.input.xkb_options.join(",")),
+                )
+            });
+            keyboard
+                .set_xkb_config(
+                    state,
+                    XkbConfig {
+                        layout: &layout,
+                        variant: &variant,
+                        options,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|err| format!("the keymap was rejected: {err}"))
+        }
+        // Repeat timing lives on the keyboard handle, which pushes it to the
+        // focused client; Otto's own repeat (`input::keyboard`) reads the
+        // delay from the live configuration as it repeats.
+        "keyboard_repeat_delay" | "keyboard_repeat_rate" => {
+            let Some(keyboard) = state.seat.get_keyboard() else {
+                return Err("the seat has no keyboard".to_string());
+            };
+            let (delay, rate) = Config::with(|c| (c.keyboard_repeat_delay, c.keyboard_repeat_rate));
+            keyboard.change_repeat_info(rate, delay);
+            Ok(())
+        }
+        // The sound player reads both on every sound it plays
+        // (`audio::sound_player`), so the next interface sound already follows
+        // them — including the one this change itself might make.
+        "audio.sound_enabled" | "audio.sound_theme" => Ok(()),
+        // Read when the event happens rather than held anywhere: the lid
+        // settings by `update_display_power_state` as the switch reports, the
+        // button action by the key handler as it is pressed.
+        "power_management.manage_lid_switch"
+        | "power_management.on_lid_close"
+        | "power_management.on_power_button" => Ok(()),
+        // `lock::locker_command` reads both at the moment something asks for
+        // the session to be locked, so the next lock uses the new locker.
+        "lock.locker_command" | "lock.locker_args" => Ok(()),
+        // The auto-lock timer holds its timeout, and is not scheduled at all
+        // while the setting is off, so this one is re-armed rather than left
+        // to read itself.
+        "lock.auto_lock_timeout" => {
+            state.rearm_auto_lock_timer();
+            Ok(())
+        }
         // The rest of `input.*` is libinput device state, and one device is as
         // cheap to reconfigure as all of them, so the whole set is re-pushed
         // rather than mapping each identifier to its own setter.
@@ -264,13 +356,19 @@ mod tests {
 
     #[test]
     fn every_input_setting_that_reaches_a_device_is_live() {
-        // The touchpad and pointer settings are the ones a user expects to
-        // feel immediately; the keyboard ones still need a restart.
+        // The pointer, touchpad and keyboard settings all reach the seat or a
+        // device while the session runs — the keymap included, which is pushed
+        // to the focused client rather than waiting for the next login.
         for id in [
             "input.tap_enabled",
             "input.touchpad_click_method",
             "input.pointer_accel_speed",
             "input.scroll_speed",
+            "input.xkb_layout",
+            "input.xkb_variant",
+            "input.xkb_options",
+            "keyboard_repeat_delay",
+            "keyboard_repeat_rate",
         ] {
             assert_eq!(
                 schema::lookup(id).expect("in schema").apply,
@@ -278,9 +376,52 @@ mod tests {
                 "`{id}` should apply live"
             );
         }
-        assert_eq!(
-            schema::lookup("input.xkb_layout").expect("in schema").apply,
-            Apply::Restart
-        );
+    }
+
+    /// Settings whose only "apply" is that the code reading them reads the live
+    /// configuration. Nothing has to happen for these to take effect, which is
+    /// exactly why they must not be marked `restart`: a restart badge on a
+    /// change that is already in force is a lie the user can catch.
+    #[test]
+    fn settings_read_at_the_point_of_use_are_live() {
+        for id in [
+            "audio.sound_enabled",
+            "audio.sound_theme",
+            "power_management.manage_lid_switch",
+            "power_management.on_lid_close",
+            "power_management.on_power_button",
+            "lock.locker_command",
+            "lock.locker_args",
+            "lock.auto_lock_timeout",
+        ] {
+            assert_eq!(
+                schema::lookup(id).expect("in schema").apply,
+                Apply::Live,
+                "`{id}` should apply live"
+            );
+        }
+    }
+
+    /// What genuinely cannot follow a running session. The scale reaches
+    /// outputs, the bar and every maximized window and nothing reconciles
+    /// those; the font is baked into caches shared with the client toolkits;
+    /// the locale list is read once, before anything is built; the greeter runs
+    /// before this session exists. Each of these is a promise that the badge
+    /// means something.
+    #[test]
+    fn the_settings_that_really_need_a_restart_say_so() {
+        for id in [
+            "screen_scale",
+            "font_family",
+            "locales",
+            "login.greeter_command",
+            "login.greeter_args",
+        ] {
+            assert_eq!(
+                schema::lookup(id).expect("in schema").apply,
+                Apply::Restart,
+                "`{id}` cannot be applied to a running session"
+            );
+        }
     }
 }

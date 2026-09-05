@@ -277,9 +277,13 @@ const ACCENT_COLOR_LABELS: &[&str] = &[
 
 /// Everything `org.otto.Settings` describes.
 ///
-/// `apply` is truthful rather than optimistic: only the dock reconciles itself
-/// against a changed configuration today, so everything else is `restart` even
-/// where a value happens to be re-read later by accident.
+/// `apply` is truthful in both directions. A setting is `live` when the running
+/// session genuinely follows it — either because [`crate::settings::apply`]
+/// reconciles something, or because the value is read from the live
+/// configuration at the moment it is used — and `restart` only where a restart
+/// is what it actually takes. Marking a setting `restart` that already applies
+/// itself is the same lie as the other way round: it puts a "takes effect after
+/// a restart" badge on a change the user can already see.
 pub static SETTINGS: &[SettingSpec] = &[
     // ---- General ---------------------------------------------------------
     ranged(
@@ -493,7 +497,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Int,
         "Repeat delay",
         "Milliseconds a key is held before it starts repeating.",
-        Restart,
+        Live,
         100.0,
         2000.0,
         25.0,
@@ -503,7 +507,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         Int,
         "Repeat rate",
         "Repeats per second while a key is held.",
-        Restart,
+        Live,
         1.0,
         100.0,
         1.0,
@@ -513,21 +517,21 @@ pub static SETTINGS: &[SettingSpec] = &[
         Str,
         "Keyboard layout",
         "XKB layout name. Empty uses the system default.",
-        Restart,
+        Live,
     ),
     spec(
         "input.xkb_variant",
         Str,
         "Keyboard variant",
         "XKB variant name. Empty uses the system default.",
-        Restart,
+        Live,
     ),
     spec(
         "input.xkb_options",
         StrList,
         "Keyboard options",
         "XKB option strings.",
-        Restart,
+        Live,
     ),
     // ---- Trackpad & Mouse ------------------------------------------------
     spec(
@@ -624,14 +628,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         Bool,
         "Interface sounds",
         "Play sound feedback for interface events.",
-        Restart,
+        Live,
     ),
     spec(
         "audio.sound_theme",
         Str,
         "Sound theme",
         "XDG sound theme name. Empty auto-detects.",
-        Restart,
+        Live,
     ),
     // ---- Power -----------------------------------------------------------
     spec(
@@ -639,13 +643,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         Bool,
         "Handle the lid switch",
         "Let Otto act on the lid rather than leaving it to logind.",
-        Restart,
+        Live,
     ),
     labelled_choice(
         "power_management.on_lid_close",
         "When the lid closes",
         "What happens when the laptop lid is closed.",
-        Restart,
+        Live,
         &["auto", "lock", "disable_internal_screen"],
         &[
             "settings-choice-lid-auto",
@@ -657,7 +661,7 @@ pub static SETTINGS: &[SettingSpec] = &[
         "power_management.on_power_button",
         "When the power button is pressed",
         "What happens when the hardware power button is pressed.",
-        Restart,
+        Live,
         &["ignore", "lock", "suspend", "shutdown"],
         &[
             "settings-choice-power-ignore",
@@ -672,21 +676,21 @@ pub static SETTINGS: &[SettingSpec] = &[
         Str,
         "Lock screen command",
         "The locker launched to lock the session.",
-        Restart,
+        Live,
     ),
     spec(
         "lock.locker_args",
         StrList,
         "Lock screen arguments",
         "Arguments passed to the locker.",
-        Restart,
+        Live,
     ),
     ranged(
         "lock.auto_lock_timeout",
         Int,
         "Lock after",
         "Seconds of inactivity before locking. 0 never locks.",
-        Restart,
+        Live,
         0.0,
         86400.0,
         60.0,
