@@ -170,6 +170,12 @@ snapping on release.
   resolved through `workspace_position_by_view_index`, and the hover highlight
   matches on the view index too. The two only ran in lockstep before workspaces
   could be added and removed from the strip.
+- For the length of the drag the selector is told (`set_window_drag`) that its
+  previews are drop targets, not hover targets: the lay-rs pointer handlers on
+  the previews still fire as the dragged window crosses them, and without the
+  gate they revealed the workspace close button and cleared the drop-target
+  darkening on the way out. Only `set_drop_hover` drives the previews' look
+  until `end_window_selector_drag` lifts the flag.
 - On drop with a target: `move_window_to_workspace` is called with the window's
   last known position. It drops the cached grid of the source and destination
   workspaces first (`invalidate_layout`), because the drag already re-laid the
