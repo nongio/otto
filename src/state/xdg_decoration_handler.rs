@@ -26,6 +26,11 @@ impl<BackendData: Backend> Otto<BackendData> {
             state.decoration_mode = Some(mode);
         });
 
+        // Flag the window first: a maximized or tiled window is re-fitted to
+        // its zone by `set_surface_decorated`, and that size must ride the
+        // same configure as the mode.
+        self.set_surface_decorated(toplevel.wl_surface(), mode == DecorationMode::ServerSide);
+
         let initial_configure_sent = with_states(toplevel.wl_surface(), |states| {
             states
                 .data_map
@@ -38,8 +43,6 @@ impl<BackendData: Backend> Otto<BackendData> {
         if initial_configure_sent {
             toplevel.send_pending_configure();
         }
-
-        self.set_surface_decorated(toplevel.wl_surface(), mode == DecorationMode::ServerSide);
     }
 
     /// Show or hide Otto's titlebar for a surface, whichever protocol asked.
@@ -67,6 +70,12 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
                 self.update_window_view(&window);
                 self.workspaces.update_workspace_model();
+                // A zone-owned window's client size is the zone minus the
+                // titlebar it just gained or lost — re-derive it, whether
+                // the change lands mid-animation (Chrome restoring a
+                // maximized window negotiates client-side decorations
+                // AFTER asking to be maximized) or long after.
+                self.refit_window_to_zone(&window);
             }
         }
     }
