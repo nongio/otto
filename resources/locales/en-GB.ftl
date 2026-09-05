@@ -78,7 +78,6 @@ settings-group-appearance = Appearance
 settings-colour-scheme = Colour scheme
 settings-accent-colour = Accent colour
 settings-rounded-corners = Rounded corners
-settings-rounded-corners-detail = Applies after a restart
 settings-window-controls = Window controls
 settings-maximize-button = Maximize button
 settings-maximize-button-detail = Show the zoom dot; a double click on the titlebar zooms either way

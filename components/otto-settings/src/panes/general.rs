@@ -27,13 +27,11 @@ pub fn build() -> Pane {
                         otto_kit::t!("settings-rounded-corners"),
                         Control::Toggle(true),
                     )
-                    .detail(otto_kit::t!("settings-rounded-corners-detail"))
                     .id("rounded_corners"),
                     Row::new(
                         otto_kit::t!("settings-window-controls"),
                         Control::Select("left".into()),
                     )
-                    .detail(otto_kit::t!("settings-rounded-corners-detail"))
                     .id("window_controls_side"),
                     Row::new(
                         otto_kit::t!("settings-maximize-button"),

@@ -78,7 +78,6 @@ settings-group-appearance = Вигляд
 settings-colour-scheme = Схема кольорів
 settings-accent-colour = Колір акценту
 settings-rounded-corners = Заокруглені кути
-settings-rounded-corners-detail = Застосовується після перезапуску
 settings-window-controls = Кнопки вікна
 settings-maximize-button = Кнопка розгортання
 settings-maximize-button-detail = Показує кружечок масштабування; подвійне клацання на заголовку однаково розгортає вікно

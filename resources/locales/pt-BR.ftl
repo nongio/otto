@@ -78,7 +78,6 @@ settings-group-appearance = Aparência
 settings-colour-scheme = Esquema de cores
 settings-accent-colour = Cor de destaque
 settings-rounded-corners = Cantos arredondados
-settings-rounded-corners-detail = Aplicado após reiniciar
 settings-window-controls = Controles da janela
 settings-maximize-button = Botão de maximizar
 settings-maximize-button-detail = Mostra o ponto de ampliar; um clique duplo na barra de título amplia de qualquer forma

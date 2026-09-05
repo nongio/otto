@@ -77,7 +77,6 @@ settings-group-appearance = Wygląd
 settings-colour-scheme = Schemat kolorów
 settings-accent-colour = Kolor akcentu
 settings-rounded-corners = Zaokrąglone rogi
-settings-rounded-corners-detail = Zacznie obowiązywać po ponownym uruchomieniu
 settings-window-controls = Przyciski okna
 settings-maximize-button = Przycisk maksymalizacji
 settings-maximize-button-detail = Pokazuje kropkę powiększania; dwukrotne kliknięcie paska tytułu i tak maksymalizuje

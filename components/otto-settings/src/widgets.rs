@@ -5,7 +5,7 @@
 //! before any of them is wired to the compositor.
 
 use otto_kit::prelude::*;
-use skia_safe::{BlurStyle, ClipOp, MaskFilter, PaintStyle, PathBuilder, PathEffect, Point, RRect};
+use skia_safe::{BlurStyle, ClipOp, MaskFilter, PaintStyle, PathEffect, Point, RRect};
 
 /// Trailing-edge control width, so labels can be laid out against it.
 pub const TOGGLE_W: f32 = 40.0;
@@ -436,26 +436,6 @@ pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Them
         text_centered_y(canvas, key, x + pad, cy, style, theme.text_primary);
         x += width + gap;
     }
-}
-
-/// How much room the revert badge takes to the right of the point it is
-/// centred on, plus the gap that separates it from the text it trails.
-pub const REVERT_BADGE_ROOM: f32 = 12.0 + 14.0;
-
-/// Small circular arrow marking a row that overrides its inherited value.
-pub fn revert_badge(canvas: &Canvas, cx: f32, cy: f32, theme: &Theme) {
-    let mut paint = stroke(theme.accent, 1.4);
-    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-    let r = 5.5;
-    let arc = Rect::from_xywh(cx - r, cy - r, r * 2.0, r * 2.0);
-    canvas.draw_arc(arc, 40.0, 280.0, false, &paint);
-
-    let mut head = PathBuilder::new();
-    head.move_to(Point::new(cx + r - 1.0, cy - r + 1.5));
-    head.line_to(Point::new(cx + r + 2.5, cy - r + 2.0));
-    head.line_to(Point::new(cx + r + 0.5, cy - r + 5.0));
-    head.close();
-    canvas.draw_path(&head.detach(), &fill(theme.accent));
 }
 
 const RESTART_TEXT: &str = "Restart required";

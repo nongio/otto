@@ -1908,25 +1908,17 @@ impl Settings {
     ///
     /// A translated label is as long as the language makes it and the room is
     /// fixed, so the text is cropped to what is free rather than drawn over
-    /// the control. The revert badge and the restart pill trail the text, so
-    /// their room comes out of the same budget — the pill off the detail line
-    /// when there is one, off the label when there is not.
+    /// the control. The restart pill trails the text, so its room comes out of
+    /// the same budget — off the detail line when there is one, off the label
+    /// when there is not.
     fn text_room(row: &Row, label_x: f32, right: f32, cy: f32) -> (f32, f32) {
         let room =
             (Self::control_left(row, label_x, right, cy) - Self::LABEL_GAP - label_x).max(0.0);
         let pill_room = widgets::restart_pill_width() + 10.0;
-        let badge_room = if row.overridden {
-            widgets::REVERT_BADGE_ROOM
-        } else {
-            0.0
-        };
         let (label, detail) = match (row.restart_required, row.detail.is_some()) {
-            (true, true) => (room - badge_room, room - pill_room),
-            (true, false) => (
-                room - badge_room - pill_room - if row.overridden { 14.0 } else { 0.0 },
-                room,
-            ),
-            (false, _) => (room - badge_room, room),
+            (true, true) => (room, room - pill_room),
+            (true, false) => (room - pill_room, room),
+            (false, _) => (room, room),
         };
         (label.max(0.0), detail.max(0.0))
     }
@@ -1971,12 +1963,6 @@ impl Settings {
                 styles::BODY,
                 self.theme.text_primary,
             ),
-        }
-
-        if row.overridden {
-            let label_w = styles::BODY.font().measure_str(&label, None).0;
-            let badge_y = if row.detail.is_some() { cy - 9.0 } else { cy };
-            widgets::revert_badge(canvas, label_x + label_w + 12.0, badge_y, &self.theme);
         }
 
         match &row.control {
@@ -2136,13 +2122,7 @@ impl Settings {
                 Some(detail) => (detail, styles::SUBHEADLINE, cy + 9.0),
                 None => (label.as_str(), styles::BODY, cy),
             };
-            let after_text = label_x + style.font().measure_str(text, None).0 + 10.0;
-            // A row that also carries the override badge has to clear that too.
-            let x = if row.overridden && row.detail.is_none() {
-                after_text + 14.0
-            } else {
-                after_text
-            };
+            let x = label_x + style.font().measure_str(text, None).0 + 10.0;
             widgets::restart_pill(canvas, x, pill_cy);
         }
     }

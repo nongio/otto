@@ -58,8 +58,6 @@ pub struct Row {
     /// setting takes effect.
     pub detail: Option<Cow<'static, str>>,
     pub control: Control,
-    /// Row differs from the inherited value, so it offers a reset.
-    pub overridden: bool,
     /// Change is persisted but needs a restart to take effect.
     pub restart_required: bool,
     /// The `org.otto.Settings` identifier this row edits. `None` means the row
@@ -73,7 +71,6 @@ impl Row {
             label,
             detail: None,
             control,
-            overridden: false,
             restart_required: false,
             id: None,
         }
@@ -83,7 +80,6 @@ impl Row {
     /// override state from the compositor when it is serving them.
     pub(crate) fn id(mut self, id: &'static str) -> Self {
         self.id = Some(id);
-        self.overridden = settings_client::is_overridden(id);
 
         let desc = settings_client::describe(id);
         let step = desc.as_ref().and_then(|d| d.step);
@@ -157,15 +153,6 @@ impl Row {
 
     pub(crate) fn detail(mut self, detail: impl Into<Cow<'static, str>>) -> Self {
         self.detail = Some(detail.into());
-        self
-    }
-
-    /// No pane marks a row overridden since the shortcuts group stopped being
-    /// a static list; kept because the badge it sets is drawn and the next
-    /// setting that can be overridden will want it.
-    #[allow(dead_code)]
-    pub(crate) fn overridden(mut self) -> Self {
-        self.overridden = true;
         self
     }
 

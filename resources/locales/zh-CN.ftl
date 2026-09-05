@@ -77,7 +77,6 @@ settings-group-appearance = 外观
 settings-colour-scheme = 配色方案
 settings-accent-colour = 强调色
 settings-rounded-corners = 圆角
-settings-rounded-corners-detail = 重新启动后生效
 settings-window-controls = 窗口控件
 settings-maximize-button = 最大化按钮
 settings-maximize-button-detail = 显示缩放圆点；双击标题栏同样可以缩放

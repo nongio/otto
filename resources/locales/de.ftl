@@ -78,7 +78,6 @@ settings-group-appearance = Erscheinungsbild
 settings-colour-scheme = Farbschema
 settings-accent-colour = Akzentfarbe
 settings-rounded-corners = Abgerundete Ecken
-settings-rounded-corners-detail = Gilt nach einem Neustart
 settings-window-controls = Fenstersteuerelemente
 settings-maximize-button = Maximieren-Knopf
 settings-maximize-button-detail = Zeigt den Zoom-Punkt; ein Doppelklick auf die Titelleiste maximiert ohnehin

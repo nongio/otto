@@ -213,6 +213,12 @@ pub fn value(id: &str) -> Option<Value> {
 
 /// Whether a setting is set in the user's own config file, and so offers a
 /// revert.
+///
+/// Nothing reads this yet: the badge that used to show it was an unlabelled
+/// glyph that could not be clicked and read as a restart marker, so it was
+/// removed. The override set is still tracked here, and [`reset`] still
+/// written, for the undo affordance that replaces it.
+#[allow(dead_code)]
 pub fn is_overridden(id: &str) -> bool {
     store()
         .read()
