@@ -17,6 +17,12 @@ pub struct TilingState {
     pub tree: Tree<ObjectId>,
     /// The leaf insertions and directional commands act relative to.
     pub focused: Option<ObjectId>,
+    /// Something removed a window from the tree and the workspace's windows
+    /// have not been moved into their new cells yet. The removal happens
+    /// wherever the window went away — unmap, minimize, a workspace move —
+    /// and only the compositor can run the relayout, so it rides on this flag
+    /// and is picked up on the next event-loop iteration.
+    pub dirty: bool,
     /// An armed split axis: the next insertion splits the focused cell this
     /// way rather than following the cell's shape. Cleared by the insertion.
     pub preselect: Option<Axis>,
@@ -43,6 +49,7 @@ impl TilingState {
         self.tree = Tree::default();
         self.focused = None;
         self.preselect = None;
+        self.dirty = false;
     }
 }
 
