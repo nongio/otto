@@ -138,7 +138,7 @@ impl FilesApp {
             .unwrap_or_default();
 
         tokio::task::spawn_blocking(move || {
-            let preview = quickview::decode(&path, panel, scale);
+            let preview = quickview::decode(&path, panel, scale, 1);
             let video = (path.is_file() && otto_media_kit::player::available())
                 .then(|| (path.clone(), quickview::video_options(panel, scale, true)));
             state
@@ -150,6 +150,36 @@ impl FilesApp {
             // decode landed.
             AppContext::request_wakeup();
         });
+    }
+
+    /// Turn an open PDF's page, decoding off the UI thread like any other
+    /// preview. Returns whether there was a page to turn to — when there is
+    /// not, the keystroke was never the preview's and the caller goes on to
+    /// do what it does to the listing.
+    pub(super) fn turn_quickview_page(&self, browser: &mut Browser, delta: i32) -> bool {
+        let Some((path, generation, page, anchor)) = browser.turn_quickview_page(delta) else {
+            return false;
+        };
+        let panel = quickview::panel_rect(browser.size.0, browser.size.1);
+        let scale = AppContext::scale_factor().max(1) as f32;
+        let state = Arc::clone(&self.state);
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        // No video: what is being turned is a document's page, and a
+        // paginated preview is never a player.
+        tokio::task::spawn_blocking(move || {
+            let preview = quickview::decode(&path, panel, scale, page);
+            state
+                .lock()
+                .unwrap()
+                .finish_quickview(generation, anchor, name, preview, None);
+            AppContext::request_wakeup();
+        });
+        true
     }
 
     /// Decode the docked preview column's target, off the UI thread — the
@@ -169,7 +199,7 @@ impl FilesApp {
         let video = (path.is_file() && otto_media_kit::player::available())
             .then(|| quickview::video_options(panel, scale, false));
         tokio::task::spawn_blocking(move || {
-            let preview = quickview::decode(&path, panel, scale);
+            let preview = quickview::decode(&path, panel, scale, 1);
             state
                 .lock()
                 .unwrap()

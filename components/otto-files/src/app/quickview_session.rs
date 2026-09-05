@@ -91,6 +91,29 @@ impl Browser {
         Some((entry.path, self.quickview_generation, anchor))
     }
 
+    /// Turn a paginated preview by `delta` pages, in place.
+    ///
+    /// Returns what the caller must decode — the same file, at another page —
+    /// or `None` when the open preview has no pages to turn, which is the
+    /// signal to let the keystroke go on meaning what it means everywhere
+    /// else. Unlike [`Browser::begin_quickview`] the panel is *not* emptied
+    /// while the decode runs: the page on screen is the right file and a good
+    /// answer to the keystroke until the next one lands, where the waiting
+    /// line would only be a flash of nothing.
+    pub(super) fn turn_quickview_page(&mut self, delta: i32) -> Option<(PathBuf, u64, u32, Rect)> {
+        let page = self.quickview.as_ref()?.page_turn(delta)?;
+        let path = self.selected_entry()?.path;
+        self.quickview_generation += 1;
+        self.quickview_pending = true;
+        self.dirty = true;
+        Some((
+            path,
+            self.quickview_generation,
+            page,
+            self.quickview_anchor(),
+        ))
+    }
+
     /// Show a decode that arrived, unless the user has moved on since.
     pub(super) fn finish_quickview(
         &mut self,

@@ -374,6 +374,10 @@ impl FilesApp {
             // Set by the type-ahead arm below: every other key ends the
             // word being typed, the way a second of silence does.
             let mut typing = false;
+            // Whether the keystroke was spent turning a page of the open
+            // preview. It stops the follow below from re-decoding the file at
+            // page one and undoing the turn.
+            let mut paginated = false;
 
             match event.keysym {
                 // History and hierarchy, on the chords every file manager
@@ -434,13 +438,25 @@ impl FilesApp {
                 Keysym::BackSpace => browser.go_up(),
                 Keysym::Home => browser.move_cursor(-100_000, shift),
                 Keysym::End => browser.move_cursor(100_000, shift),
+                // The page keys belong to the content when the content has
+                // pages: with a PDF open, Page Down is the next page rather
+                // than the next screenful of file names. Everywhere else they
+                // mean what they always meant, including on the last page of
+                // a PDF — a key that stops working at the end would be worse
+                // than one that hands the listing back.
                 Keysym::Page_Down => {
-                    let step = browser.row_step();
-                    browser.move_cursor(15 * step, shift)
+                    paginated = self.turn_quickview_page(&mut browser, 1);
+                    if !paginated {
+                        let step = browser.row_step();
+                        browser.move_cursor(15 * step, shift)
+                    }
                 }
                 Keysym::Page_Up => {
-                    let step = browser.row_step();
-                    browser.move_cursor(-15 * step, shift)
+                    paginated = self.turn_quickview_page(&mut browser, -1);
+                    if !paginated {
+                        let step = browser.row_step();
+                        browser.move_cursor(-15 * step, shift)
+                    }
                 }
                 // Select-all only means something when the request asked for
                 // more than one file.
@@ -571,7 +587,7 @@ impl FilesApp {
                     | Keysym::Page_Down
                     | Keysym::Page_Up
             );
-            if moved && browser.quickview.is_some() {
+            if moved && !paginated && browser.quickview.is_some() {
                 self.start_quickview(&mut browser);
             }
         }

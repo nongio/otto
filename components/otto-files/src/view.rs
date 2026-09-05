@@ -5482,12 +5482,37 @@ pub fn draw_quickview(
             // is a titlebar and the name is what it is for, so it is read at
             // the distance a window title is read at rather than a caption's.
             let font = styles::BODY_EMPHASIZED.font();
-            let room = strip.width() - 80.0;
+            // Room for the close dot on the right, and for the page counter
+            // on the left when there is one: the name is centred, so it grows
+            // towards both and has to be kept off both.
+            let room = strip.width()
+                - if session.paged().is_some() {
+                    140.0
+                } else {
+                    80.0
+                };
             Label::new(ellipsize(&font, &session.name, room.max(40.0)))
                 .with_style(styles::BODY_EMPHASIZED)
                 .with_color(fade(f.theme.text_secondary, chrome))
                 .centered_at(strip.center_x(), strip.center_y())
                 .render(canvas);
+        }
+
+        // Which page of a PDF is showing, in the strip's free corner. Turning
+        // a page changes the picture and nothing else, so without this the
+        // only evidence that Page Down did anything is that the content
+        // looks different — and on a document of similar-looking pages that
+        // is no evidence at all.
+        if let Some((page, pages)) = session.paged() {
+            Label::new(otto_kit::t_owned!(
+                "quickview-page-of",
+                page = page.to_string(),
+                pages = pages.to_string()
+            ))
+            .with_style(styles::FOOTNOTE)
+            .with_color(fade(f.theme.text_tertiary, chrome))
+            .centered_on(strip.left + 12.0, strip.center_y())
+            .render(canvas);
         }
 
         draw_quickview_close(canvas, f.theme, panel, f.quickview_close_hovered, chrome);
