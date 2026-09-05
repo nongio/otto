@@ -201,6 +201,11 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
                 .cursor_manager
                 .reload(&theme, size.clamp(1, 255) as u8);
             state.cursor_texture_cache.clear();
+            // X11 clients draw their own pointer from XSETTINGS, so the new
+            // theme and size have to be republished or XWayland keeps the old
+            // one (see `Otto::apply_xwayland_xsettings`).
+            #[cfg(feature = "xwayland")]
+            state.apply_xwayland_xsettings();
             // Nothing else invalidates on a pointer that is not moving.
             state.backend_data.request_redraw();
             Ok(())

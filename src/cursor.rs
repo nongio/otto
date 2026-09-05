@@ -181,16 +181,7 @@ impl CursorManager {
             .entry((icon, scale))
             .or_insert_with_key(|(icon, scale)| {
                 let size = self.size as i32 * scale;
-                let mut cursor = Self::load_xcursor(&self.theme, icon.name(), size);
-
-                if cursor.is_err() {
-                    for name in icon.alt_names() {
-                        cursor = Self::load_xcursor(&self.theme, name, size);
-                        if cursor.is_ok() {
-                            break;
-                        }
-                    }
-                }
+                let mut cursor = Self::load_named(&self.theme, *icon, size);
 
                 if let Err(err) = &cursor {
                     warn!("error loading xcursor {}@{size}: {err:?}", icon.name());
@@ -218,11 +209,35 @@ impl CursorManager {
         self.current_cursor = cursor;
     }
 
-    fn load_xcursor(theme: &CursorTheme, name: &str, size: i32) -> anyhow::Result<XCursor> {
-        let path = theme
-            .load_icon(name)
-            .ok_or_else(|| anyhow!("no default icon"))?;
+    /// Load `icon` from `theme`, preferring the shallowest theme that has it.
+    ///
+    /// An icon has a modern name (`default`, `pointer`) and a set of legacy X11
+    /// names (`left_ptr`, `hand2`). Trying the modern name to exhaustion first
+    /// is wrong, because a theme with no `Inherits=` still implicitly inherits
+    /// `default` (usually Adwaita): a legacy-named theme — one shipping
+    /// `left_ptr` but no `default` — loses the modern name to its fallback
+    /// theme even though it has the icon under the old name. The user then gets
+    /// the fallback theme's art for most of the desktop and their own theme's
+    /// only for the handful of icons whose modern and legacy names coincide
+    /// (`move`, `copy`, `crosshair`), so the pointer changes appearance and size
+    /// mid-gesture — most visibly when a drag swaps `default` for `move`.
+    ///
+    /// So rank every candidate name by how far up the inheritance chain it was
+    /// found and take the nearest, breaking ties in name order. The configured
+    /// theme always wins over the one it falls back to, whatever the name.
+    fn load_named(theme: &CursorTheme, icon: CursorIcon, size: i32) -> anyhow::Result<XCursor> {
+        let (path, _) = std::iter::once(icon.name())
+            .chain(icon.alt_names().iter().copied())
+            .filter_map(|name| theme.load_icon_with_depth(name))
+            .min_by_key(|(_, depth)| *depth)
+            .ok_or_else(|| anyhow!("no icon named {} in the cursor theme", icon.name()))?;
 
+        Self::parse_xcursor_file(&path, size)
+    }
+
+    /// Read one xcursor file and keep only the frames at the size nearest to
+    /// `size`, which is in physical pixels.
+    fn parse_xcursor_file(path: &std::path::Path, size: i32) -> anyhow::Result<XCursor> {
         let mut file = File::open(path).context("error opening cursor icon file")?;
         let mut buf = vec![];
         file.read_to_end(&mut buf)
@@ -237,6 +252,36 @@ impl CursorManager {
             .unwrap();
 
         images.retain(move |image| image.width == width && image.height == height);
+
+        // A theme answers a size request with the nearest art it happens to
+        // ship, and several legacy X11 themes ship a single 32px bitmap and
+        // nothing else. On a HiDPI screen that draws a pointer a fraction of
+        // `cursor_size`, so resample the frames to the size that was asked for.
+        // A theme with art at the requested size lands here as a no-op.
+        let nominal = images.first().map(|image| image.size).unwrap_or(0);
+        if nominal != 0 && nominal != size.max(1) as u32 {
+            let factor = size.max(1) as f32 / nominal as f32;
+            for image in &mut images {
+                let dst_w = ((image.width as f32 * factor).round() as i32).max(1);
+                let dst_h = ((image.height as f32 * factor).round() as i32).max(1);
+                image.pixels_rgba = Self::resample(
+                    &image.pixels_rgba,
+                    image.width as i32,
+                    0,
+                    0,
+                    image.width as i32,
+                    image.height as i32,
+                    dst_w,
+                    dst_h,
+                );
+                image.pixels_argb = vec![];
+                image.xhot = ((image.xhot as f32 * factor).round() as u32).min(dst_w as u32);
+                image.yhot = ((image.yhot as f32 * factor).round() as u32).min(dst_h as u32);
+                image.width = dst_w as u32;
+                image.height = dst_h as u32;
+                image.size = size.max(1) as u32;
+            }
+        }
 
         let animation_duration = images.iter().fold(0, |acc, image| acc + image.delay);
 
@@ -328,11 +373,36 @@ impl CursorManager {
         dst_w: i32,
         dst_h: i32,
     ) -> Vec<u8> {
-        let side = FALLBACK_SRC_SIDE;
+        Self::resample(
+            FALLBACK_CURSOR_DATA,
+            FALLBACK_SRC_SIDE,
+            src_x,
+            src_y,
+            src_w,
+            src_h,
+            dst_w,
+            dst_h,
+        )
+    }
+
+    /// Bilinearly resample the `src_w`×`src_h` region at (`src_x`, `src_y`) of
+    /// an Argb8888 buffer `stride` texels wide into a `dst_w`×`dst_h` image.
+    #[allow(clippy::too_many_arguments)]
+    fn resample(
+        src: &[u8],
+        stride: i32,
+        src_x: i32,
+        src_y: i32,
+        src_w: i32,
+        src_h: i32,
+        dst_w: i32,
+        dst_h: i32,
+    ) -> Vec<u8> {
+        let side = stride;
         let texel = |x: i32, y: i32, c: usize| -> f32 {
             let x = x.clamp(src_x, src_x + src_w - 1);
             let y = y.clamp(src_y, src_y + src_h - 1);
-            FALLBACK_CURSOR_DATA[((y * side + x) * 4) as usize + c] as f32
+            src[((y * side + x) * 4) as usize + c] as f32
         };
 
         let mut pixels = vec![0u8; (dst_w * dst_h * 4) as usize];
@@ -513,5 +583,99 @@ mod tests {
                 && FALLBACK_HOTSPOT.1 < y + h,
             "the hotspot must sit within the art, or scaling it moves the tip"
         );
+    }
+}
+
+#[cfg(test)]
+mod theme_lookup_tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    /// `XCURSOR_PATH` is process-global, so the tests that plant a theme on
+    /// disk take turns.
+    static XCURSOR_PATH_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Encode a single-frame xcursor file: one `size`×`size` image filled with
+    /// `fill` (Argb8888, little-endian byte order as the parser reads it).
+    fn write_cursor(path: &Path, size: u32, fill: [u8; 4]) {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"Xcur");
+        out.extend_from_slice(&16u32.to_le_bytes()); // header length
+        out.extend_from_slice(&0x0001_0000u32.to_le_bytes()); // file version
+        out.extend_from_slice(&1u32.to_le_bytes()); // one table entry
+
+        let chunk_pos = 16 + 12;
+        out.extend_from_slice(&0xfffd_0002u32.to_le_bytes()); // image chunk
+        out.extend_from_slice(&size.to_le_bytes()); // nominal size
+        out.extend_from_slice(&(chunk_pos as u32).to_le_bytes());
+
+        for word in [0x24u32, 0xfffd_0002, size, 1, size, size, 0, 0, 0] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        for _ in 0..(size * size) {
+            out.extend_from_slice(&fill);
+        }
+
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, out).unwrap();
+    }
+
+    /// The bug this guards: a theme with no `Inherits=` still implicitly
+    /// inherits `default`, so asking for the modern name first found the
+    /// icon in the *fallback* theme and never tried the legacy name in the
+    /// configured one. The user got the fallback theme's art for most of the
+    /// desktop and their own only where the two names coincide (`move`), so
+    /// starting a drag visibly swapped cursor themes.
+    #[test]
+    fn the_configured_theme_wins_over_the_one_it_falls_back_to() {
+        let _guard = XCURSOR_PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = std::env::temp_dir().join("otto-cursor-inherit-test");
+        let _ = std::fs::remove_dir_all(&root);
+
+        // The configured theme has the icon only under its legacy X11 name.
+        write_cursor(&root.join("legacy/cursors/left_ptr"), 32, [1, 2, 3, 255]);
+        // The implicit fallback theme has it under the modern name.
+        write_cursor(&root.join("default/cursors/default"), 32, [9, 9, 9, 255]);
+
+        std::env::set_var("XCURSOR_PATH", &root);
+        let theme = CursorTheme::load("legacy");
+        let cursor = CursorManager::load_named(&theme, CursorIcon::Default, 32).unwrap();
+        std::env::remove_var("XCURSOR_PATH");
+
+        assert_eq!(
+            cursor.images[0].pixels_rgba[0..4],
+            [1, 2, 3, 255],
+            "Default should resolve to the configured theme's left_ptr, \
+             not to the fallback theme's default"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The bug this guards: a theme that ships a single 32px bitmap — several
+    /// legacy X11 themes do — drew a pointer a fraction of `cursor_size` on a
+    /// HiDPI screen, because the nearest available art was emitted unscaled.
+    #[test]
+    fn art_smaller_than_the_request_is_scaled_up_to_it() {
+        let _guard = XCURSOR_PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = std::env::temp_dir().join("otto-cursor-resample-test");
+        let _ = std::fs::remove_dir_all(&root);
+
+        write_cursor(&root.join("small/cursors/left_ptr"), 32, [1, 2, 3, 255]);
+
+        std::env::set_var("XCURSOR_PATH", &root);
+        let theme = CursorTheme::load("small");
+        let cursor = CursorManager::load_named(&theme, CursorIcon::Default, 80).unwrap();
+        std::env::remove_var("XCURSOR_PATH");
+
+        let image = &cursor.images[0];
+        assert_eq!(
+            (image.width, image.height),
+            (80, 80),
+            "a 32px bitmap asked for at 80 should be resampled, not emitted small"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

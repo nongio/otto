@@ -1166,10 +1166,25 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn start_xwayland(&mut self) {
         use std::process::Stdio;
 
+        // The X screen is at the native resolution (see `client_scale` below), so
+        // a client asking Xcursor for `cursor_size` gets physical pixels and draws
+        // a pointer `scale` times smaller than Otto's. Hand XWayland the scaled
+        // size for the clients that read the environment rather than XSETTINGS
+        // (Qt, raw Xlib); `apply_xwayland_xsettings` covers GTK and Chromium.
+        let scale = self.xwayland_target_scale();
+        let (cursor_theme, cursor_size) = Config::with(|c| (c.cursor_theme.clone(), c.cursor_size));
+        let cursor_env = [
+            ("XCURSOR_THEME".to_string(), cursor_theme),
+            (
+                "XCURSOR_SIZE".to_string(),
+                ((cursor_size as f64 * scale) as u32).to_string(),
+            ),
+        ];
+
         let (xwayland, client) = XWayland::spawn(
             &self.display_handle,
             None,
-            std::iter::empty::<(String, String)>(),
+            cursor_env,
             true,
             Stdio::null(),
             Stdio::null(),
@@ -1206,7 +1221,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     .expect("Failed to attach X11 Window Manager");
 
                     let cursor = Cursor::load();
-                    let image = cursor.get_image(1, Duration::ZERO);
+                    // Physical-pixel X screen: ask for the scaled bitmap, or the
+                    // root-window pointer is `scale` times too small.
+                    let image = cursor
+                        .get_image((data.xwayland_target_scale() as u32).max(1), Duration::ZERO);
                     wm.set_cursor(
                         &image.pixels_rgba,
                         Size::from((image.width as u16, image.height as u16)),
@@ -1283,6 +1301,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn apply_xwayland_xsettings(&mut self) {
         use smithay::xwayland::xwm::settings::Value;
         let scale = self.xwayland_target_scale();
+        let (cursor_theme, cursor_size) = Config::with(|c| (c.cursor_theme.clone(), c.cursor_size));
         let Some(wm) = self.xwm.as_mut() else { return };
         let settings = [
             (
@@ -1296,6 +1315,19 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             (
                 "Xft/DPI".to_string(),
                 Value::Integer((96.0 * scale * 1024.0) as i32),
+            ),
+            // An X11 client picks its own pointer bitmap, and the X screen is at
+            // the native resolution, so the size it asks Xcursor for is in
+            // physical pixels. Publish the scaled size, or the client draws a
+            // cursor `scale` times smaller than the one Otto draws everywhere
+            // else. `Gtk/CursorThemeSize` is what GTK and Chromium/CEF read.
+            (
+                "Gtk/CursorThemeName".to_string(),
+                Value::String(cursor_theme),
+            ),
+            (
+                "Gtk/CursorThemeSize".to_string(),
+                Value::Integer((cursor_size as f64 * scale) as i32),
             ),
         ];
         match wm.set_xsettings(settings.into_iter()) {
