@@ -1093,6 +1093,42 @@ impl HeadlessHandle {
         });
     }
 
+    // ── The command language ─────────────────────────────────────────────
+
+    /// Run an i3-syntax command string, exactly as the D-Bus `RunCommand`
+    /// method and `otto-msg` do. One result per `;`-separated command:
+    /// `Ok(())`, or the message a caller would be shown.
+    pub fn run_command(&self, text: &str) -> Vec<Result<(), String>> {
+        let text = text.to_string();
+        self.query(move |state| state.run_command(&text))
+    }
+
+    /// `GetTree`: the whole tree in i3's node shape.
+    pub fn tree_json(&self) -> serde_json::Value {
+        self.query(|state| state.tree_json())
+    }
+
+    /// `GetWorkspaces`, in i3's shape.
+    pub fn workspaces_json(&self) -> serde_json::Value {
+        self.query(|state| state.workspaces_json())
+    }
+
+    /// `GetOutputs`, in i3's shape.
+    pub fn outputs_json(&self) -> serde_json::Value {
+        self.query(|state| state.outputs_json())
+    }
+
+    /// The gap override on the current workspace, if it has one:
+    /// `(inner, outer)`.
+    pub fn workspace_gap_override(&self) -> Option<(i32, i32)> {
+        self.query(|state| {
+            let output = headless_output(state)?;
+            let workspace = state.workspaces.current_tiling_workspace(&output)?;
+            let gaps = workspace.tiling.read().ok()?.gaps?;
+            Some((gaps.inner, gaps.outer))
+        })
+    }
+
     /// The area a maximized window fills on the headless output — output
     /// geometry minus exclusive zones and the dock. `(x, y, width, height)`.
     pub fn usable_zone(&self) -> (i32, i32, i32, i32) {

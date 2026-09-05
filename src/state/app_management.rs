@@ -219,6 +219,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         // Focus the top window of the new workspace, or clear focus if empty
         self.focus_top_window_or_clear(index);
+        self.announce_workspace_focus();
     }
 
     pub fn close_expose_show_all_and_focus_top(&mut self) {
@@ -401,6 +402,39 @@ impl<BackendData: Backend> Otto<BackendData> {
         // own, so without this the switcher keeps the order it had before the
         // focus change.
         self.workspaces.update_workspace_model();
+
+        // Tell the bus, so a status bar or a script following `window` events
+        // sees the same focus change a keybinding does
+        // (docs/developer/shell-dbus-api.md).
+        self.announce_window_focus();
+    }
+
+    /// Publish the focused window on `org.otto.Shell1` as i3's `window` event.
+    ///
+    /// Only the focused window's own node is built, not the whole tree: focus
+    /// changes with every click and every alt-tab step, and walking every
+    /// workspace on every output to answer one of them would be a cost the
+    /// desktop pays whether or not anything is listening.
+    pub(crate) fn announce_window_focus(&self) {
+        let container = self
+            .focused_container_node()
+            .unwrap_or(serde_json::Value::Null);
+        crate::shell_service::announce_window_focus(container);
+    }
+
+    /// Publish the current workspace on `org.otto.Shell1` as i3's `workspace`
+    /// event.
+    pub(crate) fn announce_workspace_focus(&self) {
+        let workspaces = self.workspaces_json();
+        let current = workspaces
+            .as_array()
+            .and_then(|list| {
+                list.iter()
+                    .find(|entry| entry["focused"] == serde_json::Value::Bool(true))
+            })
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        crate::shell_service::announce_workspace_focus(current);
     }
 
     /// Mirror keyboard focus to the X11 world by setting `_NET_ACTIVE_WINDOW`.

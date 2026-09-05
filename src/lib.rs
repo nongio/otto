@@ -38,6 +38,7 @@ pub mod screenshare;
 pub mod settings;
 pub mod settings_service;
 pub mod shell;
+pub mod shell_service;
 pub mod skia_renderer;
 pub mod state;
 pub mod surface_config_cache;

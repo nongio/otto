@@ -513,6 +513,34 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         Value::Array(out)
     }
 
+    /// The focused window as one `GetTree`-shaped node, or `None` when
+    /// nothing has focus. What the `WindowChanged` signal carries.
+    pub fn focused_container_node(&self) -> Option<Value> {
+        let window = self.focused_window()?;
+        let id = window.id();
+        let geometry = self
+            .workspaces
+            .output_for_window(&window)
+            .and_then(|output| self.workspaces.output_workspaces.get(&output.name()))
+            .and_then(|ows| {
+                ows.spaces
+                    .iter()
+                    .find_map(|space| space.element_geometry(&window))
+            })
+            .unwrap_or_default();
+        Some(self.window_node(
+            &id,
+            Rect::new(
+                geometry.loc.x,
+                geometry.loc.y,
+                geometry.size.w,
+                geometry.size.h,
+            ),
+            None,
+            Some(&id),
+        ))
+    }
+
     // ── Node building ────────────────────────────────────────────────────
 
     fn output_rect(&self, output: &Output) -> Value {

@@ -701,6 +701,7 @@ pub async fn run_dbus_service(
 ) -> zbus::Result<()> {
     let connection = Connection::session().await?;
     let settings_tx = compositor_tx.clone();
+    let shell_tx = compositor_tx.clone();
 
     let screencast = ScreenCastInterface::new(compositor_tx.clone(), connection.clone());
 
@@ -722,6 +723,10 @@ pub async fn run_dbus_service(
 
     // Register the Settings interface
     crate::settings_service::register_settings_interface(&connection, settings_tx).await?;
+
+    // The scripting surface: the command language, the tree, and the two
+    // events a status bar watches (docs/developer/shell-dbus-api.md).
+    crate::shell_service::register_shell_interface(&connection, shell_tx).await?;
 
     // Accessibility: assistive technologies watch and grab keys through this.
     // The well-known name comes last, so an AT that sees the name appear finds
