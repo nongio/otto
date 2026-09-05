@@ -512,6 +512,8 @@ impl Scene {
             data.name,
             data.first_row,
             data.decoded.is_some(),
+            // A video re-records on every frame and every tick of its clock.
+            data.video.map(crate::quickview::Video::key).unwrap_or(0),
             view::is_dark(),
             full.width().to_bits(),
             full.height().to_bits(),
@@ -991,6 +993,8 @@ mod tests {
             action_row: None,
             footer: 0.0,
             quickview_close_hovered: false,
+            quickview_expand_hovered: false,
+            quickview_expanded: false,
             drop_target: None,
             marquee: None,
             path_entry: false,

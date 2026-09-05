@@ -486,6 +486,16 @@ keeps the writer from lapping the reader at the rate a video decodes and a
 panel paints. The host's wake — a poke to its event loop — comes with every
 event, so a frame landing is a repaint the same way a decode landing is.
 
+**In the docked preview column too.** The file browser's Miller-column
+preview pane embeds the same player, through the same seam: when the pane's
+decode says video, an `otto-media-kit` player is attached and its frame and
+transport are drawn in the pane's stage in place of the card. The difference
+is pacing — the column follows the selection as the arrow keys move it, so it
+opens *paused* on the first frame (the worker delivers its preroll frame for
+exactly this) rather than starting to play and talk on every keystroke. A
+click on its picture or its play button starts it. The panel, which the user
+opened deliberately, still autoplays.
+
 **Behaviour in the panel.** A video starts playing when the panel opens on
 it, with sound. The transport runs along the bottom of the content: play or
 pause, the elapsed time, the scrubber, the time remaining, mute. A click on
@@ -498,7 +508,9 @@ with the session. The worker is found next to the host's own executable, on
 as its card exactly as before, and the reason is in the log.
 
 **What this does not do.** Audio-only playback, subtitles, playback rate,
-fullscreen, picture-in-picture, and any frame path other than a CPU copy — a
+fullscreen from the transport (the panel has its own expand button, which
+fills the display), picture-in-picture, and any frame path other than a CPU
+copy — a
 dmabuf ring is the obvious next step for 4K, and the protocol leaves room for
 it without changing the host side.
 

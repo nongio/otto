@@ -332,6 +332,8 @@ struct Browser {
     /// The last video frame painted into the window; see
     /// [`Browser::quickview_video_frame_pending`].
     quickview_video_painted: u64,
+    /// The last preview-column video frame painted; same purpose.
+    preview_video_painted: u64,
     /// The cursor moved on its own — a delete landing its selection on the
     /// survivor — rather than through an arrow key. Quick View follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
@@ -441,6 +443,8 @@ struct Browser {
     footer_pressed: Option<view::FooterButton>,
     /// Pointer is over Quick View's close button.
     quickview_close_hovered: bool,
+    /// Pointer is over Quick View's expand button.
+    quickview_expand_hovered: bool,
     /// Where Quick View's panel actually is, in window coordinates.
     ///
     /// Written by the render path, read by the pointer handler, because the
@@ -507,6 +511,10 @@ struct PreviewPaneState {
     /// A decode for `path` is in flight.
     pending: bool,
     decoded: Option<otto_kit::preview::Preview>,
+    /// A player, when the decode said video. Opened paused: the column
+    /// follows the selection, and a video that started playing on every
+    /// arrow key would be a column that talks.
+    video: Option<quickview::Video>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
@@ -639,6 +647,7 @@ impl Browser {
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
             quickview_generation: 0,
             quickview_video_painted: 0,
+            preview_video_painted: 0,
             quickview_follow: false,
             trash: false,
             trash_pressed: None,
@@ -659,6 +668,7 @@ impl Browser {
             footer_hover: None,
             footer_pressed: None,
             quickview_close_hovered: false,
+            quickview_expand_hovered: false,
             quickview_panel: None,
             quickview_focus: None,
             quickview_pinch: None,
@@ -918,6 +928,7 @@ impl Browser {
             generation,
             pending: true,
             decoded: None,
+            video: None,
         });
         self.dirty = true;
         Some((entry.path, generation))
@@ -1000,6 +1011,7 @@ impl Browser {
             name: entry.name.as_str(),
             icon_chain: entry.icon_chain(),
             decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
+            video: None,
             first_row: 0,
             info: preview_info(&entry),
         };
@@ -1112,7 +1124,12 @@ impl Browser {
 
     /// Show a preview decode that arrived, unless the selection has moved on
     /// since — the same staleness guard Quick View uses.
-    fn finish_preview(&mut self, generation: u64, preview: otto_kit::preview::Preview) {
+    fn finish_preview(
+        &mut self,
+        generation: u64,
+        preview: otto_kit::preview::Preview,
+        video: Option<otto_media_kit::Options>,
+    ) {
         let Some(pane) = &mut self.preview else {
             return;
         };
@@ -1120,8 +1137,36 @@ impl Browser {
             return;
         }
         pane.pending = false;
+        pane.video = video.and_then(|options| {
+            quickview::Video::open(&preview, &pane.path, options, AppContext::request_wakeup)
+        });
         pane.decoded = Some(preview);
         self.dirty = true;
+    }
+
+    /// The pointer over the preview column's video, if there is one and it
+    /// wants the event. The stage is where the picture is; the caption
+    /// under it is the listing's business.
+    fn preview_video_pointer(&mut self, kind: quickview::VideoPointer, x: f32, y: f32) -> bool {
+        if !self.preview_visible() {
+            return false;
+        }
+        let Some(entry) = self.selected_entry() else {
+            return false;
+        };
+        let pane = view::preview_pane_rect(
+            self.columns.len(),
+            self.content_h(),
+            self.pan.offset(),
+            self.miller_w,
+        );
+        let stage = view::preview_stage_rect(pane, preview_info(&entry).len());
+        let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
+            return false;
+        };
+        let handled = video.pointer(kind, x, y, stage);
+        self.dirty |= handled;
+        handled
     }
 
     /// Give every pane's scroll view its viewport and content height.
@@ -3758,7 +3803,7 @@ impl Browser {
         anchor: Rect,
         name: String,
         preview: otto_kit::preview::Preview,
-        video: Option<(PathBuf, otto_media_kit::player::Limits)>,
+        video: Option<(PathBuf, otto_media_kit::Options)>,
     ) {
         if std::env::var_os("OTTO_FILES_QV_TRACE").is_some() {
             eprintln!(
@@ -3772,11 +3817,12 @@ impl Browser {
         self.quickview_pending = false;
         // Re-opening onto the same panel keeps its entrance rather than
         // replaying it, so arrow-keying through a folder does not pulse.
-        let opened_at = match &self.quickview {
-            Some(session) => session.opened_at,
-            None => std::time::Instant::now(),
+        let (opened_at, expanded) = match &self.quickview {
+            Some(session) => (session.opened_at, session.expanded),
+            None => (std::time::Instant::now(), false),
         };
         let mut session = quickview::Session::new(preview, name, anchor, opened_at);
+        session.expanded = expanded;
         // Only once the decoder has said what the file is: the player is
         // started on the sniffed type, never on the name. It wakes the loop
         // from its own thread on every frame, the way a landing decode does.
@@ -3790,20 +3836,49 @@ impl Browser {
         self.dirty = true;
     }
 
-    /// Whether the open preview has a frame the window has not painted.
-    ///
-    /// Only for the window-painted panel: on its own surface the panel's
-    /// content key sees each frame for itself.
-    fn quickview_video_frame_pending(&mut self) -> bool {
-        let Some(session) = self.quickview.as_ref() else {
-            return false;
-        };
-        let seq = session.video_frame_seq();
-        if seq == self.quickview_video_painted {
-            return false;
+    /// Expand the open panel to fill its display, or bring it back.
+    fn toggle_quickview_expand(&mut self) {
+        if let Some(session) = self.quickview.as_mut() {
+            session.toggle_expanded();
+            self.dirty = true;
         }
-        self.quickview_video_painted = seq;
-        true
+    }
+
+    /// Where the panel rests when the surface layer has not said: centred in
+    /// the window, at whichever size the session asks for.
+    fn quickview_fallback_panel(&self) -> Rect {
+        let expanded = self.quickview.as_ref().is_some_and(|s| s.expanded);
+        quickview::resting_in(Rect::from_wh(self.size.0, self.size.1), expanded)
+    }
+
+    /// Whether a video has a frame the window has not painted: the preview
+    /// column's, or the open panel's where the window paints the panel
+    /// itself. On its own surface the panel's content key sees each frame
+    /// for itself, and the window is left alone.
+    fn video_frame_pending(&mut self) -> bool {
+        let mut pending = false;
+        if !pane_surfaces::quickview_on_surface() {
+            let seq = self
+                .quickview
+                .as_ref()
+                .map(quickview::Session::video_frame_seq)
+                .unwrap_or(0);
+            if seq != self.quickview_video_painted {
+                self.quickview_video_painted = seq;
+                pending = true;
+            }
+        }
+        let seq = self
+            .preview
+            .as_ref()
+            .and_then(|p| p.video.as_ref())
+            .map(quickview::Video::frame_seq)
+            .unwrap_or(0);
+        if seq != self.preview_video_painted {
+            self.preview_video_painted = seq;
+            pending = true;
+        }
+        pending
     }
 
     /// Remember where the pointer is over the Quick View panel, and which
@@ -3827,7 +3902,7 @@ impl Browser {
             None => {
                 let panel = self
                     .quickview_panel
-                    .unwrap_or_else(|| quickview::panel_rect(self.size.0, self.size.1));
+                    .unwrap_or_else(|| self.quickview_fallback_panel());
                 let content = view::quickview_content_rect(panel);
                 ((content.center_x(), content.center_y()), panel)
             }
@@ -3931,7 +4006,7 @@ impl Browser {
     fn tick_quickview_pan(&mut self) -> bool {
         let panel = self
             .quickview_panel
-            .unwrap_or_else(|| quickview::panel_rect(self.size.0, self.size.1));
+            .unwrap_or_else(|| self.quickview_fallback_panel());
         let content = view::quickview_content_rect(panel);
         let Some(session) = self.quickview.as_mut() else {
             return false;
@@ -4230,6 +4305,7 @@ impl Browser {
             name: entry.name.as_str(),
             icon_chain: entry.icon_chain(),
             decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
+            video: self.preview.as_ref().and_then(|p| p.video.as_ref()),
             first_row: 0,
             info: preview_info(entry),
         });
@@ -4287,6 +4363,8 @@ impl Browser {
             }),
             footer: self.footer_h(),
             quickview_close_hovered: self.quickview_close_hovered,
+            quickview_expand_hovered: self.quickview_expand_hovered,
+            quickview_expanded: self.quickview.as_ref().is_some_and(|s| s.expanded),
             thumbs: Some(&self.thumbs),
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
             marquee: self.marquee_band(),
@@ -4800,11 +4878,9 @@ impl App for FilesApp {
             let animating = browser.quickview_animating()
                 | browser.tick_quickview_exit()
                 | browser.tick_open_pulse()
-                // A video frame landing is a repaint only where the window
-                // paints the panel itself; on its own surface the panel's
-                // key notices for it, and the window is left alone.
-                | (browser.quickview_video_frame_pending()
-                    && !pane_surfaces::quickview_on_surface());
+                // A video frame landing in the preview column, or in a
+                // panel the window paints itself.
+                | browser.video_frame_pending();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -5556,7 +5632,7 @@ impl FilesApp {
         tokio::task::spawn_blocking(move || {
             let preview = quickview::decode(&path, panel, scale);
             let video = (path.is_file() && otto_media_kit::player::available())
-                .then(|| (path.clone(), quickview::video_limits(panel, scale)));
+                .then(|| (path.clone(), quickview::video_options(panel, scale, true)));
             state
                 .lock()
                 .unwrap()
@@ -5579,9 +5655,17 @@ impl FilesApp {
         let scale = AppContext::scale_factor().max(1) as f32;
         let state = Arc::clone(&self.state);
 
+        // Paused, and only where a worker exists: the column is a glance,
+        // and the click that starts it is the user asking for sound.
+        let autoplay = std::env::var_os("OTTO_FILES_PREVIEW_AUTOPLAY").is_some();
+        let video = (path.is_file() && otto_media_kit::player::available())
+            .then(|| quickview::video_options(panel, scale, autoplay));
         tokio::task::spawn_blocking(move || {
             let preview = quickview::decode(&path, panel, scale);
-            state.lock().unwrap().finish_preview(generation, preview);
+            state
+                .lock()
+                .unwrap()
+                .finish_preview(generation, preview, video);
             AppContext::request_wakeup();
         });
     }
@@ -5697,11 +5781,17 @@ impl FilesApp {
                 let over = view::quickview_close_rect(panel)
                     .with_outset((4.0, 4.0))
                     .contains(point);
+                let over_expand = view::quickview_expand_rect(panel)
+                    .with_outset((4.0, 4.0))
+                    .contains(point);
 
                 let mut browser = state.lock().unwrap();
                 match event.kind {
                     PointerEventKind::Press { .. } if over => {
                         browser.close_quickview();
+                    }
+                    PointerEventKind::Press { .. } if over_expand => {
+                        browser.toggle_quickview_expand();
                     }
                     PointerEventKind::Press { .. } => {
                         // A scrollbar over a zoomed picture takes the press
@@ -5714,16 +5804,20 @@ impl FilesApp {
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         browser.quickview_focus(point, panel);
                         browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
-                        if browser.quickview_close_hovered != over {
+                        if browser.quickview_close_hovered != over
+                            || browser.quickview_expand_hovered != over_expand
+                        {
                             browser.quickview_close_hovered = over;
+                            browser.quickview_expand_hovered = over_expand;
                             browser.dirty = true;
                         }
                     }
                     PointerEventKind::Leave { .. } => {
                         browser.quickview_focus = None;
                         browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
-                        if browser.quickview_close_hovered {
+                        if browser.quickview_close_hovered || browser.quickview_expand_hovered {
                             browser.quickview_close_hovered = false;
+                            browser.quickview_expand_hovered = false;
                             browser.dirty = true;
                         }
                     }
@@ -6037,19 +6131,24 @@ impl FilesApp {
                     // over the action row rather than beside it.
                     let panel = browser
                         .quickview_panel
-                        .unwrap_or_else(|| quickview::panel_rect(width, browser.size.1));
+                        .unwrap_or_else(|| browser.quickview_fallback_panel());
                     let point = skia_safe::Point::new(x, y);
                     let over_close = view::quickview_close_rect(panel)
                         .with_outset((4.0, 4.0))
                         .contains(point);
+                    let over_expand = view::quickview_expand_rect(panel)
+                        .with_outset((4.0, 4.0))
+                        .contains(point);
                     match event.kind {
                         PointerEventKind::Press { .. } => {
-                            // The button first: it sits inside the panel, so
-                            // the "click outside dismisses" rule below would
-                            // never reach it. Then the pan's scrollbars,
-                            // which are inside it too.
+                            // The buttons first: they sit inside the panel,
+                            // so the "click outside dismisses" rule below
+                            // would never reach them. Then the pan's
+                            // scrollbars, which are inside it too.
                             if over_close || !panel.contains(point) {
                                 browser.close_quickview();
+                            } else if over_expand {
+                                browser.toggle_quickview_expand();
                             } else {
                                 browser.quickview_pan_pointer(
                                     QuickviewPointer::Press,
@@ -6064,16 +6163,22 @@ impl FilesApp {
                         PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                             browser.quickview_focus(point, panel);
                             browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
-                            if browser.quickview_close_hovered != over_close {
+                            if browser.quickview_close_hovered != over_close
+                                || browser.quickview_expand_hovered != over_expand
+                            {
                                 browser.quickview_close_hovered = over_close;
+                                browser.quickview_expand_hovered = over_expand;
                                 browser.dirty = true;
                             }
                         }
                         PointerEventKind::Leave { .. } => {
                             browser.quickview_focus = None;
                             browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
-                            if browser.quickview_close_hovered {
+                            if browser.quickview_close_hovered
+                                || browser.quickview_expand_hovered
+                            {
                                 browser.quickview_close_hovered = false;
+                                browser.quickview_expand_hovered = false;
                                 browser.dirty = true;
                             }
                         }
@@ -6093,6 +6198,26 @@ impl FilesApp {
                     }
                     drop(browser);
                     continue;
+                }
+
+                // The preview column's video takes its own presses and a
+                // scrub in progress, before anything decides what a click on
+                // the column means.
+                let video_pointer = match event.kind {
+                    PointerEventKind::Press { .. } => Some(quickview::VideoPointer::Press),
+                    PointerEventKind::Release { .. } => Some(quickview::VideoPointer::Release),
+                    PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
+                        Some(quickview::VideoPointer::Motion)
+                    }
+                    PointerEventKind::Leave { .. } => Some(quickview::VideoPointer::Leave),
+                    PointerEventKind::Axis { .. } => None,
+                };
+                if let Some(kind) = video_pointer {
+                    if browser.preview_video_pointer(kind, x, y) {
+                        drop(browser);
+                        AppContext::request_wakeup();
+                        continue;
+                    }
                 }
 
                 // The confirmation sheet is modal: it answers its own two

@@ -8,7 +8,7 @@
 use otto_kit::theme::Theme;
 use skia_safe::{Canvas, Color, Image, Paint, Rect};
 
-use crate::player::{Playback, Player, State};
+use crate::player::{Frame, Playback, Player, State};
 use crate::transport::{self, TransportLayout, TransportState};
 
 /// What the host is doing to the playback, which the drawing reflects.
@@ -64,6 +64,31 @@ pub fn draw(
 ) {
     let state = player.state();
     let frame = player.frame();
+    draw_frame(
+        canvas,
+        bounds,
+        frame.as_ref(),
+        poster,
+        &state,
+        interaction,
+        theme,
+    );
+}
+
+/// [`draw`] from a snapshot rather than the player itself.
+///
+/// For a host that records its drawing into a picture on another thread, or
+/// later: a [`Frame`] and a [`State`] are both `Send` and cheap to clone,
+/// while a [`Player`] is neither.
+pub fn draw_frame(
+    canvas: &Canvas,
+    bounds: Rect,
+    frame: Option<&Frame>,
+    poster: Option<&Image>,
+    state: &State,
+    interaction: Interaction,
+    theme: &Theme,
+) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
 
@@ -91,7 +116,7 @@ pub fn draw(
         canvas.draw_image_rect_with_sampling_options(&image, None, dest, sampling, &paint);
     }
 
-    if let Some(reason) = failure(&state) {
+    if let Some(reason) = failure(state) {
         use otto_kit::common::Renderable;
         let stage = stage_rect(bounds);
         otto_kit::components::label::Label::new(reason)
