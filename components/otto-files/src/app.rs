@@ -1012,6 +1012,7 @@ impl Browser {
             icon_chain: entry.icon_chain(),
             decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
             video: None,
+            video_on_surface: false,
             first_row: 0,
             info: preview_info(&entry),
         };
@@ -1164,7 +1165,11 @@ impl Browser {
         let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
             return false;
         };
-        let handled = video.pointer(kind, x, y, stage);
+        // The controls are drawn in the aspect box, not the whole stage, so
+        // the hit test has to measure against the same rect — otherwise the
+        // play button answers for a band of empty column above it.
+        let content = view::preview_video_box(stage, video.snapshot().aspect());
+        let handled = video.pointer(kind, x, y, content);
         self.dirty |= handled;
         handled
     }
@@ -3868,15 +3873,21 @@ impl Browser {
                 pending = true;
             }
         }
-        let seq = self
-            .preview
-            .as_ref()
-            .and_then(|p| p.video.as_ref())
-            .map(quickview::Video::frame_seq)
-            .unwrap_or(0);
-        if seq != self.preview_video_painted {
-            self.preview_video_painted = seq;
-            pending = true;
+        // On its own subsurface the preview column's video is repainted by
+        // `sync_pane_surfaces`, which runs every pass regardless of this — so
+        // a landing frame there is not a window repaint. Only when there is no
+        // subsurface manager does the window draw it.
+        if !pane_surfaces::quickview_on_surface() {
+            let seq = self
+                .preview
+                .as_ref()
+                .and_then(|p| p.video.as_ref())
+                .map(quickview::Video::frame_seq)
+                .unwrap_or(0);
+            if seq != self.preview_video_painted {
+                self.preview_video_painted = seq;
+                pending = true;
+            }
         }
         pending
     }
@@ -4306,6 +4317,9 @@ impl Browser {
             icon_chain: entry.icon_chain(),
             decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
             video: self.preview.as_ref().and_then(|p| p.video.as_ref()),
+            // The player is on its own subsurface whenever this window is
+            // running the subsurface manager, which it does by default.
+            video_on_surface: pane_surfaces::quickview_on_surface(),
             first_row: 0,
             info: preview_info(entry),
         });

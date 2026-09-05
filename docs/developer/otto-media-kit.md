@@ -78,3 +78,21 @@ A paused pipeline emits its first frame as a *preroll*, not a sample, so the
 worker delivers both — otherwise a paused embed would show black. Set
 `OTTO_FILES_PREVIEW_AUTOPLAY=1` to make the docked column autoplay too, which
 is the quickest way to see the embed render frames without clicking.
+
+## Aspect and the preview-column subsurface
+
+The player box takes the video's own shape, not the whole space it sits in:
+`otto-files`' `view::preview_video_box` sizes it to `width / aspect +
+transport height`, capped and centred, so a 16:9 clip in a narrow column is a
+compact box on dark ground rather than a sliver in a field of black. Aspect
+comes from the frame, then the announced size, then the poster
+(`VideoSnapshot::aspect`); square pixels are already enforced worker-side, so
+this never distorts anamorphic content.
+
+In the preview column that box is its **own Wayland subsurface**
+(`pane_surfaces::sync_preview_video`), so a 30 fps video repaints only that
+surface — never the browser's toplevel, nor the scene's cached preview
+picture, whose key drops the video term when the video is on a surface. Input
+still belongs to the toplevel (empty input region), and the browser hit-tests
+the same box, so play and scrub work through the existing routing. The Quick
+View panel is unaffected: it is already its own surface.
