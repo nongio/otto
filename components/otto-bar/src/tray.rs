@@ -501,7 +501,10 @@ async fn fetch_item(
     let title = proxy.title().await.ok();
 
     // Try to get icon pixmap
-    let pixmap_target = 24 * otto_kit::app_runner::context::AppContext::scale_factor().max(1);
+    // Match the size the icon is actually painted at, so the pixmap we keep
+    // needs the least rescaling.
+    let pixmap_target = (crate::config::TRAY_ICON_SIZE as i32)
+        * otto_kit::app_runner::context::AppContext::scale_factor().max(1);
     let (icon_data, icon_w, icon_h) = match proxy.icon_pixmap().await {
         Ok(pixmaps) if !pixmaps.is_empty() => {
             // Pick the best size (closest to target, prefer >= target when tied)
