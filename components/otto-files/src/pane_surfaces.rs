@@ -796,6 +796,9 @@ fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> 
         // invisible to the key, and the panel never repaints out of its
         // waiting state.
         ^ if session.loading { LOADING_KEY } else { 0 }
+        // A video changes what is drawn on every frame and every tick of its
+        // clock, with nothing else about the panel moving.
+        ^ session.video_key()
 }
 
 /// The content key's contribution for a panel that is still waiting for its

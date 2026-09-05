@@ -38,6 +38,23 @@ pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
 /// answer for all of them, and because the interesting case is the payload no
 /// decoder produced: a worker that died or overran still comes back as a card
 /// with the file's icon on it rather than as a bare line of text.
+/// Whether a payload describes a video — one a host with a player can play.
+///
+/// Read off the icon chain the worker stamped from the type it *sniffed*: a
+/// card whose first icon is `video-…` came from the video previewer, and the
+/// bytes said so. The name is not consulted, for the same reason dispatch
+/// never consults it. A host that can play video checks this rather than the
+/// file's extension, so a `.mp4` full of something else is never handed to a
+/// demuxer by the previewer.
+pub fn is_video(payload: &PreviewPayload) -> bool {
+    match payload {
+        PreviewPayload::Card { icon, .. } => icon
+            .first()
+            .is_some_and(|name| name.starts_with("video-") && name != "video-x-generic"),
+        _ => false,
+    }
+}
+
 pub fn with_icon(payload: PreviewPayload, chain: Vec<String>) -> PreviewPayload {
     match payload {
         PreviewPayload::Card {
