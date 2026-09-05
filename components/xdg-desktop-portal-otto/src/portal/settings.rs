@@ -23,6 +23,7 @@ const OTTO_DESKTOP_KEYS: &[(&str, &str)] = &[
     ("frosting", "frosting"),
     ("window-controls-side", "window_controls_side"),
     ("maximize-button", "show_maximize_button"),
+    ("tiling-decoration", "tiling.decoration"),
 ];
 
 /// Otto's identifier for a key in the `org.otto.desktop` namespace.
@@ -291,6 +292,7 @@ fn portal_keys_for(id: &str) -> &'static [(&'static str, &'static str)] {
         "frosting" => &[("org.otto.desktop", "frosting")],
         "window_controls_side" => &[("org.otto.desktop", "window-controls-side")],
         "show_maximize_button" => &[("org.otto.desktop", "maximize-button")],
+        "tiling.decoration" => &[("org.otto.desktop", "tiling-decoration")],
         _ => &[],
     }
 }

@@ -427,3 +427,12 @@ colorize_icons = true
 # How much of the container one ResizeGrow/ResizeShrink step moves, as a
 # fraction of its extent.
 # resize_step = 0.05
+
+# How much chrome a window keeps while it is tiled. "minimal" gives it a bar
+# one text line high with its title and a close button, squared corners and no
+# shadow — i3's one-line title bar. "none" gives it no bar at all: the focused
+# tile is marked with a hairline border in the accent colour and the rest with
+# a neutral one, and a tile is then moved from the keyboard — sway's
+# `default_border pixel`. A floating window in a tiling workspace keeps its
+# full titlebar either way, and so does a window that draws its own.
+# decoration = "minimal"

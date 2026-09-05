@@ -51,6 +51,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "frosting"
             | "window_controls_side"
             | "show_maximize_button"
+            | "tiling.decoration"
             | "cursor_theme"
             | "cursor_size"
             | "icon_theme"
@@ -193,6 +194,16 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // be rebuilt, not the rest of the chrome.
         "window_controls_side" => {
             crate::export_window_controls_side();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        // A tile's bar height is part of what its client is configured with,
+        // so this is a geometry change as much as an appearance one: every
+        // tiling workspace is laid out again, and the value goes out to the
+        // apps that draw their own bars the way the controls side does.
+        "tiling.decoration" => {
+            crate::export_tiling_decoration();
+            state.refresh_tiling_decorations();
             state.refresh_window_decorations();
             Ok(())
         }
@@ -348,6 +359,7 @@ mod tests {
             "frosting",
             "window_controls_side",
             "show_maximize_button",
+            "tiling.decoration",
             "cursor_theme",
             "cursor_size",
             "icon_theme",

@@ -342,6 +342,15 @@ pub static SETTINGS: &[SettingSpec] = &[
             "settings-choice-controls-right",
         ],
     ),
+    choice(
+        "tiling.decoration",
+        "Tiled window decoration",
+        "How much chrome a window keeps while it is tiled: a bar one text \
+         line high with its title and a close button, or no bar at all, with \
+         the focused tile marked by a hairline border.",
+        Live,
+        &["minimal", "none"],
+    ),
     spec(
         "show_maximize_button",
         Bool,

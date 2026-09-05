@@ -109,6 +109,7 @@ async fn main() {
     otto::export_rounded_corners();
     otto::export_frosting();
     otto::export_window_controls_side();
+    otto::export_tiling_decoration();
     otto::export_maximize_button();
     otto::export_color_scheme();
 

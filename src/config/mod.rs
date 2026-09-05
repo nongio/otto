@@ -997,6 +997,12 @@ pub struct TilingConfig {
     /// fraction. Clamped to `0.01..0.5`.
     #[serde(default = "default_tiling_resize_step")]
     pub resize_step: f32,
+    /// How much chrome a tile keeps: `"minimal"` — a bar one text line high
+    /// with the title and a close control — or `"none"`, where the focused
+    /// tile is marked with a hairline border instead. A floating window in a
+    /// tiling workspace keeps its full decoration either way.
+    #[serde(default = "default_tiling_decoration")]
+    pub decoration: String,
 }
 
 fn default_tiling_inner_gap() -> i32 {
@@ -1023,6 +1029,12 @@ fn default_tiling_resize_step() -> f32 {
     0.05
 }
 
+fn default_tiling_decoration() -> String {
+    otto_kit::tile_decoration::TileDecoration::default()
+        .as_str()
+        .to_string()
+}
+
 impl Default for TilingConfig {
     fn default() -> Self {
         Self {
@@ -1032,6 +1044,7 @@ impl Default for TilingConfig {
             layout_duration: default_tiling_layout_duration(),
             layout_bounce: default_tiling_layout_bounce(),
             resize_step: default_tiling_resize_step(),
+            decoration: default_tiling_decoration(),
         }
     }
 }
@@ -1064,6 +1077,13 @@ impl TilingConfig {
     /// One keyboard resize step, as a share of the container.
     pub fn step(&self) -> f32 {
         self.resize_step.clamp(0.01, 0.5)
+    }
+
+    /// How much chrome a tile keeps. An unparseable token keeps the default
+    /// rather than dropping every tile's bar — the schema rejects one before
+    /// it can be written.
+    pub fn decoration(&self) -> otto_kit::tile_decoration::TileDecoration {
+        otto_kit::tile_decoration::TileDecoration::parse(&self.decoration).unwrap_or_default()
     }
 }
 
