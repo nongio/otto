@@ -14,6 +14,6 @@ pub mod layout;
 pub mod state;
 pub mod tree;
 
-pub use layout::{neighbour, resolve, Gaps, Rect};
+pub use layout::{Gaps, Rect};
 pub use state::TilingState;
-pub use tree::{Axis, Direction, Node, NodeId, Tree};
+pub use tree::{Axis, Direction};

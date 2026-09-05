@@ -90,6 +90,8 @@ pub struct Config {
     #[serde(default)]
     pub workspaces: WorkspacesConfig,
     #[serde(default)]
+    pub tiling: TilingConfig,
+    #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
@@ -156,6 +158,7 @@ impl Default for Config {
             login: LoginConfig::default(),
             lock: LockConfig::default(),
             workspaces: WorkspacesConfig::default(),
+            tiling: TilingConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
             systemd_notify: false,
@@ -949,6 +952,108 @@ impl WorkspacesConfig {
             self.switch_duration.clamp(0.0, 10.0),
             self.switch_bounce.clamp(0.0, 1.0),
         )
+    }
+}
+
+/// Tiling settings: the gaps a tiled workspace leaves around and between its
+/// cells, how a layout change animates, and how much one resize step moves.
+///
+/// Follows the `[workspaces]` convention: a duration in seconds and a bounce,
+/// both clamped, and a duration of `0` means no animation at all — the tree
+/// lands in one frame. Nothing else is needed to turn tiling animations off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TilingConfig {
+    /// Logical pixels between two neighbouring tiles.
+    #[serde(default = "default_tiling_inner_gap")]
+    pub inner_gap: i32,
+    /// Logical pixels between the tiles and the edge of the usable area.
+    #[serde(default = "default_tiling_outer_gap")]
+    pub outer_gap: i32,
+    /// A workspace with a single tile drops the gaps entirely, so one window
+    /// does not look inset for no reason.
+    #[serde(default = "default_tiling_smart_gaps")]
+    pub smart_gaps: bool,
+    /// Duration in seconds of the spring a layout change animates on: an
+    /// insertion, a removal, a move, an equalise, a re-fit, entering or
+    /// leaving tiling mode. `0` snaps.
+    #[serde(default = "default_tiling_layout_duration")]
+    pub layout_duration: f32,
+    /// Bounce of that same spring: `0.0` settles without overshoot. Clamped
+    /// to `0.0..1.0`.
+    #[serde(default = "default_tiling_layout_bounce")]
+    pub layout_bounce: f32,
+    /// How much of a container's extent one keyboard resize step moves, as a
+    /// fraction. Clamped to `0.01..0.5`.
+    #[serde(default = "default_tiling_resize_step")]
+    pub resize_step: f32,
+}
+
+fn default_tiling_inner_gap() -> i32 {
+    8
+}
+
+fn default_tiling_outer_gap() -> i32 {
+    8
+}
+
+fn default_tiling_smart_gaps() -> bool {
+    true
+}
+
+fn default_tiling_layout_duration() -> f32 {
+    0.3
+}
+
+fn default_tiling_layout_bounce() -> f32 {
+    0.0
+}
+
+fn default_tiling_resize_step() -> f32 {
+    0.05
+}
+
+impl Default for TilingConfig {
+    fn default() -> Self {
+        Self {
+            inner_gap: default_tiling_inner_gap(),
+            outer_gap: default_tiling_outer_gap(),
+            smart_gaps: default_tiling_smart_gaps(),
+            layout_duration: default_tiling_layout_duration(),
+            layout_bounce: default_tiling_layout_bounce(),
+            resize_step: default_tiling_resize_step(),
+        }
+    }
+}
+
+impl TilingConfig {
+    /// The transition a layout change animates with, or `None` when the
+    /// configured duration is zero — which is a first-class case, not a very
+    /// short animation: the window is placed at its cell without a transition
+    /// and the client is configured once.
+    pub fn layout_transition(&self) -> Option<layers::prelude::Transition> {
+        let duration = self.layout_duration.clamp(0.0, 10.0);
+        if duration <= f32::EPSILON {
+            return None;
+        }
+        Some(layers::prelude::Transition::spring(
+            duration,
+            self.layout_bounce.clamp(0.0, 1.0),
+        ))
+    }
+
+    /// The gaps a workspace lays out with.
+    pub fn gaps(&self) -> crate::workspaces::tiling::Gaps {
+        crate::workspaces::tiling::Gaps {
+            inner: self.inner_gap.max(0),
+            outer: self.outer_gap.max(0),
+            smart: self.smart_gaps,
+        }
+    }
+
+    /// One keyboard resize step, as a share of the container.
+    pub fn step(&self) -> f32 {
+        self.resize_step.clamp(0.01, 0.5)
     }
 }
 

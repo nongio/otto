@@ -290,6 +290,26 @@ sound_enabled = true
 "XF86AudioPrev" = "MediaPrev"              # Media previous track
 "XF86AudioStop" = "MediaStop"              # Media stop
 
+# Tiling. A workspace tiles because you asked it to; these are the commands
+# that shape the tree once it does. Uncomment the block to bind them — nothing
+# here is bound by default.
+# "Logo+t" = "TilingToggle"                 # tile / untile this workspace
+# "Logo+h" = "FocusLeft"                    # move focus between cells
+# "Logo+j" = "FocusDown"
+# "Logo+k" = "FocusUp"
+# "Logo+l" = "FocusRight"
+# "Logo+Shift+h" = "MoveContainerLeft"      # move the focused window in the tree
+# "Logo+Shift+j" = "MoveContainerDown"
+# "Logo+Shift+k" = "MoveContainerUp"
+# "Logo+Shift+l" = "MoveContainerRight"
+# "Logo+b" = "SplitHorizontal"              # the next window splits this cell
+# "Logo+v" = "SplitVertical"                #   left/right, or top/bottom
+# "Logo+r" = "ResizeGrowWidth"              # one resize_step of the container
+# "Logo+Shift+r" = "ResizeShrinkWidth"
+# "Logo+Ctrl+r" = "ResizeGrowHeight"
+# "Logo+Ctrl+Shift+r" = "ResizeShrinkHeight"
+# "Logo+e" = "EqualizeContainer"            # even out the focused container
+
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
 # Screen edge the dock is docked to: "bottom" (default), "left" or "right".
@@ -370,3 +390,30 @@ colorize_icons = true
 # because it starts from wherever your fingers left the workspaces.
 # switch_duration = 0.6
 # switch_bounce = 0.1
+
+[tiling]
+# A tiling workspace lays its windows out edge to edge in a tree of splits,
+# instead of letting them float and overlap. Toggle a workspace into it with
+# the "TilingToggle" shortcut above; the mode belongs to that workspace on that
+# output, so a tiled workspace and a floating one live a swipe apart.
+
+# Logical pixels between two neighbouring tiles, and between the tiles and the
+# edge of the usable area (the screen minus the dock, the top bar and any panel).
+# inner_gap = 8
+# outer_gap = 8
+
+# A workspace with a single tile drops the gaps entirely, so one window does not
+# sit inset for no reason.
+# smart_gaps = true
+
+# How long a layout change takes — a window joining or leaving the tree, a move,
+# a resize step, a re-fit after the dock changed size — and how much it
+# overshoots before it settles, the same spring the workspace scroll uses.
+# A duration of 0 snaps: windows land in their cells in one frame, with no
+# motion at all.
+# layout_duration = 0.3
+# layout_bounce = 0.0
+
+# How much of the container one ResizeGrow/ResizeShrink step moves, as a
+# fraction of its extent.
+# resize_step = 0.05
