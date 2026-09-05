@@ -70,7 +70,7 @@ New module `src/workspaces/tiling/`, kept out of the 7000-line
 tiling/
   tree.rs      pure data + operations, no compositor types
   layout.rs    pure fn (tree, rect, gaps, min sizes) -> Vec<(leaf, rect)>
-  scene.rs     mirrors the tree into lay-rs flex container layers
+  apply.rs     relayout: per-window animate + configure, transactions
   command.rs   i3 grammar -> Command enum
   state.rs     per-workspace TilingState, held on WorkspaceView
   focus.rs     directional focus / move over resolved rects
@@ -79,9 +79,11 @@ tiling/
 
 **Division of labour.** `layout.rs` is the truth: it answers "what is this
 window's rectangle" synchronously, for the client configure, hit-testing,
-scanout eligibility and tests. `scene.rs` is the motion: it hands the same
-shares to the engine's Taffy layout and lets the engine animate. The two agree
-by construction because both are a linear function of the same fractions.
+scanout eligibility and tests. `apply.rs` turns rectangles into motion and
+configures, and owns the one hard fact about animating a tiled layout: a
+resized rectangle only has real content once the client has committed a
+buffer of that size. The engine can move a layer for free; it cannot resize
+its content.
 
 **`tree.rs`.** `Node = Leaf(WindowId) | Container { layout: Split(Axis) | Tabbed | Stacked, children: Vec<(NodeId, f32)> }`.
 Operations from the spec, each a method returning what changed: `insert_next_to`,
@@ -116,39 +118,31 @@ TilingState {
 }
 ```
 
-**`scene.rs` — reusing the engine's layout.** The dock already shows the
-pattern: a Taffy *style* change is instantaneous, but a layer's *size* is an
-animated attribute that is also a Taffy input, and the engine runs animations,
-then transactions, then the layout pass, every frame. Animate a flex child's
-size with a transition and its siblings reflow fluidly; dock magnification is
-nothing else. Tiling mirrors the tree into layers this way:
+**`apply.rs` — motion paced by the client.** Moves and swaps, where sizes
+do not change, animate the window layers with a lay-rs transition and look
+right throughout: the buffer stays valid. Resizes are configured per
+animation frame, as half-snap and the MVP already do, and the window is
+drawn with whatever buffer the client has committed most recently. A client
+that keeps up (GTK, Qt, otto-kit at frame rate) shows real content on every
+frame; a slow one lags behind its rectangle for a few frames, which is the
+honest state of affairs rather than a stretched or clipped stand-in. No
+Taffy mirroring of the tree: it would move the same problem into the engine
+and reparent window layers for nothing.
 
-- one layer per container, `Display::Flex` with `flex_direction` row or
-  column and the inner gap as Taffy `gap`; the root container is sized to the
-  usable area inset by the outer gap and is `Absolute` inside `windows_layer`;
-- one flex child per leaf — the window's existing base layer, reparented
-  under its container — sized to `share × container extent` with a
-  transition; Taffy supplies positions;
-- insert: add at zero size and grow; remove: shrink to zero and detach
-  `on_animation_finish` (the fullscreen-overlay lesson: never on a
-  transaction's `on_finish`); gap drag: set the two neighbouring sizes; usable
-  area change: resize the root and everything reflows;
-- tabbed and stacked containers are `Absolute` children under a strip layer,
-  all sized to the container;
-- floating windows stay in `windows_layer` above every container, so
-  stacking is unaffected; containers must not clip (the
-  minimize-into-dock-strip clip bug is the cautionary tale).
+Two refinements on top of the MVP:
 
-Interruptibility comes free: a new `set_size` re-targets the running
-transition. Per-frame the *drawn* rectangle is whatever Taffy resolved, while
-the client is configured once with the final rect from `layout.rs` — which is
-the spec's "fluid by default" without a bespoke animation system.
+- **Transactions for the final frame.** The last configure of a relayout is
+  tracked per window; the layout is presented as settled only when every
+  affected client has committed the final size, or a short deadline passes.
+  This is sway's transaction model applied to the end of the animation, so
+  a slow client never leaves a half-applied layout on screen.
+- **Configure only what changed.** Leaves whose rectangle is unchanged get
+  no configure at all.
 
 **Applying a layout.** One entry point on `Otto`, `relayout_workspace(output,
-workspace, transition)`: resolve the tree with `layout.rs`, push the shares to
-`scene.rs`, then for each leaf whose final rect changed send one configure
-with the new size and xdg states (the extracted body of `apply_tile`), and
-call `reposition_popups_for_window`. Every mutation of the tree — from a
+workspace, transition)`: resolve the tree with `layout.rs`, then for each leaf
+whose rect changed animate the layer and configure the client through
+`apply.rs`, and call `reposition_popups_for_window`. Every mutation of the tree — from a
 keystroke, a map, an unmap, a drag drop, a usable-area change — ends by
 calling it.
 
@@ -211,7 +205,7 @@ float = []              # app ids that always float
 
 The values are read where `relayout_workspace` picks its transition, so they
 apply live through the settings machinery like the workspace switch does. A
-`None` transition is a first-class case in `scene.rs`, not a very short one:
+`None` transition is a first-class case in `apply.rs`, not a very short one:
 insert adds the layer at its final size, remove detaches it at once, and the
 client is configured with no intermediate frame.
 
@@ -372,7 +366,7 @@ that generalises `TilingOverlayView` from one preview pane to a set: the
 same layer recipe (30 % white fill, 80 % white 2 px border, 12 pt radius,
 0.15 s ease-out move, 0.2 s fade) per cell, plus bar and corner handle layers
 in the gaps, parented above the containers and driven from the same shares as
-`scene.rs` so the panes animate in step with the windows beneath them. The
+`apply.rs` so the panes animate in step with the windows beneath them. The
 pointer path hit-tests the handles before windows (the same hook the dock's resize
 handle uses). Drags are a `PointerGrab` that writes shares into the tree and
 calls `relayout_workspace` with no transition. The toolbar reuses otto-kit
@@ -502,10 +496,9 @@ restart (spec open question — recommend yes for mode, tree best-effort by
 app_id).
 
 **Phase 4 — compatibility.** Sway-ipc socket shim if there is demand.
-The spec's scaled-last-frame animation falls out of Phase 1 through
-`scene.rs`: the engine animates the layer, the buffer inside it is drawn
-scaled until the configured one lands. What remains to verify there is plane
-promotion during and after the animation, not a render-side feature.
+The spec's scaled-last-frame animation is dropped: there is no honest way
+to fill a resized rectangle before the client has drawn it. Per-frame
+configure plus end-of-animation transactions is the model.
 
 ## Open: exposé on a tiled workspace
 
@@ -539,9 +532,8 @@ Update `specs/tiling.md` when Phase 1 starts:
   spring rather than tracking the pointer rigidly.
 - Add the command language and IPC sections.
 - Add workspace create-on-demand (touches `workspaces-multi-output.md`).
-- Rewrite the rationale "Why the layout is not expressed as engine layout
-  nodes" to the hybrid: the compositor resolves rectangles for the client and
-  input, the engine's Taffy layout animates them.
+- Animation: replace "fluid by default" (scaled last frame) with per-frame
+  configure paced by the client, plus transactions for the settled frame.
 
 ## Risks
 
