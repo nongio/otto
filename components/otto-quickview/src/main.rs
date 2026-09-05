@@ -211,6 +211,35 @@ async fn main() {
     print_payload(&selected, &payload);
 }
 
+/// One document block, as `--describe` shows it: its kind, and enough of its
+/// text to recognise it by.
+fn describe_block(block: &otto_kit::preview::Block) -> (&'static str, String) {
+    use otto_kit::preview::Block;
+
+    let joined = |spans: &[otto_kit::preview::Span]| {
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>()
+    };
+    match block {
+        Block::Heading { level, spans } => (
+            match level {
+                1 => "h1",
+                2 => "h2",
+                3 => "h3",
+                _ => "h4",
+            },
+            joined(spans),
+        ),
+        Block::Paragraph { spans } => ("para", joined(spans)),
+        Block::Item { marker, spans, .. } => ("item", format!("{marker} {}", joined(spans))),
+        Block::Quote { spans } => ("quote", joined(spans)),
+        Block::Code { lines } => ("code", format!("{} lines", lines.len())),
+        Block::Rule => ("rule", String::new()),
+    }
+}
+
 /// Render a payload as text. This is what `--describe` prints, and it is the
 /// fastest way to see what a decoder actually produced.
 fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
@@ -253,6 +282,20 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
                 println!("    │ {line}");
             }
             if lines.len() > 5 {
+                println!("    │ …");
+            }
+        }
+        PreviewPayload::Document { blocks, truncated } => {
+            println!(
+                "  document  {} blocks{}",
+                blocks.len(),
+                if *truncated { ", truncated" } else { "" }
+            );
+            for block in blocks.iter().take(8) {
+                let (kind, text) = describe_block(block);
+                println!("    │ {kind:<9} {text}");
+            }
+            if blocks.len() > 8 {
                 println!("    │ …");
             }
         }

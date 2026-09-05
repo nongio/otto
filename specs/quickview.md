@@ -351,6 +351,7 @@ the table is arranged around not compromising them.
 | **Image** — SVG | Full, re-rendered at each zoom level, so it stays sharp | Skia's own SVG module — `skia-safe` is already built with `features = ["svg"]` |
 | **PDF** | Full: rendered pages, page navigation, zoom | An external rasteriser, exec'd — see below |
 | **Text and source code** | Full: monospace layout, line numbers, encoding sniff, wrap toggle. No syntax highlighting in v1 | Nothing |
+| **Markdown** | Full, as a *document*: headings, emphasis, links, inline and fenced code, quotes, nested lists, rules. Wrapped and scrolled, not paged | Nothing — parsed in the worker, drawn by the toolkit |
 | Directory | Full: entry count, total size, a grid of child icons and image thumbnails | Nothing |
 | Lottie animation | Full, played | Skottie — already enabled and already used by otto-kit |
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
@@ -378,6 +379,27 @@ Notes on the ones that look like they need a crate and do not:
 - **Skia does not help with PDF.** Its PDF support is a document *writer*; there
   is no reader and no rasteriser. This is worth stating because "Skia already
   does PDF" is the natural wrong assumption.
+- **Markdown needs no parser crate and no browser engine.** The worker parses it
+  by hand into a small block vocabulary — heading, paragraph, list item, quote,
+  code, rule, each carrying styled spans — and the toolkit draws those blocks
+  with its own typography. It is a *reading* parser, not a conforming one:
+  CommonMark's corners degrade to a paragraph rather than to nonsense, a table
+  is drawn as a code block because the worker has no fonts to measure columns
+  with, and an image becomes its alt text because the worker holds one
+  descriptor and cannot open what the image refers to. This is the one document
+  format the desktop is full of that can be shown honestly for free, which is
+  why it is here and HTML and Office are not.
+
+### Documents scroll; they do not page
+
+A Markdown preview is one continuous flow, wrapped to the panel's width and
+scrolled by wheel or two-finger gesture like a text file — not paged like a PDF.
+The unit it scrolls by is the *wrapped line*, which only the layout knows: the
+same blocks are more lines in a narrow panel than in a wide one, and a
+document's lines are not all one height, so both the total and how many fit come
+from the measured lines rather than from a nominal row height. Page Up/Down keep
+meaning what they mean everywhere else — move the host's selection — because
+only paged content claims them.
 
 ### PDF, and the external rasteriser seam
 
@@ -906,8 +928,9 @@ them.
   arrow-key navigation feeling instant and feeling spawned, but it contradicts
   the launcher's "no daemon, nothing to keep warm" principle. If that principle
   is absolute here too, `SetIndex` latency needs a different answer.
-- **What is a "text document"?** Plain text and source code are fully previewed
-  in v1. If the intent includes `.odt` and `.docx`, that is a different and much
+- **What is a "text document"?** Plain text, source code and Markdown are fully
+  previewed in v1 — Markdown as a rendered document rather than as its source.
+  If the intent includes `.odt` and `.docx`, that is a different and much
   larger feature: both are zip containers whose text lives in compressed XML, so
   it needs an inflate implementation and an XML parser before a single word can
   be shown, and a faithful rendering needs layout on top of that. Extracting the

@@ -173,6 +173,11 @@ pub enum Preview {
         /// Carried for a future highlighter, so adding one is not a wire change.
         language: String,
     },
+    /// A formatted document: Markdown, decoded into blocks the toolkit draws
+    /// with its own typography. Distinct from [`Preview::Text`] because the
+    /// two answer different questions — text shows a file's *bytes*, with
+    /// line numbers, and this shows what the file *says*.
+    Document { blocks: Vec<Block>, truncated: bool },
     /// A listing: archive entries, directory children.
     Rows {
         rows: Vec<Row>,
@@ -257,6 +262,9 @@ pub struct PreviewLayout {
     pub fit: Rect,
     /// One rect per visible row, for listings. Empty otherwise.
     pub row_rects: Vec<Rect>,
+    /// Every line of a wrapped document, visible or not — the count is what
+    /// a host scrolls against. Empty for everything else.
+    pub doc_lines: Vec<document::Line>,
     /// How many rows fit, whether or not that many exist.
     pub visible_rows: usize,
 }
@@ -397,6 +405,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 inner,
                 fit: fitted,
                 row_rects: Vec::new(),
+                doc_lines: Vec::new(),
                 visible_rows: 0,
             }
         }
@@ -415,6 +424,30 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 inner,
                 fit: inner,
                 row_rects,
+                doc_lines: Vec::new(),
+                visible_rows: visible,
+            }
+        }
+        Preview::Document { blocks, .. } => {
+            let lines = document::wrap(blocks, inner.width());
+            // How many whole lines fit from `first_row`, which is what a page
+            // key advances by. Measured from the lines themselves rather than
+            // from a nominal height: a document's lines are not all one size,
+            // so a division would be wrong wherever it mattered.
+            let top = lines.get(first_row).map(|line| line.top).unwrap_or(0.0);
+            let visible = lines
+                .iter()
+                .skip(first_row)
+                .take_while(|line| line.top + line.height <= top + inner.height())
+                .count()
+                .max(1);
+            PreviewLayout {
+                bounds,
+                content: inner,
+                inner,
+                fit: inner,
+                row_rects: Vec::new(),
+                doc_lines: lines,
                 visible_rows: visible,
             }
         }
@@ -424,6 +457,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
             inner,
             fit: inner,
             row_rects: Vec::new(),
+            doc_lines: Vec::new(),
             visible_rows: ((inner.height() / LINE_HEIGHT).floor().max(0.0)) as usize,
         },
         Preview::Card { .. } | Preview::Unavailable { .. } => PreviewLayout {
@@ -432,6 +466,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
             inner,
             fit: inner,
             row_rects: Vec::new(),
+            doc_lines: Vec::new(),
             visible_rows: 0,
         },
     }
@@ -483,6 +518,13 @@ pub fn draw(
     match preview {
         Preview::Pixels { pixels, .. } => draw_pixels(canvas, &geometry, pixels, theme),
         Preview::Text { lines, .. } => draw_text(canvas, &geometry, lines, first_row, theme),
+        Preview::Document { .. } => document::draw(
+            canvas,
+            geometry.content,
+            &geometry.doc_lines,
+            first_row,
+            theme,
+        ),
         Preview::Rows { rows, .. } => {
             draw_rows(canvas, &geometry, rows, first_row, theme, resolve_icon)
         }

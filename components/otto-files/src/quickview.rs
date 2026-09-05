@@ -453,13 +453,18 @@ impl Session {
     /// under the fold, but that is a pan rather than a scroll — see
     /// [`Session::pan_wheel`], which the host reaches for first.
     pub fn scroll_by(&mut self, rows: i32, panel: Rect) {
+        let geometry = otto_kit::preview::layout(panel, &self.preview, self.first_row, self.zoom);
         let total = match &self.preview {
             Preview::Text { lines, .. } => lines.len(),
             Preview::Rows { rows, .. } => rows.len(),
+            // A document's rows are its *wrapped* lines, which only the layout
+            // knows: the same blocks are more lines in a narrow panel than in
+            // a wide one, so the count has to come from the geometry rather
+            // than from the payload.
+            Preview::Document { .. } => geometry.doc_lines.len(),
             _ => return,
         };
-        let visible =
-            otto_kit::preview::layout(panel, &self.preview, self.first_row, self.zoom).visible_rows;
+        let visible = geometry.visible_rows;
         let max = total.saturating_sub(visible);
         let next = self.first_row as i64 + rows as i64;
         self.first_row = next.clamp(0, max as i64) as usize;
@@ -888,6 +893,26 @@ mod tests {
         )
     }
 
+    fn document_session() -> Session {
+        use otto_kit::preview::{Block, Span, SpanStyle};
+
+        let paragraph = |n: usize| Block::Paragraph {
+            spans: vec![Span {
+                text: format!("Paragraph {n}. {}", "Words that wrap. ".repeat(20)),
+                style: SpanStyle::default(),
+            }],
+        };
+        Session::new(
+            Preview::Document {
+                blocks: (0..80).map(paragraph).collect(),
+                truncated: false,
+            },
+            "notes.md".into(),
+            Rect::new_empty(),
+            Instant::now(),
+        )
+    }
+
     /// The content box of a panel resting in a window of a comfortable size.
     fn content() -> Rect {
         crate::view::quickview_content_rect(panel_rect(1100.0, 700.0))
@@ -1098,6 +1123,29 @@ mod tests {
 
         session.scroll_by(5, content);
         assert_eq!(session.first_row, 5);
+    }
+
+    /// A Markdown document is longer than its panel like any other text, and
+    /// scrolls the same way — by its *wrapped* lines, which only the layout
+    /// counts. Missing that arm left a document pinned to its first screen.
+    #[test]
+    fn a_document_scrolls_by_its_wrapped_lines() {
+        let content = content();
+        let mut session = document_session();
+
+        session.scroll_by(5, content);
+        assert_eq!(session.first_row, 5);
+
+        // And it stops at the end rather than scrolling off it: the last
+        // screenful stays on screen.
+        session.scroll_by(100_000, content);
+        let lines = otto_kit::preview::layout(content, &session.preview, 0, session.zoom)
+            .doc_lines
+            .len();
+        assert!(
+            session.first_row > 0 && session.first_row < lines,
+            "{lines}"
+        );
     }
 
     #[test]
