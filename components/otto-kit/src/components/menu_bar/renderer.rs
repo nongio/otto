@@ -145,7 +145,19 @@ impl MenuBarRenderer {
                 ));
             }
 
-            canvas.draw_image_rect(&image, None, dst, &paint);
+            // The image is whatever size the icon source offered, which is
+            // rarely the box we draw into; nearest-neighbour would stair-step it.
+            let dst_px = (
+                style.icon_size * scale as f32,
+                style.icon_size * scale as f32,
+            );
+            canvas.draw_image_rect_with_sampling_options(
+                &image,
+                None,
+                dst,
+                crate::utils::icon_sampling((image.width(), image.height()), dst_px),
+                &paint,
+            );
         }
     }
 
