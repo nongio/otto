@@ -128,19 +128,25 @@ pub struct Player {
     shared: Arc<Shared>,
 }
 
-/// How large a frame the worker may hand back, in pixels. The worker scales
-/// the video down to fit, keeping its aspect; it never scales up.
+/// How to open a playback.
+///
+/// `max_width` and `max_height` cap the frames the worker hands back, in
+/// pixels: it scales the video down to fit, keeping its aspect, and never
+/// scales up. `autoplay` starts playing as soon as the stream is ready; off,
+/// the first frame is shown and playback waits for [`Player::play`].
 #[derive(Debug, Clone, Copy)]
-pub struct Limits {
+pub struct Options {
     pub max_width: u32,
     pub max_height: u32,
+    pub autoplay: bool,
 }
 
-impl Default for Limits {
+impl Default for Options {
     fn default() -> Self {
         Self {
             max_width: 1920,
             max_height: 1080,
+            autoplay: true,
         }
     }
 }
@@ -150,14 +156,14 @@ impl Player {
     ///
     /// Returns as soon as the worker is spawned; the stream's size and
     /// duration arrive through [`Player::state`] once it has prerolled. The
-    /// worker is asked to play immediately.
+    /// worker is asked to play immediately when `options.autoplay` is set.
     ///
     /// `wake` is called from another thread whenever there is something new
     /// to draw — a frame, a state change — and must be cheap: typically it
     /// pokes the host's event loop.
     pub fn open(
         path: &Path,
-        limits: Limits,
+        options: Options,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> io::Result<Player> {
         // `O_NONBLOCK` so a FIFO cannot block the open; the check below then
@@ -180,9 +186,9 @@ impl Player {
         let mut command = Command::new(executable);
         command
             .arg("--max-width")
-            .arg(limits.max_width.to_string())
+            .arg(options.max_width.to_string())
             .arg("--max-height")
-            .arg(limits.max_height.to_string())
+            .arg(options.max_height.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(if std::env::var_os("OTTO_MEDIA_TRACE").is_some() {
@@ -231,7 +237,9 @@ impl Player {
                 .map_err(|err| io::Error::other(format!("cannot start event reader: {err}")))?;
         }
 
-        let _ = commands.write_all(Cmd::Play.encode().as_bytes());
+        if options.autoplay {
+            let _ = commands.write_all(Cmd::Play.encode().as_bytes());
+        }
         Ok(Player {
             child,
             commands: Some(commands),
@@ -257,10 +265,15 @@ impl Player {
         self.send(Cmd::Pause);
     }
 
-    /// Play if paused or ended, pause if playing.
+    /// Play if paused, pause if playing. Ended, it plays again from the
+    /// start: GStreamer sits at end-of-stream until it is moved.
     pub fn toggle(&mut self) {
         match self.state().playback {
             Playback::Playing => self.pause(),
+            Playback::Ended => {
+                self.seek(Duration::ZERO, true);
+                self.play();
+            }
             _ => self.play(),
         }
     }

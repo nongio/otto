@@ -235,11 +235,21 @@ fn build(
         .and_then(|element| element.downcast::<gst_app::AppSink>().ok())
         .ok_or("the video sink has no appsink")?;
 
+    // A preroll frame arrives while the pipeline is only PAUSED — which is
+    // how a preview starts when the host does not autoplay. Delivering it too
+    // is what lets a paused player show its first frame rather than black.
+    let preroll_events = Arc::clone(&events);
+    let preroll_ring = Arc::clone(&ring);
     appsink.set_callbacks(
         gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
                 let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                 deliver(&sample, &events, &ring, appsink);
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .new_preroll(move |appsink| {
+                let sample = appsink.pull_preroll().map_err(|_| gst::FlowError::Eos)?;
+                deliver(&sample, &preroll_events, &preroll_ring, appsink);
                 Ok(gst::FlowSuccess::Ok)
             })
             .build(),

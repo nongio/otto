@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 fn main() {
     let path = PathBuf::from(std::env::args().nth(1).expect("a media file"));
-    let mut player =
-        otto_media_kit::Player::open(&path, Default::default(), || {}).expect("worker starts");
+    let mut player = otto_media_kit::Player::open(&path, otto_media_kit::Options::default(), || {})
+        .expect("worker starts");
     let started = Instant::now();
     let mut last_seq = 0;
     let mut frames = 0;

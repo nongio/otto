@@ -30,4 +30,4 @@ pub mod protocol;
 pub mod transport;
 pub mod view;
 
-pub use player::{Frame, Playback, Player, State};
+pub use player::{Frame, Options, Playback, Player, State};

@@ -64,3 +64,17 @@ socket and the registry cache live there. No Wayland or bus address.
   (`PROBE_PNG` names it). Point `OTTO_MEDIA_WORKER` at the worker if it is
   not next to the example binary.
 - `GST_DEBUG=3` works as usual since `GST_*` is passed through.
+
+## Embedding in a preview surface
+
+`otto-media-kit::view::draw_frame` draws from a `Frame` + `State` snapshot
+rather than the live `Player`, so a host that records its drawing into a
+picture on another thread (as otto-files' preview column does) can paint the
+player without holding the player. `otto-files` uses it in two places behind
+one `quickview::Video`: the Quick View panel (autoplays) and the docked
+Miller preview column (opens paused on the first frame, plays on click).
+
+A paused pipeline emits its first frame as a *preroll*, not a sample, so the
+worker delivers both — otherwise a paused embed would show black. Set
+`OTTO_FILES_PREVIEW_AUTOPLAY=1` to make the docked column autoplay too, which
+is the quickest way to see the embed render frames without clicking.

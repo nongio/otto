@@ -125,14 +125,19 @@ pub struct PaneSurfaces {
     /// A fresh answer has been asked for and has not arrived. The previous
     /// resting rect stays in use until it does.
     quickview_awaiting: bool,
-    /// Where the panel rests, frozen for the length of one opening or one
-    /// closing.
+    /// The display the panel is centred on, in window points, frozen for the
+    /// length of one opening or one closing.
     ///
     /// Recomputed only at those two moments, and never in between. The
     /// compositor's answer is relative to the *window*, so anything that moves
     /// the window — tiling it, dragging it — changes what it means. Following
     /// that continuously would drag the panel across the screen mid-animation
-    /// and, when the window moves far enough, off it.
+    /// and, when the window moves far enough, off it. The panel's own rect is
+    /// derived from this on every pass, since expanding it changes the rect
+    /// without changing where the display is.
+    quickview_display: Option<Rect>,
+    /// Where the panel was last placed to rest, whichever space it rests in.
+    /// What the pointer handler measures against.
     quickview_resting: Option<Rect>,
     /// Set when a paint was wanted but the surface still had a frame in
     /// flight. The throttle is only safe while something else keeps calling
@@ -159,6 +164,7 @@ impl PaneSurfaces {
             quickview: None,
             quickview_placement: None,
             quickview_awaiting: false,
+            quickview_display: None,
             quickview_resting: None,
             pending: false,
             stack_dirty: false,
@@ -358,12 +364,13 @@ impl PaneSurfaces {
         // The *old* rect stays in force until the new answer lands. Nulling it
         // here is what made the panel snap to the window's centre and back.
         if self.quickview_awaiting {
-            if let Some(rect) = centered_resting(pane, self.scale) {
-                self.quickview_resting = Some(rect);
+            if let Some(rect) = centered_display(pane, self.scale) {
+                self.quickview_display = Some(rect);
                 self.quickview_awaiting = false;
             }
         }
-        self.quickview_resting
+        self.quickview_display
+            .map(|display| quickview::resting_in(display, session.expanded))
     }
 
     /// The Quick View panel.
@@ -400,9 +407,13 @@ impl PaneSurfaces {
         // stays in window coordinates either way, which is what lets the
         // entrance keep growing out of the file's icon: the anchor and the
         // resting place are in the same space.
-        let resting = self
-            .resting_for(session)
-            .unwrap_or_else(|| quickview::panel_rect(f.width, f.height + f.footer));
+        let resting = self.resting_for(session).unwrap_or_else(|| {
+            quickview::resting_in(
+                Rect::from_wh(f.width, f.height + f.footer),
+                session.expanded,
+            )
+        });
+        self.quickview_resting = Some(resting);
         // Wherever the panel is *now* — part way in, at rest, or part way
         // back to its file. Asking for the entrance alone left the exit out
         // of the surface entirely: once open, `entrance_t` is pinned at 1, so
@@ -921,7 +932,7 @@ mod qv_trace {
 /// surface is created, and the reply lands a round trip later, so the first
 /// frame or two of an entrance are still centred on the window. Those frames
 /// are the smallest ones, at the file's icon, so the correction is invisible.
-fn centered_resting(pane: &PaneSurface, scale: f32) -> Option<Rect> {
+fn centered_display(pane: &PaneSurface, scale: f32) -> Option<Rect> {
     use wayland_client::Proxy;
 
     let style = pane.surface.layer()?;
@@ -936,22 +947,7 @@ fn centered_resting(pane: &PaneSurface, scale: f32) -> Option<Rect> {
     // The answer is in the same pixels the positions are set in; the rest of
     // this module works in points.
     let (x, y, width, height) = (x / scale, y / scale, width / scale, height / scale);
-
-    // The panel's share of the display, floored the same way it is floored
-    // against a window, and never quite touching the edges.
-    let panel_width = (width * quickview::PANEL_FRACTION)
-        .max(quickview::PANEL_MIN.0)
-        .min(width - 32.0);
-    let panel_height = (height * quickview::PANEL_FRACTION)
-        .max(quickview::PANEL_MIN.1)
-        .min(height - 32.0);
-
-    Some(Rect::from_xywh(
-        x + (width - panel_width) / 2.0,
-        y + (height - panel_height) / 2.0,
-        panel_width.max(1.0),
-        panel_height.max(1.0),
-    ))
+    Some(Rect::from_xywh(x, y, width, height))
 }
 
 #[cfg(test)]
