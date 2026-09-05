@@ -113,6 +113,10 @@ pub struct PaneSurfaces {
     pan: Option<PaneSurface>,
     /// The Quick View panel, in a surface of its own over everything.
     quickview: Option<PaneSurface>,
+    /// The docked preview column's video player, in a surface of its own so
+    /// its per-frame repaints never touch the toplevel. Sized to the video's
+    /// shape, placed over the column's stage; see [`Self::sync_preview_video`].
+    preview_video: Option<PaneSurface>,
     /// Which panel, and which direction, [`Self::quickview_resting`] was
     /// worked out for: the session's generation and whether it is closing.
     /// `Some(closing)` once the output has been asked about for the panel
@@ -162,6 +166,7 @@ impl PaneSurfaces {
             panes: Vec::new(),
             pan: None,
             quickview: None,
+            preview_video: None,
             quickview_placement: None,
             quickview_awaiting: false,
             quickview_display: None,
@@ -189,6 +194,7 @@ impl PaneSurfaces {
         // columns and nothing here touches them.
         if f.mode != ViewMode::Columns || !enabled() {
             let mut changed = self.hide_all();
+            changed |= self.sync_preview_video(parent, f, quickview.is_some());
             changed |= self.sync_quickview(parent, f, quickview);
             self.restack(parent);
             return changed;
@@ -285,6 +291,7 @@ impl PaneSurfaces {
             painted |= pane.hide();
         }
         painted |= self.sync_pan_bar(parent, f, viewport);
+        painted |= self.sync_preview_video(parent, f, quickview.is_some());
         painted |= self.sync_quickview(parent, f, quickview);
         self.restack(parent);
         painted
@@ -316,7 +323,11 @@ impl PaneSurfaces {
         let trace = std::env::var_os("OTTO_FILES_QV_TRACE").is_some();
         let mut order: Vec<String> = Vec::new();
         let mut below: Option<WlSurface> = None;
-        let overlays = [self.pan.as_ref(), self.quickview.as_ref()];
+        let overlays = [
+            self.preview_video.as_ref(),
+            self.pan.as_ref(),
+            self.quickview.as_ref(),
+        ];
         for (index, pane) in self.panes.iter().map(Some).chain(overlays).enumerate() {
             let Some(pane) = pane else { continue };
             let surface = pane.surface.wl_surface().clone();
@@ -487,6 +498,96 @@ impl PaneSurfaces {
         painted = true;
         painted
     }
+    /// The docked preview column's video, on its own subsurface.
+    ///
+    /// Sized to the video's shape and placed over the column's stage, so the
+    /// picture updates without the toplevel — or the scene's cached preview
+    /// picture — being touched. Input stays with the toplevel, exactly like
+    /// the columns: the browser's pointer routing already hit-tests the box
+    /// in window coordinates (see `Browser::preview_video_pointer`).
+    fn sync_preview_video(&mut self, parent: &WlSurface, f: &Frame, quickview_up: bool) -> bool {
+        // Shown only for a video in the column view, and never behind the
+        // Quick View panel — which is its own, larger player.
+        let video = (f.mode == ViewMode::Columns && !quickview_up)
+            .then(|| {
+                f.preview
+                    .as_ref()
+                    .and_then(|p| p.video.map(|v| (v, p.info.len())))
+            })
+            .flatten();
+        let Some((video, info_lines)) = video else {
+            return self
+                .preview_video
+                .as_mut()
+                .map(PaneSurface::hide)
+                .unwrap_or(false);
+        };
+
+        let full = view::preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w);
+        let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
+        let stage = view::preview_stage_rect(full, info_lines);
+        let snapshot = video.snapshot();
+        let rect = view::preview_video_box(stage, snapshot.aspect());
+        // A column panned so its player would spill over the sidebar is not
+        // shown on a surface — the surface has no parent clip. The scene's
+        // in-layer draw, which is clipped, covers that transient.
+        if rect.left < viewport.left || rect.right > viewport.right || rect.width() <= 1.0 {
+            return self
+                .preview_video
+                .as_mut()
+                .map(PaneSurface::hide)
+                .unwrap_or(false);
+        }
+
+        if self.preview_video.is_none() {
+            self.preview_video = Self::create(parent, rect);
+            self.stack_dirty = true;
+        }
+        let scale = self.scale;
+        let Some(pane) = self.preview_video.as_mut() else {
+            return false;
+        };
+        let mut painted = pane.show();
+        pane.place(rect, scale);
+
+        let key = hash_rect(rect) ^ video.key().rotate_left(19);
+        if pane.key == key {
+            return painted;
+        }
+        use wayland_client::Proxy;
+        if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
+            self.pending = true;
+            return painted;
+        }
+        pane.key = key;
+
+        let poster = snapshot
+            .poster
+            .as_ref()
+            .and_then(otto_kit::preview::Pixels::to_image);
+        let theme = f.theme.clone();
+        let origin = (rect.left, rect.top);
+        pane.surface.draw(|canvas| {
+            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.save();
+            canvas.translate((-origin.0, -origin.1));
+            otto_media_kit::view::draw_frame(
+                canvas,
+                rect,
+                snapshot.frame.as_ref(),
+                poster.as_ref(),
+                &snapshot.state,
+                otto_media_kit::view::Interaction {
+                    scrubbing: snapshot.scrubbing,
+                    transport_opacity: 1.0,
+                },
+                &theme,
+            );
+            canvas.restore();
+        });
+        painted = true;
+        painted
+    }
 
     /// The stack's horizontal bar.
     ///
@@ -562,6 +663,9 @@ impl PaneSurfaces {
         }
         if let Some(pan) = self.pan.as_mut() {
             changed |= pan.hide();
+        }
+        if let Some(preview_video) = self.preview_video.as_mut() {
+            changed |= preview_video.hide();
         }
         changed
     }

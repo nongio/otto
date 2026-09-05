@@ -97,6 +97,22 @@ pub struct VideoSnapshot {
     pub poster: Option<Pixels>,
 }
 
+impl VideoSnapshot {
+    /// The video's width over its height, once anything has said what that
+    /// is — the frame first, then the stream's announced size, then the
+    /// poster. `None` until the worker has answered, when the caller fills
+    /// the space it has and corrects on the next frame.
+    pub fn aspect(&self) -> Option<f32> {
+        let (w, h) = self
+            .frame
+            .as_ref()
+            .map(|f| (f.width, f.height))
+            .or(self.state.size)
+            .or_else(|| self.poster.as_ref().map(|p| (p.width, p.height)))?;
+        (w > 0 && h > 0).then(|| w as f32 / h as f32)
+    }
+}
+
 impl Video {
     /// Start playing `path`, if the decoded `preview` says it is a video
     /// and a player can be started.

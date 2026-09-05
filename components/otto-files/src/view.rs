@@ -2126,6 +2126,9 @@ pub struct PreviewData<'a> {
     /// A player, when the decode said video and one could be started. The
     /// column then shows its frame and transport in the stage.
     pub video: Option<&'a crate::quickview::Video>,
+    /// Whether that video is presented on its own subsurface, so the scene
+    /// layer leaves the stage to the column ground rather than drawing frames.
+    pub video_on_surface: bool,
     pub first_row: usize,
     /// What the column says about the file underneath its name — kind, size,
     /// when it was last written. Already formatted, because the listing has
@@ -2358,6 +2361,7 @@ pub fn preview_content(
     let icon_chain = data.icon_chain.clone();
     let decoded = data.decoded.cloned();
     let video = data.video.map(crate::quickview::Video::snapshot);
+    let video_on_surface = data.video_on_surface;
     let first_row = data.first_row;
     let info = data.info.clone();
 
@@ -2376,6 +2380,7 @@ pub fn preview_content(
             stage,
             decoded.as_ref(),
             video.as_ref(),
+            video_on_surface,
             &icon_chain,
             first_row,
         );
@@ -2407,9 +2412,29 @@ pub fn preview_drag_picture(
             stage,
             decoded.as_ref(),
             None,
+            false,
             &icon_chain,
             first_row,
         );
+    }
+}
+
+/// The player's box within the preview column's stage: the video's own
+/// shape, not the whole stage. The picture fills the box's width and the
+/// transport rides under it, so the box is `width / aspect + transport`,
+/// capped to the stage and centred in what is left. Until the aspect is
+/// known the box is the stage and the fitted draw letterboxes — one frame,
+/// then it snaps to shape. Drawing and hit-testing both measure against this,
+/// so they cannot disagree about where the controls are.
+pub fn preview_video_box(stage: Rect, aspect: Option<f32>) -> Rect {
+    match aspect {
+        Some(aspect) if aspect > 0.0 => {
+            let width = stage.width();
+            let height = (width / aspect + otto_media_kit::transport::HEIGHT).min(stage.height());
+            let top = (stage.center_y() - height / 2.0).max(stage.top);
+            Rect::from_xywh(stage.left, top, width, height)
+        }
+        _ => stage,
     }
 }
 
@@ -2437,21 +2462,31 @@ fn draw_preview_stage(
     stage: Rect,
     decoded: Option<&otto_kit::preview::Preview>,
     video: Option<&crate::quickview::VideoSnapshot>,
+    // Whether a video is drawn on its own subsurface over this stage, in
+    // which case the stage is left to the column ground here.
+    on_surface: bool,
     icon_chain: &[String],
     first_row: usize,
 ) {
     // A video plays in the stage, transport and all, the same view Quick
     // View draws in its panel. The card the decoder produced is its poster.
     if let Some(video) = video {
+        // On its own subsurface the player draws itself; the scene layer
+        // leaves the stage to the column's ground so it is not re-recorded on
+        // every frame. See `pane_surfaces::sync_preview_video`.
+        if on_surface {
+            return;
+        }
         let poster = video
             .poster
             .as_ref()
             .and_then(otto_kit::preview::Pixels::to_image);
+        let box_rect = preview_video_box(stage, video.aspect());
         canvas.save();
         canvas.clip_rect(stage, None, false);
         otto_media_kit::view::draw_frame(
             canvas,
-            stage,
+            box_rect,
             video.frame.as_ref(),
             poster.as_ref(),
             &video.state,
