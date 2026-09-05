@@ -1988,6 +1988,14 @@ impl App for SettingsApp {
         // is a frost behind its materials. A configure that changes nothing
         // else still has to repaint the sidebar, which is why this runs before
         // the size early-out below.
+        // Whether the window is tiled arrives on a configure too, and the bar
+        // it draws follows it: a tile wears the compact bar, or none at all.
+        // Its height is what every rectangle in `view` is measured from, so a
+        // change here relays out the whole window.
+        if view::set_decoration_variant(window.decoration_variant()) {
+            mark_pane_dirty(&self.pane_dirty);
+            window.request_frame();
+        }
         let activated = window.is_activated();
         let frosted = window.background_blur() && activated;
         let mut repaint = self
@@ -2428,6 +2436,9 @@ impl App for SettingsApp {
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
         mark_pane_dirty(&self.pane_dirty);
         if let Some(window) = self.window.as_ref() {
+            // `[tiling] decoration` travels on this channel, and while the
+            // window is tiled it decides how tall the bar is.
+            view::set_decoration_variant(window.decoration_variant());
             // The frost's tint is on the compositor's layer, which keeps the
             // colour it was last given — hand it the new scheme's material.
             apply_material(window);

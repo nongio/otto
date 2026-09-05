@@ -794,6 +794,27 @@ impl Window {
             .unwrap_or(false)
     }
 
+    /// Whether the compositor's last configure said the window is tiled on at
+    /// least one edge. See [`ToplevelSurface::is_tiled`].
+    pub fn is_tiled(&self) -> bool {
+        self.surface
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|s| s.is_tiled()))
+            .unwrap_or(false)
+    }
+
+    /// The decoration this window should draw: the full bar while it floats,
+    /// and whatever `[tiling] decoration` reduces a tile to while it is tiled.
+    pub fn decoration_variant(&self) -> crate::components::titlebar::DecorationVariant {
+        use crate::components::titlebar::DecorationVariant;
+        if self.is_tiled() {
+            DecorationVariant::tiled(crate::tile_decoration::decoration())
+        } else {
+            DecorationVariant::Floating
+        }
+    }
+
     /// Ask the compositor to minimize the window — what the yellow traffic
     /// light does.
     pub fn minimize(&self) {

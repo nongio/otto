@@ -4,7 +4,8 @@ use otto_kit::components::color_picker::{self, WellInteraction};
 use otto_kit::components::dropdown::{self, DropdownInteraction};
 use otto_kit::components::text_input::TextInput;
 use otto_kit::components::titlebar::{
-    Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
+    DecorationVariant, Titlebar, TitlebarGroup, WindowControls, WindowControlsState,
+    WindowDecoration,
 };
 use otto_kit::controls_side::ControlsSide;
 use otto_kit::prelude::*;
@@ -16,6 +17,7 @@ use crate::panes::keyboard;
 use crate::settings_client::{self, Value};
 use crate::widgets;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// The size the window asks for on first map. After that the compositor is in
 /// charge, and everything draws against [`Settings::width`]/`height` instead —
@@ -27,11 +29,56 @@ pub const MIN_W: f32 = 560.0;
 pub const MIN_H: f32 = 360.0;
 pub const CORNER: f32 = 12.0;
 
-/// [`CORNER`], or square on a desktop configured without rounded corners.
+/// [`CORNER`], or square on a desktop configured without rounded corners —
+/// and square while the window is tiled, since a tile abuts its neighbours on
+/// every edge it touches.
 pub fn corner() -> f32 {
+    if decoration_variant().is_tiled() {
+        return 0.0;
+    }
     otto_kit::corners::radius(CORNER)
 }
+/// The window's own titlebar, while it floats.
 pub const TITLEBAR_H: f32 = 38.0;
+
+/// The decoration this window is currently drawing.
+///
+/// A tiled window abuts its neighbours, so it wears whatever
+/// `[tiling] decoration` reduces a tile to: the compact bar, or none at all
+/// (`specs/tiling.md`, *Decorations*). Kept here rather than passed around
+/// because every rectangle in this module is measured from the bar's height,
+/// and the pane's own surfaces are placed against the same number.
+static VARIANT: AtomicU8 = AtomicU8::new(0);
+
+/// Record the variant the compositor's last configure implies. Returns
+/// whether it changed, so the caller can relayout and repaint.
+pub fn set_decoration_variant(variant: DecorationVariant) -> bool {
+    let code = match variant {
+        DecorationVariant::Floating => 0,
+        DecorationVariant::Minimal => 1,
+        DecorationVariant::Hidden => 2,
+    };
+    VARIANT.swap(code, Ordering::Relaxed) != code
+}
+
+fn decoration_variant() -> DecorationVariant {
+    match VARIANT.load(Ordering::Relaxed) {
+        1 => DecorationVariant::Minimal,
+        2 => DecorationVariant::Hidden,
+        _ => DecorationVariant::Floating,
+    }
+}
+
+/// Height of the bar this window is drawing right now: its own while it
+/// floats, and the shared component's answer for the variant it wears while
+/// it is tiled — so the app's chrome is exactly as tall as a
+/// compositor-decorated window's beside it.
+pub fn titlebar_h() -> f32 {
+    match decoration_variant() {
+        DecorationVariant::Floating => TITLEBAR_H,
+        variant => WindowDecoration::height_for(variant),
+    }
+}
 pub const SIDEBAR_W: f32 = 214.0;
 const CONTENT_PAD: f32 = 26.0;
 const ROW_H: f32 = 42.0;
@@ -81,7 +128,7 @@ const SWATCH_W: f32 = SWATCH_PAD * 2.0
 /// titlebar, in window-local coordinates. Where the pane's subsurfaces are
 /// placed, and what the popup anchors are measured against.
 pub fn pane_viewport(width: f32, height: f32) -> Rect {
-    Rect::from_ltrb(SIDEBAR_W, TITLEBAR_H, width, height)
+    Rect::from_ltrb(SIDEBAR_W, titlebar_h(), width, height)
 }
 
 /// The same viewport in the pane's *own* coordinates, origin at its top-left.
@@ -143,12 +190,12 @@ pub fn titlebar_material(dark: bool) -> Color {
 /// reader is told all go through this, so none of them can drift away from the
 /// painted row.
 pub fn sidebar_item_rect(index: usize) -> Rect {
-    const FIRST_ITEM_Y: f32 = TITLEBAR_H + 10.0;
+    let first_item_y = titlebar_h() + 10.0;
     const ITEM_H: f32 = 30.0;
     const ITEM_STEP: f32 = 32.0;
     Rect::from_xywh(
         8.0,
-        FIRST_ITEM_Y + index as f32 * ITEM_STEP,
+        first_item_y + index as f32 * ITEM_STEP,
         SIDEBAR_W - 16.0,
         ITEM_H,
     )
@@ -376,7 +423,9 @@ fn screen_caption(output: &model::Output) -> &'static str {
 
 /// Padding `Titlebar` is given, which is also where it places its leading
 /// group — so the traffic lights end up at `(TITLEBAR_PAD, TITLEBAR_PAD)`.
-const TITLEBAR_PAD: f32 = (TITLEBAR_H - 12.0) / 2.0;
+fn titlebar_pad() -> f32 {
+    (titlebar_h() - 12.0) / 2.0
+}
 
 /// The traffic lights as the desktop wants them: ordered close-outermost for
 /// whichever end of the bar they sit at, but still at the origin — the
@@ -394,10 +443,10 @@ fn window_controls() -> WindowControls {
 fn window_controls_hit(width: f32) -> WindowControls {
     let controls = window_controls();
     let x = match otto_kit::controls_side::side() {
-        ControlsSide::Left => TITLEBAR_PAD,
-        ControlsSide::Right => width - TITLEBAR_PAD - controls.width(),
+        ControlsSide::Left => titlebar_pad(),
+        ControlsSide::Right => width - titlebar_pad() - controls.width(),
     };
-    controls.at(x, TITLEBAR_PAD)
+    controls.at(x, titlebar_pad())
 }
 
 /// What a press in the titlebar means.
@@ -410,7 +459,7 @@ pub enum TitlebarHit {
 
 /// What a window-local point hits in the titlebar, if anything.
 pub fn titlebar_hit(x: f32, y: f32, width: f32) -> Option<TitlebarHit> {
-    if !(0.0..=TITLEBAR_H).contains(&y) || !(0.0..=width).contains(&x) {
+    if titlebar_h() <= 0.0 || !(0.0..=titlebar_h()).contains(&y) || !(0.0..=width).contains(&x) {
         return None;
     }
     match window_controls_hit(width).control_at(x, y) {
@@ -940,7 +989,7 @@ impl Settings {
         // (see `render_titlebar`), so it must not have an opaque ground under
         // it.
         canvas.draw_rect(
-            Rect::from_ltrb(SIDEBAR_W, TITLEBAR_H, self.width, self.height),
+            Rect::from_ltrb(SIDEBAR_W, titlebar_h(), self.width, self.height),
             &self.fill(pane_background(self.dark)),
         );
 
@@ -1475,12 +1524,17 @@ impl Settings {
     }
 
     fn render_titlebar(&self, canvas: &Canvas) {
+        // `[tiling] decoration = "none"` leaves a tile no bar at all; the
+        // compositor marks the focused one with a hairline instead.
+        if titlebar_h() <= 0.0 {
+            return;
+        }
         // The band over the content is slightly translucent, so the frosted
         // backdrop carries across the whole top of the window instead of
         // stopping at the sidebar's edge. Without compositor blur it would be
         // a tint over the raw desktop, so paint it flat there.
         canvas.draw_rect(
-            Rect::from_ltrb(SIDEBAR_W, 0.0, self.width, TITLEBAR_H),
+            Rect::from_ltrb(SIDEBAR_W, 0.0, self.width, titlebar_h()),
             &self.fill(if self.blurred {
                 titlebar_material(self.dark)
             } else {
@@ -1501,9 +1555,9 @@ impl Settings {
         let bar = Titlebar::new()
             .at(0.0, 0.0)
             .with_width(self.width)
-            .with_height(TITLEBAR_H)
+            .with_height(titlebar_h())
             .with_corner_radius(corner())
-            .with_padding(TITLEBAR_PAD)
+            .with_padding(titlebar_pad())
             .with_background(Color::TRANSPARENT);
         match otto_kit::controls_side::side() {
             ControlsSide::Left => bar.with_leading(group),
@@ -1518,7 +1572,7 @@ impl Settings {
             canvas,
             &self.title(),
             SIDEBAR_W + CONTENT_PAD,
-            TITLEBAR_H / 2.0,
+            titlebar_h() / 2.0,
             styles::TITLE_3_EMPHASIZED,
             if self.active {
                 self.theme.text_primary
@@ -1536,8 +1590,8 @@ impl Settings {
         hairline.set_color(self.theme.fill_tertiary);
         hairline.set_stroke_width(1.0);
         canvas.draw_line(
-            Point::new(SIDEBAR_W, TITLEBAR_H - 0.5),
-            Point::new(self.width, TITLEBAR_H - 0.5),
+            Point::new(SIDEBAR_W, titlebar_h() - 0.5),
+            Point::new(self.width, titlebar_h() - 0.5),
             &hairline,
         );
     }
@@ -2569,7 +2623,7 @@ mod tests {
         let settings = Settings::new(0, false);
         let card = settings.pane_layout(settings.width - SIDEBAR_W).groups[0].card;
         let x = (SIDEBAR_W + card.left + 40.0) as i32;
-        let y = (TITLEBAR_H + card.top + 20.0) as i32;
+        let y = (titlebar_h() + card.top + 20.0) as i32;
 
         let whole = pixel_at(&settings, |canvas| settings.render(canvas), x, y);
         let chrome = pixel_at(&settings, |canvas| settings.render_chrome(canvas), x, y);
@@ -2585,7 +2639,7 @@ mod tests {
         let item = sidebar_item_rect(0);
         for (x, y) in [
             (item.center_x() as i32, item.center_y() as i32),
-            (SIDEBAR_W as i32 + 60, (TITLEBAR_H / 2.0) as i32),
+            (SIDEBAR_W as i32 + 60, (titlebar_h() / 2.0) as i32),
         ] {
             assert_eq!(
                 pixel_at(&settings, |canvas| settings.render(canvas), x, y),
