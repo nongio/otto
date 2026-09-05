@@ -43,6 +43,15 @@ pub fn resize_edges_at(
     if w <= RESIZE_MARGIN * 2.0 || h <= RESIZE_MARGIN * 2.0 {
         return None;
     }
+    // The border is a strip just *inside* the window's own rect. A point can
+    // reach here from outside it — the space attributes a point to a window
+    // whenever its bounding box contains it, and that box grows to cover the
+    // window's popups — and `>= w - MARGIN` would then read every point to the
+    // right of the window as its right border, swallowing the part of a menu
+    // that hangs off the edge.
+    if local.x < 0.0 || local.y < 0.0 || local.x >= w || local.y >= h {
+        return None;
+    }
     let mut edges = ResizeEdge::NONE;
     if local.x < RESIZE_MARGIN {
         edges |= ResizeEdge::LEFT;

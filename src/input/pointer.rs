@@ -500,6 +500,24 @@ impl<BackendData: Backend> Otto<BackendData> {
             ));
         }
 
+        // A window's popups, ahead of the strips Otto owns. A menu is free to
+        // hang off its parent — over the titlebar it opened from, or across
+        // the resize border — and where it does, the menu is what the click is
+        // aimed at. Only the popup surfaces are considered here; the toplevel
+        // itself is resolved below, after the chrome.
+        if under.is_none() {
+            if let Some((window, loc)) = self.workspaces.element_under(pos) {
+                if !window.is_minimised() {
+                    if let Some((focus, surf_loc)) = window.surface_under::<BackendData>(
+                        pos - loc.to_f64(),
+                        WindowSurfaceType::POPUP | WindowSurfaceType::SUBSURFACE,
+                    ) {
+                        under = Some((focus, (surf_loc + loc).to_f64()));
+                    }
+                }
+            }
+        }
+
         // Resize borders. A server-decorated client draws no frame of its
         // own, so it never offers a resize edge: the strip along the window's
         // own border is Otto's, and it is hit-tested ahead of both the
@@ -530,7 +548,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                 let deco_height = window.decoration_height();
                 if deco_height > 0 && !window.is_minimised() {
                     let local_y = pos.y - loc.y as f64;
-                    if local_y >= 0.0 && local_y < deco_height as f64 {
+                    let local_x = pos.x - loc.x as f64;
+                    let width = smithay::desktop::space::SpaceElement::geometry(window)
+                        .size
+                        .w as f64;
+                    // Bounded horizontally for the same reason the resize
+                    // border is: a point beside the window can be attributed
+                    // to it (its bounding box covers its popups), and the bar
+                    // must not answer for a menu hanging out there.
+                    if local_x >= 0.0
+                        && local_x < width
+                        && local_y >= 0.0
+                        && local_y < deco_height as f64
+                    {
                         let view = crate::workspaces::WindowDecorationView::new(window.clone());
                         // The offset is the window's origin: Smithay subtracts
                         // it from the event, so the view sees titlebar-local

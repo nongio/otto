@@ -460,6 +460,35 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestPopup>> {
+        self.create_popup_inner(parent, x, y, width, height, 0)
+    }
+
+    /// Create a popup that pads its buffer with a drop shadow, the way a GTK
+    /// menu does: the surface is `width` x `height`, and `shadow` points of it
+    /// on every side are shadow, so the menu itself is the window geometry
+    /// inset by `shadow`. The anchor is measured against that geometry, not
+    /// against the buffer.
+    pub fn create_popup_with_shadow(
+        &mut self,
+        parent: &Arc<Mutex<TestToplevel>>,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        shadow: i32,
+    ) -> Arc<Mutex<TestPopup>> {
+        self.create_popup_inner(parent, x, y, width, height, shadow)
+    }
+
+    fn create_popup_inner(
+        &mut self,
+        parent: &Arc<Mutex<TestToplevel>>,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        shadow: i32,
+    ) -> Arc<Mutex<TestPopup>> {
         let surface = self.create_surface();
         let xdg_wm_base = self
             .state
@@ -468,7 +497,9 @@ impl TestClient {
             .expect("xdg_wm_base not bound");
 
         let positioner = xdg_wm_base.create_positioner(&self.qh, ());
-        positioner.set_size(width as i32, height as i32);
+        // The client asks for the size of what it draws — the menu, not the
+        // shadow padding around it.
+        positioner.set_size(width as i32 - 2 * shadow, height as i32 - 2 * shadow);
         positioner.set_anchor_rect(x, y, 1, 1);
         positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
         positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
@@ -496,6 +527,14 @@ impl TestClient {
             popup_state.clone(),
         );
         positioner.destroy();
+        if shadow > 0 {
+            xdg_surface.set_window_geometry(
+                shadow,
+                shadow,
+                width as i32 - 2 * shadow,
+                height as i32 - 2 * shadow,
+            );
+        }
 
         // Commit to trigger the initial configure, then attach and commit.
         surface.commit();

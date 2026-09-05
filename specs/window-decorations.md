@@ -147,12 +147,19 @@ usable zone, centred) rather than to an empty one.
 **Popups under a titlebar.** A popup's offset is measured from its parent's
 *window geometry* — the client's own content — while a decorated window's frame
 origin is one titlebar higher. So a popup belongs at `frame origin + titlebar +
-offset`, and where the client sets a geometry of its own on the popup (the
-shadow margin around a menu), at that offset less the popup's geometry origin,
-which is where its surface actually starts. Both the painted position and the
-pointer hit test resolve to that same point: a popup that responds anywhere
-other than where it is drawn is a bug, and the titlebar's height is the offset
-it shows up as.
+offset`. Where the client sets a geometry of its own on the popup — the shadow
+margin a menu pads its buffer with — that margin is already taken off the
+popup's surfaces, so it is the menu, not the buffer's corner, that lands on the
+offset. Both the painted position and the pointer hit test resolve to that same
+point: a popup that responds anywhere other than where it is drawn is a bug,
+and the titlebar's height is the offset it shows up as.
+
+**Popups over the compositor's own strips.** A menu is free to hang past its
+parent window — off an edge, or back over the titlebar it opened from. The
+titlebar and the resize border belong to Otto and are hit-tested ahead of the
+client's surfaces, but a popup outranks both: where a menu covers them, the
+click goes to the menu. Neither strip answers for a point outside the window's
+own rect either, which is where a menu hanging off an edge is.
 
 **Popups across a geometry change.** A popup is placed once, against the
 parent window as it stood when the popup mapped. Moving or resizing the window

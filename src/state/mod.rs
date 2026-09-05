@@ -1793,11 +1793,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
                 // Smithay resolves a click on a popup against
                 // `window_geometry_origin + popup_location - popup.geometry().loc`
-                // (`Window::surface_under`), and the scene lays the popup's
-                // surface tree out from the layer's origin — so the layer has
-                // to sit where that surface origin is, shadow margin and all.
+                // (`Window::surface_under`), and `element_location` is that
+                // geometry origin. The `- popup.geometry().loc` half is
+                // already applied to the popup's own surface layers by
+                // `window_view_for_surface` (`phy_dst` subtracts each
+                // surface's geometry origin), so the layer belongs at the
+                // popup's *geometry* origin: subtracting the shadow margin
+                // here too would slide a menu that pads its buffer with a
+                // drop shadow — a GTK one — up and left of where it responds.
                 let offset: smithay::utils::Point<f64, smithay::utils::Physical> =
-                    (popup_offset - popup.geometry().loc).to_physical_precise_round(scale_factor);
+                    popup_offset.to_physical_precise_round(scale_factor);
 
                 // Calculate absolute popup position (window position + popup offset)
                 let popup_position = layers::types::Point {

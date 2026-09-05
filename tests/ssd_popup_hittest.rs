@@ -117,4 +117,153 @@ mod ssd_popup_hittest_tests {
 
         handle.stop();
     }
+
+    /// A GTK-style menu pads its buffer with a drop shadow and reports the
+    /// menu itself as its window geometry. The anchor is measured against
+    /// that geometry, and the scene already offsets every surface layer by
+    /// its own `geometry.loc` (`window_view_for_surface`) — so subtracting the
+    /// popup's geometry origin a second time when placing the popup's layer
+    /// slid the whole menu up and to the left of the region that responds to
+    /// the pointer, by exactly the shadow.
+    #[test]
+    #[serial]
+    fn a_popup_with_a_shadow_is_hit_where_it_is_drawn() {
+        const SHADOW: i32 = 20;
+
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client =
+            TestClient::connect(&handle.socket_name).expect("Failed to connect to compositor");
+
+        let toplevel = client.create_toplevel(TITLE, 640, 480);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        handle.settle(300);
+        handle.decorate_window(TITLE);
+        handle.settle(300);
+        handle.focus_window(TITLE);
+        handle.settle(200);
+        handle.move_window(TITLE, 120, 80);
+        handle.settle(200);
+
+        let (anchor_x, anchor_y) = (80, 120);
+        let _popup = client
+            .create_popup_with_shadow(&toplevel, anchor_x, anchor_y, POPUP_W, POPUP_H, SHADOW);
+        let _ = client.roundtrip();
+        handle.settle(400);
+        let _ = client.roundtrip();
+        handle.settle(400);
+
+        let (wx, wy, _ww, _wh) = handle
+            .window_logical_geometry(TITLE)
+            .expect("the window is mapped");
+        let scale = handle.output_scale();
+        let rects = handle.popup_logical_rects();
+        eprintln!("window=({wx},{wy}) scale={scale} popup rects={rects:?}");
+        assert_eq!(rects.len(), 1, "exactly one popup is on screen");
+        let (px, py) = (rects[0].0, rects[0].1);
+
+        // The popup layer's origin is where the client's *window geometry*
+        // starts — the menu, not the shadow around it — so the expectation is
+        // the same as for a popup with no shadow at all. Same rounding chain
+        // as the test above.
+        let to_px = |points: f64| (points * scale).round();
+        let expected_px = (wx as f64 * scale + to_px(anchor_x as f64)).round() / scale;
+        let expected_py =
+            (wy as f64 * scale + to_px(BAR) + to_px(anchor_y as f64 + 1.0)).round() / scale;
+        assert!(
+            (px as f64 - expected_px).abs() < 0.01,
+            "the menu is drawn at the anchor's x, shadow excluded: got {px}, expected {expected_px}"
+        );
+        assert!(
+            (py as f64 - expected_py).abs() < 0.01,
+            "the menu is drawn at the anchor's y, shadow excluded: \
+             got {py}, expected {expected_py} (scale {scale})"
+        );
+
+        // And the pointer agrees with the paint. The buffer — shadow included
+        // — starts one shadow above and left of the menu; that whole rect is
+        // the popup's surface, so it is what the hit test has to cover.
+        let (bx, by) = (px - SHADOW as f32, py - SHADOW as f32);
+        assert!(
+            handle.point_hits_popup((bx + 3.0) as f64, (by + 3.0) as f64),
+            "the top-left corner of the drawn popup responds to the pointer"
+        );
+        assert!(
+            handle.point_hits_popup(
+                (px + POPUP_W as f32 / 2.0 - SHADOW as f32) as f64,
+                (py + POPUP_H as f32 / 2.0 - SHADOW as f32) as f64,
+            ),
+            "the middle of the drawn popup responds to the pointer"
+        );
+        assert!(
+            !handle.point_hits_popup(
+                (bx + POPUP_W as f32 + 8.0) as f64,
+                (by + POPUP_H as f32 / 2.0) as f64,
+            ),
+            "the hit area does not run past the paint"
+        );
+
+        handle.stop();
+    }
+
+    /// A menu is free to hang off its parent window — that is most of what a
+    /// context menu near an edge does. The part outside the window's own rect
+    /// is still the popup, and it has to answer the pointer there.
+    #[test]
+    #[serial]
+    fn a_popup_hanging_off_the_window_is_clickable_outside_it() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client =
+            TestClient::connect(&handle.socket_name).expect("Failed to connect to compositor");
+
+        let toplevel = client.create_toplevel(TITLE, 640, 480);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        handle.settle(300);
+        handle.decorate_window(TITLE);
+        handle.settle(300);
+        handle.focus_window(TITLE);
+        handle.settle(200);
+        handle.move_window(TITLE, 120, 80);
+        handle.settle(200);
+
+        // Anchored near the right edge, so most of the popup hangs past it —
+        // and far enough from the output's own edge that the positioner has no
+        // reason to slide it back.
+        let (anchor_x, anchor_y) = (600, 200);
+        let _popup = client.create_popup(&toplevel, anchor_x, anchor_y, POPUP_W, POPUP_H);
+        let _ = client.roundtrip();
+        handle.settle(400);
+        let _ = client.roundtrip();
+        handle.settle(400);
+
+        let (wx, wy, ww, wh) = handle
+            .window_logical_geometry(TITLE)
+            .expect("the window is mapped");
+        let rects = handle.popup_logical_rects();
+        eprintln!("window=({wx},{wy},{ww},{wh}) popup rects={rects:?}");
+        assert_eq!(rects.len(), 1, "exactly one popup is on screen");
+        let (px, py) = (rects[0].0, rects[0].1);
+        let window_right = (wx + ww) as f32;
+        assert!(
+            px + POPUP_W as f32 > window_right,
+            "the popup hangs off the window's right edge: popup x {px}, window right {window_right}"
+        );
+
+        let inside_y = (py + POPUP_H as f32 / 2.0) as f64;
+        assert!(
+            handle.point_hits_popup((px + 5.0) as f64, inside_y),
+            "the part of the popup still over the window responds to the pointer"
+        );
+        assert!(
+            handle.point_hits_popup((window_right + 10.0) as f64, inside_y),
+            "the part of the popup hanging off the window responds to the pointer too"
+        );
+        assert!(
+            handle.point_hits_popup((px + POPUP_W as f32 - 5.0) as f64, inside_y),
+            "the popup's far edge, well outside the window, responds to the pointer"
+        );
+
+        handle.stop();
+    }
 }
