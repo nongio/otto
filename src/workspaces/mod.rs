@@ -37,6 +37,7 @@ mod dock;
 mod osd;
 mod popup_overlay;
 mod tiling_overlay;
+pub mod tiling;
 pub mod trash;
 pub mod workspace;
 
@@ -61,6 +62,7 @@ pub use dnd_view::DndView;
 pub use dock::{DockModel, DockView};
 pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
+pub use tiling::TilingState;
 pub use tiling_overlay::{zone_from_pointer, TileZone, TilingOverlayView};
 pub use workspace::WORKSPACE_SPACING;
 pub use workspace_selector::{WorkspaceSelectorView, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
