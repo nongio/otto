@@ -109,6 +109,7 @@ No dependency. Errors carry the offset so `otto-msg` can print them the way
 ```
 TilingState {
   mode: Floating | Tiling,
+  gaps: Option<Gaps>,               // per-workspace override of [tiling] gaps
   tree: Tree,
   focused: Option<NodeId>,          // may be a container after `focus parent`
   preselect: Option<Axis>,
@@ -208,12 +209,21 @@ monocle_duration = 0.25
 # Design mode: cells chasing a dragged handle, splits, swaps, presets.
 design_duration = 0.35
 design_bounce = 0.25
-inner_gap = 8
+inner_gap = 8           # defaults; a workspace can override both, see below
 outer_gap = 8
 smart_gaps = true       # a lone tile drops the gaps
 decoration = "minimal"  # "minimal" title line, or "none" for a border only
 float = []              # app ids that always float
 ```
+
+**Gaps are per session with a per-workspace override.** `[tiling]` holds
+the defaults. A workspace may override inner and outer gaps: from the
+command language (`gaps inner 0 current`, sway's shape), from the workspace
+context menu, and later from design mode. The override lives in
+`TilingState.gaps` and travels with the workspace across outputs; it is
+persisted next to the workspace's name, under `[workspaces]` keyed by
+`"<output>:<position>"`, the way `names` already is, so a "no gaps on the
+video workspace" setup survives a restart. `smart_gaps` stays global.
 
 The values are read where `relayout_workspace` picks its transition, so they
 apply live through the settings machinery like the workspace switch does. A
@@ -441,7 +451,7 @@ floating toggle|enable|disable
 fullscreen [toggle]
 kill
 tiling toggle                      # Otto: workspace mode
-gaps inner|outer <n>
+gaps inner|outer <n> [current|all]  # current = this workspace's override, all = the default
 ```
 
 Deferred: `mark` / `[con_mark]` criteria, `mode "resize"` binding modes,
