@@ -40,7 +40,9 @@ mod pipewire_stream;
 
 pub use dbus_service::run_dbus_service;
 
-pub use pipewire_stream::{AvailableBuffer, BackendCapabilities, PipeWireStream, StreamConfig};
+pub use pipewire_stream::{
+    live_stream_threads, AvailableBuffer, BackendCapabilities, PipeWireStream, StreamConfig,
+};
 
 use smithay::reexports::calloop::channel::{
     channel, Event as ChannelEvent, Sender as ChannelSender,

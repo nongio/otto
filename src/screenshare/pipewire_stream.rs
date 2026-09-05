@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -162,10 +162,23 @@ struct PwStreamState {
     dmabufs: HashMap<i64, Dmabuf>,
 }
 
+/// How many PipeWire mainloop threads are running right now.
+///
+/// The thread owns the `pw_stream`, so a thread that outlives its cast is a
+/// node the client can still see. Tests assert this returns to zero.
+static LIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// The number of PipeWire mainloop threads currently alive.
+pub fn live_stream_threads() -> usize {
+    LIVE_THREADS.load(Ordering::SeqCst)
+}
+
 /// A PipeWire stream for screen casting.
 pub struct PipeWireStream {
     shared: Arc<SharedState>,
     config: StreamConfig,
+    /// The PipeWire mainloop thread, joined when the stream is dropped.
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl PipeWireStream {
@@ -186,7 +199,11 @@ impl PipeWireStream {
             pending_size: Mutex::new(None),
         });
 
-        Self { shared, config }
+        Self {
+            shared,
+            config,
+            thread: None,
+        }
     }
 
     /// Start the PipeWire stream synchronously.
@@ -212,13 +229,18 @@ impl PipeWireStream {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
 
         // Spawn PipeWire thread
-        let _handle = std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
+            LIVE_THREADS.fetch_add(1, Ordering::SeqCst);
             if let Err(e) = run_pipewire_thread(config, shared.clone(), ready_tx) {
                 tracing::error!("PipeWire thread error: {}", e);
             }
             shared.active.store(false, Ordering::SeqCst);
             shared.streaming.store(false, Ordering::SeqCst);
+            LIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
         });
+        // Kept before the readiness wait so that a failed handshake still
+        // leaves a thread for `Drop` to shut down.
+        self.thread = Some(handle);
 
         // Wait for stream to be ready
         let node_id = ready_rx
@@ -303,6 +325,45 @@ impl PipeWireStream {
     /// Increment the frame sequence counter (call when a frame is actually rendered)
     pub fn increment_frame_sequence(&self) {
         self.shared.frame_sequence.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl Drop for PipeWireStream {
+    /// Shuts the PipeWire thread down and waits for it to exit.
+    ///
+    /// The thread owns the `pw_stream`, so dropping this struct is not by
+    /// itself enough to end the cast: without the stop flag the node stays
+    /// registered with PipeWire and the mainloop keeps iterating for the life
+    /// of the compositor, one leaked thread per cast.
+    fn drop(&mut self) {
+        self.shared.should_stop.store(true, Ordering::SeqCst);
+        // The stream is going away; nothing may trigger it from here on.
+        *self.shared.stream_ptr.lock().unwrap() = None;
+
+        let Some(handle) = self.thread.take() else {
+            return;
+        };
+
+        // The loop checks the flag once per `iterate()` timeout, so a running
+        // stream is gone within a frame. A thread still inside PipeWire setup
+        // can take longer, and this runs on the compositor's main thread, so
+        // wait with a deadline rather than risk stalling the session: a thread
+        // that outstays it is left to exit on its own, since it will see the
+        // flag as soon as it reaches the loop.
+        const SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+        let deadline = std::time::Instant::now() + SHUTDOWN_TIMEOUT;
+        while !handle.is_finished() {
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!("PipeWire thread still running after stop, detaching");
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        if handle.join().is_err() {
+            tracing::error!("PipeWire thread panicked");
+        }
+        tracing::debug!("PipeWire thread joined");
     }
 }
 

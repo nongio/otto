@@ -450,6 +450,11 @@ mod screenshare_tests {
             "the session should be gone"
         );
         assert_eq!(
+            otto::screenshare::live_stream_threads(),
+            0,
+            "the PipeWire thread owns the node, so it must not outlive the session"
+        );
+        assert_eq!(
             handle.window_throttle_states().get("Behind"),
             Some(&WindowThrottleState::Secondary),
             "the window should be throttled again once nothing casts it"

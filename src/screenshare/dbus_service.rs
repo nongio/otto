@@ -274,6 +274,31 @@ impl SessionInterface {
         OwnedObjectPath::try_from(stream_path)
             .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid path: {e}")))
     }
+
+    /// Takes interface `I` at `path` off the bus.
+    ///
+    /// Teardown is best-effort: a path that has already gone is the outcome
+    /// we wanted, and failing to unregister is no reason to fail the caller's
+    /// `Stop`.
+    async fn unregister<I: zbus::object_server::Interface>(&self, path: &str) {
+        let object_path = match ObjectPath::try_from(path) {
+            Ok(path) => path,
+            Err(e) => {
+                warn!(%path, ?e, "Invalid object path, not unregistering");
+                return;
+            }
+        };
+
+        match self
+            .connection
+            .object_server()
+            .remove::<I, _>(&object_path)
+            .await
+        {
+            Ok(_) => debug!(%path, "Unregistered object"),
+            Err(e) => warn!(%path, ?e, "Failed to unregister object"),
+        }
+    }
 }
 
 #[interface(name = "org.otto.ScreenCast.Session")]
@@ -437,17 +462,25 @@ impl SessionInterface {
         Ok(())
     }
 
-    /// Stops the session and all its streams.
+    /// Stops the session, tears down its streams and unregisters both.
+    ///
+    /// This is terminal: the portal calls it from `Session.Close`, and a
+    /// client that comes back gets a fresh session rather than inheriting a
+    /// half-dead one. Leaving the objects on the bus and the recording state
+    /// in the compositor would strand a PipeWire node per cast.
     async fn stop(&mut self) -> zbus::fdo::Result<()> {
         info!(session = %self.session_path, "Stopping session");
 
-        // Stop all streams
-        let mut streams = self.streams.write().await;
+        // Take the streams: nothing may start them again from here.
+        let streams = {
+            let mut streams = self.streams.write().await;
+            std::mem::take(&mut *streams)
+        };
+
         info!(session = %self.session_path, stream_count = streams.len(), "Stopping {} streams", streams.len());
-        for (path, stream) in streams.iter_mut() {
+        for (path, stream) in &streams {
             if stream.started {
                 info!(session = %self.session_path, stream_path = %path, target = %stream.target.key(), "Stopping started stream");
-                stream.started = false;
 
                 if let Err(e) = self.compositor_tx.send(CompositorCommand::StopRecording {
                     session_id: self.session_path.clone(),
@@ -458,15 +491,28 @@ impl SessionInterface {
             } else {
                 info!(session = %self.session_path, stream_path = %path, target = %stream.target.key(), "Skipping non-started stream");
             }
+
+            self.unregister::<StreamInterface>(path).await;
         }
 
-        // Mark session as stopped
+        // Drop the compositor-side session, along with any stream the
+        // bookkeeping above missed.
         {
             let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(&self.session_path) {
-                session.started = false;
-            }
+            sessions.remove(&self.session_path);
         }
+
+        if let Err(e) = self.compositor_tx.send(CompositorCommand::DestroySession {
+            session_id: self.session_path.clone(),
+        }) {
+            warn!(?e, "Failed to destroy session");
+        }
+
+        // Last, since it takes this very object off the bus. zbus releases the
+        // root lock before dispatching, so removing ourselves from inside a
+        // method is fine.
+        let session_path = self.session_path.clone();
+        self.unregister::<SessionInterface>(&session_path).await;
 
         Ok(())
     }

@@ -93,6 +93,22 @@ documented in `docs/developer/screenshare.md`.
 - An identifier that no longer resolves (window closed or unmapped between the picker and
   `Start`) fails `RecordWindow` rather than falling back to any other window.
 
+### Session teardown
+
+- `org.otto.ScreenCast.Session.Stop` is **terminal**, not a pause. It stops every stream in
+  the session, unregisters the session and its stream objects from the bus, and drops the
+  compositor's recording state. A client that comes back gets a fresh session rather than
+  inheriting a half-dead one.
+- Ending a stream must end its PipeWire node. The node is owned by the stream's mainloop
+  thread, so dropping the stream also signals that thread to stop and waits for it — a node
+  the client can still enumerate after its cast ended is a bug, and one thread per ended cast
+  is a leak.
+- The wait for that thread is bounded, because it happens on the compositor's main thread. A
+  thread that overruns the deadline is detached and logged rather than allowed to stall the
+  session; it exits on its own once it observes the stop flag.
+- `xdg-desktop-portal-otto` drives this from `org.freedesktop.impl.portal.Session.Close`,
+  which also removes its own session object and emits `Closed`.
+
 ### Portal implementation properties and cursor modes
 
 - `xdg-desktop-portal-otto` exports the `org.freedesktop.impl.portal.ScreenCast` properties
