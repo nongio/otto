@@ -402,6 +402,22 @@ The variant is chosen per window in `decoration_view.rs` from the
 workspace's mode, and swapped when the window enters or leaves the tree —
 the same path the maximized (gapless, squared) variant already uses.
 
+**Otto's own apps.** otto-files, otto-settings, the launcher and quick view
+draw their own titlebar through otto-kit's titlebar component, so the
+compositor-side variants never reach them. They follow the same setting
+from the client side:
+
+- the tiled xdg edge states in the configure tell the app it is tiled; the
+  otto-kit titlebar switches to its compact form and squares its corners
+  while any edge is tiled, as GTK does;
+- the `minimal` / `none` choice goes out over `org.otto.Settings` like the
+  theme and the controls side already do, so the app applies it live;
+- with `none` the app draws no bar and is moved by design mode or the
+  keyboard, like any client-decorated window.
+
+One component change in otto-kit covers every app that already implements
+the settings callback; islands, quick view and lock still need that hook.
+
 ## Command language
 
 The scripting grammar, resolving to the actions above. Phase-1 subset:
