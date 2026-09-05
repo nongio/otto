@@ -114,20 +114,24 @@ impl<BackendData: Backend> Otto<BackendData> {
         if !self.workspaces.tiling_design.is_active() {
             return;
         }
-        let mut stale = false;
-        for (name, ows) in self.workspaces.output_workspaces.iter() {
+        // The grid is up; it stays up only while some workspace is both the
+        // one on screen for its output and still editing. Leaving tiling mode
+        // clears the design flag outright, and scrolling away leaves it set on
+        // a workspace that is no longer current — both end here.
+        let mut live = false;
+        for ows in self.workspaces.output_workspaces.values() {
             for (index, view) in ows.workspace_views.iter().enumerate() {
                 let Ok(state) = view.tiling.read() else {
                     continue;
                 };
-                if state.design.active && (!state.enabled || index != ows.current_workspace) {
-                    stale = true;
+                if state.design.active && state.enabled && index == ows.current_workspace {
+                    live = true;
                 }
-                let _ = name;
             }
         }
-        if stale {
+        if !live {
             self.tiling_design_leave();
+            self.workspaces.tiling_design.hide();
         }
     }
 

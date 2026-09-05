@@ -502,7 +502,9 @@ impl TilingDesignView {
     /// changes: leaving design mode leaves the layout exactly as it stands.
     pub fn hide(&self) {
         if let Ok(mut geo) = self.geometry.write() {
-            geo.active = false;
+            // Cleared, not just deactivated: nothing may still hit-test
+            // against a grid that is on its way out.
+            *geo = DesignGeometry::default();
         }
         if let Ok(mut hover) = self.hover.write() {
             *hover = None;
