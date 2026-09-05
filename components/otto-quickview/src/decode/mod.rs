@@ -12,6 +12,7 @@
 
 mod image;
 mod listing;
+mod markdown;
 mod media;
 mod pdf;
 mod text;
@@ -224,6 +225,12 @@ fn dispatch(
     }
     if mime.starts_with("video/") {
         return media::video(file, metadata, request, mime);
+    }
+    // Before the text rule below, which would otherwise catch it: Markdown is
+    // a subclass of text/plain, and showing it as source is showing the
+    // markup rather than the document.
+    if mime == "text/markdown" {
+        return markdown::read(file, request);
     }
     // Text last, and via the hierarchy rather than a language list: every
     // source file in existence is a subclass of text/plain, and enumerating

@@ -13,7 +13,10 @@
 
 use std::io::{self, Write};
 
-pub use otto_kit::preview::{Fact, Pixels, Preview as PreviewPayload, Row};
+pub use otto_kit::preview::{
+    document::{Block, Span, SpanStyle},
+    Fact, Pixels, Preview as PreviewPayload, Row,
+};
 
 /// Wire magic. Bumped if the encoding below ever changes shape.
 const MAGIC: &[u8; 4] = b"OQV3";
@@ -137,6 +140,47 @@ fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
     out.extend_from_slice(&pixels.data);
 }
 
+fn put_spans(out: &mut Vec<u8>, spans: &[Span]) {
+    put_u32(out, spans.len() as u32);
+    for span in spans {
+        put_str(out, &span.text);
+        out.push(span.style.to_bits());
+    }
+}
+
+fn put_block(out: &mut Vec<u8>, block: &Block) {
+    match block {
+        Block::Heading { level, spans } => {
+            out.push(1);
+            out.push(*level);
+            put_spans(out, spans);
+        }
+        Block::Paragraph { spans } => {
+            out.push(2);
+            put_spans(out, spans);
+        }
+        Block::Item {
+            indent,
+            marker,
+            spans,
+        } => {
+            out.push(3);
+            out.push(*indent);
+            put_str(out, marker);
+            put_spans(out, spans);
+        }
+        Block::Quote { spans } => {
+            out.push(4);
+            put_spans(out, spans);
+        }
+        Block::Code { lines } => {
+            out.push(5);
+            put_strs(out, lines);
+        }
+        Block::Rule => out.push(6),
+    }
+}
+
 pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
     let mut out = Vec::with_capacity(4096);
     out.extend_from_slice(MAGIC);
@@ -163,6 +207,14 @@ pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
             }
             out.push(*truncated as u8);
             put_str(&mut out, language);
+        }
+        PreviewPayload::Document { blocks, truncated } => {
+            out.push(6);
+            put_u32(&mut out, blocks.len() as u32);
+            for block in blocks {
+                put_block(&mut out, block);
+            }
+            out.push(*truncated as u8);
         }
         PreviewPayload::Rows {
             rows,
@@ -272,6 +324,43 @@ impl<'a> Cursor<'a> {
         Some(values)
     }
 
+    fn spans(&mut self) -> Option<Vec<Span>> {
+        let count = self.len()?;
+        let mut spans = Vec::with_capacity(count.min(64));
+        for _ in 0..count {
+            spans.push(Span {
+                text: self.string()?,
+                style: SpanStyle::from_bits(self.u8()?),
+            });
+        }
+        Some(spans)
+    }
+
+    fn block(&mut self) -> Option<Block> {
+        match self.u8()? {
+            1 => Some(Block::Heading {
+                level: self.u8()?,
+                spans: self.spans()?,
+            }),
+            2 => Some(Block::Paragraph {
+                spans: self.spans()?,
+            }),
+            3 => Some(Block::Item {
+                indent: self.u8()?,
+                marker: self.string()?,
+                spans: self.spans()?,
+            }),
+            4 => Some(Block::Quote {
+                spans: self.spans()?,
+            }),
+            5 => Some(Block::Code {
+                lines: self.strings()?,
+            }),
+            6 => Some(Block::Rule),
+            _ => None,
+        }
+    }
+
     fn pixels(&mut self) -> Option<Pixels> {
         let width = self.u32()?;
         let height = self.u32()?;
@@ -374,6 +463,17 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
                 facts,
                 hero,
                 icon: cursor.strings()?,
+            })
+        }
+        6 => {
+            let count = cursor.len()?;
+            let mut blocks = Vec::with_capacity(count.min(4096));
+            for _ in 0..count {
+                blocks.push(cursor.block()?);
+            }
+            Some(PreviewPayload::Document {
+                blocks,
+                truncated: cursor.u8()? != 0,
             })
         }
         5 => {
