@@ -37,6 +37,10 @@ use wayland_protocols::xdg::shell::client::{
     xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
+
 use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
 use wayland_protocols::ext::background_effect::v1::client::{
     ext_background_effect_manager_v1, ext_background_effect_surface_v1,
@@ -71,6 +75,13 @@ pub struct TestClientState {
     /// needs one: the compositor checks it against the grab it handed out, and
     /// a made-up number is refused.
     pub last_button_serial: Option<u32>,
+    /// The serial of the most recent `wl_pointer.enter`. Naming a cursor shape
+    /// needs one, the same way starting a drag needs a press serial.
+    pub last_enter_serial: Option<u32>,
+    /// The cursor-shape protocol, when the compositor advertises it. A client
+    /// that binds this asks for a cursor by name and lets the compositor draw
+    /// it, rather than uploading a bitmap of its own.
+    pub wp_cursor_shape_manager: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     /// Drag and drop, when the compositor advertises it.
     pub wl_data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub wl_data_device: Option<wl_data_device::WlDataDevice>,
@@ -94,6 +105,8 @@ impl TestClientState {
             keyboard_focused: false,
             wl_pointer: None,
             last_button_serial: None,
+            last_enter_serial: None,
+            wp_cursor_shape_manager: None,
             wl_data_device_manager: None,
             wl_data_device: None,
             drag_cancelled: false,
@@ -351,6 +364,27 @@ impl TestClient {
     ///
     /// Returns a shared reference to the toplevel state which tracks
     /// configure events.
+    /// Ask the compositor to draw `shape` as the cursor, the way a client that
+    /// binds the cursor-shape protocol does instead of uploading a bitmap.
+    ///
+    /// Returns `false` when the compositor advertises no cursor-shape global,
+    /// or when the pointer has not entered one of this client's surfaces yet —
+    /// the enter serial is what authorises the request.
+    pub fn set_cursor_shape(&mut self, shape: wp_cursor_shape_device_v1::Shape) -> bool {
+        let (Some(manager), Some(pointer), Some(serial)) = (
+            self.state.wp_cursor_shape_manager.clone(),
+            self.state.wl_pointer.clone(),
+            self.state.last_enter_serial,
+        ) else {
+            return false;
+        };
+
+        let device = manager.get_pointer(&pointer, &self.qh, ());
+        device.set_shape(serial, shape);
+        device.destroy();
+        true
+    }
+
     pub fn create_toplevel(
         &mut self,
         title: &str,
@@ -692,9 +726,37 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                     state.ext_background_effect_manager =
                         Some(registry.bind(name, version.min(1), qh, ()));
                 }
+                "wp_cursor_shape_manager_v1" => {
+                    state.wp_cursor_shape_manager =
+                        Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
+    }
+}
+
+impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        _event: wp_cursor_shape_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        _event: wp_cursor_shape_device_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
     }
 }
 
@@ -811,14 +873,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for TestClientState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // Only the press serials matter here: they are what authorises a drag.
-        if let wl_pointer::Event::Button {
-            serial,
-            state: wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed),
-            ..
-        } = event
-        {
-            state.last_button_serial = Some(serial);
+        // Serials are the point: a press serial authorises a drag, an enter
+        // serial authorises naming a cursor shape.
+        match event {
+            wl_pointer::Event::Button {
+                serial,
+                state: wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed),
+                ..
+            } => state.last_button_serial = Some(serial),
+            wl_pointer::Event::Enter { serial, .. } => state.last_enter_serial = Some(serial),
+            _ => {}
         }
     }
 }

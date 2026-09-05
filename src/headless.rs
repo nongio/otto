@@ -919,6 +919,72 @@ impl HeadlessHandle {
         });
     }
 
+    /// The cursor Otto would draw right now, as
+    /// `(kind, width_px, height_px, centre_pixel_rgba)`.
+    ///
+    /// `kind` is `"named:<icon>"` for a cursor Otto draws from the theme —
+    /// what a client using the cursor-shape protocol gets — `"surface"` for a
+    /// bitmap the client uploaded itself, and `"hidden"` for no cursor. The
+    /// size is in physical pixels, so it compares directly against
+    /// `cursor_size * scale`. The centre pixel says which theme the art came
+    /// out of, which size alone cannot: rescaled art from the wrong theme is
+    /// the right size and still the wrong cursor.
+    pub fn cursor_render_state(&self) -> (String, u32, u32, [u8; 4]) {
+        self.query(move |state| {
+            let scale = state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().integer_scale())
+                .unwrap_or(1);
+
+            match state.cursor_manager.get_render_cursor(scale) {
+                crate::cursor::RenderCursor::Hidden => ("hidden".to_string(), 0, 0, [0; 4]),
+                crate::cursor::RenderCursor::Surface { .. } => {
+                    ("surface".to_string(), 0, 0, [0; 4])
+                }
+                crate::cursor::RenderCursor::Named { icon, cursor, .. } => {
+                    let (_, image) = cursor.frame(0);
+                    let centre = ((image.height / 2) * image.width + image.width / 2) as usize * 4;
+                    let pixel = image
+                        .pixels_rgba
+                        .get(centre..centre + 4)
+                        .map(|p| [p[0], p[1], p[2], p[3]])
+                        .unwrap_or([0; 4]);
+                    (
+                        format!("named:{}", icon.name()),
+                        image.width,
+                        image.height,
+                        pixel,
+                    )
+                }
+            }
+        })
+    }
+
+    /// Switch the compositor to `theme` at `size` logical pixels, the way the
+    /// settings app does at runtime, and return the physical size every cursor
+    /// it draws should then come out at.
+    ///
+    /// Tests use this to run against a theme they planted themselves, rather
+    /// than whichever one the machine happens to have installed.
+    pub fn use_cursor_theme(&self, theme: &str, size: u32) -> u32 {
+        let theme = theme.to_string();
+        self.query(move |state| {
+            state
+                .cursor_manager
+                .reload(&theme, size.clamp(1, 255) as u8);
+            state.cursor_texture_cache.clear();
+            let scale = state
+                .workspaces
+                .outputs()
+                .next()
+                .map(|o| o.current_scale().integer_scale())
+                .unwrap_or(1);
+            size * scale as u32
+        })
+    }
+
     /// Whether Otto currently draws a titlebar for this window — the window
     /// state, not the scene.
     pub fn window_is_decorated(&self, title: &str) -> bool {
