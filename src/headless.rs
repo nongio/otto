@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{
         atomic::Ordering,
         mpsc::{self, Receiver, Sender},
@@ -107,6 +108,10 @@ type Query = Box<dyn FnOnce(&mut Otto<HeadlessData>) + Send>;
 /// Wayland socket name, run queries against compositor state, and stop it.
 pub struct HeadlessHandle {
     pub socket_name: String,
+    /// The throwaway `XDG_CONFIG_HOME` this session persists settings under.
+    /// Nothing outside it is written, so a test that changes a persisted
+    /// setting cannot touch the developer's own configuration.
+    pub config_root: PathBuf,
     compositor_thread: Option<JoinHandle<()>>,
     running: Arc<std::sync::atomic::AtomicBool>,
     query_tx: Sender<Query>,
@@ -120,6 +125,28 @@ pub struct HeadlessHandle {
 /// How long [`HeadlessHandle::start`] waits for the compositor to come up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A fresh, empty directory to stand in for `$XDG_CONFIG_HOME`.
+///
+/// Rolled by hand rather than pulled from `tempfile`: that is a
+/// dev-dependency, and this runs in the library, on the `--headless` path as
+/// well as under `cargo test`.
+fn isolated_config_root() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "otto-headless-config-{}-{nanos}-{serial}",
+        std::process::id()
+    ));
+    if let Err(err) = std::fs::create_dir_all(root.join("otto")) {
+        tracing::warn!("Could not create the headless config directory: {err}");
+    }
+    root
+}
+
 /// How long [`HeadlessHandle::with_state`] waits for the dispatch loop to run
 /// a closure.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -132,6 +159,11 @@ impl HeadlessHandle {
     ///
     /// Returns a handle once the compositor is ready to accept Wayland clients.
     pub fn start(config: HeadlessConfig) -> Self {
+        // Before anything reads or writes configuration: a headless session
+        // is a test session, and must not persist into `~/.config/otto`.
+        let config_root = isolated_config_root();
+        crate::config::use_isolated_config_root(config_root.clone());
+
         let (ready_tx, ready_rx) = mpsc::channel::<String>();
         let (query_tx, query_rx) = mpsc::channel::<Query>();
         let (result_tx, result_rx) = mpsc::channel::<()>();
@@ -164,6 +196,7 @@ impl HeadlessHandle {
 
         Self {
             socket_name,
+            config_root,
             compositor_thread: Some(compositor_thread),
             running,
             query_tx,
@@ -205,6 +238,9 @@ impl HeadlessHandle {
             }
             let _ = thread.join();
         }
+        // The throwaway config directory goes with it. Anything a test wants
+        // to read out of it must be read before `stop`.
+        let _ = std::fs::remove_dir_all(&self.config_root);
     }
 
     /// Wait for the compositor to process events for the given duration.

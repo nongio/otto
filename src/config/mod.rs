@@ -368,8 +368,40 @@ fn get_system_config_path() -> Option<PathBuf> {
     }
 }
 
+/// An override for the user's configuration directory, set by the headless
+/// backend so a test session cannot read or write the real one.
+static ISOLATED_CONFIG_ROOT: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// Point the *user* configuration layer — the only layer Otto ever writes —
+/// at `root` instead of `$XDG_CONFIG_HOME`.
+///
+/// The headless backend calls this with a fresh temporary directory, so a
+/// setting a test persists (`gaps … current`, a workspace rename, anything
+/// through [`writable_config_path`]) lands there and the developer's own
+/// `~/.config/otto/config.toml` is left untouched — read as well as written.
+/// The read-only layers below it (`/etc/otto`, the working directory's
+/// `otto_config.toml`) still apply, so a headless session is configured the
+/// same way it is today.
+#[cfg(feature = "headless")]
+pub fn use_isolated_config_root(root: PathBuf) {
+    if let Ok(mut guard) = ISOLATED_CONFIG_ROOT.write() {
+        *guard = Some(root);
+    }
+}
+
+fn isolated_config_file() -> Option<PathBuf> {
+    ISOLATED_CONFIG_ROOT
+        .read()
+        .ok()?
+        .as_ref()
+        .map(|root| root.join("otto").join("config.toml"))
+}
+
 /// Where the user's own configuration lives, whether or not it is there yet.
 fn user_config_file() -> Option<PathBuf> {
+    if let Some(path) = isolated_config_file() {
+        return Some(path);
+    }
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .map(PathBuf::from)
@@ -437,6 +469,12 @@ fn config_layers() -> Vec<PathBuf> {
 /// not exist yet is created rather than dropping a stray `otto_config.toml`
 /// into whatever directory the session happens to have started from.
 pub fn writable_config_path() -> PathBuf {
+    // An isolated session writes to its own file and nowhere else — never to
+    // the working directory's `otto_config.toml`, which in a test run is the
+    // checkout's own.
+    if let Some(path) = isolated_config_file() {
+        return path;
+    }
     config_layers()
         .into_iter()
         .rev()

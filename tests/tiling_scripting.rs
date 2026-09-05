@@ -11,7 +11,7 @@
 
 #[cfg(feature = "headless")]
 mod tiling_scripting_tests {
-    use otto::headless::{HeadlessConfig, HeadlessHandle};
+    use otto::headless::{Axis, HeadlessConfig, HeadlessHandle};
     use otto_kit::testing::TestClient;
     use serde_json::Value;
     use serial_test::serial;
@@ -287,17 +287,49 @@ mod tiling_scripting_tests {
         handle.stop();
     }
 
+    /// Design mode's empty slots take up space, so `GetTree` has to describe
+    /// them — as a `con` that answers to `empty` and carries no `app_id`.
+    #[test]
+    #[serial]
+    fn an_empty_slot_is_a_con_with_no_app_id() {
+        let (handle, windows) = setup(&["slot-a"]);
+        handle.focus_window("slot-a");
+        run(&handle, "tiling toggle");
+
+        handle.toggle_tiling_design();
+        handle.settle(600);
+        handle.tiling_design_split_pane(0, Axis::Row);
+        handle.settle(600);
+        assert_eq!(handle.tiling_empty_slots(), 1, "the split left a slot");
+
+        let tree = handle.tree_json();
+        let empty: Vec<Value> = nodes(&tree)
+            .into_iter()
+            .filter(|node| node["empty"] == Value::Bool(true))
+            .collect();
+        assert_eq!(empty.len(), 1, "one empty slot in the tree: {tree:#}");
+        let slot = &empty[0];
+        assert_eq!(slot["type"], "con");
+        assert!(slot["app_id"].is_null(), "an empty slot holds no window");
+        assert!(
+            slot["rect"]["width"].as_i64().unwrap_or(0) > 0,
+            "an empty slot has the extent the layout gave it: {slot:#}"
+        );
+        // The window beside it is still described in full.
+        let window = node_named(&tree, "slot-a").expect("the window is in the tree");
+        assert_eq!(window["app_id"], Value::String(String::new()).clone());
+
+        handle.toggle_tiling_design();
+        drop(windows);
+        handle.stop();
+    }
+
     // ── Gaps ─────────────────────────────────────────────────────────────
 
     #[test]
     #[serial]
     fn gaps_on_one_workspace_leave_another_alone() {
         let (handle, mut windows) = setup(&["gap-a", "gap-b"]);
-        // An override is persisted beside the workspace's name, so a previous
-        // run of this test could still be in the config. `all` clears every
-        // override and sets the documented defaults, which is also how the
-        // test tidies up after itself.
-        reset_gaps(&handle);
         handle.focus_window("gap-a");
         run(&handle, "tiling toggle");
         let before = cell(&handle, "gap-a");
@@ -354,15 +386,79 @@ mod tiling_scripting_tests {
             "sanity: the first workspace still has its outer gap ({before:?} inside {zx})"
         );
 
-        reset_gaps(&handle);
         drop(windows);
         handle.stop();
     }
 
-    /// Drop every per-workspace override and put the session defaults back.
-    fn reset_gaps(handle: &HeadlessHandle) {
-        run(handle, "gaps inner 8 all");
-        run(handle, "gaps outer 8 all");
+    /// A persisted setting must land in the session's own throwaway config
+    /// directory and nowhere else — least of all in the developer's
+    /// `~/.config/otto/config.toml`, which an earlier version of this test
+    /// really did rewrite.
+    #[test]
+    #[serial]
+    fn a_persisted_override_stays_inside_the_test_session() {
+        let real = user_config_file();
+        let before = real.as_ref().map(|path| digest(path));
+
+        let (handle, windows) = setup(&["persist-a", "persist-b"]);
+        handle.focus_window("persist-a");
+        run(&handle, "tiling toggle");
+        run(&handle, "gaps inner 0 current");
+
+        let written = handle.config_root.join("otto").join("config.toml");
+        assert!(
+            written.is_file(),
+            "the override should be persisted under the session's config root ({})",
+            handle.config_root.display()
+        );
+        let text = std::fs::read_to_string(&written).expect("the session's own config");
+        assert!(
+            text.contains("[workspaces.gaps"),
+            "the gap override should be in the session's config, not somewhere else:\n{text}"
+        );
+
+        assert_eq!(
+            real.as_ref().map(|path| digest(path)),
+            before,
+            "the user's own config.toml must be byte-identical before and after"
+        );
+
+        drop(windows);
+        handle.stop();
+        assert!(
+            !handle_config_root_exists(&written),
+            "the session's config directory is cleaned up on stop"
+        );
+    }
+
+    fn handle_config_root_exists(written: &std::path::Path) -> bool {
+        written.exists()
+    }
+
+    /// The real user config, resolved exactly the way `src/config` resolves
+    /// it — so this compares the file the compositor would otherwise write.
+    fn user_config_file() -> Option<std::path::PathBuf> {
+        let dir = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| std::path::PathBuf::from(home).join(".config"))
+            })?;
+        Some(dir.join("otto").join("config.toml"))
+    }
+
+    /// A cheap content digest — `None` when the file is not there, so "absent
+    /// before and absent after" also compares equal.
+    fn digest(path: &std::path::Path) -> Option<(u64, u64)> {
+        let bytes = std::fs::read(path).ok()?;
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in &bytes {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Some((bytes.len() as u64, hash))
     }
 
     // ── GetTree ──────────────────────────────────────────────────────────
