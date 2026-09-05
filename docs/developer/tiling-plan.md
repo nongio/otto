@@ -205,6 +205,7 @@ design_bounce = 0.25
 inner_gap = 8
 outer_gap = 8
 smart_gaps = true       # a lone tile drops the gaps
+decoration = "minimal"  # "minimal" title line, or "none" for a border only
 float = []              # app ids that always float
 ```
 
@@ -377,6 +378,30 @@ handle uses). Drags are a `PointerGrab` that writes shares into the tree and
 calls `relayout_workspace` with no transition. The toolbar reuses otto-kit
 buttons drawn by the compositor, as the titlebar controls are.
 
+## Decorations on tiles
+
+Tiles want less chrome than floating windows, and i3 users disagree on how
+much less: i3 draws a one-line title bar by default, sway users very often
+set `default_border pixel 2` and keep only a coloured border. So it is a
+setting, `[tiling] decoration = "minimal" | "none"`, default `minimal`:
+
+- **minimal** — a bar one text line high with the title and a close button,
+  squared corners, no shadow. It keeps the move handle, the window menu and
+  the title, which is the spec's reason for keeping a bar at all.
+- **none** — no bar; the focused tile gets a hairline border in the accent
+  colour, the rest a neutral hairline. Moving a tile is then design mode or
+  the keyboard. This is sway's `pixel` border.
+
+Tabbed and stacked containers draw their strip in both settings, since it
+is the only way to see the hidden windows. Client-side-decorated windows are
+told they are tiled on every touching edge and square off on their own; they
+get no bar in either setting. Floating windows in a tiling workspace keep
+the full floating decoration.
+
+The variant is chosen per window in `decoration_view.rs` from the
+workspace's mode, and swapped when the window enters or leaves the tree —
+the same path the maximized (gapless, squared) variant already uses.
+
 ## Command language
 
 The scripting grammar, resolving to the actions above. Phase-1 subset:
@@ -450,7 +475,7 @@ geometries, the way `tests/tiling.rs` does for half-snap.
 handles with `ew-resize`/`ns-resize`/`nwse-resize` cursor shapes, live
 reconfigure on ack, cell toolbar, empty slots, cell and container drag;
 drag-to-detach with the reused `TilingOverlayView` showing
-the slot; dropping a floating window into a tree; compact titlebar variant;
+the slot; dropping a floating window into a tree; the minimal and none decoration variants;
 accent focus border; no shadow on tiles; usable-area re-fit on dock/layer-shell/
 mode changes; XWayland parity; workspace-selector mode indicator.
 
