@@ -1,7 +1,15 @@
 # Window Tiling
 
-**Status:** draft
+**Status:** in progress
 **Related specs:** [window-decorations](window-decorations.md), [workspaces-multi-output](workspaces-multi-output.md), [window-focus-navigation](window-focus-navigation.md), [context-menus](context-menus.md)
+
+**Implementation status.** The first cut is keyboard-only: a per-workspace
+tiling mode, split containers, insertion and removal, directional focus and
+move, pre-selection, the keyboard resize step and equalise, and the layout
+animation. Not in it yet: the pointer paths (drag-to-detach and design mode),
+the floating layer and its toggle, tabbed and stacked containers, the compact
+decoration variants — a tile still keeps the full titlebar — and the command
+grammar with the interface that runs it.
 
 ## Summary
 
@@ -36,6 +44,15 @@ on one output, so a tiled workspace and a floating one coexist a swipe apart.
 - Clients are told the truth: a tiled window is told which of its edges abut
   something, so toolkits square off the right corners and hide the right
   affordances.
+- Every tiling operation is a named action that can be bound to a key, so a
+  workspace can be shaped entirely from the keyboard.
+- A preset file ships with Otto binding those actions to the i3 defaults; a
+  user copies it into their configuration and edits lines, and nothing in it
+  is bound until they do.
+- A scripting interface accepts i3's command syntax — `focus left`,
+  `move container to workspace 3`, `split v`, `layout tabbed` — resolving to
+  the same named actions, so existing scripts port with a rename. The syntax
+  is for scripting only; key bindings name actions.
 
 ## Non-Goals
 
@@ -43,7 +60,9 @@ on one output, so a tiled workspace and a floating one coexist a swipe apart.
   because the user asked it to, or because the configuration set the default.
 - A layout that overlaps windows, or a "manual" mode where the user positions
   tiles by absolute coordinates. Overlapping windows are what floating mode is.
-- Reproducing any specific existing tiler's keybindings verbatim.
+- Reproducing any specific existing tiler's keybindings *by default*. The
+  bindings are the user's; Otto ships the i3 set as a file to copy in, not as
+  a hidden default.
 - Delegating layout decisions to an external process. The layout is computed
   inside the compositor. A protocol for an external layout generator is a
   possible future addition and must not be designed out, but is not specified
@@ -71,6 +90,13 @@ moves to a different output keeps its tree and re-fits it to the new usable
 area.
 
 **Default.** Configuration may declare that new workspaces start tiled.
+
+**Workspaces on demand.** A command that names a workspace which does not
+exist yet creates it: asking for workspace 7 on an output with four appends
+workspaces until there is a seventh. A workspace is never taken away again for
+becoming empty. Otto's workspaces are named, reorderable and persistent, and
+one vanishing under the user because its last window closed would break that;
+an empty workspace stays.
 
 ### The tree
 
@@ -105,6 +131,17 @@ proportion to their existing shares. A container left with one child is
 dissolved into its parent, so the tree never keeps a container that splits
 nothing.
 
+**Container layouts.** A container lays its children out in one of three
+ways. *Split* — the default — gives each child its share of the container's
+extent along the axis. *Tabbed* and *stacked* give every child the whole of
+the container's cell and show one child at a time, the rest hidden behind a
+strip of titles drawn along the top of the cell: one row of tabs side by side
+for tabbed, one title per line for stacked. Selecting a title raises that
+child. A command sets the focused container's layout and a toggle command
+cycles it. From the outside a tabbed or stacked container is one cell:
+directional focus and move step over it as a unit, and step between its
+children only from within.
+
 **Restoring.** A window that comes back — unminimized, or unfloated — is
 inserted at the focused position, not at the one it left. A window that returns
 from fullscreen goes back to the exact slot it held, which is kept for it while
@@ -135,6 +172,14 @@ along a chosen axis. While armed, the focused window's cell shows which half the
 next window will take. Opening a window, moving one in, or pressing the command
 again disarms it.
 
+**Container focus.** Focus normally rests on a window, but it can also rest
+on a container. A *focus parent* command moves focus from the focused window
+to the container holding it, and again to that container's parent; *focus
+child* moves back down into the child it came from. While a container is
+focused its whole cell is marked, and the move, resize, layout and close
+commands act on the entire subtree — moving a focused container moves
+everything inside it. Focusing a window by any means ends container focus.
+
 **Promotion.** A command lifts the focused window out of its container and makes
 it a sibling of that container's parent, and the reverse command pushes it back
 down into the neighbouring container. Together these reshape nesting without
@@ -142,11 +187,24 @@ closing anything.
 
 ### Resizing
 
-**Pointer.** The gap between two tiles is a resize handle. Dragging it changes
-the shares of the two children on either side of that split and nothing else;
-the pointer shows a horizontal or vertical resize cursor over it. Where four
-tiles meet at a corner, the corner handle resizes both splits at once. A drag
-that would push a window below its minimum size stops there.
+**Design mode.** Outside design mode the gaps between tiles are not drag
+handles: pointer handling on a tiled workspace is the same as on a floating
+one, so no hidden hit area competes with a window's edges. A command, an item
+in the workspace's context menu, or a long press on a gap enters *design
+mode*, where the layout's cells are drawn as panes over the windows and the
+gaps between them become visible handles that light up on hover with a cursor
+saying what a drag will do. Dragging a bar handle changes the shares of the
+two children either side of that split and nothing else; where four cells meet
+at a corner, the corner handle drags both splits at once; a drag that would
+push a window below its minimum size stops there. A cell can be dragged onto
+another to swap with it, or onto a bar handle to be inserted at that split,
+and each pane offers splitting the cell and choosing its container's layout.
+A split made with nothing to fill it, or a cell whose window closes while
+design mode is open, leaves an *empty slot* drawn as a dashed pane: the next
+window to open fills the focused empty slot before it splits anything, so a
+workspace can be laid out before it is populated. Every named action keeps
+working in design mode, and leaving it changes nothing about where the windows
+are.
 
 **Keyboard.** A resize command grows or shrinks the focused window along a given
 axis by a configurable step, taking from — or giving to — the sibling in that
@@ -212,47 +270,69 @@ command arriving mid-flight re-targets the windows already in motion rather than
 queueing behind them, so holding down a move command sweeps a window across the
 layout smoothly.
 
-**Fluid by default.** During an animation a window's *drawn* rectangle follows
-the animation curve continuously, whether or not the client has caught up. The
-client is asked once for the final size, and until its new buffer arrives its
-last frame is drawn scaled into the animated rectangle. When the new buffer
-lands the window is drawn at its true resolution again. The user sees a
-continuous resize; the client sees one configure.
+**Motion is paced by the client.** A move or a swap, where no size changes,
+animates the whole way: the buffer stays valid, so the window travels
+smoothly. A resize is different — a rectangle only holds real content once the
+client has drawn a buffer of that size — so during a resize the client is
+configured with the rectangle of every animation frame and the window is drawn
+with the most recent buffer it has committed. A client that keeps up shows
+real content throughout; a slow one lags behind its rectangle for a few
+frames, which is the honest state of affairs rather than a stretched or
+clipped stand-in. Only the windows whose rectangle actually changed are
+configured at all.
 
-**Configurable.** The animation has a configurable duration and curve, and can
-be reduced to *snap*, where windows are placed at their new cells immediately
-with no motion — for a user who wants the tiler to feel instantaneous, and for
-the accessibility reduced-motion setting, which forces it regardless of the
-tiling configuration. A third setting drives the client's configure size on
-every animation frame instead of scaling its last frame: the most faithful
-resize, at the cost of reconfiguring every affected client at frame rate, and
-therefore not the default for a layout that can move a dozen windows at once.
+**Settling.** A layout change is presented as settled only once every affected
+client has committed its final size, or a short deadline has passed, so a slow
+client never leaves a half-applied layout on screen.
 
-**Interactive resize is live, not animated.** Dragging a gap resizes
-continuously under the pointer, with the affected clients reconfigured as they
-acknowledge the previous size rather than on a fixed cadence. There is no
-animation to run: the pointer is the animation. On release the layout settles
-with no further motion.
+**Configurable.** Each family of layout animation — a layout change, entering
+and leaving tiling mode, monocle, a design-mode drag — has a configurable
+duration and bounce. A duration of zero means *snap*: the windows are placed
+at their new cells in one frame with no motion and each client is configured
+once. Snap is a case of its own, not a very short animation. A single key
+binding may additionally ask for its action to run without animation, so a
+keystroke can move a window instantly while the same operation from the
+pointer or from a script still animates. An accessibility *reduce motion*
+setting forces every one of these durations, and the workspace switch's, to
+zero regardless of the tiling configuration.
+
+**Interactive resize animates too.** Dragging a handle in design mode updates
+the shares under the pointer, but the panes and the windows beneath them chase
+it on a spring rather than tracking it rigidly, so a fast drag lags a little
+and overshoots before settling. Clients are reconfigured as they acknowledge
+the previous size during the drag, and once more with the final size when the
+spring settles, so a slow client never holds the drag back. That spring has
+its own duration, bouncier than the layout one by default; a duration of zero
+makes the layout track the pointer exactly.
 
 **Dragging a window** animates the tree closing behind the detached window and
 opening again to accept it, on the same curve.
 
 ### Decorations
 
-A tiled window keeps the titlebar Otto draws — it is the move handle, and the
-route to the window's controls and menu. In a tiled workspace the bar is drawn
-in a compact variant: shorter than the floating one, with the same controls and
-title. The window frame keeps its rounded corners and its gap-borne separation
-from its neighbours when gaps are on; with gaps off the frame squares off, as it
-already does when maximized.
+How much chrome a tile keeps is a setting, because users disagree about it.
+With *minimal*, the default, a tile gets a bar one text line high with the
+title and a close button, squared corners and no shadow: it is still the move
+handle and the route to the window's controls and menu. With *none* a tile
+gets no bar at all, and moving it is design mode or the keyboard. Tabbed and
+stacked containers draw their title strip under both settings, since it is the
+only way to see the windows they hide. The window frame keeps its rounded
+corners and its gap-borne separation from its neighbours when gaps are on;
+with gaps off the frame squares off, as it already does when maximized.
 
-The focused tile is marked with a border in the accent colour. Drop shadows are
+The focused tile is marked with a border in the accent colour — a hairline one
+under *none*, where the other tiles get a neutral hairline. Drop shadows are
 not drawn on tiles — nothing overlaps, so there is nothing to cast onto — and
 return when the window floats again.
 
-A window that draws its own decorations is tiled the same way and is not given a
-bar; it is still moved by dragging whatever it treats as its titlebar, and the
-keyboard commands reach it unchanged.
+A window that draws its own decorations is tiled the same way and is given no
+bar under either setting; it is still moved by dragging whatever it treats as
+its titlebar, and the keyboard commands reach it unchanged. Because it is told
+which of its edges are tiled, it can square the corresponding corners and
+compact its own titlebar. Otto's own applications, which draw their titlebars
+themselves, follow the same setting from the client side: under *minimal* the
+titlebar takes its compact form, and under *none* they draw no bar and are
+moved by design mode or the keyboard.
 
 ### What clients are told
 
@@ -266,12 +346,25 @@ area. A window in monocle is told it is maximized.
 Windows managed through XWayland tile identically, are configured with the same
 rectangles, and carry the same states where the X11 equivalent exists.
 
+### Scripting
+
+Every tiling operation is reachable by name from a key binding, and by i3's
+command syntax from a script: `focus left|right|up|down|parent|child`,
+`move …`, `move container to workspace <n>`, `workspace <n>`, `split h|v`,
+`layout splith|splitv|tabbed|stacking|toggle`,
+`resize grow|shrink width|height <n>`, `floating toggle`, `fullscreen`,
+`kill`, `gaps inner|outer <n>`. The same interface reports the tree, the workspaces and the outputs in
+i3's shape, so a bar or a script written against i3 or sway keeps working
+after a rename. Key bindings never use that syntax: a binding names an action.
+
 ### Overview and previews
 
 Exposé, the workspace selector previews, and the app switcher work on a tiled
-workspace exactly as on a floating one — a tiled workspace's windows are simply
-already spread out. Entering exposé does not disturb the tree, and selecting a
-window from it focuses that window in place.
+workspace as far as this spec goes exactly as on a floating one — a tiled
+workspace's windows are simply already spread out. Entering exposé does not
+disturb the tree, and selecting a window from it focuses that window in place.
+What exposé should add to a workspace that is already an overview of itself is
+an open question below.
 
 ## Constraints & Edge Cases
 
@@ -327,12 +420,16 @@ dock that grows, a workspace dragged to a second screen, a scale change — is
 free if the layout never stores a pixel. It also makes the layout comparable
 across outputs, which is what lets a workspace move.
 
-**Why the drawn rectangle leads the client.** A layout change can move a dozen
-windows at once. Driving every one of their configures at frame rate turns one
-keystroke into a resize storm across a dozen clients, and the slowest of them
-decides how the animation looks. Scaling the last frame into the animated
-rectangle keeps the motion the compositor's business and the size the client's,
-which is the only way tiling animations stay smooth with a screenful of windows.
+**Why motion is paced by the client.** An earlier draft had the drawn
+rectangle lead the client: one configure for the final size, the last frame
+scaled into the animated rectangle until the new buffer arrived. That was
+dropped. There is no honest way to fill a resized rectangle before the client
+has drawn it, and a scaled stand-in reads as a stretched, blurry window at
+exactly the moment the user is watching it move. Configuring each frame, and
+drawing whatever the client has committed, keeps every pixel true; the cost —
+a configure storm across a screenful of clients — is paid down by configuring
+only the windows whose rectangle changed and by holding the settled frame
+until they have all acknowledged it.
 
 **Why the layout is not expressed as engine layout nodes.** The scene engine can
 lay out containers and animate them itself, and a split container maps neatly
@@ -343,6 +440,20 @@ would mean reading geometry back out of the render layer on the input path. The
 tree is therefore resolved to rectangles by the compositor, and those rectangles
 drive the engine's layers and its transitions. The engine animates; it does not
 decide.
+
+**Why tabbed and stacked containers are specified, not deferred.** They were
+an open question, and are now behaviour. Someone arriving with a years-old i3
+configuration expects `layout toggle split` to do something, and a tree that
+cannot hold a per-container layout kind has to be rewritten to gain one later.
+Otto's compositor-drawn titlebar is already the right thing to draw the strip
+with.
+
+**Why the compositor computes the layout and the engine only animates.** The
+tree is resolved to rectangles by the compositor, which needs each window's
+rectangle synchronously in any case; those rectangles are then handed to the
+scene engine, which animates positions and sizes towards them and decides
+nothing. The layout is never expressed as engine layout nodes, so there is no
+second source of truth to read geometry back out of on the input path.
 
 **Why keep decorations.** The titlebar is compositor-owned in Otto and is the
 window's move handle; dropping it in tiling mode would cost drag-to-rearrange,
@@ -366,13 +477,18 @@ command exists for when they want to.
 
 ## Open Questions
 
-- **Tabbed and stacked containers.** A container whose children occupy the same
-  cell, selected by a tab strip, is the natural next thing to want, and Otto's
-  compositor-drawn titlebar is well placed to draw the strip. Not specified here;
-  the tree must be able to grow a per-container layout kind without a rewrite.
 - **Persistence across sessions.** Whether a tiled workspace's tree, and the
   mode itself, should be restored on the next login.
 - **Named layouts.** Whether the user should be able to save a tree and apply it
   to a workspace, and whether an application should be able to ask for a slot.
 - **Whether the tiling mode belongs in the workspace selector UI** as a visible
   per-workspace indicator, rather than only in a menu and a shortcut.
+- **Exposé on a tiled workspace.** A tiled workspace is already an overview of
+  itself, so what exposé should add to it is unsettled:
+  - whether exposé should spread the tiles at all, or only pull out the
+    floating layer and the windows a tabbed or stacked container hides;
+  - what becomes of the containers while exposé rearranges or mirrors the
+    windows it shows;
+  - whether selecting a window in exposé should move it in the tree as well as
+    focus it;
+  - how a workspace-selector preview should render a tree.
