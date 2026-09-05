@@ -565,6 +565,7 @@ pub fn run_x11() {
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
+            state.flush_tiling_relayout();
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }

@@ -128,6 +128,31 @@ desktop id or a plain command line.
 | `TileWindowRight` | Snap the focused window to the right half |
 | `ToggleDecorations` | Flip every window between client-side and server-side decoration mode |
 
+### Tiling
+
+A workspace can be switched from free-floating window placement to *tiling*,
+where every window is laid out edge to edge in a tree of splits. The mode
+belongs to one workspace on one output, so a tiled workspace and a floating one
+live a swipe apart. None of these actions is bound by default; the example
+config carries a commented block that binds them the way i3 and sway users
+expect.
+
+| Action | Effect |
+|--------|--------|
+| `TilingToggle` | Put the focused workspace into, or out of, tiling mode |
+| `FocusLeft` / `FocusRight` / `FocusUp` / `FocusDown` | Move keyboard focus to the neighbouring tile. Focus does not wrap |
+| `MoveContainerLeft` / `MoveContainerRight` / `MoveContainerUp` / `MoveContainerDown` | Move the focused window through the tree: it swaps with its neighbour, or leaves its container that way |
+| `SplitHorizontal` | The next window to open splits the focused cell left/right |
+| `SplitVertical` | …top/bottom instead. Pressing the same one again disarms it |
+| `ResizeGrowWidth` / `ResizeShrinkWidth` | Widen or narrow the focused cell by one `[tiling] resize_step`, taking from its neighbour |
+| `ResizeGrowHeight` / `ResizeShrinkHeight` | The same vertically |
+| `EqualizeContainer` | Give every cell in the focused container the same share |
+
+In a tiling workspace `TileWindowLeft` and `TileWindowRight` do not half-snap:
+they move focus left and right, since every position is already a slot. Gaps,
+the layout animation and the resize step are configured under `[tiling]` — see
+`otto_config.example.toml`.
+
 ### Applications
 
 | Action | Effect |

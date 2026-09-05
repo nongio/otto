@@ -135,6 +135,27 @@ pub enum BuiltinAction {
     MediaPrev,
     MediaStop,
     LockSession,
+    // ── Tiling (see specs/tiling.md) ─────────────────────────────────────
+    /// Put the focused workspace into, or out of, tiling mode.
+    TilingToggle,
+    FocusLeft,
+    FocusRight,
+    FocusUp,
+    FocusDown,
+    MoveContainerLeft,
+    MoveContainerRight,
+    MoveContainerUp,
+    MoveContainerDown,
+    /// Arm the next insertion to split the focused cell left/right.
+    SplitHorizontal,
+    /// Arm the next insertion to split the focused cell top/bottom.
+    SplitVertical,
+    ResizeGrowWidth,
+    ResizeShrinkWidth,
+    ResizeGrowHeight,
+    ResizeShrinkHeight,
+    /// Give every child of the focused container the same share.
+    EqualizeContainer,
 }
 
 #[derive(Debug, Error)]
@@ -253,6 +274,22 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "MediaPrev" => BuiltinAction::MediaPrev,
         "MediaStop" => BuiltinAction::MediaStop,
         "LockSession" => BuiltinAction::LockSession,
+        "TilingToggle" => BuiltinAction::TilingToggle,
+        "FocusLeft" => BuiltinAction::FocusLeft,
+        "FocusRight" => BuiltinAction::FocusRight,
+        "FocusUp" => BuiltinAction::FocusUp,
+        "FocusDown" => BuiltinAction::FocusDown,
+        "MoveContainerLeft" => BuiltinAction::MoveContainerLeft,
+        "MoveContainerRight" => BuiltinAction::MoveContainerRight,
+        "MoveContainerUp" => BuiltinAction::MoveContainerUp,
+        "MoveContainerDown" => BuiltinAction::MoveContainerDown,
+        "SplitHorizontal" => BuiltinAction::SplitHorizontal,
+        "SplitVertical" => BuiltinAction::SplitVertical,
+        "ResizeGrowWidth" => BuiltinAction::ResizeGrowWidth,
+        "ResizeShrinkWidth" => BuiltinAction::ResizeShrinkWidth,
+        "ResizeGrowHeight" => BuiltinAction::ResizeGrowHeight,
+        "ResizeShrinkHeight" => BuiltinAction::ResizeShrinkHeight,
+        "EqualizeContainer" => BuiltinAction::EqualizeContainer,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }
