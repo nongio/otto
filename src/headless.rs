@@ -895,7 +895,6 @@ impl HeadlessHandle {
             };
             state.recalculate_exclusive_zones(&output);
             let zone = state.usable_zone(&output);
-            let gaps = crate::config::Config::with(|c| c.tiling.gaps());
             let area = crate::workspaces::tiling::Rect::new(
                 zone.loc.x,
                 zone.loc.y,
@@ -903,6 +902,7 @@ impl HeadlessHandle {
                 zone.size.h,
             );
             let tree = workspace.tiling.read().unwrap();
+            let gaps = crate::config::Config::with(|c| tree.effective_gaps(&c.tiling));
             crate::workspaces::tiling::layout::resolve(&tree.tree, area, gaps)
                 .into_iter()
                 .filter_map(|(id, rect)| {

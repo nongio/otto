@@ -372,6 +372,38 @@ fn persisted_workspace_name(output: &str, position: usize) -> Option<String> {
     })
 }
 
+/// The gap override saved for workspace `position` on `output`, if any.
+///
+/// Keyed by position exactly as the names are, and with the same trade-off:
+/// removing a workspace shifts the ones after it, and their gaps shift with
+/// them.
+fn persisted_workspace_gaps(output: &str, position: usize) -> Option<tiling::Gaps> {
+    Config::with(|c| {
+        let saved = c
+            .workspaces
+            .gaps
+            .get(&crate::config::workspace_name_key(output, position))?;
+        Some(tiling::Gaps {
+            inner: saved.inner.max(0),
+            outer: saved.outer.max(0),
+            smart: c.tiling.smart_gaps,
+        })
+    })
+}
+
+/// Restore what was saved for the workspace now sitting at `position` on
+/// `output`: the name the user typed, and its gap override.
+fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position: usize) {
+    if let Some(name) = persisted_workspace_name(output, position) {
+        workspace.set_custom_name(Some(name));
+    }
+    if let Some(gaps) = persisted_workspace_gaps(output, position) {
+        if let Ok(mut state) = workspace.tiling.write() {
+            state.gaps = Some(gaps);
+        }
+    }
+}
+
 /// Where the item at old position `i` ends up once the item at `from` is moved
 /// to `to`. The moved item lands on `to`; everything the move stepped over
 /// shifts one place the other way.
@@ -832,6 +864,28 @@ impl Workspaces {
             }
         }
         crate::config::save_workspace_names(&names);
+    }
+
+    /// Write every output's per-workspace gap overrides to the config, keyed
+    /// by position. A workspace with no override is simply absent, so
+    /// `gaps … all` — which clears them all — writes an empty table.
+    pub(crate) fn save_workspace_gaps(&self) {
+        let mut gaps = std::collections::BTreeMap::new();
+        for (output, ows) in self.output_workspaces.iter() {
+            for (position, workspace) in ows.workspace_views.iter().enumerate() {
+                let Some(over) = workspace.tiling.read().ok().and_then(|state| state.gaps) else {
+                    continue;
+                };
+                gaps.insert(
+                    crate::config::workspace_name_key(output, position),
+                    crate::config::WorkspaceGapsConfig {
+                        inner: over.inner,
+                        outer: over.outer,
+                    },
+                );
+            }
+        }
+        crate::config::save_workspace_gaps(&gaps);
     }
 
     /// The workspace selector belonging to a given output.
@@ -4469,9 +4523,7 @@ impl Workspaces {
             // so all workspace backgrounds live under one node for the KMS plane.
             let _ = background_plane.add_sublayer(&workspace.workspace_background);
             let _ = windows_plane.add_sublayer(&workspace.windows_layer);
-            if let Some(name) = persisted_workspace_name(&output.name(), i) {
-                workspace.set_custom_name(Some(name));
-            }
+            restore_workspace_settings(&workspace, &output.name(), i);
             workspace.set_display_number(next_display_number(display_numbers(&workspace_views)));
             workspace_views.push(workspace);
         }
@@ -4644,9 +4696,7 @@ impl Workspaces {
                     .add_sublayer(&workspace.window_selector_view.window_selector_root);
 
                 let index = ows.workspace_views.len();
-                if let Some(custom) = persisted_workspace_name(name, index) {
-                    workspace.set_custom_name(Some(custom));
-                }
+                restore_workspace_settings(&workspace, name, index);
                 workspace
                     .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
                 ows.workspace_views.push(workspace.clone());
@@ -4725,9 +4775,7 @@ impl Workspaces {
             let _ = ows.windows_plane.add_sublayer(&workspace.windows_layer);
 
             let index = ows.workspace_views.len();
-            if let Some(name) = persisted_workspace_name(output_name, index) {
-                workspace.set_custom_name(Some(name));
-            }
+            restore_workspace_settings(&workspace, output_name, index);
             workspace
                 .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
             ows.workspace_views.push(workspace.clone());

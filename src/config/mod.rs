@@ -924,6 +924,11 @@ pub struct WorkspacesConfig {
     /// [`workspace_name_key`]. Workspaces are per output, and positions shift
     /// when one is removed, so this is a best-effort restore, not an identity.
     pub names: BTreeMap<String, String>,
+    /// Per-workspace gap overrides, keyed the same way `names` is. A
+    /// workspace absent from here uses the `[tiling]` defaults; `gaps … all`
+    /// writes those defaults and empties this table.
+    #[serde(default)]
+    pub gaps: BTreeMap<String, WorkspaceGapsConfig>,
     /// Duration in seconds of the spring that scrolls from one workspace to the
     /// next — the animation a shortcut, an app switcher commit or the workspace
     /// selector plays. A swipe keeps its own, shorter spring, since it starts
@@ -948,10 +953,22 @@ impl Default for WorkspacesConfig {
     fn default() -> Self {
         Self {
             names: BTreeMap::new(),
+            gaps: BTreeMap::new(),
             switch_duration: default_workspace_switch_duration(),
             switch_bounce: default_workspace_switch_bounce(),
         }
     }
+}
+
+/// One workspace's gap override, as `gaps inner|outer <n>` leaves it.
+///
+/// Both values are always written: `gaps inner 0` on a workspace with no
+/// override yet takes the `[tiling]` outer gap with it, so the override
+/// describes the whole workspace rather than half of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceGapsConfig {
+    pub inner: i32,
+    pub outer: i32,
 }
 
 impl WorkspacesConfig {
@@ -1172,6 +1189,51 @@ fn replace_workspace_names(
         table.insert(key, toml_edit::value(value.as_str()));
     }
     workspaces.insert("names", toml_edit::Item::Table(table));
+    Ok(())
+}
+
+/// Persist the per-workspace gap overrides into `[workspaces.gaps]`, keyed by
+/// [`workspace_name_key`] exactly as the names are, and replacing the whole
+/// table — the compositor holds the authoritative set.
+pub fn save_workspace_gaps(gaps: &BTreeMap<String, WorkspaceGapsConfig>) {
+    let path = writable_config_path();
+    let mut doc = match file::load_document(&path) {
+        Ok(doc) => doc,
+        Err(err) => {
+            warn!("Failed to save workspace gaps: {err}");
+            return;
+        }
+    };
+
+    if let Err(err) = replace_workspace_gaps(&mut doc, gaps) {
+        warn!("Failed to save workspace gaps to {}: {err}", path.display());
+        return;
+    }
+    if let Err(err) = file::store_document(&path, &doc) {
+        warn!("Failed to save workspace gaps: {err}");
+    }
+}
+
+/// Put `gaps` in `[workspaces.gaps]`, replacing whatever was there.
+fn replace_workspace_gaps(
+    doc: &mut toml_edit::DocumentMut,
+    gaps: &BTreeMap<String, WorkspaceGapsConfig>,
+) -> Result<(), String> {
+    let workspaces = doc
+        .as_table_mut()
+        .entry("workspaces")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| "`workspaces` is not a table".to_string())?;
+
+    let mut table = toml_edit::Table::new();
+    for (key, value) in gaps {
+        let mut entry = toml_edit::InlineTable::new();
+        entry.insert("inner", (value.inner as i64).into());
+        entry.insert("outer", (value.outer as i64).into());
+        table.insert(key, toml_edit::value(entry));
+    }
+    workspaces.insert("gaps", toml_edit::Item::Table(table));
     Ok(())
 }
 

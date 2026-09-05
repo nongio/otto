@@ -210,13 +210,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         let zone = self.tiling_area(output);
-        let gaps = Config::with(|c| c.tiling.gaps());
         let area = Rect::new(zone.loc.x, zone.loc.y, zone.size.w, zone.size.h);
-        let rects = {
+        let (gaps, rects) = {
             let Ok(state) = workspace.tiling.read() else {
                 return;
             };
-            layout::resolve(&state.tree, area, gaps)
+            // This workspace's own gaps, if it has an override.
+            let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
+            (gaps, layout::resolve(&state.tree, area, gaps))
         };
 
         // The pane grid is driven from the very rects that are about to be
@@ -483,12 +484,12 @@ impl<BackendData: Backend> Otto<BackendData> {
         id: ObjectId,
     ) {
         let zone = self.tiling_area(output);
-        let gaps = Config::with(|c| c.tiling.gaps());
         let area = Rect::new(zone.loc.x, zone.loc.y, zone.size.w, zone.size.h);
 
         let Ok(mut state) = workspace.tiling.write() else {
             return;
         };
+        let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
         let focused = state
             .focused
             .clone()
@@ -625,7 +626,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
         let zone = self.tiling_area(&output);
-        let gaps = Config::with(|c| c.tiling.gaps());
         let area = Rect::new(zone.loc.x, zone.loc.y, zone.size.w, zone.size.h);
         let next = {
             let Ok(state) = workspace.tiling.read() else {
@@ -634,6 +634,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             if !state.enabled {
                 return;
             }
+            let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
             let rects = layout::resolve(&state.tree, area, gaps);
             layout::neighbour(&rects, &from, direction)
         };
