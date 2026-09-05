@@ -5669,11 +5669,11 @@ impl FilesApp {
         let scale = AppContext::scale_factor().max(1) as f32;
         let state = Arc::clone(&self.state);
 
-        // Paused, and only where a worker exists: the column is a glance,
-        // and the click that starts it is the user asking for sound.
-        let autoplay = std::env::var_os("OTTO_FILES_PREVIEW_AUTOPLAY").is_some();
+        // Paused, and only where a worker exists: the column is a glance that
+        // follows the selection, and the click that starts it is the user
+        // asking for sound. It opens on the first frame, not on black.
         let video = (path.is_file() && otto_media_kit::player::available())
-            .then(|| quickview::video_options(panel, scale, autoplay));
+            .then(|| quickview::video_options(panel, scale, false));
         tokio::task::spawn_blocking(move || {
             let preview = quickview::decode(&path, panel, scale);
             state

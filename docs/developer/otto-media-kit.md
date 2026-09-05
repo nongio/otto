@@ -75,9 +75,9 @@ one `quickview::Video`: the Quick View panel (autoplays) and the docked
 Miller preview column (opens paused on the first frame, plays on click).
 
 A paused pipeline emits its first frame as a *preroll*, not a sample, so the
-worker delivers both — otherwise a paused embed would show black. Set
-`OTTO_FILES_PREVIEW_AUTOPLAY=1` to make the docked column autoplay too, which
-is the quickest way to see the embed render frames without clicking.
+worker delivers both — otherwise a paused embed would show black. The docked
+column always opens paused on that first frame and plays on click; only the
+Quick View panel autoplays.
 
 ## Aspect and the preview-column subsurface
 
