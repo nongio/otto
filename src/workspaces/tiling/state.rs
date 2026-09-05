@@ -252,14 +252,16 @@ mod tests {
             smart_gaps: true,
             ..TilingConfig::default()
         };
-        let mut state = TilingState::default();
         // `smart` is global, so whatever was stored on the override loses to
         // the configured value.
-        state.gaps = Some(Gaps {
-            inner: 0,
-            outer: 4,
-            smart: false,
-        });
+        let state = TilingState {
+            gaps: Some(Gaps {
+                inner: 0,
+                outer: 4,
+                smart: false,
+            }),
+            ..TilingState::default()
+        };
         assert_eq!(
             state.effective_gaps(&config),
             Gaps {
@@ -272,12 +274,14 @@ mod tests {
 
     #[test]
     fn leaving_tiling_mode_keeps_the_gap_override() {
-        let mut state = TilingState::default();
-        state.gaps = Some(Gaps {
-            inner: 2,
-            outer: 2,
-            smart: false,
-        });
+        let mut state = TilingState {
+            gaps: Some(Gaps {
+                inner: 2,
+                outer: 2,
+                smart: false,
+            }),
+            ..TilingState::default()
+        };
         state.clear();
         assert!(
             state.gaps.is_some(),

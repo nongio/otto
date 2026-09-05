@@ -112,6 +112,12 @@ works normally. Tiling a maximized window unmaximizes it first.
 The same three targets are reachable with the pointer — see
 [Drag to tile](#drag-to-tile).
 
+A workspace can also be put into a managed **tiling mode**, where every window
+gets a cell in a tree and nothing overlaps. Its commands — `focus left`,
+`split v`, `resize grow width 10 ppt` and the rest — can be bound to keys or
+driven from a script with `otto-msg`, the way `i3-msg` and `swaymsg` are used;
+see [Scripting Otto](scripting.md).
+
 ## Design mode
 
 A tiling workspace can be shaped with the pointer instead of with keyboard

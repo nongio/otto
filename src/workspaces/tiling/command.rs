@@ -25,6 +25,7 @@ pub enum WorkspaceTarget {
 
 /// The three-state argument i3 gives every toggleable command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Toggle {
     Toggle,
     Enable,
