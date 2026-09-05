@@ -10,10 +10,12 @@
 //! See `specs/tiling.md` for the behaviour and
 //! `docs/developer/tiling-plan.md` for how the phases fit together.
 
+pub mod design;
 pub mod layout;
 pub mod state;
 pub mod tree;
 
+pub use design::Preset;
 pub use layout::{Gaps, Rect};
-pub use state::TilingState;
-pub use tree::{Axis, Direction};
+pub use state::{TilingDesignState, TilingState};
+pub use tree::{Axis, Cell, Direction, EmptyId, NodeId};

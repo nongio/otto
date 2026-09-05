@@ -61,6 +61,26 @@ pub fn resolve<L: Clone + Eq + Hash + Debug>(
     area: Rect,
     gaps: Gaps,
 ) -> Vec<(L, Rect)> {
+    resolve_nodes(tree, area, gaps)
+        .into_iter()
+        .filter_map(|(node, rect)| match tree.node(node) {
+            Some(Node::Leaf(leaf)) => Some((leaf.clone(), rect)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Resolve `tree` the same way, but keep *every* node — containers and empty
+/// slots included — with the rectangle it occupies.
+///
+/// Design mode needs the containers (a bar handle sits between two of their
+/// children) and the empty slots (they are cells with panes of their own),
+/// so it reads the layout from here rather than from [`resolve`].
+pub fn resolve_nodes<L: Clone + Eq + Hash + Debug>(
+    tree: &Tree<L>,
+    area: Rect,
+    gaps: Gaps,
+) -> Vec<(NodeId, Rect)> {
     let Some(root) = tree.root() else {
         return Vec::new();
     };
@@ -73,16 +93,29 @@ pub fn resolve<L: Clone + Eq + Hash + Debug>(
     out
 }
 
+/// Every *cell* — window or empty slot — with its rectangle, in layout order.
+pub fn resolve_cells<L: Clone + Eq + Hash + Debug>(
+    tree: &Tree<L>,
+    area: Rect,
+    gaps: Gaps,
+) -> Vec<(super::tree::Cell<L>, Rect)> {
+    resolve_nodes(tree, area, gaps)
+        .into_iter()
+        .filter_map(|(node, rect)| tree.cell(node).map(|cell| (cell, rect)))
+        .collect()
+}
+
 fn place<L: Clone + Eq + Hash + Debug>(
     tree: &Tree<L>,
     node: NodeId,
     rect: Rect,
     inner: i32,
-    out: &mut Vec<(L, Rect)>,
+    out: &mut Vec<(NodeId, Rect)>,
 ) {
     match tree.node(node) {
-        Some(Node::Leaf(leaf)) => out.push((leaf.clone(), rect)),
+        Some(Node::Leaf(_)) | Some(Node::Empty(_)) => out.push((node, rect)),
         Some(Node::Container { axis, children }) => {
+            out.push((node, rect));
             let n = children.len();
             if n == 0 {
                 return;

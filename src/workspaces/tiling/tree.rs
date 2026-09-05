@@ -76,13 +76,42 @@ pub struct Child {
     pub share: f32,
 }
 
+/// Identity of an empty slot, unique within one tree for as long as the slot
+/// lives. Not a [`NodeId`]: arena slots are recycled, and a slot has to stay
+/// recognisable across the relayouts a design-mode edit triggers.
+pub type EmptyId = u32;
+
 /// A node of the tree.
 #[derive(Debug, Clone)]
 pub enum Node<L> {
     /// A window.
     Leaf(L),
+    /// A cell reserved by design mode with no window in it yet. It takes up
+    /// space in the layout exactly like a leaf; the next window to map fills
+    /// it (`specs/tiling.md`, *Design mode*).
+    Empty(EmptyId),
     /// A split holding two or more children in order.
     Container { axis: Axis, children: Vec<Child> },
+}
+
+/// What occupies one cell of the layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cell<L> {
+    Window(L),
+    Empty(EmptyId),
+}
+
+impl<L> Cell<L> {
+    pub fn window(&self) -> Option<&L> {
+        match self {
+            Cell::Window(l) => Some(l),
+            Cell::Empty(_) => None,
+        }
+    }
+
+    pub fn is_empty_slot(&self) -> bool {
+        matches!(self, Cell::Empty(_))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +126,8 @@ pub struct Tree<L> {
     slots: Vec<Option<Slot<L>>>,
     free: Vec<NodeId>,
     root: Option<NodeId>,
+    /// Never reused, so an empty slot's identity outlives an arena slot.
+    next_empty: EmptyId,
 }
 
 impl<L> Default for Tree<L> {
@@ -105,6 +136,7 @@ impl<L> Default for Tree<L> {
             slots: Vec::new(),
             free: Vec::new(),
             root: None,
+            next_empty: 0,
         }
     }
 }
@@ -145,17 +177,219 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
         out
     }
 
-    /// Every leaf *node id*, in layout order.
+    /// Every window leaf's *node id*, in layout order. Empty slots are not
+    /// leaves: nothing that acts on a window has anything to do there.
     pub fn leaf_nodes(&self) -> Vec<NodeId> {
+        self.cell_nodes()
+            .into_iter()
+            .filter(|id| matches!(self.node(*id), Some(Node::Leaf(_))))
+            .collect()
+    }
+
+    /// Every *cell* node id — windows and empty slots alike — in layout
+    /// order. This is what takes up space, so it is what the layout counts.
+    pub fn cell_nodes(&self) -> Vec<NodeId> {
         let mut out = Vec::new();
         if let Some(root) = self.root {
-            self.collect_leaf_nodes(root, &mut out);
+            self.collect_cell_nodes(root, &mut out);
         }
         out
     }
 
+    /// What sits in `id`, when it is a cell rather than a container.
+    pub fn cell(&self, id: NodeId) -> Option<Cell<L>> {
+        match self.node(id)? {
+            Node::Leaf(l) => Some(Cell::Window(l.clone())),
+            Node::Empty(e) => Some(Cell::Empty(*e)),
+            Node::Container { .. } => None,
+        }
+    }
+
+    /// The number of cells: windows plus empty slots.
     pub fn len(&self) -> usize {
-        self.leaf_nodes().len()
+        self.cell_nodes().len()
+    }
+
+    /// The container axis of `id`, or `None` when it is a cell.
+    pub fn axis(&self, id: NodeId) -> Option<Axis> {
+        self.axis_of(id)
+    }
+
+    /// A container's children, in order. Empty for a cell.
+    pub fn children(&self, id: NodeId) -> Vec<Child> {
+        match self.node(id) {
+            Some(Node::Container { children, .. }) => children.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    // ── Empty slots ──────────────────────────────────────────────────────
+
+    /// Mint an identity for a new empty slot.
+    pub fn new_empty_id(&mut self) -> EmptyId {
+        let id = self.next_empty;
+        self.next_empty = self.next_empty.wrapping_add(1);
+        id
+    }
+
+    /// Every empty slot, in layout order.
+    pub fn empty_slots(&self) -> Vec<EmptyId> {
+        self.cell_nodes()
+            .into_iter()
+            .filter_map(|id| match self.node(id) {
+                Some(Node::Empty(e)) => Some(*e),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The node holding empty slot `slot`.
+    pub fn node_of_empty(&self, slot: EmptyId) -> Option<NodeId> {
+        self.cell_nodes()
+            .into_iter()
+            .find(|id| matches!(self.node(*id), Some(Node::Empty(e)) if *e == slot))
+    }
+
+    /// The empty slot a newly mapped window should fill: `preferred` when it
+    /// is still there, otherwise the first one in layout order.
+    pub fn next_empty(&self, preferred: Option<EmptyId>) -> Option<EmptyId> {
+        let slots = self.empty_slots();
+        match preferred {
+            Some(p) if slots.contains(&p) => Some(p),
+            _ => slots.first().copied(),
+        }
+    }
+
+    /// Put `leaf` into empty slot `slot`, keeping the slot's share.
+    pub fn fill_empty(&mut self, slot: EmptyId, leaf: L) -> bool {
+        let Some(node) = self.node_of_empty(slot) else {
+            return false;
+        };
+        if let Some(n) = self.node_mut(node) {
+            *n = Node::Leaf(leaf);
+            return true;
+        }
+        false
+    }
+
+    /// Drop an empty slot, the way [`Tree::remove`] drops a window.
+    pub fn remove_empty(&mut self, slot: EmptyId) -> bool {
+        match self.node_of_empty(slot) {
+            Some(node) => {
+                self.remove_node(node);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Replace the cell at `node` with a container of `axis` holding that cell
+    /// and a fresh empty slot, half each. Returns the new slot's id.
+    ///
+    /// This is design mode's "split this cell": the window stays where it is
+    /// and the space it gives up becomes a slot to drop something into.
+    pub fn split_cell(&mut self, node: NodeId, axis: Axis) -> Option<EmptyId> {
+        if !matches!(self.node(node), Some(Node::Leaf(_)) | Some(Node::Empty(_))) {
+            return None;
+        }
+        let slot = self.new_empty_id();
+        let parent = self.parent_of(node);
+        let new_node = self.alloc(Node::Empty(slot), None);
+        let container = self.alloc(
+            Node::Container {
+                axis,
+                children: vec![
+                    Child { node, share: 0.5 },
+                    Child {
+                        node: new_node,
+                        share: 0.5,
+                    },
+                ],
+            },
+            parent,
+        );
+        self.set_parent(node, Some(container));
+        self.set_parent(new_node, Some(container));
+        self.replace_in_parent(node, container, parent);
+        Some(slot)
+    }
+
+    /// Take one cell node out of the tree, restoring every invariant.
+    pub fn remove_node(&mut self, node: NodeId) {
+        match self.parent_of(node) {
+            None => {
+                if self.root == Some(node) {
+                    self.root = None;
+                }
+                self.free_node(node);
+            }
+            Some(parent) => {
+                self.detach_child(parent, node);
+                self.free_node(node);
+                self.dissolve_upwards(parent);
+            }
+        }
+    }
+
+    // ── Design-mode share editing ────────────────────────────────────────
+
+    /// Set the shares of the two children either side of the bar at `index`
+    /// in `container`, keeping their sum — and so every other child's share —
+    /// exactly as it was.
+    pub fn set_pair_shares(&mut self, container: NodeId, index: usize, first: f32) -> bool {
+        let Some(Node::Container { children, .. }) = self.node_mut(container) else {
+            return false;
+        };
+        if index + 1 >= children.len() {
+            return false;
+        }
+        let pair = children[index].share + children[index + 1].share;
+        let first = first.clamp(MIN_SHARE.min(pair), (pair - MIN_SHARE).max(0.0));
+        if (children[index].share - first).abs() < f32::EPSILON {
+            return false;
+        }
+        children[index].share = first;
+        children[index + 1].share = pair - first;
+        true
+    }
+
+    /// Replace the whole tree with `cells` laid out by `builder`. Used by the
+    /// design-mode presets, which build a shape out of empty slots.
+    pub fn set_root(&mut self, root: Option<NodeId>) {
+        self.root = root;
+        if let Some(root) = root {
+            self.set_parent(root, None);
+        }
+    }
+
+    /// Allocate a bare empty-slot node, unparented. Callers wire it up.
+    pub fn alloc_empty(&mut self) -> NodeId {
+        let slot = self.new_empty_id();
+        self.alloc(Node::Empty(slot), None)
+    }
+
+    /// Allocate a container over `children`, equally shared, and adopt them.
+    pub fn alloc_container(&mut self, axis: Axis, children: &[NodeId]) -> NodeId {
+        let share = if children.is_empty() {
+            1.0
+        } else {
+            1.0 / children.len() as f32
+        };
+        let kids: Vec<Child> = children
+            .iter()
+            .map(|node| Child { node: *node, share })
+            .collect();
+        let container = self.alloc(
+            Node::Container {
+                axis,
+                children: kids,
+            },
+            None,
+        );
+        for child in children {
+            self.set_parent(*child, Some(container));
+        }
+        container
     }
 
     /// Is `leaf` in this tree?
@@ -210,7 +444,7 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
 
         let target = focused
             .and_then(|f| self.node_of(f))
-            .or_else(|| self.leaf_nodes().last().copied());
+            .or_else(|| self.cell_nodes().last().copied());
         let Some(target) = target else {
             let n = self.alloc(Node::Leaf(new_leaf), None);
             self.root = Some(n);
@@ -302,17 +536,7 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
         let Some(node) = self.node_of(leaf) else {
             return false;
         };
-        match self.parent_of(node) {
-            None => {
-                self.root = None;
-                self.free_node(node);
-            }
-            Some(parent) => {
-                self.detach_child(parent, node);
-                self.free_node(node);
-                self.dissolve_upwards(parent);
-            }
-        }
+        self.remove_node(node);
         true
     }
 
@@ -673,17 +897,17 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
                     self.collect_leaves(k, out);
                 }
             }
-            None => {}
+            Some(Node::Empty(_)) | None => {}
         }
     }
 
-    fn collect_leaf_nodes(&self, id: NodeId, out: &mut Vec<NodeId>) {
+    fn collect_cell_nodes(&self, id: NodeId, out: &mut Vec<NodeId>) {
         match self.node(id) {
-            Some(Node::Leaf(_)) => out.push(id),
+            Some(Node::Leaf(_)) | Some(Node::Empty(_)) => out.push(id),
             Some(Node::Container { children, .. }) => {
                 let kids: Vec<NodeId> = children.iter().map(|c| c.node).collect();
                 for k in kids {
-                    self.collect_leaf_nodes(k, out);
+                    self.collect_cell_nodes(k, out);
                 }
             }
             None => {}
