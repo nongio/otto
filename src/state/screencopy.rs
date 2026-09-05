@@ -84,6 +84,11 @@ pub struct PendingScreencopy {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
+    /// Whether the client asked for the pointer to be drawn into the capture
+    /// (`grim -c`). The cursor normally scans out on its own KMS plane, which
+    /// the capture blit never sees, so this has to reach the render loop to
+    /// force the cursor to composite with everything else.
+    pub overlay_cursor: bool,
 }
 
 fn find_output_for_wl<BackendData: Backend>(
@@ -262,6 +267,7 @@ where
                     width: data.width,
                     height: data.height,
                     stride: data.stride,
+                    overlay_cursor: data.overlay_cursor,
                 });
                 // Wake the render loop — the compositor may be idle with no pending
                 // damage, so `should_draw` would normally be false and screencopy

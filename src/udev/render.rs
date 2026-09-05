@@ -2862,10 +2862,20 @@ pub(super) fn render_output_frame<'a>(
     }
 
     // Screencopy frames composite everything into the primary swapchain so
-    // the capture blit sees the full image; the cursor keeps its own plane
-    // so captures exclude the pointer.
+    // the capture blit sees the full image. The cursor normally keeps its own
+    // plane, which the blit never reads, so captures exclude the pointer —
+    // unless a client asked for it (`grim -c`), in which case the cursor has
+    // to come down off the plane and composite with everything else or the
+    // request is silently ignored.
+    let screencopy_wants_cursor = pending_screencopy
+        .iter()
+        .any(|p| p.overlay_cursor && &p.output == output);
     let frame_flags = if screencopy_pending {
-        smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+        if screencopy_wants_cursor {
+            smithay::backend::drm::compositor::FrameFlags::empty()
+        } else {
+            smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
+        }
     } else {
         smithay::backend::drm::compositor::FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT
             | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
