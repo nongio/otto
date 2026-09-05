@@ -32,6 +32,9 @@ use crate::{
 /// The tiling zones a window can be snapped to, re-exported for tests and
 /// external callers driving the headless compositor.
 pub use crate::workspaces::TileZone;
+/// The tiling tree's axis and direction types, re-exported so a test can
+/// drive the tiling actions without reaching into the compositor's modules.
+pub use crate::workspaces::tiling::{Axis, Direction};
 
 const OUTPUT_NAME: &str = "headless";
 const DEFAULT_WIDTH: i32 = 1920;
@@ -796,6 +799,112 @@ impl HeadlessHandle {
                 .unmaximised_rect;
             Some((rect.loc.x, rect.loc.y, rect.size.w, rect.size.h))
         })
+    }
+
+    // ── The tiling tree ──────────────────────────────────────────────────
+
+    /// Toggle the current workspace between floating and tiling — the
+    /// `TilingToggle` shortcut's entry point.
+    pub fn toggle_tiling(&self) {
+        self.with_state(|state| {
+            state.handle_tiling_toggle();
+        });
+    }
+
+    /// Does the current workspace on the headless output tile?
+    pub fn workspace_tiling_enabled(&self) -> bool {
+        self.query(|state| {
+            let Some(output) = headless_output(state) else {
+                return false;
+            };
+            state.workspaces.output_tiles(&output)
+        })
+    }
+
+    /// Titles of the windows in the current workspace's tree, in layout order
+    /// (left to right, top to bottom).
+    pub fn tiling_tree_leaves(&self) -> Vec<String> {
+        self.query(|state| {
+            let Some(output) = headless_output(state) else {
+                return Vec::new();
+            };
+            let Some(workspace) = state.workspaces.current_tiling_workspace(&output) else {
+                return Vec::new();
+            };
+            let leaves = workspace.tiling.read().unwrap().tree.leaves();
+            leaves
+                .iter()
+                .filter_map(|id| state.workspaces.windows_map.get(id))
+                .map(|w| w.xdg_title())
+                .collect()
+        })
+    }
+
+    /// The cells the current workspace's tree resolves to, in layout order:
+    /// `(title, (x, y, width, height))` in logical pixels. This is the layout
+    /// truth — what the clients are configured with — rather than what the
+    /// windows have drawn so far.
+    pub fn tiling_cell_rects(&self) -> Vec<(String, (i32, i32, i32, i32))> {
+        self.query(|state| {
+            let Some(output) = headless_output(state) else {
+                return Vec::new();
+            };
+            let Some(workspace) = state.workspaces.current_tiling_workspace(&output) else {
+                return Vec::new();
+            };
+            state.recalculate_exclusive_zones(&output);
+            let zone = state.usable_zone(&output);
+            let gaps = crate::config::Config::with(|c| c.tiling.gaps());
+            let area = crate::workspaces::tiling::Rect::new(
+                zone.loc.x,
+                zone.loc.y,
+                zone.size.w,
+                zone.size.h,
+            );
+            let tree = workspace.tiling.read().unwrap();
+            crate::workspaces::tiling::layout::resolve(&tree.tree, area, gaps)
+                .into_iter()
+                .filter_map(|(id, rect)| {
+                    let title = state.workspaces.windows_map.get(&id)?.xdg_title();
+                    Some((title, (rect.x, rect.y, rect.w, rect.h)))
+                })
+                .collect()
+        })
+    }
+
+    /// Move focus to the neighbouring tile in `direction`.
+    pub fn tiling_focus(&self, direction: Direction) {
+        self.with_state(move |state| {
+            state.handle_tiling_focus(direction);
+        });
+    }
+
+    /// Move the focused tile through the tree in `direction`.
+    pub fn tiling_move(&self, direction: Direction) {
+        self.with_state(move |state| {
+            state.handle_tiling_move(direction);
+        });
+    }
+
+    /// Arm the next insertion to split the focused cell along `axis`.
+    pub fn tiling_split(&self, axis: Axis) {
+        self.with_state(move |state| {
+            state.handle_tiling_split(axis);
+        });
+    }
+
+    /// Grow or shrink the focused cell along `axis` by one resize step.
+    pub fn tiling_resize(&self, axis: Axis, grow: bool) {
+        self.with_state(move |state| {
+            state.handle_tiling_resize(axis, grow);
+        });
+    }
+
+    /// Even out the shares of the focused container.
+    pub fn tiling_equalize(&self) {
+        self.with_state(|state| {
+            state.handle_tiling_equalize();
+        });
     }
 
     /// The area a maximized window fills on the headless output — output
@@ -1600,6 +1709,9 @@ fn run_headless_loop(
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
+            // Pick up any tiling tree a close, minimize or workspace move
+            // left dirty; a no-op flag read when nothing changed.
+            state.flush_tiling_relayout();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();
@@ -1669,4 +1781,13 @@ fn find_node_by_key(
         }
     }
     None
+}
+
+/// The headless output, or `None` before it has been created.
+fn headless_output<B: Backend>(state: &Otto<B>) -> Option<Output> {
+    state
+        .workspaces
+        .outputs()
+        .find(|o| o.name() == OUTPUT_NAME)
+        .cloned()
 }
