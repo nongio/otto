@@ -210,3 +210,95 @@ mod cursor_shape_tests {
         handle.stop();
     }
 }
+
+/// Whether a client's own cursor bitmap survives the pointer moving inside
+/// the window it set the cursor for.
+///
+/// A client that does not use the cursor-shape protocol uploads a bitmap and
+/// expects it to stay up until the pointer leaves. The compositor resets to
+/// its default cursor on every pointer-focus change, which is correct — but
+/// only if focus is actually stable while the pointer stays over one surface.
+/// Otto was seen resetting to `default` eight times for every cursor the
+/// client set, over a window the pointer never left, which leaves the client's
+/// cursor mostly not drawn at all.
+#[cfg(feature = "headless")]
+mod client_cursor_tests {
+    use otto::headless::{HeadlessConfig, HeadlessHandle};
+    use otto_kit::testing::TestClient;
+    use serial_test::serial;
+    use std::time::Duration;
+
+    /// The client's cursor bitmap, sized so it cannot be confused with
+    /// anything Otto would draw from a theme.
+    const CURSOR_PX: u32 = 48;
+
+    #[test]
+    #[serial]
+    fn a_client_cursor_survives_the_pointer_moving_inside_its_window() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("connect");
+
+        let toplevel = client.create_toplevel("client-cursor", 400, 300);
+        handle.wait(Duration::from_millis(120));
+        client.roundtrip().expect("roundtrip");
+        toplevel.lock().unwrap().commit_frame();
+        client.roundtrip().expect("roundtrip");
+        handle.wait(Duration::from_millis(120));
+
+        let (x, y, w, h) = handle
+            .window_logical_geometry("client-cursor")
+            .expect("the window is mapped");
+        let (cx, cy) = (x as f64 + w as f64 / 2.0, y as f64 + h as f64 / 2.0);
+
+        handle.pointer_move(cx, cy);
+        handle.wait(Duration::from_millis(80));
+        client.roundtrip().expect("roundtrip");
+
+        let cursor = client
+            .set_cursor_surface(CURSOR_PX, CURSOR_PX)
+            .expect("the pointer should have entered the window");
+        client.roundtrip().expect("roundtrip");
+        handle.wait(Duration::from_millis(80));
+
+        let (kind, ..) = handle.cursor_render_state();
+        assert_eq!(
+            kind, "surface",
+            "the compositor should be drawing the client's own bitmap right after it set one"
+        );
+
+        // Walk the pointer around well inside the window. Every one of these
+        // stays over the same surface, so none of them is a focus change and
+        // none should take the client's cursor away.
+        let mut stomped = Vec::new();
+        for (i, (dx, dy)) in [(6.0, 0.0), (0.0, 6.0), (-6.0, 0.0), (0.0, -6.0)]
+            .into_iter()
+            .cycle()
+            .take(12)
+            .enumerate()
+        {
+            handle.pointer_move(cx + dx, cy + dy);
+            handle.wait(Duration::from_millis(30));
+            client.roundtrip().expect("roundtrip");
+
+            let (kind, ..) = handle.cursor_render_state();
+            if kind != "surface" {
+                stomped.push(format!("move {i}: {kind}"));
+            }
+        }
+
+        // Drop the client before stopping: the compositor holds the cursor
+        // surface as its current cursor image, and tearing the compositor down
+        // underneath a live client wedges the shutdown.
+        drop(cursor);
+        drop(client);
+        handle.wait(Duration::from_millis(80));
+
+        assert!(
+            stomped.is_empty(),
+            "the client's cursor was replaced by one of Otto's while the pointer \
+             stayed inside its window: {stomped:?}"
+        );
+
+        handle.stop();
+    }
+}
