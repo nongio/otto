@@ -181,6 +181,7 @@ members = [
     "components/otto-files",
     "components/otto-quickview",
     "components/otto-media-kit",
+    "components/otto-msg",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",

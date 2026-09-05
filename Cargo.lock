@@ -5298,6 +5298,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-msg"
+version = "1.2.0"
+dependencies = [
+ "serde_json",
+ "zbus 4.4.0",
+]
+
+[[package]]
 name = "otto-quickview"
 version = "1.2.0"
 dependencies = [
