@@ -148,6 +148,10 @@ expect.
 | `ResizeGrowHeight` / `ResizeShrinkHeight` | The same vertically |
 | `EqualizeContainer` | Give every cell in the focused container the same share |
 
+With `xkb_options = ["altwin:ctrl_win"]` (or `mac_style_modifiers`) set under
+`[input]`, the Cmd key reports as Control and a `Logo+…` binding can never
+match; bind these as `Ctrl+Alt+h` and so on instead — Cmd+Alt on the keyboard.
+
 In a tiling workspace `TileWindowLeft` and `TileWindowRight` do not half-snap:
 they move focus left and right, since every position is already a slot. Gaps,
 the layout animation and the resize step are configured under `[tiling]` — see
