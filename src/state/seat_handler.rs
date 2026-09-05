@@ -15,6 +15,77 @@ use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
 
 use super::{Backend, Otto};
 
+/// Live toggle for the cursor trace: `touch` this path to start logging what
+/// each client asks the pointer to look like, remove it to stop. A file check
+/// per cursor change costs nothing next to what a cursor change already does,
+/// and it beats a rebuild-and-relogin cycle to answer one question.
+const CURSOR_TRACE_TOGGLE: &str = "/tmp/otto-cursordbg";
+
+impl<BackendData: Backend> Otto<BackendData> {
+    /// Record where a cursor came from, which is the thing a screenshot cannot
+    /// tell you: a client either names a shape and lets Otto draw it, or hands
+    /// over a bitmap of its own. Only the first is Otto's to get right, so a
+    /// pointer that looks wrong over one window and right over every other is
+    /// not diagnosable without knowing which of the two it is.
+    fn log_cursor_image(&self, image: &CursorImageStatus) {
+        if !std::path::Path::new(CURSOR_TRACE_TOGGLE).exists() {
+            return;
+        }
+
+        let scale = self
+            .workspaces
+            .outputs()
+            .next()
+            .map(|o| o.current_scale().integer_scale())
+            .unwrap_or(1);
+
+        match image {
+            CursorImageStatus::Hidden => {
+                tracing::info!(target: "otto::cursordbg", "hidden");
+            }
+            CursorImageStatus::Named(icon) => {
+                let drawn = self
+                    .cursor_manager
+                    .get_cursor_with_name(*icon, scale)
+                    .map(|cursor| {
+                        let (_, image) = cursor.frame(0);
+                        format!("{}x{}", image.width, image.height)
+                    })
+                    .unwrap_or_else(|| "unresolved".to_string());
+                tracing::info!(
+                    target: "otto::cursordbg",
+                    "named {} -> {drawn} (scale {scale}, Otto draws it)",
+                    icon.name(),
+                );
+            }
+            CursorImageStatus::Surface(surface) => {
+                use smithay::backend::renderer::utils::with_renderer_surface_state;
+                use smithay::wayland::compositor::with_states;
+
+                let buffer_scale = with_states(surface, |states| {
+                    states
+                        .cached_state
+                        .get::<smithay::wayland::compositor::SurfaceAttributes>()
+                        .current()
+                        .buffer_scale
+                });
+                // Logical size: what the buffer covers on screen once its own
+                // scale is applied. Compare it against `cursor_size` — a client
+                // bitmap half the configured size is the client's own doing.
+                let logical = with_renderer_surface_state(surface, |state| state.buffer_size())
+                    .flatten()
+                    .map(|d| format!("{}x{}", d.w, d.h))
+                    .unwrap_or_else(|| "?".to_string());
+                let configured = crate::config::Config::with(|c| c.cursor_size);
+                tracing::info!(
+                    target: "otto::cursordbg",
+                    "surface {logical} logical, buffer_scale {buffer_scale} (client drew it; cursor_size is {configured}, output scale {scale})",
+                );
+            }
+        }
+    }
+}
+
 impl<BackendData: Backend> SeatHandler for Otto<BackendData> {
     type KeyboardFocus = KeyboardFocusTarget<BackendData>;
     type PointerFocus = PointerFocusTarget<BackendData>;
@@ -41,6 +112,7 @@ impl<BackendData: Backend> SeatHandler for Otto<BackendData> {
     }
 
     fn cursor_image(&mut self, _seat: &smithay::input::Seat<Self>, image: CursorImageStatus) {
+        self.log_cursor_image(&image);
         *self.cursor_status.lock().unwrap() = image.clone();
         self.cursor_manager.set_cursor_image(image);
     }
