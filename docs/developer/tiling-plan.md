@@ -172,6 +172,18 @@ Floating windows always draw above the tiles, keep their full titlebar and
 shadow, and are moved and resized as on a floating workspace. Nothing in the
 tree ever overlaps them.
 
+**Otto's own dialogs.** The portal file picker is the test case: the portal
+hands otto-files a `parent_window` handle and the file-picker spec requires
+the picker to be parented to it, but today otto-files only stores the
+string. The picker must import the handle through xdg-foreign (the
+compositor already implements it) and call `set_parent`; then
+`is_tileable` floats it for the same reason it floats any dialog, and it
+stacks over the requesting window everywhere. A picker with no parent handle
+gets its own app id, `otto-files-picker`, and the compositor ships a
+built-in float list of its own dialogs which `[tiling] float` extends. The
+same check applies to every otto-kit dialog surface (portal access dialog,
+settings sub-dialogs).
+
 ## Animation configuration
 
 Every tiling animation — a window joining or leaving the tree, a move or
