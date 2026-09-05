@@ -10,6 +10,7 @@
 //! See `specs/tiling.md` for the behaviour and
 //! `docs/developer/tiling-plan.md` for how the phases fit together.
 
+pub mod command;
 pub mod design;
 pub mod layout;
 pub mod state;

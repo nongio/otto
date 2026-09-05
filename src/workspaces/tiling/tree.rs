@@ -177,6 +177,40 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
         out
     }
 
+    /// Every leaf under `id`, in layout order. A leaf node yields itself.
+    pub fn leaves_under(&self, id: NodeId) -> Vec<L> {
+        let mut out = Vec::new();
+        if self.node(id).is_some() {
+            self.collect_leaves(id, &mut out);
+        }
+        out
+    }
+
+    /// The split axis of `id`, or `None` when it is a leaf.
+    pub fn container_axis(&self, id: NodeId) -> Option<Axis> {
+        self.axis_of(id)
+    }
+
+    /// The children of `id`, or an empty list when it is a leaf.
+    pub fn children_of(&self, id: NodeId) -> Vec<Child> {
+        match self.node(id) {
+            Some(Node::Container { children, .. }) => children.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Turn a container's split the other way (i3's `layout splith` /
+    /// `splitv`). `false` when `id` is a leaf, or already lies that way.
+    pub fn set_container_axis(&mut self, id: NodeId, axis: Axis) -> bool {
+        match self.node_mut(id) {
+            Some(Node::Container { axis: current, .. }) if *current != axis => {
+                *current = axis;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Every window leaf's *node id*, in layout order. Empty slots are not
     /// leaves: nothing that acts on a window has anything to do there.
     pub fn leaf_nodes(&self) -> Vec<NodeId> {
