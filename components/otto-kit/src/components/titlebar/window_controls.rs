@@ -38,6 +38,10 @@ pub struct WindowControls {
     /// zoomed by double-clicking its bar — and turned on by the desktop's
     /// `show_maximize_button` setting; see [`crate::maximize_button`].
     pub show_zoom: bool,
+    /// Whether the minimize dot is drawn. A tile's minimal bar keeps only
+    /// close: it is one text line high, and a tiled window is not somewhere a
+    /// user minimizes from.
+    pub show_minimize: bool,
 }
 
 impl Default for WindowControls {
@@ -60,6 +64,7 @@ impl WindowControls {
             dark: false,
             reversed: false,
             show_zoom: crate::maximize_button::enabled(),
+            show_minimize: true,
         }
     }
 
@@ -117,11 +122,19 @@ impl WindowControls {
         self
     }
 
+    /// Draw the close dot alone — the minimal bar a tile wears.
+    pub fn close_only(mut self) -> Self {
+        self.show_zoom = false;
+        self.show_minimize = false;
+        self
+    }
+
     /// The dots left to right.
     fn order(&self) -> Vec<WindowControl> {
         let mut order: Vec<WindowControl> = Self::ORDER
             .into_iter()
             .filter(|control| self.show_zoom || *control != WindowControl::Zoom)
+            .filter(|control| self.show_minimize || *control != WindowControl::Minimize)
             .collect();
         if self.reversed {
             order.reverse();

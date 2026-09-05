@@ -42,6 +42,10 @@ pub struct ToplevelSurface {
     /// Whether the last configure carried the activated state — the window is
     /// the focused one. Shared for the same reason as `maximized`.
     activated: Arc<AtomicBool>,
+    /// Whether the last configure carried any of the tiled edge states. A
+    /// tiled window abuts its neighbours, so it squares its corners and wears
+    /// the compact bar; see [`crate::components::titlebar::DecorationVariant`].
+    tiled: Arc<AtomicBool>,
 }
 
 impl ToplevelSurface {
@@ -156,6 +160,7 @@ impl ToplevelSurface {
             configured: false,
             maximized: Arc::new(AtomicBool::new(false)),
             activated: Arc::new(AtomicBool::new(false)),
+            tiled: Arc::new(AtomicBool::new(false)),
         };
 
         Ok(toplevel)
@@ -174,6 +179,18 @@ impl ToplevelSurface {
             .store(configure.is_maximized(), Ordering::Relaxed);
         self.activated
             .store(configure.is_activated(), Ordering::Relaxed);
+        // Any edge is enough: the states say which sides abut something, and
+        // a window with even one of them is in somebody's tree.
+        use smithay_client_toolkit::reexports::csd_frame::WindowState;
+        self.tiled.store(
+            configure.state.intersects(
+                WindowState::TILED_LEFT
+                    | WindowState::TILED_RIGHT
+                    | WindowState::TILED_TOP
+                    | WindowState::TILED_BOTTOM,
+            ),
+            Ordering::Relaxed,
+        );
 
         // Get configured size or use initial size
         let (width, height) = match configure.new_size {
@@ -225,6 +242,28 @@ impl ToplevelSurface {
     /// itself dimmed while another window has the focus.
     pub fn is_activated(&self) -> bool {
         self.activated.load(Ordering::Relaxed)
+    }
+
+    /// Whether the compositor's last configure said the window is tiled on at
+    /// least one edge — that is, whether it is a tile in a tiling workspace.
+    pub fn is_tiled(&self) -> bool {
+        self.tiled.load(Ordering::Relaxed)
+    }
+
+    /// The decoration this window should draw: the full bar while it floats,
+    /// and whatever the desktop reduces a tile to while it is tiled.
+    ///
+    /// This is the whole of the client side of `[tiling] decoration` — an app
+    /// that draws its titlebar through
+    /// [`WindowDecoration`](crate::components::titlebar::WindowDecoration)
+    /// passes this to `with_variant` and needs nothing else.
+    pub fn decoration_variant(&self) -> crate::components::titlebar::DecorationVariant {
+        use crate::components::titlebar::DecorationVariant;
+        if self.is_tiled() {
+            DecorationVariant::tiled(crate::tile_decoration::decoration())
+        } else {
+            DecorationVariant::Floating
+        }
     }
 
     /// Get the underlying XDG window

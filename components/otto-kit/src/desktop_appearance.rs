@@ -1,7 +1,8 @@
-//! The three appearance settings that are Otto's own, followed live.
+//! The appearance settings that are Otto's own, followed live.
 //!
-//! Corner rounding, which end of the titlebar the window controls sit at, and
-//! whether the zoom dot is drawn are read from the environment on first use
+//! Corner rounding, which end of the titlebar the window controls sit at,
+//! whether the zoom dot is drawn, and how much chrome a tile keeps are read
+//! from the environment on first use
 //! (see [`crate::corners`]) because that is the one channel every child and
 //! every bus-activated helper inherits. But an environment variable is a value
 //! a process was *started* with: change the setting and every window already on
@@ -39,6 +40,7 @@ const ROUNDED_CORNERS: &str = "rounded-corners";
 const FROSTING: &str = "frosting";
 const WINDOW_CONTROLS_SIDE: &str = "window-controls-side";
 const MAXIMIZE_BUTTON: &str = "maximize-button";
+const TILING_DECORATION: &str = "tiling-decoration";
 
 /// Spawn the watcher. Safe to call repeatedly — only one is ever active.
 pub fn spawn_desktop_appearance_watcher() {
@@ -69,6 +71,7 @@ const OTTO_IDS: &[(&str, &str)] = &[
     ("frosting", FROSTING),
     ("window_controls_side", WINDOW_CONTROLS_SIDE),
     ("show_maximize_button", MAXIMIZE_BUTTON),
+    ("tiling.decoration", TILING_DECORATION),
 ];
 
 /// Follow `org.otto.Settings` directly: read the three settings, then keep up
@@ -159,6 +162,15 @@ fn apply(key: &str, value: Value<'_>) -> bool {
             crate::maximize_button::set(shown);
             true
         }
+        (TILING_DECORATION, Value::Str(decoration)) => {
+            match crate::tile_decoration::TileDecoration::parse(&decoration) {
+                Some(decoration) => {
+                    crate::tile_decoration::set(decoration);
+                    true
+                }
+                None => false,
+            }
+        }
         (WINDOW_CONTROLS_SIDE, Value::Str(side)) => match ControlsSide::parse(&side) {
             Some(side) => {
                 crate::controls_side::set(side);
@@ -196,6 +208,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
         FROSTING,
         WINDOW_CONTROLS_SIDE,
         MAXIMIZE_BUTTON,
+        TILING_DECORATION,
     ] {
         match proxy.read(NAMESPACE, key).await {
             Ok(owned) => changed |= apply(key, owned.into()),
@@ -247,7 +260,7 @@ mod tests {
         assert_eq!(unwrap_variant(Value::Bool(false)), Value::Bool(false));
     }
 
-    /// The compositor's channel and the portal's carry the same three
+    /// The compositor's channel and the portal's carry the same
     /// settings. A key followed on one and not the other is a setting that
     /// applies live in some sessions and not others, which is worse than not
     /// applying live at all.
@@ -260,6 +273,7 @@ mod tests {
             FROSTING,
             WINDOW_CONTROLS_SIDE,
             MAXIMIZE_BUTTON,
+            TILING_DECORATION,
         ];
         portal.sort_unstable();
         assert_eq!(direct, portal);
@@ -274,5 +288,6 @@ mod tests {
         // Right type, wrong shape: a side is a string, not a boolean.
         assert!(!apply(WINDOW_CONTROLS_SIDE, Value::from(true)));
         assert!(!apply(ROUNDED_CORNERS, Value::from("yes")));
+        assert!(!apply(TILING_DECORATION, Value::from("pixel 2")));
     }
 }

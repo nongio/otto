@@ -10,6 +10,43 @@ use super::{
 };
 use crate::controls_side::ControlsSide;
 
+/// How much of a decoration a window gets.
+///
+/// A floating window gets the full bar; a tile gets less, and how much less is
+/// the desktop's `[tiling] decoration` setting — see
+/// [`crate::tile_decoration`]. The variant is what both the compositor and an
+/// otto-kit client switch on, so a server-decorated tile and a client-drawn
+/// one end up the same height.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DecorationVariant {
+    /// The full bar: title, all three controls, rounded top corners, shadow.
+    #[default]
+    Floating,
+    /// A tile under `decoration = "minimal"`: one text line high, the title,
+    /// the close control alone, square corners, no shadow.
+    Minimal,
+    /// A tile under `decoration = "none"`: no bar at all. The compositor marks
+    /// the focused tile with a hairline border instead.
+    Hidden,
+}
+
+impl DecorationVariant {
+    /// The variant a tile takes under `decoration`.
+    pub fn tiled(decoration: crate::tile_decoration::TileDecoration) -> Self {
+        match decoration {
+            crate::tile_decoration::TileDecoration::Minimal => DecorationVariant::Minimal,
+            crate::tile_decoration::TileDecoration::None => DecorationVariant::Hidden,
+        }
+    }
+
+    /// Whether a window wearing this variant is one of the tree's tiles: the
+    /// cases that square their corners and drop their shadow, alongside
+    /// maximized.
+    pub fn is_tiled(self) -> bool {
+        !matches!(self, DecorationVariant::Floating)
+    }
+}
+
 /// Everything needed to draw one window's decoration, and nothing about who is
 /// drawing it.
 ///
@@ -70,6 +107,9 @@ pub struct WindowDecoration {
     /// Which end of the bar the traffic lights sit at. Defaults to what the
     /// desktop is configured for, so a client that says nothing follows it.
     pub controls_side: ControlsSide,
+    /// How much of a decoration this window gets. A tile gets less; see
+    /// [`DecorationVariant`].
+    pub variant: DecorationVariant,
 }
 
 impl Default for WindowDecoration {
@@ -91,6 +131,7 @@ impl Default for WindowDecoration {
             tint_on_layer: false,
             title_style: Self::DEFAULT_TITLE_STYLE,
             controls_side: crate::controls_side::side(),
+            variant: DecorationVariant::Floating,
         }
     }
 }
@@ -98,8 +139,15 @@ impl Default for WindowDecoration {
 impl WindowDecoration {
     /// Height of the titlebar strip, in logical points
     pub const DEFAULT_HEIGHT: f32 = 34.0;
+    /// Height of a tile's minimal bar: one line of the title type, which is
+    /// 13pt on a 1.5 line, rounded up — a little over half the floating bar.
+    /// [`Self::minimal_height_matches_the_title_line`] holds it to that.
+    pub const MINIMAL_HEIGHT: f32 = 20.0;
     /// Diameter of one traffic-light dot
     pub const CONTROL_SIZE: f32 = 13.0;
+    /// The same dot on a minimal bar, where 13pt would leave no room to
+    /// centre it.
+    pub const MINIMAL_CONTROL_SIZE: f32 = 11.0;
     /// Gap between dots
     pub const CONTROL_SPACING: f32 = 8.0;
     /// Title type: 13pt semibold, one step up from the secondary-label size
@@ -112,6 +160,29 @@ impl WindowDecoration {
             width,
             ..Default::default()
         }
+    }
+
+    /// The bar height a variant asks for, in logical points. The one place
+    /// the compositor and a client both read, so a tile's client area is
+    /// configured with exactly what the bar leaves.
+    pub fn height_for(variant: DecorationVariant) -> f32 {
+        match variant {
+            DecorationVariant::Floating => Self::DEFAULT_HEIGHT,
+            DecorationVariant::Minimal => Self::MINIMAL_HEIGHT,
+            DecorationVariant::Hidden => 0.0,
+        }
+    }
+
+    /// Wear `variant`, taking its height and — for a tile — its square
+    /// corners with it. A tile abuts its neighbours on every side it touches,
+    /// so it squares off exactly as a maximized window does.
+    pub fn with_variant(mut self, variant: DecorationVariant) -> Self {
+        self.variant = variant;
+        self.titlebar_height = Self::height_for(variant);
+        if variant.is_tiled() {
+            self.corner_radius = 0.0;
+        }
+        self
     }
 
     pub fn with_active(mut self, active: bool) -> Self {
@@ -176,8 +247,16 @@ impl WindowDecoration {
     /// the leading group itself — and offset by [`Self::padding`] for hit
     /// testing, which is exactly where `Titlebar` puts it.
     fn controls(&self) -> WindowControls {
-        WindowControls::new()
-            .with_size(Self::CONTROL_SIZE)
+        let controls = WindowControls::new();
+        // A minimal bar keeps the close control alone: it is the one thing a
+        // tile still needs a target for, and there is no room for three.
+        let controls = if self.variant == DecorationVariant::Minimal {
+            controls.close_only()
+        } else {
+            controls
+        };
+        controls
+            .with_size(self.control_size())
             .with_spacing(Self::CONTROL_SPACING)
             .with_active(self.active)
             .with_hovered(self.controls_hovered)
@@ -205,14 +284,29 @@ impl WindowDecoration {
             .with_dark(self.dark)
     }
 
+    /// Diameter of a dot on this bar.
+    fn control_size(&self) -> f32 {
+        match self.variant {
+            DecorationVariant::Minimal => Self::MINIMAL_CONTROL_SIZE,
+            _ => Self::CONTROL_SIZE,
+        }
+    }
+
     /// Dots are vertically centered, so the padding follows the bar height.
     fn padding(&self) -> f32 {
-        ((self.titlebar_height - Self::CONTROL_SIZE) / 2.0).max(4.0)
+        let floor = if self.variant == DecorationVariant::Minimal {
+            // A 20pt bar has 4.5pt above and below an 11pt dot; the 4pt floor
+            // the full bar needs would push it off centre.
+            0.0
+        } else {
+            4.0
+        };
+        ((self.titlebar_height - self.control_size()) / 2.0).max(floor)
     }
 
     /// Which control is under a window-local point, if any.
     pub fn control_at(&self, x: f32, y: f32) -> Option<WindowControl> {
-        if !self.show_controls {
+        if !self.show_controls || self.variant == DecorationVariant::Hidden {
             return None;
         }
         self.controls()
@@ -223,7 +317,7 @@ impl WindowDecoration {
     /// Whether a window-local point is in the draggable part of the titlebar
     /// (the bar, minus the controls).
     pub fn is_drag_area(&self, x: f32, y: f32) -> bool {
-        if y < 0.0 || y > self.titlebar_height || x < 0.0 || x > self.width {
+        if !self.hits_titlebar(x, y) {
             return false;
         }
         self.control_at(x, y).is_none()
@@ -231,6 +325,11 @@ impl WindowDecoration {
 
     /// Whether a window-local point is anywhere in the titlebar strip.
     pub fn hits_titlebar(&self, x: f32, y: f32) -> bool {
+        // A window with no bar has no strip to hit: a zero-height one would
+        // still answer for the single row at y == 0.
+        if self.variant == DecorationVariant::Hidden || self.titlebar_height <= 0.0 {
+            return false;
+        }
         y >= 0.0 && y <= self.titlebar_height && x >= 0.0 && x <= self.width
     }
 
@@ -292,6 +391,11 @@ impl WindowDecoration {
     /// shadow and corner clipping belong to whoever owns the frame (the
     /// compositor's shadow layer, or the client's surface).
     pub fn draw(&self, canvas: &Canvas) {
+        // `none` draws nothing at all — the compositor marks the focused tile
+        // with a hairline border instead.
+        if self.variant == DecorationVariant::Hidden {
+            return;
+        }
         let mut titlebar = Titlebar::new()
             .at(0.0, 0.0)
             .with_width(self.width)
@@ -333,5 +437,71 @@ impl WindowDecoration {
     /// Bounds of the titlebar strip, for damage tracking.
     pub fn bounds(&self) -> Rect {
         Rect::from_wh(self.width, self.titlebar_height)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The minimal bar is one line of the title type. Written as a constant
+    /// because the compositor's geometry needs it before any font is loaded;
+    /// this is what keeps that constant honest against the type scale.
+    #[test]
+    fn minimal_height_matches_the_title_line() {
+        let line = (WindowDecoration::DEFAULT_TITLE_STYLE.size * 1.5).ceil();
+        assert_eq!(WindowDecoration::MINIMAL_HEIGHT, line);
+        // "Roughly half the floating bar", and never taller than it.
+        assert!(WindowDecoration::MINIMAL_HEIGHT < WindowDecoration::DEFAULT_HEIGHT);
+        assert!(WindowDecoration::MINIMAL_HEIGHT > WindowDecoration::DEFAULT_HEIGHT / 2.0 - 4.0);
+    }
+
+    #[test]
+    fn a_variant_carries_its_height_and_its_corners() {
+        let floating = WindowDecoration::new("t", 400.0).with_corner_radius(12.0);
+        assert_eq!(floating.titlebar_height, WindowDecoration::DEFAULT_HEIGHT);
+
+        let minimal = floating.clone().with_variant(DecorationVariant::Minimal);
+        assert_eq!(minimal.titlebar_height, WindowDecoration::MINIMAL_HEIGHT);
+        assert_eq!(minimal.corner_radius, 0.0);
+
+        let hidden = floating.with_variant(DecorationVariant::Hidden);
+        assert_eq!(hidden.titlebar_height, 0.0);
+        assert_eq!(hidden.corner_radius, 0.0);
+    }
+
+    /// Hit testing follows the variant, or a drag lands on a bar that is not
+    /// drawn and a click misses the one that is.
+    #[test]
+    fn hit_testing_follows_the_variant() {
+        let floating = WindowDecoration::new("t", 400.0);
+        assert!(floating.hits_titlebar(200.0, 30.0));
+
+        let minimal = floating.clone().with_variant(DecorationVariant::Minimal);
+        assert!(minimal.hits_titlebar(200.0, 10.0));
+        // Below the compact bar is the client's own content.
+        assert!(!minimal.hits_titlebar(200.0, 30.0));
+
+        let hidden = floating.with_variant(DecorationVariant::Hidden);
+        assert!(!hidden.hits_titlebar(200.0, 0.0));
+        assert!(hidden.control_at(0.0, 0.0).is_none());
+    }
+
+    /// A minimal bar keeps close and nothing else, at either end.
+    #[test]
+    fn a_minimal_bar_keeps_only_close() {
+        for side in [ControlsSide::Left, ControlsSide::Right] {
+            let minimal = WindowDecoration::new("t", 400.0)
+                .with_controls_side(side)
+                .with_variant(DecorationVariant::Minimal);
+            let hits: Vec<WindowControl> = (0..400)
+                .filter_map(|x| minimal.control_at(x as f32, minimal.titlebar_height / 2.0))
+                .collect();
+            assert!(
+                hits.iter().all(|c| *c == WindowControl::Close),
+                "{side:?} bar offered {hits:?}"
+            );
+            assert!(!hits.is_empty(), "{side:?} bar offered no close control");
+        }
     }
 }

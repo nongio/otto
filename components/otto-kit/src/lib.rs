@@ -31,6 +31,7 @@ pub mod rendering;
 pub mod sound;
 pub mod surfaces;
 pub mod theme;
+pub mod tile_decoration;
 pub mod typography;
 pub mod utils;
 
