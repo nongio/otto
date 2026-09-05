@@ -1,0 +1,47 @@
+[package]
+name = "otto-media-kit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Video playback for Otto apps: a sandboxed GStreamer worker and the canvas-pure player view that draws its frames"
+
+# Two halves, deliberately unequal in weight.
+#
+# The *library* is what an application embeds: a `Player` handle that runs the
+# worker, a frame the app draws, and a transport bar drawn the way every other
+# otto-kit control is. It links otto-kit and skia — which the host already has
+# — and nothing else. GStreamer never enters an application binary.
+#
+# The *worker* binary is where GStreamer lives. It is spawned per playback,
+# sandboxed, and talks to the host over pipes and one shared frame buffer.
+[lib]
+name = "otto_media_kit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "otto-media-worker"
+path = "src/bin/otto-media-worker.rs"
+required-features = ["worker"]
+
+[features]
+default = ["worker"]
+# The GStreamer-backed worker. Off for a host that only wants the library;
+# the worker is then expected to be installed alongside from another build.
+worker = ["dep:gstreamer", "dep:gstreamer-app"]
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+libc = "0.2"
+tracing = "0.1"
+
+gstreamer = { version = "0.25", optional = true }
+gstreamer-app = { version = "0.25", optional = true }
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]
+
+[lints]
+workspace = true
