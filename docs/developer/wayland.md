@@ -1,5 +1,9 @@
 # Wayland protocols
 
+> For the inventory of XDG/freedesktop standards Otto implements — the
+> `xdg_*` protocols and the desktop specifications around them — see
+> [XDG specifications](xdg-specifications.md).
+
 Otto follows Smithay's "one big compositor state" architecture: nearly all
 protocol state and every handler hangs off a single struct, `Otto<BackendData>`.
 Learning where that struct is built, and how Smithay routes requests into it,

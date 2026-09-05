@@ -53,6 +53,7 @@ versions: useful day to day, still filling in.
 | [Autostart](autostart.md) | `exec_once`, XDG autostart, systemd integration |
 | [Clipboard](clipboard.md) | Clipboard persistence and history managers |
 | [Desktop Widgets](desktop-widgets.md) | Running layer-shell widgets and dashboards on the desktop |
+| [Desktop Standards](desktop-standards.md) | How Otto interoperates with the rest of the Linux desktop: apps, icons, trash, thumbnails, portals |
 
 ## Sessions and remote access
 

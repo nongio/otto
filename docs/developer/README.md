@@ -18,6 +18,7 @@ and hands the whole tree to the renderer as a single render element. Most of
 | [Rendering](rendering.md) | Scene graph → render elements → Skia → screen |
 | [Render Loop](render_loop.md) | When Otto wakes up, when it renders, damage tracking |
 | [Wayland Protocols](wayland.md) | The one-big-state pattern and how to find any protocol handler |
+| [XDG Specifications](xdg-specifications.md) | Every freedesktop/XDG standard Otto implements, and where |
 | [The Scene Graph](scene-graph.md) | The layer tree: how it is shaped, how surfaces enter it, how subtrees become KMS planes |
 | [Layers](layers.md) | The unit the tree is made of: properties, content closures, transactions, caching, damage |
 

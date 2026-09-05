@@ -44,6 +44,11 @@ accent_color = "blue"
 keyboard_repeat_delay = 300
 keyboard_repeat_rate = 30
 
+# XDG Autostart — launch apps from ~/.config/autostart/*.desktop and /etc/xdg/autostart/*.desktop
+# Respects Hidden=true, OnlyShowIn= and NotShowIn= fields (desktop identifier: "Otto").
+# Disabled by default.
+# xdg_autostart = true
+
 # Autostart — commands to run once at startup, in order.
 # Each entry is spawned non-blocking (fire-and-forget). Otto does not
 # restart crashed processes; use systemd or another supervisor for that.
@@ -67,11 +72,6 @@ args = []
 # [[exec_once]]
 # cmd = "wlsunset"
 # args = ["-l", "48.8", "-L", "2.3"]
-
-# XDG Autostart — launch apps from ~/.config/autostart/*.desktop and /etc/xdg/autostart/*.desktop
-# Respects Hidden=true, OnlyShowIn= and NotShowIn= fields (desktop identifier: "Otto").
-# Disabled by default.
-# xdg_autostart = true
 
 # Login mode — only used when Otto is started with `--login`, where it acts as
 # the host compositor for a greeter (the role `cage` plays for gtkgreet).
