@@ -195,9 +195,10 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# Pinned to a release: v1.16.0 carries the cancelled-change re-sync
-# (nongio/layers#25), without which an exposé preview can stay drawn where a
-# superseded change left it — v1.15.0 brought `Layer::set_blur_bounds` (#24).
+# Pinned to a release: v1.16.0 (re-tagged on nongio/layers#26) keeps the
+# backdrop blur from sampling past a layer's bounds, which left a window's edge
+# crisp through a frosted titlebar; it also carries the cancelled-change
+# re-sync (#25). v1.15.0 brought `Layer::set_blur_bounds` (#24).
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
