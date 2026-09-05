@@ -112,6 +112,44 @@ works normally. Tiling a maximized window unmaximizes it first.
 The same three targets are reachable with the pointer — see
 [Drag to tile](#drag-to-tile).
 
+## Design mode
+
+A tiling workspace can be shaped with the pointer instead of with keyboard
+commands. The `TilingDesignToggle` action turns the layout into a grid of
+translucent panes — one per cell, drawn over the windows, which keep running
+underneath — and the gaps between them become handles.
+
+- **Drag a bar** between two panes to change how the space is split between
+  them, and nothing else. It snaps to halves, thirds and quarters as it passes
+  them; hold `Shift` to slide past. The two shares are shown as percentages on
+  the bar while you drag.
+- **Drag a corner**, where cells meet at a point, to move both splits at once.
+- **Double-click a bar** to give every cell in that row or column the same
+  share.
+- **Hover a pane** for a small toolbar: split the cell left/right, split it
+  top/bottom, or close it.
+
+Splitting a cell leaves an **empty slot**, drawn as a dashed pane with a `+`.
+The next window you open fills it before it splits anything else — so a
+workspace can be laid out first and populated after. Closing an empty slot
+gives its space back to its neighbours.
+
+On an **empty** tiling workspace design mode offers a row of starting points
+instead — two columns, three columns, main and stack, and a 2×2 grid. Clicking
+one builds it out of empty slots.
+
+`Ctrl+Z` undoes the last edit. `Escape`, the action again, or a click on a
+window's content leaves design mode; nothing about where the windows are
+changes when you do. Design mode also ends by itself when the workspace scrolls
+away or stops tiling.
+
+Cells chase the pointer on a slightly bouncy spring, configured with
+`[tiling] design_duration` and `design_bounce` — `0` makes every change snap.
+
+Outside design mode the gaps are *not* drag handles: pointer handling on a
+tiled workspace is the same as on a floating one, so no hidden hit area
+competes with a window's edges.
+
 ## Fullscreen
 
 Fullscreen is driven by the application (a video player's fullscreen button, a
