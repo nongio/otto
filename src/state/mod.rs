@@ -706,6 +706,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.push(crate::export_rounded_corners());
                 assignments.push(crate::export_frosting());
                 assignments.push(crate::export_window_controls_side());
+                assignments.push(crate::export_tiling_decoration());
                 assignments.push(crate::export_maximize_button());
                 assignments.push(crate::export_color_scheme());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
@@ -2124,7 +2125,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 let decoration_height = window.decoration_height();
                 window_view.set_decorated(window.is_decorated());
                 // A fullscreen window covers the output: no bar, no shadow.
-                window_view.set_shadow_hidden(fullscreen);
+                // Neither does a tile — nothing overlaps it, so there is
+                // nothing for it to cast onto.
+                window_view.set_shadow_hidden(fullscreen || window.is_tiled());
+                // Under `decoration = "none"` the tile's only chrome is a
+                // hairline, in the accent colour while it holds focus.
+                window_view.set_tile_border(
+                    window.decoration_variant()
+                        == otto_kit::components::titlebar::DecorationVariant::Hidden,
+                    is_focused,
+                    model.w,
+                    model.h,
+                );
                 if window.is_decorated() {
                     let model = self.decoration_model_for(
                         window,
@@ -2209,9 +2221,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             title: window.xdg_title(),
             active: is_focused,
             dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
-            // Maximized and fullscreen windows sit flush against the screen
-            // edges, so their frame — and with it the bar — squares off.
-            corner_radius: if window.is_maximized() || fullscreen {
+            // Maximized, fullscreen and tiled windows sit flush against
+            // their neighbours or the screen edges, so their frame — and with
+            // it the bar — squares off.
+            corner_radius: if window.is_maximized() || fullscreen || window.is_tiled() {
                 0.0
             } else {
                 otto_kit::corners::radius(12.0)
@@ -2225,6 +2238,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 &window.id(),
             ),
             fixed_size: !window.is_resizable(),
+            minimal: window.decoration_variant()
+                == otto_kit::components::titlebar::DecorationVariant::Minimal,
             scale: scale_factor as f32,
         }
     }
@@ -2340,7 +2355,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // The bar is sized from the same geometry, and it is drawn in the
             // scene even while the client's content scans out.
             window_view.set_decorated(window.is_decorated());
-            window_view.set_shadow_hidden(current.fullscreen);
+            window_view.set_shadow_hidden(current.fullscreen || window.is_tiled());
+            window_view.set_tile_border(
+                window.decoration_variant()
+                    == otto_kit::components::titlebar::DecorationVariant::Hidden,
+                current.active,
+                w,
+                h,
+            );
             if window.is_decorated() {
                 let decoration = self.decoration_model_for(
                     window,

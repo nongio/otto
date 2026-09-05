@@ -36,8 +36,8 @@ mod dnd_view;
 mod dock;
 mod osd;
 mod popup_overlay;
-mod tiling_overlay;
 pub mod tiling;
+mod tiling_overlay;
 pub mod trash;
 pub mod workspace;
 

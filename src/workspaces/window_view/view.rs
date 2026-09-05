@@ -8,7 +8,7 @@ use layers::{
 use smithay::{reexports::wayland_server::backend::ObjectId, utils::Logical};
 use std::sync::{atomic::AtomicBool, Arc};
 
-use crate::shell::WindowElement;
+use crate::{config::Config, shell::WindowElement};
 
 use super::{
     effects::GenieEffect,
@@ -21,6 +21,12 @@ use super::{
 /// decorates and one that draws its own bar should not fade at different
 /// speeds.
 const MATERIAL_FADE: f32 = 0.3;
+
+/// How long a tile's hairline takes to fade between the accent colour and the
+/// neutral one when focus moves. Shorter than the titlebar's material fade:
+/// nothing else on a borderless tile marks the focus, so it should keep up
+/// with the keystroke rather than trail it.
+const TILE_BORDER_FADE: f32 = 0.15;
 
 #[derive(Clone)]
 pub struct WindowView {
@@ -35,6 +41,9 @@ pub struct WindowView {
     pub shadow_layer: layers::prelude::Layer,
     pub content_layer: layers::prelude::Layer,
     pub decoration_layer: layers::prelude::Layer,
+    /// The hairline a tile wears when it has no bar at all — see
+    /// [`WindowView::set_tile_border`]. Hidden for every other window.
+    pub border_layer: layers::prelude::Layer,
     pub mirror_layer: layers::prelude::Layer,
 
     pub genie_effect: GenieEffect,
@@ -46,6 +55,9 @@ pub struct WindowView {
     pub tiled_zone: Option<crate::workspaces::TileZone>,
     pub minimizing_animation: Arc<AtomicBool>,
     pub is_unmapped: Arc<AtomicBool>,
+    /// The decoration layer is currently drawing a tile's hairline border
+    /// rather than a titlebar — see [`WindowView::set_tile_border`].
+    tile_border: Arc<AtomicBool>,
 }
 
 impl WindowView {
@@ -83,9 +95,21 @@ impl WindowView {
         // so opt into the raw background plus a real blur.
         decoration_layer.set_blur_include_content(true);
 
+        // Above everything, since it draws the tile's outline over the
+        // client's own edge pixels.
+        let border_layer = layers_engine.new_layer();
+        border_layer.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        border_layer.set_hidden(true);
+        border_layer.set_pointer_events(false);
+        border_layer.set_border_corner_radius(layers::types::BorderRadius::new_single(0.0), None);
+
         let _ = layers_engine.append_layer(&shadow_layer, layer.id());
         let _ = layers_engine.append_layer(&content_layer, layer.id());
         let _ = layers_engine.append_layer(&decoration_layer, layer.id());
+        let _ = layers_engine.append_layer(&border_layer, layer.id());
 
         let base_rect = WindowViewBaseModel {
             x: 0.0,
@@ -121,6 +145,7 @@ impl WindowView {
             window_layer: layer,
             content_layer,
             decoration_layer,
+            border_layer,
             shadow_layer,
             genie_effect,
             mirror_layer,
@@ -128,6 +153,7 @@ impl WindowView {
             tiled_zone: None,
             minimizing_animation: Arc::new(AtomicBool::new(false)),
             is_unmapped: Arc::new(AtomicBool::new(false)),
+            tile_border: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -143,6 +169,54 @@ impl WindowView {
     /// size of the output, which is pure cost with nothing to show for it.
     pub fn set_shadow_hidden(&self, hidden: bool) {
         self.shadow_layer.set_hidden(hidden);
+    }
+
+    /// The hairline a tile wears under `[tiling] decoration = "none"`.
+    ///
+    /// With no bar there is nothing to tell one tile from the next, and
+    /// nothing to say which one has the focus — so the frame itself carries
+    /// it: the accent colour while focused, the theme's neutral hairline
+    /// otherwise (`specs/tiling.md`, *Decorations*). The colour animates, so
+    /// focus moving between tiles reads as a short fade rather than a jump.
+    ///
+    /// It rides on a layer of its own rather than on the titlebar's: the two
+    /// never appear together, but the bar's layer carries a material, a blur
+    /// and a corner radius that a border has no business inheriting or
+    /// putting back.
+    ///
+    /// `w_px` and `h_px` are the window box in physical pixels.
+    pub fn set_tile_border(&self, borderless_tile: bool, focused: bool, w_px: f32, h_px: f32) {
+        let was = self
+            .tile_border
+            .swap(borderless_tile, std::sync::atomic::Ordering::Relaxed);
+        if !borderless_tile {
+            if was {
+                self.border_layer.set_hidden(true);
+            }
+            return;
+        }
+
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let color = if focused {
+            crate::theme::accent_color()
+        } else {
+            crate::theme::theme_colors().hairline
+        };
+        let color = skia::Color4f::from(color);
+        let color = layers::types::Color::new_rgba(color.r, color.g, color.b, color.a);
+
+        self.border_layer.set_hidden(false);
+        self.border_layer
+            .set_size(layers::types::Size::points(w_px, h_px), None);
+        // A hairline is one logical point, whatever the output scale.
+        self.border_layer.set_border_width(scale.max(1.0), None);
+        if !was {
+            // Nothing to fade from: the tile has only just lost its bar.
+            self.border_layer.set_border_color(color, None);
+            return;
+        }
+        self.border_layer
+            .set_border_color(color, Transition::ease_out_quad(TILE_BORDER_FADE));
     }
 
     /// Fade the titlebar's material between its frosted and its opaque form.

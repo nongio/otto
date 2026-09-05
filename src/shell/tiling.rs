@@ -19,6 +19,8 @@ use smithay::{
     utils::{Logical, Rectangle, Size},
 };
 
+use otto_kit::components::titlebar::DecorationVariant;
+
 use crate::{
     config::Config,
     shell::WindowElement,
@@ -55,6 +57,14 @@ impl Workspaces {
                 };
                 if !state.tree.remove(id) {
                     continue;
+                }
+                // Out of the tree is back to a floating window's chrome. The
+                // window may be gone already (an unmap), in which case this
+                // is a no-op on a value nobody reads again.
+                if let Some(window) = self.windows_map.get(id) {
+                    window.set_decoration_variant(
+                        otto_kit::components::titlebar::DecorationVariant::Floating,
+                    );
                 }
                 state.dirty = true;
                 if state.focused.as_ref() == Some(id) {
@@ -159,6 +169,16 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// one: the window is placed at its cell and the client configured once
     /// (`[tiling] layout_duration = 0` takes the same path).
     pub fn relayout_workspace(&mut self, output: &Output, animate: bool) {
+        self.relayout_workspace_forced(output, animate, false);
+    }
+
+    /// [`Self::relayout_workspace`], with the option to configure every leaf
+    /// whether or not its cell moved.
+    ///
+    /// A decoration change moves no cell — the *client* rectangle inside it
+    /// changes, by the height of the bar — so the "skip what did not move"
+    /// rule would skip the whole workspace.
+    pub fn relayout_workspace_forced(&mut self, output: &Output, animate: bool, force: bool) {
         let Some(workspace) = self.workspaces.current_tiling_workspace(output) else {
             return;
         };
@@ -203,7 +223,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             };
             let target =
                 Rectangle::<i32, Logical>::new((rect.x, rect.y).into(), (rect.w, rect.h).into());
-            if self.workspaces.element_geometry(&window) == Some(target) {
+            if !force && self.workspaces.element_geometry(&window) == Some(target) {
                 continue;
             }
             let edges = tiled_edges(*rect, &cells, zone, edge_tolerance(gaps));
@@ -262,6 +282,12 @@ impl<BackendData: Backend> Otto<BackendData> {
         // Same reason as `maximize_request`: the state lands on the
         // animation's last frame, this flag has to be true now.
         window.set_is_maximized(maximize);
+        // And the same for the decoration: the bar's height is subtracted
+        // from every configure below, so the window has to be wearing the
+        // tile's variant before the first one goes out.
+        window.set_decoration_variant(DecorationVariant::tiled(Config::with(|c| {
+            c.tiling.decoration()
+        })));
         let (left, right, top, bottom) = edges;
 
         match transition {
@@ -372,6 +398,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                     continue;
                 };
                 window.set_is_maximized(false);
+                // Before the restore, for the same reason `apply_tiled_rect`
+                // sets it before the first configure: the floating rect is
+                // configured minus the *floating* bar.
+                window.set_decoration_variant(DecorationVariant::Floating);
                 self.restore_to_floating(&window);
             }
             return;
@@ -514,6 +544,36 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     // ── Shortcut handlers ────────────────────────────────────────────────
+
+    /// Re-dress every tile after `[tiling] decoration` changed.
+    ///
+    /// The bar's height is part of what the client is configured with, so a
+    /// change of variant is a change of geometry: every tiling workspace is
+    /// laid out again, which reconfigures each leaf against the new bar.
+    pub fn refresh_tiling_decorations(&mut self) {
+        let variant = DecorationVariant::tiled(Config::with(|c| c.tiling.decoration()));
+        let mut leaves: Vec<ObjectId> = Vec::new();
+        for ows in self.workspaces.output_workspaces.values() {
+            for view in ows.workspace_views.iter() {
+                let Ok(state) = view.tiling.read() else {
+                    continue;
+                };
+                if state.enabled {
+                    leaves.extend(state.tree.leaves());
+                }
+            }
+        }
+        for id in leaves {
+            let Some(window) = self.workspaces.windows_map.get(&id).cloned() else {
+                continue;
+            };
+            window.set_decoration_variant(variant);
+        }
+        let outputs: Vec<Output> = self.workspaces.outputs().cloned().collect();
+        for output in outputs {
+            self.relayout_workspace_forced(&output, false, true);
+        }
+    }
 
     pub(crate) fn handle_tiling_toggle(&mut self) {
         let Some(output) = self.tiling_output() else {

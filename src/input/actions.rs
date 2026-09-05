@@ -794,9 +794,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ResizeGrowWidth => Some(KeyAction::TilingResize(Axis::Row, true)),
             BuiltinAction::ResizeShrinkWidth => Some(KeyAction::TilingResize(Axis::Row, false)),
             BuiltinAction::ResizeGrowHeight => Some(KeyAction::TilingResize(Axis::Column, true)),
-            BuiltinAction::ResizeShrinkHeight => {
-                Some(KeyAction::TilingResize(Axis::Column, false))
-            }
+            BuiltinAction::ResizeShrinkHeight => Some(KeyAction::TilingResize(Axis::Column, false)),
             BuiltinAction::EqualizeContainer => Some(KeyAction::TilingEqualize),
         },
         ShortcutAction::RunCommand(run) => {

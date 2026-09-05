@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     fs,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
+        atomic::{AtomicBool, AtomicU8, AtomicUsize},
         Arc, OnceLock,
     },
     time::Duration,
@@ -39,7 +39,15 @@ use smithay::{
 };
 use wayland_server::DisplayHandle;
 
+use otto_kit::components::titlebar::{DecorationVariant, WindowDecoration};
+
 use crate::{focus::PointerFocusTarget, state::Backend};
+
+/// [`DecorationVariant`] as an atomic. Kept next to the accessors so the two
+/// directions of the mapping stay in view of each other.
+const VARIANT_FLOATING: u8 = 0;
+const VARIANT_MINIMAL: u8 = 1;
+const VARIANT_HIDDEN: u8 = 2;
 
 #[derive(Debug, Clone)]
 pub struct WindowElement(pub Arc<WindowElementInner>);
@@ -69,6 +77,11 @@ pub struct WindowElementInner {
     /// the client buffer alone, so promotion has to leave those pixels behind
     /// in the windows plane. See [`WindowElement::has_material`].
     pub has_material: AtomicBool,
+    /// How much of a decoration this window wears: the full floating bar, a
+    /// tile's minimal one, or none at all. Stored as the discriminant of
+    /// otto-kit's `DecorationVariant` so it fits an atomic; see
+    /// [`WindowElement::decoration_variant`].
+    decoration_variant: AtomicU8,
     /// Cached stable ID derived from the wl_surface on first call.
     /// Survives after the wl_surface is destroyed (e.g. on window close).
     cached_id: OnceLock<ObjectId>,
@@ -95,6 +108,7 @@ impl WindowElement {
             is_decorated: AtomicBool::new(false),
             is_scanned_out: AtomicBool::new(false),
             has_material: AtomicBool::new(false),
+            decoration_variant: AtomicU8::new(VARIANT_FLOATING),
             cached_id: OnceLock::new(),
         }))
     }
@@ -103,6 +117,45 @@ impl WindowElement {
     /// otto-kit's `WindowDecoration::DEFAULT_HEIGHT` — the decoration is drawn
     /// by that shared component, so the two must agree.
     pub const DECORATION_HEIGHT: i32 = 34;
+
+    /// How much of a decoration this window wears.
+    ///
+    /// A floating window gets the full bar. A window in a tiling tree gets
+    /// whatever `[tiling] decoration` reduces a tile to — set by
+    /// `Otto::apply_tiled_rect` when it enters the tree and put back to
+    /// [`DecorationVariant::Floating`] when it leaves.
+    pub fn decoration_variant(&self) -> DecorationVariant {
+        match self
+            .0
+            .decoration_variant
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            VARIANT_MINIMAL => DecorationVariant::Minimal,
+            VARIANT_HIDDEN => DecorationVariant::Hidden,
+            _ => DecorationVariant::Floating,
+        }
+    }
+
+    /// Wear `variant` from now on. Returns the previous one, so a caller can
+    /// re-configure the client only when the bar's height actually moved.
+    pub fn set_decoration_variant(&self, variant: DecorationVariant) -> DecorationVariant {
+        let previous = self.decoration_variant();
+        self.0.decoration_variant.store(
+            match variant {
+                DecorationVariant::Floating => VARIANT_FLOATING,
+                DecorationVariant::Minimal => VARIANT_MINIMAL,
+                DecorationVariant::Hidden => VARIANT_HIDDEN,
+            },
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        previous
+    }
+
+    /// Whether this window is laid out by a tiling tree: the case that squares
+    /// its corners and drops its shadow, alongside maximized.
+    pub fn is_tiled(&self) -> bool {
+        self.decoration_variant().is_tiled()
+    }
 
     /// Whether the client negotiated a server-side decoration at all.
     ///
@@ -126,7 +179,9 @@ impl WindowElement {
     /// input-region offset, the client size — falls out of this, so the
     /// fullscreen surface really does get the whole output.
     pub fn is_decorated(&self) -> bool {
-        self.wants_decoration() && !self.is_fullscreen()
+        self.wants_decoration()
+            && !self.is_fullscreen()
+            && self.decoration_variant() != DecorationVariant::Hidden
     }
 
     /// Mark the window server-side decorated. Returns the previous value so
@@ -141,7 +196,7 @@ impl WindowElement {
     /// titlebar height when decorated, 0 otherwise.
     pub fn decoration_height(&self) -> i32 {
         if self.is_decorated() {
-            Self::DECORATION_HEIGHT
+            WindowDecoration::height_for(self.decoration_variant()) as i32
         } else {
             0
         }
@@ -712,5 +767,74 @@ where
             .map(C::from)
             .collect()
         // }
+    }
+}
+
+#[cfg(test)]
+mod decoration_variant_tests {
+    use super::*;
+    use crate::config::TilingConfig;
+    use otto_kit::tile_decoration::TileDecoration;
+
+    /// The compositor's geometry needs the bar's height before any font is
+    /// loaded, so it keeps a constant; otto-kit draws the bar from its own.
+    /// A window configured against one and drawn from the other overshoots
+    /// its cell by the difference.
+    #[test]
+    fn the_height_constant_matches_the_component() {
+        assert_eq!(
+            WindowElement::DECORATION_HEIGHT as f32,
+            WindowDecoration::DEFAULT_HEIGHT
+        );
+        assert_eq!(
+            WindowDecoration::height_for(DecorationVariant::Floating) as i32,
+            WindowElement::DECORATION_HEIGHT
+        );
+    }
+
+    /// What each variant leaves for the client. `none` leaves the whole cell;
+    /// `minimal` leaves it minus one text line.
+    #[test]
+    fn each_variant_takes_its_own_strip() {
+        assert_eq!(WindowDecoration::height_for(DecorationVariant::Hidden), 0.0);
+        assert_eq!(
+            WindowDecoration::height_for(DecorationVariant::Minimal),
+            WindowDecoration::MINIMAL_HEIGHT
+        );
+        assert!(
+            WindowDecoration::height_for(DecorationVariant::Minimal)
+                < WindowDecoration::height_for(DecorationVariant::Floating)
+        );
+    }
+
+    /// The setting picks the variant a tile wears; a floating window is not
+    /// covered by it at all.
+    #[test]
+    fn the_setting_picks_the_tiles_variant() {
+        let variant_for = |token: &str| {
+            let config = TilingConfig {
+                decoration: token.to_string(),
+                ..TilingConfig::default()
+            };
+            DecorationVariant::tiled(config.decoration())
+        };
+        assert_eq!(variant_for("minimal"), DecorationVariant::Minimal);
+        assert_eq!(variant_for("none"), DecorationVariant::Hidden);
+        // The default is the minimal bar, and a token the build does not know
+        // falls back to it rather than dropping every tile's chrome.
+        assert_eq!(
+            TilingConfig::default().decoration(),
+            TileDecoration::Minimal
+        );
+        assert_eq!(variant_for("pixel 2"), DecorationVariant::Minimal);
+    }
+
+    /// Only the tiled variants square their corners and drop their shadow —
+    /// the gate `is_maximized` already had, widened to "maximized or tiled".
+    #[test]
+    fn only_a_tile_counts_as_tiled() {
+        assert!(!DecorationVariant::Floating.is_tiled());
+        assert!(DecorationVariant::Minimal.is_tiled());
+        assert!(DecorationVariant::Hidden.is_tiled());
     }
 }

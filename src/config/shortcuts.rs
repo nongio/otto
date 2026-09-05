@@ -107,7 +107,9 @@ pub enum ShortcutAction {
 #[derive(Debug, Clone)]
 pub enum BuiltinAction {
     Quit,
-    Screen { index: usize },
+    Screen {
+        index: usize,
+    },
     ScaleUp,
     ScaleDown,
     RotateOutput,
@@ -122,7 +124,9 @@ pub enum BuiltinAction {
     TileWindowRight,
     ExposeShowDesktop,
     ExposeShowAll,
-    WorkspaceNum { index: usize },
+    WorkspaceNum {
+        index: usize,
+    },
     SceneSnapshot,
     SkpSnapshot,
     BrightnessUp,

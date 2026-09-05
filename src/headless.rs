@@ -29,12 +29,12 @@ use crate::{
     state::{Backend, Otto},
 };
 
-/// The tiling zones a window can be snapped to, re-exported for tests and
-/// external callers driving the headless compositor.
-pub use crate::workspaces::TileZone;
 /// The tiling tree's axis and direction types, re-exported so a test can
 /// drive the tiling actions without reaching into the compositor's modules.
 pub use crate::workspaces::tiling::{Axis, Direction};
+/// The tiling zones a window can be snapped to, re-exported for tests and
+/// external callers driving the headless compositor.
+pub use crate::workspaces::TileZone;
 
 const OUTPUT_NAME: &str = "headless";
 const DEFAULT_WIDTH: i32 = 1920;

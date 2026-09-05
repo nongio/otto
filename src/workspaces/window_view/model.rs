@@ -80,6 +80,11 @@ pub struct WindowDecorationModel {
     /// The window is pinned to one size (min == max), so it has no maximized
     /// form: its zoom control is drawn gray and does nothing.
     pub fixed_size: bool,
+    /// The window is a tile wearing the minimal bar: one text line high, the
+    /// title, the close control alone. Kept as a flag so the model stays free
+    /// of otto-kit types; `decoration_for` turns it back into a
+    /// `DecorationVariant`.
+    pub minimal: bool,
     pub scale: f32,
 }
 
@@ -95,6 +100,7 @@ impl Hash for WindowDecorationModel {
         self.pressed.hash(state);
         self.sharing.hash(state);
         self.fixed_size.hash(state);
+        self.minimal.hash(state);
         self.scale.to_bits().hash(state);
     }
 }
