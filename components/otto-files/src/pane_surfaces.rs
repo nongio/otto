@@ -523,11 +523,25 @@ impl PaneSurfaces {
                 .unwrap_or(false);
         };
 
+        let snapshot = video.snapshot();
+        // Held hidden until the worker has said what shape the video is. The
+        // box is sized from the aspect, so showing before it is known would
+        // put a full-height surface up and then resize it to the real box a
+        // frame later — a visible snap. The dark column ground stands in for
+        // the few milliseconds until Ready arrives, and the surface then
+        // appears once, at the right size.
+        let Some(aspect) = snapshot.aspect() else {
+            return self
+                .preview_video
+                .as_mut()
+                .map(PaneSurface::hide)
+                .unwrap_or(false);
+        };
+
         let full = view::preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w);
         let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
         let stage = view::preview_stage_rect(full, info_lines);
-        let snapshot = video.snapshot();
-        let rect = view::preview_video_box(stage, snapshot.aspect());
+        let rect = view::preview_video_box(stage, Some(aspect));
         // A column panned so its player would spill over the sidebar is not
         // shown on a surface — the surface has no parent clip. The scene's
         // in-layer draw, which is clipped, covers that transient.
