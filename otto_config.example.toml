@@ -293,6 +293,9 @@ sound_enabled = true
 # Tiling. A workspace tiles because you asked it to; these are the commands
 # that shape the tree once it does. Uncomment the block to bind them — nothing
 # here is bound by default.
+# With [input] xkb_options = ["altwin:ctrl_win"] (or mac_style_modifiers), the
+# Cmd key reports as Control and a "Logo+…" binding can never match: bind these
+# as "Ctrl+Alt+h" and so on instead, which is Cmd+Alt on the keyboard.
 # "Logo+t" = "TilingToggle"                 # tile / untile this workspace
 # "Logo+h" = "FocusLeft"                    # move focus between cells
 # "Logo+j" = "FocusDown"
