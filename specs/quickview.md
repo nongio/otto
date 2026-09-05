@@ -47,8 +47,10 @@ one file descriptor and no network.
   application".
 - File management: rename, delete, move, copy, permissions. That is the
   browser's job.
-- Playback in v1. Audio and video show a poster and metadata; a transport is a
-  later stage, not a hidden v1 requirement.
+- Audio playback. Audio shows a card with its tags and cover art; a PCM
+  decoder and an output path are a later stage. Video *is* played — see
+  [Video playback](#video-playback) — but by a separate media crate, never by
+  the previewer or the toolkit.
 - HTML, EPUB, and anything else whose faithful rendering implies a browser
   engine. This is a permanent exclusion, not a deferral.
 - Out-of-tree previewer plug-ins. The seam for new content types is in-tree; a
@@ -344,7 +346,7 @@ the table is arranged around not compromising them.
 | Lottie animation | Full, played | Skottie — already enabled and already used by otto-kit |
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
 | Audio | Metadata card: title/artist/album/duration, plus embedded cover art | Tag parsing by hand; PCM decode deferred |
-| Video | Metadata card: dimensions, duration, codec, plus the container's embedded poster when present | Frame decode deferred |
+| Video | Played, with a transport: play/pause, scrub, clock, mute. The card underneath (dimensions, duration, kind) is the poster until the first frame, and the whole preview where playback is unavailable | `otto-media-kit`'s worker, a separate binary — see [Video playback](#video-playback) |
 | HEIC, AVIF, camera RAW | Not previewed — shown as an unsupported card naming the type, under the file's icon | Deferred |
 | Anything with no decoder, and any decode that failed | The file's icon at hero size, with the type and size, or the reason it could not be shown | Nothing |
 | HTML, EPUB, Office documents | Never | — |
@@ -424,6 +426,81 @@ Decoders Otto genuinely lacks, with candidates and their cost:
   when this is built:** a hand-written token scanner covering strings, comments,
   numbers, and a keyword set per language — a few hundred lines, correct enough
   for a preview, and consistent with the project's dependency posture.
+
+### Video playback
+
+A video previews as a *playing* video, because a poster frame of a video is
+the one preview that tells you less than its icon does: which second of it
+you are looking at is arbitrary, and the thing you pressed space to find out
+— what is in it — needs motion to answer.
+
+Playback is **not a decoder** and does not run in the decode worker. The
+worker's job is one payload from one file under a deadline; a player is a
+long-lived process with a clock, an audio device and a stream of frames. So
+the two stay separate, and the seam between them is the payload the worker
+already produces:
+
+1. The decode worker sniffs the file, finds `video/*`, and produces the
+   metadata `Card` it always did, stamped with the `video-…` icon chain.
+2. The host asks `otto_quickview::payload::is_video` of the *decoded*
+   payload. The answer comes from the sniffed type — the bytes said video —
+   never from the name, for the same reason dispatch never reads the name.
+   A `.mp4` full of something else is never handed to a demuxer.
+3. If it is a video and a player is available, the host attaches an
+   `otto_media_kit::Player` to the session. The card stays underneath: its
+   artwork is the poster until the first frame lands, and it is the preview
+   again if the player cannot start or dies.
+
+`otto-media-kit` is its own crate, deliberately outside otto-kit: a media
+stack is more code than the toolkit it would be bolted onto, and it links
+GStreamer, which no application binary should. The crate has two halves:
+
+- **The library** (`otto_media_kit`) — what the host embeds. `Player` spawns
+  the worker, sends it commands and reads its events; `view` and `transport`
+  draw the current frame and the controls in the toolkit's canvas-pure
+  draw/hit-test style. It links otto-kit and Skia, which the host already
+  has, and nothing else.
+- **The worker** (`otto-media-worker`) — a separate binary where GStreamer
+  lives. It is spawned per playback with the media file on descriptor 3 and a
+  frame ring on descriptor 4, commands on stdin, events on stdout. It runs
+  `playbin3` with an `appsink`, writes each decoded frame into the ring as
+  RGBx no larger than the panel at the output's scale, plays audio itself,
+  and exits when told to or when its host goes away.
+
+The worker is contained the way the decode worker is — `chdir("/")`,
+`PR_SET_NO_NEW_PRIVS`, no core dumps, a descriptor ceiling, a network
+namespace where the kernel allows one — minus the limits a media stack cannot
+live under: no `RLIMIT_FSIZE` (GStreamer maintains its plugin registry cache)
+and a much larger address-space ceiling (hardware decoders map device memory
+generously). It keeps `XDG_RUNTIME_DIR`, `HOME` and the `GST_*` variables
+from the environment, because the audio server's socket and the registry
+cache live there; it does not keep the Wayland or bus addresses. A demuxer
+that crashes on a hostile file takes the worker and nothing else, and the
+panel shows the card again.
+
+Frames cross to the host through a memfd ring of three slots: the worker
+writes a frame into the next slot and announces it with a `frame` event; the
+host copies it out at once and wraps it as a Skia image when it draws. Three
+slots is one being written, one being read, and one of slack, which is what
+keeps the writer from lapping the reader at the rate a video decodes and a
+panel paints. The host's wake — a poke to its event loop — comes with every
+event, so a frame landing is a repaint the same way a decode landing is.
+
+**Behaviour in the panel.** A video starts playing when the panel opens on
+it, with sound. The transport runs along the bottom of the content: play or
+pause, the elapsed time, the scrubber, the time remaining, mute. A click on
+the picture itself toggles play and pause, as in every player. Dragging the
+scrubber pauses, seeks to keyframes as it goes, seeks accurately on release,
+and resumes if it was playing. Space still closes the panel — it is the
+gesture that opened it — and arrow-keying to another file ends the playback
+with the session. The worker is found next to the host's own executable, on
+`PATH`, or wherever `OTTO_MEDIA_WORKER` points; without it, a video previews
+as its card exactly as before, and the reason is in the log.
+
+**What this does not do.** Audio-only playback, subtitles, playback rate,
+fullscreen, picture-in-picture, and any frame path other than a CPU copy — a
+dmabuf ring is the obvious next step for 4K, and the protocol leaves room for
+it without changing the host side.
 
 ### The previewer seam
 

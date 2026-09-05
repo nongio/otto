@@ -4005,17 +4005,37 @@ pub fn draw_quickview(
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
     canvas.clip_rect(content, None, true);
-    otto_kit::preview::draw(
-        canvas,
-        content,
-        &session.preview,
-        f.theme,
-        session.first_row,
-        session.zoom,
-        &|name: &str, size: i32| {
-            icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-        },
-    );
+    if let Some(video) = &session.video {
+        // A playing video takes the card's place. The card's artwork is the
+        // poster until the first frame lands; with none, the stage is dark.
+        let poster = video
+            .poster
+            .as_ref()
+            .and_then(otto_kit::preview::Pixels::to_image);
+        otto_media_kit::view::draw(
+            canvas,
+            content,
+            &video.player,
+            poster.as_ref(),
+            otto_media_kit::view::Interaction {
+                scrubbing: video.scrubbing,
+                transport_opacity: 1.0,
+            },
+            f.theme,
+        );
+    } else {
+        otto_kit::preview::draw(
+            canvas,
+            content,
+            &session.preview,
+            f.theme,
+            session.first_row,
+            session.zoom,
+            &|name: &str, size: i32| {
+                icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
+            },
+        );
+    }
 
     // The pan's bars, inside the same clip as the picture they belong to.
     // Nothing is drawn unless there is a zoomed picture with something under

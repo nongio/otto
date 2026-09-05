@@ -329,6 +329,9 @@ struct Browser {
     /// slow PDF must not land on top of a file the user moved off three keys
     /// ago.
     quickview_generation: u64,
+    /// The last video frame painted into the window; see
+    /// [`Browser::quickview_video_frame_pending`].
+    quickview_video_painted: u64,
     /// The cursor moved on its own — a delete landing its selection on the
     /// survivor — rather than through an arrow key. Quick View follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
@@ -635,6 +638,7 @@ impl Browser {
             quickview_closing: None,
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
             quickview_generation: 0,
+            quickview_video_painted: 0,
             quickview_follow: false,
             trash: false,
             trash_pressed: None,
@@ -3754,6 +3758,7 @@ impl Browser {
         anchor: Rect,
         name: String,
         preview: otto_kit::preview::Preview,
+        video: Option<(PathBuf, otto_media_kit::player::Limits)>,
     ) {
         if std::env::var_os("OTTO_FILES_QV_TRACE").is_some() {
             eprintln!(
@@ -3771,11 +3776,34 @@ impl Browser {
             Some(session) => session.opened_at,
             None => std::time::Instant::now(),
         };
-        self.quickview = Some(quickview::Session::new(preview, name, anchor, opened_at));
+        let mut session = quickview::Session::new(preview, name, anchor, opened_at);
+        // Only once the decoder has said what the file is: the player is
+        // started on the sniffed type, never on the name. It wakes the loop
+        // from its own thread on every frame, the way a landing decode does.
+        if let Some((path, limits)) = video {
+            session.attach_video(&path, limits, AppContext::request_wakeup);
+        }
+        self.quickview = Some(session);
         // Re-opening cancels whatever was on its way out: two panels in flight
         // at once would cross over each other.
         self.quickview_closing = None;
         self.dirty = true;
+    }
+
+    /// Whether the open preview has a frame the window has not painted.
+    ///
+    /// Only for the window-painted panel: on its own surface the panel's
+    /// content key sees each frame for itself.
+    fn quickview_video_frame_pending(&mut self) -> bool {
+        let Some(session) = self.quickview.as_ref() else {
+            return false;
+        };
+        let seq = session.video_frame_seq();
+        if seq == self.quickview_video_painted {
+            return false;
+        }
+        self.quickview_video_painted = seq;
+        true
     }
 
     /// Remember where the pointer is over the Quick View panel, and which
@@ -3864,6 +3892,19 @@ impl Browser {
         let Some(session) = self.quickview.as_mut() else {
             return false;
         };
+        // A video's controls come before the pan: the two never share a
+        // panel, and the player wants the press wherever on the picture it
+        // lands.
+        let video = match kind {
+            QuickviewPointer::Press => quickview::VideoPointer::Press,
+            QuickviewPointer::Motion => quickview::VideoPointer::Motion,
+            QuickviewPointer::Release => quickview::VideoPointer::Release,
+            QuickviewPointer::Leave => quickview::VideoPointer::Leave,
+        };
+        if let Some(handled) = session.video_pointer(video, point.x, point.y, content) {
+            self.dirty |= handled;
+            return handled;
+        }
         let (handled, moved) = match kind {
             QuickviewPointer::Press => {
                 let hit = session.pan_pointer_down(point.x, point.y, content);
@@ -4758,7 +4799,12 @@ impl App for FilesApp {
             let scrolled = browser.tick_scroll();
             let animating = browser.quickview_animating()
                 | browser.tick_quickview_exit()
-                | browser.tick_open_pulse();
+                | browser.tick_open_pulse()
+                // A video frame landing is a repaint only where the window
+                // paints the panel itself; on its own surface the panel's
+                // key notices for it, and the window is left alone.
+                | (browser.quickview_video_frame_pending()
+                    && !pane_surfaces::quickview_on_surface());
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -5509,10 +5555,12 @@ impl FilesApp {
 
         tokio::task::spawn_blocking(move || {
             let preview = quickview::decode(&path, panel, scale);
+            let video = (path.is_file() && otto_media_kit::player::available())
+                .then(|| (path.clone(), quickview::video_limits(panel, scale)));
             state
                 .lock()
                 .unwrap()
-                .finish_quickview(generation, anchor, name, preview);
+                .finish_quickview(generation, anchor, name, preview, video);
             // Wake the UI thread: a window showing "Opening preview…" is not
             // committing frames, so there is no frame callback to notice the
             // decode landed.

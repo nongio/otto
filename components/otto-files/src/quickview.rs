@@ -19,10 +19,12 @@ use std::path::Path;
 use std::time::Instant;
 
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
-use otto_kit::preview::{Preview, Zoom};
+use otto_kit::preview::{Pixels, Preview, Zoom};
+use otto_media_kit::transport::TransportHit;
+use otto_media_kit::{Playback, Player};
 use otto_quickview::decode::Request;
 use otto_quickview::opening;
-use skia_safe::Rect;
+use skia_safe::{Contains, Rect};
 
 /// The title strip along the top of the panel: the file's name, and the
 /// close button. The preview's content starts below it, so neither ever
@@ -72,6 +74,37 @@ impl Pan {
     }
 }
 
+/// A video being played inside a session.
+pub struct Video {
+    pub player: Player,
+    /// The card's own artwork, drawn until the first frame arrives.
+    pub poster: Option<Pixels>,
+    /// A drag along the scrubber in progress, as a fraction of the duration.
+    pub scrubbing: Option<f32>,
+    /// Whether the video was playing when the drag began, so it resumes
+    /// when the drag ends.
+    resume: bool,
+}
+
+/// What the pointer did over a video, in the host's own vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoPointer {
+    Press,
+    Motion,
+    Release,
+    Leave,
+}
+
+/// How large a frame to ask the worker for: the panel's content at the
+/// output's scale. A frame larger than the pixels it is drawn into is
+/// decode work and copy bandwidth for nothing.
+pub fn video_limits(panel: Rect, scale: f32) -> otto_media_kit::player::Limits {
+    otto_media_kit::player::Limits {
+        max_width: ((panel.width() * scale) as u32).clamp(64, 3840),
+        max_height: ((panel.height() * scale) as u32).clamp(64, 2160),
+    }
+}
+
 /// An open preview.
 pub struct Session {
     pub preview: Preview,
@@ -103,6 +136,11 @@ pub struct Session {
     /// When the exit started, once it has. A closing session is no longer the
     /// window's open preview — it is only still on screen, going home.
     pub closing: Option<Instant>,
+    /// A playback, when the file is a video and a player could be started.
+    /// The card in `preview` stays underneath it: its artwork is the poster
+    /// until the first frame lands, and it is what is shown again if the
+    /// player fails.
+    pub video: Option<Video>,
     /// Whether `preview` is the waiting line rather than a decoded file.
     ///
     /// The panel's surface repaints only when its content key changes, and
@@ -128,8 +166,140 @@ impl Session {
             anchor,
             opened_at,
             closing: None,
+            video: None,
             loading: false,
         }
+    }
+
+    /// Start playing `path` in this session, if it can be.
+    ///
+    /// Only for a preview [`otto_quickview::payload::is_video`] vouches for:
+    /// the sandboxed decoder read the bytes and said video, which is the one
+    /// opinion that counts before a demuxer is handed the file. A worker
+    /// that cannot be found or started leaves the card as it was, and says
+    /// why in the log rather than on the panel — the card is a complete
+    /// preview on its own.
+    pub fn attach_video(
+        &mut self,
+        path: &Path,
+        limits: otto_media_kit::player::Limits,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) {
+        if !otto_quickview::payload::is_video(&self.preview) {
+            return;
+        }
+        match Player::open(path, limits, wake) {
+            Ok(player) => {
+                let poster = match &self.preview {
+                    Preview::Card { hero, .. } => hero.clone(),
+                    _ => None,
+                };
+                self.video = Some(Video {
+                    player,
+                    poster,
+                    scrubbing: None,
+                    resume: false,
+                });
+            }
+            Err(err) => tracing::info!("no video playback for {}: {err}", path.display()),
+        }
+    }
+
+    /// The playback's contribution to the panel's repaint key: everything
+    /// the player view draws that changes without the panel moving.
+    pub fn video_key(&self) -> u64 {
+        let Some(video) = &self.video else {
+            return 0;
+        };
+        let state = video.player.state();
+        let playing = state.playback == Playback::Playing;
+        let millis = state.position().as_millis() as u64;
+        let scrub = video
+            .scrubbing
+            .map(|fraction| fraction.to_bits() as u64)
+            .unwrap_or(0);
+        state.frame_seq.rotate_left(29)
+            ^ millis.rotate_left(11)
+            ^ (playing as u64) << 3
+            ^ (state.playback as u64) << 5
+            ^ ((state.volume <= 0.0) as u64) << 9
+            ^ scrub.rotate_left(41)
+    }
+
+    /// Whether the playback has drawn something new since `seen`, and what
+    /// to remember as seen. For a host that paints the panel into its own
+    /// window, where there is no content key to notice a frame for it.
+    pub fn video_frame_seq(&self) -> u64 {
+        self.video
+            .as_ref()
+            .map(|video| video.player.state().frame_seq)
+            .unwrap_or(0)
+    }
+
+    /// The pointer over a playing video. `None` when there is no video and
+    /// the caller's own handling applies; `Some(handled)` otherwise.
+    pub fn video_pointer(
+        &mut self,
+        kind: VideoPointer,
+        x: f32,
+        y: f32,
+        content: Rect,
+    ) -> Option<bool> {
+        let video = self.video.as_mut()?;
+        let layout = otto_media_kit::view::transport_layout(content);
+        let point = skia_safe::Point::new(x, y);
+        let state = video.player.state();
+        let seek_to = |fraction: f32| state.duration.map(|duration| duration.mul_f32(fraction));
+        Some(match kind {
+            VideoPointer::Press => {
+                match layout.hit(point) {
+                    Some(TransportHit::PlayPause) => video.player.toggle(),
+                    Some(TransportHit::Mute) => {
+                        let volume = if state.volume <= 0.0 { 1.0 } else { 0.0 };
+                        video.player.set_volume(volume);
+                    }
+                    Some(TransportHit::Scrub(fraction)) => {
+                        video.scrubbing = Some(fraction);
+                        video.resume = state.playback == Playback::Playing;
+                        if video.resume {
+                            video.player.pause();
+                        }
+                        if let Some(position) = seek_to(fraction) {
+                            video.player.seek(position, false);
+                        }
+                    }
+                    Some(TransportHit::Bar) => {}
+                    // The picture itself is the biggest play/pause button
+                    // there is, as in every player.
+                    None if content.contains(point) => video.player.toggle(),
+                    None => return Some(false),
+                }
+                true
+            }
+            VideoPointer::Motion => {
+                let Some(_) = video.scrubbing else {
+                    return Some(false);
+                };
+                let fraction = layout.fraction_at(x);
+                video.scrubbing = Some(fraction);
+                if let Some(position) = seek_to(fraction) {
+                    video.player.seek(position, false);
+                }
+                true
+            }
+            VideoPointer::Release | VideoPointer::Leave => {
+                let Some(fraction) = video.scrubbing.take() else {
+                    return Some(false);
+                };
+                if let Some(position) = seek_to(fraction) {
+                    video.player.seek(position, true);
+                }
+                if video.resume {
+                    video.player.play();
+                }
+                true
+            }
+        })
     }
 
     /// A session on a file whose decode has only just been asked for: the
