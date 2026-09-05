@@ -17,5 +17,5 @@ pub mod tree;
 
 pub use design::Preset;
 pub use layout::{Gaps, Rect};
-pub use state::{TilingDesignState, TilingState};
-pub use tree::{Axis, Cell, Direction, EmptyId, NodeId};
+pub use state::TilingState;
+pub use tree::{Axis, Cell, Direction};

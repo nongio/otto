@@ -1771,6 +1771,7 @@ fn run_headless_loop(
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
+            state.flush_tiling_design();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();

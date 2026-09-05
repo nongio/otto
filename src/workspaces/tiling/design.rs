@@ -198,7 +198,7 @@ pub fn corner_handles(bars: &[BarHandle]) -> Vec<CornerHandle> {
 
         // Cluster by overlapping x: bars that line up are one corner.
         let mut cluster: Vec<BarHandle> = Vec::new();
-        let mut flush = |cluster: &mut Vec<BarHandle>, out: &mut Vec<CornerHandle>| {
+        let flush = |cluster: &mut Vec<BarHandle>, out: &mut Vec<CornerHandle>| {
             if cluster.is_empty() {
                 return;
             }

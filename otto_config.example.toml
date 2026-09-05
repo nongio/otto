@@ -424,6 +424,13 @@ colorize_icons = true
 # layout_duration = 0.3
 # layout_bounce = 0.0
 
+# Design mode — the "TilingDesignToggle" shortcut — draws the layout's cells as
+# panes with draggable handles between them. Its own spring, bouncier than the
+# one above, so the cells feel like a physical thing chasing the pointer.
+# 0 snaps, like every other duration here.
+# design_duration = 0.35
+# design_bounce = 0.25
+
 # How much of the container one ResizeGrow/ResizeShrink step moves, as a
 # fraction of its extent.
 # resize_step = 0.05

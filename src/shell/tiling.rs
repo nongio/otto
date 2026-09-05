@@ -157,7 +157,7 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     /// The area a tree fills on `output`, in logical pixels, with fresh
     /// exclusive zones — the same rectangle a maximized window gets.
-    fn tiling_area(&mut self, output: &Output) -> Rectangle<i32, Logical> {
+    pub(crate) fn tiling_area(&mut self, output: &Output) -> Rectangle<i32, Logical> {
         self.recalculate_exclusive_zones(output);
         self.usable_zone(output)
     }
@@ -179,6 +179,23 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// changes, by the height of the bar — so the "skip what did not move"
     /// rule would skip the whole workspace.
     pub fn relayout_workspace_forced(&mut self, output: &Output, animate: bool, force: bool) {
+        let transition = if animate {
+            Config::with(|c| c.tiling.layout_transition())
+        } else {
+            None
+        };
+        self.relayout_workspace_with(output, transition, force);
+    }
+
+    /// [`Self::relayout_workspace_forced`] with the transition chosen by the
+    /// caller, so a design-mode edit can use its own, bouncier spring while
+    /// everything else keeps the layout one.
+    pub fn relayout_workspace_with(
+        &mut self,
+        output: &Output,
+        transition: Option<Transition>,
+        force: bool,
+    ) {
         let Some(workspace) = self.workspaces.current_tiling_workspace(output) else {
             return;
         };
@@ -201,15 +218,16 @@ impl<BackendData: Backend> Otto<BackendData> {
             };
             layout::resolve(&state.tree, area, gaps)
         };
+
+        // The pane grid is driven from the very rects that are about to be
+        // applied, so it moves in step with the windows underneath it — and
+        // it is refreshed even when the tree holds nothing but empty slots,
+        // which is exactly when there are no windows to move.
+        self.refresh_tiling_design(output, transition.clone());
+
         if rects.is_empty() {
             return;
         }
-
-        let transition = if animate {
-            Config::with(|c| c.tiling.layout_transition())
-        } else {
-            None
-        };
         // A lone tile that fills the usable area outright — gaps off, or smart
         // gaps with one window — really is maximized, and is the one case the
         // client is told so (`specs/tiling.md`, *What clients are told*).
@@ -485,6 +503,19 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .unwrap_or(true),
             None => true,
         };
+        // An empty slot laid out in design mode is filled before any other
+        // insertion rule applies: that is the whole point of laying a
+        // workspace out before populating it (`specs/tiling.md`, *Design
+        // mode*). The focused slot goes first, then the first in layout order.
+        let slot = state.tree.next_empty(state.design.focused_empty);
+        if let Some(slot) = slot {
+            if state.tree.fill_empty(slot, id.clone()) {
+                state.design.focused_empty = state.tree.empty_slots().first().copied();
+                state.focused = Some(id);
+                return;
+            }
+        }
+
         let preselect = state.take_preselect();
         state
             .tree

@@ -766,6 +766,14 @@ impl<B: Backend> From<WindowDecorationView> for PointerFocusTarget<B> {
     }
 }
 
+impl<B: Backend> From<crate::workspaces::TilingDesignInputView> for PointerFocusTarget<B> {
+    fn from(value: crate::workspaces::TilingDesignInputView) -> Self {
+        PointerFocusTarget::View(InteractiveView {
+            view: Box::new(value),
+        })
+    }
+}
+
 impl<B: Backend> From<WindowResizeView> for PointerFocusTarget<B> {
     fn from(value: WindowResizeView) -> Self {
         let d = InteractiveView {

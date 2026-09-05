@@ -518,6 +518,20 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
+        // Design mode's pane grid. The panes cover the windows and the
+        // handles live in the gaps between them, so while the editor is up it
+        // answers for the whole usable area — and a drag in flight keeps it
+        // even if the pointer wanders off, which is what a grab would do.
+        // Outside design mode this costs one flag read
+        // (`specs/tiling.md`: gaps are not drag handles until you ask).
+        if under.is_none() && self.workspaces.tiling_design.is_active() {
+            let dragging = self.tiling_design_drag_is_active();
+            if dragging || self.workspaces.tiling_design.hit(pos.x, pos.y).is_some() {
+                let view = crate::workspaces::TilingDesignInputView::default();
+                return Some((view.into(), (0.0, 0.0).into()));
+            }
+        }
+
         // Resize borders. A server-decorated client draws no frame of its
         // own, so it never offers a resize edge: the strip along the window's
         // own border is Otto's, and it is hit-tested ahead of both the

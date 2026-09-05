@@ -37,6 +37,7 @@ mod dock;
 mod osd;
 mod popup_overlay;
 pub mod tiling;
+pub mod tiling_design;
 mod tiling_overlay;
 pub mod trash;
 pub mod workspace;
@@ -62,6 +63,9 @@ pub use dnd_view::DndView;
 pub use dock::{DockModel, DockView};
 pub use osd::OsdView;
 pub use popup_overlay::PopupOverlayView;
+pub use tiling_design::{
+    DesignCell, DesignGeometry, DesignHit, TilingDesignInputView, TilingDesignView,
+};
 pub use tiling_overlay::{zone_from_pointer, TileZone, TilingOverlayView};
 pub use workspace::WORKSPACE_SPACING;
 pub use workspace_selector::{WorkspaceSelectorView, WORKSPACE_SELECTOR_PREVIEW_WIDTH};
@@ -226,6 +230,8 @@ pub struct Workspaces {
     pub popup_overlay: PopupOverlayView,
     pub osd: OsdView,
     pub tiling_overlay: TilingOverlayView,
+    /// Design mode's pane grid, on the workspace that is editing its layout.
+    pub tiling_design: TilingDesignView,
     pub app_icons_manager: Arc<AppIconsManager>,
 
     // gestures states
@@ -646,6 +652,9 @@ impl Workspaces {
 
         // Window-tiling drop-zone overlay; attached to overlay_layer in map_output_with_primary
         let tiling_overlay = TilingOverlayView::new(layers_engine.clone());
+        // Design mode's grid; attached beside the snap overlay, above the
+        // windows and below the popups.
+        let tiling_design = TilingDesignView::new(layers_engine.clone());
 
         let mut workspaces = Self {
             // layer,
@@ -664,6 +673,7 @@ impl Workspaces {
             popup_overlay,
             osd,
             tiling_overlay,
+            tiling_design,
             app_icons_manager,
             overlay_layer,
             layer_shell_top,
@@ -4386,6 +4396,9 @@ impl Workspaces {
             let _ = self
                 .overlay_layer
                 .add_sublayer(&self.tiling_overlay.wrap_layer);
+            let _ = self
+                .overlay_layer
+                .add_sublayer(&self.tiling_design.wrap_layer);
             let _ = self.overlay_layer.add_sublayer(&self.osd.wrap_layer);
             // App icons manager lives at the root — sibling of output layers, never rendered
             // on any output, but present in the scene so its subtree gets laid out.
@@ -5345,7 +5358,11 @@ impl Workspaces {
                 return PlaneCandidates::none();
             }
         }
-        // The tiling drop-zone overlay composites above windows.
+        // The tiling drop-zone overlay and design mode's grid composite above
+        // windows, so nothing may be promoted out from under them.
+        if self.tiling_design.is_visible() {
+            return PlaneCandidates::none();
+        }
         if self.tiling_overlay.is_visible() {
             {
                 Self::plane_gate_log("tiling-overlay");
@@ -5589,7 +5606,7 @@ impl Workspaces {
             || self.get_show_all()
             || self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
         let osd = self.osd.is_visible();
-        let tiling = self.tiling_overlay.is_visible();
+        let tiling = self.tiling_overlay.is_visible() || self.tiling_design.is_visible();
         let active = layer_shell_active || popups || selector || osd || tiling;
         if active {
             tracing::debug!(

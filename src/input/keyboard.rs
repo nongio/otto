@@ -319,6 +319,15 @@ impl<BackendData: Backend> Otto<BackendData> {
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
 
+        // Design mode owns Escape and the undo shortcut while it is up, the
+        // way the app switcher owns its modifier: they must not reach the
+        // client running inside the cell being edited. Read before
+        // `keyboard.input` borrows the state for the filter.
+        let design_active = self
+            .workspaces
+            .outputs()
+            .any(|output| self.tiling_design_active(output));
+
         // Assistive technologies are offered the key before anything else in
         // the session sees it. Cloned out of `self` because `keyboard.input`
         // borrows the state for the duration of the filter.
@@ -389,6 +398,22 @@ impl<BackendData: Backend> Otto<BackendData> {
                             tracing::info!(target: "otto::planes", "debug plane dump: {msg}");
                             suppressed_keys.push(keysym);
                             return FilterResult::Intercept(KeyAction::None);
+                        }
+                    }
+
+                    // Escape leaves design mode; Ctrl+Z (which is what this
+                    // machine's Cmd+Z produces) undoes the last edit.
+                    if design_active && matches!(state, KeyState::Pressed) {
+                        let action = match keysym {
+                            Keysym::Escape => Some(KeyAction::TilingDesignToggle),
+                            Keysym::z | Keysym::Z if modifiers.ctrl || modifiers.logo => {
+                                Some(KeyAction::TilingUndo)
+                            }
+                            _ => None,
+                        };
+                        if let Some(action) = action {
+                            suppressed_keys.push(keysym);
+                            return FilterResult::Intercept(action);
                         }
                     }
 

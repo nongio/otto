@@ -154,6 +154,11 @@ pub enum BuiltinAction {
     SplitHorizontal,
     /// Arm the next insertion to split the focused cell top/bottom.
     SplitVertical,
+    /// Show the pane grid: the layout's cells become things to grab, split
+    /// and resize. The action again, or Escape, leaves it.
+    TilingDesignToggle,
+    /// Undo the last edit made in design mode.
+    TilingUndo,
     ResizeGrowWidth,
     ResizeShrinkWidth,
     ResizeGrowHeight,
@@ -289,6 +294,8 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "MoveContainerDown" => BuiltinAction::MoveContainerDown,
         "SplitHorizontal" => BuiltinAction::SplitHorizontal,
         "SplitVertical" => BuiltinAction::SplitVertical,
+        "TilingDesignToggle" => BuiltinAction::TilingDesignToggle,
+        "TilingUndo" => BuiltinAction::TilingUndo,
         "ResizeGrowWidth" => BuiltinAction::ResizeGrowWidth,
         "ResizeShrinkWidth" => BuiltinAction::ResizeShrinkWidth,
         "ResizeGrowHeight" => BuiltinAction::ResizeGrowHeight,

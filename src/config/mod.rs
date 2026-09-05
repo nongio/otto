@@ -993,6 +993,15 @@ pub struct TilingConfig {
     /// to `0.0..1.0`.
     #[serde(default = "default_tiling_layout_bounce")]
     pub layout_bounce: f32,
+    /// Duration in seconds of the spring design mode's cells chase a dragged
+    /// handle on, and that its splits, presets and equalises animate with.
+    /// Bouncier than the layout spring by default: the grid is meant to feel
+    /// like a physical thing being pushed around. `0` snaps.
+    #[serde(default = "default_tiling_design_duration")]
+    pub design_duration: f32,
+    /// Bounce of that spring. Clamped to `0.0..1.0`.
+    #[serde(default = "default_tiling_design_bounce")]
+    pub design_bounce: f32,
     /// How much of a container's extent one keyboard resize step moves, as a
     /// fraction. Clamped to `0.01..0.5`.
     #[serde(default = "default_tiling_resize_step")]
@@ -1025,6 +1034,14 @@ fn default_tiling_layout_bounce() -> f32 {
     0.0
 }
 
+fn default_tiling_design_duration() -> f32 {
+    0.35
+}
+
+fn default_tiling_design_bounce() -> f32 {
+    0.25
+}
+
 fn default_tiling_resize_step() -> f32 {
     0.05
 }
@@ -1043,6 +1060,8 @@ impl Default for TilingConfig {
             smart_gaps: default_tiling_smart_gaps(),
             layout_duration: default_tiling_layout_duration(),
             layout_bounce: default_tiling_layout_bounce(),
+            design_duration: default_tiling_design_duration(),
+            design_bounce: default_tiling_design_bounce(),
             resize_step: default_tiling_resize_step(),
             decoration: default_tiling_decoration(),
         }
@@ -1062,6 +1081,19 @@ impl TilingConfig {
         Some(layers::prelude::Transition::spring(
             duration,
             self.layout_bounce.clamp(0.0, 1.0),
+        ))
+    }
+
+    /// The spring design mode animates on. Same `0` = snap rule as
+    /// [`TilingConfig::layout_transition`].
+    pub fn design_transition(&self) -> Option<layers::prelude::Transition> {
+        let duration = self.design_duration.clamp(0.0, 10.0);
+        if duration <= f32::EPSILON {
+            return None;
+        }
+        Some(layers::prelude::Transition::spring(
+            duration,
+            self.design_bounce.clamp(0.0, 1.0),
         ))
     }
 

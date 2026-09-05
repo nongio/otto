@@ -70,6 +70,10 @@ pub enum KeyAction {
     /// one `[tiling] resize_step`.
     TilingResize(crate::workspaces::tiling::Axis, bool),
     TilingEqualize,
+    /// Enter or leave design mode on the focused output's workspace.
+    TilingDesignToggle,
+    /// Undo the last design-mode edit.
+    TilingUndo,
     /// The hardware power button was pressed; `[power_management].on_power_button`
     /// decides what that means
     PowerButton,
@@ -699,6 +703,8 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingSplit(axis) => self.handle_tiling_split(axis),
             KeyAction::TilingResize(axis, grow) => self.handle_tiling_resize(axis, grow),
             KeyAction::TilingEqualize => self.handle_tiling_equalize(),
+            KeyAction::TilingDesignToggle => self.handle_tiling_design_toggle(),
+            KeyAction::TilingUndo => self.handle_tiling_undo(),
             other => self.process_common_key_action(other),
         }
     }
@@ -796,6 +802,8 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ResizeGrowHeight => Some(KeyAction::TilingResize(Axis::Column, true)),
             BuiltinAction::ResizeShrinkHeight => Some(KeyAction::TilingResize(Axis::Column, false)),
             BuiltinAction::EqualizeContainer => Some(KeyAction::TilingEqualize),
+            BuiltinAction::TilingDesignToggle => Some(KeyAction::TilingDesignToggle),
+            BuiltinAction::TilingUndo => Some(KeyAction::TilingUndo),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))
