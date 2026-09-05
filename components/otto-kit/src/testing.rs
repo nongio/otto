@@ -364,6 +364,32 @@ impl TestClient {
     ///
     /// Returns a shared reference to the toplevel state which tracks
     /// configure events.
+    /// Hand the compositor a cursor bitmap of this client's own, the way a
+    /// client that does not use the cursor-shape protocol does — Chromium
+    /// among them.
+    ///
+    /// Returns the cursor surface and its buffer, which the caller keeps
+    /// alive, or `None` when the pointer has not entered one of this client's
+    /// surfaces yet: the enter serial is what authorises the request.
+    pub fn set_cursor_surface(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Option<(wl_surface::WlSurface, ShmBuffer)> {
+        let pointer = self.state.wl_pointer.clone()?;
+        let serial = self.state.last_enter_serial?;
+        let shm = self.state.wl_shm.clone().expect("shm not bound");
+
+        let buffer = ShmBuffer::new(&shm, &self.qh, width, height);
+        let surface = self.create_surface();
+        surface.attach(Some(buffer.buffer()), 0, 0);
+        surface.damage(0, 0, width as i32, height as i32);
+        surface.commit();
+
+        pointer.set_cursor(serial, Some(&surface), 0, 0);
+        Some((surface, buffer))
+    }
+
     /// Ask the compositor to draw `shape` as the cursor, the way a client that
     /// binds the cursor-shape protocol does instead of uploading a bitmap.
     ///
