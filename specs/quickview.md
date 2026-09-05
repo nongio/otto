@@ -175,7 +175,14 @@ There is no hand-back: the host already has the keypress.
 - **Space, Escape** — close the preview.
 - **Arrows, Home, End, Page Up/Down** — the host moves its own selection and
   tells the preview the new path. When the content has pages, Page Up/Down
-  paginate instead.
+  paginate instead — and at the last page they go back to meaning what they
+  mean everywhere else, because a key that stops working at the end of a
+  document is worse than one that hands the listing back. A page turn is a
+  fresh decode of the same file at another page, since the worker rasterises
+  one page and holds no document between calls; the page on screen stays up
+  while it runs, rather than being replaced by the waiting line. The panel's
+  title strip says which page of how many, or a turn would have no visible
+  effect on a document whose pages look alike.
 - **Enter** — the host opens the file in its default application and closes the
   preview.
 - **`+` / `-` / `0`** — zoom, which is the preview's own business; past fit,

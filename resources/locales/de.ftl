@@ -1195,6 +1195,10 @@ quickview-megapixels = { $count } Megapixel
 # comma-separated list of package names — pdftoppm's package and so on — and
 # is not translated. Wraps to two lines if it has to.
 quickview-pdf-install-rasteriser = Eines davon installieren: { $packages } — dann erscheinen die Seiten
+# Which page of a PDF the panel is showing, in the corner of its title strip.
+# $page and $pages are whole numbers. Very little room — keep it to a few
+# characters, and drop the word for "page" if the language can.
+quickview-page-of = { $page } / { $pages }
 
 
 ## Quick View — listings

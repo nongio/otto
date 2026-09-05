@@ -470,6 +470,29 @@ impl Session {
         self.first_row = next.clamp(0, max as i64) as usize;
     }
 
+    /// Which page of a paginated preview is showing, and how many there are —
+    /// `None` for everything that is not paginated, which is everything but a
+    /// PDF of more than one page.
+    ///
+    /// A page is not scroll state and not zoom state: it is *a different
+    /// decode*. Turning one is asking the worker for another picture, which is
+    /// why this only reports and the host does the turning.
+    pub fn paged(&self) -> Option<(u32, u32)> {
+        match &self.preview {
+            Preview::Pixels { pages, page, .. } if *pages > 1 => Some((*page, *pages)),
+            _ => None,
+        }
+    }
+
+    /// The page a turn of `delta` lands on, or `None` when there is nothing to
+    /// turn to: an unpaginated preview, or an end already reached. Stopping at
+    /// both ends rather than wrapping, like every other end in the panel.
+    pub fn page_turn(&self, delta: i32) -> Option<u32> {
+        let (page, pages) = self.paged()?;
+        let next = (page as i64 + delta as i64).clamp(1, pages as i64) as u32;
+        (next != page).then_some(next)
+    }
+
     /// Whether a two-finger gesture over `panel` should move the picture
     /// rather than scroll the content.
     ///
@@ -812,9 +835,13 @@ fn to_opening(rect: Rect) -> opening::Rect {
 ///
 /// `panel` is the resting rect in logical pixels and `scale` the output's
 /// scale; the worker is asked for roughly twice that, so a scaled decode still
-/// has detail to show when the panel is looked at closely.
-pub fn decode(path: &Path, panel: Rect, scale: f32) -> Preview {
+/// has detail to show when the panel is looked at closely. `page` is 1-based
+/// and only means anything to paginated content — turning a PDF's page is a
+/// fresh decode, since the worker rasterises one page and holds no document
+/// between calls.
+pub fn decode(path: &Path, panel: Rect, scale: f32, page: u32) -> Preview {
     let request = Request {
+        page: page.max(1),
         width: ((panel.width() * scale * 2.0) as u32).clamp(64, 4096),
         height: ((panel.height() * scale * 2.0) as u32).clamp(64, 4096),
         name: path
@@ -891,6 +918,21 @@ mod tests {
             Rect::new_empty(),
             Instant::now(),
         )
+    }
+
+    /// A session on page `page` of a `pages`-page document — a PDF, as far as
+    /// the panel is concerned: a picture that knows it is one of several.
+    fn pdf_session(page: u32, pages: u32) -> Session {
+        let mut session = image_session(800, 1100);
+        if let Preview::Pixels {
+            pages: p, page: n, ..
+        } = &mut session.preview
+        {
+            *p = pages;
+            *n = page;
+        }
+        session.name = "report.pdf".into();
+        session
     }
 
     fn document_session() -> Session {
@@ -1146,6 +1188,25 @@ mod tests {
             session.first_row > 0 && session.first_row < lines,
             "{lines}"
         );
+    }
+
+    /// The page keys turn a PDF's pages and stop at both ends — and at an end
+    /// they report that they did nothing, which is what lets the host hand
+    /// the keystroke back to the listing rather than swallowing it.
+    #[test]
+    fn a_pdf_turns_its_pages_and_stops_at_both_ends() {
+        assert_eq!(pdf_session(1, 15).page_turn(1), Some(2));
+        assert_eq!(pdf_session(15, 15).page_turn(-1), Some(14));
+
+        assert_eq!(pdf_session(15, 15).page_turn(1), None);
+        assert_eq!(pdf_session(1, 15).page_turn(-1), None);
+
+        // A single-page document is not paginated at all: its page keys were
+        // never the preview's to take.
+        assert_eq!(pdf_session(1, 1).paged(), None);
+        assert_eq!(pdf_session(1, 1).page_turn(1), None);
+        // Neither is anything that is not a picture.
+        assert_eq!(text_session().page_turn(1), None);
     }
 
     #[test]
