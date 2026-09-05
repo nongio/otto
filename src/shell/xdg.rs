@@ -16,13 +16,13 @@ use smithay::{
             Resource,
         },
     },
-    utils::{Rectangle, Serial},
+    utils::{Logical, Rectangle, Serial, Size},
     wayland::{
         compositor::{with_states, with_surface_tree_downward, TraversalAction},
         seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
-            XdgShellState,
+            XdgShellState, XdgToplevelSurfaceData,
         },
     },
 };
@@ -1177,18 +1177,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 .layers_engine
                 .add_animation_from_transition(&transition, false);
 
-            // The client is configured in ITS OWN geometry, which excludes the
-            // server-side titlebar: the bar is drawn above the client surface
-            // and already counted in the element geometry we animate from.
-            let current_client_size = window.client_size(current_element_geometry.size);
-            let new_client_size = window.client_size(new_geometry.size);
-
             // Use minimum size for windows that open already maximized (size 0,0)
-            let current_width = current_client_size.w.max(600) as f32;
-            let current_height = current_client_size.h.max(400) as f32;
-
-            let new_width = new_client_size.w as f32;
-            let new_height = new_client_size.h as f32;
+            let current_size = Size::<i32, Logical>::from((
+                current_element_geometry.size.w.max(600),
+                current_element_geometry.size.h.max(400),
+            ));
+            let new_size = new_geometry.size;
 
             // The client is told it is maximized NOW, not on the animation's
             // last frame: a client that draws its own decoration decides from
@@ -1200,14 +1194,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             });
 
             let s = surface.clone();
+            let w = window.clone();
             self.layers_engine.on_animation_update(
                 animation,
                 move |p: f32| {
-                    let width = current_width.interpolate(&new_width, p) as i32;
-                    let height = current_height.interpolate(&new_height, p) as i32;
-                    let size = Rectangle::new((0, 0).into(), (width, height).into());
+                    let size = animated_client_size(&w, current_size, new_size, p);
                     s.with_pending_state(|state| {
-                        state.size = Some(size.size);
+                        state.size = Some(size);
                     });
                     s.send_configure();
                 },
@@ -1787,14 +1780,13 @@ impl<BackendData: Backend> Otto<BackendData> {
 
                 // `current_geometry` and `target` are both decorated (space)
                 // rects; the client is configured without the titlebar Otto
-                // draws on top of it.
-                let current_client_size = window.client_size(current_geometry.size);
-                let new_client_size = window.client_size(target.size);
-
-                let current_width = current_client_size.w.max(600) as f32;
-                let current_height = current_client_size.h.max(400) as f32;
-                let new_width = new_client_size.w as f32;
-                let new_height = new_client_size.h as f32;
+                // draws on top of it — stripped per frame, see
+                // `animated_client_size`.
+                let current_size = Size::<i32, Logical>::from((
+                    current_geometry.size.w.max(600),
+                    current_geometry.size.h.max(400),
+                ));
+                let new_size = target.size;
 
                 let maximize = matches!(zone, TileZone::Maximize);
                 // Same reason as in `maximize_request`: the state below lands on
@@ -1804,12 +1796,11 @@ impl<BackendData: Backend> Otto<BackendData> {
                 let tiled_right = matches!(zone, TileZone::RightHalf);
 
                 let s = toplevel.clone();
+                let w = window.clone();
                 self.layers_engine.on_animation_update(
                     animation,
                     move |p: f32| {
-                        let width = current_width.interpolate(&new_width, p) as i32;
-                        let height = current_height.interpolate(&new_height, p) as i32;
-                        let size = Rectangle::new((0, 0).into(), (width, height).into());
+                        let size = animated_client_size(&w, current_size, new_size, p);
                         s.with_pending_state(|state| {
                             if (p - 1.0).abs() < f32::EPSILON {
                                 // Replace any prior maximized/tiled flags with this zone's.
@@ -1831,7 +1822,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                                     }
                                 }
                             }
-                            state.size = Some(size.size);
+                            state.size = Some(size);
                         });
                         s.send_configure();
                     },
@@ -1861,6 +1852,53 @@ impl<BackendData: Backend> Otto<BackendData> {
         // The window sits at its new rect now, so its menus have to be placed
         // against it again.
         self.reposition_popups_for_window(window);
+    }
+
+    /// Re-send the client size of a window whose geometry is owned by a zone
+    /// — maximized, or tiled — after something under it changed: the client
+    /// size is the zone minus Otto's titlebar, and a window that just gained
+    /// or lost that titlebar is otherwise a bar's height off its zone. Does
+    /// nothing for a floating window.
+    pub fn refit_window_to_zone(&mut self, window: &WindowElement) {
+        let Some(toplevel) = window.toplevel().cloned() else {
+            return;
+        };
+        let id = window.id();
+        let tiled_zone = self
+            .workspaces
+            .get_window_view(&id)
+            .and_then(|view| view.tiled_zone);
+        let zone = match (window.is_maximized(), tiled_zone) {
+            (true, _) => crate::workspaces::TileZone::Maximize,
+            (false, Some(zone)) => zone,
+            (false, None) => return,
+        };
+        let Some(output) = self
+            .workspaces
+            .output_for_window(window)
+            .or_else(|| self.workspaces.outputs_for_element(window).first().cloned())
+        else {
+            return;
+        };
+        self.recalculate_exclusive_zones(&output);
+        let target = zone.target_rect(self.usable_zone(&output));
+        let size = window.client_size(target.size);
+        toplevel.with_pending_state(|state| {
+            state.size = Some(size);
+        });
+        // Before the initial configure the size simply rides along with it.
+        let initial_configure_sent = with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .initial_configure_sent
+        });
+        if initial_configure_sent {
+            toplevel.send_pending_configure();
+        }
     }
 
     /// Forget that `window` is tiled, without moving it: a window the user
@@ -2210,6 +2248,28 @@ fn clamp_popup_to_target(
     if geo.loc.y < target.loc.y {
         geo.loc.y = target.loc.y;
     }
+}
+
+/// The size to configure a client with, `p` of the way through a maximize or
+/// tile animation from `from` to `to` — both decorated (space) rects.
+///
+/// The titlebar is stripped HERE, on every frame, rather than once when the
+/// animation is set up: a client can change its decoration mode while the
+/// animation is in flight. Chrome restoring a maximized window does exactly
+/// that — it asks to be maximized, then asks for client-side decorations — and
+/// a height fixed at set-up time would leave it a titlebar short of its zone,
+/// with a strip of desktop showing under the maximized window.
+pub(crate) fn animated_client_size(
+    window: &WindowElement,
+    from: Size<i32, Logical>,
+    to: Size<i32, Logical>,
+    p: f32,
+) -> Size<i32, Logical> {
+    let from = window.client_size(from);
+    let to = window.client_size(to);
+    let width = (from.w as f32).interpolate(&(to.w as f32), p) as i32;
+    let height = (from.h as f32).interpolate(&(to.h as f32), p) as i32;
+    Size::from((width, height))
 }
 
 /// Where a window goes when it is unmaximized but never had a size of its own
