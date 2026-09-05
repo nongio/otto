@@ -347,4 +347,129 @@ mod tiling_tree_tests {
         drop(windows);
         handle.stop();
     }
+
+    // ── Decorations on tiles ─────────────────────────────────────────────
+
+    /// Two decorated windows in a tree, everything settled, running under
+    /// `[tiling] decoration = decoration`.
+    fn tiled_decorated(decoration: &str) -> (HeadlessHandle, Vec<Window>) {
+        let (handle, windows) = setup(&["tile-a", "tile-b"]);
+        for window in &windows {
+            handle.decorate_window(&window.title);
+        }
+        handle.settle(200);
+        handle.set_tiling_decoration(decoration);
+        handle.focus_window("tile-a");
+        handle.toggle_tiling();
+        handle.settle(600);
+        (handle, windows)
+    }
+
+    /// Under `minimal` a tile keeps a bar, and it is the compact one: the
+    /// client is configured with its cell minus exactly that.
+    #[test]
+    #[serial]
+    fn a_minimal_tile_is_configured_with_its_cell_minus_its_bar() {
+        let (handle, windows) = tiled_decorated("minimal");
+
+        for title in ["tile-a", "tile-b"] {
+            let bar = handle
+                .window_decoration_height(title)
+                .expect("a decorated tile");
+            assert!(
+                bar > 0 && bar < 34,
+                "{title} should wear the compact bar, not the floating one: {bar}"
+            );
+            let (_, _, cw, ch) = cell(&handle, title);
+            let (w, h) = handle
+                .window_client_size(title)
+                .expect("the client was configured");
+            assert_eq!(
+                (w, h),
+                (cw, ch - bar),
+                "{title} keeps its cell minus its bar"
+            );
+        }
+
+        handle.set_tiling_decoration("minimal");
+        drop(windows);
+        handle.stop();
+    }
+
+    /// Under `none` there is no bar at all, so the client gets the whole cell.
+    #[test]
+    #[serial]
+    fn with_no_decoration_a_tile_is_configured_with_its_whole_cell() {
+        let (handle, windows) = tiled_decorated("none");
+
+        for title in ["tile-a", "tile-b"] {
+            assert_eq!(
+                handle.window_decoration_height(title),
+                Some(0),
+                "{title} should wear no bar"
+            );
+            let (_, _, cw, ch) = cell(&handle, title);
+            let (w, h) = handle
+                .window_client_size(title)
+                .expect("the client was configured");
+            assert_eq!((w, h), (cw, ch), "{title} fills its cell");
+        }
+
+        handle.set_tiling_decoration("minimal");
+        drop(windows);
+        handle.stop();
+    }
+
+    /// The setting reaches the tiles already on screen: a bar's height is part
+    /// of what its client is configured with, so a change of variant is a
+    /// change of geometry and the workspace is laid out again.
+    #[test]
+    #[serial]
+    fn changing_the_setting_reconfigures_the_tiles() {
+        let (handle, windows) = tiled_decorated("minimal");
+        let minimal = handle
+            .window_client_size("tile-a")
+            .expect("configured under minimal");
+
+        handle.set_tiling_decoration("none");
+        handle.settle(400);
+        let borderless = handle
+            .window_client_size("tile-a")
+            .expect("configured under none");
+        assert!(
+            borderless.1 > minimal.1,
+            "dropping the bar gives its height back to the client: \
+             {minimal:?} -> {borderless:?}"
+        );
+        assert_eq!(borderless.0, minimal.0, "the cell's width did not move");
+
+        handle.set_tiling_decoration("minimal");
+        drop(windows);
+        handle.stop();
+    }
+
+    /// Out of the tree, back to the floating bar.
+    #[test]
+    #[serial]
+    fn leaving_the_tree_puts_the_floating_bar_back() {
+        let (handle, windows) = tiled_decorated("minimal");
+        let tiled_bar = handle
+            .window_decoration_height("tile-a")
+            .expect("a decorated tile");
+
+        handle.toggle_tiling();
+        handle.settle(600);
+
+        assert!(!handle.workspace_tiling_enabled());
+        for title in ["tile-a", "tile-b"] {
+            let bar = handle
+                .window_decoration_height(title)
+                .expect("still decorated");
+            assert_eq!(bar, 34, "{title} wears the floating bar again");
+            assert!(bar > tiled_bar);
+        }
+
+        drop(windows);
+        handle.stop();
+    }
 }

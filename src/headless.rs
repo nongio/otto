@@ -801,6 +801,47 @@ impl HeadlessHandle {
         })
     }
 
+    /// The size the client of `title` was last configured with, in logical
+    /// pixels — the cell minus whatever its titlebar takes.
+    pub fn window_client_size(&self, title: &str) -> Option<(i32, i32)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            let toplevel = window.toplevel()?.clone();
+            let size = toplevel.with_pending_state(|state| state.size)?;
+            Some((size.w, size.h))
+        })
+    }
+
+    /// Height of the server-side titlebar `title` is wearing, in logical
+    /// pixels: the floating bar, a tile's minimal one, or none.
+    pub fn window_decoration_height(&self, title: &str) -> Option<i32> {
+        let title = title.to_string();
+        self.query(move |state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .map(|w| w.decoration_height())
+        })
+    }
+
+    /// Change `[tiling] decoration` the way the settings app does, and let it
+    /// reach the windows already on screen.
+    pub fn set_tiling_decoration(&self, decoration: &str) {
+        let decoration = decoration.to_string();
+        self.with_state(move |state| {
+            crate::config::Config::update(|config| {
+                config.tiling.decoration = decoration.clone();
+            });
+            state.refresh_tiling_decorations();
+        });
+    }
+
     // ── The tiling tree ──────────────────────────────────────────────────
 
     /// Toggle the current workspace between floating and tiling — the
