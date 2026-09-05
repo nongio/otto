@@ -194,13 +194,13 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# Pinned to a release: v1.15.0 carries `Layer::set_blur_bounds`
-# (nongio/layers#24), which confines a client's ext-background-effect-v1 frost
-# to the region it asked for instead of its whole surface.
+# Pinned to a release: v1.16.0 carries the cancelled-change re-sync
+# (nongio/layers#25), without which an exposé preview can stay drawn where a
+# superseded change left it — v1.15.0 brought `Layer::set_blur_bounds` (#24).
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.15.0", features = [
+laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.16.0", features = [
     "export-taffy",
 ] }
 

@@ -4036,8 +4036,8 @@ dependencies = [
 
 [[package]]
 name = "laye-rs"
-version = "1.15.0"
-source = "git+https://github.com/nongio/layers?tag=v1.15.0#a62932a5b624ac6aa1a974a2abfc22bcc68c2516"
+version = "1.16.0"
+source = "git+https://github.com/nongio/layers?tag=v1.16.0#be6a39d0ec00be1e8750c5b1f73b617daec374d7"
 dependencies = [
  "bezier_easing",
  "bitflags 1.3.2",
@@ -4073,7 +4073,7 @@ dependencies = [
 [[package]]
 name = "layers-debug-server"
 version = "0.3.0"
-source = "git+https://github.com/nongio/layers?tag=v1.15.0#a62932a5b624ac6aa1a974a2abfc22bcc68c2516"
+source = "git+https://github.com/nongio/layers?tag=v1.16.0#be6a39d0ec00be1e8750c5b1f73b617daec374d7"
 dependencies = [
  "futures",
  "serde",
