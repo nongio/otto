@@ -548,10 +548,19 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let id = elem.id();
 
-        // Save the current geometry so unfullscreen can restore it
+        // Save the current geometry so unfullscreen can restore it. An X11
+        // client that maps straight into fullscreen — most games do — has no
+        // geometry of its own yet, and remembering an empty rect would restore
+        // it to 0x0 at the top-left corner.
         if let Some(mut view) = self.workspaces.get_window_view(&id) {
-            let current_element_geometry = self.workspaces.element_geometry(elem).unwrap();
-            view.unmaximised_rect = current_element_geometry;
+            let current_element_geometry = self
+                .workspaces
+                .element_geometry(elem)
+                .unwrap_or_else(|| Rectangle::new((0, 0).into(), elem.geometry().size));
+            view.unmaximised_rect = crate::shell::xdg::restored_rect_or_default(
+                current_element_geometry,
+                self.usable_zone(&output),
+            );
             self.workspaces.set_window_view(&id, view);
         }
 

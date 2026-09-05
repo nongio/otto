@@ -670,9 +670,17 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
             let id = window.id();
 
+            // Remember what to restore to. A client that asked to be fullscreen
+            // before it ever committed a buffer has no geometry yet, and an
+            // empty rect would restore to nothing at all — give it the size a
+            // fresh window gets instead, exactly as the maximize path does.
             if let Some(mut view) = self.workspaces.get_window_view(&id) {
-                let current_element_geometry = self.workspaces.element_geometry(&window).unwrap();
-                view.unmaximised_rect = current_element_geometry;
+                let current_element_geometry = self
+                    .workspaces
+                    .element_geometry(&window)
+                    .unwrap_or_else(|| Rectangle::new((0, 0).into(), window.geometry().size));
+                view.unmaximised_rect =
+                    restored_rect_or_default(current_element_geometry, self.usable_zone(&output));
                 self.workspaces.set_window_view(&id, view);
             }
             output
@@ -869,7 +877,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         let id = surface.wl_surface().id();
 
-        if let Some(view) = self.workspaces.get_window_view(&id) {
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
             let wl_output = surface.with_pending_state(|state| {
                 state.states.unset(xdg_toplevel::State::Fullscreen);
                 state.fullscreen_output.take()
@@ -890,6 +898,16 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 }
 
                 we.set_fullscreen(false, 0);
+                // Nothing to restore to means restoring to nothing: the window
+                // would be configured 0x0 and disappear as it left fullscreen.
+                // The enter path fills this in, so an empty rect here is a
+                // window that was fullscreen before Otto ever saw a size for it
+                // — a client mapped straight into fullscreen, or one restored
+                // that way across a session.
+                if view.unmaximised_rect.size.is_empty() {
+                    view.unmaximised_rect = default_restored_rect(self.usable_zone(&output));
+                    self.workspaces.set_window_view(&id, view.clone());
+                }
                 // Fullscreen is off now, so `is_decorated` speaks for the
                 // client's negotiated mode again: bring the chrome back for
                 // the shrink animation.
@@ -2199,7 +2217,7 @@ fn clamp_popup_to_target(
 ///
 /// Two thirds of the usable zone, centred in it: big enough to work in, small
 /// enough that the restore is unmistakable.
-fn default_restored_rect(
+pub(crate) fn default_restored_rect(
     zone: Rectangle<i32, smithay::utils::Logical>,
 ) -> Rectangle<i32, smithay::utils::Logical> {
     let size = (zone.size.w * 2 / 3, zone.size.h * 2 / 3);
@@ -2208,4 +2226,63 @@ fn default_restored_rect(
         zone.loc.y + (zone.size.h - size.1) / 2,
     );
     Rectangle::new(loc.into(), size.into())
+}
+
+/// The rect to remember as a window's restored geometry, given where it is
+/// now and the usable area of the output it is on.
+///
+/// `current` is empty when the client asked to be fullscreen (or maximized)
+/// before it ever committed a buffer — a game, a video player or a browser
+/// restoring its last session does exactly that — and remembering an empty
+/// rect is remembering 0x0: leaving fullscreen later would configure the
+/// window to nothing at all and it would vanish. A window that has never had
+/// a size of its own gets the size a fresh window gets.
+pub(crate) fn restored_rect_or_default(
+    current: Rectangle<i32, smithay::utils::Logical>,
+    zone: Rectangle<i32, smithay::utils::Logical>,
+) -> Rectangle<i32, smithay::utils::Logical> {
+    if current.size.is_empty() {
+        default_restored_rect(zone)
+    } else {
+        current
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new((x, y).into(), (w, h).into())
+    }
+
+    #[test]
+    fn a_window_with_a_size_is_remembered_as_it_is() {
+        let current = rect(120, 80, 640, 480);
+        assert_eq!(
+            restored_rect_or_default(current, rect(0, 0, 1920, 1080)),
+            current
+        );
+    }
+
+    /// The bug this guards: a client that goes fullscreen before it has ever
+    /// been given a size has no geometry, and remembering that empty rect made
+    /// leaving fullscreen configure the window to 0x0.
+    #[test]
+    fn a_window_with_no_size_yet_falls_back_to_a_fresh_windows_rect() {
+        let zone = rect(0, 30, 1920, 1050);
+        let restored = restored_rect_or_default(rect(0, 0, 0, 0), zone);
+        assert!(!restored.size.is_empty());
+        assert_eq!(restored, default_restored_rect(zone));
+    }
+
+    /// A window can have a position but no size — the location is as
+    /// meaningless as the size when the client has never been configured, so
+    /// the whole rect is replaced rather than only the size.
+    #[test]
+    fn a_zero_size_at_an_offset_is_still_empty() {
+        let zone = rect(0, 30, 1920, 1050);
+        let restored = restored_rect_or_default(rect(400, 300, 0, 0), zone);
+        assert_eq!(restored, default_restored_rect(zone));
+    }
 }
