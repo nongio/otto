@@ -344,6 +344,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// `smart_gaps` stays global either way: it is a preference about how a
     /// lone tile looks, not a measurement of one workspace.
     fn command_gaps(&mut self, scope: GapScope, target: GapTarget, amount: i32) -> CommandResult {
+        // Which records have to be rewritten: every one for `all`, which
+        // clears an override wherever there is one, and the focused
+        // workspace's alone for `current`.
+        let touched_all = matches!(target, GapTarget::All);
+        let mut touched: Option<(String, usize)> = None;
         match target {
             GapTarget::All => {
                 Config::update(|config| match scope {
@@ -365,6 +370,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 let Some(workspace) = self.workspaces.current_tiling_workspace(&output) else {
                     return Err("no workspace has focus".to_string());
                 };
+                let name = output.name();
+                if let Some(ows) = self.workspaces.output_workspaces.get(&name) {
+                    touched = Some((name, ows.current_workspace));
+                }
                 let Ok(mut state) = workspace.tiling.write() else {
                     return Err("the tiling state is busy".to_string());
                 };
@@ -379,7 +388,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 state.gaps = Some(gaps);
             }
         }
-        self.workspaces.save_workspace_gaps();
+        if touched_all {
+            self.workspaces.persist_all_workspace_entries();
+        } else if let Some((output, position)) = touched {
+            self.workspaces.persist_workspace_entry(&output, position);
+        }
         let outputs: Vec<Output> = self.workspaces.outputs().cloned().collect();
         for output in outputs {
             self.relayout_workspace(&output, true);

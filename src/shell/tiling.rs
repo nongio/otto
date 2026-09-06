@@ -401,6 +401,15 @@ impl<BackendData: Backend> Otto<BackendData> {
         if already == enabled {
             return;
         }
+        // The mode is persisted with the workspace's name and gaps, so a
+        // workspace the user tiles is still tiled at the next login. Written
+        // after the state has changed, from the state — see
+        // `Workspaces::persist_workspace_entry`.
+        let record = self
+            .workspaces
+            .output_workspaces
+            .get(&output.name())
+            .map(|ows| (output.name(), ows.current_workspace));
 
         if !enabled {
             let leaves = {
@@ -412,6 +421,9 @@ impl<BackendData: Backend> Otto<BackendData> {
                 state.enabled = false;
                 leaves
             };
+            if let Some((output, position)) = record.clone() {
+                self.workspaces.persist_workspace_entry(&output, position);
+            }
             for id in leaves {
                 let Some(window) = self.workspaces.windows_map.get(&id).cloned() else {
                     continue;
@@ -432,6 +444,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             };
             state.clear();
             state.enabled = true;
+        }
+        if let Some((output, position)) = record {
+            self.workspaces.persist_workspace_entry(&output, position);
         }
 
         // `windows_list` is bottom-to-top, so walking it backwards gives the

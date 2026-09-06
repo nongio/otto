@@ -953,20 +953,18 @@ impl Default for LoginConfig {
     }
 }
 
-/// Workspace settings: the names the user typed in the workspace selector, and
-/// how long the scroll between two workspaces takes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+/// Workspace settings: one record per workspace, and how long the scroll
+/// between two workspaces takes.
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkspacesConfig {
-    /// Custom workspace names, keyed by `"<output name>:<position>"` — see
-    /// [`workspace_name_key`]. Workspaces are per output, and positions shift
-    /// when one is removed, so this is a best-effort restore, not an identity.
-    pub names: BTreeMap<String, String>,
-    /// Per-workspace gap overrides, keyed the same way `names` is. A
-    /// workspace absent from here uses the `[tiling]` defaults; `gaps … all`
-    /// writes those defaults and empties this table.
-    #[serde(default)]
-    pub gaps: BTreeMap<String, WorkspaceGapsConfig>,
+    /// What the user set on each workspace, keyed by
+    /// `"<output name>:<position>"` — see [`workspace_name_key`]. Workspaces
+    /// are per output, and positions shift when one is removed, so this is a
+    /// best-effort restore, not an identity.
+    ///
+    /// Written as `[workspaces.entries."eDP-1:0"]`. A workspace with nothing
+    /// set is simply absent.
+    pub entries: BTreeMap<String, WorkspaceEntry>,
     /// Duration in seconds of the spring that scrolls from one workspace to the
     /// next — the animation a shortcut, an app switcher commit or the workspace
     /// selector plays. A swipe keeps its own, shorter spring, since it starts
@@ -990,23 +988,111 @@ fn default_workspace_switch_bounce() -> f32 {
 impl Default for WorkspacesConfig {
     fn default() -> Self {
         Self {
-            names: BTreeMap::new(),
-            gaps: BTreeMap::new(),
+            entries: BTreeMap::new(),
             switch_duration: default_workspace_switch_duration(),
             switch_bounce: default_workspace_switch_bounce(),
         }
     }
 }
 
-/// One workspace's gap override, as `gaps inner|outer <n>` leaves it.
+/// Everything the user has set on one workspace: the name typed in the
+/// selector, whether it tiles, and its gap override.
 ///
-/// Both values are always written: `gaps inner 0` on a workspace with no
-/// override yet takes the `[tiling]` outer gap with it, so the override
-/// describes the whole workspace rather than half of one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// One record rather than a table per field, so a workspace reads as a
+/// workspace in the file and a new per-workspace setting is a field here
+/// instead of another parallel map.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceEntry {
+    /// The name the user typed in the workspace selector. Absent means the
+    /// workspace shows its default `Workspace N`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Whether the workspace tiles. Restored on login — the mode, not the
+    /// tree — so a workspace the user tiles stays tiled across a restart.
+    #[serde(skip_serializing_if = "is_false")]
+    pub tiling: bool,
+    /// Gap override, in logical pixels. Absent means the `[tiling]` default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner_gap: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outer_gap: Option<i32>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl WorkspaceEntry {
+    /// Nothing set: the record can be dropped rather than written as an
+    /// empty table.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// One workspace's gap override, as `[workspaces.gaps]` held it before the
+/// per-workspace record existed. Read only, and folded into
+/// [`WorkspaceEntry`] on the way in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct WorkspaceGapsConfig {
     pub inner: i32,
     pub outer: i32,
+}
+
+/// `[workspaces]` as it may be written in a file: either the record per
+/// workspace, or the two parallel `names` / `gaps` maps that came before it.
+///
+/// Deserialising through this rather than into [`WorkspacesConfig`] directly
+/// is what makes the legacy keys readable without keeping them anywhere else
+/// in the compositor: by the time anything holds a `WorkspacesConfig` there
+/// is one shape, and writing emits only that.
+#[derive(Deserialize)]
+#[serde(default)]
+struct WorkspacesConfigFile {
+    names: BTreeMap<String, String>,
+    gaps: BTreeMap<String, WorkspaceGapsConfig>,
+    entries: BTreeMap<String, WorkspaceEntry>,
+    switch_duration: f32,
+    switch_bounce: f32,
+}
+
+impl Default for WorkspacesConfigFile {
+    fn default() -> Self {
+        Self {
+            names: BTreeMap::new(),
+            gaps: BTreeMap::new(),
+            entries: BTreeMap::new(),
+            switch_duration: default_workspace_switch_duration(),
+            switch_bounce: default_workspace_switch_bounce(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkspacesConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let file = WorkspacesConfigFile::deserialize(deserializer)?;
+        let mut entries = file.entries;
+
+        // The legacy maps fill in only what the record does not already say:
+        // a file that carries both was written by a newer Otto and edited by
+        // an older one, and the record is the one that is current.
+        for (key, name) in file.names {
+            entries.entry(key).or_default().name.get_or_insert(name);
+        }
+        for (key, gaps) in file.gaps {
+            let entry = entries.entry(key).or_default();
+            entry.inner_gap.get_or_insert(gaps.inner);
+            entry.outer_gap.get_or_insert(gaps.outer);
+        }
+        entries.retain(|_, entry| !entry.is_empty());
+
+        Ok(WorkspacesConfig {
+            entries,
+            switch_duration: file.switch_duration,
+            switch_bounce: file.switch_bounce,
+        })
+    }
 }
 
 impl WorkspacesConfig {
@@ -1212,41 +1298,49 @@ pub fn workspace_name_key(output: &str, position: usize) -> String {
     format!("{output}:{position}")
 }
 
-/// Persist custom workspace names into the `[workspaces]` section of the
-/// writable config file, replacing the whole `names` table (the compositor
-/// holds the authoritative set) and leaving every other section alone.
+/// Change one workspace's persisted record in the `[workspaces]` section of
+/// the writable config file, leaving every other section alone.
 ///
-/// The edit goes through `toml_edit`, so the comments, key order and whitespace
-/// of the rest of a hand-maintained config survive it byte for byte.
-pub fn save_workspace_names(names: &BTreeMap<String, String>) {
+/// `edit` is handed the record as it stands — a default one for a workspace
+/// that has none yet — and whatever it leaves behind is written back. An
+/// entry `edit` empties is removed rather than written as a bare table.
+///
+/// The edit goes through `toml_edit`, so the comments, key order and
+/// whitespace of the rest of a hand-maintained config survive it byte for
+/// byte. The legacy `names` and `gaps` tables are folded into `entries` and
+/// dropped from the file the first time this rewrites the section, which is
+/// the only migration there is.
+pub fn save_workspace_entry(key: &str, edit: impl FnOnce(&mut WorkspaceEntry)) {
     let path = writable_config_path();
     let mut doc = match file::load_document(&path) {
         Ok(doc) => doc,
         Err(err) => {
-            warn!("Failed to save workspace names: {err}");
+            warn!("Failed to save the workspace record: {err}");
             return;
         }
     };
 
-    if let Err(err) = replace_workspace_names(&mut doc, names) {
+    if let Err(err) = edit_workspace_entry(&mut doc, key, edit) {
         warn!(
-            "Failed to save workspace names to {}: {err}",
+            "Failed to save the workspace record to {}: {err}",
             path.display()
         );
         return;
     }
     if let Err(err) = file::store_document(&path, &doc) {
-        warn!("Failed to save workspace names: {err}");
+        warn!("Failed to save the workspace record: {err}");
     }
 }
 
-/// Put `names` in `[workspaces.names]`, replacing whatever was there.
+/// [`save_workspace_entry`] against a document, so the rewrite can be tested
+/// without a file.
 ///
-/// Fails rather than overwrite a `workspaces` key that is not a table: the user
-/// wrote that, whatever it is.
-fn replace_workspace_names(
+/// Fails rather than overwrite a `workspaces` key that is not a table: the
+/// user wrote that, whatever it is.
+fn edit_workspace_entry(
     doc: &mut toml_edit::DocumentMut,
-    names: &BTreeMap<String, String>,
+    key: &str,
+    edit: impl FnOnce(&mut WorkspaceEntry),
 ) -> Result<(), String> {
     let workspaces = doc
         .as_table_mut()
@@ -1255,57 +1349,130 @@ fn replace_workspace_names(
         .as_table_mut()
         .ok_or_else(|| "`workspaces` is not a table".to_string())?;
 
-    let mut table = toml_edit::Table::new();
-    for (key, value) in names {
-        table.insert(key, toml_edit::value(value.as_str()));
-    }
-    workspaces.insert("names", toml_edit::Item::Table(table));
-    Ok(())
-}
+    // Read what the file says about every workspace — through the same
+    // legacy fold the compositor loads with, so an old file's `names` and
+    // `gaps` survive the rewrite that removes them.
+    let mut entries = read_workspace_entries(workspaces);
+    workspaces.remove("names");
+    workspaces.remove("gaps");
 
-/// Persist the per-workspace gap overrides into `[workspaces.gaps]`, keyed by
-/// [`workspace_name_key`] exactly as the names are, and replacing the whole
-/// table — the compositor holds the authoritative set.
-pub fn save_workspace_gaps(gaps: &BTreeMap<String, WorkspaceGapsConfig>) {
-    let path = writable_config_path();
-    let mut doc = match file::load_document(&path) {
-        Ok(doc) => doc,
-        Err(err) => {
-            warn!("Failed to save workspace gaps: {err}");
-            return;
+    let mut entry = entries.remove(key).unwrap_or_default();
+    edit(&mut entry);
+
+    let mut table = toml_edit::Table::new();
+    // `entries` holds a table per workspace, so it has to be written as a
+    // section rather than inlined into `[workspaces]` — otherwise the keys
+    // that follow it would land inside the last workspace.
+    table.set_implicit(true);
+    for (name, entry) in entries
+        .iter()
+        .chain(std::iter::once((&key.to_string(), &entry)))
+    {
+        if entry.is_empty() {
+            continue;
         }
-    };
-
-    if let Err(err) = replace_workspace_gaps(&mut doc, gaps) {
-        warn!("Failed to save workspace gaps to {}: {err}", path.display());
-        return;
+        table.insert(name, toml_edit::Item::Table(workspace_entry_table(entry)));
     }
-    if let Err(err) = file::store_document(&path, &doc) {
-        warn!("Failed to save workspace gaps: {err}");
+    if table.is_empty() {
+        workspaces.remove("entries");
+    } else {
+        workspaces.insert("entries", toml_edit::Item::Table(table));
     }
+    Ok(())
 }
 
-/// Put `gaps` in `[workspaces.gaps]`, replacing whatever was there.
-fn replace_workspace_gaps(
-    doc: &mut toml_edit::DocumentMut,
-    gaps: &BTreeMap<String, WorkspaceGapsConfig>,
-) -> Result<(), String> {
-    let workspaces = doc
-        .as_table_mut()
-        .entry("workspaces")
-        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
-        .as_table_mut()
-        .ok_or_else(|| "`workspaces` is not a table".to_string())?;
+/// Every workspace record the `[workspaces]` table holds, with the legacy
+/// `names` and `gaps` tables folded in on the same rule
+/// [`WorkspacesConfig`]'s own deserialiser uses: the record wins where it has
+/// a value. Read off the document rather than through serde, because what is
+/// being edited is the file's own syntax tree, not a `Config`.
+fn read_workspace_entries(workspaces: &toml_edit::Table) -> BTreeMap<String, WorkspaceEntry> {
+    let mut entries: BTreeMap<String, WorkspaceEntry> = BTreeMap::new();
 
-    let mut table = toml_edit::Table::new();
-    for (key, value) in gaps {
-        let mut entry = toml_edit::InlineTable::new();
-        entry.insert("inner", (value.inner as i64).into());
-        entry.insert("outer", (value.outer as i64).into());
-        table.insert(key, toml_edit::value(entry));
+    if let Some(table) = workspaces
+        .get("entries")
+        .and_then(|item| item.as_table_like())
+    {
+        for (key, item) in table.iter() {
+            let Some(fields) = item.as_table_like() else {
+                continue;
+            };
+            entries.insert(
+                key.to_string(),
+                WorkspaceEntry {
+                    name: fields
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                    tiling: fields
+                        .get("tiling")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    inner_gap: fields
+                        .get("inner_gap")
+                        .and_then(|v| v.as_integer())
+                        .map(|n| n as i32),
+                    outer_gap: fields
+                        .get("outer_gap")
+                        .and_then(|v| v.as_integer())
+                        .map(|n| n as i32),
+                },
+            );
+        }
     }
-    workspaces.insert("gaps", toml_edit::Item::Table(table));
-    Ok(())
+
+    if let Some(table) = workspaces
+        .get("names")
+        .and_then(|item| item.as_table_like())
+    {
+        for (key, item) in table.iter() {
+            if let Some(name) = item.as_str() {
+                entries
+                    .entry(key.to_string())
+                    .or_default()
+                    .name
+                    .get_or_insert_with(|| name.to_string());
+            }
+        }
+    }
+
+    if let Some(table) = workspaces.get("gaps").and_then(|item| item.as_table_like()) {
+        for (key, item) in table.iter() {
+            let Some(fields) = item.as_table_like() else {
+                continue;
+            };
+            let entry = entries.entry(key.to_string()).or_default();
+            if let Some(inner) = fields.get("inner").and_then(|v| v.as_integer()) {
+                entry.inner_gap.get_or_insert(inner as i32);
+            }
+            if let Some(outer) = fields.get("outer").and_then(|v| v.as_integer()) {
+                entry.outer_gap.get_or_insert(outer as i32);
+            }
+        }
+    }
+
+    entries.retain(|_, entry| !entry.is_empty());
+    entries
+}
+
+/// One workspace's record as the table it is written as, with everything
+/// unset left out — an absent optional, and `tiling = false`, are the default
+/// and say nothing.
+fn workspace_entry_table(entry: &WorkspaceEntry) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    if let Some(name) = &entry.name {
+        table.insert("name", toml_edit::value(name.as_str()));
+    }
+    if entry.tiling {
+        table.insert("tiling", toml_edit::value(true));
+    }
+    if let Some(inner) = entry.inner_gap {
+        table.insert("inner_gap", toml_edit::value(inner as i64));
+    }
+    if let Some(outer) = entry.outer_gap {
+        table.insert("outer_gap", toml_edit::value(outer as i64));
+    }
+    table
 }
 
 /// What Otto offers assistive technologies — see `specs/accessibility.md`.
@@ -2317,41 +2484,163 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_saving_workspace_names_keeps_the_rest_of_the_file() {
+    fn test_saving_a_workspace_record_keeps_the_rest_of_the_file() {
         let env = ConfigEnv::new();
         let config_file = env.user_config(
             "# my desktop\nscreen_scale = 2.0\n\n[dock]\n# tuned by hand\ngenie_scale = 0.3\n",
         );
 
-        let mut names = BTreeMap::new();
-        names.insert(workspace_name_key("eDP-1", 0), "Work".to_string());
-        names.insert(workspace_name_key("eDP-1", 1), "Mail".to_string());
-        save_workspace_names(&names);
+        save_workspace_entry(&workspace_name_key("eDP-1", 0), |entry| {
+            entry.name = Some("Work".to_string());
+            entry.tiling = true;
+        });
+        save_workspace_entry(&workspace_name_key("eDP-1", 1), |entry| {
+            entry.name = Some("Mail".to_string());
+        });
 
         let written = fs::read_to_string(&config_file).unwrap();
         assert!(written.contains("# my desktop"), "{written}");
         assert!(written.contains("# tuned by hand"), "{written}");
         assert!(written.contains("genie_scale = 0.3"), "{written}");
-
-        let config: Config = toml::from_str(&written).expect("the file stays parsable");
-        assert_eq!(
-            config.workspaces.names.get("eDP-1:0").map(String::as_str),
-            Some("Work")
+        assert!(
+            written.contains("[workspaces.entries.\"eDP-1:0\"]"),
+            "the record is written as its own section:\n{written}"
         );
 
-        // Renaming again replaces the table rather than accumulating in it.
-        let mut names = BTreeMap::new();
-        names.insert(workspace_name_key("eDP-1", 0), "Play".to_string());
-        save_workspace_names(&names);
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        let first = &config.workspaces.entries["eDP-1:0"];
+        assert_eq!(first.name.as_deref(), Some("Work"));
+        assert!(first.tiling);
+        // Nothing unset is written: `tiling = false` and an absent gap say
+        // exactly what leaving them out says.
+        assert!(!written.contains("tiling = false"), "{written}");
+        assert!(!written.contains("inner_gap"), "{written}");
+        assert_eq!(config.workspaces.entries.len(), 2);
 
+        // A second edit of the same workspace replaces its record rather than
+        // accumulating beside it, and leaves the other workspace alone.
+        save_workspace_entry(&workspace_name_key("eDP-1", 0), |entry| {
+            entry.name = Some("Play".to_string());
+            entry.tiling = false;
+            entry.inner_gap = Some(0);
+            entry.outer_gap = Some(0);
+        });
         let written = fs::read_to_string(&config_file).unwrap();
         assert!(written.contains("# my desktop"), "{written}");
         let config: Config = toml::from_str(&written).expect("the file stays parsable");
-        assert_eq!(config.workspaces.names.len(), 1);
+        assert_eq!(config.workspaces.entries.len(), 2);
         assert_eq!(
-            config.workspaces.names.get("eDP-1:0").map(String::as_str),
-            Some("Play")
+            config.workspaces.entries["eDP-1:0"],
+            WorkspaceEntry {
+                name: Some("Play".to_string()),
+                tiling: false,
+                inner_gap: Some(0),
+                outer_gap: Some(0),
+            }
         );
+        assert_eq!(
+            config.workspaces.entries["eDP-1:1"].name.as_deref(),
+            Some("Mail")
+        );
+    }
+
+    /// A workspace whose last setting is cleared loses its record rather than
+    /// leaving an empty table behind.
+    #[test]
+    fn an_emptied_workspace_record_is_removed() {
+        let mut doc: toml_edit::DocumentMut = "".parse().unwrap();
+        edit_workspace_entry(&mut doc, "eDP-1:0", |entry| {
+            entry.name = Some("Work".to_string())
+        })
+        .unwrap();
+        edit_workspace_entry(&mut doc, "eDP-1:0", |entry| entry.name = None).unwrap();
+
+        let written = doc.to_string();
+        assert!(!written.contains("eDP-1:0"), "{written}");
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        assert!(config.workspaces.entries.is_empty());
+    }
+
+    /// The two tables that came before the record are still read, and folded
+    /// into it — a config written by an older Otto keeps working.
+    #[test]
+    fn legacy_names_and_gaps_fold_into_the_record() {
+        let raw = r#"
+[workspaces.names]
+"eDP-1:0" = "Work"
+"eDP-1:1" = "Mail"
+
+[workspaces.gaps."eDP-1:0"]
+inner = 0
+outer = 4
+"#;
+        let config: Config = toml::from_str(raw).expect("a legacy file still parses");
+        assert_eq!(
+            config.workspaces.entries["eDP-1:0"],
+            WorkspaceEntry {
+                name: Some("Work".to_string()),
+                tiling: false,
+                inner_gap: Some(0),
+                outer_gap: Some(4),
+            }
+        );
+        assert_eq!(
+            config.workspaces.entries["eDP-1:1"].name.as_deref(),
+            Some("Mail")
+        );
+    }
+
+    /// Where a file carries both shapes — written by a newer Otto, then edited
+    /// by an older one — the record wins and the legacy table only fills gaps.
+    #[test]
+    fn the_record_wins_over_the_legacy_tables() {
+        let raw = r#"
+[workspaces.names]
+"eDP-1:0" = "Old"
+"eDP-1:1" = "Only in names"
+
+[workspaces.entries."eDP-1:0"]
+name = "New"
+tiling = true
+"#;
+        let config: Config = toml::from_str(raw).expect("both shapes parse together");
+        assert_eq!(
+            config.workspaces.entries["eDP-1:0"].name.as_deref(),
+            Some("New")
+        );
+        assert!(config.workspaces.entries["eDP-1:0"].tiling);
+        assert_eq!(
+            config.workspaces.entries["eDP-1:1"].name.as_deref(),
+            Some("Only in names")
+        );
+    }
+
+    /// Writing drops the legacy tables from the file: the fold happens once,
+    /// on the next rewrite of the section, and the file then has one shape.
+    #[test]
+    fn writing_a_record_drops_the_legacy_tables() {
+        let raw = "# mine\n[workspaces]\nswitch_duration = 0.5\n\n                   [workspaces.names]\n\"eDP-1:0\" = \"Work\"\n\n                   [workspaces.gaps.\"eDP-1:0\"]\ninner = 0\nouter = 4\n";
+        let mut doc: toml_edit::DocumentMut = raw.parse().unwrap();
+        edit_workspace_entry(&mut doc, "eDP-1:0", |entry| entry.tiling = true).unwrap();
+
+        let written = doc.to_string();
+        assert!(!written.contains("workspaces.names"), "{written}");
+        assert!(!written.contains("workspaces.gaps"), "{written}");
+        assert!(written.contains("# mine"), "{written}");
+
+        // And nothing was lost on the way: the name and the gaps the legacy
+        // tables held are now fields of the record.
+        let config: Config = toml::from_str(&written).expect("the file stays parsable");
+        assert_eq!(
+            config.workspaces.entries["eDP-1:0"],
+            WorkspaceEntry {
+                name: Some("Work".to_string()),
+                tiling: true,
+                inner_gap: Some(0),
+                outer_gap: Some(4),
+            }
+        );
+        assert_eq!(config.workspaces.switch_duration, 0.5);
     }
 
     #[test]

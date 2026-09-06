@@ -356,51 +356,52 @@ pub type RemoveWorkspaceChannel =
 pub type RenameWorkspaceChannel =
     smithay::reexports::calloop::channel::Channel<(String, usize, String)>;
 
-/// The user-chosen name saved for workspace `position` on `output`, if any.
+/// What was persisted for workspace `position` on `output`, if anything.
 ///
-/// Names are keyed by position rather than by workspace identity: indices are
-/// handed out by a counter that never repeats across restarts, so position is
-/// the only thing that survives. Adding or removing a workspace shifts the
-/// positions after it, and the names shift with them — the same trade-off every
-/// position-keyed workspace name has.
-fn persisted_workspace_name(output: &str, position: usize) -> Option<String> {
+/// Records are keyed by position rather than by workspace identity: indices
+/// are handed out by a counter that never repeats across restarts, so position
+/// is the only thing that survives. Adding or removing a workspace shifts the
+/// positions after it, and the records shift with them — the same trade-off
+/// every position-keyed workspace name has.
+fn persisted_workspace_entry(
+    output: &str,
+    position: usize,
+) -> Option<crate::config::WorkspaceEntry> {
     Config::with(|c| {
         c.workspaces
-            .names
+            .entries
             .get(&crate::config::workspace_name_key(output, position))
             .cloned()
     })
 }
 
-/// The gap override saved for workspace `position` on `output`, if any.
-///
-/// Keyed by position exactly as the names are, and with the same trade-off:
-/// removing a workspace shifts the ones after it, and their gaps shift with
-/// them.
-fn persisted_workspace_gaps(output: &str, position: usize) -> Option<tiling::Gaps> {
-    Config::with(|c| {
-        let saved = c
-            .workspaces
-            .gaps
-            .get(&crate::config::workspace_name_key(output, position))?;
-        Some(tiling::Gaps {
-            inner: saved.inner.max(0),
-            outer: saved.outer.max(0),
-            smart: c.tiling.smart_gaps,
-        })
-    })
-}
-
 /// Restore what was saved for the workspace now sitting at `position` on
-/// `output`: the name the user typed, and its gap override.
+/// `output`: the name the user typed, whether it tiles, and its gap override.
+///
+/// Called from the three workspace-creation sites, before any window is
+/// mapped, so turning tiling on here is the whole of it: there is nothing in
+/// the tree to lay out yet, and the windows that arrive afterwards take the
+/// ordinary insertion path.
 fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position: usize) {
-    if let Some(name) = persisted_workspace_name(output, position) {
+    let Some(entry) = persisted_workspace_entry(output, position) else {
+        return;
+    };
+    if let Some(name) = entry.name {
         workspace.set_custom_name(Some(name));
     }
-    if let Some(gaps) = persisted_workspace_gaps(output, position) {
-        if let Ok(mut state) = workspace.tiling.write() {
-            state.gaps = Some(gaps);
-        }
+    let gaps = match (entry.inner_gap, entry.outer_gap) {
+        (None, None) => None,
+        (inner, outer) => Config::with(|c| {
+            Some(tiling::Gaps {
+                inner: inner.unwrap_or(c.tiling.inner_gap).max(0),
+                outer: outer.unwrap_or(c.tiling.outer_gap).max(0),
+                smart: c.tiling.smart_gaps,
+            })
+        }),
+    };
+    if let Ok(mut state) = workspace.tiling.write() {
+        state.gaps = gaps;
+        state.enabled = entry.tiling;
     }
 }
 
@@ -847,45 +848,59 @@ impl Workspaces {
             return;
         };
         workspace.set_custom_name(name);
-        self.save_workspace_names();
+        self.persist_workspace_entries(output);
         self.refresh_output_selectors();
     }
 
-    /// Write every output's custom workspace names to the config, keyed by
-    /// position. Called after a rename; positions that hold no custom name are
-    /// simply absent.
-    fn save_workspace_names(&self) {
-        let mut names = std::collections::BTreeMap::new();
-        for (output, ows) in self.output_workspaces.iter() {
-            for (position, workspace) in ows.workspace_views.iter().enumerate() {
-                if let Some(name) = workspace.get_custom_name() {
-                    names.insert(crate::config::workspace_name_key(output, position), name);
-                }
-            }
-        }
-        crate::config::save_workspace_names(&names);
+    /// Write the persisted record for the workspace at `position` on `output`
+    /// — its name, its mode and its gap override — from what the workspace
+    /// holds now. A workspace with none of the three loses its record rather
+    /// than keeping an empty one.
+    pub(crate) fn persist_workspace_entry(&self, output: &str, position: usize) {
+        let Some(ows) = self.output_workspaces.get(output) else {
+            return;
+        };
+        let Some(workspace) = ows.workspace_views.get(position) else {
+            return;
+        };
+        let name = workspace.get_custom_name();
+        let (tiling, gaps) = workspace
+            .tiling
+            .read()
+            .map(|state| (state.enabled, state.gaps))
+            .unwrap_or((false, None));
+        crate::config::save_workspace_entry(
+            &crate::config::workspace_name_key(output, position),
+            |entry| {
+                entry.name = name;
+                entry.tiling = tiling;
+                entry.inner_gap = gaps.map(|gaps| gaps.inner);
+                entry.outer_gap = gaps.map(|gaps| gaps.outer);
+            },
+        );
     }
 
-    /// Write every output's per-workspace gap overrides to the config, keyed
-    /// by position. A workspace with no override is simply absent, so
-    /// `gaps … all` — which clears them all — writes an empty table.
-    pub(crate) fn save_workspace_gaps(&self) {
-        let mut gaps = std::collections::BTreeMap::new();
-        for (output, ows) in self.output_workspaces.iter() {
-            for (position, workspace) in ows.workspace_views.iter().enumerate() {
-                let Some(over) = workspace.tiling.read().ok().and_then(|state| state.gaps) else {
-                    continue;
-                };
-                gaps.insert(
-                    crate::config::workspace_name_key(output, position),
-                    crate::config::WorkspaceGapsConfig {
-                        inner: over.inner,
-                        outer: over.outer,
-                    },
-                );
-            }
+    /// Write every record on `output`. Records are keyed by position, so a
+    /// reorder moves all of them at once — the name, the mode and the gaps
+    /// travel with the workspace they belong to.
+    pub(crate) fn persist_workspace_entries(&self, output: &str) {
+        let count = self
+            .output_workspaces
+            .get(output)
+            .map(|ows| ows.workspace_views.len())
+            .unwrap_or(0);
+        for position in 0..count {
+            self.persist_workspace_entry(output, position);
         }
-        crate::config::save_workspace_gaps(&gaps);
+    }
+
+    /// Write every record on every output — what `gaps … all`, which clears
+    /// an override wherever there is one, has to do.
+    pub(crate) fn persist_all_workspace_entries(&self) {
+        let outputs: Vec<String> = self.output_workspaces.keys().cloned().collect();
+        for output in outputs {
+            self.persist_workspace_entries(&output);
+        }
     }
 
     /// The workspace selector belonging to a given output.
@@ -4995,9 +5010,9 @@ impl Workspaces {
 
         self.sync_model_from_primary();
         self.update_workspaces_layout();
-        // Names are stored by position, so the strip comes back in the order it
-        // was dragged into rather than the order it was created in.
-        self.save_workspace_names();
+        // Records are stored by position, so the strip comes back in the order
+        // it was dragged into rather than the order it was created in.
+        self.persist_workspace_entries(output_name);
         self.refresh_output_selectors();
 
         // Put the scroll back on the workspace the user is on — it is at a new

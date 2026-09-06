@@ -413,7 +413,7 @@ mod tiling_scripting_tests {
         );
         let text = std::fs::read_to_string(&written).expect("the session's own config");
         assert!(
-            text.contains("[workspaces.gaps"),
+            text.contains("[workspaces.entries"),
             "the gap override should be in the session's config, not somewhere else:\n{text}"
         );
 
@@ -429,6 +429,52 @@ mod tiling_scripting_tests {
             !handle_config_root_exists(&written),
             "the session's config directory is cleaned up on stop"
         );
+    }
+
+    /// Everything a workspace persists lands in one record: the mode the
+    /// toggle set and the gaps the command set, in a single
+    /// `[workspaces.entries."…"]` table, with neither of the two tables that
+    /// came before it left in the file.
+    #[test]
+    #[serial]
+    fn one_record_holds_the_workspace_mode_and_its_gaps() {
+        let (handle, windows) = setup(&["record-a", "record-b"]);
+        handle.focus_window("record-a");
+        run(&handle, "tiling toggle");
+        run(&handle, "gaps inner 0 current");
+        run(&handle, "gaps outer 2 current");
+
+        let written = handle.config_root.join("otto").join("config.toml");
+        let text = std::fs::read_to_string(&written).expect("the session's own config");
+
+        let tables: Vec<&str> = text
+            .lines()
+            .filter(|line| line.trim_start().starts_with("[workspaces.entries."))
+            .collect();
+        assert_eq!(
+            tables.len(),
+            1,
+            "exactly one workspace has a record:\n{text}"
+        );
+
+        // The record is the whole of what the workspace persisted.
+        let record: toml::Value = toml::from_str(&text).expect("the file stays parsable");
+        let entries = record["workspaces"]["entries"]
+            .as_table()
+            .expect("entries is a table");
+        let (_, entry) = entries.iter().next().expect("one record");
+        assert_eq!(entry["tiling"].as_bool(), Some(true), "{text}");
+        assert_eq!(entry["inner_gap"].as_integer(), Some(0), "{text}");
+        assert_eq!(entry["outer_gap"].as_integer(), Some(2), "{text}");
+
+        let workspaces = record["workspaces"].as_table().expect("a table");
+        assert!(
+            !workspaces.contains_key("names") && !workspaces.contains_key("gaps"),
+            "the tables the record replaced must not be written:\n{text}"
+        );
+
+        drop(windows);
+        handle.stop();
     }
 
     fn handle_config_root_exists(written: &std::path::Path) -> bool {

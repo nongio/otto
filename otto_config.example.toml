@@ -386,12 +386,6 @@ follow_cursor = true
 colorize_icons = true
 
 [workspaces]
-# Custom workspace names, written by the workspace selector when you rename a
-# label (click it a second time to edit it in place). The key is
-# "<output>:<position>", position counting from 0. Workspaces with no entry here
-# are labelled "Workspace N".
-# names = { "eDP-1:0" = "Mail", "eDP-1:2" = "Code" }
-
 # How long the desktop takes to scroll from one workspace to the next, in
 # seconds, and how much the scroll overshoots before it settles (0.0 = no
 # overshoot, 1.0 = very bouncy). This is the animation a keyboard shortcut, an
@@ -400,6 +394,22 @@ colorize_icons = true
 # because it starts from wherever your fingers left the workspaces.
 # switch_duration = 0.6
 # switch_bounce = 0.1
+
+# One record per workspace, written by Otto itself: the name from the workspace
+# selector (click a label a second time to edit it in place), whether the
+# workspace tiles, and its gap override if you set one with `gaps inner|outer
+# <n> current`. The key is "<output>:<position>", position counting from 0; a
+# workspace with no record is labelled "Workspace N", floats, and uses the
+# [tiling] gaps below. Every field is optional.
+# [workspaces.entries."eDP-1:0"]
+# name = "Mail"
+# tiling = true
+# inner_gap = 0
+# outer_gap = 0
+#
+# Older configs wrote `names` and a `[workspaces.gaps]` table instead. Both are
+# still read and folded into the records above; Otto drops them from the file
+# the next time it writes this section.
 
 [tiling]
 # A tiling workspace lays its windows out edge to edge in a tree of splits,
@@ -423,6 +433,12 @@ colorize_icons = true
 # motion at all.
 # layout_duration = 0.3
 # layout_bounce = 0.0
+
+# Switching a workspace into or out of tiling mode moves every window at once,
+# which is a bigger motion than a single insertion, so it has its own spring.
+# 0 snaps.
+# mode_duration = 0.4
+# mode_bounce = 0.1
 
 # Design mode — the "TilingDesignToggle" shortcut — draws the layout's cells as
 # panes with draggable handles between them. Its own spring, bouncier than the
