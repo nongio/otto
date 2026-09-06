@@ -471,18 +471,12 @@ current` persists the override; `gaps … all` clears every override. A
 workspace that moves position keeps best-effort semantics, as names do
 today.
 
-**Editing per-workspace settings.** The schema is static, so per-workspace
-values do not go through `org.otto.Settings`. They go through
-`org.otto.Shell1`: `GetWorkspaces` already lists them (add `name`, `tiling`,
-`gaps` to each entry) and a new `SetWorkspace(s output, u position, s json)`
-applies a partial record — `{"name": …}`, `{"tiling": true}`,
-`{"gaps": {"inner": 0, "outer": 0}}` or `{"gaps": null}` — through the same
-paths the selector rename, `TilingToggle` and the `gaps` command use, and
-`WorkspaceChanged` fires after. Otto Settings gets a *Workspaces* pane: one
-row per workspace per output with the name field (the selector's rename in
-another place), a tiling switch, and a gaps override with a "use default"
-state; it subscribes to `WorkspaceChanged` to refresh. The workspace
-selector's context menu gains the same tiling switch.
+**Editing per-workspace settings.** For now only where they already are
+edited: the name in the workspace selector, the mode with `TilingToggle`,
+the gaps with the `gaps` command. Each persists its own field of the record.
+A Workspaces pane in Otto Settings, and a `SetWorkspace` call on
+`org.otto.Shell1` to back it, are deferred; the record is shaped so they
+can be added without a migration.
 
 ## Command language
 
@@ -561,9 +555,9 @@ the slot; dropping a floating window into a tree; the minimal and none decoratio
 accent focus border; no shadow on tiles; usable-area re-fit on dock/layer-shell/
 mode changes; XWayland parity; workspace-selector mode indicator.
 
-**Phase 2b — settings.** The Tiling pane, the per-workspace record with
-name + mode + gaps persisted together, `SetWorkspace` on `org.otto.Shell1`,
-and the Workspaces pane. See "Settings app and per-workspace settings".
+**Phase 2b — settings.** The Tiling pane, and the per-workspace record with
+name + mode + gaps persisted together. The Workspaces pane is deferred. See
+"Settings app and per-workspace settings".
 
 **Phase 3 — scriptability and depth.** `org.otto.Shell1` + `otto-msg`;
 `GetTree`; marks and criteria; binding modes (`mode "resize"`); scratchpad;
