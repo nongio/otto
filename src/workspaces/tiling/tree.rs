@@ -590,9 +590,7 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
         axis: Axis,
         after: bool,
     ) -> Option<NodeId> {
-        if self.node(target).is_none() {
-            return None;
-        }
+        self.node(target)?;
         if let Some(parent) = self.parent_of(target) {
             if self.axis_of(parent) == Some(axis) {
                 return Some(self.insert_sibling_at(parent, target, new_leaf, after));

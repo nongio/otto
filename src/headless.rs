@@ -1122,6 +1122,120 @@ impl HeadlessHandle {
         });
     }
 
+    // ── Pointer drags on a tile ──────────────────────────────────────────
+    //
+    // The grab entry points, called with logical pointer positions, rather
+    // than synthesised input: a test then does not have to reason about
+    // pointer focus or the drag threshold to exercise the tree edits.
+
+    /// Detach this window from its tree, the way a titlebar drag past the
+    /// threshold does.
+    pub fn tiling_drag_begin(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.tiling_drag_begin(&window);
+        });
+    }
+
+    /// Move a detached window's drag to a logical point, arming the slot it
+    /// would land in.
+    pub fn tiling_drag_motion(&self, x: f64, y: f64) {
+        self.with_state(move |state| {
+            state.tiling_drag_motion(x, y);
+        });
+    }
+
+    /// Let go at a logical point.
+    pub fn tiling_drag_drop(&self, x: f64, y: f64) {
+        self.with_state(move |state| {
+            state.tiling_drag_drop(x, y);
+        });
+    }
+
+    /// Escape mid-drag.
+    pub fn tiling_drag_cancel(&self) {
+        self.with_state(|state| {
+            state.tiling_drag_cancel();
+        });
+    }
+
+    /// Press on `title`'s titlebar, drag to `(x, y)` and let go — the whole
+    /// gesture in one call.
+    pub fn tiling_drag_window(&self, title: &str, x: f64, y: f64) {
+        self.tiling_drag_begin(title);
+        self.settle(200);
+        self.tiling_drag_motion(x, y);
+        self.tiling_drag_drop(x, y);
+        self.settle(400);
+    }
+
+    /// Is a drag out of a tree in flight?
+    pub fn tiling_drag_active(&self) -> bool {
+        self.query(|state| state.tiling_drag_is_active())
+    }
+
+    /// The slot overlay's rectangle in logical pixels, or `None` while it is
+    /// hidden.
+    pub fn tiling_drag_preview(&self) -> Option<(i32, i32, i32, i32)> {
+        self.query(|state| {
+            if !state.workspaces.tiling_overlay.is_visible() {
+                return None;
+            }
+            let output = headless_output(state)?;
+            let scale = output.current_scale().fractional_scale() as f32;
+            let layer = &state.workspaces.tiling_overlay.preview_layer;
+            let position = layer.render_position();
+            let size = layer.render_size();
+            Some((
+                (position.x / scale).round() as i32,
+                (position.y / scale).round() as i32,
+                (size.x / scale).round() as i32,
+                (size.y / scale).round() as i32,
+            ))
+        })
+    }
+
+    /// Drag `title`'s `edge` — "left", "right", "top", "bottom" or a corner
+    /// like "bottom-right" — to the logical point `(x, y)`.
+    ///
+    /// Returns false when the edge has no split under it, which is what an
+    /// outer edge of the tree does.
+    pub fn tiling_resize_drag(&self, title: &str, edge: &str, x: f64, y: f64) -> bool {
+        let title = title.to_string();
+        let edge = edge.to_string();
+        let started = self.query(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return false;
+            };
+            let Some(edges) = resize_edges_from_name(&edge) else {
+                return false;
+            };
+            state.tiling_resize_begin(&window, edges) == crate::shell::TilingResizeStart::Started
+        });
+        if !started {
+            return false;
+        }
+        self.with_state(move |state| {
+            state.tiling_resize_to(x, y);
+            state.tiling_resize_end();
+        });
+        self.settle(400);
+        true
+    }
+
     /// Undo the last design-mode edit — the `TilingUndo` shortcut.
     pub fn tiling_undo(&self) {
         self.with_state(|state| {
@@ -2061,6 +2175,22 @@ fn find_node_by_key(
 }
 
 /// The headless output, or `None` before it has been created.
+/// The resize edges a test names in words.
+fn resize_edges_from_name(name: &str) -> Option<crate::shell::ResizeEdge> {
+    use crate::shell::ResizeEdge;
+    Some(match name {
+        "left" => ResizeEdge::LEFT,
+        "right" => ResizeEdge::RIGHT,
+        "top" => ResizeEdge::TOP,
+        "bottom" => ResizeEdge::BOTTOM,
+        "top-left" => ResizeEdge::TOP_LEFT,
+        "top-right" => ResizeEdge::TOP_RIGHT,
+        "bottom-left" => ResizeEdge::BOTTOM_LEFT,
+        "bottom-right" => ResizeEdge::BOTTOM_RIGHT,
+        _ => return None,
+    })
+}
+
 fn headless_output<B: Backend>(state: &Otto<B>) -> Option<Output> {
     state
         .workspaces
