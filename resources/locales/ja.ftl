@@ -88,6 +88,7 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-background-image-unavailable = 表示できません
 
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
@@ -127,6 +128,8 @@ settings-display-scale-detail = 次回のログインから適用されます。
 # Shown when the compositor reports no outputs at all.
 settings-display-none = ディスプレイなし
 settings-display-none-detail = コンポジタはどの出力も駆動していません
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = ディスプレイを選ぶと、その設定を下で変更できます
 
 settings-virtual-displays = 仮想ディスプレイ
 # $count is how many headless outputs exist. These are streamed to other
@@ -135,6 +138,9 @@ settings-virtual-displays-detail =
     { $count ->
        *[other] PipeWireでストリーミングされるヘッドレス出力が { $count } 個。取り除くと選択中のものが外れます
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = 再起動が必要
 
 
 ## Settings — Dock
@@ -164,6 +170,7 @@ settings-key-combination = キーの組み合わせ
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl、Alt、Shift、Logo を + でつなぎ、最後にキーを1つ：Ctrl+Shift+Return
+settings-key-combination-unassigned = 未設定
 
 
 ## Settings — Trackpad & Mouse
