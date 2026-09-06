@@ -1,8 +1,11 @@
 //! Settings app for Otto — see `specs/settings-app.md`.
 //!
-//! Nothing is wired to the compositor yet: the values come from `model.rs`
-//! and changing a control does nothing. What works is the window itself and
-//! moving between panes, so the layout can be judged in place.
+//! Values come from `org.otto.Settings` through `settings_client.rs`, and a
+//! control that carries a setting's identifier applies its change there. The
+//! layout of every pane lives in `model.rs`, which also holds the rows no
+//! setting serves — the Displays pane is mostly those, on purpose. With no
+//! compositor answering, the panes draw placeholders and changes are not
+//! saved, which is enough to judge the layout in place.
 //!
 //! ```sh
 //! cargo run -p otto-settings                    # open the window
@@ -428,13 +431,6 @@ fn handle_wheel(scroll: &Mutex<ScrollView>, vertical: &AxisScroll) {
     }
 }
 
-/// Width of the strip `ScrollSurfaces` gives its scrollbar, in points.
-///
-/// Private there, so it is restated here: it is the x offset of the scrollbar
-/// surface within the pane, and without it an event that landed on the
-/// scrollbar cannot be put back into the pane's coordinates.
-const THUMB_STRIP_W: f32 = 16.0;
-
 /// Which of the pane's surfaces a pointer event landed on.
 ///
 /// The pane is three subsurfaces (see `ScrollSurfaces`), and the pointer is
@@ -449,13 +445,16 @@ enum PaneTarget {
     /// pane — which is also why a coordinate translated through it stays
     /// still when the pointer does, however far the content has scrolled.
     Content,
-    /// The scrollbar, which sits over the band and never moves: it is drawn
-    /// where it belongs through its style node, while the subsurface the
-    /// pointer is hit-tested against stays at the top of the gutter. So its
-    /// local y *is* the pane's y, and events on it are handled exactly like
-    /// events on the band — the scroll view's own hit tests decide what a
-    /// press in the gutter means.
-    Thumb,
+    /// The clip box the band scrolls inside. The band is only as tall as
+    /// there is content, so wherever it falls short of the viewport — the
+    /// space below the two rows of the Sound pane, say — the clip is what the
+    /// pointer is over. It does not move, and it *is* the viewport, so its
+    /// local coordinates are already the pane's and need no adjusting.
+    ///
+    /// The scrollbar is never a target: `ScrollSurfaces` gives it an empty
+    /// input region, so it receives no pointer events at all and the scroll
+    /// view's own hit tests decide what a press in the gutter means.
+    Clip,
 }
 
 /// The serial of a press, which the compositor requires to open a popup.
@@ -752,13 +751,6 @@ struct Focused {
     /// The pop-up field's rect, for a row that has one: where its menu is
     /// anchored, in window coordinates.
     select_rect: Option<Rect>,
-}
-
-impl Focused {
-    /// What the row is keyed by everywhere it is not a served setting.
-    fn handle(&self) -> &'static str {
-        self.id.unwrap_or(self.label)
-    }
 }
 
 /// Every stop a row carries.
@@ -1270,8 +1262,14 @@ impl SettingsApp {
                 let Some(button) = focused.button.or_else(|| labels.first().copied()) else {
                     return false;
                 };
+                // Keyed by label, not by `handle()`: `Pressed::Button` is a
+                // label everywhere else — `view::button_hit` builds one from
+                // `row.label`, `released_on` compares against that, the panes'
+                // `press` handlers match on labels, and the pressed state is
+                // drawn from `row.label`. A `handle()` here would agree with
+                // all of them only for as long as no button row has an id.
                 activate(view::Pressed::Button {
-                    row: focused.handle(),
+                    row: focused.label,
                     button,
                 });
             }
@@ -1443,6 +1441,7 @@ impl App for SettingsApp {
             view::pane_background(current_color_scheme() == ColorScheme::Dark),
         )?;
         let content_id = surfaces.content_surface().id();
+        let clip_id = surfaces.clip_surface().id();
         let window_id = parent.id();
         *self.surfaces.borrow_mut() = Some(surfaces);
 
@@ -1593,11 +1592,14 @@ impl App for SettingsApp {
                 {
                     // A popup of ours is up and handles its own events.
                     continue;
+                } else if surface == clip_id {
+                    PaneTarget::Clip
                 } else {
-                    // `ScrollSurfaces` does not hand out its scrollbar
-                    // surface, so it is recognised by elimination: the only
-                    // other surface of this app the pointer can be over.
-                    PaneTarget::Thumb
+                    // Some other surface of this app — a popup that has just
+                    // closed, a drag icon. Recognised surfaces only: taking
+                    // everything else as the pane put events from wherever
+                    // through a translation written for one of these.
+                    continue;
                 };
 
                 let viewport = viewport_for(&size_hit);
@@ -1615,7 +1617,7 @@ impl App for SettingsApp {
                         let offset = scroll.lock().unwrap().offset();
                         (lx, ly + band_origin - offset)
                     }
-                    PaneTarget::Thumb => (lx + viewport.width() - THUMB_STRIP_W, ly),
+                    PaneTarget::Clip => (lx, ly),
                 };
                 // And on into window coordinates, which is what the pane's
                 // hit tests take and what the popups anchor against.
@@ -1670,20 +1672,24 @@ impl App for SettingsApp {
                         // which looks the identifier up in the schema and finds
                         // nothing.
                         let shortcut = settings.shortcut_hit(x, y, offset);
-                        // Pressing anywhere but inside the field being typed
-                        // into accepts what is in it, the way clicking away
-                        // from a rename does.
-                        let stays_open = match (&shortcut, editing_hit.lock().unwrap().as_ref()) {
-                            (Some(ShortcutHit::Keys { index, .. }), Some(edit)) => {
-                                edit.target == EditTarget::ShortcutKeys(*index)
-                            }
-                            _ => false,
-                        };
-                        if !stays_open {
-                            commit_edit(&editing_hit);
-                        }
 
                         if let Some(hit) = shortcut {
+                            // A shortcut line is not a text row, so the
+                            // `same_field` check above — which only knows about
+                            // `text_hit` — cannot have seen it. Pressing
+                            // anywhere but inside the shortcut field being
+                            // typed into accepts what is in it, the way
+                            // clicking away from a rename does.
+                            let stays_open = match (&hit, editing_hit.lock().unwrap().as_ref()) {
+                                (ShortcutHit::Keys { index, .. }, Some(edit)) => {
+                                    edit.target == EditTarget::ShortcutKeys(*index)
+                                }
+                                _ => false,
+                            };
+                            if !stays_open {
+                                commit_edit(&editing_hit);
+                            }
+
                             match hit {
                                 ShortcutHit::Action(select) => open_menu(
                                     &dropdowns,
@@ -2147,6 +2153,34 @@ impl App for SettingsApp {
             return;
         }
 
+        // A colour picker is up. Every key reaches this handler whatever
+        // surface holds the focus, and the picker has no key table of its own,
+        // so without this the arrows would move the slider behind it and
+        // Escape would never reach it. It owns every key until it closes —
+        // Escape closes it, and nothing else does anything, which is the same
+        // bargain the pop-up above strikes and matches the spec's note that a
+        // pop-up cannot be operated from the keyboard.
+        let picker = *self.open_picker.lock().unwrap();
+        if let Some(id) = picker {
+            let closed = match self.pickers.get(id) {
+                Some(picker) => {
+                    if event.keysym == Keysym::Escape {
+                        picker.close();
+                    }
+                    !picker.is_open()
+                }
+                None => true,
+            };
+            if closed {
+                *self.open_picker.lock().unwrap() = None;
+            }
+            mark_pane_dirty(&self.pane_dirty);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+            return;
+        }
+
         // Nothing is being typed into: the key belongs to whatever the keyboard
         // focus is on — a sidebar row, or a control in the pane it selected.
         if self.editing.lock().unwrap().is_none() {
@@ -2440,6 +2474,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Populate the settings store before the first frame, so panes draw live
     // values rather than placeholders and then flicker.
     settings_client::connect();
+    // Resolved here, once, because the row that shows it is built on the draw
+    // path — see `settings_client::resolve_config_path`.
+    settings_client::resolve_config_path();
     if settings_client::is_online() {
         // Only worth watching once there is something to watch — an offline
         // store has no bus connection for a listener to subscribe on.
