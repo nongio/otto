@@ -64,6 +64,7 @@ dock-quit = Завершить
 settings-pane-general = Основные
 settings-pane-displays = Дисплеи
 settings-pane-dock = Dock
+settings-pane-tiling = Мозаика
 settings-pane-keyboard = Клавиатура
 settings-pane-pointing = Трекпад и мышь
 settings-pane-sound = Звук
@@ -160,6 +161,25 @@ settings-dock-tint-icons = Тонировать значки
 settings-switcher-colorize-icons = Тонировать переключатель
 settings-dock-icon-tint = Оттенок значков
 settings-dock-icon-tint-strength = Сила оттенка значков
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Мозаичный рабочий стол заполняет экран своими окнами, бок о бок. Это значения по умолчанию; отдельный рабочий стол может задать свои отступы.
+settings-tiling-decoration = Оформление мозаичных окон
+settings-group-tiling-gaps = Отступы
+settings-tiling-inner-gap = Между окнами
+settings-tiling-outer-gap = Вокруг окон
+settings-tiling-smart-gaps = Без отступов для одного окна
+settings-group-tiling-keyboard = Клавиатура
+settings-tiling-resize-step = Шаг изменения размера
+settings-group-tiling-animation = Анимация
+settings-tiling-layout-duration = Смена расположения
+settings-tiling-layout-bounce = Отскок расположения
+settings-tiling-mode-duration = Переход в мозаику
+settings-tiling-mode-bounce = Отскок мозаики
+settings-tiling-design-duration = Режим конструктора
+settings-tiling-design-bounce = Отскок конструктора
 
 
 ## Settings — Keyboard
@@ -707,8 +727,6 @@ schema-frosting-label = Матовое стекло
 schema-frosting-description = Полупрозрачный размытый материал за доком, верхней панелью, лаунчером и панелями рабочего стола.
 schema-window-controls-side-label = Кнопки окна
 schema-window-controls-side-description = У какого края заголовка окна расположены кнопки закрытия, сворачивания и масштабирования.
-schema-tiling-decoration-label = Оформление мозаичных окон
-schema-tiling-decoration-description = Сколько оформления сохраняет окно при мозаичном размещении: полоса высотой в одну строку текста, с заголовком и кнопкой закрытия, либо отсутствие полосы, а активное окно отмечено тонкой рамкой.
 schema-show-maximize-button-label = Кнопка развёртывания
 schema-show-maximize-button-description = Показывать кнопку масштабирования в заголовке окна. По умолчанию выключено: двойной щелчок по заголовку и так разворачивает окно.
 schema-font-family-label = Шрифт интерфейса
@@ -727,6 +745,30 @@ schema-gtk-theme-label = Тема GTK
 schema-gtk-theme-description = Название темы GTK, передаваемое клиентам. Пусто — определяется автоматически.
 schema-locales-label = Локали
 schema-locales-description = Предпочитаемые локали, в порядке убывания предпочтения.
+
+# --- tiling ---
+schema-tiling-decoration-label = Оформление мозаичных окон
+schema-tiling-decoration-description = Сколько оформления сохраняет окно при мозаичном размещении: полоса высотой в одну строку текста, с заголовком и кнопкой закрытия, либо отсутствие полосы, а активное окно отмечено тонкой рамкой.
+schema-tiling-inner-gap-label = Отступ между окнами
+schema-tiling-inner-gap-description = Логические пиксели между двумя соседними окнами.
+schema-tiling-outer-gap-label = Отступ вокруг окон
+schema-tiling-outer-gap-description = Логические пиксели между окнами и краем экрана.
+schema-tiling-smart-gaps-label = Без отступов для одного окна
+schema-tiling-smart-gaps-description = Рабочий стол с единственным окном не оставляет отступов, чтобы одно окно не выглядело без причины вдавленным.
+schema-tiling-resize-step-label = Шаг изменения размера
+schema-tiling-resize-step-description = Насколько меняется контейнер за один шаг с клавиатуры — долей его ширины или высоты.
+schema-tiling-layout-duration-label = Анимация расположения
+schema-tiling-layout-duration-description = Секунды, которые занимает смена расположения: окно входит в дерево или покидает его, перемещение, обмен, выравнивание. Ноль переключает сразу.
+schema-tiling-layout-bounce-label = Отскок расположения
+schema-tiling-layout-bounce-description = Насколько смена расположения проскакивает цель, прежде чем остановиться. Ноль останавливается без отскока.
+schema-tiling-mode-duration-label = Анимация мозаики
+schema-tiling-mode-duration-description = Секунды, за которые рабочий стол перестраивается при включении или выключении мозаики, когда каждое окно летит на своё место. Ноль переключает сразу.
+schema-tiling-mode-bounce-label = Отскок мозаики
+schema-tiling-mode-bounce-description = Насколько эта перестройка проскакивает цель, прежде чем остановиться.
+schema-tiling-design-duration-label = Анимация режима конструктора
+schema-tiling-design-duration-description = Секунды, за которые ячейки следуют за перетянутым манипулятором, разделением или заготовкой в режиме конструктора. Ноль переключает сразу.
+schema-tiling-design-bounce-label = Отскок конструктора
+schema-tiling-design-bounce-description = Насколько ячейки проскакивают цель после правки в режиме конструктора, прежде чем остановиться. По умолчанию упруже, чем расположение: сетка должна ощущаться как физический предмет, который толкают.
 
 # --- dock ---
 schema-dock-size-label = Размер

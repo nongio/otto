@@ -65,6 +65,7 @@ dock-quit = Sair
 settings-pane-general = Geral
 settings-pane-displays = Monitores
 settings-pane-dock = Dock
+settings-pane-tiling = Lado a lado
 settings-pane-keyboard = Teclado
 settings-pane-pointing = Trackpad e mouse
 settings-pane-sound = Som
@@ -160,6 +161,25 @@ settings-dock-tint-icons = Colorir ícones
 settings-switcher-colorize-icons = Colorir o alternador
 settings-dock-icon-tint = Cor dos ícones
 settings-dock-icon-tint-strength = Intensidade da cor dos ícones
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Uma área de trabalho lado a lado preenche a tela com suas janelas, uma ao lado da outra. Estes são os padrões; cada área de trabalho pode alterar seu espaçamento.
+settings-tiling-decoration = Decoração lado a lado
+settings-group-tiling-gaps = Espaçamento
+settings-tiling-inner-gap = Entre as janelas
+settings-tiling-outer-gap = Ao redor das janelas
+settings-tiling-smart-gaps = Sem espaçamento com uma única janela
+settings-group-tiling-keyboard = Teclado
+settings-tiling-resize-step = Passo de redimensionamento
+settings-group-tiling-animation = Animação
+settings-tiling-layout-duration = Mudança de disposição
+settings-tiling-layout-bounce = Rebote da disposição
+settings-tiling-mode-duration = Entrar no modo lado a lado
+settings-tiling-mode-bounce = Rebote do modo lado a lado
+settings-tiling-design-duration = Modo de desenho
+settings-tiling-design-bounce = Rebote do modo de desenho
 
 
 ## Settings — Keyboard
@@ -685,8 +705,6 @@ schema-frosting-label = Efeito fosco
 schema-frosting-description = O material translúcido e desfocado atrás do dock, da barra superior, do lançador e dos painéis da área de trabalho.
 schema-window-controls-side-label = Controles da janela
 schema-window-controls-side-description = Em que extremidade da barra de título ficam os controles de fechar, minimizar e ampliar.
-schema-tiling-decoration-label = Decoração lado a lado
-schema-tiling-decoration-description = Quanta decoração uma janela mantém enquanto está lado a lado: uma barra com a altura de uma linha de texto, com o título e um botão de fechar, ou nenhuma barra, com a janela ativa marcada por uma borda muito fina.
 schema-show-maximize-button-label = Botão de maximizar
 schema-show-maximize-button-description = Mostra o controle de ampliar na barra de título de uma janela. Desativado por padrão: um clique duplo na barra de título amplia a janela de qualquer forma.
 schema-font-family-label = Fonte da interface
@@ -705,6 +723,30 @@ schema-gtk-theme-label = Tema do GTK
 schema-gtk-theme-description = Nome do tema GTK repassado aos clientes. Vazio para detecção automática.
 schema-locales-label = Idiomas
 schema-locales-description = Idiomas preferidos, do mais preferido ao menos.
+
+# --- tiling ---
+schema-tiling-decoration-label = Decoração lado a lado
+schema-tiling-decoration-description = Quanta decoração uma janela mantém enquanto está lado a lado: uma barra com a altura de uma linha de texto, com o título e um botão de fechar, ou nenhuma barra, com a janela ativa marcada por uma borda muito fina.
+schema-tiling-inner-gap-label = Espaço entre as janelas
+schema-tiling-inner-gap-description = Pixels lógicos deixados entre duas janelas vizinhas.
+schema-tiling-outer-gap-label = Espaço ao redor das janelas
+schema-tiling-outer-gap-description = Pixels lógicos deixados entre as janelas e a borda da tela.
+schema-tiling-smart-gaps-label = Sem espaçamento com uma única janela
+schema-tiling-smart-gaps-description = Uma área de trabalho com uma única janela não deixa espaçamento algum, para que uma janela sozinha não pareça recuada sem motivo.
+schema-tiling-resize-step-label = Passo de redimensionamento
+schema-tiling-resize-step-description = Quanto um contêiner muda a cada passo de redimensionamento pelo teclado, como fração da sua largura ou altura.
+schema-tiling-layout-duration-label = Animação da disposição
+schema-tiling-layout-duration-description = Segundos que leva uma mudança de disposição: uma janela que entra na árvore ou sai dela, um movimento, uma troca, uma equalização. Zero muda de imediato.
+schema-tiling-layout-bounce-label = Rebote da disposição
+schema-tiling-layout-bounce-description = Quanto uma mudança de disposição passa do alvo antes de se acomodar. Zero se acomoda sem passar.
+schema-tiling-mode-duration-label = Animação do modo lado a lado
+schema-tiling-mode-duration-description = Segundos que a área de trabalho leva para se reorganizar quando o modo lado a lado é ligado ou desligado e cada janela voa até sua célula. Zero muda de imediato.
+schema-tiling-mode-bounce-label = Rebote do modo lado a lado
+schema-tiling-mode-bounce-description = Quanto essa reorganização passa do alvo antes de se acomodar.
+schema-tiling-design-duration-label = Animação do modo de desenho
+schema-tiling-design-duration-description = Segundos que as células levam para seguir uma alça arrastada, uma divisão ou uma predefinição no modo de desenho. Zero muda de imediato.
+schema-tiling-design-bounce-label = Rebote do modo de desenho
+schema-tiling-design-bounce-description = Quanto as células passam do alvo após uma edição no modo de desenho, antes de se acomodarem. Por padrão, mais elástico que a disposição: a grade deve parecer uma coisa física sendo empurrada.
 
 # --- dock ---
 schema-dock-size-label = Tamanho

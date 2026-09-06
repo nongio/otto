@@ -65,6 +65,7 @@ dock-quit = Esci
 settings-pane-general = Generali
 settings-pane-displays = Monitor
 settings-pane-dock = Dock
+settings-pane-tiling = Affiancamento
 settings-pane-keyboard = Tastiera
 settings-pane-pointing = Trackpad e mouse
 settings-pane-sound = Suono
@@ -160,6 +161,25 @@ settings-dock-tint-icons = Colora le icone
 settings-switcher-colorize-icons = Colora il cambio finestra
 settings-dock-icon-tint = Tinta delle icone
 settings-dock-icon-tint-strength = Intensità della tinta
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Una scrivania affiancata riempie lo schermo con le sue finestre, una accanto all'altra. Questi sono i valori predefiniti; ogni scrivania può cambiare la propria spaziatura.
+settings-tiling-decoration = Decorazione finestre affiancate
+settings-group-tiling-gaps = Spaziatura
+settings-tiling-inner-gap = Tra le finestre
+settings-tiling-outer-gap = Attorno alle finestre
+settings-tiling-smart-gaps = Nessuna spaziatura con una sola finestra
+settings-group-tiling-keyboard = Tastiera
+settings-tiling-resize-step = Passo di ridimensionamento
+settings-group-tiling-animation = Animazione
+settings-tiling-layout-duration = Cambio di disposizione
+settings-tiling-layout-bounce = Rimbalzo della disposizione
+settings-tiling-mode-duration = Ingresso in affiancamento
+settings-tiling-mode-bounce = Rimbalzo dell'affiancamento
+settings-tiling-design-duration = Modalità progettazione
+settings-tiling-design-bounce = Rimbalzo della progettazione
 
 
 ## Settings — Keyboard
@@ -690,8 +710,6 @@ schema-frosting-label = Effetto smerigliato
 schema-frosting-description = Il materiale traslucido e sfocato dietro il dock, la barra superiore, il launcher e i pannelli della scrivania.
 schema-window-controls-side-label = Comandi della finestra
 schema-window-controls-side-description = A quale estremità della barra del titolo si trovano i comandi chiudi, riduci a icona e zoom.
-schema-tiling-decoration-label = Decorazione finestre affiancate
-schema-tiling-decoration-description = Quanta decorazione mantiene una finestra mentre è affiancata: una barra alta una riga di testo, con il titolo e un pulsante di chiusura, oppure nessuna barra, con la finestra attiva segnata da un bordo sottilissimo.
 schema-show-maximize-button-label = Pulsante Ingrandisci
 schema-show-maximize-button-description = Mostra il comando di ingrandimento nella barra del titolo di una finestra. Disattivato per impostazione predefinita: un doppio clic sulla barra del titolo ingrandisce comunque la finestra.
 schema-font-family-label = Carattere dell'interfaccia
@@ -710,6 +728,30 @@ schema-gtk-theme-label = Tema GTK
 schema-gtk-theme-description = Nome del tema GTK fornito ai client. Vuoto per il rilevamento automatico.
 schema-locales-label = Lingue
 schema-locales-description = Lingue preferite, in ordine di preferenza.
+
+# --- tiling ---
+schema-tiling-decoration-label = Decorazione finestre affiancate
+schema-tiling-decoration-description = Quanta decorazione mantiene una finestra mentre è affiancata: una barra alta una riga di testo, con il titolo e un pulsante di chiusura, oppure nessuna barra, con la finestra attiva segnata da un bordo sottilissimo.
+schema-tiling-inner-gap-label = Spazio tra le finestre
+schema-tiling-inner-gap-description = Pixel logici lasciati tra due finestre vicine.
+schema-tiling-outer-gap-label = Spazio attorno alle finestre
+schema-tiling-outer-gap-description = Pixel logici lasciati tra le finestre e il bordo dello schermo.
+schema-tiling-smart-gaps-label = Nessuna spaziatura con una sola finestra
+schema-tiling-smart-gaps-description = Una scrivania con una sola finestra non lascia alcuno spazio, così una finestra sola non appare rientrata senza motivo.
+schema-tiling-resize-step-label = Passo di ridimensionamento
+schema-tiling-resize-step-description = Di quanto cambia un contenitore a ogni passo di ridimensionamento da tastiera, come frazione della sua larghezza o altezza.
+schema-tiling-layout-duration-label = Animazione della disposizione
+schema-tiling-layout-duration-description = Secondi che impiega un cambio di disposizione: una finestra che entra nell'albero o lo lascia, uno spostamento, uno scambio, un pareggiamento. Zero passa di scatto.
+schema-tiling-layout-bounce-label = Rimbalzo della disposizione
+schema-tiling-layout-bounce-description = Di quanto un cambio di disposizione supera il bersaglio prima di assestarsi. Zero si assesta senza superarlo.
+schema-tiling-mode-duration-label = Animazione dell'affiancamento
+schema-tiling-mode-duration-description = Secondi che impiega la scrivania a riorganizzarsi quando l'affiancamento viene attivato o disattivato e ogni finestra vola alla propria cella. Zero passa di scatto.
+schema-tiling-mode-bounce-label = Rimbalzo dell'affiancamento
+schema-tiling-mode-bounce-description = Di quanto quella riorganizzazione supera il bersaglio prima di assestarsi.
+schema-tiling-design-duration-label = Animazione della modalità progettazione
+schema-tiling-design-duration-description = Secondi che impiegano le celle a seguire una maniglia trascinata, una divisione o uno schema predefinito in modalità progettazione. Zero passa di scatto.
+schema-tiling-design-bounce-label = Rimbalzo della progettazione
+schema-tiling-design-bounce-description = Di quanto le celle superano il bersaglio dopo una modifica in modalità progettazione, prima di assestarsi. Per impostazione predefinita rimbalza più della disposizione: la griglia deve sembrare una cosa fisica che viene spinta.
 
 # --- dock ---
 schema-dock-size-label = Dimensione

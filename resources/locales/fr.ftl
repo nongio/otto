@@ -65,6 +65,7 @@ dock-quit = Quitter
 settings-pane-general = Général
 settings-pane-displays = Écrans
 settings-pane-dock = Dock
+settings-pane-tiling = Mosaïque
 settings-pane-keyboard = Clavier
 settings-pane-pointing = Pavé tactile et souris
 settings-pane-sound = Son
@@ -160,6 +161,25 @@ settings-dock-tint-icons = Teinter les icônes
 settings-switcher-colorize-icons = Teinter l’alternateur
 settings-dock-icon-tint = Teinte des icônes
 settings-dock-icon-tint-strength = Intensité de la teinte
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Un bureau en mosaïque remplit l’écran de ses fenêtres, côte à côte. Ce sont les valeurs par défaut ; un bureau peut redéfinir son espacement.
+settings-tiling-decoration = Décoration en mosaïque
+settings-group-tiling-gaps = Espacement
+settings-tiling-inner-gap = Entre les fenêtres
+settings-tiling-outer-gap = Autour des fenêtres
+settings-tiling-smart-gaps = Aucun espacement pour une fenêtre seule
+settings-group-tiling-keyboard = Clavier
+settings-tiling-resize-step = Pas de redimensionnement
+settings-group-tiling-animation = Animation
+settings-tiling-layout-duration = Changement de disposition
+settings-tiling-layout-bounce = Rebond de la disposition
+settings-tiling-mode-duration = Passage en mosaïque
+settings-tiling-mode-bounce = Rebond du mode mosaïque
+settings-tiling-design-duration = Mode conception
+settings-tiling-design-bounce = Rebond du mode conception
 
 
 ## Settings — Keyboard
@@ -695,8 +715,6 @@ schema-frosting-label = Effet givré
 schema-frosting-description = Le matériau translucide et flouté derrière le dock, la barre supérieure, le lanceur et les panneaux du bureau.
 schema-window-controls-side-label = Boutons de fenêtre
 schema-window-controls-side-description = À quelle extrémité de la barre de titre se trouvent les boutons de fermeture, de réduction et d’agrandissement.
-schema-tiling-decoration-label = Décoration en mosaïque
-schema-tiling-decoration-description = Quelle quantité d’habillage une fenêtre conserve lorsqu’elle est en mosaïque : une barre de la hauteur d’une ligne de texte, avec son titre et un bouton de fermeture, ou aucune barre, la fenêtre active étant marquée par une bordure très fine.
 schema-show-maximize-button-label = Bouton d’agrandissement
 schema-show-maximize-button-description = Affiche le bouton d’agrandissement dans la barre de titre d’une fenêtre. Désactivé par défaut : un double-clic sur la barre de titre agrandit la fenêtre de toute façon.
 schema-font-family-label = Police de l’interface
@@ -715,6 +733,30 @@ schema-gtk-theme-label = Thème GTK
 schema-gtk-theme-description = Nom du thème GTK transmis aux clients. Vide pour une détection automatique.
 schema-locales-label = Langues
 schema-locales-description = Langues préférées, la plus préférée en premier.
+
+# --- tiling ---
+schema-tiling-decoration-label = Décoration en mosaïque
+schema-tiling-decoration-description = Quelle quantité d’habillage une fenêtre conserve lorsqu’elle est en mosaïque : une barre de la hauteur d’une ligne de texte, avec son titre et un bouton de fermeture, ou aucune barre, la fenêtre active étant marquée par une bordure très fine.
+schema-tiling-inner-gap-label = Espacement entre les fenêtres
+schema-tiling-inner-gap-description = Pixels logiques laissés entre deux fenêtres voisines.
+schema-tiling-outer-gap-label = Espacement autour des fenêtres
+schema-tiling-outer-gap-description = Pixels logiques laissés entre les fenêtres et le bord de l’écran.
+schema-tiling-smart-gaps-label = Aucun espacement pour une fenêtre seule
+schema-tiling-smart-gaps-description = Un bureau qui ne contient qu’une fenêtre ne laisse aucun espacement, pour qu’une fenêtre seule ne paraisse pas encadrée sans raison.
+schema-tiling-resize-step-label = Pas de redimensionnement
+schema-tiling-resize-step-description = De combien un conteneur change à chaque pas de redimensionnement au clavier, en fraction de sa largeur ou de sa hauteur.
+schema-tiling-layout-duration-label = Animation de la disposition
+schema-tiling-layout-duration-description = Secondes que prend un changement de disposition : une fenêtre qui rejoint l’arbre ou le quitte, un déplacement, un échange, une égalisation. Zéro passe d’un coup.
+schema-tiling-layout-bounce-label = Rebond de la disposition
+schema-tiling-layout-bounce-description = De combien un changement de disposition dépasse avant de se stabiliser. Zéro se stabilise sans dépassement.
+schema-tiling-mode-duration-label = Animation du mode mosaïque
+schema-tiling-mode-duration-description = Secondes que met le bureau à se réorganiser quand la mosaïque est activée ou désactivée et que chaque fenêtre rejoint sa cellule. Zéro passe d’un coup.
+schema-tiling-mode-bounce-label = Rebond du mode mosaïque
+schema-tiling-mode-bounce-description = De combien cette réorganisation dépasse avant de se stabiliser.
+schema-tiling-design-duration-label = Animation du mode conception
+schema-tiling-design-duration-description = Secondes que mettent les cellules à suivre une poignée déplacée, une division ou un modèle en mode conception. Zéro passe d’un coup.
+schema-tiling-design-bounce-label = Rebond du mode conception
+schema-tiling-design-bounce-description = De combien les cellules dépassent après une modification en mode conception avant de se stabiliser. Par défaut plus rebondissant que la disposition : la grille doit se sentir comme un objet physique que l’on pousse.
 
 # --- dock ---
 schema-dock-size-label = Taille
