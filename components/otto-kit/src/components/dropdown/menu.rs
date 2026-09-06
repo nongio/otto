@@ -146,14 +146,21 @@ fn item_font() -> skia_safe::Font {
 }
 
 /// How wide `text` is in a menu row.
+///
+/// Measured in the face the row will be drawn in — see
+/// [`crate::typography::font_covering`]. Measuring a Chinese language name in
+/// Inter reports the width of a row of missing-glyph boxes, which is not the
+/// width of the text that ends up there.
 fn measure(text: &str) -> f32 {
-    item_font().measure_str(text, None).0
+    crate::typography::font_covering(&item_font(), text)
+        .measure_str(text, None)
+        .0
 }
 
 /// Trim `text` until it fits `width`, marking the cut with a trailing
 /// ellipsis. Returns it unchanged when it already fits.
 fn elide(text: &str, width: f32) -> String {
-    let font = item_font();
+    let font = crate::typography::font_covering(&item_font(), text);
     if width <= 0.0 || font.measure_str(text, None).0 <= width {
         return text.to_string();
     }

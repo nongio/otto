@@ -62,6 +62,54 @@ impl FontCache {
     fn covering(&self, typeface: skia::Typeface, family: &str, style: FontStyle) -> skia::Typeface {
         covering_typeface(&self.font_mgr, typeface, family, style)
     }
+
+    /// This cache's own [`font_covering`].
+    ///
+    /// Keyed by the character that was missing rather than by the string, so
+    /// every language name in one script shares a lookup: asking the font
+    /// manager is a fontconfig query, far too slow to repeat per label per
+    /// frame.
+    fn font_covering(&self, font: &Font, text: &str) -> Font {
+        // Almost every string the interface draws is ASCII, and every face it
+        // draws with covers ASCII, so this runs on the way to drawing anything
+        // at all: settle the common case with a byte scan rather than a cmap
+        // lookup per character.
+        if text.is_ascii() {
+            return font.clone();
+        }
+        let typeface = font.typeface();
+        let Some(missing) = text
+            .chars()
+            .find(|c| !c.is_whitespace() && typeface.unichar_to_glyph(*c as skia::Unichar) == 0)
+        else {
+            return font.clone();
+        };
+
+        let style = typeface.font_style();
+        let size = font.size();
+        // Namespaced away from real family names, which never start with a
+        // replacement character, so a fallback entry cannot collide with the
+        // cached font for a family of that name.
+        let key = CacheKey::from_style(&format!("\u{FFFD}{missing}"), style, size);
+        if let Some(hit) = self.cache.borrow().get(&key) {
+            return hit.clone();
+        }
+
+        let replacement = self
+            .font_mgr
+            .match_family_style_character(
+                &typeface.family_name(),
+                style,
+                &[],
+                missing as skia::Unichar,
+            )
+            .unwrap_or(typeface);
+        let mut found = Font::from_typeface(replacement, size);
+        found.set_subpixel(true);
+        found.set_edging(skia::font::Edging::SubpixelAntiAlias);
+        self.cache.borrow_mut().insert(key, found.clone());
+        found
+    }
 }
 
 /// The typeface to actually draw with: the one asked for, or one that can
@@ -175,6 +223,24 @@ pub fn get_font(family: &str, style: FontStyle, size: f32) -> Option<Font> {
 /// Get a font with fallback from the thread-local cache
 pub fn get_font_with_fallback(family: &str, style: FontStyle, size: f32) -> Font {
     FONT_CACHE.with(|cache| cache.get_font_with_fallback(family, style, size))
+}
+
+/// `font`, or the nearest face that can actually draw `text`.
+///
+/// [`covering_typeface`] substitutes one face for the whole interface, on the
+/// argument that the language is fixed for the life of the process and a
+/// desktop wants one face for its chrome. A language picker is where that
+/// argument runs out: it lists every language in its own script at once, so an
+/// English interface has to draw 中文 and Русский in faces it never otherwise
+/// needs, and drew both as empty boxes.
+///
+/// Chosen per string rather than per glyph. Skia draws a string with exactly
+/// one typeface, and the strings this is for — a language's name, a theme's
+/// name — are each written in a single script, so one face per string covers
+/// them. A genuinely mixed string still falls back on its first uncovered
+/// character, which is no worse than the boxes it replaces.
+pub fn font_covering(font: &Font, text: &str) -> Font {
+    FONT_CACHE.with(|cache| cache.font_covering(font, text))
 }
 
 /// Predefined text styles for a consistent design system
@@ -419,5 +485,42 @@ mod tests {
         let _body = styles::BODY.font();
         let _caption = styles::CAPTION_1.font();
         // If we get here without panic, fonts loaded successfully
+    }
+
+    #[test]
+    fn ascii_keeps_the_face_it_was_given() {
+        let base = styles::BODY.font();
+        let covering = font_covering(&base, "English (United Kingdom)");
+        assert_eq!(
+            base.typeface().unique_id(),
+            covering.typeface().unique_id(),
+            "an ASCII label must not be moved off the interface font"
+        );
+    }
+
+    #[test]
+    fn a_script_the_interface_font_lacks_finds_a_face_that_has_it() {
+        let base = styles::BODY.font();
+        // The language picker names every language in its own script, so this
+        // is drawn by an interface that is itself in English.
+        let text = "\u{4E2D}\u{6587}";
+        let missing = text
+            .chars()
+            .any(|c| base.typeface().unichar_to_glyph(c as skia::Unichar) == 0);
+        if !missing {
+            // A system whose interface font already covers CJK has nothing to
+            // substitute, and the fallback is not what is under test.
+            return;
+        }
+        let covering = font_covering(&base, text);
+        assert!(
+            text.chars()
+                .all(|c| covering.typeface().unichar_to_glyph(c as skia::Unichar) != 0),
+            "every character must have a glyph, or the label still draws as boxes"
+        );
+        assert!(
+            covering.measure_str(text, None).0 > 0.0,
+            "the substituted face must give the text a width"
+        );
     }
 }
