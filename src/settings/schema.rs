@@ -230,7 +230,7 @@ use SettingType::{Bool, Double, Int, Str, StrList};
 /// them. The empty string is the absence of a preference — the environment
 /// answers — and is a real choice rather than a blank row, so it leads.
 const LOCALE_CHOICES: &[&str] = &[
-    "", "en-GB", "en-US", "de", "es", "fr", "it", "pl", "pt-BR", "ru", "uk", "zh-CN",
+    "", "en-GB", "en-US", "de", "es", "fr", "it", "ja", "pl", "pt-BR", "ru", "uk", "zh-CN",
 ];
 
 /// Presentation for `LOCALE_CHOICES`, in the same order.
@@ -247,6 +247,7 @@ const LOCALE_LABELS: &[&str] = &[
     "Español",
     "Français",
     "Italiano",
+    "日本語",
     "Polski",
     "Português (Brasil)",
     "Русский",

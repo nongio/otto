@@ -4755,7 +4755,7 @@ mod fit_tests {
     }
 
     const LOCALES: &[&str] = &[
-        "en-GB", "de", "es", "fr", "it", "pl", "pt-BR", "ru", "uk", "zh-CN",
+        "en-GB", "de", "es", "fr", "it", "ja", "pl", "pt-BR", "ru", "uk", "zh-CN",
     ];
 
     /// The widest of `keys` in `locale`, measured in `font`.
@@ -4770,7 +4770,7 @@ mod fit_tests {
     /// The row labels never grow far enough to unseat the right alignment.
     ///
     /// Mirrors `perm_metrics`, which cannot be called directly: it reads the
-    /// live locale chain, and this has to answer for all nine at once.
+    /// live locale chain, and this has to answer for every locale at once.
     #[test]
     fn the_permissions_grid_fits_the_panel() {
         let mut over = Vec::new();
