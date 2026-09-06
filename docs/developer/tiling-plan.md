@@ -434,6 +434,56 @@ from the client side:
 One component change in otto-kit covers every app that already implements
 the settings callback; islands, quick view and lock still need that hook.
 
+## Settings app and per-workspace settings
+
+Two halves. Both persist through the existing settings machinery
+(validate → apply → persist → announce) so they are live and reach the
+otto-kit apps.
+
+**Global tiling settings in Otto Settings.** A *Tiling* pane in
+`components/otto-settings` (a new file under `panes/`, discovered from the
+schema like the others) with every `[tiling]` key: decoration
+(`minimal`/`none`), inner and outer gap, smart gaps, resize step, and the
+three animation pairs (layout, mode, design) with 0 meaning snap. Each key
+gets a `spec(...)` entry in `src/settings/schema.rs` marked `Live` and an
+apply arm in `src/settings/apply.rs` that relays out every tiling workspace
+(gaps, decoration) or just stores the value (durations, step). Decoration
+already has both; the rest follow it.
+
+**Per-workspace settings, persisted with the name.** Today the config holds
+two parallel maps keyed `"<output>:<position>"`: `[workspaces] names` and
+`[workspaces.gaps]`. They become one record per workspace:
+
+```toml
+[workspaces.entries."eDP-1:0"]
+name = "Code"
+tiling = true          # the mode is restored on login (answers the spec's open question; the tree is not)
+inner_gap = 0          # optional override; absent = [tiling] default
+outer_gap = 0
+```
+
+Reading accepts the old `names`/`gaps` maps and folds them in; writing
+emits only `entries`. One writer (`save_workspace_entry`) replaces
+`save_workspace_names` and `save_workspace_gaps`, and the existing
+`restore_workspace_settings` at the three workspace-creation sites restores
+name, mode and gaps together. Toggling tiling persists the mode; `gaps …
+current` persists the override; `gaps … all` clears every override. A
+workspace that moves position keeps best-effort semantics, as names do
+today.
+
+**Editing per-workspace settings.** The schema is static, so per-workspace
+values do not go through `org.otto.Settings`. They go through
+`org.otto.Shell1`: `GetWorkspaces` already lists them (add `name`, `tiling`,
+`gaps` to each entry) and a new `SetWorkspace(s output, u position, s json)`
+applies a partial record — `{"name": …}`, `{"tiling": true}`,
+`{"gaps": {"inner": 0, "outer": 0}}` or `{"gaps": null}` — through the same
+paths the selector rename, `TilingToggle` and the `gaps` command use, and
+`WorkspaceChanged` fires after. Otto Settings gets a *Workspaces* pane: one
+row per workspace per output with the name field (the selector's rename in
+another place), a tiling switch, and a gaps override with a "use default"
+state; it subscribes to `WorkspaceChanged` to refresh. The workspace
+selector's context menu gains the same tiling switch.
+
 ## Command language
 
 The scripting grammar, resolving to the actions above. Phase-1 subset:
@@ -510,6 +560,10 @@ drag-to-detach with the reused `TilingOverlayView` showing
 the slot; dropping a floating window into a tree; the minimal and none decoration variants;
 accent focus border; no shadow on tiles; usable-area re-fit on dock/layer-shell/
 mode changes; XWayland parity; workspace-selector mode indicator.
+
+**Phase 2b — settings.** The Tiling pane, the per-workspace record with
+name + mode + gaps persisted together, `SetWorkspace` on `org.otto.Shell1`,
+and the Workspaces pane. See "Settings app and per-workspace settings".
 
 **Phase 3 — scriptability and depth.** `org.otto.Shell1` + `otto-msg`;
 `GetTree`; marks and criteria; binding modes (`mode "resize"`); scratchpad;
