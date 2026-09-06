@@ -165,6 +165,20 @@ impl ScrollSurfaces {
         self.band_surface.wl_surface()
     }
 
+    /// The clip box the content and scrollbar sit inside.
+    ///
+    /// A host has to be able to recognise events on this one too: the band is
+    /// only as tall as there is content, so wherever it falls short of the
+    /// viewport the clip is what the pointer is over. Its local coordinates
+    /// are the pane's own, since it *is* the viewport — unlike the band, which
+    /// moves under it to scroll.
+    ///
+    /// The scrollbar is deliberately not exposed: it has an empty input
+    /// region and never receives a pointer event.
+    pub fn clip_surface(&self) -> &WlSurface {
+        self.clip.wl_surface()
+    }
+
     /// Drop the painted band so the next [`Self::sync`] repaints it.
     ///
     /// The band is normally only repainted when a scroll runs off its edge —
