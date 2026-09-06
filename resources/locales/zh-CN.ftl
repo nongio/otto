@@ -87,6 +87,8 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
+# Stands in for the wallpaper thumbnail when the file cannot be decoded.
+settings-background-image-unavailable = 无法显示
 
 settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
@@ -126,6 +128,8 @@ settings-display-scale-detail = 下次登录时生效。桌面不会即时重新
 # Shown when the compositor reports no outputs at all.
 settings-display-none = 没有显示器
 settings-display-none-detail = 合成器没有驱动任何输出
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = 点按某个显示器以在下方更改其设置
 
 settings-virtual-displays = 虚拟显示器
 # $count is how many headless outputs exist. These are streamed to other
@@ -134,6 +138,9 @@ settings-virtual-displays-detail =
     { $count ->
        *[other] { $count } 个无头输出，通过 PipeWire 串流。移除会去掉选中的那个
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = 需要重新启动
 
 
 ## Settings — Dock
@@ -163,6 +170,8 @@ settings-key-combination = 组合键
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl、Alt、Shift 或 Logo 以 + 相连，再加一个键：Ctrl+Shift+Return
+# Shown in a shortcut's key field when no combination is set.
+settings-key-combination-unassigned = 未指定
 
 
 ## Settings — Trackpad & Mouse

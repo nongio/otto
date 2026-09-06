@@ -87,6 +87,8 @@ settings-group-desktop = Рабочий стол
 settings-background-colour = Цвет фона
 settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
+# Stands in for the wallpaper thumbnail when the file cannot be decoded.
+settings-background-image-unavailable = Невозможно показать
 
 settings-group-pointer-and-icons = Указатель и значки
 settings-cursor-theme = Тема курсора
@@ -126,6 +128,8 @@ settings-display-scale-detail = Применяется при следующем
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Нет дисплеев
 settings-display-none-detail = Композитор не управляет ни одним выводом
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = Нажмите на экран, чтобы изменить его настройки ниже
 
 settings-virtual-displays = Виртуальные дисплеи
 # $count is how many headless outputs exist. These are streamed to other
@@ -137,6 +141,9 @@ settings-virtual-displays-detail =
         [many] { $count } автономных выводов, транслируются через PipeWire. «Убрать» удаляет выбранный
        *[other] { $count } автономного вывода, транслируется через PipeWire. «Убрать» удаляет выбранный
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = Нужен перезапуск
 
 
 ## Settings — Dock
@@ -166,6 +173,8 @@ settings-key-combination = Сочетание клавиш
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl, Alt, Shift или Logo, соединённые «+», затем одна клавиша: Ctrl+Shift+Return
+# Shown in a shortcut's key field when no combination is set.
+settings-key-combination-unassigned = Не назначено
 
 
 ## Settings — Trackpad & Mouse
