@@ -526,7 +526,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         // (`specs/tiling.md`: gaps are not drag handles until you ask).
         if under.is_none() && self.workspaces.tiling_design.is_active() {
             let dragging = self.tiling_design_drag_is_active();
-            if dragging || self.workspaces.tiling_design.hit(pos.x, pos.y).is_some() {
+            let hit = self.workspaces.tiling_design.hit(pos.x, pos.y);
+            // A tile's own titlebar wins over the pane covering it: the
+            // titlebar drag detaches a window in design mode exactly as it
+            // does outside it, and a pane's *body* has nothing else to offer
+            // in that strip. Handles and toolbars still come first.
+            let over_titlebar = matches!(hit, Some(crate::workspaces::DesignHit::Pane(_)))
+                && self.point_is_on_a_titlebar(pos);
+            if dragging || (hit.is_some() && !over_titlebar) {
                 let view = crate::workspaces::TilingDesignInputView::default();
                 return Some((view.into(), (0.0, 0.0).into()));
             }
@@ -755,6 +762,31 @@ impl<BackendData: Backend> Otto<BackendData> {
                 self.workspaces.dock.schedule_autohide();
             }
         }
+    }
+
+    /// Would a press at `pos` land on a window's server-side titlebar?
+    ///
+    /// The same strip the [`WindowDecorationView`] branch below claims, asked
+    /// ahead of time so design mode's pane can stand aside for it: a titlebar
+    /// drag detaches a tile whether or not the editor is up.
+    ///
+    /// [`WindowDecorationView`]: crate::workspaces::WindowDecorationView
+    fn point_is_on_a_titlebar(
+        &self,
+        pos: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) -> bool {
+        let Some((window, loc)) = self.workspaces.element_under(pos) else {
+            return false;
+        };
+        let deco_height = window.decoration_height();
+        if deco_height <= 0 || window.is_minimised() {
+            return false;
+        }
+        let width = smithay::desktop::space::SpaceElement::geometry(window)
+            .size
+            .w as f64;
+        let (local_x, local_y) = (pos.x - loc.x as f64, pos.y - loc.y as f64);
+        local_x >= 0.0 && local_x < width && local_y >= 0.0 && local_y < deco_height as f64
     }
 }
 

@@ -653,6 +653,7 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerTilingResizeGrab<B> {
     /// A grab taken away mid-drag leaves the shares where the pointer left
     /// them; the tree is always in a valid state, so there is nothing to undo.
     fn unset(&mut self, data: &mut Otto<B>) {
+        data.is_resizing = false;
         data.tiling_resize_end();
     }
 }

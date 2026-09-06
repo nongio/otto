@@ -260,7 +260,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             state.focused = Some(id);
         }
         drop(workspace);
-        self.relayout_workspace(&output, true);
+        // Forced: the window may land on the very rectangle it is already at,
+        // and it still has to be given the tile's decoration and states back.
+        self.relayout_workspace_forced(&output, true, true);
     }
 
     /// Escape during a drag: put the leaf back, and let go of the pointer so
@@ -291,7 +293,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 state.focused = drag.focused;
             }
         }
-        self.relayout_workspace(&output, true);
+        self.relayout_workspace_forced(&output, true, true);
     }
 
     /// Scale the window's own layer, animated. Not a client resize: the

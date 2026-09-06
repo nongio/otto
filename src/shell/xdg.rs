@@ -509,23 +509,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let loc = self.workspaces.element_location(window).unwrap();
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
-        with_states(top_level.wl_surface(), move |states| {
-            states
-                .data_map
-                .get::<RefCell<SurfaceData>>()
-                .unwrap()
-                .borrow_mut()
-                .resize_state = ResizeState::Resizing(ResizeData {
-                edges: edges.into(),
-                initial_window_location,
-                initial_window_size,
-            });
-        });
-
         let window = window.clone();
 
         // A tile has no free size: the edge is a split, and the drag moves it
         // (`docs/developer/tiling-plan.md`: resize refused on a tiled window).
+        // Ahead of the resize state below, which belongs to a grab that is
+        // about to size the window's own rectangle — a tile never has one.
         match self.tiling_resize_begin(&window, edges.into()) {
             TilingResizeStart::Started => {
                 self.is_resizing = true;
@@ -540,6 +529,19 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             TilingResizeStart::NoSplit => return,
             TilingResizeStart::NotTiled => {}
         }
+
+        with_states(top_level.wl_surface(), move |states| {
+            states
+                .data_map
+                .get::<RefCell<SurfaceData>>()
+                .unwrap()
+                .borrow_mut()
+                .resize_state = ResizeState::Resizing(ResizeData {
+                edges: edges.into(),
+                initial_window_location,
+                initial_window_size,
+            });
+        });
 
         self.clear_tiled_marker(&window);
 
