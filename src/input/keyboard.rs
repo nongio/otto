@@ -327,6 +327,8 @@ impl<BackendData: Backend> Otto<BackendData> {
             .workspaces
             .outputs()
             .any(|output| self.tiling_design_active(output));
+        // And a drag out of a tree owns Escape, which cancels it.
+        let tiling_drag_active = self.tiling_drag_is_active();
 
         // Assistive technologies are offered the key before anything else in
         // the session sees it. Cloned out of `self` because `keyboard.input`
@@ -399,6 +401,17 @@ impl<BackendData: Backend> Otto<BackendData> {
                             suppressed_keys.push(keysym);
                             return FilterResult::Intercept(KeyAction::None);
                         }
+                    }
+
+                    // Escape puts a window being dragged out of a tree back
+                    // in the slot it came from, ahead of design mode's own
+                    // Escape: the drag is the thing in flight.
+                    if tiling_drag_active
+                        && matches!(state, KeyState::Pressed)
+                        && keysym == Keysym::Escape
+                    {
+                        suppressed_keys.push(keysym);
+                        return FilterResult::Intercept(KeyAction::TilingDragCancel);
                     }
 
                     // Escape leaves design mode; Ctrl+Z (which is what this

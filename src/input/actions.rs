@@ -74,6 +74,9 @@ pub enum KeyAction {
     TilingDesignToggle,
     /// Undo the last design-mode edit.
     TilingUndo,
+    /// Escape during a titlebar drag out of a tree: put the window back in the
+    /// slot it came from. Not bindable — it exists only while a drag is up.
+    TilingDragCancel,
     /// The hardware power button was pressed; `[power_management].on_power_button`
     /// decides what that means
     PowerButton,
@@ -705,6 +708,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingEqualize => self.handle_tiling_equalize(),
             KeyAction::TilingDesignToggle => self.handle_tiling_design_toggle(),
             KeyAction::TilingUndo => self.handle_tiling_undo(),
+            KeyAction::TilingDragCancel => self.handle_tiling_drag_cancel(),
             other => self.process_common_key_action(other),
         }
     }

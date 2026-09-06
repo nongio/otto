@@ -362,6 +362,13 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub pinch_last_scale: f64,
     pub is_resizing: bool,
 
+    /// A titlebar drag that took a window out of a tiling tree, in flight.
+    /// See [`crate::shell::TilingDrag`].
+    pub tiling_drag: Option<crate::shell::TilingDrag>,
+    /// An edge drag moving the split between two tiles.
+    /// See [`crate::shell::TilingResize`].
+    pub tiling_resize: Option<crate::shell::TilingResize>,
+
     // power management
     pub is_lid_closed: bool,
 
@@ -1051,6 +1058,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             is_pinching: false,
             pinch_last_scale: 1.0,
             is_resizing: false,
+            tiling_drag: None,
+            tiling_resize: None,
 
             // power management
             is_lid_closed: false,

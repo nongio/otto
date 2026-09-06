@@ -41,13 +41,14 @@ use crate::{
     ClientState,
 };
 
+pub(crate) mod commands;
 mod element;
 mod grabs;
 pub mod layer;
 pub(crate) mod ssd;
-pub(crate) mod commands;
 mod tiling;
 mod tiling_design;
+mod tiling_drag;
 #[cfg(feature = "xwayland")]
 mod x11;
 mod xdg;
@@ -55,6 +56,7 @@ mod xdg;
 pub use self::element::*;
 pub use self::grabs::*;
 pub use self::layer::*;
+pub use self::tiling_drag::*;
 
 // the surface size is either output size
 // or the current workspace size
