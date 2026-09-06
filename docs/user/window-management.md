@@ -118,6 +118,40 @@ gets a cell in a tree and nothing overlaps. Its commands — `focus left`,
 driven from a script with `otto-msg`, the way `i3-msg` and `swaymsg` are used;
 see [Scripting Otto](scripting.md).
 
+## Moving and resizing a tile with the pointer
+
+On a tiling workspace the pointer edits the layout rather than a window's own
+geometry, and it does so without entering design mode.
+
+**Drag a tile by its titlebar** and it leaves the tree: it shrinks to follow
+the pointer, and the tiles behind it close up as though it had been closed. A
+translucent pane shows where it would land as you move:
+
+- over the **left or right half** of a wide tile, or the **top or bottom half**
+  of a tall one, the pane covers that half — the window is inserted there,
+  splitting that tile;
+- over the **middle** of a tile, the pane covers the whole of it — the two
+  windows swap places, and nothing else moves;
+- over an **empty slot**, the pane covers the slot and the window fills it;
+- over nothing — an empty workspace, or the space beside the tree — the window
+  goes against the nearest outside edge of the layout.
+
+Let go to drop it. `Escape` while you are still dragging puts it back in the
+cell it came from, at the size it had. The screen-edge snap zones are not
+offered on a tiling workspace: every position there is already a slot.
+
+**Drag a tile's edge** and you are dragging the split it sits on, not the
+window. The two tiles either side of that split change how they share the
+space and nothing else moves; a corner drags both splits at once. As on a
+design-mode bar, the split snaps to halves, thirds and quarters, and `Shift`
+slides past the snapping. Neither neighbour is ever pushed below the size its
+application says it needs.
+
+An edge with nothing beyond it — the outside of the layout, against the edge of
+the screen — drags nothing, and the pointer keeps its ordinary arrow there.
+Tiles have no free size at all: an application asking to resize itself is
+simply sent its cell again.
+
 ## Design mode
 
 A tiling workspace can be shaped with the pointer instead of with keyboard
@@ -152,9 +186,10 @@ away or stops tiling.
 Cells chase the pointer on a slightly bouncy spring, configured with
 `[tiling] design_duration` and `design_bounce` — `0` makes every change snap.
 
-Outside design mode the gaps are *not* drag handles: pointer handling on a
-tiled workspace is the same as on a floating one, so no hidden hit area
-competes with a window's edges.
+Outside design mode the gaps are *not* drag handles: what the pointer offers
+on a tiled workspace is the titlebar drag and the edge drag above, so no hidden
+hit area competes with a window's edges. Both of those keep working while
+design mode is up, and the pane grid follows them.
 
 ## Fullscreen
 
@@ -229,6 +264,8 @@ Two things get special handling:
 ## What is not there yet
 
 - Quarter tiles, and tiling without holding `Ctrl`
+- A floating layer inside a tiling workspace: dropping a tile outside the
+  layout puts it back in the tree at the nearest edge rather than floating it
 - A modifier-drag to move or resize from anywhere in a window
 - Window rules (per-app placement, size, workspace assignment)
 - Always-on-top / sticky windows
