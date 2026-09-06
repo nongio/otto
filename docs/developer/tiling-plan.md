@@ -187,65 +187,41 @@ settings sub-dialogs).
 
 ## Animation configuration
 
-Every tiling animation — a window joining or leaving the tree, a move or
-swap, a resize step, a re-fit after the usable area changed, entering or
-leaving tiling mode, monocle in and out — is driven by `relayout_workspace`
-and takes its transition from one place. That place follows the convention `[workspaces] switch_duration` /
-`switch_bounce` already set: a duration in seconds and a bounce, both
-clamped, and a duration of `0` means no animation at all — the layer is set
-without a transition and the tree lands in one frame. Nothing else is
-needed to "disable" tiling animations.
+Otto animates everywhere — the workspace switch, maximize, half-snap,
+minimize, exposé, the dock, and now tiling — and each grew its own constant
+or config key. Animation timing is therefore a **general setting outside
+`[tiling]`**, not a tiling one:
 
 ```toml
-[tiling]
-# Insert, remove, move, swap, equalise, re-fit. 0 = snap.
-layout_duration = 0.3
-layout_bounce = 0.0
-# Entering and leaving tiling mode: every window flies to its cell or back.
-mode_duration = 0.4
-mode_bounce = 0.1
-# Monocle in and out.
-monocle_duration = 0.25
-# Design mode: cells chasing a dragged handle, splits, swaps, presets.
-design_duration = 0.35
-design_bounce = 0.25
-inner_gap = 8           # defaults; a workspace can override both, see below
-outer_gap = 8
-smart_gaps = true       # a lone tile drops the gaps
-decoration = "minimal"  # "minimal" title line, or "none" for a border only
-float = []              # app ids that always float
+[animations]
+scale = 1.0             # multiplies every duration; 0.5 = twice as fast, 0 = snap everywhere
+layout = { duration = 0.3, bounce = 0.0 }    # windows moving into place: maximize, snap, tiling relayouts, tiling mode in/out
+interactive = { duration = 0.35, bounce = 0.25 }  # anything chasing the pointer: design handles, edge and tile drags
+switch = { duration = 0.6, bounce = 0.1 }    # workspace scrolling (replaces [workspaces] switch_duration/bounce, still read)
 ```
 
-**Gaps are per session with a per-workspace override.** `[tiling]` holds
-the defaults. A workspace may override inner and outer gaps: from the
-command language (`gaps inner 0 current`, sway's shape), from the workspace
-context menu, and later from design mode. The override lives in
-`TilingState.gaps` and travels with the workspace across outputs; it is
-persisted next to the workspace's name, under `[workspaces]` keyed by
-`"<output>:<position>"`, the way `names` already is, so a "no gaps on the
-video workspace" setup survives a restart. `smart_gaps` stays global.
+Rules:
 
-The values are read where `relayout_workspace` picks its transition, so they
-apply live through the settings machinery like the workspace switch does. A
-`None` transition is a first-class case in `apply.rs`, not a very short one:
-insert adds the layer at its final size, remove detaches it at once, and the
-client is configured with no intermediate frame.
-
-Two things ride on top:
-
-- **Per-invocation skip.** Every named action and command accepts a
-  `no_animation` flag (`{ builtin = "FocusLeft", animate = false }` in the
-  shortcut config, `--no-animation` on `otto-msg`) so a keybinding can move a window
-  or switch the layout instantly while the same operation from the pointer or
-  from a script still animates. It is the same distinction the workspace
-  switch draws between a keybinding and a trackpad swipe, made explicit per
-  binding.
-- **`[accessibility] reduce_motion`.** A new global that forces every
-  duration above to zero, and the workspace switch's too. It maps to the
-  freedesktop `org.freedesktop.appearance` reduced-motion key when that is
-  read through the portal, so it reaches clients as well. It does not exist
-  today; adding it is part of Phase 1 because the tiling settings are the
-  first place a second animation family appears.
+- A family is a duration in seconds plus a bounce; `scale` multiplies the
+  duration. A resulting duration of 0 passes **no** transition to lay-rs: the
+  layer lands in one frame and the client gets one configure. That is the
+  only "off" switch; there is no separate enable flag.
+- `[accessibility] reduce_motion = true` forces `scale` to 0 and goes out
+  over the portal's reduced-motion key so clients see it too.
+- `[tiling]` has no duration or bounce keys: relayouts, keyboard resizes and
+  mode changes use `layout`; design-mode handles, edge drags and tile drags
+  use `interactive`. The old `tiling.layout_*`, `mode_*`, `design_*` keys are
+  read as legacy overrides of the families and no longer written.
+- The hard-coded `ease_out(0.3)` in maximize, half-snap and restore move onto
+  `layout`. Dock magnification and exposé keep their own tuned springs for
+  now and only honour `scale`.
+- Every named action accepts `animate = false` in the shortcut config, and
+  `otto-msg` takes `--no-animation`, so a keybinding can be instant while the
+  same operation from the pointer or a script animates — the distinction the
+  workspace switch already draws between a keybinding and a swipe.
+- Otto Settings shows an *Animations* group in General: the scale and the
+  three families, all live. The Tiling pane keeps decoration, gaps, smart
+  gaps and resize step.
 
 ## Named actions
 
@@ -444,7 +420,7 @@ otto-kit apps.
 `components/otto-settings` (a new file under `panes/`, discovered from the
 schema like the others) with every `[tiling]` key: decoration
 (`minimal`/`none`), inner and outer gap, smart gaps, resize step, and the
-three animation pairs (layout, mode, design) with 0 meaning snap. Each key
+(animation timing lives in `[animations]`, see "Animation configuration"). Each key
 gets a `spec(...)` entry in `src/settings/schema.rs` marked `Live` and an
 apply arm in `src/settings/apply.rs` that relays out every tiling workspace
 (gaps, decoration) or just stores the value (durations, step). Decoration
