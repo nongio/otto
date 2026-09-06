@@ -464,7 +464,15 @@ impl Window {
         // and fades, since this is the one place it changes for a reason the
         // user can see.
         self.update_material(true);
-        self.render();
+        // Marked for repaint rather than repainted here. An interactive resize
+        // sends a configure per pointer motion, and painting inline meant a
+        // draw and an `eglSwapBuffers` on a buffer chain the driver had just
+        // reallocated at the new size for every one of them, unthrottled by
+        // frame callbacks. `update_windows` renders on the next loop iteration
+        // instead, so a burst of configures collapses into one paint and
+        // `frame_in_flight` keeps it in step with the compositor. See
+        // [`Self::update`].
+        self.request_frame();
     }
 
     /// Render the window content
