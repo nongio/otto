@@ -143,9 +143,41 @@ pub fn covering_typeface(
     if typeface.unichar_to_glyph(sample) != 0 {
         return typeface;
     }
+    for candidate in script_families(bcp47) {
+        if let Some(face) = font_mgr.match_family_style(candidate, style) {
+            if face.unichar_to_glyph(sample) != 0 {
+                return face;
+            }
+        }
+    }
     font_mgr
         .match_family_style_character(family, style, &[bcp47], sample)
         .unwrap_or(typeface)
+}
+
+/// The faces that draw a language's own shapes, most preferred first.
+///
+/// Han unification gives one code point different correct shapes per
+/// language: 直, 骨 and 今 are drawn one way in Japanese and another in
+/// Simplified Chinese, and a reader of either notices the wrong one at once.
+/// The language belongs in the request, and
+/// [`FontMgr::match_family_style_character`] takes one — but on a fontconfig
+/// system Skia ignores it, answering `Source Han Sans CN` for `ja` as readily
+/// as for `zh`. Naming the regional family is what actually picks the shapes,
+/// so it is tried first and the language-tagged search is left as the fallback
+/// for a machine that has none of these installed.
+fn script_families(bcp47: &str) -> &'static [&'static str] {
+    let language = bcp47.split(['-', '_']).next().unwrap_or(bcp47);
+    match language {
+        "ja" => &["Noto Sans CJK JP", "Source Han Sans JP", "Noto Sans JP"],
+        "ko" => &["Noto Sans CJK KR", "Source Han Sans KR", "Noto Sans KR"],
+        "zh" => match bcp47 {
+            t if t.contains("TW") => &["Noto Sans CJK TC", "Source Han Sans TW"],
+            t if t.contains("HK") => &["Noto Sans CJK HK", "Source Han Sans HK"],
+            _ => &["Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC"],
+        },
+        _ => &[],
+    }
 }
 
 impl FontCache {
@@ -532,5 +564,19 @@ mod tests {
             covering.measure_str(text, None).0 > 0.0,
             "the substituted face must give the text a width"
         );
+    }
+
+    /// A language names the regional face that draws its own Han shapes: the
+    /// language tag alone does not survive Skia's fontconfig manager.
+    #[test]
+    fn a_language_asks_for_its_own_han_shapes() {
+        assert_eq!(script_families("ja").first(), Some(&"Noto Sans CJK JP"));
+        assert_eq!(script_families("ko-KR").first(), Some(&"Noto Sans CJK KR"));
+        assert_eq!(script_families("zh-CN").first(), Some(&"Noto Sans CJK SC"));
+        assert_eq!(script_families("zh-TW").first(), Some(&"Noto Sans CJK TC"));
+        assert_eq!(script_families("zh-HK").first(), Some(&"Noto Sans CJK HK"));
+        // A language whose script the interface font already covers asks for
+        // nothing, and never reaches this list.
+        assert!(script_families("de").is_empty());
     }
 }
