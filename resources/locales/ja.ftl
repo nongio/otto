@@ -480,7 +480,7 @@ settings-not-set = 未設定
 # The button that opens the file picker, and the field beside it before a file
 # has been chosen.
 settings-choose = 選択…
-settings-no-file-chosen = ファイルが選択されていません
+settings-no-file-chosen = ファイル未選択
 settings-choose-background-image = 背景画像を選択
 
 # The settings window's title bar. $pane is the selected pane's name.
