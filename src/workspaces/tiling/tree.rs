@@ -510,24 +510,28 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
     /// Replace the leaf at `target` with a container of `axis` holding the old
     /// leaf and `new_leaf`, half each. Returns the new leaf's node.
     fn split_leaf(&mut self, target: NodeId, axis: Axis, new_leaf: L) -> NodeId {
+        self.split_leaf_at(target, axis, new_leaf, true)
+    }
+
+    /// [`Self::split_leaf`] with the new leaf on the chosen side: `after`
+    /// puts it right of a [`Axis::Row`] split, below a [`Axis::Column`] one.
+    fn split_leaf_at(&mut self, target: NodeId, axis: Axis, new_leaf: L, after: bool) -> NodeId {
         let parent = self.parent_of(target);
         let new_node = self.alloc(Node::Leaf(new_leaf), None);
-        let container = self.alloc(
-            Node::Container {
-                axis,
-                children: vec![
-                    Child {
-                        node: target,
-                        share: 0.5,
-                    },
-                    Child {
-                        node: new_node,
-                        share: 0.5,
-                    },
-                ],
-            },
-            parent,
-        );
+        let old = Child {
+            node: target,
+            share: 0.5,
+        };
+        let fresh = Child {
+            node: new_node,
+            share: 0.5,
+        };
+        let children = if after {
+            vec![old, fresh]
+        } else {
+            vec![fresh, old]
+        };
+        let container = self.alloc(Node::Container { axis, children }, parent);
         self.set_parent(target, Some(container));
         self.set_parent(new_node, Some(container));
         self.replace_in_parent(target, container, parent);
@@ -537,13 +541,25 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
     /// Add `new_leaf` right after `after` in `parent`, taking half of
     /// `after`'s share.
     fn insert_sibling_after(&mut self, parent: NodeId, after: NodeId, new_leaf: L) -> NodeId {
+        self.insert_sibling_at(parent, after, new_leaf, true)
+    }
+
+    /// Add `new_leaf` beside `anchor` in `parent`, before or after it, taking
+    /// half of `anchor`'s share.
+    fn insert_sibling_at(
+        &mut self,
+        parent: NodeId,
+        anchor: NodeId,
+        new_leaf: L,
+        after: bool,
+    ) -> NodeId {
         let new_node = self.alloc(Node::Leaf(new_leaf), Some(parent));
         if let Some(Node::Container { children, .. }) = self.node_mut(parent) {
-            if let Some(index) = children.iter().position(|c| c.node == after) {
+            if let Some(index) = children.iter().position(|c| c.node == anchor) {
                 let half = children[index].share / 2.0;
                 children[index].share = half;
                 children.insert(
-                    index + 1,
+                    if after { index + 1 } else { index },
                     Child {
                         node: new_node,
                         share: half,
@@ -557,6 +573,105 @@ impl<L: Clone + Eq + Hash + Debug> Tree<L> {
             }
         }
         self.normalize(parent);
+        new_node
+    }
+
+    /// Insert `new_leaf` beside the cell at `target`, on a named side.
+    ///
+    /// The pointer's answer to [`Self::insert_next_to`]: a drop names the side
+    /// it landed on, so the window goes left of the tile it was dropped on the
+    /// left half of, rather than always after it. A parent that already splits
+    /// along `axis` takes the new leaf as a plain sibling; otherwise the
+    /// target is split, the new leaf on the chosen side.
+    pub fn insert_beside(
+        &mut self,
+        target: NodeId,
+        new_leaf: L,
+        axis: Axis,
+        after: bool,
+    ) -> Option<NodeId> {
+        if self.node(target).is_none() {
+            return None;
+        }
+        if let Some(parent) = self.parent_of(target) {
+            if self.axis_of(parent) == Some(axis) {
+                return Some(self.insert_sibling_at(parent, target, new_leaf, after));
+            }
+        }
+        Some(self.split_leaf_at(target, axis, new_leaf, after))
+    }
+
+    /// Exchange two leaves' windows, cells and shares staying where they are.
+    ///
+    /// What a drop on the middle of a tile means: the two windows trade
+    /// places and the layout does not otherwise move.
+    pub fn swap_leaves(&mut self, a: &L, b: &L) -> bool {
+        if a == b {
+            return false;
+        }
+        let (Some(na), Some(nb)) = (self.node_of(a), self.node_of(b)) else {
+            return false;
+        };
+        if let Some(Node::Leaf(leaf)) = self.node_mut(na) {
+            *leaf = b.clone();
+        }
+        if let Some(Node::Leaf(leaf)) = self.node_mut(nb) {
+            *leaf = a.clone();
+        }
+        true
+    }
+
+    /// Put `new_leaf` against the outside of the whole tree, on `axis` and at
+    /// the near or far end of it.
+    ///
+    /// Where a drop that missed every tile lands. A root that already splits
+    /// along `axis` gains one more child at that end, each child keeping its
+    /// proportion of what is left; otherwise the root is wrapped in a new
+    /// container and the two halve the area.
+    pub fn insert_at_root_edge(&mut self, new_leaf: L, axis: Axis, after: bool) -> NodeId {
+        let Some(root) = self.root else {
+            let node = self.alloc(Node::Leaf(new_leaf), None);
+            self.root = Some(node);
+            return node;
+        };
+        if self.axis_of(root) == Some(axis) {
+            let new_node = self.alloc(Node::Leaf(new_leaf), Some(root));
+            if let Some(Node::Container { children, .. }) = self.node_mut(root) {
+                let share = 1.0 / (children.len() + 1) as f32;
+                for child in children.iter_mut() {
+                    child.share *= 1.0 - share;
+                }
+                let at = if after { children.len() } else { 0 };
+                children.insert(
+                    at,
+                    Child {
+                        node: new_node,
+                        share,
+                    },
+                );
+            }
+            self.normalize(root);
+            return new_node;
+        }
+
+        let new_node = self.alloc(Node::Leaf(new_leaf), None);
+        let old = Child {
+            node: root,
+            share: 0.5,
+        };
+        let fresh = Child {
+            node: new_node,
+            share: 0.5,
+        };
+        let children = if after {
+            vec![old, fresh]
+        } else {
+            vec![fresh, old]
+        };
+        let container = self.alloc(Node::Container { axis, children }, None);
+        self.set_parent(root, Some(container));
+        self.set_parent(new_node, Some(container));
+        self.root = Some(container);
         new_node
     }
 

@@ -12,6 +12,7 @@
 
 pub mod command;
 pub mod design;
+pub mod drag;
 pub mod layout;
 pub mod state;
 pub mod tree;
