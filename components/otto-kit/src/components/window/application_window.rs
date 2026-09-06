@@ -429,7 +429,20 @@ impl ApplicationWindow {
             wl_surface.commit();
         }
 
-        self.render();
+        // Marked for repaint rather than repainted here. An interactive resize
+        // sends a configure per pointer motion, and painting inline meant one
+        // full round of `render()` — a draw and an `eglSwapBuffers` on the
+        // toplevel and on every subsurface, each of whose buffer chains the
+        // driver has just reallocated at the new size — for every one of them,
+        // unthrottled by frame callbacks. `update_windows` renders on the next
+        // loop iteration instead, so a burst of configures collapses into a
+        // single paint and `frame_in_flight` keeps it in step with the
+        // compositor. See `Window::update`.
+        if let Ok(surface_guard) = self.surface.read() {
+            if let Some(ref surface) = *surface_guard {
+                surface.request_frame();
+            }
+        }
     }
 
     /// Render the window
