@@ -508,9 +508,16 @@ fn sync() {
         })
         .collect();
 
-    // Virtual outputs added in the pane are not running anywhere, so the probe
-    // cannot report them — they would disappear the moment they were added.
-    outputs.extend(held.into_iter().filter(|o| o.local));
+    // Virtual outputs added in the pane are not running anywhere *yet*, so the
+    // probe cannot report them — they would disappear the moment they were
+    // added. Once the compositor's `wl_output` for one arrives the probe has
+    // the real thing and the placeholder is dropped, or the screen would be
+    // listed twice.
+    let placeholders: Vec<Output> = held
+        .into_iter()
+        .filter(|o| o.local && !outputs.iter().any(|probed| probed.name == o.name))
+        .collect();
+    outputs.extend(placeholders);
 
     // Nothing in the protocol says which display is primary, and
     // `org.otto.Settings` serves no per-output setting to ask (see the doc
@@ -732,6 +739,14 @@ pub fn set_selected_position(x: Option<f32>, y: Option<f32>) {
 /// Placed to the right of everything else at the resolution
 /// `otto_config.example.toml` uses, since a new headless output has no
 /// hardware to take a mode from.
+///
+/// Asks the compositor to create it for real, and persist it — a screen that
+/// existed only in this window and vanished on quit is not what the button
+/// says it does. The entry is still added here so the pane shows it at once:
+/// the compositor's `wl_output` arrives asynchronously, and [`sync`] drops
+/// this placeholder as soon as the probe reports one by the same name. When
+/// the compositor does not serve the interface at all the entry is all there
+/// is, which is the same bargain the rest of the pane strikes offline.
 pub fn add_virtual_output() {
     let mut arrangement = arrangement().write().unwrap();
     // Names have to be unique — the compositor keys virtual outputs by name —
@@ -749,8 +764,15 @@ pub fn add_virtual_output() {
         .map(|o| o.x + o.width)
         .fold(0.0_f32, f32::max);
 
+    let name = format!("virtual-{next}");
+    if let crate::settings_client::SetOutcome::Failed(why) =
+        crate::settings_client::add_virtual_output(&name, 1920, 1080, 60.0)
+    {
+        eprintln!("displays: {name} is only in this window: {why}");
+    }
+
     arrangement.outputs.push(Output {
-        name: format!("virtual-{next}"),
+        name,
         x: right,
         y: 0.0,
         width: 1920.0,
@@ -776,11 +798,27 @@ pub fn add_virtual_output() {
 /// Physical outputs are not removable: the arrangement describes hardware
 /// that is plugged in, and a panel does not stop existing because the pane
 /// stopped listing it. Returns whether anything was removed.
+///
+/// A virtual output the compositor is actually running has to be removed
+/// there too. Dropping it from the arrangement alone accomplished nothing:
+/// the next [`sync`] probes the compositor, sees it still running, and puts
+/// it straight back — so the button appeared to do nothing while reporting
+/// success.
 pub fn remove_selected_virtual_output() -> bool {
     let mut arrangement = arrangement().write().unwrap();
     let selected = arrangement.selected;
     match arrangement.outputs.get(selected) {
-        Some(output) if output.is_virtual() => {}
+        Some(output) if output.is_virtual() => {
+            if !output.local {
+                let name = output.name.clone();
+                if let crate::settings_client::SetOutcome::Failed(why) =
+                    crate::settings_client::remove_virtual_output(&name)
+                {
+                    eprintln!("displays: {name} could not be removed: {why}");
+                    return false;
+                }
+            }
+        }
         _ => return false,
     }
     arrangement.outputs.remove(selected);
