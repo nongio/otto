@@ -95,6 +95,10 @@ const ARRANGEMENT_CANVAS_H: f32 = 168.0;
 /// constant, alongside that function, so [`Settings::pane_content_height`]
 /// cannot drift from what it actually draws.
 const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
+/// One line of a pane's opening paragraph, and the space between the
+/// paragraph and the first group below it.
+const INTRO_LINE_H: f32 = 19.0;
+const INTRO_GAP: f32 = 14.0;
 /// A file row's preview: how tall the thumbnail box is, and the space above
 /// and below it. The width follows the image's own aspect, capped at
 /// [`PREVIEW_W`] — a wallpaper is worth seeing in its own shape.
@@ -603,6 +607,10 @@ impl GroupLayout<'_> {
 struct PaneLayout<'a> {
     /// The displays arrangement canvas, on the pane that has one.
     arrangement: Option<Rect>,
+    /// The opening paragraph, on the pane that has one: the wrapped lines and
+    /// the band they occupy, laid out once so drawing and the content height
+    /// cannot disagree about how tall it is.
+    intro: Option<(Vec<String>, Rect)>,
     groups: Vec<GroupLayout<'a>>,
     /// Where the walk ended — the pane's content height.
     height: f32,
@@ -1033,6 +1041,14 @@ impl Settings {
             area
         });
 
+        let intro = pane.intro.map(|text| {
+            let lines = widgets::wrap(text, styles::SUBHEADLINE, x1 - x0);
+            let height = lines.len() as f32 * INTRO_LINE_H + INTRO_GAP;
+            let area = Rect::from_ltrb(x0, y, x1, y + height);
+            y += height;
+            (lines, area)
+        });
+
         let mut groups = Vec::with_capacity(pane.groups.len());
         for group in &pane.groups {
             let title_y = group.title.as_ref().map(|_| {
@@ -1065,6 +1081,7 @@ impl Settings {
 
         PaneLayout {
             arrangement,
+            intro,
             groups,
             height: y,
         }
@@ -1667,6 +1684,21 @@ impl Settings {
         if let Some(area) = layout.arrangement {
             if intersects_band(area, content) {
                 self.render_arrangement(canvas, x0, x1, area.top);
+            }
+        }
+
+        if let Some((lines, area)) = &layout.intro {
+            if intersects_band(*area, content) {
+                for (i, line) in lines.iter().enumerate() {
+                    widgets::text_centered_y(
+                        canvas,
+                        line,
+                        x0 + 2.0,
+                        area.top + i as f32 * INTRO_LINE_H + INTRO_LINE_H / 2.0,
+                        styles::SUBHEADLINE,
+                        self.theme.text_secondary,
+                    );
+                }
             }
         }
 

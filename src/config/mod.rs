@@ -1048,6 +1048,15 @@ pub struct TilingConfig {
     /// to `0.0..1.0`.
     #[serde(default = "default_tiling_layout_bounce")]
     pub layout_bounce: f32,
+    /// Duration in seconds of the spring that plays when a workspace enters
+    /// or leaves tiling mode and every window flies to its cell. Its own
+    /// value because it is a bigger, rarer motion than a single insertion:
+    /// the whole workspace rearranges at once. `0` snaps.
+    #[serde(default = "default_tiling_mode_duration")]
+    pub mode_duration: f32,
+    /// Bounce of that spring. Clamped to `0.0..1.0`.
+    #[serde(default = "default_tiling_mode_bounce")]
+    pub mode_bounce: f32,
     /// Duration in seconds of the spring design mode's cells chase a dragged
     /// handle on, and that its splits, presets and equalises animate with.
     /// Bouncier than the layout spring by default: the grid is meant to feel
@@ -1089,6 +1098,14 @@ fn default_tiling_layout_bounce() -> f32 {
     0.0
 }
 
+fn default_tiling_mode_duration() -> f32 {
+    0.4
+}
+
+fn default_tiling_mode_bounce() -> f32 {
+    0.1
+}
+
 fn default_tiling_design_duration() -> f32 {
     0.35
 }
@@ -1115,6 +1132,8 @@ impl Default for TilingConfig {
             smart_gaps: default_tiling_smart_gaps(),
             layout_duration: default_tiling_layout_duration(),
             layout_bounce: default_tiling_layout_bounce(),
+            mode_duration: default_tiling_mode_duration(),
+            mode_bounce: default_tiling_mode_bounce(),
             design_duration: default_tiling_design_duration(),
             design_bounce: default_tiling_design_bounce(),
             resize_step: default_tiling_resize_step(),
@@ -1136,6 +1155,20 @@ impl TilingConfig {
         Some(layers::prelude::Transition::spring(
             duration,
             self.layout_bounce.clamp(0.0, 1.0),
+        ))
+    }
+
+    /// The spring a workspace entering or leaving tiling mode animates on:
+    /// every window moving to its cell, or back to where it floated. Same
+    /// `0` = snap rule as [`TilingConfig::layout_transition`].
+    pub fn mode_transition(&self) -> Option<layers::prelude::Transition> {
+        let duration = self.mode_duration.clamp(0.0, 10.0);
+        if duration <= f32::EPSILON {
+            return None;
+        }
+        Some(layers::prelude::Transition::spring(
+            duration,
+            self.mode_bounce.clamp(0.0, 1.0),
         ))
     }
 

@@ -9,6 +9,7 @@ pub fn build() -> Pane {
     Pane {
         name: otto_kit::t!("settings-pane-dock"),
         icon: "dock",
+        intro: None,
         groups: vec![
             untitled(vec![
                 Row::new(

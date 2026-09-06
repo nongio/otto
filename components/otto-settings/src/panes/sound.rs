@@ -9,6 +9,7 @@ pub fn build() -> Pane {
     Pane {
         name: otto_kit::t!("settings-pane-sound"),
         icon: "sound",
+        intro: None,
         groups: vec![untitled(vec![
             Row::new(
                 otto_kit::t!("settings-interface-sounds"),

@@ -179,6 +179,35 @@ pub fn elide_tail(text: &str, style: otto_kit::typography::TextStyle, width: f32
     "…".to_string()
 }
 
+/// Break `text` into lines no wider than `width`, on word boundaries.
+///
+/// Greedy, and it never breaks inside a word: a single word too long for the
+/// line is left overhanging rather than cut, which is honest about the space
+/// being too narrow. Used for the paragraph a pane opens with, which is the
+/// only running text in the app.
+pub fn wrap(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> Vec<String> {
+    let font = style.font();
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if line.is_empty() {
+            line.push_str(word);
+            continue;
+        }
+        let candidate = format!("{line} {word}");
+        if font.measure_str(&candidate, None).0 <= width {
+            line = candidate;
+        } else {
+            lines.push(std::mem::take(&mut line));
+            line.push_str(word);
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 /// Trim characters off the FRONT of `text` until it fits `width`, marking the
 /// cut with a leading ellipsis. Returns `text` unchanged when it already fits.
 fn elide_head(text: &str, style: otto_kit::typography::TextStyle, width: f32) -> String {

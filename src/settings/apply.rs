@@ -52,6 +52,16 @@ pub fn is_applied_live(id: &str) -> bool {
             | "window_controls_side"
             | "show_maximize_button"
             | "tiling.decoration"
+            | "tiling.inner_gap"
+            | "tiling.outer_gap"
+            | "tiling.smart_gaps"
+            | "tiling.resize_step"
+            | "tiling.layout_duration"
+            | "tiling.layout_bounce"
+            | "tiling.mode_duration"
+            | "tiling.mode_bounce"
+            | "tiling.design_duration"
+            | "tiling.design_bounce"
             | "cursor_theme"
             | "cursor_size"
             | "icon_theme"
@@ -207,6 +217,33 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.refresh_window_decorations();
             Ok(())
         }
+        // The gaps are geometry: every tile's rectangle is resolved from them,
+        // so each tiling workspace is laid out again and its clients are
+        // reconfigured. Forced, because a gap change can leave a lone tile's
+        // cell exactly where it was while the smart-gap rule changes what is
+        // inside it.
+        "tiling.inner_gap" | "tiling.outer_gap" => {
+            state.relayout_tiling_workspaces();
+            Ok(())
+        }
+        // `smart_gaps` is read through `TilingConfig::gaps` every time a
+        // workspace resolves its tree, but the workspaces already on screen
+        // were resolved with the old value, so they are laid out again too.
+        "tiling.smart_gaps" => {
+            state.relayout_tiling_workspaces();
+            Ok(())
+        }
+        // Read from the live configuration at the moment they are used: the
+        // step when a resize command runs (`TilingConfig::step`), each spring
+        // when `relayout_workspace` picks its transition. The next keystroke
+        // already uses the new value, so there is nothing to reconcile.
+        "tiling.resize_step"
+        | "tiling.layout_duration"
+        | "tiling.layout_bounce"
+        | "tiling.mode_duration"
+        | "tiling.mode_bounce"
+        | "tiling.design_duration"
+        | "tiling.design_bounce" => Ok(()),
         "show_maximize_button" => {
             crate::export_maximize_button();
             state.refresh_window_decorations();
@@ -360,6 +397,8 @@ mod tests {
             "window_controls_side",
             "show_maximize_button",
             "tiling.decoration",
+            "tiling.inner_gap",
+            "tiling.outer_gap",
             "cursor_theme",
             "cursor_size",
             "icon_theme",

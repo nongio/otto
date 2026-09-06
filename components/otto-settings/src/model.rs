@@ -293,15 +293,20 @@ pub struct Pane {
     pub name: &'static str,
     /// Sidebar glyph name, drawn by `glyphs::draw`.
     pub icon: &'static str,
+    /// A sentence or two under the pane's title, for a pane whose subject
+    /// needs one before its first row makes sense. Most do not: a row's own
+    /// label and the schema's description say enough.
+    pub intro: Option<&'static str>,
     pub groups: Vec<Group>,
 }
 
-/// The eight panes from the spec, in sidebar order.
+/// The panes from the spec, in sidebar order.
 pub fn panes() -> Vec<Pane> {
     vec![
         panes::general::build(),
         panes::displays::build(),
         panes::dock::build(),
+        panes::tiling::build(),
         panes::keyboard::build(),
         panes::pointing::build(),
         panes::sound::build(),

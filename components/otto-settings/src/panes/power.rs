@@ -9,6 +9,7 @@ pub fn build() -> Pane {
     Pane {
         name: otto_kit::t!("settings-pane-power"),
         icon: "battery",
+        intro: None,
         groups: vec![untitled(vec![
             Row::new(
                 otto_kit::t!("settings-manage-lid-switch"),

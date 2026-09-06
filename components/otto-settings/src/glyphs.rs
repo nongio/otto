@@ -26,6 +26,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "settings" => settings(canvas, &paint),
         "monitor" => monitor(canvas, &paint),
         "dock" => dock(canvas, &paint),
+        "tiling" => tiling(canvas, &paint),
         "keyboard" => keyboard(canvas, &paint),
         "pointer" => pointer(canvas, &paint, color),
         "sound" => sound(canvas, &paint),
@@ -54,6 +55,15 @@ fn monitor(canvas: &Canvas, paint: &Paint) {
     canvas.draw_rrect(RRect::new_rect_xy(screen, 1.5, 1.5), paint);
     canvas.draw_line(Point::new(0.0, 3.0), Point::new(0.0, 6.0), paint);
     canvas.draw_line(Point::new(-4.0, 6.5), Point::new(4.0, 6.5), paint);
+}
+
+/// A frame split into one tall cell and two stacked ones — the layout a
+/// two-window tiled workspace lands in.
+fn tiling(canvas: &Canvas, paint: &Paint) {
+    let frame = Rect::from_ltrb(-7.0, -6.0, 7.0, 6.0);
+    canvas.draw_rrect(RRect::new_rect_xy(frame, 2.0, 2.0), paint);
+    canvas.draw_line(Point::new(0.0, -6.0), Point::new(0.0, 6.0), paint);
+    canvas.draw_line(Point::new(0.0, 0.0), Point::new(7.0, 0.0), paint);
 }
 
 /// A strip of tiles along the bottom edge.

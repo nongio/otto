@@ -342,15 +342,6 @@ pub static SETTINGS: &[SettingSpec] = &[
             "settings-choice-controls-right",
         ],
     ),
-    choice(
-        "tiling.decoration",
-        "Tiled window decoration",
-        "How much chrome a window keeps while it is tiled: a bar one text \
-         line high with its title and a close button, or no bar at all, with \
-         the focused tile marked by a hairline border.",
-        Live,
-        &["minimal", "none"],
-    ),
     spec(
         "show_maximize_button",
         Bool,
@@ -428,6 +419,121 @@ pub static SETTINGS: &[SettingSpec] = &[
             Restart,
         )
     },
+    // ---- Tiling ----------------------------------------------------------
+    choice(
+        "tiling.decoration",
+        "Tiled window decoration",
+        "How much chrome a window keeps while it is tiled: a bar one text \
+         line high with its title and a close button, or no bar at all, with \
+         the focused tile marked by a hairline border.",
+        Live,
+        &["minimal", "none"],
+    ),
+    ranged(
+        "tiling.inner_gap",
+        Int,
+        "Gap between tiles",
+        "Logical pixels left between two neighbouring tiles.",
+        Live,
+        0.0,
+        64.0,
+        1.0,
+    ),
+    ranged(
+        "tiling.outer_gap",
+        Int,
+        "Gap around the tiles",
+        "Logical pixels left between the tiles and the edge of the screen.",
+        Live,
+        0.0,
+        64.0,
+        1.0,
+    ),
+    spec(
+        "tiling.smart_gaps",
+        Bool,
+        "Drop the gaps for a lone tile",
+        "A workspace holding a single tile leaves no gaps at all, so one \
+         window does not look inset for no reason.",
+        Live,
+    ),
+    ranged(
+        "tiling.resize_step",
+        Double,
+        "Resize step",
+        "How much of a container one keyboard resize step moves, as a \
+         fraction of its width or height.",
+        Live,
+        0.01,
+        0.5,
+        0.01,
+    ),
+    ranged(
+        "tiling.layout_duration",
+        Double,
+        "Layout animation",
+        "Seconds a layout change takes: a window joining or leaving the \
+         tree, a move, a swap, an equalise. Zero snaps.",
+        Live,
+        0.0,
+        2.0,
+        0.05,
+    ),
+    ranged(
+        "tiling.layout_bounce",
+        Double,
+        "Layout bounce",
+        "How far a layout change overshoots before it settles. Zero settles \
+         without overshoot.",
+        Live,
+        0.0,
+        1.0,
+        0.05,
+    ),
+    ranged(
+        "tiling.mode_duration",
+        Double,
+        "Tiling mode animation",
+        "Seconds the workspace takes to rearrange when tiling is switched on \
+         or off and every window flies to its cell. Zero snaps.",
+        Live,
+        0.0,
+        2.0,
+        0.05,
+    ),
+    ranged(
+        "tiling.mode_bounce",
+        Double,
+        "Tiling mode bounce",
+        "How far that rearrangement overshoots before it settles.",
+        Live,
+        0.0,
+        1.0,
+        0.05,
+    ),
+    ranged(
+        "tiling.design_duration",
+        Double,
+        "Design mode animation",
+        "Seconds the cells take to follow a dragged handle, a split or a \
+         preset in design mode. Zero snaps.",
+        Live,
+        0.0,
+        2.0,
+        0.05,
+    ),
+    ranged(
+        "tiling.design_bounce",
+        Double,
+        "Design mode bounce",
+        "How far the cells overshoot a design-mode edit before they settle. \
+         Bouncier than the layout spring by default: the grid is meant to \
+         feel like a physical thing being pushed around.",
+        Live,
+        0.0,
+        1.0,
+        0.05,
+    ),
     // ---- Dock ------------------------------------------------------------
     ranged(
         "dock.size",

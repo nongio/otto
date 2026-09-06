@@ -473,7 +473,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        self.relayout_workspace(output, true);
+        // Entering tiling mode moves the whole workspace at once rather than
+        // one cell, so it rides its own spring (`[tiling] mode_duration`).
+        let transition = Config::with(|c| c.tiling.mode_transition());
+        self.relayout_workspace_with(output, transition, false);
     }
 
     /// Insert `id` into `workspace`'s tree next to whatever is focused there.
@@ -582,6 +585,18 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// The bar's height is part of what the client is configured with, so a
     /// change of variant is a change of geometry: every tiling workspace is
     /// laid out again, which reconfigures each leaf against the new bar.
+    /// Lay out every output's tiling workspace again.
+    ///
+    /// For a change to what the *layout* is resolved from rather than to the
+    /// tree — the gaps — where no cell need have moved but every rectangle
+    /// may have, so the leaves are configured whether or not they did.
+    pub fn relayout_tiling_workspaces(&mut self) {
+        let outputs: Vec<Output> = self.workspaces.outputs().cloned().collect();
+        for output in outputs {
+            self.relayout_workspace_forced(&output, true, true);
+        }
+    }
+
     pub fn refresh_tiling_decorations(&mut self) {
         let variant = DecorationVariant::tiled(Config::with(|c| c.tiling.decoration()));
         let mut leaves: Vec<ObjectId> = Vec::new();
