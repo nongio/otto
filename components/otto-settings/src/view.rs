@@ -1094,9 +1094,13 @@ impl Settings {
                 let track = Rect::from_xywh(track_x, cy - 12.0, widgets::SLIDER_W, 24.0);
                 track.contains(local).then(|| {
                     let t = ((local.x - track_x) / widgets::SLIDER_W).clamp(0.0, 1.0);
+                    // Snapped like `drag_value` does: a click on the track that
+                    // is never dragged persists whatever float the pixel maps
+                    // to, which is exactly what `snap` exists to prevent.
+                    let raw = settings_client::snap(id, min + t * (max - min));
                     Hit {
                         id,
-                        value: settings_client::number_for(id, min + t * (max - min)),
+                        value: settings_client::number_for(id, raw),
                         draggable: true,
                     }
                 })
@@ -1704,7 +1708,7 @@ impl Settings {
                 canvas.draw_rect(box_rect, &paint);
                 widgets::text_centered_y(
                     canvas,
-                    "Cannot be shown",
+                    otto_kit::t!("settings-background-image-unavailable"),
                     box_rect.left + 10.0,
                     box_rect.center_y(),
                     styles::SUBHEADLINE,
@@ -2156,7 +2160,13 @@ impl Settings {
                 input.render_at(canvas, keys.width(), keys.height());
                 canvas.restore();
             }
-            None => widgets::field_box(canvas, keys, &line.keys, "Unassigned", &self.theme),
+            None => widgets::field_box(
+                canvas,
+                keys,
+                &line.keys,
+                otto_kit::t!("settings-key-combination-unassigned"),
+                &self.theme,
+            ),
         }
 
         widgets::line_button(
@@ -2291,7 +2301,7 @@ impl Settings {
 
         widgets::text_centered_y(
             canvas,
-            "Click a display to change its settings below",
+            otto_kit::t!("settings-arrangement-hint"),
             x0 + 2.0,
             area.bottom + 12.0,
             styles::SUBHEADLINE,

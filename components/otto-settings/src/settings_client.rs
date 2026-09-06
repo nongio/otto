@@ -525,10 +525,28 @@ pub enum SetOutcome {
 /// The store is updated from the value we sent rather than by re-reading:
 /// `Changed` will arrive too, and agreeing with it is the point. A failure
 /// leaves the store untouched, so the UI snaps back to the real value.
+///
+/// A value the store already holds is dropped rather than sent. A slider drag
+/// asks for one `Set` per pointer motion and the compositor rewrites the
+/// user's configuration file for every one it accepts, while [`snap`] means
+/// most of those motions land back on the value that is already there — so
+/// without this a single drag across a slider rewrites the file dozens of
+/// times a second. Only values this session put there count: the first `Set`
+/// for a setting still has to go out, since it is what records the override.
 pub fn set(id: &str, value: Value) -> SetOutcome {
     let Some(Some(connection)) = CONNECTION.get() else {
         return SetOutcome::Failed("not connected to the compositor".into());
     };
+
+    if let Ok(store) = store().read() {
+        if store.overridden.contains(id) && store.values.get(id) == Some(&value) {
+            return if store.pending_restart.contains(id) {
+                SetOutcome::PendingRestart
+            } else {
+                SetOutcome::Applied
+            };
+        }
+    }
 
     let status: zbus::Result<String> = call(connection, "Set", &(id, value.to_zbus()));
 
@@ -552,27 +570,34 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
     }
 }
 
-/// The file a changed setting is written to, as the compositor reports it.
+static CONFIG_PATH: OnceLock<Option<String>> = OnceLock::new();
+
+/// Ask the compositor where a changed setting is written, once, and remember
+/// the answer — including that there wasn't one.
+///
+/// Called from `main` after [`connect`], which is the only place that can
+/// afford to block: [`config_path`] is read while a pane is being built, and a
+/// pane is rebuilt several times per pointer motion. Asking there meant a
+/// synchronous round trip on the draw path every time — and, because only a
+/// *successful* answer used to be cached, it meant one on every rebuild for
+/// the whole run whenever the compositor does not serve the interface, which
+/// is a mode this app explicitly supports.
+pub fn resolve_config_path() {
+    let path = CONNECTION
+        .get()
+        .and_then(|c| c.as_ref())
+        .and_then(|connection| call::<_, String>(connection, "ConfigPath", &()).ok());
+    let _ = CONFIG_PATH.set(path);
+}
+
+/// The file a changed setting is written to, as the compositor reported it at
+/// startup. `None` until [`resolve_config_path`] has run, and after that if the
+/// compositor had no answer.
 ///
 /// Asked rather than worked out: configuration is layered, and which layer is
 /// writable depends on what exists on this machine.
-///
-/// Only a *successful* answer is cached. Caching the failure would freeze the
-/// row at "not known" for the whole run over one call that came too early or
-/// reached a compositor too old to answer.
 pub fn config_path() -> Option<String> {
-    static PATH: RwLock<Option<String>> = RwLock::new(None);
-    if let Some(path) = PATH.read().ok().and_then(|p| p.clone()) {
-        return Some(path);
-    }
-    let Some(Some(connection)) = CONNECTION.get() else {
-        return None;
-    };
-    let path = call::<_, String>(connection, "ConfigPath", &()).ok()?;
-    if let Ok(mut cached) = PATH.write() {
-        *cached = Some(path.clone());
-    }
-    Some(path)
+    CONFIG_PATH.get().cloned().flatten()
 }
 
 /// Persist how one display should be driven. Applies at the next start — see
@@ -600,6 +625,38 @@ pub fn set_output_profile(
     match status {
         Ok(status) if status == "pending-restart" => SetOutcome::PendingRestart,
         Ok(_) => SetOutcome::Applied,
+        Err(err) => SetOutcome::Failed(err.to_string()),
+    }
+}
+
+/// Create a virtual display on the running compositor, and persist it so it
+/// comes back next session — see `AddVirtualOutput` in the compositor's
+/// settings service.
+///
+/// `interactive` is left off: a display added from this pane is a screen to
+/// put windows on, not a capture surface being driven from elsewhere.
+pub fn add_virtual_output(name: &str, width: u32, height: u32, refresh_hz: f64) -> SetOutcome {
+    let Some(Some(connection)) = CONNECTION.get() else {
+        return SetOutcome::Failed("not connected to the compositor".into());
+    };
+    match call::<_, u32>(
+        connection,
+        "AddVirtualOutput",
+        &(name, width, height, refresh_hz, false, true),
+    ) {
+        Ok(_) => SetOutcome::Applied,
+        Err(err) => SetOutcome::Failed(err.to_string()),
+    }
+}
+
+/// Remove a virtual display the compositor is running, and forget it from the
+/// configuration — see `RemoveVirtualOutput`.
+pub fn remove_virtual_output(name: &str) -> SetOutcome {
+    let Some(Some(connection)) = CONNECTION.get() else {
+        return SetOutcome::Failed("not connected to the compositor".into());
+    };
+    match call::<_, ()>(connection, "RemoveVirtualOutput", &(name,)) {
+        Ok(()) => SetOutcome::Applied,
         Err(err) => SetOutcome::Failed(err.to_string()),
     }
 }
