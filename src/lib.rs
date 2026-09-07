@@ -41,6 +41,7 @@ pub mod skia_renderer;
 pub mod state;
 pub mod surface_config_cache;
 pub mod surface_style;
+pub mod text_cursor;
 pub mod textures_storage;
 #[cfg(feature = "udev")]
 pub mod udev;

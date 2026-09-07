@@ -214,6 +214,7 @@ For reference, this is what `/etc/otto/config.toml` binds:
 "Ctrl+Return"               = { open_default = { role = "terminal", fallback = "xdg-terminal-exec" } }
 "Ctrl+Space"                = { run = { cmd = "otto-launcher", args = [] } }
 "Ctrl+Shift+P"              = { run = { cmd = "otto-launcher", args = ["--windows"] } }
+"Ctrl+period"               = { run = { cmd = "otto-emoji", args = [] } }
 
 "Ctrl+1"                    = { builtin = "Workspace", index = 0 }
 "Ctrl+2"                    = { builtin = "Workspace", index = 1 }

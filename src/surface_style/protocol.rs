@@ -60,6 +60,26 @@ impl ContentsGravity {
     }
 }
 
+/// A balloon's point, as the client described it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Beak {
+    pub edge: BeakEdge,
+    /// Where the tip points, along the edge, from the surface's top-left.
+    pub offset: f32,
+    /// How wide it is where it meets the body, and how far it reaches out.
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Which edge a beak sticks out of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeakEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
 /// Compositor-side layer state (pure augmentation, no wl_surface)
 #[derive(Debug, Clone)]
 pub struct SurfaceStyle {
@@ -86,6 +106,17 @@ pub struct SurfaceStyle {
     /// Shared gravity for live reading in draw closures.
     /// Updated atomically when `set_contents_gravity` is called.
     pub shared_gravity: std::sync::Arc<std::sync::atomic::AtomicU8>,
+
+    /// The balloon beak, when the client asked for one: which edge it is on,
+    /// where along that edge the tip points, and how big it is. The layer's
+    /// outline is rebuilt from this and the current size — see
+    /// [`crate::surface_style::handlers::style::refresh_beak_shape`].
+    pub beak: Option<Beak>,
+
+    /// The corner radius the client last asked for, in surface pixels. Kept
+    /// because a balloon's outline is built from it and has to be rebuilt
+    /// whenever either it or the size changes.
+    pub corner_radius_px: f32,
 
     /// When true, the client has called set_size at least once and now owns the layer bounds.
     /// The compositor will no longer override size/position from the buffer.

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="otto_text_cursor_v1">
+  <copyright>
+    Copyright © 2026 Otto Contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="where the text cursor is">
+    This protocol tells a client where the desktop's text cursor is, so that
+    something meant to act on the text being typed — a character picker, a
+    completion popup — can be put beside it rather than in the middle of the
+    screen.
+
+    The position is the one applications report through
+    zwp_text_input_v3.set_cursor_rectangle. It is deliberately the *last*
+    reported caret rather than the current one: a client asking this question
+    has usually just taken the keyboard for itself, at which point the text
+    field it wants to sit beside is no longer the focused one.
+
+    Reporting the caret is optional for applications, and many never do — most
+    terminals, and anything running under Xwayland. A client of this protocol
+    must therefore have somewhere sensible to put itself when the answer is
+    "unknown", and must not wait indefinitely for a position.
+  </description>
+
+  <interface name="otto_text_cursor_manager_v1" version="1">
+    <description summary="manager for text cursor objects">
+      The manager global allows clients to ask where the text cursor is.
+    </description>
+
+    <request name="get_text_cursor">
+      <description summary="watch the text cursor for a seat">
+        Create an object reporting the position of the text cursor on the
+        given seat.
+
+        The compositor sends the current state immediately, so a client may
+        create this object and act on the first event it receives without
+        waiting for anything else to happen.
+      </description>
+      <arg name="id" type="new_id" interface="otto_text_cursor_v1"/>
+      <arg name="seat" type="object" interface="wl_seat" summary="the seat to watch"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the manager object. This does not affect text cursor objects
+        already created.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="otto_text_cursor_v1" version="1">
+    <description summary="the position of the text cursor">
+      Reports where the text cursor is, in the layout coordinates the
+      compositor places surfaces in — the same space a fullscreen layer
+      surface covers, so a client anchored to the whole output can use these
+      values directly.
+
+      Exactly one of "position" or "unavailable" is sent when the object is
+      created, and again whenever the answer changes.
+    </description>
+
+    <event name="position">
+      <description summary="where the text cursor is">
+        The rectangle the text cursor occupies, in layout coordinates.
+
+        The rectangle is the caret itself, not the text field around it: a
+        client placing a panel should sit clear of the whole rectangle so it
+        does not cover the character being typed.
+
+        Width or height may be zero for a caret reported as a bare point.
+      </description>
+      <arg name="x" type="int" summary="left edge, in layout coordinates"/>
+      <arg name="y" type="int" summary="top edge, in layout coordinates"/>
+      <arg name="width" type="int" summary="width of the caret"/>
+      <arg name="height" type="int" summary="height of the caret"/>
+    </event>
+
+    <event name="unavailable">
+      <description summary="the text cursor position is not known">
+        No application has reported a caret position, or the surface that
+        reported one is gone. A client should fall back to placing itself
+        wherever it would if this protocol did not exist.
+      </description>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the text cursor object">
+        Stop receiving text cursor positions.
+      </description>
+    </request>
+  </interface>
+</protocol>

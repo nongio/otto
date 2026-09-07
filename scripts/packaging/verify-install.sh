@@ -33,7 +33,7 @@ check() {
 
 echo "== binaries =="
 for b in otto otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-quickview otto-media-worker otto-greeter otto-rdp; do
+         otto-launcher otto-emoji otto-quickview otto-media-worker otto-greeter otto-rdp; do
     check "/usr/bin/$b" exec
 done
 check /usr/libexec/xdg-desktop-portal-otto exec
@@ -143,7 +143,7 @@ if [[ "${OTTO_SKIP_RUN:-0}" == 1 ]]; then
     echo "  (skipped: locally built package, dependency list is not authoritative)"
 else
 for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-lock \
-         /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher \
+         /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji \
          /usr/bin/otto-quickview /usr/bin/otto-media-worker \
          /usr/bin/otto-greeter /usr/bin/otto-rdp \
          /usr/libexec/xdg-desktop-portal-otto; do
@@ -177,7 +177,7 @@ else
 # to prove the install is runnable without a seat, a GPU or a compositor.
 "/usr/bin/otto" --version || { echo "otto --version failed"; fail=1; }
 for b in otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-quickview otto-media-worker otto-greeter otto-rdp; do
+         otto-launcher otto-emoji otto-quickview otto-media-worker otto-greeter otto-rdp; do
     [[ -x "/usr/bin/$b" ]] || continue
     # Not every component parses --version; a component that instead prints
     # usage and exits non-zero has still loaded successfully. Only a loader

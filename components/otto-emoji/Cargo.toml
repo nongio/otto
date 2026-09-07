@@ -1,0 +1,29 @@
+[package]
+name = "otto-emoji"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "An emoji picker for Otto — search or browse, pick one, and it is typed where the cursor was"
+
+[dependencies]
+laye-rs.workspace = true
+otto-kit = { path = "../otto-kit" }
+taffy = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayland-client = "0.31"
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+memfd = "0.6"
+xkbcommon = "0.6"
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]
+
+[lints]
+workspace = true
+

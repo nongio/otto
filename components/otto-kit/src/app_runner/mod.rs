@@ -11,7 +11,8 @@ pub use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::protocols::{
     otto_dock_item_v1, otto_dock_manager_v1, otto_style_transaction_v1,
-    otto_surface_style_manager_v1, otto_surface_style_v1, otto_timing_function_v1,
+    otto_surface_style_manager_v1, otto_surface_style_v1, otto_text_cursor_manager_v1,
+    otto_text_cursor_v1, otto_timing_function_v1,
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
@@ -518,9 +519,17 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // which this application cannot say where its controls are on screen
         // and no assistive technology can find them by pointing. An older
         // compositor still binds at what it has and simply lacks the rest.
-        let surface_style_manager = globals.bind(&qh, 1..=4, ()).ok();
+        // Version 5 added `set_beak`, which shapes a surface as a balloon so
+        // the compositor's frost, border and shadow follow a pointer as well
+        // as a rounded rectangle.
+        let surface_style_manager = globals.bind(&qh, 1..=5, ()).ok();
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
+        // Where the desktop's text cursor is, for a panel that wants to sit
+        // beside the text rather than in the middle of the screen. Absent on
+        // any compositor but Otto, which is why it is optional.
+        let otto_text_cursor_manager: Option<otto_text_cursor_manager_v1::OttoTextCursorManagerV1> =
+            globals.bind(&qh, 1..=1, ()).ok();
         let session_lock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
@@ -557,6 +566,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             seat_state,
             output_state,
             surface_style_manager,
+            otto_text_cursor_manager,
             wlr_layer_shell,
             subcompositor,
             otto_dock_manager,
@@ -1743,6 +1753,45 @@ impl<A: App + 'static> Dispatch<otto_dock_manager_v1::OttoDockManagerV1, ()> for
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl<A: App + 'static> Dispatch<otto_text_cursor_manager_v1::OttoTextCursorManagerV1, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &otto_text_cursor_manager_v1::OttoTextCursorManagerV1,
+        _event: otto_text_cursor_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl<A: App + 'static> Dispatch<otto_text_cursor_v1::OttoTextCursorV1, ()> for AppData<A> {
+    fn event(
+        _state: &mut Self,
+        _proxy: &otto_text_cursor_v1::OttoTextCursorV1,
+        event: otto_text_cursor_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Kept in the context rather than handed to the app: a panel asks
+        // where the caret is when it is deciding where to put itself, which is
+        // not when the event happens to arrive.
+        let caret = match event {
+            otto_text_cursor_v1::Event::Position {
+                x,
+                y,
+                width,
+                height,
+            } => Some((x, y, width, height)),
+            otto_text_cursor_v1::Event::Unavailable => None,
+        };
+        AppContext::set_text_cursor(caret);
     }
 }
 

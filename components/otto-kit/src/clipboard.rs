@@ -66,6 +66,13 @@ pub fn set(entries: Vec<(String, Vec<u8>)>, serial: u32) -> bool {
     crate::app_runner::context::AppContext::set_selection(mime_types, serial)
 }
 
+/// Whether this application still owns the clipboard: its last [`set`] has
+/// not been cancelled by someone else copying. A client that copied and is
+/// about to exit should wait on this, since the offer goes with it.
+pub fn owns_selection() -> bool {
+    !offered().lock().unwrap().is_empty()
+}
+
 /// The payload for `mime`, if this application is the one offering it.
 ///
 /// Called from the data-source handler when a paste arrives.

@@ -36,7 +36,7 @@ tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
 for b in otto otto-bar otto-islands otto-lock otto-greeter otto-rdp \
-         otto-settings otto-files otto-launcher otto-quickview otto-media-worker \
+         otto-settings otto-files otto-launcher otto-emoji otto-quickview otto-media-worker \
          xdg-desktop-portal-otto; do
     install -Dm755 "target/release/$b" "$tmpdir/$PKGDIR/target/release/$b"
 done

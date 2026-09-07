@@ -261,6 +261,7 @@ sound_enabled = true
 [keyboard_shortcuts]
 # App launcher (Otto's own launcher; --windows lists open windows instead of apps)
 "Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
+"Ctrl+period" = { run = { cmd = "otto-emoji", args = [] } }
 # "Logo+Space" = { run = { cmd = "dolphin", args = [] } }
 # "Logo+Shift+B" = { run = { cmd = "firefox", args = [] } }
 

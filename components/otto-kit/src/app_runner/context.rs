@@ -41,6 +41,9 @@ thread_local! {
     static FOCUS_RINGS: RefCell<HashMap<ObjectId, crate::focus::FocusRing>> = RefCell::new(HashMap::new());
     /// The surface the compositor last gave the keyboard to, if it is ours.
     static KEYBOARD_FOCUS: RefCell<Option<ObjectId>> = const { RefCell::new(None) };
+    /// Where the desktop's text cursor was last reported, in layout
+    /// coordinates. `None` means no application has said.
+    static TEXT_CURSOR: RefCell<Option<(i32, i32, i32, i32)>> = const { RefCell::new(None) };
     /// Modifier state from the last `wl_keyboard.modifiers`. Kept because a key
     /// event does not carry it, and Shift+Tab has to be told from Tab.
     static CURRENT_MODIFIERS: RefCell<super::Modifiers> = RefCell::new(super::Modifiers::default());
@@ -253,6 +256,8 @@ pub struct AppContextData {
     pub wlr_layer_shell: Option<ZwlrLayerShellV1>,
     pub subcompositor: Option<wayland_client::protocol::wl_subcompositor::WlSubcompositor>,
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
+    pub otto_text_cursor_manager:
+        Option<crate::protocols::otto_text_cursor_manager_v1::OttoTextCursorManagerV1>,
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
@@ -603,6 +608,16 @@ impl<'a> AppContext<'a> {
         offer.finish();
         offer.destroy();
         Self::flush();
+    }
+
+    /// The app's Wayland connection, for a client that needs a round trip of
+    /// its own — say, to be sure the compositor has seen a surface go before
+    /// acting on where the keyboard went afterwards. The runner keeps
+    /// dispatching the main queue; a caller wanting a round trip should make
+    /// an event queue of its own on the connection rather than block this
+    /// one.
+    pub fn connection() -> wayland_client::Connection {
+        Self::with_global(|ctx| ctx.data.connection.clone())
     }
 
     pub fn flush() {
@@ -1407,6 +1422,34 @@ impl<'a> AppContext<'a> {
 
     /// The surface holding the keyboard, or `None` when no window of this
     /// application does.
+    /// Start watching the desktop's text cursor, and return the object doing
+    /// the watching — it has to be kept alive for the events to keep coming.
+    ///
+    /// The compositor answers immediately, so one round trip after this call
+    /// [`AppContext::text_cursor`] is worth reading. `None` when the
+    /// compositor does not offer the protocol, in which case there is no caret
+    /// to be had and a caller should place itself however it otherwise would.
+    pub fn watch_text_cursor(
+        seat: &wayland_client::protocol::wl_seat::WlSeat,
+    ) -> Option<crate::protocols::otto_text_cursor_v1::OttoTextCursorV1> {
+        let manager = Self::with_global(|ctx| ctx.data.otto_text_cursor_manager.clone())?;
+        Some(manager.get_text_cursor(seat, Self::queue_handle(), ()))
+    }
+
+    /// Where the desktop's text cursor is, as `(x, y, width, height)` in the
+    /// coordinates a fullscreen layer surface covers, or `None` when no
+    /// application has reported one.
+    ///
+    /// Reporting a caret is optional and many applications never do, so
+    /// `None` is an ordinary answer rather than a failure.
+    pub fn text_cursor() -> Option<(i32, i32, i32, i32)> {
+        TEXT_CURSOR.with(|caret| *caret.borrow())
+    }
+
+    pub(crate) fn set_text_cursor(caret: Option<(i32, i32, i32, i32)>) {
+        TEXT_CURSOR.with(|stored| *stored.borrow_mut() = caret);
+    }
+
     pub fn keyboard_focus() -> Option<ObjectId> {
         KEYBOARD_FOCUS.with(|focus| focus.borrow().clone())
     }
