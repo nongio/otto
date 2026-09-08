@@ -530,13 +530,22 @@ impl Workspaces {
         self.expose_dragged_window.lock().unwrap().is_some()
     }
     pub fn end_window_selector_drag(&self, window_id: &ObjectId) {
+        self.clear_window_selector_drag(Some(window_id));
+        self.expose_set_visible(true);
+    }
+
+    /// Forget the in-flight expose window drag: the carried window and the
+    /// selector's drag gate, which every exit from the gesture has to drop or
+    /// the previews stay inert (no close buttons) for the rest of the session.
+    /// Pass the window the drag started on to leave a newer drag alone, or
+    /// `None` to clear whatever is in flight.
+    pub fn clear_window_selector_drag(&self, window_id: Option<&ObjectId>) {
         let mut dragging = self.expose_dragged_window.lock().unwrap();
-        if dragging.as_ref() == Some(window_id) {
+        if window_id.is_none() || dragging.as_ref() == window_id {
             *dragging = None;
         }
         drop(dragging);
         self.set_selectors_window_drag(false);
-        self.expose_set_visible(true);
     }
 
     /// Tell every output's workspace selector whether an expose window drag is
@@ -4780,6 +4789,11 @@ impl Workspaces {
             if pos < ows.spaces.len() {
                 ows.spaces.remove(pos);
             }
+            // `current_workspace` is a position in the strip, and every
+            // position at or after `pos` just moved down by one: keep it
+            // pointing at the same workspace the user was on, which is also
+            // where the removed workspace's windows are about to land.
+            ows.current_workspace = dest_after;
             if !ows.spaces.is_empty() && ows.current_workspace >= ows.spaces.len() {
                 ows.current_workspace = ows.spaces.len() - 1;
             }
@@ -4806,6 +4820,15 @@ impl Workspaces {
                     view.map_window(w, location, None);
                 }
             }
+        }
+
+        // The re-homed windows were mapped straight into the destination view
+        // rather than through `move_window_to_workspace`, so nothing has told
+        // exposé its grid changed. Without this the windows that just arrived
+        // stay invisible until an unrelated commit moves the layout hash.
+        if self.get_show_all() {
+            self.invalidate_expose_layout(output_name, dest_after);
+            self.expose_update_if_needed_workspace(dest_after);
         }
 
         self.sync_model_from_primary();
