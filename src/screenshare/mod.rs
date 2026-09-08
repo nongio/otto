@@ -798,13 +798,18 @@ fn add_virtual_output<B: crate::state::Backend + 'static>(
         return Err(format!("`{}` is already an output name", config.name));
     }
 
-    let output = crate::virtual_output::VirtualOutputState::build_output(config);
+    // Clear of every screen already up, which the configured position is not
+    // when there is none — a virtual output used to default to `(0, 0)`, on
+    // top of the primary display, where the Displays pane could not click it.
+    let position = crate::virtual_output::placement(
+        config.position.map(|p| (p.x, p.y).into()),
+        crate::virtual_output::logical_size(config),
+        &crate::virtual_output::mapped_rects(state),
+    );
+
+    let output = crate::virtual_output::VirtualOutputState::build_output(config, position);
     let global = output.create_global::<crate::state::Otto<B>>(&state.display_handle);
 
-    let position: smithay::utils::Point<i32, smithay::utils::Logical> = config
-        .position
-        .map(|p| (p.x, p.y).into())
-        .unwrap_or_else(|| (0, 0).into());
     state.workspaces.map_output(&output, position);
 
     let gbm_device = state.backend_data.gbm_device();
@@ -814,7 +819,7 @@ fn add_virtual_output<B: crate::state::Backend + 'static>(
 
     match crate::virtual_output::VirtualOutputState::start(
         output.clone(),
-        global,
+        global.clone(),
         config,
         gbm_device,
         format_modifiers,
@@ -829,10 +834,14 @@ fn add_virtual_output<B: crate::state::Backend + 'static>(
             Ok(node_id)
         }
         Err(e) => {
-            // Leave nothing half-created: the output was mapped before the
-            // stream could fail, and an output with no stream renders forever
-            // into nothing.
+            // Leave nothing half-created: the output was mapped and its global
+            // advertised before the stream could fail, and an output with no
+            // stream renders forever into nothing — while still showing up in
+            // every client's output list, this app's Displays pane included.
             state.workspaces.unmap_output(&output);
+            state
+                .display_handle
+                .remove_global::<crate::state::Otto<B>>(global);
             Err(e)
         }
     }
@@ -854,8 +863,18 @@ fn remove_virtual_output<B: crate::state::Backend + 'static>(
 
     let vout = state.virtual_outputs.remove(index);
     state.workspaces.unmap_output(&vout.output);
+    // The global has to be taken out of the display by hand. Dropping the
+    // `GlobalId` does nothing — the display owns the global — so an output
+    // removed here went on being advertised to every client for the rest of
+    // the session. The Displays pane reads `wl_output` to build its
+    // arrangement, so a removed virtual display came straight back into the
+    // list, and every further Remove was answered with "no virtual output
+    // named ...": one screen that could never be deleted.
+    state
+        .display_handle
+        .remove_global::<crate::state::Otto<B>>(vout.global);
     tracing::info!("Virtual output '{name}' removed");
-    // Dropping `vout` closes the PipeWire stream and releases the global.
+    // Dropping `vout` closes the PipeWire stream.
     Ok(())
 }
 

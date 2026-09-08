@@ -28,7 +28,7 @@ use smithay::{
     },
     output::{Mode, Output, PhysicalProperties, Scale, Subpixel},
     reexports::wayland_server::backend::GlobalId,
-    utils::Point,
+    utils::{Logical, Point, Rectangle, Size},
 };
 
 use crate::{
@@ -36,12 +36,75 @@ use crate::{
     screenshare::{BackendCapabilities, PipeWireStream, StreamConfig},
 };
 
+/// The logical size a virtual output of `resolution` occupies, which is what
+/// the arrangement is laid out in — the mode divided by the screen scale, the
+/// same figure [`crate::udev::device`] derives for a connector.
+pub fn logical_size(config: &VirtualOutputConfig) -> Size<i32, Logical> {
+    let screen_scale = crate::config::Config::with(|c| c.screen_scale);
+    Size::from((
+        (config.resolution.width as f64 / screen_scale) as i32,
+        (config.resolution.height as f64 / screen_scale) as i32,
+    ))
+}
+
+/// The rectangles the mapped outputs occupy, which is what a new one has to
+/// stay clear of. See [`placement`].
+pub fn mapped_rects<B: crate::state::Backend + 'static>(
+    state: &crate::state::Otto<B>,
+) -> Vec<Rectangle<i32, Logical>> {
+    state
+        .workspaces
+        .outputs()
+        .filter_map(|output| state.workspaces.output_geometry(output))
+        .collect()
+}
+
+/// Where a virtual output goes, given the outputs already mapped.
+///
+/// Outputs cannot overlap — there is no mirroring feature, and two screens on
+/// the same coordinates make every "which output is under this point" answer
+/// arbitrary: the pointer, window placement, and the Displays pane's canvas,
+/// where an overlapped screen can no longer be clicked at all and so can
+/// never be selected or removed. `udev::device` already applies this rule to
+/// a physical connector, rejecting a configured position that overlaps and
+/// falling back to auto-placement; a virtual output was exempt from it and
+/// defaulted to `(0, 0)`, which is exactly where the laptop panel is.
+///
+/// So: honour `configured` when it leaves the output clear, otherwise place it
+/// to the right of everything else.
+pub fn placement(
+    configured: Option<Point<i32, Logical>>,
+    size: Size<i32, Logical>,
+    existing: &[Rectangle<i32, Logical>],
+) -> Point<i32, Logical> {
+    let clear = |pos: Point<i32, Logical>| {
+        let rect = Rectangle::new(pos, size);
+        !existing.iter().any(|other| other.overlaps(rect))
+    };
+
+    if let Some(pos) = configured.filter(|&pos| clear(pos)) {
+        return pos;
+    }
+
+    // The right edge of the arrangement rather than the sum of the widths:
+    // summing assumes every output starts where the previous one ended, and
+    // one placed by config need not.
+    let x = existing
+        .iter()
+        .map(|rect| rect.loc.x + rect.size.w)
+        .max()
+        .unwrap_or(0);
+    Point::from((x, 0))
+}
+
 /// Runtime state for one virtual output.
 pub struct VirtualOutputState {
     /// The Smithay output (Wayland global, workspace mapping).
     pub output: Output,
-    /// Global handle — must be kept alive for the Wayland global to exist.
-    pub _global: GlobalId,
+    /// The output's Wayland global. Not a guard: dropping the id advertises
+    /// the output for the rest of the session regardless, so taking the
+    /// output down means handing this to `DisplayHandle::remove_global`.
+    pub global: GlobalId,
     /// PipeWire stream receiving rendered frames.
     pub pipewire_stream: PipeWireStream,
     /// Damage tracker for this output (always renders full frames, age=0).
@@ -68,8 +131,13 @@ impl VirtualOutputState {
     /// Build an `Output` from config (without registering a Wayland global yet).
     ///
     /// The caller is responsible for calling `output.create_global::<D>()` and
-    /// storing the returned `GlobalId` in `_global`, then calling `finish()`.
-    pub fn build_output(config: &VirtualOutputConfig) -> Output {
+    /// storing the returned `GlobalId` in `global`, then calling `finish()`.
+    ///
+    /// `position` is resolved by [`placement`] against the outputs already
+    /// mapped, and is the same point the caller maps the output at — the
+    /// output's own state and the workspace mapping disagreeing about where a
+    /// screen is puts the pointer and the windows on different arrangements.
+    pub fn build_output(config: &VirtualOutputConfig, position: Point<i32, Logical>) -> Output {
         let output = Output::new(
             config.name.clone(),
             PhysicalProperties {
@@ -91,10 +159,6 @@ impl VirtualOutputState {
         };
 
         let screen_scale = crate::config::Config::with(|c| c.screen_scale);
-        let position: Point<i32, smithay::utils::Logical> = config
-            .position
-            .map(|p| (p.x, p.y).into())
-            .unwrap_or_else(|| (0, 0).into());
 
         output.set_preferred(mode);
         output.change_current_state(
@@ -151,7 +215,7 @@ impl VirtualOutputState {
 
         let state = Self {
             output,
-            _global: global,
+            global,
             pipewire_stream,
             damage_tracker,
             pending_frame: None,
@@ -159,5 +223,73 @@ impl VirtualOutputState {
         };
 
         Ok((state, node_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
+        Rectangle::new(Point::from((x, y)), Size::from((w, h)))
+    }
+
+    /// One 1080p screen, the size every virtual output in these tests has.
+    fn size() -> Size<i32, Logical> {
+        Size::from((1920, 1080))
+    }
+
+    #[test]
+    fn the_first_output_starts_at_the_origin() {
+        assert_eq!(placement(None, size(), &[]), Point::from((0, 0)));
+    }
+
+    #[test]
+    fn an_unpositioned_output_goes_beside_the_screen_it_would_have_covered() {
+        // The bug this exists for: with no position of its own a virtual
+        // output landed on (0, 0), exactly over the laptop panel, where the
+        // Displays pane could no longer click it.
+        let panel = rect(0, 0, 1920, 1080);
+        assert_eq!(placement(None, size(), &[panel]), Point::from((1920, 0)));
+    }
+
+    #[test]
+    fn each_one_goes_past_the_last() {
+        let existing = [rect(0, 0, 1920, 1080), rect(1920, 0, 1920, 1080)];
+        assert_eq!(placement(None, size(), &existing), Point::from((3840, 0)));
+    }
+
+    #[test]
+    fn a_position_clear_of_everything_is_honoured() {
+        let panel = rect(0, 0, 1920, 1080);
+        let above = Point::from((0, -1080));
+        assert_eq!(placement(Some(above), size(), &[panel]), above);
+    }
+
+    #[test]
+    fn a_position_that_overlaps_is_refused() {
+        // Not clamped or nudged: auto-placement is what the physical path
+        // falls back to, and the two have to agree.
+        let panel = rect(0, 0, 1920, 1080);
+        let over = Point::from((100, 100));
+        assert_eq!(
+            placement(Some(over), size(), &[panel]),
+            Point::from((1920, 0))
+        );
+    }
+
+    #[test]
+    fn touching_edges_do_not_count_as_overlapping() {
+        let panel = rect(0, 0, 1920, 1080);
+        let beside = Point::from((1920, 0));
+        assert_eq!(placement(Some(beside), size(), &[panel]), beside);
+    }
+
+    #[test]
+    fn the_right_edge_wins_over_the_sum_of_the_widths() {
+        // A screen placed by config at 3000 leaves the arrangement 4920 wide
+        // while the widths only sum to 3840 — which is inside it.
+        let existing = [rect(0, 0, 1920, 1080), rect(3000, 0, 1920, 1080)];
+        assert_eq!(placement(None, size(), &existing), Point::from((4920, 0)));
     }
 }

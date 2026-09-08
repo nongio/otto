@@ -530,18 +530,24 @@ pub fn run_udev() {
                 .get_format_modifiers(smithay::backend::allocator::Fourcc::Argb8888);
 
             for vout_config in &vout_configs {
-                let output = crate::virtual_output::VirtualOutputState::build_output(vout_config);
+                // Clear of the connectors already up, and of the virtual
+                // outputs configured before this one: two screens on the same
+                // coordinates cannot both be pointed at.
+                let position = crate::virtual_output::placement(
+                    vout_config.position.map(|p| (p.x, p.y).into()),
+                    crate::virtual_output::logical_size(vout_config),
+                    &crate::virtual_output::mapped_rects(&state),
+                );
+
+                let output =
+                    crate::virtual_output::VirtualOutputState::build_output(vout_config, position);
                 let global = output.create_global::<Otto<UdevData>>(&display_handle);
 
-                let position: smithay::utils::Point<i32, smithay::utils::Logical> = vout_config
-                    .position
-                    .map(|p| (p.x, p.y).into())
-                    .unwrap_or_else(|| (0, 0).into());
                 state.workspaces.map_output(&output, position);
 
                 match crate::virtual_output::VirtualOutputState::start(
-                    output,
-                    global,
+                    output.clone(),
+                    global.clone(),
                     vout_config,
                     gbm_device.clone(),
                     format_modifiers.clone(),
@@ -557,11 +563,18 @@ pub fn run_udev() {
                         state.virtual_outputs.push(vout_state);
                     }
                     Err(e) => {
+                        // Half-created is worse than absent: an output with no
+                        // stream renders into nothing, and its global would go
+                        // on being advertised to every client — the Displays
+                        // pane would list a screen the compositor does not
+                        // have, and could not remove.
                         tracing::error!(
                             "Failed to create virtual output '{}': {}",
                             vout_config.name,
                             e
                         );
+                        state.workspaces.unmap_output(&output);
+                        display_handle.remove_global::<Otto<UdevData>>(global);
                     }
                 }
             }
