@@ -92,13 +92,27 @@ impl Label {
     }
 }
 
+impl Label {
+    /// The face this label will actually be drawn in.
+    ///
+    /// Every label goes through here, so a string in a script the interface
+    /// font has no glyphs for — a language named in its own, a file in
+    /// Japanese — is drawn in a face that has them rather than as a row of
+    /// empty boxes. ASCII, which is nearly everything, costs a byte scan. See
+    /// [`crate::typography::font_covering`].
+    fn font(&self) -> Font {
+        crate::typography::font_covering(&self.font, &self.text)
+    }
+}
+
 impl Renderable for Label {
     fn render(&self, canvas: &Canvas) {
         let mut paint = Paint::default();
         paint.set_color(self.color);
         paint.set_anti_alias(true);
 
-        let (text_width, _) = self.font.measure_str(&self.text, None);
+        let font = self.font();
+        let (text_width, _) = font.measure_str(&self.text, None);
         let width = self.width.unwrap_or(text_width);
 
         let x = match self.align {
@@ -107,13 +121,13 @@ impl Renderable for Label {
             TextAlign::Right => self.x + width - text_width,
         };
 
-        let y = self.y + self.font.size() * 0.8;
+        let y = self.y + font.size() * 0.8;
 
-        canvas.draw_str(&self.text, Point::new(x, y), &self.font, &paint);
+        canvas.draw_str(&self.text, Point::new(x, y), &font, &paint);
     }
 
     fn intrinsic_size(&self) -> Option<(f32, f32)> {
-        let (text_width, _) = self.font.measure_str(&self.text, None);
+        let (text_width, _) = self.font().measure_str(&self.text, None);
         let width = self.width.unwrap_or(text_width);
         Some((width, self.font.size()))
     }

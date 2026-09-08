@@ -438,18 +438,20 @@ pub fn key_combo(canvas: &Canvas, right: f32, cy: f32, combo: &str, theme: &Them
     }
 }
 
-const RESTART_TEXT: &str = "Restart required";
+fn restart_text() -> &'static str {
+    otto_kit::t!("settings-restart-required")
+}
 
 /// How wide the "restart required" pill draws, so a label can be laid out
 /// against it.
 pub fn restart_pill_width() -> f32 {
-    styles::CAPTION_2.font().measure_str(RESTART_TEXT, None).0 + 14.0
+    styles::CAPTION_2.font().measure_str(restart_text(), None).0 + 14.0
 }
 
 /// "Restart required" pill. Amber regardless of theme — it is a status, not
 /// a surface.
 pub fn restart_pill(canvas: &Canvas, x: f32, cy: f32) {
-    let text = RESTART_TEXT;
+    let text = restart_text();
     let style = styles::CAPTION_2;
     let width = restart_pill_width();
     let rect = Rect::from_xywh(x, cy - 9.0, width, 18.0);

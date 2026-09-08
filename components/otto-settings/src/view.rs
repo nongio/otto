@@ -52,6 +52,12 @@ const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
 /// and below it. The width follows the image's own aspect, capped at
 /// [`PREVIEW_W`] — a wallpaper is worth seeing in its own shape.
 const PREVIEW_H: f32 = 108.0;
+/// The kit paints every surface into a buffer twice the logical size (see
+/// `SkiaSurface::draw`), so a box measured in points covers twice that many
+/// device pixels — which is the space [`otto_kit::utils::icon_sampling`]
+/// compares a source image against.
+const BUFFER_SCALE: f32 = 2.0;
+
 const PREVIEW_W: f32 = 192.0;
 const PREVIEW_GAP: f32 = 10.0;
 /// The button that clears a file setting, revealed on the preview's top-right
@@ -597,9 +603,16 @@ fn decode_preview(path: &str) -> Option<skia_safe::Image> {
     );
     let info = skia_safe::ImageInfo::new_n32_premul((w, h), None);
     let mut surface = skia_safe::surfaces::raster(&info, None, None)?;
-    surface
-        .canvas()
-        .draw_image_rect(&full, None, Rect::from_iwh(w, h), &Paint::default());
+    // A wallpaper is shrunk by a large factor here, which is exactly where
+    // Skia's default nearest-neighbour sampling turns fine detail into
+    // stair-steps and shimmer.
+    surface.canvas().draw_image_rect_with_sampling_options(
+        &full,
+        None,
+        Rect::from_iwh(w, h),
+        otto_kit::utils::icon_sampling((full.width(), full.height()), (w as f32, h as f32)),
+        &Paint::default(),
+    );
     Some(surface.image_snapshot())
 }
 
@@ -1094,9 +1107,13 @@ impl Settings {
                 let track = Rect::from_xywh(track_x, cy - 12.0, widgets::SLIDER_W, 24.0);
                 track.contains(local).then(|| {
                     let t = ((local.x - track_x) / widgets::SLIDER_W).clamp(0.0, 1.0);
+                    // Snapped like `drag_value` does: a click on the track that
+                    // is never dragged persists whatever float the pixel maps
+                    // to, which is exactly what `snap` exists to prevent.
+                    let raw = settings_client::snap(id, min + t * (max - min));
                     Hit {
                         id,
-                        value: settings_client::number_for(id, min + t * (max - min)),
+                        value: settings_client::number_for(id, raw),
                         draggable: true,
                     }
                 })
@@ -1420,9 +1437,14 @@ impl Settings {
         let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
 
         let area = self.pane_layout(content_width).arrangement?;
+        // Last match, not first: the canvas draws the screens in this order,
+        // so where two overlap the later one is the one on top and the one
+        // the click visibly lands on. Taking the first made an overlapped
+        // screen unselectable — and a virtual display that cannot be selected
+        // cannot be removed either, since Remove acts on the selection.
         arrangement_screens(arrangement_canvas(area))
             .into_iter()
-            .position(|(_, rect)| rect.contains(local))
+            .rposition(|(_, rect)| rect.contains(local))
     }
 
     /// The value a drag to `x` implies, for a slider already being dragged.
@@ -1695,7 +1717,19 @@ impl Settings {
             Some(image) => {
                 let mut paint = Paint::default();
                 paint.set_anti_alias(true);
-                canvas.draw_image_rect(image, None, box_rect, &paint);
+                canvas.draw_image_rect_with_sampling_options(
+                    image,
+                    None,
+                    box_rect,
+                    otto_kit::utils::icon_sampling(
+                        (image.width(), image.height()),
+                        (
+                            box_rect.width() * BUFFER_SCALE,
+                            box_rect.height() * BUFFER_SCALE,
+                        ),
+                    ),
+                    &paint,
+                );
             }
             None => {
                 let mut paint = Paint::default();
@@ -1704,7 +1738,7 @@ impl Settings {
                 canvas.draw_rect(box_rect, &paint);
                 widgets::text_centered_y(
                     canvas,
-                    "Cannot be shown",
+                    otto_kit::t!("settings-background-image-unavailable"),
                     box_rect.left + 10.0,
                     box_rect.center_y(),
                     styles::SUBHEADLINE,
@@ -1787,7 +1821,20 @@ impl Settings {
                 w,
                 h,
             );
-            canvas.draw_image_rect(image, None, dst, &paint);
+            // A theme rarely carries a raster at exactly the size asked for —
+            // an XCursor theme offers 24/32/48/64, a raster icon theme its own
+            // fixed sizes — so most slots are a rescale, and the default
+            // nearest-neighbour sampling shows every step of it.
+            canvas.draw_image_rect_with_sampling_options(
+                image,
+                None,
+                dst,
+                otto_kit::utils::icon_sampling(
+                    (image.width(), image.height()),
+                    (w * BUFFER_SCALE, h * BUFFER_SCALE),
+                ),
+                &paint,
+            );
         }
 
         // The same hairline the wallpaper thumbnail carries, for the same
@@ -2156,7 +2203,13 @@ impl Settings {
                 input.render_at(canvas, keys.width(), keys.height());
                 canvas.restore();
             }
-            None => widgets::field_box(canvas, keys, &line.keys, "Unassigned", &self.theme),
+            None => widgets::field_box(
+                canvas,
+                keys,
+                &line.keys,
+                otto_kit::t!("settings-key-combination-unassigned"),
+                &self.theme,
+            ),
         }
 
         widgets::line_button(
@@ -2291,7 +2344,7 @@ impl Settings {
 
         widgets::text_centered_y(
             canvas,
-            "Click a display to change its settings below",
+            otto_kit::t!("settings-arrangement-hint"),
             x0 + 2.0,
             area.bottom + 12.0,
             styles::SUBHEADLINE,

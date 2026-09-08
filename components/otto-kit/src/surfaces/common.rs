@@ -141,8 +141,18 @@ impl BaseWaylandSurface {
         Ok(())
     }
 
-    /// Resize the surface and update the Skia surface dimensions
+    /// Resize the surface and update the Skia surface dimensions.
+    ///
+    /// A resize to the size it already has returns without doing anything.
+    /// Callers re-push their geometry on every configure and most configures
+    /// move only one axis — or neither — so without this a window being
+    /// dragged by one edge threw away and rebuilt the Skia render target of
+    /// every surface whose size had not changed, which measured in
+    /// milliseconds apiece.
     pub fn resize(&mut self, width: i32, height: i32) {
+        if self.width == width && self.height == height {
+            return;
+        }
         self.width = width;
         self.height = height;
 

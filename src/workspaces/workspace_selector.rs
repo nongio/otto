@@ -238,6 +238,10 @@ pub struct WorkspaceSelectorViewState {
     removing: Vec<usize>,
     /// The lifted copy of the workspace being dragged, if one is in flight.
     drag_ghost: Option<WorkspaceGhostState>,
+    /// Whether an expose window is riding the pointer across this strip. The
+    /// previews are drop targets then, not things being pointed at: no close
+    /// button may appear and the drop-target darkening must not be cleared.
+    window_drag: bool,
 }
 
 impl Hash for WorkspaceSelectorViewState {
@@ -249,6 +253,7 @@ impl Hash for WorkspaceSelectorViewState {
         self.editing.hash(state);
         self.removing.hash(state);
         self.drag_ghost.hash(state);
+        self.window_drag.hash(state);
     }
 }
 
@@ -336,6 +341,7 @@ impl WorkspaceSelectorView {
             editing: None,
             removing: Vec::new(),
             drag_ghost: None,
+            window_drag: false,
         };
         let view = View::new(
             "workspace_selector_view",
@@ -617,6 +623,19 @@ impl WorkspaceSelectorView {
         // Update view state to trigger re-render with new hover indication
         let mut state = self.view.get_state().clone();
         state.drop_hover_index = workspace_index;
+        self.view.update_state(&state);
+    }
+
+    /// Mark whether an expose window drag is in flight over this strip. While
+    /// it is, the previews stop reacting to the pointer as hover: the pointer
+    /// is carrying a window, and the only feedback is the drop-target darkening
+    /// driven by [`Self::set_drop_hover`].
+    pub fn set_window_drag(&self, dragging: bool) {
+        let mut state = self.view.get_state();
+        if state.window_drag == dragging {
+            return;
+        }
+        state.window_drag = dragging;
         self.view.update_state(&state);
     }
 
@@ -1229,9 +1248,11 @@ fn render_workspace_selector_view(
                         // A drag sweeps the pointer across every preview it
                         // passes, and the release leaves it parked on one.
                         // None of that is hovering — the pointer is carrying a
-                        // workspace, not pointing at one — so no close button
-                        // may appear for as long as the lifted copy is out.
-                        if view_ref.get_state().drag_ghost.is_some() {
+                        // workspace, or an expose window, not pointing at one —
+                        // so no close button may appear for as long as either
+                        // is riding the cursor.
+                        let state = view_ref.get_state();
+                        if state.drag_ghost.is_some() || state.window_drag {
                             return;
                         }
                         let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
@@ -1245,6 +1266,11 @@ fn render_workspace_selector_view(
                 .on_pointer_out({
                     let view_ref = view.clone();
                     move |layer: &Layer, x, y| {
+                        // Nothing was revealed while a window was being
+                        // dragged across, so there is nothing to hide either.
+                        if view_ref.get_state().window_drag {
+                            return;
+                        }
                         let key = format!("workspace_selector_desktop_remove_{}", workspace_index);
                         let Some(remove_button) = view_ref.layer_by_key(key.as_str()) else {
                             return;
@@ -1344,15 +1370,25 @@ fn render_workspace_selector_view(
                                     }
                                 }
                             })
+                            // The darkening also marks the drop target of an
+                            // expose window drag; that one is owned by the
+                            // drop-hover state, not by the pointer crossing
+                            // the preview, so leave it alone for the drag.
                             .on_pointer_release({
                                 let view_ref = view.clone();
                                 move |layer: &Layer, _x, _y| {
+                                    if view_ref.get_state().window_drag {
+                                        return;
+                                    }
                                     clear_preview_filter(layer, &view_ref, workspace_index);
                                 }
                             })
                             .on_pointer_out({
                                 let view_ref = view.clone();
                                 move |layer: &Layer, _x, _y| {
+                                    if view_ref.get_state().window_drag {
+                                        return;
+                                    }
                                     clear_preview_filter(layer, &view_ref, workspace_index);
                                 }
                             })

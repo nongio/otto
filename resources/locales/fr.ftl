@@ -88,6 +88,8 @@ settings-group-desktop = Bureau
 settings-background-colour = Couleur d’arrière-plan
 settings-background-image = Image d’arrière-plan
 settings-background-image-detail = Choisie via le sélecteur de fichiers du portail de bureau
+# Stands in for the wallpaper thumbnail when the file cannot be decoded.
+settings-background-image-unavailable = Impossible à afficher
 
 settings-group-pointer-and-icons = Pointeur et icônes
 settings-cursor-theme = Thème du curseur
@@ -127,6 +129,8 @@ settings-display-scale-detail = Applicable à la prochaine connexion. Le bureau 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Aucun écran
 settings-display-none-detail = Le compositeur ne pilote aucune sortie
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = Cliquez sur un écran pour modifier ses réglages ci-dessous
 
 settings-virtual-displays = Écrans virtuels
 # $count is how many headless outputs exist. These are streamed to other
@@ -137,6 +141,9 @@ settings-virtual-displays-detail =
         [many] { $count } sorties headless, diffusées via PipeWire. Retirer supprime celle sélectionnée
        *[other] { $count } sorties headless, diffusées via PipeWire. Retirer supprime celle sélectionnée
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = Redémarrage requis
 
 
 ## Settings — Dock
@@ -166,6 +173,8 @@ settings-key-combination = Combinaison de touches
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl, Alt, Shift ou Logo reliés par +, suivis d’une touche : Ctrl+Shift+Return
+# Shown in a shortcut's key field when no combination is set.
+settings-key-combination-unassigned = Non attribué
 
 
 ## Settings — Trackpad & Mouse

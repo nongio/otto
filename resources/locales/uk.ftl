@@ -88,6 +88,8 @@ settings-group-desktop = Робочий стіл
 settings-background-colour = Колір тла
 settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
+# Stands in for the wallpaper thumbnail when the file cannot be decoded.
+settings-background-image-unavailable = Неможливо показати
 
 settings-group-pointer-and-icons = Вказівник і піктограми
 settings-cursor-theme = Тема курсора
@@ -127,6 +129,8 @@ settings-display-scale-detail = Застосовується під час на�
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Немає дисплеїв
 settings-display-none-detail = Композитор не керує жодним виходом
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = Натисніть на екран, щоб змінити його налаштування нижче
 
 settings-virtual-displays = Віртуальні дисплеї
 # $count is how many headless outputs exist. These are streamed to other
@@ -138,6 +142,9 @@ settings-virtual-displays-detail =
         [many] { $count } автономних виходів, транслюються через PipeWire. «Вилучити» вилучає вибраний
        *[other] { $count } автономного виходу, транслюється через PipeWire. «Вилучити» вилучає вибраний
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = Потрібен перезапуск
 
 
 ## Settings — Dock
@@ -167,6 +174,8 @@ settings-key-combination = Комбінація клавіш
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl, Alt, Shift або Logo, поєднані знаком +, а потім одна клавіша: Ctrl+Shift+Return
+# Shown in a shortcut's key field when no combination is set.
+settings-key-combination-unassigned = Не призначено
 
 
 ## Settings — Trackpad & Mouse

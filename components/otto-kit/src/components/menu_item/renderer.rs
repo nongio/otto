@@ -155,6 +155,13 @@ impl MenuItemRenderer {
         paint.set_color(color);
         paint.set_anti_alias(true);
 
+        // A menu is where the interface most often has to draw a script its
+        // own font has none of — a language picker names every language in its
+        // own — so the face is chosen against the label rather than assumed.
+        // Before the metrics, which have to come from the face that will
+        // actually draw or the line sits off its centre.
+        let font = &crate::typography::font_covering(font, label);
+
         // Center text vertically using font metrics
         let (_line_spacing, metrics) = font.metrics();
         let font_height = metrics.descent - metrics.ascent;
@@ -198,7 +205,14 @@ impl MenuItemRenderer {
                 if let Some(img) = crate::icons::named_icon_sized(name, load_size) {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
                     let paint = Paint::default();
-                    canvas.draw_image_rect(&img, None, dst, &paint);
+                    let dst_px = (icon_size * scale as f32, icon_size * scale as f32);
+                    canvas.draw_image_rect_with_sampling_options(
+                        &img,
+                        None,
+                        dst,
+                        crate::utils::icon_sampling((img.width(), img.height()), dst_px),
+                        &paint,
+                    );
                 } else {
                     // Fall back to embedded SVG icon set
                     canvas.save();
@@ -253,7 +267,15 @@ impl MenuItemRenderer {
                     let dst = Rect::from_xywh(icon_x, icon_y, icon_size, icon_size);
                     let mut paint = Paint::default();
                     paint.set_anti_alias(true);
-                    canvas.draw_image_rect(&img, None, dst, &paint);
+                    let scale = crate::app_runner::context::AppContext::scale_factor().max(1);
+                    let dst_px = (icon_size * scale as f32, icon_size * scale as f32);
+                    canvas.draw_image_rect_with_sampling_options(
+                        &img,
+                        None,
+                        dst,
+                        crate::utils::icon_sampling((img.width(), img.height()), dst_px),
+                        &paint,
+                    );
                 } else {
                     tracing::warn!(
                         "menu_item render: failed to create skia image from pixmap {}x{}",

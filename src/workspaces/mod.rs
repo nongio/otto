@@ -508,6 +508,10 @@ impl Workspaces {
 
     pub fn start_window_selector_drag(&self, window_id: &ObjectId) {
         *self.expose_dragged_window.lock().unwrap() = Some(window_id.clone());
+        // The workspace previews are drop targets for the length of the drag,
+        // not things the pointer hovers: no close buttons, and the darkening
+        // that marks the target must survive the pointer crossing the preview.
+        self.set_selectors_window_drag(true);
         // Hide the selection overlay while dragging; it is restored in end_window_selector_drag
         // once the animation completes.
         let num_workspaces = self.with_model(|m| m.workspaces.len());
@@ -531,7 +535,16 @@ impl Workspaces {
             *dragging = None;
         }
         drop(dragging);
+        self.set_selectors_window_drag(false);
         self.expose_set_visible(true);
+    }
+
+    /// Tell every output's workspace selector whether an expose window drag is
+    /// in flight, so its previews stop treating the pointer as a hover.
+    fn set_selectors_window_drag(&self, dragging: bool) {
+        for ows in self.output_workspaces.values() {
+            ows.workspace_selector.set_window_drag(dragging);
+        }
     }
     /// Returns a clone of the expose_dragged_window Arc for use in animation callbacks.
     pub fn expose_dragged_window_handle(&self) -> Arc<std::sync::Mutex<Option<ObjectId>>> {

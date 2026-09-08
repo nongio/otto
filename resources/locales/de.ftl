@@ -88,6 +88,8 @@ settings-group-desktop = Schreibtisch
 settings-background-colour = Hintergrundfarbe
 settings-background-image = Hintergrundbild
 settings-background-image-detail = Über die Dateiauswahl des Desktop-Portals gewählt
+# Stands in for the wallpaper thumbnail when the file cannot be decoded.
+settings-background-image-unavailable = Kann nicht angezeigt werden
 
 settings-group-pointer-and-icons = Zeiger & Symbole
 settings-cursor-theme = Zeigerdesign
@@ -127,6 +129,8 @@ settings-display-scale-detail = Gilt ab der nächsten Anmeldung. Der Schreibtisc
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Keine Monitore
 settings-display-none-detail = Der Compositor steuert keine Ausgabe an
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = Klicken Sie auf einen Bildschirm, um seine Einstellungen unten zu ändern
 
 settings-virtual-displays = Virtuelle Monitore
 # $count is how many headless outputs exist. These are streamed to other
@@ -136,6 +140,9 @@ settings-virtual-displays-detail =
         [one] { $count } Headless-Ausgang, über PipeWire gestreamt. „Entfernen“ nimmt den ausgewählten weg
        *[other] { $count } Headless-Ausgänge, über PipeWire gestreamt. „Entfernen“ nimmt den ausgewählten weg
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = Neustart nötig
 
 
 ## Settings — Dock
@@ -165,6 +172,8 @@ settings-key-combination = Tastenkombination
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl, Alt, Shift oder Logo verbunden mit +, dann eine Taste: Ctrl+Shift+Return
+# Shown in a shortcut's key field when no combination is set.
+settings-key-combination-unassigned = Nicht zugewiesen
 
 
 ## Settings — Trackpad & Mouse

@@ -50,6 +50,10 @@ D-Bus client that reads a described schema, sets values, and observes changes.
   neither described nor stopped on yet: announcing it as a single thing would
   misdescribe what is there. A pop-up can be focused but not opened from the
   keyboard, because its menu has no keyboard navigation.
+- While a pop-up or a colour picker is open it owns every key until it closes,
+  and Escape closes it. Neither shares the keyboard with the pane behind it:
+  the picker has no key table of its own, so without this the arrows would move
+  the slider it is covering and Escape would never reach it.
 
 ## Non-Goals
 
@@ -415,6 +419,13 @@ status after being changed.
 Changes take effect on interaction. There is no apply or save step, and no
 confirmation dialog for ordinary settings.
 
+A slider sends the schema's step, not the pixel the pointer landed on, with a
+detent at the setting's default so the one value a user is most likely aiming
+for can be hit exactly. This holds however the slider is operated: a click on
+the track that is never dragged snaps like a drag does, or a single click would
+persist a raw float where every other route to the same value persists a clean
+one.
+
 The window draws its own title bar: the traffic lights at whichever end the
 desktop's `window_controls_side` setting names — over the sidebar at the
 leading end, over the far end of the pane at the trailing one — and the app
@@ -464,6 +475,11 @@ changes that output's position; released positions snap to edge alignment with
 neighbouring outputs and may not leave an output overlapping another or
 disconnected from the arrangement.
 
+Where two rectangles do overlap all the same, a click selects the one on top —
+the last one drawn, which is the one the pointer is visibly over. Taking the
+first match instead made an overlapped screen unselectable, and since Remove
+acts on the selection, unremovable with it.
+
 Selecting an output exposes its resolution, refresh rate, scale, and whether it
 is primary. Resolution and refresh rate offer only modes the output actually
 advertises: the arrangement and both mode lists are read from `wl_output`,
@@ -488,6 +504,24 @@ timeout above has to exist before the live path does.*
 
 An output that disconnects while the pane is open disappears from the canvas;
 the configuration recorded for it is retained so reconnecting restores it.
+
+A virtual display added from the pane is created on the running compositor and
+persisted, so it is a screen the session actually has rather than an entry in
+this window that vanishes on quit. It appears in the arrangement straight away
+— the compositor's `wl_output` for it arrives asynchronously — and the
+placeholder gives way to the probed output once that lands. It is placed clear
+of the screens already there rather than over them — the compositor resolves
+that, since it is the one that knows where the outputs are.
+
+Removing one takes it away on the compositor too: dropping it from the
+arrangement alone would leave it running, and the next probe would put it
+straight back. That holds while the entry is still a placeholder as well, the
+probe running a frame or two behind the call that created the display: a
+display added and removed in the same breath is removed on the compositor,
+not just here. Where the
+compositor does not serve the settings interface at all, an added display is
+local to the window and says so, which is the same bargain the rest of the pane
+strikes offline.
 
 The arrangement canvas itself is drawn by the pane rather than as a row, so it
 is neither a keyboard stop nor described to assistive technologies: dragging an
@@ -521,6 +555,12 @@ edited by hand.
   dragging a size slider must not produce one persistence write per frame.
   Values apply live during the drag; persistence happens when the interaction
   settles.
+
+  *Partly done: a value the app already holds is never sent, so a drag writes
+  once per distinct value rather than once per motion event — and since a
+  slider snaps to its schema's step, most of a drag's motions ask for the value
+  that is already there. Persistence still happens per accepted set rather than
+  on settle, so a drag that crosses many steps still writes many times.*
 - Existing in-compositor settings interactions — dragging the dock handle to
   resize, dock context-menu toggles — must go through the same set path, so
   they announce and persist identically. They must not keep private shadow

@@ -88,6 +88,8 @@ settings-group-desktop = Desktop
 settings-background-colour = Background colour
 settings-background-image = Background image
 settings-background-image-detail = Chosen through the desktop portal's file picker
+# Stands in for the wallpaper thumbnail when the file cannot be decoded.
+settings-background-image-unavailable = Cannot be shown
 
 settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
@@ -127,6 +129,8 @@ settings-display-scale-detail = Applies at the next login. The desktop does not 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = No displays
 settings-display-none-detail = The compositor is not driving any output
+# Under the display arrangement canvas, explaining what clicking one does.
+settings-arrangement-hint = Click a display to change its settings below
 
 settings-virtual-displays = Virtual displays
 # $count is how many headless outputs exist. These are streamed to other
@@ -136,6 +140,9 @@ settings-virtual-displays-detail =
         [one] { $count } headless output, streamed over PipeWire. Remove takes away the selected one
        *[other] { $count } headless outputs, streamed over PipeWire. Remove takes away the selected one
     }
+# Pill on a row whose setting the compositor cannot apply until it restarts.
+# Kept short: it is drawn inside a badge beside the row's label.
+settings-restart-required = Restart required
 
 
 ## Settings — Dock
@@ -165,6 +172,8 @@ settings-key-combination = Key combination
 # Modifier names and the example are literal syntax. Do not translate Ctrl,
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl, Alt, Shift or Logo joined by +, then one key: Ctrl+Shift+Return
+# Shown in a shortcut's key field when no combination is set.
+settings-key-combination-unassigned = Unassigned
 
 
 ## Settings — Trackpad & Mouse
