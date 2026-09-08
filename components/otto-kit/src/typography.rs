@@ -512,6 +512,16 @@ mod tests {
             // substitute, and the fallback is not what is under test.
             return;
         }
+        let first = text.chars().next().unwrap() as skia::Unichar;
+        if FontMgr::new()
+            .match_family_style_character("", FontStyle::default(), &[], first)
+            .is_none()
+        {
+            // A machine with no CJK face installed at all — a bare CI runner,
+            // say — has nothing to substitute either. What is under test is
+            // the substitution, not the host's font set.
+            return;
+        }
         let covering = font_covering(&base, text);
         assert!(
             text.chars()
