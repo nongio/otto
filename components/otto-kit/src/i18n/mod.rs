@@ -73,6 +73,7 @@ const CATALOGUES: &[(&str, &str)] = &[
     ("es", include_str!("../../../../resources/locales/es.ftl")),
     ("fr", include_str!("../../../../resources/locales/fr.ftl")),
     ("it", include_str!("../../../../resources/locales/it.ftl")),
+    ("ja", include_str!("../../../../resources/locales/ja.ftl")),
     ("pl", include_str!("../../../../resources/locales/pl.ftl")),
     (
         "pt-BR",
@@ -100,6 +101,7 @@ const ENDONYMS: &[(&str, &str)] = &[
     ("es", "Español"),
     ("fr", "Français"),
     ("it", "Italiano"),
+    ("ja", "日本語"),
     ("pl", "Polski"),
     ("pt-BR", "Português (Brasil)"),
     ("ru", "Русский"),
@@ -575,8 +577,9 @@ mod tests {
             assert_eq!(match_catalogue(tag), Some("zh-CN"), "`{tag}`");
         }
         assert_eq!(match_catalogue("pt_BR"), Some("pt-BR"));
+        assert_eq!(match_catalogue("ja_JP.UTF-8"), Some("ja"));
         // A language with no catalogue is not silently promoted to one.
-        assert_eq!(match_catalogue("ja_JP"), None);
+        assert_eq!(match_catalogue("sv_SE"), None);
         assert_eq!(match_catalogue(""), None);
     }
 

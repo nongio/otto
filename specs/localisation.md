@@ -49,9 +49,9 @@ desktop agrees on it.
 ### Catalogues
 
 Strings live in one Fluent catalogue per locale, keyed by stable identifiers
-rather than by their English text. Eleven catalogues ship: `en-GB`, a sparse
-`en-US`, and full translations for `de`, `es`, `fr`, `it`, `pl`, `pt-BR`, `ru`,
-`uk` and `zh-CN`. They are compiled into the binaries, so a component can
+rather than by their English text. Twelve catalogues ship: `en-GB`, a sparse
+`en-US`, and full translations for `de`, `es`, `fr`, `it`, `ja`, `pl`, `pt-BR`,
+`ru`, `uk` and `zh-CN`. They are compiled into the binaries, so a component can
 render its first frame before any filesystem the user controls is necessarily
 mounted, and a catalogue on disk cannot drift out of step with the keys the
 code asks for.
@@ -162,6 +162,16 @@ disagreeing about weight and metrics halfway along a label. The families this
 reaches (Source Han Sans, the Noto CJK siblings) carry Latin as well, so the
 Latin that remains inside a Chinese interface — a file name, a version number —
 stays in a face that matches the rest.
+
+The family is named per language rather than left to the language tag. Han
+unification gives one code point different correct shapes in Japanese,
+Simplified Chinese, Traditional Chinese and Korean, and a reader of any of them
+notices the wrong one at once; the font manager takes a language with the
+character it is asked to cover, but on a fontconfig system Skia ignores it and
+answers the Simplified Chinese face for Japanese as readily as for Chinese. So
+the regional family is asked for by name first — `Noto Sans CJK JP` for `ja`,
+`SC`/`TC`/`HK` for the Chinese variants, `KR` for `ko` — and the language-tagged
+search stays as the fallback for a machine that has none of them installed.
 
 It is the language that decides, not the string. Text in a script the interface
 is not in — a Chinese file name on an English desktop — is still drawn in the
