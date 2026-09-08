@@ -98,7 +98,7 @@ impl FontCache {
         let replacement = self
             .font_mgr
             .match_family_style_character(
-                &typeface.family_name(),
+                typeface.family_name(),
                 style,
                 &[],
                 missing as skia::Unichar,

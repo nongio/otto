@@ -807,20 +807,31 @@ pub fn add_virtual_output() {
 pub fn remove_selected_virtual_output() -> bool {
     let mut arrangement = arrangement().write().unwrap();
     let selected = arrangement.selected;
-    match arrangement.outputs.get(selected) {
-        Some(output) if output.is_virtual() => {
-            if !output.local {
-                let name = output.name.clone();
-                if let crate::settings_client::SetOutcome::Failed(why) =
-                    crate::settings_client::remove_virtual_output(&name)
-                {
-                    eprintln!("displays: {name} could not be removed: {why}");
-                    return false;
-                }
-            }
+    let Some((name, local)) = arrangement
+        .outputs
+        .get(selected)
+        .filter(|output| output.is_virtual())
+        .map(|output| (output.name.clone(), output.local))
+    else {
+        return false;
+    };
+
+    // Asked of the compositor even for an entry still marked `local`. That
+    // flag only means no probe has reported it *yet*, and the probe runs a
+    // frame or two behind the bus call that created it — so a display added
+    // and removed in the same breath was dropped from this window while the
+    // compositor kept running it, and the next sync put it straight back.
+    if let crate::settings_client::SetOutcome::Failed(why) =
+        crate::settings_client::remove_virtual_output(&name)
+    {
+        // A placeholder the compositor never created has nothing to fail to
+        // remove, and the entry in this window is all there is to drop.
+        if !local {
+            eprintln!("displays: {name} could not be removed: {why}");
+            return false;
         }
-        _ => return false,
     }
+
     arrangement.outputs.remove(selected);
     arrangement.selected = selected.min(arrangement.outputs.len().saturating_sub(1));
     true

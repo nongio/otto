@@ -1437,9 +1437,14 @@ impl Settings {
         let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
 
         let area = self.pane_layout(content_width).arrangement?;
+        // Last match, not first: the canvas draws the screens in this order,
+        // so where two overlap the later one is the one on top and the one
+        // the click visibly lands on. Taking the first made an overlapped
+        // screen unselectable — and a virtual display that cannot be selected
+        // cannot be removed either, since Remove acts on the selection.
         arrangement_screens(arrangement_canvas(area))
             .into_iter()
-            .position(|(_, rect)| rect.contains(local))
+            .rposition(|(_, rect)| rect.contains(local))
     }
 
     /// The value a drag to `x` implies, for a slider already being dragged.

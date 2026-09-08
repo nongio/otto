@@ -475,6 +475,11 @@ changes that output's position; released positions snap to edge alignment with
 neighbouring outputs and may not leave an output overlapping another or
 disconnected from the arrangement.
 
+Where two rectangles do overlap all the same, a click selects the one on top —
+the last one drawn, which is the one the pointer is visibly over. Taking the
+first match instead made an overlapped screen unselectable, and since Remove
+acts on the selection, unremovable with it.
+
 Selecting an output exposes its resolution, refresh rate, scale, and whether it
 is primary. Resolution and refresh rate offer only modes the output actually
 advertises: the arrangement and both mode lists are read from `wl_output`,
@@ -504,9 +509,16 @@ A virtual display added from the pane is created on the running compositor and
 persisted, so it is a screen the session actually has rather than an entry in
 this window that vanishes on quit. It appears in the arrangement straight away
 — the compositor's `wl_output` for it arrives asynchronously — and the
-placeholder gives way to the probed output once that lands. Removing one takes
-it away on the compositor too: dropping it from the arrangement alone would
-leave it running, and the next probe would put it straight back. Where the
+placeholder gives way to the probed output once that lands. It is placed clear
+of the screens already there rather than over them — the compositor resolves
+that, since it is the one that knows where the outputs are.
+
+Removing one takes it away on the compositor too: dropping it from the
+arrangement alone would leave it running, and the next probe would put it
+straight back. That holds while the entry is still a placeholder as well, the
+probe running a frame or two behind the call that created the display: a
+display added and removed in the same breath is removed on the compositor,
+not just here. Where the
 compositor does not serve the settings interface at all, an added display is
 local to the window and says so, which is the same bargain the rest of the pane
 strikes offline.
