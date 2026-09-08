@@ -15,7 +15,7 @@ arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "gstreamer" "gst-plugins-base-libs")
-optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)")
+optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Quick View video playback (the playbin element)" "gst-plugins-good: Quick View playback of MP4 and Matroska" "gst-libav: Quick View playback of H.264 and AAC")
 source=("https://github.com/nongio/otto/releases/download/$_tag/otto-$_ver-x86_64.tar.gz")
 sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on
@@ -38,6 +38,7 @@ package() {
     install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"
     install -Dm755 target/release/otto-files "$pkgdir/usr/bin/otto-files"
     install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
+    install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
     install -Dm755 target/release/otto-quickview "$pkgdir/usr/bin/otto-quickview"
     # Quick View's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
