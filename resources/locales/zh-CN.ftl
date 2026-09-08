@@ -675,6 +675,26 @@ launcher-badge-window = 窗口
 launcher-badge-calc = 计算器
 
 
+## Emoji picker
+
+# What the search field says when empty.
+emoji-search = 搜索表情符号…
+# Shown in the grid when nothing matches what was typed.
+emoji-no-results = 未找到表情符号
+# The section and tab titles. These are Unicode's own category names, and
+# the CLDR translations of them are the reference where one exists.
+emoji-group-recent = 最近使用
+emoji-group-smileys = 笑脸与情感
+emoji-group-people = 人物与身体
+emoji-group-nature = 动物与自然
+emoji-group-food = 食物与饮料
+emoji-group-travel = 旅行与地点
+emoji-group-activities = 活动
+emoji-group-objects = 物体
+emoji-group-symbols = 符号
+emoji-group-flags = 旗帜
+
+
 ## Login, lock and authentication
 ##
 ## The greeter, the lock screen, and the panel both of them draw. Text that
