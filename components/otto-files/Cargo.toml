@@ -10,6 +10,9 @@ repository.workspace = true
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 otto-quickview = { path = "../otto-quickview" }
+# Playback for Quick View. Library only: the GStreamer worker is a separate
+# binary built from the same crate, found at run time.
+otto-media-kit = { path = "../otto-media-kit", default-features = false }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"
 tracing = "0.1"

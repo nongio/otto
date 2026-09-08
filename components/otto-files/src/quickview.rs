@@ -19,10 +19,12 @@ use std::path::Path;
 use std::time::Instant;
 
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
-use otto_kit::preview::{Preview, Zoom};
+use otto_kit::preview::{Pixels, Preview, Zoom};
+use otto_media_kit::transport::TransportHit;
+use otto_media_kit::{Frame, Options, Playback, Player, State};
 use otto_quickview::decode::Request;
 use otto_quickview::opening;
-use skia_safe::Rect;
+use skia_safe::{Contains, Rect};
 
 /// The title strip along the top of the panel: the file's name, and the
 /// close button. The preview's content starts below it, so neither ever
@@ -72,6 +74,202 @@ impl Pan {
     }
 }
 
+/// A video being played inside a session.
+pub struct Video {
+    pub player: Player,
+    /// The card's own artwork, drawn until the first frame arrives.
+    pub poster: Option<Pixels>,
+    /// A drag along the scrubber in progress, as a fraction of the duration.
+    pub scrubbing: Option<f32>,
+    /// Whether the video was playing when the drag began, so it resumes
+    /// when the drag ends.
+    resume: bool,
+}
+
+/// Everything a drawing of the video needs, detached from the player: for a
+/// host that records its drawing into a picture, which must own what it
+/// draws from.
+pub struct VideoSnapshot {
+    pub frame: Option<Frame>,
+    pub state: State,
+    pub scrubbing: Option<f32>,
+    /// The poster, carried only until the first frame makes it moot.
+    pub poster: Option<Pixels>,
+}
+
+impl VideoSnapshot {
+    /// The video's width over its height, once anything has said what that
+    /// is — the frame first, then the stream's announced size, then the
+    /// poster. `None` until the worker has answered, when the caller fills
+    /// the space it has and corrects on the next frame.
+    pub fn aspect(&self) -> Option<f32> {
+        let (w, h) = self
+            .frame
+            .as_ref()
+            .map(|f| (f.width, f.height))
+            .or(self.state.size)
+            .or_else(|| self.poster.as_ref().map(|p| (p.width, p.height)))?;
+        (w > 0 && h > 0).then(|| w as f32 / h as f32)
+    }
+}
+
+impl Video {
+    /// Start playing `path`, if the decoded `preview` says it is a video
+    /// and a player can be started.
+    ///
+    /// Only for a preview [`otto_quickview::payload::is_video`] vouches for:
+    /// the sandboxed decoder read the bytes and said video, which is the one
+    /// opinion that counts before a demuxer is handed the file. A worker
+    /// that cannot be found or started leaves the card as it was, and says
+    /// why in the log rather than on the panel — the card is a complete
+    /// preview on its own.
+    pub fn open(
+        preview: &Preview,
+        path: &Path,
+        options: Options,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Option<Video> {
+        if !otto_quickview::payload::is_video(preview) {
+            return None;
+        }
+        match Player::open(path, options, wake) {
+            Ok(player) => {
+                let poster = match preview {
+                    Preview::Card { hero, .. } => hero.clone(),
+                    _ => None,
+                };
+                Some(Video {
+                    player,
+                    poster,
+                    scrubbing: None,
+                    resume: false,
+                })
+            }
+            Err(err) => {
+                tracing::info!("no video playback for {}: {err}", path.display());
+                None
+            }
+        }
+    }
+
+    /// The playback's contribution to a repaint key: everything the player
+    /// view draws that changes without anything around it moving.
+    pub fn key(&self) -> u64 {
+        let state = self.player.state();
+        let playing = state.playback == Playback::Playing;
+        let millis = state.position().as_millis() as u64;
+        let scrub = self
+            .scrubbing
+            .map(|fraction| fraction.to_bits() as u64)
+            .unwrap_or(0);
+        state.frame_seq.rotate_left(29)
+            ^ millis.rotate_left(11)
+            ^ (playing as u64) << 3
+            ^ (state.playback as u64) << 5
+            ^ ((state.volume <= 0.0) as u64) << 9
+            ^ scrub.rotate_left(41)
+    }
+
+    /// The newest frame's sequence number; 0 before any has arrived.
+    pub fn frame_seq(&self) -> u64 {
+        self.player.state().frame_seq
+    }
+
+    /// What to draw, detached from the player.
+    pub fn snapshot(&self) -> VideoSnapshot {
+        let frame = self.player.frame();
+        VideoSnapshot {
+            poster: if frame.is_none() {
+                self.poster.clone()
+            } else {
+                None
+            },
+            frame,
+            state: self.player.state(),
+            scrubbing: self.scrubbing,
+        }
+    }
+
+    /// The pointer over the video, drawn in `content`. Returns whether it
+    /// was taken.
+    pub fn pointer(&mut self, kind: VideoPointer, x: f32, y: f32, content: Rect) -> bool {
+        let layout = otto_media_kit::view::transport_layout(content);
+        let point = skia_safe::Point::new(x, y);
+        let state = self.player.state();
+        let seek_to = |fraction: f32| state.duration.map(|duration| duration.mul_f32(fraction));
+        match kind {
+            VideoPointer::Press => {
+                match layout.hit(point) {
+                    Some(TransportHit::PlayPause) => self.player.toggle(),
+                    Some(TransportHit::Mute) => {
+                        let volume = if state.volume <= 0.0 { 1.0 } else { 0.0 };
+                        self.player.set_volume(volume);
+                    }
+                    Some(TransportHit::Scrub(fraction)) => {
+                        self.scrubbing = Some(fraction);
+                        self.resume = state.playback == Playback::Playing;
+                        if self.resume {
+                            self.player.pause();
+                        }
+                        if let Some(position) = seek_to(fraction) {
+                            self.player.seek(position, false);
+                        }
+                    }
+                    Some(TransportHit::Bar) => {}
+                    // The picture itself is the biggest play/pause button
+                    // there is, as in every player.
+                    None if content.contains(point) => self.player.toggle(),
+                    None => return false,
+                }
+                true
+            }
+            VideoPointer::Motion => {
+                if self.scrubbing.is_none() {
+                    return false;
+                }
+                let fraction = layout.fraction_at(x);
+                self.scrubbing = Some(fraction);
+                if let Some(position) = seek_to(fraction) {
+                    self.player.seek(position, false);
+                }
+                true
+            }
+            VideoPointer::Release | VideoPointer::Leave => {
+                let Some(fraction) = self.scrubbing.take() else {
+                    return false;
+                };
+                if let Some(position) = seek_to(fraction) {
+                    self.player.seek(position, true);
+                }
+                if self.resume {
+                    self.player.play();
+                }
+                true
+            }
+        }
+    }
+}
+
+/// What the pointer did over a video, in the host's own vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoPointer {
+    Press,
+    Motion,
+    Release,
+    Leave,
+}
+
+/// How to open a video for a box of `panel` points at the output's scale.
+/// A frame larger than the pixels it is drawn into is decode work and copy
+/// bandwidth for nothing.
+pub fn video_options(panel: Rect, scale: f32, autoplay: bool) -> Options {
+    Options {
+        max_width: ((panel.width() * scale) as u32).clamp(64, 3840),
+        max_height: ((panel.height() * scale) as u32).clamp(64, 2160),
+        autoplay,
+    }
+}
+
 /// An open preview.
 pub struct Session {
     pub preview: Preview,
@@ -103,6 +301,15 @@ pub struct Session {
     /// When the exit started, once it has. A closing session is no longer the
     /// window's open preview — it is only still on screen, going home.
     pub closing: Option<Instant>,
+    /// A playback, when the file is a video and a player could be started.
+    /// The card in `preview` stays underneath it: its artwork is the poster
+    /// until the first frame lands, and it is what is shown again if the
+    /// player fails.
+    pub video: Option<Video>,
+    /// Whether the panel fills the space it is centred in — the display or
+    /// the window — rather than taking its usual share of it. Toggled by the
+    /// title strip's expand button and kept while arrow-keying between files.
+    pub expanded: bool,
     /// Whether `preview` is the waiting line rather than a decoded file.
     ///
     /// The panel's surface repaints only when its content key changes, and
@@ -128,8 +335,50 @@ impl Session {
             anchor,
             opened_at,
             closing: None,
+            video: None,
+            expanded: false,
             loading: false,
         }
+    }
+
+    /// Fill the space, or go back to the usual share of it.
+    pub fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+    }
+
+    /// Start playing `path` in this session, if the preview is a video and
+    /// a player can be started. See [`Video::open`].
+    pub fn attach_video(
+        &mut self,
+        path: &Path,
+        options: Options,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) {
+        self.video = Video::open(&self.preview, path, options, wake);
+    }
+
+    /// The playback's contribution to the panel's repaint key.
+    pub fn video_key(&self) -> u64 {
+        self.video.as_ref().map(Video::key).unwrap_or(0)
+    }
+
+    /// The newest frame's sequence number, for a host that paints the panel
+    /// into its own window and has no content key to notice a frame for it.
+    pub fn video_frame_seq(&self) -> u64 {
+        self.video.as_ref().map(Video::frame_seq).unwrap_or(0)
+    }
+
+    /// The pointer over a playing video. `None` when there is no video and
+    /// the caller's own handling applies; `Some(handled)` otherwise.
+    pub fn video_pointer(
+        &mut self,
+        kind: VideoPointer,
+        x: f32,
+        y: f32,
+        content: Rect,
+    ) -> Option<bool> {
+        let video = self.video.as_mut()?;
+        Some(video.pointer(kind, x, y, content))
     }
 
     /// A session on a file whose decode has only just been asked for: the
@@ -156,12 +405,14 @@ impl Session {
     /// too, so an exit still flies home to the row that is selected.
     pub fn awaiting(&mut self, name: String, is_dir: bool, anchor: Rect) {
         let opened_at = self.opened_at;
+        let expanded = self.expanded;
         let anchor = if anchor.is_empty() {
             self.anchor
         } else {
             anchor
         };
         *self = Self::waiting(name, is_dir, anchor, opened_at);
+        self.expanded = expanded;
     }
 
     /// How far into the entrance the panel is, 0 → 1.
@@ -487,13 +738,37 @@ fn waiting_preview(name: &str, is_dir: bool) -> Preview {
 
 /// Where the panel rests, centred in a window of `width` × `height`.
 pub fn panel_rect(width: f32, height: f32) -> Rect {
-    let w = (width * PANEL_FRACTION).max(PANEL_MIN.0).min(width - 32.0);
-    let h = (height * PANEL_FRACTION)
-        .max(PANEL_MIN.1)
-        .min(height - 32.0);
+    resting_in(Rect::from_wh(width, height), false)
+}
+
+/// What an expanded panel leaves around itself. Enough to still read as a
+/// card laid over the desktop rather than a window that replaced it.
+pub const EXPANDED_MARGIN: f32 = 12.0;
+
+/// Where the panel rests inside `space` — a window or a display, in points.
+///
+/// At rest it takes [`PANEL_FRACTION`] of the space, floored at
+/// [`PANEL_MIN`] and never quite touching the edges. Expanded it takes all
+/// of it bar [`EXPANDED_MARGIN`], which is what the title strip's expand
+/// button asks for.
+pub fn resting_in(space: Rect, expanded: bool) -> Rect {
+    let (width, height) = (space.width(), space.height());
+    let (w, h) = if expanded {
+        (
+            (width - EXPANDED_MARGIN * 2.0).max(1.0),
+            (height - EXPANDED_MARGIN * 2.0).max(1.0),
+        )
+    } else {
+        (
+            (width * PANEL_FRACTION).max(PANEL_MIN.0).min(width - 32.0),
+            (height * PANEL_FRACTION)
+                .max(PANEL_MIN.1)
+                .min(height - 32.0),
+        )
+    };
     Rect::from_xywh(
-        (width - w) / 2.0,
-        (height - h) / 2.0,
+        space.left + (width - w) / 2.0,
+        space.top + (height - h) / 2.0,
         w.max(1.0),
         h.max(1.0),
     )
@@ -556,6 +831,31 @@ mod tests {
     /// to fit any panel these tests use, so the fit rect fills one axis of
     /// the content box exactly and the zoom arithmetic has something to bite
     /// on.
+    #[test]
+    fn an_expanded_panel_fills_its_space_bar_the_margin() {
+        let space = Rect::from_xywh(100.0, 50.0, 1600.0, 900.0);
+        let rest = resting_in(space, false);
+        let full = resting_in(space, true);
+        assert!(rest.width() < full.width() && rest.height() < full.height());
+        assert!((full.left - (space.left + EXPANDED_MARGIN)).abs() < 0.01);
+        assert!((full.right - (space.right - EXPANDED_MARGIN)).abs() < 0.01);
+        assert!((full.top - (space.top + EXPANDED_MARGIN)).abs() < 0.01);
+        assert!((full.bottom - (space.bottom - EXPANDED_MARGIN)).abs() < 0.01);
+        // Both are centred in the same space.
+        assert!((rest.center_x() - full.center_x()).abs() < 0.01);
+        assert!((rest.center_y() - full.center_y()).abs() < 0.01);
+    }
+
+    #[test]
+    fn expanding_survives_moving_to_the_next_file() {
+        let mut session = image_session(100, 100);
+        session.toggle_expanded();
+        session.awaiting("next.png".into(), false, Rect::new_empty());
+        assert!(session.expanded);
+        session.toggle_expanded();
+        assert!(!session.expanded);
+    }
+
     fn image_session(width: u32, height: u32) -> Session {
         Session::new(
             Preview::Pixels {

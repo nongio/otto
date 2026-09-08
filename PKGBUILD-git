@@ -1,7 +1,7 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-git
-pkgver=1.0.0.r23.g6c1e7fd4
+pkgver=1.0.0.r50.g925f1bdb
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
 url="https://github.com/nongio/otto"
@@ -48,6 +48,7 @@ build() {
     cargo build --release -p otto-files
     cargo build --release -p otto-launcher
     cargo build --release -p otto-quickview
+    cargo build --release -p otto-media-kit
 }
 
 package() {
@@ -64,6 +65,8 @@ package() {
     install -Dm755 target/release/otto-files "$pkgdir/usr/bin/otto-files"
     install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
     install -Dm755 target/release/otto-quickview "$pkgdir/usr/bin/otto-quickview"
+    # Quick View's playback worker: otto-files looks for it beside itself.
+    install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
 
     # Install documentation

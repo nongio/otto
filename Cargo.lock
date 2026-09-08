@@ -5149,6 +5149,7 @@ dependencies = [
  "laye-rs",
  "libc",
  "otto-kit",
+ "otto-media-kit",
  "otto-quickview",
  "skia-safe",
  "smithay-client-toolkit",
@@ -5260,6 +5261,18 @@ dependencies = [
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
+]
+
+[[package]]
+name = "otto-media-kit"
+version = "1.2.0"
+dependencies = [
+ "gstreamer",
+ "gstreamer-app",
+ "libc",
+ "otto-kit",
+ "skia-safe",
+ "tracing",
 ]
 
 [[package]]

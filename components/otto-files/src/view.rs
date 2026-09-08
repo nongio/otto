@@ -2017,6 +2017,11 @@ pub struct Frame<'a> {
     /// Pointer is over Quick View's close button, so it lights up — the same
     /// hover behaviour the sheet's close dot has.
     pub quickview_close_hovered: bool,
+    /// Pointer is over Quick View's expand button.
+    pub quickview_expand_hovered: bool,
+    /// Whether the open panel is expanded, which flips the expand button's
+    /// glyph to the collapse one.
+    pub quickview_expanded: bool,
     /// Thumbnails for the entries on screen, where any have been found. A
     /// file with one is drawn as itself instead of as its type's icon.
     ///
@@ -2118,6 +2123,12 @@ pub struct PreviewData<'a> {
     /// The decode, once it lands. `None` while it is still in flight, which
     /// is the big icon's cue to stand in for it.
     pub decoded: Option<&'a otto_kit::preview::Preview>,
+    /// A player, when the decode said video and one could be started. The
+    /// column then shows its frame and transport in the stage.
+    pub video: Option<&'a crate::quickview::Video>,
+    /// Whether that video is presented on its own subsurface, so the scene
+    /// layer leaves the stage to the column ground rather than drawing frames.
+    pub video_on_surface: bool,
     pub first_row: usize,
     /// What the column says about the file underneath its name — kind, size,
     /// when it was last written. Already formatted, because the listing has
@@ -2349,6 +2360,8 @@ pub fn preview_content(
     let name = data.name.to_string();
     let icon_chain = data.icon_chain.clone();
     let decoded = data.decoded.cloned();
+    let video = data.video.map(crate::quickview::Video::snapshot);
+    let video_on_surface = data.video_on_surface;
     let first_row = data.first_row;
     let info = data.info.clone();
 
@@ -2366,6 +2379,8 @@ pub fn preview_content(
             &theme,
             stage,
             decoded.as_ref(),
+            video.as_ref(),
+            video_on_surface,
             &icon_chain,
             first_row,
         );
@@ -2396,9 +2411,30 @@ pub fn preview_drag_picture(
             &theme,
             stage,
             decoded.as_ref(),
+            None,
+            false,
             &icon_chain,
             first_row,
         );
+    }
+}
+
+/// The player's box within the preview column's stage: the video's own
+/// shape, not the whole stage. The picture fills the box's width and the
+/// transport rides under it, so the box is `width / aspect + transport`,
+/// capped to the stage and centred in what is left. Until the aspect is
+/// known the box is the stage and the fitted draw letterboxes — one frame,
+/// then it snaps to shape. Drawing and hit-testing both measure against this,
+/// so they cannot disagree about where the controls are.
+pub fn preview_video_box(stage: Rect, aspect: Option<f32>) -> Rect {
+    match aspect {
+        Some(aspect) if aspect > 0.0 => {
+            let width = stage.width();
+            let height = (width / aspect + otto_media_kit::transport::HEIGHT).min(stage.height());
+            let top = (stage.center_y() - height / 2.0).max(stage.top);
+            Rect::from_xywh(stage.left, top, width, height)
+        }
+        _ => stage,
     }
 }
 
@@ -2425,9 +2461,44 @@ fn draw_preview_stage(
     theme: &Theme,
     stage: Rect,
     decoded: Option<&otto_kit::preview::Preview>,
+    video: Option<&crate::quickview::VideoSnapshot>,
+    // Whether a video is drawn on its own subsurface over this stage, in
+    // which case the stage is left to the column ground here.
+    on_surface: bool,
     icon_chain: &[String],
     first_row: usize,
 ) {
+    // A video plays in the stage, transport and all, the same view Quick
+    // View draws in its panel. The card the decoder produced is its poster.
+    if let Some(video) = video {
+        // On its own subsurface the player draws itself; the scene layer
+        // leaves the stage to the column's ground so it is not re-recorded on
+        // every frame. See `pane_surfaces::sync_preview_video`.
+        if on_surface {
+            return;
+        }
+        let poster = video
+            .poster
+            .as_ref()
+            .and_then(otto_kit::preview::Pixels::to_image);
+        let box_rect = preview_video_box(stage, video.aspect());
+        canvas.save();
+        canvas.clip_rect(stage, None, false);
+        otto_media_kit::view::draw_frame(
+            canvas,
+            box_rect,
+            video.frame.as_ref(),
+            poster.as_ref(),
+            &video.state,
+            otto_media_kit::view::Interaction {
+                scrubbing: video.scrubbing,
+                transport_opacity: 1.0,
+            },
+            theme,
+        );
+        canvas.restore();
+        return;
+    }
     // Nothing the previewer produced may leave the stage. The decoders
     // bound what they return, and each drawing path lays itself out to
     // fit, but the content is a *file's* — an archive with hundreds of
@@ -3808,6 +3879,18 @@ pub fn quickview_close_rect(panel: Rect) -> Rect {
     Rect::from_xywh(panel.right - INSET - D, strip.center_y() - D / 2.0, D, D)
 }
 
+/// The expand button, to the left of the close button.
+pub fn quickview_expand_rect(panel: Rect) -> Rect {
+    const GAP: f32 = 8.0;
+    let close = quickview_close_rect(panel);
+    Rect::from_xywh(
+        close.left - GAP - close.width(),
+        close.top,
+        close.width(),
+        close.height(),
+    )
+}
+
 /// The panel's title strip: the file's name and the close button.
 ///
 /// Chrome, not content. The preview is drawn below it, so a close button in
@@ -3881,6 +3964,78 @@ fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bo
         (centre.x - r, centre.y + r),
         &glyph,
     );
+}
+
+/// The expand button: the same dot as close, with two diagonal arrows —
+/// pointing out to fill the display, in to come back.
+fn draw_quickview_expand(
+    canvas: &Canvas,
+    theme: &Theme,
+    panel: Rect,
+    hovered: bool,
+    expanded: bool,
+    opacity: f32,
+) {
+    let button = quickview_expand_rect(panel);
+    let centre = Point::new(button.center_x(), button.center_y());
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(fade(
+        if hovered {
+            theme.fill_primary
+        } else {
+            theme.fill_secondary
+        },
+        opacity,
+    ));
+    canvas.draw_circle(centre, button.width() / 2.0, &paint);
+
+    let mut glyph = Paint::default();
+    glyph.set_anti_alias(true);
+    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_stroke_width(1.5);
+    glyph.set_stroke_cap(skia_safe::PaintCap::Round);
+    glyph.set_stroke_join(skia_safe::PaintJoin::Round);
+    glyph.set_color(fade(theme.text_secondary, opacity));
+
+    // Two arrows on the rising diagonal. The shaft runs from near the centre
+    // to near the rim; the head sits at the outer end when expanding and at
+    // the inner end when collapsing, so the same strokes say both things.
+    let outer = button.width() * 0.28;
+    let inner = button.width() * 0.06;
+    let head = button.width() * 0.16;
+    for sign in [-1.0f32, 1.0] {
+        // Bottom-left arrow for sign = -1, top-right for sign = 1: x grows
+        // with sign, y shrinks with it.
+        let tip_out = Point::new(centre.x + sign * outer, centre.y - sign * outer);
+        let tip_in = Point::new(centre.x + sign * inner, centre.y - sign * inner);
+        canvas.draw_line(tip_in, tip_out, &glyph);
+        let (tip, dir) = if expanded {
+            (tip_in, -sign)
+        } else {
+            (tip_out, sign)
+        };
+        // The head's two strokes come back from the tip along each axis.
+        canvas.draw_line(tip, Point::new(tip.x - dir * head, tip.y), &glyph);
+        canvas.draw_line(tip, Point::new(tip.x, tip.y + dir * head), &glyph);
+    }
+}
+
+#[cfg(test)]
+mod quickview_buttons {
+    use super::*;
+
+    #[test]
+    fn the_expand_button_sits_left_of_close_inside_the_strip() {
+        let panel = Rect::from_xywh(100.0, 100.0, 800.0, 600.0);
+        let close = quickview_close_rect(panel);
+        let expand = quickview_expand_rect(panel);
+        let strip = quickview_titlebar_rect(panel);
+        assert!(expand.right < close.left);
+        assert!(expand.top >= strip.top && expand.bottom <= strip.bottom);
+        assert!((expand.center_y() - close.center_y()).abs() < 0.01);
+    }
 }
 
 /// How much of the panel's chrome is drawn at the size the panel is now.
@@ -3999,23 +4154,51 @@ pub fn draw_quickview(
         }
 
         draw_quickview_close(canvas, f.theme, panel, f.quickview_close_hovered, chrome);
+        draw_quickview_expand(
+            canvas,
+            f.theme,
+            panel,
+            f.quickview_expand_hovered,
+            f.quickview_expanded,
+            chrome,
+        );
     }
 
     let content = quickview_content_rect(panel);
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
     canvas.clip_rect(content, None, true);
-    otto_kit::preview::draw(
-        canvas,
-        content,
-        &session.preview,
-        f.theme,
-        session.first_row,
-        session.zoom,
-        &|name: &str, size: i32| {
-            icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
-        },
-    );
+    if let Some(video) = &session.video {
+        // A playing video takes the card's place. The card's artwork is the
+        // poster until the first frame lands; with none, the stage is dark.
+        let poster = video
+            .poster
+            .as_ref()
+            .and_then(otto_kit::preview::Pixels::to_image);
+        otto_media_kit::view::draw(
+            canvas,
+            content,
+            &video.player,
+            poster.as_ref(),
+            otto_media_kit::view::Interaction {
+                scrubbing: video.scrubbing,
+                transport_opacity: 1.0,
+            },
+            f.theme,
+        );
+    } else {
+        otto_kit::preview::draw(
+            canvas,
+            content,
+            &session.preview,
+            f.theme,
+            session.first_row,
+            session.zoom,
+            &|name: &str, size: i32| {
+                icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE)
+            },
+        );
+    }
 
     // The pan's bars, inside the same clip as the picture they belong to.
     // Nothing is drawn unless there is a zoomed picture with something under
@@ -5229,6 +5412,8 @@ mod geometry_tests {
             action_row: None,
             footer: 0.0,
             quickview_close_hovered: false,
+            quickview_expand_hovered: false,
+            quickview_expanded: false,
             drop_target: None,
             marquee: None,
             path_entry: false,

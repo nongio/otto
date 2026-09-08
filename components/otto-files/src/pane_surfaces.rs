@@ -113,6 +113,10 @@ pub struct PaneSurfaces {
     pan: Option<PaneSurface>,
     /// The Quick View panel, in a surface of its own over everything.
     quickview: Option<PaneSurface>,
+    /// The docked preview column's video player, in a surface of its own so
+    /// its per-frame repaints never touch the toplevel. Sized to the video's
+    /// shape, placed over the column's stage; see [`Self::sync_preview_video`].
+    preview_video: Option<PaneSurface>,
     /// Which panel, and which direction, [`Self::quickview_resting`] was
     /// worked out for: the session's generation and whether it is closing.
     /// `Some(closing)` once the output has been asked about for the panel
@@ -125,14 +129,19 @@ pub struct PaneSurfaces {
     /// A fresh answer has been asked for and has not arrived. The previous
     /// resting rect stays in use until it does.
     quickview_awaiting: bool,
-    /// Where the panel rests, frozen for the length of one opening or one
-    /// closing.
+    /// The display the panel is centred on, in window points, frozen for the
+    /// length of one opening or one closing.
     ///
     /// Recomputed only at those two moments, and never in between. The
     /// compositor's answer is relative to the *window*, so anything that moves
     /// the window — tiling it, dragging it — changes what it means. Following
     /// that continuously would drag the panel across the screen mid-animation
-    /// and, when the window moves far enough, off it.
+    /// and, when the window moves far enough, off it. The panel's own rect is
+    /// derived from this on every pass, since expanding it changes the rect
+    /// without changing where the display is.
+    quickview_display: Option<Rect>,
+    /// Where the panel was last placed to rest, whichever space it rests in.
+    /// What the pointer handler measures against.
     quickview_resting: Option<Rect>,
     /// Set when a paint was wanted but the surface still had a frame in
     /// flight. The throttle is only safe while something else keeps calling
@@ -157,8 +166,10 @@ impl PaneSurfaces {
             panes: Vec::new(),
             pan: None,
             quickview: None,
+            preview_video: None,
             quickview_placement: None,
             quickview_awaiting: false,
+            quickview_display: None,
             quickview_resting: None,
             pending: false,
             stack_dirty: false,
@@ -183,6 +194,7 @@ impl PaneSurfaces {
         // columns and nothing here touches them.
         if f.mode != ViewMode::Columns || !enabled() {
             let mut changed = self.hide_all();
+            changed |= self.sync_preview_video(parent, f, quickview.is_some());
             changed |= self.sync_quickview(parent, f, quickview);
             self.restack(parent);
             return changed;
@@ -279,6 +291,7 @@ impl PaneSurfaces {
             painted |= pane.hide();
         }
         painted |= self.sync_pan_bar(parent, f, viewport);
+        painted |= self.sync_preview_video(parent, f, quickview.is_some());
         painted |= self.sync_quickview(parent, f, quickview);
         self.restack(parent);
         painted
@@ -310,7 +323,11 @@ impl PaneSurfaces {
         let trace = std::env::var_os("OTTO_FILES_QV_TRACE").is_some();
         let mut order: Vec<String> = Vec::new();
         let mut below: Option<WlSurface> = None;
-        let overlays = [self.pan.as_ref(), self.quickview.as_ref()];
+        let overlays = [
+            self.preview_video.as_ref(),
+            self.pan.as_ref(),
+            self.quickview.as_ref(),
+        ];
         for (index, pane) in self.panes.iter().map(Some).chain(overlays).enumerate() {
             let Some(pane) = pane else { continue };
             let surface = pane.surface.wl_surface().clone();
@@ -358,12 +375,13 @@ impl PaneSurfaces {
         // The *old* rect stays in force until the new answer lands. Nulling it
         // here is what made the panel snap to the window's centre and back.
         if self.quickview_awaiting {
-            if let Some(rect) = centered_resting(pane, self.scale) {
-                self.quickview_resting = Some(rect);
+            if let Some(rect) = centered_display(pane, self.scale) {
+                self.quickview_display = Some(rect);
                 self.quickview_awaiting = false;
             }
         }
-        self.quickview_resting
+        self.quickview_display
+            .map(|display| quickview::resting_in(display, session.expanded))
     }
 
     /// The Quick View panel.
@@ -400,9 +418,13 @@ impl PaneSurfaces {
         // stays in window coordinates either way, which is what lets the
         // entrance keep growing out of the file's icon: the anchor and the
         // resting place are in the same space.
-        let resting = self
-            .resting_for(session)
-            .unwrap_or_else(|| quickview::panel_rect(f.width, f.height + f.footer));
+        let resting = self.resting_for(session).unwrap_or_else(|| {
+            quickview::resting_in(
+                Rect::from_wh(f.width, f.height + f.footer),
+                session.expanded,
+            )
+        });
+        self.quickview_resting = Some(resting);
         // Wherever the panel is *now* — part way in, at rest, or part way
         // back to its file. Asking for the entrance alone left the exit out
         // of the surface entirely: once open, `entrance_t` is pinned at 1, so
@@ -473,6 +495,110 @@ impl PaneSurfaces {
             canvas.restore();
         });
         qv_trace::frame(session, rect, resized, started);
+        painted = true;
+        painted
+    }
+    /// The docked preview column's video, on its own subsurface.
+    ///
+    /// Sized to the video's shape and placed over the column's stage, so the
+    /// picture updates without the toplevel — or the scene's cached preview
+    /// picture — being touched. Input stays with the toplevel, exactly like
+    /// the columns: the browser's pointer routing already hit-tests the box
+    /// in window coordinates (see `Browser::preview_video_pointer`).
+    fn sync_preview_video(&mut self, parent: &WlSurface, f: &Frame, quickview_up: bool) -> bool {
+        // Shown only for a video in the column view, and never behind the
+        // Quick View panel — which is its own, larger player.
+        let video = (f.mode == ViewMode::Columns && !quickview_up)
+            .then(|| {
+                f.preview
+                    .as_ref()
+                    .and_then(|p| p.video.map(|v| (v, p.info.len())))
+            })
+            .flatten();
+        let Some((video, info_lines)) = video else {
+            return self
+                .preview_video
+                .as_mut()
+                .map(PaneSurface::hide)
+                .unwrap_or(false);
+        };
+
+        let snapshot = video.snapshot();
+        // Held hidden until the worker has said what shape the video is. The
+        // box is sized from the aspect, so showing before it is known would
+        // put a full-height surface up and then resize it to the real box a
+        // frame later — a visible snap. The dark column ground stands in for
+        // the few milliseconds until Ready arrives, and the surface then
+        // appears once, at the right size.
+        let Some(aspect) = snapshot.aspect() else {
+            return self
+                .preview_video
+                .as_mut()
+                .map(PaneSurface::hide)
+                .unwrap_or(false);
+        };
+
+        let full = view::preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w);
+        let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
+        let stage = view::preview_stage_rect(full, info_lines);
+        let rect = view::preview_video_box(stage, Some(aspect));
+        // A column panned so its player would spill over the sidebar is not
+        // shown on a surface — the surface has no parent clip. The scene's
+        // in-layer draw, which is clipped, covers that transient.
+        if rect.left < viewport.left || rect.right > viewport.right || rect.width() <= 1.0 {
+            return self
+                .preview_video
+                .as_mut()
+                .map(PaneSurface::hide)
+                .unwrap_or(false);
+        }
+
+        if self.preview_video.is_none() {
+            self.preview_video = Self::create(parent, rect);
+            self.stack_dirty = true;
+        }
+        let scale = self.scale;
+        let Some(pane) = self.preview_video.as_mut() else {
+            return false;
+        };
+        let mut painted = pane.show();
+        pane.place(rect, scale);
+
+        let key = hash_rect(rect) ^ video.key().rotate_left(19);
+        if pane.key == key {
+            return painted;
+        }
+        use wayland_client::Proxy;
+        if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
+            self.pending = true;
+            return painted;
+        }
+        pane.key = key;
+
+        let poster = snapshot
+            .poster
+            .as_ref()
+            .and_then(otto_kit::preview::Pixels::to_image);
+        let theme = f.theme.clone();
+        let origin = (rect.left, rect.top);
+        pane.surface.draw(|canvas| {
+            canvas.clear(skia_safe::Color::TRANSPARENT);
+            canvas.save();
+            canvas.translate((-origin.0, -origin.1));
+            otto_media_kit::view::draw_frame(
+                canvas,
+                rect,
+                snapshot.frame.as_ref(),
+                poster.as_ref(),
+                &snapshot.state,
+                otto_media_kit::view::Interaction {
+                    scrubbing: snapshot.scrubbing,
+                    transport_opacity: 1.0,
+                },
+                &theme,
+            );
+            canvas.restore();
+        });
         painted = true;
         painted
     }
@@ -551,6 +677,9 @@ impl PaneSurfaces {
         }
         if let Some(pan) = self.pan.as_mut() {
             changed |= pan.hide();
+        }
+        if let Some(preview_video) = self.preview_video.as_mut() {
+            changed |= preview_video.hide();
         }
         changed
     }
@@ -796,6 +925,9 @@ fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> 
         // invisible to the key, and the panel never repaints out of its
         // waiting state.
         ^ if session.loading { LOADING_KEY } else { 0 }
+        // A video changes what is drawn on every frame and every tick of its
+        // clock, with nothing else about the panel moving.
+        ^ session.video_key()
 }
 
 /// The content key's contribution for a panel that is still waiting for its
@@ -918,7 +1050,7 @@ mod qv_trace {
 /// surface is created, and the reply lands a round trip later, so the first
 /// frame or two of an entrance are still centred on the window. Those frames
 /// are the smallest ones, at the file's icon, so the correction is invisible.
-fn centered_resting(pane: &PaneSurface, scale: f32) -> Option<Rect> {
+fn centered_display(pane: &PaneSurface, scale: f32) -> Option<Rect> {
     use wayland_client::Proxy;
 
     let style = pane.surface.layer()?;
@@ -933,22 +1065,7 @@ fn centered_resting(pane: &PaneSurface, scale: f32) -> Option<Rect> {
     // The answer is in the same pixels the positions are set in; the rest of
     // this module works in points.
     let (x, y, width, height) = (x / scale, y / scale, width / scale, height / scale);
-
-    // The panel's share of the display, floored the same way it is floored
-    // against a window, and never quite touching the edges.
-    let panel_width = (width * quickview::PANEL_FRACTION)
-        .max(quickview::PANEL_MIN.0)
-        .min(width - 32.0);
-    let panel_height = (height * quickview::PANEL_FRACTION)
-        .max(quickview::PANEL_MIN.1)
-        .min(height - 32.0);
-
-    Some(Rect::from_xywh(
-        x + (width - panel_width) / 2.0,
-        y + (height - panel_height) / 2.0,
-        panel_width.max(1.0),
-        panel_height.max(1.0),
-    ))
+    Some(Rect::from_xywh(x, y, width, height))
 }
 
 #[cfg(test)]
