@@ -7017,7 +7017,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 [[package]]
 name = "smithay"
 version = "0.7.0"
-source = "git+https://github.com/nongio/smithay?branch=feat%2Fdmabuf-scanout#90db50ef7419506c7db0daf5f3f57ea34d6d149e"
+source = "git+https://github.com/nongio/smithay?branch=feat%2Fdmabuf-scanout#f06b126149b7377289841e87d4c95f9712cbee2b"
 dependencies = [
  "aliasable",
  "appendlist",
@@ -7098,7 +7098,7 @@ dependencies = [
 [[package]]
 name = "smithay-drm-extras"
 version = "0.1.0"
-source = "git+https://github.com/nongio/smithay?branch=feat%2Fdmabuf-scanout#90db50ef7419506c7db0daf5f3f57ea34d6d149e"
+source = "git+https://github.com/nongio/smithay?branch=feat%2Fdmabuf-scanout#f06b126149b7377289841e87d4c95f9712cbee2b"
 dependencies = [
  "drm",
  "libdisplay-info",
