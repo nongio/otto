@@ -687,6 +687,26 @@ launcher-badge-window = Fenêtre
 launcher-badge-calc = Calc
 
 
+## Emoji picker
+
+# What the search field says when empty.
+emoji-search = Rechercher un emoji…
+# Shown in the grid when nothing matches what was typed.
+emoji-no-results = Aucun emoji trouvé
+# The section and tab titles. These are Unicode's own category names, and
+# the CLDR translations of them are the reference where one exists.
+emoji-group-recent = Récents
+emoji-group-smileys = Smileys et émotions
+emoji-group-people = Personnes et corps
+emoji-group-nature = Animaux et nature
+emoji-group-food = Nourriture et boissons
+emoji-group-travel = Voyages et lieux
+emoji-group-activities = Activités
+emoji-group-objects = Objets
+emoji-group-symbols = Symboles
+emoji-group-flags = Drapeaux
+
+
 ## Login, lock and authentication
 ##
 ## The greeter, the lock screen, and the panel both of them draw. Text that

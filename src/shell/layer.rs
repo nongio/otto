@@ -34,6 +34,13 @@ pub struct LayerShellSurface {
     last_configure_serial: AtomicU32,
     /// Computed geometry after layout (position + size in output coordinates)
     geometry: Rectangle<i32, Logical>,
+    /// Whether an exclusive-keyboard surface has already been given focus once
+    /// on map. A modal panel — the launcher, the emoji picker — asks for
+    /// exclusive interactivity because it wants the keyboard the moment it
+    /// appears, not on the next keystroke; this makes that a one-time grant so
+    /// a later commit cannot steal focus back from a window the panel handed
+    /// off to.
+    initial_focus_granted: std::cell::Cell<bool>,
 }
 
 impl LayerShellSurface {
@@ -53,7 +60,14 @@ impl LayerShellSurface {
             namespace,
             last_configure_serial: AtomicU32::new(0),
             geometry: Rectangle::default(),
+            initial_focus_granted: std::cell::Cell::new(false),
         }
+    }
+
+    /// Take the one-time "give me the keyboard on map" grant, returning whether
+    /// it is still owed. `false` on every call after the first.
+    pub fn take_initial_focus_grant(&self) -> bool {
+        !self.initial_focus_granted.replace(true)
     }
 
     /// Get the underlying Smithay LayerSurface

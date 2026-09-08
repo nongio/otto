@@ -69,7 +69,8 @@ Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases
 - **X11 apps, including fullscreen games** — keyboard focus for globally-active clients, output scale via XSETTINGS, direct scanout.
 - **A file manager** — [`otto-files`](https://nongio.github.io/otto/files/): list, icon and column views, thumbnails read from the shared cache other file managers write, drag and drop in and out of other apps, background copy/move/trash with progress and 32 levels of undo, and a quick-view panel on `Space` that previews pictures, text, PDFs and media details in a sandboxed process. It is also the desktop's file picker, so Open and Save dialogs in Firefox and Chrome are this window rather than a GTK one.
 - **A settings app** — [`otto-settings`](https://nongio.github.io/otto/settings/) edits the configuration live over D-Bus, so you don't have to hand-write TOML (you still can — the app writes to the same file, though it does not watch it for outside edits). Displays, Dock, input, sound, power, lock and login, and the shortcut list.
-- **A launcher** — [`otto-launcher`](https://nongio.github.io/otto/launcher/): `Ctrl+Space` to start an application, `Ctrl+Shift+P` to jump to a window, with fuzzy ranking and arithmetic in the query field. All three are first versions — they aim to be useful day to day, and each guide lists what is still missing rather than leaving you to find out.
+- **A launcher** — [`otto-launcher`](https://nongio.github.io/otto/launcher/): `Ctrl+Space` to start an application, `Ctrl+Shift+P` to jump to a window, with fuzzy ranking and arithmetic in the query field.
+- **An emoji picker** — [`otto-emoji`](https://nongio.github.io/otto/emoji/): `Ctrl+.` opens a card of every emoji by category, with search by name and a skin-tone setting; the pick is typed straight into whichever window had the keyboard. All four are first versions — they aim to be useful day to day, and each guide lists what is still missing rather than leaving you to find out.
 
 - **Rendering built for this** — a Skia pipeline with KMS multi-plane scanout (Dock, app switcher, popups and topmost windows on their own hardware planes) and cross-plane backdrop blur.
 - **Input and theming** — natural and two-finger scrolling, keyboard remapping, fully configurable shortcuts, dark/light themes, accent colors, and night shift through `wlsunset` or `gammastep`, which drive the hardware gamma tables.
@@ -273,6 +274,7 @@ Otto is the compositor plus a set of components, each under `components/` and bu
 | `otto-files` | File manager, and the desktop's file picker |
 | `otto-quickview` | Sandboxed preview decoder behind Files' quick view |
 | `otto-launcher` | Keyboard-driven launcher — type to filter apps and windows |
+| `otto-emoji` | Emoji picker — search or browse, and the pick is typed into the focused window |
 | `otto-rdp` | RDP bridge serving a virtual output to a remote client |
 | `otto-kit` | UI toolkit the Otto clients are built on |
 | `xdg-desktop-portal-otto` | XDG Desktop Portal backend: screen sharing, file picker, screenshots, settings, permission dialogs |

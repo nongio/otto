@@ -36,6 +36,7 @@ versions: useful day to day, still filling in.
 | [Files](files.md) | Browsing, typing a path, thumbnails, file operations, quick view, the file picker |
 | [Settings](settings.md) | Editing the configuration live, display arrangement, shortcuts |
 | [Launcher](launcher.md) | Starting applications and switching windows from the keyboard |
+| [Emoji Picker](emoji.md) | Finding an emoji and typing it into the focused window |
 
 ## Configuring Otto
 

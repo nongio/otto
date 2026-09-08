@@ -143,6 +143,9 @@ tempfile = "3"
 serial_test = "3"
 serde_json = "1"
 otto-kit = { path = "components/otto-kit", features = ["testing"] }
+# The picker's typing path, exercised end to end against the headless
+# compositor (tests/emoji_typing.rs).
+otto-emoji = { path = "components/otto-emoji" }
 wayland-client = "0.31"
 # Client bindings for the protocols otto-rdp injects input through, so the
 # end-to-end tests can act as the RDP bridge does (tests/rdp_bridge.rs).
@@ -170,6 +173,7 @@ members = [
     "components/otto-bar",
     "components/otto-islands",
     "components/otto-launcher",
+    "components/otto-emoji",
     "components/otto-settings",
     "components/otto-files",
     "components/otto-quickview",

@@ -25,7 +25,7 @@
     THIS SOFTWARE.
   </copyright>
 
-  <interface name="otto_surface_style_manager_v1" version="4">
+  <interface name="otto_surface_style_manager_v1" version="5">
     <description summary="declarative animations and compositing for Wayland">
       Otto surface style protocol provides declarative animations and advanced
       compositing features. Clients can augment wayland surfaces with animations
@@ -81,7 +81,7 @@
   </interface>
 
 
-  <interface name="otto_surface_style_v1" version="4">
+  <interface name="otto_surface_style_v1" version="5">
     <description summary="style compositing and animation support">
       A style surface augments a wl_surface and provides additional compositing
       and animation capabilities. It can have transforms, effects, and visual
@@ -208,6 +208,51 @@
         clipped to this shape.
       </description>
       <arg name="radius" type="fixed" summary="corner radius in pixels"/>
+    </request>
+
+    <enum name="beak_edge">
+      <description summary="which edge a beak sticks out of">
+        A beak is the point on a balloon — the bit that reaches out of one edge
+        towards whatever the surface is about. Which edge it is on says which
+        way the surface points: a beak on the top edge means the surface hangs
+        below the thing it points at.
+      </description>
+      <entry name="none" value="0" summary="no beak; the surface is a plain rounded rectangle"/>
+      <entry name="top" value="1" summary="out of the top edge, pointing up"/>
+      <entry name="bottom" value="2" summary="out of the bottom edge, pointing down"/>
+      <entry name="left" value="3" summary="out of the left edge, pointing left"/>
+      <entry name="right" value="4" summary="out of the right edge, pointing right"/>
+    </enum>
+
+    <request name="set_beak" since="5">
+      <description summary="give the surface a balloon's point">
+        Shape the surface as a balloon: a rounded rectangle with a beak
+        reaching out of one edge, instead of a plain rounded rectangle.
+
+        Everything the compositor paints follows the new outline — the
+        background, the blur behind it, the border and the shadow — so a
+        frosted panel keeps being one piece of glass rather than a rectangle
+        with something stuck to it. A client cannot achieve this by drawing:
+        the material behind a surface is the compositor's, and it can only be
+        asked for, not painted.
+
+        The size set by set_size covers the whole balloon, beak included, and
+        the beak is taken out of the edge it is on: a surface 200 by 120 with a
+        10-pixel beak on its top edge has a 200 by 110 body below it. A client
+        drawing its own content has to leave that strip alone.
+
+        `offset` is where the tip points, measured along the edge from the
+        surface's top-left corner. It is clamped so the beak stays on the
+        straight part of the edge rather than growing out of a rounded corner.
+
+        Passing an edge of `none` removes the beak. The beak is not animatable:
+        it is the surface's shape, and a shape that moved while a transaction
+        interpolated the size would tear.
+      </description>
+      <arg name="edge" type="uint" enum="beak_edge" summary="which edge it sticks out of"/>
+      <arg name="offset" type="fixed" summary="where the tip points, along the edge, in pixels"/>
+      <arg name="width" type="fixed" summary="how wide the beak is where it meets the body"/>
+      <arg name="height" type="fixed" summary="how far it reaches out of the edge"/>
     </request>
 
     <enum name="output_placement">

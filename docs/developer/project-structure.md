@@ -61,6 +61,7 @@ Each is a standalone binary in `components/`:
 | `otto-bar` | The top bar: clock, tray, global menus |
 | `otto-islands` | The dynamic island: notifications, HUD, permission dialogs |
 | `otto-launcher` | Keyboard-driven app and window launcher |
+| `otto-emoji` | Emoji picker that types the pick into the focused window |
 | `otto-settings` | Settings application |
 | `otto-lock` | Lock screen, backed by PAM |
 | `otto-greeter` | Login screen, backed by greetd |

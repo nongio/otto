@@ -422,6 +422,7 @@ pub struct Otto<BackendData: Backend + 'static> {
 
     // otto_dock protocol
     pub otto_dock: crate::otto_dock::handlers::OttoDockState,
+    pub text_cursor: crate::text_cursor::TextCursorState,
     pub dock_item_surfaces: HashMap<ObjectId, crate::otto_dock::DockItem>,
     // Rendering metrics
     #[cfg(feature = "metrics")]
@@ -607,6 +608,19 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
     crate::otto_dock::protocol::gen::otto_dock_item_v1::OttoDockItemV1: crate::otto_dock::protocol::DockItem
 ] => crate::otto_dock::handlers::OttoDockState);
 
+// otto_text_cursor protocol delegates
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::text_cursor::protocol::gen::otto_text_cursor_manager_v1::OttoTextCursorManagerV1: ()
+] => crate::text_cursor::TextCursorState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::text_cursor::protocol::gen::otto_text_cursor_manager_v1::OttoTextCursorManagerV1: ()
+] => crate::text_cursor::TextCursorState);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::text_cursor::protocol::gen::otto_text_cursor_v1::OttoTextCursorV1: ()
+] => crate::text_cursor::TextCursorState);
+
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
     smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1: ()
 ] => screencopy::ScreencopyManagerState);
@@ -748,6 +762,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     unsafe {
                         display.get_mut().dispatch_clients(data).unwrap();
                     }
+                    // The caret moves on a text-input commit, which is not a
+                    // surface commit and so reaches none of the per-surface
+                    // hooks. Checking once per batch of client requests
+                    // catches it wherever it came from, and costs an
+                    // empty-vector test when nothing is watching.
+                    data.refresh_text_cursor();
                     Ok(PostAction::Continue)
                 },
             )
@@ -832,6 +852,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // Create otto_dock protocol global
         let otto_dock = crate::otto_dock::handlers::OttoDockState::new::<Self>(&dh);
+        let text_cursor = crate::text_cursor::TextCursorState::new::<Self>(&dh);
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -1046,6 +1067,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // otto_dock protocol
             otto_dock,
+            text_cursor,
             dock_item_surfaces: HashMap::new(),
             // render metrics
             #[cfg(feature = "metrics")]

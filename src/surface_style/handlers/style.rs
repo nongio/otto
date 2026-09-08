@@ -14,8 +14,9 @@ use crate::{
 
 use super::super::protocol::{
     gen::otto_surface_style_v1::{self, OttoSurfaceStyleV1},
-    SurfaceStyleHandler,
+    Beak, BeakEdge, SurfaceStyleHandler,
 };
+use crate::workspaces::utils::{draw_balloon_rect, BalloonArrow};
 
 impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for Otto<BackendData> {
     fn request(
@@ -70,6 +71,15 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                     s.client_owns_size = true;
                     s.last_size_px = Some((width, height));
                 });
+                // A balloon's outline is built from the size, so it has to be
+                // rebuilt when the size changes or the beak lands in the wrong
+                // place on a resized card.
+                refresh_beak_shape(
+                    &sstyle.layer,
+                    sstyle.beak,
+                    (width, height),
+                    sstyle.corner_radius_px,
+                );
 
                 let transaction = active_transaction.clone();
                 if let Some(txn_id) = active_transaction {
@@ -181,6 +191,58 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 trigger_window_update(state, &sstyle.surface.id());
             }
 
+            otto_surface_style_v1::Request::SetBeak {
+                edge,
+                offset,
+                width,
+                height,
+            } => {
+                // The beak's geometry is in surface pixels, the same space as
+                // `set_size` — which is not scaled here either. Scaling it by
+                // `screen_scale` on top of the scaling the client already did
+                // would grow the point without growing the balloon.
+                let edge = match edge.into_result() {
+                    Ok(otto_surface_style_v1::BeakEdge::Top) => Some(BeakEdge::Top),
+                    Ok(otto_surface_style_v1::BeakEdge::Bottom) => Some(BeakEdge::Bottom),
+                    Ok(otto_surface_style_v1::BeakEdge::Left) => Some(BeakEdge::Left),
+                    Ok(otto_surface_style_v1::BeakEdge::Right) => Some(BeakEdge::Right),
+                    // `none`, and anything a newer client invents.
+                    _ => None,
+                };
+                let beak = edge.map(|edge| Beak {
+                    edge,
+                    offset: wl_fixed_to_f32(offset),
+                    width: wl_fixed_to_f32(width),
+                    height: wl_fixed_to_f32(height),
+                });
+                store_style(state, &sstyle, |s| s.beak = beak);
+                refresh_beak_shape(
+                    &sstyle.layer,
+                    beak,
+                    applied_size(&sstyle),
+                    sstyle.corner_radius_px,
+                );
+                trigger_window_update(state, &sstyle.surface.id());
+            }
+            otto_surface_style_v1::Request::SetRotation { angle } => {
+                // Declared by the protocol since the first version and never
+                // implemented, so a client asking to turn a surface was
+                // silently ignored. Only the z axis is exposed; x and y stay
+                // where they are.
+                let angle = wl_fixed_to_f32(angle);
+                let rotation = layers::types::Point3d {
+                    x: 0.0,
+                    y: 0.0,
+                    z: angle,
+                };
+                if let Some(txn_id) = active_transaction {
+                    let change = sstyle.layer.change_rotation(rotation);
+                    accumulate_change(state, txn_id, change);
+                } else {
+                    sstyle.layer.set_rotation(rotation, None);
+                    trigger_window_update(state, &sstyle.surface.id());
+                }
+            }
             otto_surface_style_v1::Request::SetScale { x, y } => {
                 let x = wl_fixed_to_f32(x);
                 let y = wl_fixed_to_f32(y);
@@ -258,6 +320,16 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 let screen_scale = Config::with(|c| c.screen_scale) as f32;
                 let scaled_radius = radius * screen_scale;
 
+                // Stored as applied, not as sent: the balloon's outline has to
+                // round its corners by exactly what the layer's own rounded
+                // rectangle would, or a card with a beak would have visibly
+                // different corners from one without.
+                //
+                // Note that this is scaled once here and once again by clients
+                // that pre-scale what they send — the two conventions disagree
+                // across the tree (otto-bar sends points, otto-files pixels),
+                // which is a wider inconsistency than a balloon can settle.
+                store_style(state, &sstyle, |s| s.corner_radius_px = scaled_radius);
                 if let Some(txn_id) = active_transaction {
                     let change = sstyle.layer.change_border_corner_radius(scaled_radius);
                     accumulate_change(state, txn_id, change);
@@ -267,6 +339,14 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                         .set_border_corner_radius(BorderRadius::new_single(scaled_radius), None);
                     // trigger_window_update(state, &sstyle.surface.id());
                 }
+                // The balloon's corners are cut to the radius the layer itself
+                // would have used.
+                refresh_beak_shape(
+                    &sstyle.layer,
+                    sstyle.beak,
+                    applied_size(&sstyle),
+                    scaled_radius,
+                );
 
                 // A rounded window is clipped to a shape its own buffer does
                 // not have, so it cannot be scanned out raw — it needs the
@@ -566,6 +646,80 @@ fn store_style<BackendData: Backend>(
             edit(stored);
         }
     }
+}
+
+/// Give the layer the outline the client asked for: a balloon when it wants a
+/// beak, and the layer's own rounded rectangle when it does not.
+///
+/// Everything the compositor paints for a surface — the background, the blur
+/// behind it, the border, the shadow — follows the layer's shape, so this is
+/// the whole of what makes a balloon one piece of glass rather than a
+/// rectangle with a triangle beside it.
+///
+/// `size` and `radius` are in surface pixels, and the outline is rebuilt
+/// whenever either changes.
+pub(crate) fn refresh_beak_shape(
+    layer: &layers::prelude::Layer,
+    beak: Option<Beak>,
+    size: (f32, f32),
+    radius: f32,
+) {
+    let (width, height) = size;
+    let Some(beak) = beak else {
+        // Back to the plain rounded rectangle the layer draws by itself.
+        layer.shape(layers::prelude::Shape::RoundRect);
+        return;
+    };
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+
+    let arrow = match beak.edge {
+        BeakEdge::Bottom => BalloonArrow::Bottom,
+        BeakEdge::Left => BalloonArrow::Left,
+        BeakEdge::Right => BalloonArrow::Right,
+        // The balloon helper has no top variant: a balloon pointing up is the
+        // same path turned over, which is the down one mirrored in y.
+        BeakEdge::Top => BalloonArrow::Bottom,
+    };
+
+    // `draw_balloon_rect` takes the beak's position along its edge as a
+    // fraction, and measures it on the axis the beak is on.
+    let along = match beak.edge {
+        BeakEdge::Top | BeakEdge::Bottom => width,
+        BeakEdge::Left | BeakEdge::Right => height,
+    };
+    let position = if along > 0.0 {
+        (beak.offset / along).clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    // A tip is rounded a little, as the dock's labels are: a needle point
+    // reads as an artefact rather than a shape.
+    let tip_radius = (beak.height * 0.15).max(1.0);
+
+    let path = draw_balloon_rect(
+        0.0,
+        0.0,
+        width,
+        height,
+        radius,
+        beak.width,
+        beak.height,
+        position,
+        tip_radius,
+        arrow,
+    );
+    let path = if beak.edge == BeakEdge::Top {
+        // Mirror it in y about the middle: down becomes up, and the body ends
+        // up under the beak instead of above it.
+        let flip = layers::skia::Matrix::scale((1.0, -1.0));
+        let flipped = path.with_transform(&flip);
+        flipped.with_transform(&layers::skia::Matrix::translate((0.0, height)))
+    } else {
+        path
+    };
+    layer.shape(layers::prelude::Shape::from_path(&path));
 }
 
 /// The size the layer is becoming, in surface pixels.

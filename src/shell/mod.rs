@@ -191,6 +191,12 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         on_commit_buffer_handler::<Self>(surface);
         self.backend_data.early_import(surface);
 
+        // A caret moves as its window is typed into and as the window is
+        // dragged about, and both arrive here. Costs an empty-vector check
+        // unless something is actually watching, which is only while a client
+        // that places itself at the caret is on screen.
+        self.refresh_text_cursor();
+
         // A drag icon's commit can carry an anchor: the offset that puts the
         // point the user grabbed under the cursor, rather than the icon's
         // corner. It is relative to the last one, so it accumulates, and it is
@@ -245,6 +251,7 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
             if let Some(_layer_shell_surf) = self.layer_surfaces.get(&surface_id) {
                 // Layer shells don't need build_cache_for_view - they use the workspace layer directly
                 self.update_layer_shell_surface(&surface_id);
+                self.maybe_grant_initial_layer_focus(&surface_id);
 
                 // Don't recalculate here - it causes deadlock since layer_map is borrowed
                 // Recalculation will happen during arrange in ensure_initial_configure
@@ -601,6 +608,61 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
         }
+    }
+
+    /// Give a freshly mapped exclusive-keyboard layer surface the keyboard,
+    /// once. Otto otherwise only moves focus onto such a surface when the next
+    /// key is pressed (see `keyboard_key_to_action`), so a modal panel that
+    /// wants to be typed into the instant it appears — the launcher, the emoji
+    /// picker — would drop everything typed before that first key registered
+    /// the focus change. Granting it here, on the first mapped commit, closes
+    /// that gap.
+    ///
+    /// One-time, so it cannot steal focus back on a later paint from a window
+    /// the panel handed off to. Skipped while the session is locked, where the
+    /// lock surface owns the keyboard and nothing else may take it.
+    fn maybe_grant_initial_layer_focus(
+        &mut self,
+        surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) {
+        if self.is_session_locked() {
+            return;
+        }
+        let Some(layer) = self.layer_surfaces.get(surface_id) else {
+            return;
+        };
+        let exclusive = matches!(
+            layer.keyboard_interactivity(),
+            KeyboardInteractivity::Exclusive
+        ) && matches!(layer.wlr_layer(), Layer::Top | Layer::Overlay);
+        // Only once the surface is actually mapped can it hold focus; an
+        // unmapped surface with no buffer would take the keyboard into a void.
+        if !exclusive || !layer.can_receive_keyboard_focus() || !layer.take_initial_focus_grant() {
+            return;
+        }
+        // Move the focus on the next loop turn, not here: `set_focus` runs the
+        // whole focus-change machinery (leave/enter, grabs), and doing that in
+        // the middle of a surface commit deadlocks. An idle callback runs once
+        // the commit has fully returned, which is where the keypress path also
+        // safely changes focus from.
+        let surface_id = surface_id.clone();
+        self.handle.insert_idle(move |state| {
+            if state.is_session_locked() {
+                return;
+            }
+            let Some(layer) = state.layer_surfaces.get(&surface_id) else {
+                return;
+            };
+            if !layer.can_receive_keyboard_focus() {
+                return;
+            }
+            let target =
+                crate::focus::KeyboardFocusTarget::LayerSurface(layer.layer_surface().clone());
+            if let Some(keyboard) = state.seat.get_keyboard() {
+                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                keyboard.set_focus(state, Some(target), serial);
+            }
+        });
     }
 
     /// Is a modal overlay layer-shell surface on screen?

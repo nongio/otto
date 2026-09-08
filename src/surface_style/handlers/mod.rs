@@ -277,10 +277,10 @@ pub fn create_style_manager_global<BackendData: Backend + 'static>(
     display: &DisplayHandle,
 ) -> smithay::reexports::wayland_server::backend::GlobalId {
     // Version 2 added set_clip_children, version 3 output placement and
-    // output-relative sizing, version 4 the desktop_frame event; clients
-    // binding an older version keep working because wayland only ever hands
-    // them the requests and events their version knows.
-    display.create_global::<Otto<BackendData>, OttoSurfaceStyleManagerV1, _>(4, ())
+    // output-relative sizing, version 4 the desktop_frame event, version 5
+    // set_beak; clients binding an older version keep working because wayland
+    // only ever hands them the requests and events their version knows.
+    display.create_global::<Otto<BackendData>, OttoSurfaceStyleManagerV1, _>(5, ())
 }
 
 impl<BackendData: Backend> GlobalDispatch<OttoSurfaceStyleManagerV1, ()> for Otto<BackendData> {
@@ -355,6 +355,8 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleManagerV1, ()> for Otto<Back
                     bordered: false,
                     output_centered: false,
                     last_size_px: None,
+                    beak: None,
+                    corner_radius_px: 0.0,
                     last_desktop_frame: None,
                 };
 

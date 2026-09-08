@@ -40,6 +40,9 @@ use wayland_protocols::xdg::shell::client::{
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
+use wayland_protocols::wp::text_input::zv3::client::{
+    zwp_text_input_manager_v3, zwp_text_input_v3,
+};
 
 use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
 use wayland_protocols::ext::background_effect::v1::client::{
@@ -63,10 +66,18 @@ pub struct TestClientState {
     pub shm_formats: Vec<wl_shm::Format>,
     /// The seat's keyboard, once the compositor announces the capability.
     pub wl_keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// The text-input manager, for a test acting as an application with a
+    /// text field that reports where its caret is.
+    pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
+    pub text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     /// Keys delivered to this client, as `(evdev code, pressed)` in arrival
     /// order — what a remote input injector's key presses look like from the
     /// application's side.
     pub keys: Vec<(u32, bool)>,
+    /// Every keymap the compositor sent, as xkb text, in arrival order. A
+    /// virtual keyboard brings its own, so the last one is what the keys in
+    /// `keys` mean.
+    pub keymaps: Vec<String>,
     /// Whether the compositor has given this client's surface keyboard focus.
     pub keyboard_focused: bool,
     /// The seat's pointer, once the compositor announces the capability.
@@ -101,7 +112,10 @@ impl TestClientState {
             background_effect_capabilities: None,
             shm_formats: Vec::new(),
             wl_keyboard: None,
+            text_input_manager: None,
+            text_input: None,
             keys: Vec::new(),
+            keymaps: Vec::new(),
             keyboard_focused: false,
             wl_pointer: None,
             last_button_serial: None,
@@ -388,6 +402,33 @@ impl TestClient {
 
         pointer.set_cursor(serial, Some(&surface), 0, 0);
         Some((surface, buffer))
+    }
+
+    /// Report where this client's text cursor is, as an application with a
+    /// focused text field does.
+    ///
+    /// The rectangle is in the client's own surface coordinates. Enables the
+    /// text input on first use, since a compositor discards requests from one
+    /// that was never enabled. Returns whether the compositor offers
+    /// `zwp_text_input_manager_v3` at all.
+    pub fn set_text_cursor(&mut self, x: i32, y: i32, width: i32, height: i32) -> bool {
+        let (Some(manager), Some(seat)) = (
+            self.state.text_input_manager.clone(),
+            self.state.wl_seat.clone(),
+        ) else {
+            return false;
+        };
+        let text_input = self.state.text_input.clone().unwrap_or_else(|| {
+            let input = manager.get_text_input(&seat, &self.qh, ());
+            input.enable();
+            input.commit();
+            self.state.text_input = Some(input.clone());
+            input
+        });
+        text_input.set_cursor_rectangle(x, y, width, height);
+        text_input.commit();
+        let _ = self.roundtrip();
+        true
     }
 
     /// Ask the compositor to draw `shape` as the cursor, the way a client that
@@ -756,9 +797,36 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                     state.wp_cursor_shape_manager =
                         Some(registry.bind(name, version.min(1), qh, ()));
                 }
+                "zwp_text_input_manager_v3" => {
+                    state.text_input_manager = Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
+    }
+}
+
+impl Dispatch<zwp_text_input_manager_v3::ZwpTextInputManagerV3, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        _event: zwp_text_input_manager_v3::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwp_text_input_v3::ZwpTextInputV3,
+        _event: zwp_text_input_v3::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
     }
 }
 
@@ -884,6 +952,24 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for TestClientState {
                     wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed)
                 );
                 state.keys.push((key, pressed));
+            }
+            wl_keyboard::Event::Keymap { fd, size, .. } => {
+                // The keymap arrives as a file descriptor; read it out into
+                // text so a test can compile it and decode the keys. At an
+                // explicit offset: the compositor hands out the same file
+                // every time, and a plain read would carry on from wherever
+                // the last one stopped — at the end, so nothing.
+                use std::os::unix::fs::FileExt;
+                let file = std::fs::File::from(fd);
+                let mut text = vec![0u8; size as usize];
+                if file.read_exact_at(&mut text, 0).is_ok() {
+                    // NUL-terminated, as wl_keyboard keymaps are.
+                    let end = text.iter().position(|b| *b == 0).unwrap_or(text.len());
+                    text.truncate(end);
+                    state
+                        .keymaps
+                        .push(String::from_utf8_lossy(&text).into_owned());
+                }
             }
             _ => {}
         }
