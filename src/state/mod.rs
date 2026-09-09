@@ -693,6 +693,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 // run in the session's `LANG` while everything Otto spawned
                 // itself runs in the configured one.
                 let mut assignments = vec![format!("WAYLAND_DISPLAY={socket_name}")];
+                // What kind of session this is. Services guard on it — the
+                // file indexer's unit carries
+                // `ConditionEnvironment=XDG_SESSION_CLASS=user` and silently
+                // refuses to start without it, which takes file search down
+                // with it — and nothing else in the session sets it: the
+                // process-local `set_var` in `config` never reaches the
+                // systemd user manager, which is where these conditions are
+                // evaluated.
+                assignments.push("XDG_SESSION_CLASS=user".to_string());
                 assignments.extend(crate::locale_env::published().iter().cloned());
                 assignments.push(crate::export_rounded_corners());
                 assignments.push(crate::export_window_controls_side());
