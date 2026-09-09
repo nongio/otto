@@ -442,7 +442,10 @@ and a superseded search is abandoned through a generation counter rather than
 interrupted — the same contract `Directory` already has. A query is debounced,
 so holding a key down costs one search rather than one per character. Until the
 answer lands the pane says it is working; it never invents rows to fill the
-gap.
+gap. Navigating away before the answer lands — to a place, Home, a typed path,
+by any route — discards it: the results pane and its search die together, the
+window shows the folder it was sent to, and the search or Recent listing is
+left behind Back, not still standing over the folder.
 
 **One source: the desktop's index.** Both scopes, and Recent, are answered by
 **LocalSearch (TinySPARQL)** over D-Bus. There is no second implementation to

@@ -3287,6 +3287,12 @@ impl Browser {
 
     /// Go to the parent directory.
     fn go_up(&mut self) {
+        // A synthetic listing has no parent: the sentinel's is a path nobody
+        // asked for, and going there would carry Recent's flag along with it.
+        if self.is_synthetic() {
+            self.refuse(otto_kit::t_owned!("files-recent-no-location"));
+            return;
+        }
         if self.columns.len() > 1 {
             self.record_location();
             self.columns.truncate(self.columns.len() - 1);
@@ -3307,8 +3313,24 @@ impl Browser {
     }
 
     /// Replace the whole stack, as clicking a place does.
+    ///
+    /// Whatever synthetic listing is up — Recent, or search results — comes
+    /// down with the pane it was in. The two are one state and have to leave
+    /// together: the pane's search dies with it (see [`crate::search::Search`]'s
+    /// `Drop`), so no stale batch can land, but a `recent` or `searching`
+    /// flag left standing would dress the folder up as the listing it
+    /// replaced the moment its read arrives — Recent's title, day headings
+    /// and locked grid over a home directory, and every place-bound command
+    /// still refusing for want of a location. Every route into a folder goes
+    /// through here, so every one of them gets that right.
     fn navigate_to(&mut self, path: &Path) {
+        // Recorded first: once the listing is down there is nothing left to
+        // record but the sentinel standing in for its directory.
         self.record_location();
+        if self.is_synthetic() {
+            self.close_search();
+            self.leave_recent();
+        }
         self.go_to(path);
     }
 
@@ -3327,15 +3349,11 @@ impl Browser {
 
     /// Leave whatever synthetic listing is up and go to `path`, with the
     /// listing left behind Back.
+    ///
+    /// The same as [`Self::navigate_to`] — every navigation leaves a
+    /// synthetic listing now — kept for the callers that say what they mean.
     fn leave_synthetic_to(&mut self, path: &Path) {
-        if self.is_synthetic() {
-            self.record_location();
-            self.close_search();
-            self.leave_recent();
-            self.go_to(path);
-        } else {
-            self.navigate_to(path);
-        }
+        self.navigate_to(path);
     }
 
     /// Open the path entry on the directory being shown, with the whole path
@@ -12701,6 +12719,120 @@ mod search_tests {
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(selected.len(), 1, "one row, not three: {selected:?}");
         assert!(selected[0].contains("two"), "and the one clicked");
+    }
+
+    /// Poll until the pane in front has its listing, so a test can look at
+    /// what a navigation *settled* into rather than what it started as.
+    fn settle_listing(browser: &mut Browser) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while browser.columns[0].loading() && std::time::Instant::now() < deadline {
+            browser.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        browser.poll();
+        browser.rebuild_recent_sections();
+    }
+
+    /// Opening Recent and, before its scan has answered, being sent to a
+    /// folder — the palette's Home, or any other place — must leave Recent
+    /// entirely. The pane was replaced; the flag it hid behind must go with
+    /// it, or the folder arrives under Recent's title, day headings and
+    /// locked grid, and every place-bound command still says there is no
+    /// location.
+    #[test]
+    fn going_to_a_place_while_recent_is_loading_leaves_recent_behind() {
+        let root =
+            std::env::temp_dir().join(format!("otto-files-recent-race-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("note.txt"), "x").unwrap();
+
+        let mut browser = browser_at(&root);
+        browser.show_recent();
+        assert!(browser.recent, "Recent is up");
+        assert!(browser.columns[0].loading(), "and still scanning");
+
+        let request = command::Request {
+            id: command::id::GO_TO_PLACE.to_string(),
+            arg: Some(root.to_string_lossy().into_owned()),
+        };
+        browser.run_request(&request, 0).expect("the folder exists");
+        settle_listing(&mut browser);
+
+        let landed = browser.current_path();
+        let recent = browser.recent;
+        let synthetic = browser.is_synthetic();
+        let flat = browser.recent_sections.is_flat();
+        let names: Vec<String> = browser.columns[0]
+            .snapshot
+            .entries
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        let back_to_recent = matches!(
+            browser.back.last().map(|l| &l.synthetic),
+            Some(Some(Synthetic::Recent))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(landed, root, "the window is on the folder it was sent to");
+        assert!(!recent, "and Recent is no longer up");
+        assert!(!synthetic, "the folder is a real location");
+        assert!(flat, "no day headings over a directory listing");
+        assert_eq!(names, vec!["note.txt".to_string()], "showing the folder");
+        assert!(back_to_recent, "with Recent left behind Back");
+    }
+
+    /// The same race for a search: sent somewhere while the results are
+    /// still coming, the window must show the folder and not a search.
+    #[test]
+    fn going_to_a_place_while_a_search_is_running_closes_the_search() {
+        let root =
+            std::env::temp_dir().join(format!("otto-files-search-race-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("note.txt"), "x").unwrap();
+
+        let mut browser = browser_at(&root);
+        type_query(&mut browser, "invoice");
+        assert!(browser.searching, "results are on their way");
+        assert!(browser.columns[0].loading(), "and not here yet");
+
+        let request = command::Request {
+            id: command::id::GO_TO_PLACE.to_string(),
+            arg: Some(root.to_string_lossy().into_owned()),
+        };
+        browser.run_request(&request, 0).expect("the folder exists");
+        settle_listing(&mut browser);
+
+        let landed = browser.current_path();
+        let searching = browser.searching;
+        let field_open = browser.search.is_some();
+        let names: Vec<String> = browser.columns[0]
+            .snapshot
+            .entries
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(landed, root, "the window is on the folder it was sent to");
+        assert!(!searching, "and no longer searching");
+        assert!(!field_open, "the strip went with it");
+        assert_eq!(names, vec!["note.txt".to_string()], "showing the folder");
+    }
+
+    /// Up from Recent has nowhere to go: the sentinel's parent is not a
+    /// folder anyone asked for.
+    #[test]
+    fn up_from_recent_stays_put() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        browser.show_recent();
+        browser.go_up();
+        assert!(browser.recent, "still Recent");
+        assert!(
+            crate::recent::is_sentinel(&browser.columns[0].path),
+            "not the sentinel's parent: {}",
+            browser.columns[0].path.display()
+        );
     }
 }
 
