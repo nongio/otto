@@ -103,6 +103,13 @@ pub struct ArgSpec {
     pub placeholder: Option<String>,
     /// What the field starts out holding — the current name, for a rename.
     pub initial: Option<String>,
+    /// Whether a half-typed argument can be applied as you type.
+    ///
+    /// Only for a command whose effect is *shown* rather than done — a
+    /// selection, a filter, a highlight — and which the window can therefore
+    /// take back when the palette is abandoned. A command that touches files
+    /// must never set this: there is no half-typed rename.
+    pub preview: bool,
     pub kind: ArgKind,
 }
 
@@ -113,6 +120,7 @@ impl ArgSpec {
             label: label.into(),
             placeholder: None,
             initial: None,
+            preview: false,
             kind,
         }
     }
@@ -124,6 +132,13 @@ impl ArgSpec {
 
     pub fn with_initial(mut self, initial: impl Into<String>) -> Self {
         self.initial = Some(initial.into());
+        self
+    }
+
+    /// Mark the argument as one that can be applied while it is being typed.
+    /// See [`Self::preview`] for what may claim this.
+    pub fn previewed(mut self) -> Self {
+        self.preview = true;
         self
     }
 
@@ -750,7 +765,11 @@ impl CommandProvider for Builtin {
                         otto_kit::t_owned!("files-command-arg-pattern"),
                         ArgKind::Text,
                     )
-                    .with_placeholder("*.png"),
+                    .with_placeholder("*.png")
+                    // The selection is shown, not done: every keystroke can
+                    // narrow it in place, and abandoning the palette puts back
+                    // whatever was selected before.
+                    .previewed(),
                 ),
             );
             out.push(

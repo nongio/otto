@@ -2999,9 +2999,15 @@ pub const PALETTE_FIELD_H: f32 = 46.0;
 pub const PALETTE_ROW_H: f32 = 32.0;
 pub const PALETTE_HEADING_H: f32 = 26.0;
 pub const PALETTE_PAD: f32 = 8.0;
-/// How far down the window the card's top edge sits. Near the top rather than
-/// centred: what is being typed should not move when the list under it grows.
-pub const PALETTE_TOP: f32 = 64.0;
+/// How far down the window the card's top edge sits: just clear of the header,
+/// so the location and the view switcher stay readable behind it. Near the top
+/// rather than centred, so what is being typed does not move when the list
+/// under it grows.
+pub const PALETTE_TOP: f32 = HEADER_H + 6.0;
+/// How far the card's right edge sits from the window's. Nearly flush: the
+/// panel belongs to this window, and hanging it off the right keeps the
+/// sidebar and the first column in view beside it.
+pub const PALETTE_RIGHT_INSET: f32 = 12.0;
 /// The most rows on screen at once. Past this the list scrolls under the
 /// highlight — a card taller than this stops reading as a card.
 pub const PALETTE_MAX_ROWS: usize = 10;
@@ -3074,7 +3080,7 @@ fn palette_row_h(kind: PaletteRowKind) -> f32 {
 /// one-match query are not the same box.
 pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect {
     let w = PALETTE_W.min(width - 48.0).max(240.0);
-    let left = ((width - w) / 2.0).max(0.0);
+    let left = (width - w - PALETTE_RIGHT_INSET).max(0.0);
     let mut height = PALETTE_FIELD_H;
     let body: f32 = rows.iter().map(|row| palette_row_h(row.kind)).sum();
     if body > 0.0 || message {
@@ -6089,6 +6095,24 @@ mod geometry_tests {
     fn the_palette_window_stays_inside_the_list() {
         let window = palette_window(12, None, 99, 5);
         assert_eq!(window, 7..12);
+    }
+
+    /// The card hangs off the right edge, clear of the header.
+    #[test]
+    fn the_palette_sits_under_the_header_and_near_the_right_edge() {
+        let rows = [item("Copy")];
+        let card = palette_rect(1200.0, &rows, false);
+        assert!(card.top >= HEADER_H, "the header stays readable");
+        assert_eq!(card.right, 1200.0 - PALETTE_RIGHT_INSET);
+    }
+
+    /// A window too narrow for the card still gets one, hard against the left.
+    #[test]
+    fn a_narrow_window_still_gets_a_card() {
+        let rows = [item("Copy")];
+        let card = palette_rect(200.0, &rows, false);
+        assert!(card.left >= 0.0);
+        assert!(card.width() > 0.0);
     }
 
     /// The field does not move when the list under it grows: the card grows

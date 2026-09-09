@@ -429,6 +429,14 @@ struct Browser {
     /// keyboard whole; the browser underneath is untouched until a command
     /// actually runs. See `specs/file-command-palette.md`.
     palette: Option<palette::Palette>,
+    /// What was selected when the palette opened: the pane, its selection, its
+    /// cursor and its anchor.
+    ///
+    /// A previewed argument selects as it is typed, so there has to be
+    /// something to put back when the palette is abandoned — and something to
+    /// start each keystroke's answer from, since a pattern narrowed by one
+    /// character is a fresh question rather than a refinement of the last one.
+    palette_selection: Option<SelectionMark>,
     /// A palette command asked for Quick View. The panel and its decode belong
     /// to the window around the browser, so the request is left here for it.
     palette_quickview: bool,
@@ -530,6 +538,19 @@ struct Browser {
     /// asking for is this times that — and applying it incrementally instead
     /// would compound rounding across a gesture that can run for seconds.
     quickview_pinch: Option<f32>,
+}
+
+/// A pane's selection as it stood at some moment, so it can be put back.
+///
+/// Held while the palette is open: a previewed argument selects as it is
+/// typed, and every keystroke answers afresh from here rather than refining
+/// the last answer.
+#[derive(Clone)]
+struct SelectionMark {
+    depth: usize,
+    selection: std::collections::BTreeSet<String>,
+    cursor: Option<usize>,
+    anchor: Option<usize>,
 }
 
 /// One of the palette's rows, with its text owned.
@@ -852,6 +873,7 @@ impl Browser {
             rename: None,
             pending_rename: None,
             palette: None,
+            palette_selection: None,
             palette_quickview: false,
             commands: command::Registry::builtin(),
             path_entry: None,
@@ -3500,6 +3522,14 @@ impl Browser {
     fn open_palette(&mut self) {
         let situation = self.situation();
         let commands = self.commands.commands(&situation);
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let column = &self.columns[depth];
+        self.palette_selection = Some(SelectionMark {
+            depth,
+            selection: column.selection.clone(),
+            cursor: column.cursor,
+            anchor: column.anchor,
+        });
         self.palette = Some(palette::Palette::open(
             commands,
             view::palette_field_style(AppContext::current_theme()),
@@ -3511,10 +3541,64 @@ impl Browser {
     /// it was — the palette never changed it by being open.
     fn close_palette(&mut self) -> bool {
         let was_open = self.palette.take().is_some();
+        // Whatever a previewed argument selected along the way is not what the
+        // user asked for: they backed out.
+        self.restore_palette_selection();
+        self.palette_selection = None;
         if was_open {
             self.dirty = true;
         }
         was_open
+    }
+
+    /// Close the palette with what it did left standing — the way out after a
+    /// command actually ran.
+    fn finish_palette(&mut self) -> bool {
+        let was_open = self.palette.take().is_some();
+        self.palette_selection = None;
+        if was_open {
+            self.dirty = true;
+        }
+        was_open
+    }
+
+    /// Put the selection back to what it was when the palette opened.
+    fn restore_palette_selection(&mut self) {
+        let Some(mark) = self.palette_selection.clone() else {
+            return;
+        };
+        if let Some(column) = self.columns.get_mut(mark.depth) {
+            column.selection = mark.selection;
+            column.cursor = mark.cursor;
+            column.anchor = mark.anchor;
+        }
+    }
+
+    /// Show a previewed argument as it is typed.
+    ///
+    /// Every keystroke answers afresh from the selection the palette opened
+    /// on, so deleting a character widens the selection again rather than
+    /// leaving the last narrower answer standing.
+    fn preview_palette_argument(&mut self) {
+        let Some((id, typed)) = self
+            .palette
+            .as_ref()
+            .and_then(|palette| palette.previewed_argument())
+            .map(|(id, typed)| (id.to_string(), typed.to_string()))
+        else {
+            return;
+        };
+        self.restore_palette_selection();
+        if typed.trim().is_empty() {
+            self.dirty = true;
+            return;
+        }
+        if id == command::id::SELECT_MATCHING {
+            // A pattern that matches nothing leaves the restored selection
+            // standing and says nothing: it is half-typed, not wrong.
+            let _ = self.select_matching(&typed);
+        }
+        self.dirty = true;
     }
 
     /// Fill in what a half-typed path could be completed to.
@@ -3657,7 +3741,11 @@ impl Browser {
         if let Some(error) = palette.error() {
             return Some(error.to_string());
         }
-        (palette.rows().is_empty() && !palette.resting())
+        // Only about the *command* list. An argument with nothing under it —
+        // a name, a pattern, anything free-text — has no completions by
+        // nature, and saying "no command matches" about it is both wrong and
+        // alarming.
+        (palette.prompt().is_none() && palette.rows().is_empty() && !palette.resting())
             .then(|| otto_kit::t_owned!("files-palette-no-matches"))
     }
 
@@ -3680,7 +3768,7 @@ impl Browser {
                 Ok(followup) => {
                     // Closed only once the command was carried out: a refusal
                     // keeps the panel up with the text still there to fix.
-                    self.close_palette();
+                    self.finish_palette();
                     self.palette_quickview = followup == Followup::QuickView;
                 }
                 Err(error) => {
@@ -3692,6 +3780,7 @@ impl Browser {
             },
             palette::Outcome::Changed => {
                 self.refresh_palette_completions();
+                self.preview_palette_argument();
                 self.dirty = true;
             }
             palette::Outcome::Ignored => {}
@@ -9672,6 +9761,142 @@ mod palette_tests {
         browser.select(0, outer);
         assert!(browser.move_selection_to("outer/inner").is_err());
         assert!(dir.0.join("outer/inner").is_dir());
+    }
+
+    /// A previewed pattern selects as it is typed.
+    #[test]
+    fn select_matching_shows_its_answer_while_it_is_typed() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt"]);
+        open_and_type(&mut browser, "select matching");
+        press(&mut browser, palette::Key::Tab);
+
+        for ch in "*.png".chars() {
+            browser.palette.as_mut().unwrap().on_key(
+                palette::Key::Edit(TextInputKey::Char(ch)),
+                KeyMods {
+                    shift: false,
+                    ctrl: false,
+                },
+            );
+            browser.preview_palette_argument();
+        }
+        let selected: Vec<String> = browser
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(selected, vec!["a.png", "b.png"]);
+    }
+
+    /// Deleting back through the pattern widens the answer again, rather than
+    /// leaving the narrower one standing.
+    #[test]
+    fn deleting_through_a_pattern_gives_the_selection_back() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.txt"]);
+        open_and_type(&mut browser, "select matching");
+        press(&mut browser, palette::Key::Tab);
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        for ch in "*.png".chars() {
+            browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Char(ch)), mods);
+            browser.preview_palette_argument();
+        }
+        assert_eq!(browser.selected_entries().len(), 1);
+
+        // All the way back to an empty pattern: nothing is selected again.
+        for _ in 0..5 {
+            browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Backspace), mods);
+            browser.preview_palette_argument();
+        }
+        assert_eq!(browser.selected_entries().len(), 0);
+    }
+
+    /// And abandoning the palette puts back whatever was selected before it
+    /// opened — the preview was shown, not done.
+    #[test]
+    fn abandoning_a_preview_puts_the_selection_back() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt"]);
+        browser.select(0, 2);
+        let before: Vec<String> = browser
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+
+        open_and_type(&mut browser, "select matching");
+        press(&mut browser, palette::Key::Tab);
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        for ch in "*.png".chars() {
+            browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Char(ch)), mods);
+            browser.preview_palette_argument();
+        }
+        assert_eq!(browser.selected_entries().len(), 2);
+
+        browser.close_palette();
+        let after: Vec<String> = browser
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(after, before);
+    }
+
+    /// Running it keeps what it selected.
+    #[test]
+    fn running_a_preview_keeps_its_answer() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt"]);
+        open_and_type(&mut browser, "select matching");
+        press(&mut browser, palette::Key::Tab);
+        browser
+            .palette
+            .as_mut()
+            .unwrap()
+            .input_mut()
+            .set_value("*.png");
+        let palette::Outcome::Run(request) = press(&mut browser, palette::Key::Enter) else {
+            panic!("Return should run it");
+        };
+        browser.run_request(&request, 0).expect("two match");
+        browser.finish_palette();
+        assert_eq!(browser.selected_entries().len(), 2);
+    }
+
+    /// A free-text argument has no completions, and that is not a failure to
+    /// find anything: the panel must not say "no command matches" about a
+    /// pattern being typed.
+    #[test]
+    fn a_text_argument_is_not_reported_as_matching_nothing() {
+        let (mut browser, _dir) = browser_over(&["a.png"]);
+        open_and_type(&mut browser, "select matching");
+        assert!(browser.palette_message().is_none());
+        press(&mut browser, palette::Key::Tab);
+        assert!(browser.palette.as_ref().unwrap().prompt().is_some());
+        assert!(
+            browser.palette_message().is_none(),
+            "an argument with no completions says nothing"
+        );
+
+        // A query that really matches no command still says so.
+        browser.close_palette();
+        open_and_type(&mut browser, "zzzz");
+        assert!(browser.palette_message().is_some());
     }
 
     /// Opening the palette changes nothing underneath it, and closing it

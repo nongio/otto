@@ -262,6 +262,19 @@ impl Palette {
             .map(|session| &self.commands[session.command])
     }
 
+    /// The argument being typed, when its command asked to be shown as it is
+    /// written. The host applies it after each key and takes it back if the
+    /// palette is abandoned.
+    pub fn previewed_argument(&self) -> Option<(&str, &str)> {
+        let session = self.arg.as_ref()?;
+        let command = &self.commands[session.command];
+        command
+            .arg
+            .as_ref()
+            .filter(|spec| spec.preview)
+            .map(|_| (command.id.as_str(), session.input.value()))
+    }
+
     /// The half-typed path the host should complete against, and whether only
     /// directories count. `None` unless a path argument is open — which is the
     /// palette's whole involvement with the disk.

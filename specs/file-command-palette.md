@@ -39,8 +39,8 @@ a path to go to or a new name to give a file.
 
 ### Opening and closing
 
-- Ctrl+P opens the palette. It opens over the browser window, centred near the
-  top, and takes the keyboard whole while it is up.
+- Ctrl+P opens the palette. It opens over the browser window, just below the
+  header and near its right edge, and takes the keyboard whole while it is up.
 - The palette is unavailable in the file picker, whose window is answering a
   request rather than managing files.
 - Escape closes it, in one step, without running anything. Ctrl+P while it is
@@ -69,7 +69,9 @@ a path to go to or a new name to give a file.
   takes an argument shows its argument label after the title, dimmed, as
   `Go to Path  ›  path`.
 - A query matching nothing shows a single dim line saying so, and Return does
-  nothing.
+  nothing. This is about the *command* list only: an argument with no
+  completions — a name, a pattern, any free text — has none by nature, and says
+  nothing about it.
 
 ### Running a command
 
@@ -108,6 +110,20 @@ a path to go to or a new name to give a file.
   place) opens argument mode with all of them listed and the current one
   highlighted, so it can be answered with one arrow key and Return.
 
+### Showing an argument as it is typed
+
+- A command may declare that its argument can be *shown* while it is being
+  written. Only a command whose effect is something displayed — a selection, a
+  filter — may do so; a command that touches files may not, because there is no
+  half-typed rename.
+- Such an argument is applied after every keystroke, answered afresh from the
+  state the palette opened on. Deleting a character therefore widens the answer
+  again rather than leaving the last, narrower one standing.
+- Abandoning the palette — Escape, a click outside, losing focus — puts back
+  exactly what was there when it opened. Running the command keeps the answer.
+- A partial argument that matches nothing leaves the restored state standing
+  and says nothing: it is half-typed, not wrong.
+
 ### The first set of commands
 
 Every command below is one the window already carries out by some other means;
@@ -125,6 +141,8 @@ the palette adds no new capability.
 | File | Move to Trash | — |
 | File | Put Back, Delete Immediately, Empty Trash | — (Trash only) |
 | Edit | Cut, Copy, Paste, Select All, Undo | — |
+| Edit | Select Matching | glob pattern, shown as it is typed |
+| File | Move to Folder | path (folders only) |
 | View | List View, Grid View, Column View | — (the one already on is not offered) |
 | View | Change View | choice of the three |
 | View | Sort By | choice of sort keys |
@@ -173,6 +191,11 @@ the palette adds no new capability.
   provider that needs to look at the disk offers what it already knows.
   Argument completion may touch the disk, and does so the way the location bar
   already does.
+- **Selecting by pattern matches the listing on screen**, not the directory:
+  hidden files stay out of it unless they are being shown, and a filtered
+  listing narrows what can be picked. Matching ignores case until the pattern
+  itself carries case — `*.png` finds `PHOTO.PNG`, `*.PNG` means only the
+  shouty one — which is the rule the file picker's own filters read by.
 - **The palette is not modal over the compositor**, only over its window: the
   window can still be moved, resized and closed while it is up, and closing the
   window closes the palette with it. It is drawn over a shadow rather than over
