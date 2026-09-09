@@ -3140,7 +3140,7 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
 
     // A shadow rather than a dim over the window: the palette is not modal,
     // and dimming the listing behind it would say that it was.
-    paint.set_color(Color::from_argb(0x40, 0, 0, 0));
+    paint.set_color(theme.shadow);
     paint.set_mask_filter(skia_safe::MaskFilter::blur(
         skia_safe::BlurStyle::Normal,
         14.0,
@@ -3155,8 +3155,22 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     // Filled in, not the translucent material: the material is meant to sit
     // over the compositor's blur, and this card is inside the window's own
     // surface with nothing behind it but the listing it is covering.
-    paint.set_color(opaque(panel_material()));
+    paint.set_color(content_ground());
     canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
+
+    // The hairline is what says the card is above the listing rather than part
+    // of it: the ground is the same colour on both sides of the edge, exactly
+    // as it is around the Get Info panel. On its own surface the compositor
+    // draws this; here the card is inside the window's own buffer, so it is
+    // painted.
+    paint.set_color(theme.hairline());
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(Theme::HAIRLINE_WIDTH);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(card.with_inset((0.5, 0.5)), 14.0, 14.0),
+        &paint,
+    );
+    paint.set_style(skia_safe::paint::Style::Fill);
 
     let field = palette_field_rect(width);
     if let Some(prompt) = data.prompt {

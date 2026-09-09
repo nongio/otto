@@ -6084,6 +6084,14 @@ impl App for FilesApp {
                     .as_ref()
                     .map(|p| p.placeholder())
                     .unwrap_or_default();
+                // The rest of the best answer, shown ahead of the caret in
+                // the field's own size — taking it is the same as having typed
+                // it. Read before the field is borrowed to draw.
+                let suggestion = browser
+                    .palette
+                    .as_ref()
+                    .and_then(|palette| palette.suggestion_tail())
+                    .map(str::to_string);
                 if let Some(palette) = browser.palette.as_mut() {
                     let input = palette.input_mut();
                     input.state.placeholder = placeholder;
@@ -6091,6 +6099,17 @@ impl App for FilesApp {
                     canvas.save();
                     canvas.translate((field.left + lead, field.top));
                     input.render_at(canvas, field.width() - lead, field.height());
+                    if let Some(tail) = suggestion {
+                        // From the caret, in the field's own style: the two
+                        // runs have to read as one line of text, one half of
+                        // it already typed.
+                        let caret = input.caret_rect();
+                        Label::new(tail)
+                            .with_style(input.style.text_style.clone())
+                            .with_color(theme.text_tertiary)
+                            .centered_on(caret.left, field.height() / 2.0)
+                            .render(canvas);
+                    }
                     canvas.restore();
                     palette_caret = caret_in_window(input, (field.left + lead, field.top));
                 }

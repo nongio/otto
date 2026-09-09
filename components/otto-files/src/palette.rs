@@ -262,6 +262,66 @@ impl Palette {
             .map(|session| &self.commands[session.command])
     }
 
+    /// What the field would become if the suggestion were taken — the whole
+    /// value, not the part still to be typed.
+    ///
+    /// The terminal's bargain: the best answer is shown ahead of the caret as
+    /// you type, and taking it is the same as having typed it. Only a
+    /// candidate that *starts with* what is typed can be shown this way — a
+    /// fuzzy hit like "mo tr" for "Move to Trash" has no tail to put after the
+    /// caret, so it is left to the list below.
+    pub fn suggestion(&self) -> Option<&str> {
+        let typed = self.input().value();
+        if typed.is_empty() {
+            return None;
+        }
+        let candidate = match &self.arg {
+            Some(session) => {
+                let completion = session.completions.get(session.highlight.unwrap_or(0))?;
+                // A path's value is what gets typed; a choice's is an id
+                // nobody types, so that one is suggested by its title.
+                match self.commands[session.command].arg.as_ref()?.kind {
+                    ArgKind::Path { .. } => completion.value.as_str(),
+                    _ => completion.title.as_str(),
+                }
+            }
+            None => self.commands[*self.order.first()?].title.as_str(),
+        };
+        (candidate.len() > typed.len()
+            && candidate.to_lowercase().starts_with(&typed.to_lowercase()))
+        .then_some(candidate)
+    }
+
+    /// The part of the suggestion still to be typed — what the view draws
+    /// after the caret, in the field's own size.
+    pub fn suggestion_tail(&self) -> Option<&str> {
+        let typed_len = self.input().value().len();
+        self.suggestion().map(|whole| &whole[typed_len..])
+    }
+
+    /// Take the suggestion whole. The field then holds exactly what it would
+    /// hold had it all been typed, which is what makes the two the same.
+    fn accept_suggestion(&mut self) -> bool {
+        let Some(whole) = self.suggestion().map(str::to_string) else {
+            return false;
+        };
+        let input = self.input_mut();
+        input.set_value(whole);
+        input.state.set_caret(usize::MAX, false);
+        self.refilter_choices();
+        if self.arg.is_none() {
+            self.refilter();
+        }
+        true
+    }
+
+    /// Whether the caret is at the end of the text, which is the only place a
+    /// suggestion can be taken from: in the middle, Right means Right.
+    fn caret_at_end(&self) -> bool {
+        let input = self.input();
+        input.state.caret() >= input.value().len()
+    }
+
     /// The half-typed path the host should complete against, and whether only
     /// directories count. `None` unless a path argument is open — which is the
     /// palette's whole involvement with the disk.
@@ -350,6 +410,12 @@ impl Palette {
                 }
                 _ => Outcome::Ignored,
             },
+            // Right at the end of the text takes the suggestion, the way it
+            // does at a shell prompt. Anywhere else in the text it is just
+            // Right.
+            Key::Edit(TextInputKey::Right) if self.caret_at_end() && self.accept_suggestion() => {
+                Outcome::Changed
+            }
             Key::Edit(edit) => {
                 let response = self.query.on_key(edit, mods);
                 if let TextInputResponse::Clipboard(text) = response {
@@ -388,6 +454,9 @@ impl Palette {
             }
             Key::Tab => {
                 self.complete();
+                Outcome::Changed
+            }
+            Key::Edit(TextInputKey::Right) if self.caret_at_end() && self.accept_suggestion() => {
                 Outcome::Changed
             }
             Key::Edit(TextInputKey::Backspace) if self.arg_is_empty() => {
@@ -879,6 +948,84 @@ mod tests {
         palette.on_key(Key::Tab, mods());
         type_text(&mut palette, "/us");
         assert_eq!(palette.path_argument(), Some(("/us", false)));
+    }
+
+    /// The terminal's bargain: the rest of the best answer is shown ahead of
+    /// the caret, and Right takes it.
+    #[test]
+    fn the_rest_of_the_best_answer_is_offered_ahead_of_the_caret() {
+        let mut palette = open(commands());
+        type_text(&mut palette, "go to path");
+        palette.on_key(Key::Tab, mods());
+        type_text(&mut palette, "/usr/sh");
+        palette.set_completions(vec![
+            Completion::new("/usr/share", "share"),
+            Completion::new("/usr/shrunk", "shrunk"),
+        ]);
+        assert_eq!(palette.suggestion(), Some("/usr/share"));
+        assert_eq!(palette.suggestion_tail(), Some("are"));
+
+        palette.on_key(Key::Edit(TextInputKey::Right), mods());
+        assert_eq!(palette.input().value(), "/usr/share");
+    }
+
+    /// And taking it leaves the field exactly as typing it would have.
+    #[test]
+    fn taking_the_suggestion_is_the_same_as_typing_it() {
+        let completions = || {
+            vec![
+                Completion::new("/usr/share", "share"),
+                Completion::new("/usr/shrunk", "shrunk"),
+            ]
+        };
+
+        let mut taken = open(commands());
+        type_text(&mut taken, "go to path");
+        taken.on_key(Key::Tab, mods());
+        type_text(&mut taken, "/usr/sh");
+        taken.set_completions(completions());
+        taken.on_key(Key::Edit(TextInputKey::Right), mods());
+
+        let mut typed = open(commands());
+        type_text(&mut typed, "go to path");
+        typed.on_key(Key::Tab, mods());
+        type_text(&mut typed, "/usr/share");
+        typed.set_completions(completions());
+
+        assert_eq!(taken.input().value(), typed.input().value());
+        assert_eq!(
+            taken.on_key(Key::Enter, mods()),
+            typed.on_key(Key::Enter, mods())
+        );
+    }
+
+    /// A fuzzy hit has no tail to put after the caret — "mo tr" is not a
+    /// prefix of "Move to Trash" — so nothing is offered there.
+    #[test]
+    fn a_gapped_query_offers_no_inline_suggestion() {
+        let mut palette = open(commands());
+        type_text(&mut palette, "mo tr");
+        assert_eq!(palette.suggestion(), None);
+    }
+
+    /// A prefix of a command's name is offered, though.
+    #[test]
+    fn a_prefix_of_a_command_is_offered_in_the_query_too() {
+        let mut palette = open(commands());
+        type_text(&mut palette, "go to p");
+        assert_eq!(palette.suggestion(), Some("Go to Path"));
+        palette.on_key(Key::Edit(TextInputKey::Right), mods());
+        assert_eq!(palette.input().value(), "Go to Path");
+    }
+
+    /// Right in the middle of the text is just Right.
+    #[test]
+    fn the_suggestion_is_only_taken_from_the_end_of_the_text() {
+        let mut palette = open(commands());
+        type_text(&mut palette, "go to p");
+        palette.input_mut().state.set_caret(2, false);
+        palette.on_key(Key::Edit(TextInputKey::Right), mods());
+        assert_eq!(palette.input().value(), "go to p");
     }
 
     #[test]
