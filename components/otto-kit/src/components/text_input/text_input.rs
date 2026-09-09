@@ -247,6 +247,17 @@ impl TextInput {
         self.drag_origin = None;
     }
 
+    /// The caret's box in field-local points, for a host that has to tell the
+    /// compositor where the insertion point is — see
+    /// [`AppContext::report_text_cursor`](crate::AppContext::report_text_cursor).
+    ///
+    /// Independent of the blink and of any selection covering it: what is
+    /// wanted is where text will be inserted, not what is on screen this
+    /// frame.
+    pub fn caret_rect(&self) -> skia_safe::Rect {
+        TextInputRenderer::caret_rect(&self.state, &self.style, self.width, self.height)
+    }
+
     /// Byte offset under box-local `x`.
     pub fn offset_at(&self, x: f32) -> usize {
         TextInputRenderer::hit_test_offset(&self.state, &self.style, self.width, x)
@@ -398,6 +409,25 @@ mod tests {
         // After release, moving the pointer no longer changes the selection.
         i.on_pointer_drag(start);
         assert_eq!(i.state.selection(), 1..4);
+    }
+
+    #[test]
+    fn the_caret_rect_follows_the_caret_and_ignores_the_blink() {
+        let mut i = input("one two");
+        i.on_key(TextInputKey::Home, KeyMods::default());
+        let home = i.caret_rect();
+        i.on_key(TextInputKey::End, KeyMods::default());
+        let end = i.caret_rect();
+        assert!(end.left > home.left, "it moved with the caret");
+        assert!(end.height() > 0.0 && end.width() > 0.0, "and has a size");
+
+        // Blinked off, and with the whole value selected — the insertion point
+        // is still somewhere, and that is what the compositor is told.
+        i.tick(CARET_BLINK_PERIOD * 0.6);
+        assert!(!i.caret_visible());
+        assert_eq!(i.caret_rect(), end);
+        i.on_key(TextInputKey::SelectAll, KeyMods::default());
+        assert_eq!(i.caret_rect().height(), end.height());
     }
 
     #[test]

@@ -287,6 +287,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = 場所
+files-recent = 最近の項目
 files-home = ホーム
 files-desktop = デスクトップ
 files-documents = 書類
@@ -295,6 +296,35 @@ files-music = ミュージック
 files-pictures = ピクチャ
 files-videos = ビデオ
 files-trash = ゴミ箱
+
+# The Recent listing's day headings, over the run of files saved in each.
+files-recent-today = 今日
+files-recent-yesterday = 昨日
+files-recent-this-week = 今週
+files-recent-this-month = 今月
+files-recent-earlier = それ以前
+# フォルダを必要とするコマンド（名称変更、開く、ゴミ箱に入れる、プレビュー）を、
+# 対応するフォルダのないリスト（「最近の項目」や検索結果）に使ったときに表示されます。
+files-synthetic-no-action = このリストに対応するフォルダはありません。
+files-recent-grid-only = 「最近の項目」はグリッドで表示されます。
+files-recent-not-a-folder = 「最近の項目」はリストであり、フォルダではありません。
+files-recent-no-location = 「最近の項目」には移動先の場所がありません。
+
+# The filter strip between the header and the listing, and what it reports.
+files-search-placeholder = 「{ $folder }」を絞り込む
+files-search-scope-folder = このフォルダ
+files-search-scope-everywhere = すべて
+files-search-found =
+    { $count ->
+       *[other] { $count } 件の結果
+    }
+files-search-none = 見つかりません
+files-search-no-columns = 結果に表示できる列はありません。
+# Shown in place of a result count when the desktop's file indexer is not
+# running. Search and Recent both go through it, so neither can answer without
+# it — and an empty listing would read as "no such file" rather than as
+# "nothing was able to look".
+files-search-unavailable = ファイルのインデックス作成はオフです
 
 files-column-name = 名前
 files-column-size = サイズ

@@ -288,6 +288,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = 位置
+files-recent = 最近使用
 files-home = 个人文件夹
 files-desktop = 桌面
 files-documents = 文稿
@@ -296,6 +297,35 @@ files-music = 音乐
 files-pictures = 图片
 files-videos = 影片
 files-trash = 废纸篓
+
+# The Recent listing's day headings, over the run of files saved in each.
+files-recent-today = 今天
+files-recent-yesterday = 昨天
+files-recent-this-week = 本周早些时候
+files-recent-this-month = 本月早些时候
+files-recent-earlier = 更早
+# 当需要文件夹的命令（重命名、打开、移到废纸篓、快速查看）用在背后没有文件夹的
+# 列表上时显示：“最近使用”或搜索结果。
+files-synthetic-no-action = 这个列表没有对应的文件夹。
+files-recent-grid-only = “最近使用”以网格显示。
+files-recent-not-a-folder = “最近使用”是一个列表，不是文件夹。
+files-recent-no-location = “最近使用”没有可前往的位置。
+
+# The filter strip between the header and the listing, and what it reports.
+files-search-placeholder = 筛选“{ $folder }”
+files-search-scope-folder = 当前文件夹
+files-search-scope-everywhere = 所有位置
+files-search-found =
+    { $count ->
+       *[other] { $count } 个结果
+    }
+files-search-none = 未找到任何内容
+files-search-no-columns = 结果没有可显示的列。
+# Shown in place of a result count when the desktop's file indexer is not
+# running. Search and Recent both go through it, so neither can answer without
+# it — and an empty listing would read as "no such file" rather than as
+# "nothing was able to look".
+files-search-unavailable = 文件索引已关闭
 
 files-column-name = 名称
 files-column-size = 大小

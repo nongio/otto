@@ -295,6 +295,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = Emplacements
+files-recent = Récents
 files-home = Dossier personnel
 files-desktop = Bureau
 files-documents = Documents
@@ -303,6 +304,39 @@ files-music = Musique
 files-pictures = Images
 files-videos = Vidéos
 files-trash = Corbeille
+
+# Les en-têtes de jour de la liste « Récents », au-dessus des fichiers
+# enregistrés dans chacun.
+files-recent-today = Aujourd’hui
+files-recent-yesterday = Hier
+files-recent-this-week = Plus tôt cette semaine
+files-recent-this-month = Plus tôt ce mois-ci
+files-recent-earlier = Plus tôt
+# Affiché quand une commande qui exige un dossier — renommer, ouvrir, mettre à
+# la corbeille, aperçu — est utilisée sur une liste qui n’en a aucun derrière
+# elle : « Récents » ou les résultats d’une recherche.
+files-synthetic-no-action = Cette liste ne correspond à aucun dossier.
+files-recent-grid-only = « Récents » s’affiche en grille.
+files-recent-not-a-folder = « Récents » est une liste, pas un dossier.
+files-recent-no-location = « Récents » n’a pas d’emplacement où aller.
+
+# La barre de filtre entre l’en-tête et la liste, et ce qu’elle indique.
+files-search-placeholder = Filtrer « { $folder } »
+files-search-scope-folder = Ce dossier
+files-search-scope-everywhere = Partout
+files-search-found =
+    { $count ->
+        [one] { $count } résultat
+        [many] { $count } résultats
+       *[other] { $count } résultats
+    }
+files-search-none = Aucun résultat
+files-search-no-columns = Les résultats n’ont pas de colonnes à afficher.
+# Affiché à la place du nombre de résultats quand l’indexation des fichiers du
+# système ne tourne pas. La recherche et « Récents » passent toutes deux par
+# elle : sans elle, aucune ne peut répondre — et une liste vide se lirait comme
+# « ce fichier n’existe pas » plutôt que comme « rien n’a pu chercher ».
+files-search-unavailable = Indexation des fichiers désactivée
 
 files-column-name = Nom
 files-column-size = Taille

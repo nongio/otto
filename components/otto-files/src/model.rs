@@ -35,6 +35,19 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// How the selection remembers this entry.
+    ///
+    /// The **path**, not the name. In an ordinary directory listing the two
+    /// are interchangeable, because one folder cannot hold two files with the
+    /// same name — but Recent and search results merge entries from all over
+    /// the disk, where three `Cargo.toml`s in one listing are ordinary rather
+    /// than exceptional. Keyed by name, clicking one of them selects all
+    /// three, and every command that acts on the selection then acts on all
+    /// three.
+    pub fn selection_key(&self) -> String {
+        self.path.to_string_lossy().into_owned()
+    }
+
     /// The Kind column's text.
     pub fn kind_label(&self) -> &'static str {
         if self.is_dir {
@@ -52,6 +65,33 @@ impl Entry {
         match filetype::mime_for_name(&self.name) {
             Some(mime) => filetype::icon_names(mime),
             None => vec![self.kind.generic_icon().to_string()],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Searching
+// ---------------------------------------------------------------------------
+
+/// How wide a search casts. Shown as the two pills on the filter strip, and
+/// switchable while results are on screen — the same query against a bigger
+/// haystack is the commonest second thing you want.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchScope {
+    /// The listing you pressed Ctrl+F in, and nothing else. The default,
+    /// because it is instant and it is what a filter strip over these rows
+    /// promises.
+    #[default]
+    Folder,
+    /// Everything the index can reach.
+    Everywhere,
+}
+
+impl SearchScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            SearchScope::Folder => otto_kit::t!("files-search-scope-folder"),
+            SearchScope::Everywhere => otto_kit::t!("files-search-scope-everywhere"),
         }
     }
 }
@@ -164,11 +204,19 @@ pub struct Column {
     pub path: PathBuf,
     pub snapshot: Snapshot,
     pub loader: Directory,
-    /// The selection, held as entry **names** rather than indices.
+    /// Whether the last search this pane ran was answered at all. `false`
+    /// means the file indexer is not running, which the window says out loud
+    /// rather than showing as an empty listing.
+    pub search_available: bool,
+    /// A search filling this column, for the two panes that have no directory
+    /// behind them: Recent, and the Everywhere scope's results. Idle for every
+    /// column that is showing a real directory.
+    pub search: crate::search::Search,
+    /// The selection, held as [`Entry::selection_key`]s rather than indices.
     ///
     /// Indices into the filtered, sorted list are only meaningful until
     /// something re-sorts, re-filters or reloads it — and all three happen
-    /// while a selection is live. Names survive every one of those, which is
+    /// while a selection is live. A key survives every one of those, which is
     /// what makes a multi-selection stable when a file appears in the
     /// directory underneath it.
     pub selection: std::collections::BTreeSet<String>,
@@ -192,7 +240,7 @@ pub struct Column {
     watch: crate::watch::DirWatch,
     /// Set when a snapshot landed because the *directory* changed rather than
     /// because the user navigated. The cursor is an index, so it has to be
-    /// re-derived after one of these; the selection is by name and does not.
+    /// re-derived after one of these; the selection is by key and does not.
     pub refreshed: bool,
     /// Set when the directory itself was deleted or moved away. The pane
     /// showing it has to go somewhere that still exists.
@@ -211,6 +259,8 @@ impl Column {
             path,
             snapshot: Snapshot::default(),
             loader,
+            search: crate::search::Search::idle(),
+            search_available: true,
             selection: std::collections::BTreeSet::new(),
             cursor: None,
             anchor: None,
@@ -224,8 +274,73 @@ impl Column {
         }
     }
 
+    /// A pane with no directory behind it: Recent, or a set of search results.
+    ///
+    /// Its entries are handed to it or streamed in rather than read from a
+    /// path, its loader is idle and its watch is dead — nothing on disk
+    /// corresponds to it. The sentinel path is never navigated to.
+    ///
+    /// Recent and search results take *different* sentinels — see
+    /// [`crate::recent::SENTINEL`] and [`crate::search::SENTINEL`] — because
+    /// the sidebar lights the place whose path matches the pane's, so a shared
+    /// one lit Recent as soon as anyone typed a query.
+    ///
+    /// `epoch` starts at 1 for a listing that is already complete and at 0 for
+    /// one still being searched for, because that is what tells the view
+    /// whether the pane is empty or merely not finished yet.
+    fn synthetic(sentinel: &str, entries: Vec<Entry>, epoch: u64) -> Self {
+        let path = PathBuf::from(sentinel);
+        Self {
+            snapshot: Snapshot {
+                path: path.clone(),
+                entries,
+                error: None,
+            },
+            // Idle: no read is started, so nothing will arrive later and
+            // replace the listing with the error of failing to open a path
+            // that was never meant to be opened.
+            loader: Directory::new(),
+            search: crate::search::Search::idle(),
+            search_available: true,
+            // Dead: the sentinel is not a directory, so inotify declines it and
+            // the watch reports nothing for the pane's whole life.
+            watch: crate::watch::DirWatch::new(&path),
+            path,
+            selection: std::collections::BTreeSet::new(),
+            cursor: None,
+            anchor: None,
+            scroll: ScrollView::new(Rect::new_empty()),
+            epoch,
+            sorted: std::cell::RefCell::new(SortCache::default()),
+            refreshed: false,
+            gone: false,
+            reload_pending: false,
+        }
+    }
+
+    /// The Recent listing's pane, with its scan already started.
+    ///
+    /// Recent is a search with no query — see [`crate::search`] — so the pane
+    /// fills the same way results do, in batches, best first.
+    pub fn recent() -> Self {
+        let mut column = Self::synthetic(crate::recent::SENTINEL, Vec::new(), 0);
+        column.search.start(crate::search::Request::recent());
+        column
+    }
+
+    /// A pane holding the results of a search that is still running.
+    ///
+    /// A result set is a snapshot of an instant and is deliberately unwatched —
+    /// a file appearing three levels down must not reshuffle results while
+    /// they are being read.
+    pub fn searching(request: crate::search::Request) -> Self {
+        let mut column = Self::synthetic(crate::search::SENTINEL, Vec::new(), 0);
+        column.search.start(request);
+        column
+    }
+
     pub fn loading(&self) -> bool {
-        self.loader.loading
+        self.loader.loading || self.search.running
     }
 
     /// A first read, with nothing to show until it lands.
@@ -234,11 +349,11 @@ impl Column {
     /// very nearly right, so a delete or a paste keeps it up rather than
     /// blinking the whole pane through a "Loading" placeholder and back.
     pub fn awaiting_first_listing(&self) -> bool {
-        self.loader.loading && self.epoch == 0
+        self.loading() && self.epoch == 0
     }
 
     /// Re-read this directory, keeping everything the user positioned: the
-    /// selection (held by name), the scroll offset and the scroll metrics.
+    /// selection (held by key), the scroll offset and the scroll metrics.
     /// Only the listing is replaced.
     pub fn reload(&mut self) {
         self.loader.load(&self.path);
@@ -257,6 +372,17 @@ impl Column {
             }
             Some(crate::watch::Change::Gone) => self.gone = true,
             None => {}
+        }
+        // A search batch replaces the listing whole — the worker has already
+        // ranked and capped it — so this is the same replacement a re-read is,
+        // and it sets `refreshed` for the same reason: the cursor is an index
+        // and has to be put back on whatever the selection names.
+        if let Some(batch) = self.search.poll() {
+            self.search_available = batch.available;
+            self.snapshot.entries = batch.entries;
+            self.refreshed = self.epoch > 0;
+            self.epoch = self.epoch.wrapping_add(1);
+            return true;
         }
         match self.loader.poll() {
             Some(snapshot) => {
@@ -400,39 +526,10 @@ fn read_directory(path: &Path) -> Snapshot {
     let origins = is_trash_root(path).then(read_trash_origins);
 
     let mut entries = Vec::new();
-    for entry in read.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let path = entry.path();
-
-        // `file_type` comes from readdir's d_type where the filesystem
-        // supplies it, so it is usually free.
-        let file_type = entry.file_type().ok();
-        let is_symlink = file_type.is_some_and(|t| t.is_symlink());
-        // A symlink's target decides whether it behaves as a directory.
-        let is_dir = match file_type {
-            Some(t) if t.is_dir() => true,
-            Some(t) if t.is_symlink() => path.is_dir(),
-            _ => false,
-        };
-
-        let meta = entry.metadata().ok();
-        let kind = if is_dir {
-            Kind::Folder
-        } else {
-            filetype::kind_for_name(&name)
-        };
-
-        entries.push(Entry {
-            hidden: name.starts_with('.') || name.ends_with('~'),
-            kind,
-            size: meta.as_ref().map(|m| m.len()),
-            modified: meta.as_ref().and_then(|m| m.modified().ok()),
-            origin: origins.as_ref().and_then(|o| o.get(&name).cloned()),
-            name,
-            path,
-            is_dir,
-            is_symlink,
-        });
+    for read_entry in read.flatten() {
+        let mut entry = entry_for_dir_entry(&read_entry);
+        entry.origin = origins.as_ref().and_then(|o| o.get(&entry.name).cloned());
+        entries.push(entry);
     }
 
     Snapshot {
@@ -440,6 +537,85 @@ fn read_directory(path: &Path) -> Snapshot {
         entries,
         error: None,
     }
+}
+
+/// One entry, from a directory read.
+///
+/// Shared with [`crate::search`]'s walk, which reads directories for a
+/// different reason and must produce entries indistinguishable from a
+/// listing's — a result that sorted or drew differently from the same file
+/// seen in its folder would be a bug nobody could explain.
+///
+/// The trash's `origin` is not filled in here: it comes from a sidecar read
+/// once for a whole listing rather than once per row, so only the directory
+/// read knows about it.
+pub fn entry_for_dir_entry(entry: &std::fs::DirEntry) -> Entry {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let path = entry.path();
+
+    // `file_type` comes from readdir's d_type where the filesystem supplies
+    // it, so it is usually free.
+    let file_type = entry.file_type().ok();
+    let is_symlink = file_type.is_some_and(|t| t.is_symlink());
+    // A symlink's target decides whether it behaves as a directory.
+    let is_dir = match file_type {
+        Some(t) if t.is_dir() => true,
+        Some(t) if t.is_symlink() => path.is_dir(),
+        _ => false,
+    };
+
+    let meta = entry.metadata().ok();
+    Entry {
+        hidden: name.starts_with('.') || name.ends_with('~'),
+        kind: if is_dir {
+            Kind::Folder
+        } else {
+            filetype::kind_for_name(&name)
+        },
+        size: meta.as_ref().map(|m| m.len()),
+        modified: meta.as_ref().and_then(|m| m.modified().ok()),
+        origin: None,
+        name,
+        path,
+        is_dir,
+        is_symlink,
+    }
+}
+
+/// One entry, built from a path rather than from a directory read.
+///
+/// What [`read_directory`] does per row, for a caller that already has the
+/// path and no `DirEntry` to go with it — a search result, most of all, where
+/// the paths come from somewhere that is not a `readdir`. `None` when there is
+/// nothing at that path any more, which is how a stale index entry is dropped.
+pub fn entry_for_path(path: &Path) -> Option<Entry> {
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    // The link itself first: a broken symlink still exists and still belongs
+    // in a listing, and `metadata` alone would say it does not.
+    let link_meta = std::fs::symlink_metadata(path).ok()?;
+    let is_symlink = link_meta.file_type().is_symlink();
+    let meta = if is_symlink {
+        std::fs::metadata(path).ok()
+    } else {
+        Some(link_meta)
+    };
+    let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+
+    Some(Entry {
+        hidden: name.starts_with('.') || name.ends_with('~'),
+        kind: if is_dir {
+            Kind::Folder
+        } else {
+            filetype::kind_for_name(&name)
+        },
+        size: meta.as_ref().map(|m| m.len()),
+        modified: meta.as_ref().and_then(|m| m.modified().ok()),
+        origin: None,
+        name,
+        path: path.to_path_buf(),
+        is_dir,
+        is_symlink,
+    })
 }
 
 /// A message worth showing a user, rather than a debug rendering.
@@ -459,60 +635,113 @@ fn describe_error(err: &std::io::Error) -> String {
 pub struct Place {
     pub label: String,
     pub path: PathBuf,
-    pub icon: &'static str,
+    /// Icon name to look up in the theme. Owned rather than `&'static str`
+    /// because a row can come from the user's own config, which names its
+    /// icon at run time.
+    pub icon: String,
+    /// This row is the Recent listing rather than a directory. Its `path` is
+    /// the sentinel in [`crate::recent`] and is never navigated to; the
+    /// browser switches into its recent mode instead.
+    pub recent: bool,
 }
 
-/// The sidebar's places: home, then the XDG user directories that actually
-/// exist. A directory that is not there is not listed — an empty row leading
-/// nowhere is worse than its absence.
+/// The sidebar's places: Recent, home, then the XDG user directories that
+/// actually exist. A directory that is not there is not listed — an empty row
+/// leading nowhere is worse than its absence.
+///
+/// These are the defaults, and they stand on their own: the sidebar is
+/// complete without anyone configuring anything. What
+/// [`crate::places_config`] adds on top is the two things defaults cannot
+/// know — the folders this particular person works in, and which of the
+/// built-in rows they never touch.
 pub fn places() -> Vec<Place> {
+    places_with(&crate::places_config::SidebarConfig::load())
+}
+
+pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
+    use crate::places_config::Builtin;
+
     let mut places = Vec::new();
     let Some(home) = home_dir() else {
         return places;
     };
 
-    places.push(Place {
-        // Not a directory name — the folder on disk is called whatever the
-        // user's login is — so this one is always translated.
-        label: otto_kit::t_owned!("files-home"),
-        path: home.clone(),
-        icon: "user-home",
-    });
+    // Recent leads the sidebar. It is the answer to "where did that go", and
+    // the whole point is not having to pick a folder first — so it sits above
+    // the folders rather than among them.
+    if !config.hides(Builtin::Recent) {
+        places.push(Place {
+            label: otto_kit::t_owned!("files-recent"),
+            path: PathBuf::from(crate::recent::SENTINEL),
+            icon: "document-open-recent".to_string(),
+            recent: true,
+        });
+    }
+
+    if !config.hides(Builtin::Home) {
+        places.push(Place {
+            // Not a directory name — the folder on disk is called whatever the
+            // user's login is — so this one is always translated.
+            label: otto_kit::t_owned!("files-home"),
+            path: home.clone(),
+            icon: "user-home".to_string(),
+            recent: false,
+        });
+    }
 
     // `user-dirs.dirs` is `XDG_DESKTOP_DIR="$HOME/Desktop"` per line. Parsed
     // here rather than by a crate: it is five lines of shell-ish assignment.
     let configured = user_dirs(&home);
 
-    const WANTED: &[(&str, &str, &str, &str)] = &[
+    const WANTED: &[(Builtin, &str, &str, &str, &str)] = &[
         (
+            Builtin::Desktop,
             "XDG_DESKTOP_DIR",
             "Desktop",
             "user-desktop",
             "files-desktop",
         ),
         (
+            Builtin::Documents,
             "XDG_DOCUMENTS_DIR",
             "Documents",
             "folder-documents",
             "files-documents",
         ),
         (
+            Builtin::Downloads,
             "XDG_DOWNLOAD_DIR",
             "Downloads",
             "folder-download",
             "files-downloads",
         ),
-        ("XDG_MUSIC_DIR", "Music", "folder-music", "files-music"),
         (
+            Builtin::Music,
+            "XDG_MUSIC_DIR",
+            "Music",
+            "folder-music",
+            "files-music",
+        ),
+        (
+            Builtin::Pictures,
             "XDG_PICTURES_DIR",
             "Pictures",
             "folder-pictures",
             "files-pictures",
         ),
-        ("XDG_VIDEOS_DIR", "Videos", "folder-videos", "files-videos"),
+        (
+            Builtin::Videos,
+            "XDG_VIDEOS_DIR",
+            "Videos",
+            "folder-videos",
+            "files-videos",
+        ),
     ];
 
-    for (key, fallback_name, icon, message) in WANTED {
+    for (builtin, key, fallback_name, icon, message) in WANTED {
+        if config.hides(*builtin) {
+            continue;
+        }
         let path = configured
             .iter()
             .find(|(k, _)| k == key)
@@ -537,9 +766,25 @@ pub fn places() -> Vec<Place> {
             } else {
                 on_disk
             };
-            places.push(Place { label, path, icon });
+            places.push(Place {
+                label,
+                path,
+                icon: (*icon).to_string(),
+                recent: false,
+            });
         }
     }
+
+    // The user's own folders go after the built-in ones: a sidebar that
+    // reordered itself around a config would make every screenshot, every
+    // instruction and every muscle memory wrong for the sake of a preference
+    // nobody expressed.
+    places.extend(config.extra.iter().map(|custom| Place {
+        label: custom.label.clone(),
+        path: custom.path.clone(),
+        icon: custom.icon.clone(),
+        recent: false,
+    }));
 
     places
 }
@@ -1778,6 +2023,40 @@ fn deletion_date() -> String {
             broken.tm_min,
             broken.tm_sec,
         )
+    }
+}
+
+#[cfg(test)]
+mod places_tests {
+    use super::*;
+    use crate::places_config::{Builtin, SidebarConfig};
+
+    /// The sidebar is complete without anyone configuring anything, and an
+    /// empty config has to leave it exactly as it was. This is the case
+    /// almost everyone is in.
+    #[test]
+    fn the_defaults_stand_on_their_own() {
+        let default = places_with(&SidebarConfig::default());
+        assert!(default.iter().any(|p| p.recent), "Recent leads the sidebar");
+        assert!(
+            default.len() >= 2,
+            "and at least Home is under it: {default:?}"
+        );
+    }
+
+    /// Hiding a row takes that row out and nothing else. A config that said
+    /// one thing and changed two would be worse than no config.
+    #[test]
+    fn hiding_a_row_removes_only_that_row() {
+        let default = places_with(&SidebarConfig::default());
+        let without = places_with(&SidebarConfig::hiding(&[Builtin::Recent]));
+
+        assert!(!without.iter().any(|p| p.recent), "Recent is gone");
+        assert_eq!(
+            without.len(),
+            default.len() - 1,
+            "and took nothing with it: {without:?}"
+        );
     }
 }
 

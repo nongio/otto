@@ -52,8 +52,11 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
   kind. The browser deals in local paths.
 - Mounting, unmounting, formatting or ejecting devices. Already-mounted volumes
   appear; udisks2 integration is not in v1.
-- Searching file contents, or any persistent index. See Non-Goals in
-  [launcher.md](./launcher.md) — the same reasoning applies.
+- Searching file contents, and *building* an index of any kind. Otto stores
+  nothing about the user's files between runs. See Non-Goals in
+  [launcher.md](./launcher.md) — the same reasoning applies. Consulting an
+  index the desktop already keeps is a different thing and is in scope; see
+  *Recent and Find*.
 - A scripting or plugin interface.
 - Being configurable by theme file. It follows the desktop's colour scheme and
   icon theme.
@@ -81,13 +84,14 @@ A client-decorated toplevel. Layout:
 - **Titlebar** — the current directory's name.
 - **Toolbar** — back/forward, parent, the view switcher (list / icon), a sort
   control, a new-folder action, an action menu, and a search field.
-- **Path bar** — clickable ancestor segments; ancestors collapse into an
-  overflow control when the path is too long for the width.
-- **Sidebar** — places: the XDG user directories that exist, the user's
-  bookmarks and currently mounted volumes. A place takes a drop, which
-  files into that place's directory; dragging a directory onto the sidebar to
-  *bookmark* it is a separate gesture and is not yet built, so bookmarking is
-  still a menu action on the selection.
+- **Path bar** — a breadcrumb strip along the **bottom** edge, spelling out
+  where the selection is. See [The path bar](#the-path-bar).
+- **Sidebar** — places: Recent, home, the XDG user directories that exist,
+  and whatever the user has added (see [The sidebar's
+  places](#the-sidebars-places)). A place takes a drop, which files into that
+  place's directory; dragging a directory onto the sidebar to *bookmark* it is
+  a separate gesture and is not yet built, so bookmarking is still a menu
+  action on the selection. Mounted volumes are not listed yet.
 - **File view** — the shared list / icon / column presentation. List and icon
   ship in v1. Every scrolling pane draws **only the rows its scroll view is
   asking for**: the visible band, taken from the scroll view's own content
@@ -159,6 +163,98 @@ picker's window as well, minus the traffic lights it does not have.
   progress and cancel surface for a running operation.
 
 Multiple windows are supported and are independent. Tabs are not in v1.
+
+### The sidebar's places
+
+The defaults stand on their own and need no configuration: Recent, home, and
+whichever XDG user directories actually exist. A directory that is not there is
+not listed — a row leading nowhere is worse than its absence.
+
+`~/.config/otto/files.toml` adds the two things defaults cannot know: the
+folders this person works in, and which built-in rows they never touch.
+
+```toml
+[sidebar]
+hide = ["music", "videos"]
+
+[[sidebar.places]]
+path = "~/dev/otto"
+label = "Otto"          # optional: the folder's own name otherwise
+icon = "folder-code"    # optional: a plain folder otherwise
+```
+
+- **`hide` names rows by a stable id**, not by label — the label is translated,
+  and a config written on an English desktop must keep working when the
+  language changes. Matched case-insensitively: a config is prose, not code.
+- **Added folders go after the built-in ones.** A sidebar that reordered itself
+  around a config would make every screenshot, every instruction and every
+  piece of muscle memory wrong for a preference nobody expressed.
+- **`~` and `$HOME` expand**, because neither has been through a shell by the
+  time it reaches a config file. A path that is not a directory is dropped, so
+  a moved disk costs that row and nothing else.
+- **A file that cannot be read or parsed is a warning in the log**, and the
+  defaults stand. The sidebar is how you get anywhere in this window, and
+  losing it to a stray bracket would be a bad trade for strictness nobody
+  asked for.
+- **Read when a window opens.** Editing the file changes the next window, not
+  the ones already up.
+
+**Which row is lit** is the row that was clicked, while the window is still
+showing what it led to. It cannot be worked out from the path alone: two rows
+may name one folder — a shortcut pointing at Downloads, or two pointing at the
+same place — and matching on the path lights whichever comes first, leaving the
+row that was actually pressed dark, which reads as a click that did not work.
+Arriving anywhere by other means falls back to the first row whose path
+matches, which is what lights Documents when you walk into it from home.
+
+### The path bar
+
+A strip along the bottom edge of the browser window, beside the sidebar, on
+the same material as the header. It reads out **the full path of what is
+selected**, one crumb per component, root first, each crumb an icon and a
+name with a chevron between them.
+
+The header says where the *window* is, and in column view — where the thing
+selected can be three columns back — that is not the same answer. The bar is
+the answer to "what am I actually looking at", without a trip to Get Info.
+
+- **What it spells out** — the one thing selected in the active column. With
+  nothing selected, or with several things selected, there is no single path
+  to give and it falls back to that column's own directory.
+- **Naming** — every crumb is what the thing is called on disk. The root is
+  `/`, wearing the volume icon: naming it in words would mean inventing a
+  name — a hostname, "Computer" — where every other crumb is a fact. The home
+  directory keeps the name the login gives it, and takes the sidebar's house
+  icon; the header titles it the same way, and a trail reading
+  `/ › home › Home` would spend a crumb saying one word twice. The leaf wears
+  the selected entry's own icon and is the one crumb drawn in the emphasised
+  weight.
+- **Overflow** — a trail longer than the window slides left, so it is the
+  *root* that runs off the edge and the leaf that stays. The end of a path is
+  what identifies it; the beginning is what every path in the window has in
+  common.
+- **Clicking a crumb navigates to it**, replacing the stack the way a place in
+  the sidebar does. Only directories lead anywhere: the leaf of a file's path
+  is a label. A crumb lights under the pointer, and the window's bottom resize
+  edge still wins where the two overlap.
+- **Where it is not** — the picker, whose bottom edge belongs to the action
+  row, and the Trash window, where every path would spell out the same stretch
+  of `.local/share/Trash` and the Original-location column already answers the
+  question a user of that window is asking.
+- **In Recent and in search results** it earns its line twice over: those rows
+  are files from all over the disk, and the title says what you asked for
+  rather than where the answer came from, so where the selected one lives is
+  the one thing the window otherwise cannot tell you. With nothing selected it
+  has nothing truthful to say — there is no folder behind the listing to fall
+  back to, and the sentinel standing in for one is not a path — so it draws
+  empty. It keeps its line while it does: the band coming and going with the
+  selection would shift every tile in the grid as the selection moved.
+  Clicking a crumb from one of those listings leaves it, rather than restoring
+  the folder the search began in: going to a result's folder is a navigation
+  and not an abandoned query.
+
+The file area stops above the strip, the same way it stops above the picker's
+action row, so no listing geometry has to know it exists.
 
 ### Column view scrolling
 
@@ -271,7 +367,8 @@ aligned by navigation, not by a selection changing what the last column holds.
 
 ### Places
 
-The sidebar's places come from three sources:
+The sidebar's places come from three sources, under a row for **Recent** that
+leads the list and is not a directory at all — see *Recent and Find*:
 
 1. The XDG user directories — Desktop, Documents, Downloads, Music, Pictures,
    Videos, Public, Templates — read from `user-dirs.dirs`, and shown only when
@@ -291,6 +388,131 @@ disconnected drive is not a deleted bookmark.
 Trash is **not** a place in this sidebar. It is a window of its own — see
 *The Trash window* below — so a row here pointing at it would be a shortcut to
 another application rather than a directory this window can show.
+
+### Recent and Find
+
+Two features, one mechanism, because they are the same question asked twice:
+**Recent is a search with no query.** Same roots, same traversal, same cap —
+what differs is only what decides which results survive the cap.
+
+**Recent** leads the sidebar, above the folders: it is the answer to "where did
+that go", and the whole point is not having to pick a folder first. It is a
+*mode*, not a place — the column stack is replaced by one pane with no
+directory behind it, the location controls (path bar, Ctrl+L, Back, Forward)
+are left out entirely, and clicking any other place is the way out. It is a
+grid, sorted newest first, and neither is a preference: the view is a wall of
+thumbnails scanned by eye, so the sort control is disabled rather than merely
+defaulted. Tiles are grouped under a heading per day — Today, Yesterday,
+Earlier This Week, Earlier This Month, Earlier — cut at **local midnight**
+rather than on a rolling twenty-four hours, or a file saved at nine last night
+would sit under "Today" at eight this morning.
+
+Recent's roots are the XDG user directories that exist, not the whole of home.
+A home directory's most recently written files are overwhelmingly caches, dot
+directories and build output: true, useless, and numerous enough to bury the
+document being looked for. Folders are left out for the same reason — a
+folder's modification time changes every time anything inside it does.
+
+**Find** is Ctrl+F: a filter strip under the toolbar with two scope pills.
+
+- *This folder* — the default: the folder Ctrl+F was pressed in, and
+  everything under it.
+- *Everywhere* — the whole of the user's home directory.
+
+Results are a listing with no directory behind them, like Recent: grid or list,
+never Miller columns, since a result set has no hierarchy. Switching the pill
+re-runs the same query against the other haystack; Escape puts the field away
+and the *original folder* back, because an abandoned search is not a
+navigation.
+
+**The strip keeps the keyboard only while it is being typed in.** Clicking a
+result, or arrowing down into one, hands the keyboard back to the listing: the
+strip and its results stay on screen, but Space then previews the selected file
+rather than putting a space in a query nobody is writing. The accent ring
+follows the keyboard rather than the strip, so an unlit field is one that
+ignores keys. Ctrl+F on a blurred strip puts the caret back rather than closing
+it; a second press closes it.
+
+**Results arrive off the UI thread.** A search cannot block the window while
+it runs, and it must not make the person wait on a spinner with nothing said.
+The query runs on a worker and hands back one ranked, capped result set, which
+replaces whatever the pane held rather than appending to it. It is drained by
+`Browser::poll` on the UI thread, the same place finished directory reads land,
+and a superseded search is abandoned through a generation counter rather than
+interrupted — the same contract `Directory` already has. A query is debounced,
+so holding a key down costs one search rather than one per character. Until the
+answer lands the pane says it is working; it never invents rows to fill the
+gap.
+
+**One source: the desktop's index.** Both scopes, and Recent, are answered by
+**LocalSearch (TinySPARQL)** over D-Bus. There is no second implementation to
+fall back to. A search of our own that reads every directory under home takes
+seconds where the index takes a fraction of one, and it answers a subtly
+different question — matching names by subsequence where the index matches by
+substring — so which one ran would decide what the person found. One source is
+slower to be unavailable and never quietly disagrees with itself.
+
+The index is asked only for **paths**. Size, modification time, kind and
+whether a thing is a folder are read from the filesystem here, by the same code
+that builds an ordinary directory listing. That is not duplicated work: an
+index is always a little behind the disk, so a listing built from what it
+remembers would name files that have been deleted and give the sizes they used
+to have. Statting every row is what makes a result an ordinary entry that the
+grid, the thumbnailer and Quick View can treat like any other.
+
+The scope pills differ only in how much of the disk the index may answer from:
+*This folder* narrows the query to the current directory and everything under
+it, *Everywhere* to the whole of home. This-folder deliberately does **not**
+filter the rows already on screen. That would be instant and wrong — nearly
+everything "in this folder" is in a subfolder of it, and a scope that quietly
+meant "the names you can already see" is the one search people would trust
+least.
+
+**The selection is keyed by path, not by name.** In an ordinary directory
+listing the two are interchangeable, because one folder cannot hold two files
+with the same name. Recent and search results merge entries from all over the
+disk, where three `Cargo.toml`s in one listing are ordinary rather than
+exceptional — and keyed by name, clicking one of them selects all three, and
+every command that acts on the selection then acts on all three. A key rather
+than an index for the older reason: the listing is re-read, re-sorted and
+re-filtered under a live selection, and indices survive none of that.
+
+**Results and Recent act on files like anything else.** Quick View works in
+both — they are where you go when you cannot quite name the file, and looking
+at it is how you tell which one it is — and so does opening one. Opening a
+*folder* found this way goes to it rather than descending inside it: there is
+no hierarchy under a result to descend, so it leaves the listing, with the
+listing left behind Back.
+
+What is still refused in a synthetic listing is what acts on a *place* rather
+than on a file — rename, paste, new folder, the location bar — because there is
+no folder behind the pane to act in.
+
+**The indexer being off is a state the window shows.** It is not an internal
+detail to paper over: with no index there is no answer at all, and an empty
+listing would read as "no such file" when the truth is "nothing was able to
+look" — which sends someone hunting for a file that is sitting on the disk. The
+batch carries whether the index answered, and the pane and the status line say
+*File indexing is off* rather than *Nothing found*. Recent is empty for the
+same reason and says the same thing.
+
+Results are capped at 500, which is more tiles than anyone reads and is what
+keeps the re-sort of a replaced listing off the frame budget.
+
+**Session prerequisite.** LocalSearch's systemd unit carries
+`ConditionEnvironment=XDG_SESSION_CLASS=user` and silently refuses to start
+without it. Otto exports that assignment alongside `WAYLAND_DISPLAY` when it
+owns the session (`src/state/mod.rs`); a process-local `set_var` does not
+reach the systemd user manager, which is where the condition is evaluated.
+
+**Packaging.** The indexer is an **optional** dependency (`localsearch`, which
+brings `tinysparql`), not a required one. It reads the user's whole home
+directory, which is a thing to be chosen rather than installed on their behalf
+— and Otto ships on installs that will never open a file manager at all. The
+cost of that choice is that search and Recent are dead until it is installed,
+which is why the window says *File indexing is off* out loud rather than
+showing an empty listing: the missing piece has to be discoverable from the
+window it is missing from. See `docs/user/files.md` for what the user is told.
 
 ### The Trash window
 
@@ -430,8 +652,9 @@ the split button makes, so a dimmed half means the chord does nothing too.
 A recorded location is the **whole column stack**, not just the deepest path,
 and for each pane both its selection and its cursor. Going back therefore
 restores every pane that was open *and* the entry that was selected in each,
-scrolled back into view. The selection is remembered by name, so it survives
-the re-read of the directory; the cursor is re-derived from that selection once
+scrolled back into view. The selection is remembered by **path**, so it
+survives the re-read of the directory; the cursor is re-derived from that
+selection once
 the listing lands, so a file added or removed while the user was away cannot
 leave the keyboard one row off from the highlight.
 
@@ -1158,7 +1381,8 @@ copied.
 ## Out of scope for v1, explicitly
 
 Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
-Content search and any index. Batch rename. Archive browsing or extraction.
+Content search, and any index of Otto's own. Batch rename. Archive browsing or
+extraction.
 File comparison. Tags, labels, colours, or any metadata Otto would have to store
 itself. Custom per-directory view settings beyond sort order. Templates. Running
 external thumbnailers. Persisted column widths.

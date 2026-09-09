@@ -82,6 +82,39 @@ impl TextInputRenderer {
             + Self::measure(style, &Self::display_prefix(state, offset))
     }
 
+    /// The caret's box, in box-local points: where [`Self::render`] paints it,
+    /// and what a client hands the compositor through
+    /// `zwp_text_input_v3::set_cursor_rectangle`.
+    ///
+    /// Answered whether or not the caret is in its blink-on phase and whether
+    /// or not a selection is hiding it. What an input method or a panel wants
+    /// to know is where the insertion point *is*, not whether it happens to be
+    /// painted this frame — a completion list that flickered with the blink
+    /// would be unusable.
+    pub fn caret_rect(
+        state: &TextInputState,
+        style: &TextInputStyle,
+        width: f32,
+        height: f32,
+    ) -> Rect {
+        let (_, metrics) = style.font().metrics();
+        let baseline = Self::baseline(&metrics, height);
+        let x = Self::caret_x(state, style, width, state.caret());
+        Rect::from_ltrb(
+            x,
+            baseline + metrics.ascent,
+            x + style.scaled_caret_width(),
+            baseline + metrics.descent,
+        )
+    }
+
+    /// Where the text sits vertically: the line's own box centred in the
+    /// field's, rather than the glyphs' — so fields holding different strings
+    /// still line up with each other.
+    fn baseline(metrics: &skia_safe::FontMetrics, height: f32) -> f32 {
+        (height - (metrics.ascent + metrics.descent)) / 2.0
+    }
+
     /// Byte offset nearest to `x` (in box-local points) — click to place caret,
     /// drag to select. Returns a `char`-boundary offset into the value.
     pub fn hit_test_offset(
@@ -174,7 +207,7 @@ impl TextInputRenderer {
 
         let font = style.font();
         let (_, metrics) = font.metrics();
-        let baseline = (height - (metrics.ascent + metrics.descent)) / 2.0;
+        let baseline = Self::baseline(&metrics, height);
         let origin_x = Self::text_origin_x(state, style, width);
 
         canvas.save();
@@ -249,14 +282,8 @@ impl TextInputRenderer {
 
         // Caret: hidden while a selection is active, like every other field.
         if state.focused() && caret_visible && selection.is_empty() {
-            let x = Self::caret_x(state, style, width, state.caret());
-            let top = baseline + metrics.ascent;
-            let bottom = baseline + metrics.descent;
             paint.set_color(style.caret_color);
-            canvas.draw_rect(
-                Rect::from_ltrb(x, top, x + style.scaled_caret_width(), bottom),
-                &paint,
-            );
+            canvas.draw_rect(Self::caret_rect(state, style, width, height), &paint);
         }
 
         canvas.restore();

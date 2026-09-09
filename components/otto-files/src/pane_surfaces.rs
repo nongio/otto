@@ -419,10 +419,7 @@ impl PaneSurfaces {
         // entrance keep growing out of the file's icon: the anchor and the
         // resting place are in the same space.
         let resting = self.resting_for(session).unwrap_or_else(|| {
-            quickview::resting_in(
-                Rect::from_wh(f.width, f.height + f.footer),
-                session.expanded,
-            )
+            quickview::resting_in(Rect::from_wh(f.width, f.window_h()), session.expanded)
         });
         self.quickview_resting = Some(resting);
         // Wherever the panel is *now* — part way in, at rest, or part way

@@ -70,8 +70,89 @@ Type or paste a path and press `Return` to go there; `Escape`, or a second
   them. This selects, it does not filter — the whole folder stays on screen.
   The typed text expires after about a second, and repeating one letter cycles
   through the entries beginning with it.
-- **The sidebar** holds your home, desktop, documents, downloads, music,
-  pictures and videos.
+- **The sidebar** holds Recent, your home, and whichever of desktop,
+  documents, downloads, music, pictures and videos you actually have. See
+  [Changing what is in the sidebar](#changing-what-is-in-the-sidebar).
+
+### Changing what is in the sidebar
+
+The sidebar works out of the box and needs no setting up. If you want your own
+folders in it, or fewer of the standard ones, make
+`~/.config/otto/files.toml`:
+
+```toml
+[sidebar]
+# Standard rows to leave out. Any of: recent, home, desktop, documents,
+# downloads, music, pictures, videos.
+hide = ["music", "videos"]
+
+# Your own folders, added under the standard ones.
+[[sidebar.places]]
+path = "~/dev/otto"
+label = "Otto"          # optional — the folder's own name is used otherwise
+icon = "folder-code"    # optional — a plain folder is used otherwise
+
+[[sidebar.places]]
+path = "/mnt/archive"
+```
+
+Paths may start with `~` or `$HOME`. A folder that is not there is left out
+rather than shown as a row leading nowhere, so a moved disk costs you that one
+row and nothing else. `icon` is an icon name from your theme; if the theme has
+no such icon you get a plain folder.
+
+The file is read when a window opens, so open a new one to see a change. If it
+contains a mistake, Files says so in its log and carries on with the standard
+sidebar — you will not lose the sidebar over a stray bracket.
+
+## Finding files
+
+`Ctrl+F` opens a search field under the header. Type what you are looking for
+and press `Return` — searching happens when you ask for it, not on every
+keystroke, so you can finish the word first.
+
+Two buttons beside the field say how wide to look:
+
+- **This folder** — the folder you pressed `Ctrl+F` in, and everything inside
+  it. This includes subfolders: it is a search of the folder, not a filter over
+  the rows you can already see.
+- **Everywhere** — your whole home directory.
+
+Switching between them re-runs the same query, so you can start narrow and
+widen without retyping.
+
+Results are an ordinary listing of real files. Space previews one, `Return`
+opens it, and opening a *folder* takes you to it. The strip along the bottom
+says where the selected file actually lives, and clicking any folder in that
+trail goes there. `Down` moves into the results and hands the keyboard to
+them, so `Space` previews rather than typing a space; `Ctrl+F` puts the caret
+back in the query. `Escape` puts back the folder you started in, and Back and
+Forward step out of a search and into it again.
+
+### Search needs the file indexer
+
+Search and the **Recent** listing both come from the desktop's file index,
+`localsearch`. It is not installed with Otto — an indexer that reads your whole
+home directory should be something you choose — so if you want either feature:
+
+```sh
+sudo pacman -S localsearch
+```
+
+It starts on demand and indexes in the background; `localsearch status` says
+how far it has got. Nothing else needs configuring: Otto sets the session
+variable the indexer's service requires, so it starts on your next login after
+installing it. (If you would rather not log out, `systemctl --user
+set-environment XDG_SESSION_CLASS=user` does the same thing for the session you
+are in.)
+
+Until it is running, Files says **File indexing is off** where a result count
+would go, rather than showing an empty listing — "nothing found" and "nothing
+was able to look" are different answers, and the second one should not send you
+hunting for a file that is sitting on your disk.
+
+Searching *inside* files — matching contents rather than names — is not built
+yet.
 
 ## Selecting
 
@@ -166,8 +247,9 @@ so you can look inside before deciding.
 - Tabs, split views, and persisted column widths.
 - Network and virtual filesystems — `smb://`, `sftp://`, MTP. Local paths only.
 - Mounting, unmounting and ejecting devices. Mounted volumes do not appear in
-  the sidebar either — it lists your home directory and the XDG user folders,
-  and you reach anything else by typing the path with `Ctrl+L`.
+  the sidebar either — it lists Recent, your home directory, the XDG user
+  folders and whatever you have added yourself, and you reach anything else by
+  typing the path with `Ctrl+L`.
 - Searching file contents, batch rename, archive browsing, tags and labels.
 - `Shift+Delete` (delete permanently) is deliberately inert for now.
 - Writing to the shared thumbnail cache.

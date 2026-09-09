@@ -298,6 +298,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = Місця
+files-recent = Нещодавні
 files-home = Домівка
 files-desktop = Стільниця
 files-documents = Документи
@@ -306,6 +307,40 @@ files-music = Музика
 files-pictures = Зображення
 files-videos = Відео
 files-trash = Кошик
+
+# Заголовки днів у списку «Нещодавні», над файлами, збереженими кожного з
+# них.
+files-recent-today = Сьогодні
+files-recent-yesterday = Учора
+files-recent-this-week = Раніше цього тижня
+files-recent-this-month = Раніше цього місяця
+files-recent-earlier = Раніше
+# Показується, коли команда, якій потрібна папка, — перейменування, відкриття,
+# переміщення в кошик, перегляд — застосовується до списку, у якого папки немає:
+# «Нещодавні» або результати пошуку.
+files-synthetic-no-action = У цього списку немає папки.
+files-recent-grid-only = «Нещодавні» показуються сіткою.
+files-recent-not-a-folder = «Нещодавні» — це список, а не папка.
+files-recent-no-location = У «Нещодавніх» немає розташування, до якого можна перейти.
+
+# Смуга фільтра між заголовком вікна і списком і те, що вона повідомляє.
+files-search-placeholder = Фільтр: { $folder }
+files-search-scope-folder = Ця папка
+files-search-scope-everywhere = Всюди
+files-search-found =
+    { $count ->
+        [one] { $count } результат
+        [few] { $count } результати
+        [many] { $count } результатів
+       *[other] { $count } результату
+    }
+files-search-none = Нічого не знайдено
+files-search-no-columns = У результатів немає стовпців для показу.
+# Показується замість числа результатів, коли індексування файлів у системі не
+# працює. Пошук і «Нещодавні» звертаються до нього, тож без нього жоден з них
+# не може відповісти — а порожній список читався б як «такого файла немає», а
+# не як «нічим було шукати».
+files-search-unavailable = Індексування файлів вимкнено
 
 files-column-name = Назва
 files-column-size = Розмір

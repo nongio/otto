@@ -292,6 +292,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = Places
+files-recent = Recent
 files-home = Home
 files-desktop = Desktop
 files-documents = Documents
@@ -300,6 +301,36 @@ files-music = Music
 files-pictures = Pictures
 files-videos = Videos
 files-trash = Trash
+
+# The Recent listing's day headings, over the run of files saved in each.
+files-recent-today = Today
+files-recent-yesterday = Yesterday
+files-recent-this-week = Earlier This Week
+files-recent-this-month = Earlier This Month
+files-recent-earlier = Earlier
+# Shown when a command that needs a folder — rename, open, trash, quick view —
+# is used on a listing that has none behind it: Recent, or search results.
+files-synthetic-no-action = This listing has no folder behind it.
+files-recent-grid-only = Recent is shown as a grid.
+files-recent-not-a-folder = Recent is a listing, not a folder.
+files-recent-no-location = Recent has no location to go to.
+
+# The filter strip between the header and the listing, and what it reports.
+files-search-placeholder = Filter { $folder }
+files-search-scope-folder = This folder
+files-search-scope-everywhere = Everywhere
+files-search-found =
+    { $count ->
+        [one] 1 result
+       *[other] { $count } results
+    }
+files-search-none = Nothing found
+files-search-no-columns = Results have no columns to show.
+# Shown in place of a result count when the desktop's file indexer is not
+# running. Search and Recent both go through it, so neither can answer without
+# it — and an empty listing would read as "no such file" rather than as
+# "nothing was able to look".
+files-search-unavailable = File indexing is off
 
 files-column-name = Name
 files-column-size = Size
