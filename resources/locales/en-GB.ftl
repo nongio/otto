@@ -315,6 +315,8 @@ files-command-go-to-path = Go to Path
 files-command-go-to-place = Go to Place
 files-command-undo = Undo
 files-command-select-all = Select All
+files-command-select-matching = Select Matching
+files-command-move-to = Move to Folder
 files-command-change-view = Change View
 files-command-sort-by = Sort By
 files-command-show-hidden = Show Hidden Files
@@ -331,6 +333,8 @@ files-command-new-folder-prompt = New folder named
 files-command-change-view-prompt = View
 files-command-sort-by-prompt = Sort by
 files-command-search-prompt = Search for
+files-command-select-matching-prompt = Select matching
+files-command-move-to-prompt = Move to
 
 # The one-word name of what a command is asking for, shown dimmed after its
 # title in the list.
@@ -340,12 +344,23 @@ files-command-arg-name = name
 files-command-arg-view = view
 files-command-arg-sort = key
 files-command-arg-query = text
+files-command-arg-pattern = pattern
 
 files-view-list = List
 files-view-grid = Grid
 files-view-columns = Columns
 # Refused when a name could not belong to a file — empty, or with a slash in it.
 files-name-invalid = That isn’t a name a file can have
+files-no-pattern = Type a pattern, such as *.png
+files-nothing-matches = Nothing matches “{ $pattern }”
+files-nothing-selected = Nothing is selected
+files-cant-move-into-itself = A folder can’t be moved into itself
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+        [one] { $count } item selected
+       *[other] { $count } items selected
+    }
 files-name-taken = “{ $name }” is already there
 
 ## Files — sidebar and columns

@@ -436,6 +436,8 @@ pub mod id {
     pub const COPY: &str = "copy";
     pub const PASTE: &str = "paste";
     pub const SELECT_ALL: &str = "select_all";
+    pub const SELECT_MATCHING: &str = "select_matching";
+    pub const MOVE_TO: &str = "move_to";
     pub const UNDO: &str = "undo";
     /// The three views, by name. Their ids double as the values
     /// [`CHANGE_VIEW`] takes, so there is one spelling of "grid".
@@ -639,6 +641,24 @@ impl CommandProvider for Builtin {
                     otto_kit::t_owned!("files-move-count-to-trash", count = s.target_count() as f64)
                 };
                 out.push(
+                    Command::new(
+                        id::MOVE_TO,
+                        otto_kit::t_owned!("files-command-move-to"),
+                        Group::File,
+                    )
+                    .with_keywords(["move", "put", "file away", "relocate"])
+                    .with_arg(
+                        ArgSpec::new(
+                            otto_kit::t_owned!("files-command-move-to-prompt"),
+                            otto_kit::t_owned!("files-command-arg-path"),
+                            // Only a folder can be moved into, so only folders
+                            // are offered.
+                            ArgKind::Path { dirs_only: true },
+                        )
+                        .with_placeholder("~/Documents"),
+                    ),
+                );
+                out.push(
                     Command::new(id::TRASH, title, Group::File)
                         .with_keywords(["delete", "remove", "bin"])
                         .with_shortcut("Delete"),
@@ -717,6 +737,22 @@ impl CommandProvider for Builtin {
             }
         }
         if s.has_entries {
+            out.push(
+                Command::new(
+                    id::SELECT_MATCHING,
+                    otto_kit::t_owned!("files-command-select-matching"),
+                    Group::Edit,
+                )
+                .with_keywords(["glob", "wildcard", "pattern", "extension"])
+                .with_arg(
+                    ArgSpec::new(
+                        otto_kit::t_owned!("files-command-select-matching-prompt"),
+                        otto_kit::t_owned!("files-command-arg-pattern"),
+                        ArgKind::Text,
+                    )
+                    .with_placeholder("*.png"),
+                ),
+            );
             out.push(
                 Command::new(
                     id::SELECT_ALL,

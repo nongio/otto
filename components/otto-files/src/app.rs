@@ -3759,6 +3759,8 @@ impl Browser {
             id::COPY => self.copy_selection(false, serial),
             id::PASTE => self.paste(),
             id::SELECT_ALL => self.select_all(),
+            id::SELECT_MATCHING => self.select_matching(arg)?,
+            id::MOVE_TO => self.move_selection_to(arg)?,
             id::UNDO => self.undo_last(),
             // The three views by name share their ids with the values Change
             // View takes, so one arm answers for both.
@@ -3802,6 +3804,95 @@ impl Browser {
             other => return Err(format!("Unknown command: {other}")),
         }
         Ok(Followup::Nothing)
+    }
+
+    /// Select every entry in the active pane whose name matches `pattern`.
+    ///
+    /// Matched against the *visible* listing rather than the directory, so a
+    /// pattern selects what is on screen: hidden files stay out of it unless
+    /// they are being shown, and a filtered listing narrows what can be
+    /// picked. That is what someone typing at a listing means by it.
+    fn select_matching(&mut self, pattern: &str) -> Result<(), String> {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return Err(otto_kit::t_owned!("files-no-pattern"));
+        }
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        let matched: Vec<(usize, String)> = self
+            .visible(depth)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                // Case-sensitive when the pattern carries case, the way the
+                // picker's filters read: `*.png` finds `PHOTO.PNG`, and
+                // `*.PNG` means the shouty one.
+                if pattern.chars().any(|c| c.is_ascii_uppercase()) {
+                    otto_kit::filetype::glob::matches(pattern, &entry.name)
+                } else {
+                    otto_kit::filetype::glob::matches_ignore_case(pattern, &entry.name)
+                }
+            })
+            .map(|(index, entry)| (index, entry.selection_key()))
+            .collect();
+
+        if matched.is_empty() {
+            return Err(otto_kit::t_owned!(
+                "files-nothing-matches",
+                pattern = pattern
+            ));
+        }
+        let count = matched.len();
+        let first = matched[0].0;
+        let column = &mut self.columns[depth];
+        column.selection.clear();
+        for (_, key) in matched {
+            column.selection.insert(key);
+        }
+        // The cursor goes to the first match so the selection can be walked
+        // from somewhere, and the anchor with it so a following Shift+Arrow
+        // extends from there rather than from wherever the cursor last was.
+        column.cursor = Some(first);
+        column.anchor = Some(first);
+        self.reveal_cursor();
+        self.status = Some(otto_kit::t_owned!(
+            "files-selected-count",
+            count = count as f64
+        ));
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Move the selection into `path`.
+    ///
+    /// The move a cut and paste would make, said in one go: the same
+    /// conflict rule, the same sound, the same undo entry.
+    fn move_selection_to(&mut self, path: &str) -> Result<(), String> {
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if paths.is_empty() {
+            return Err(otto_kit::t_owned!("files-nothing-selected"));
+        }
+        let dest = self
+            .resolve_typed_path(path)
+            .filter(|dest| dest.is_dir())
+            .ok_or_else(|| otto_kit::t_owned!("files-no-such-folder", path = path.trim()))?;
+        // Moving a folder into itself, or into its own child, would take the
+        // whole subtree somewhere it cannot be reached from.
+        if paths.iter().any(|from| dest.starts_with(from)) {
+            return Err(otto_kit::t_owned!("files-cant-move-into-itself"));
+        }
+
+        let clip = model::Clipboard { paths, cut: true };
+        // Keep Both, like a paste with no sheet to ask with: the only default
+        // that cannot destroy anything.
+        let result = model::paste(&clip, &dest, model::OnConflict::KeepBoth);
+        self.report(&result);
+        self.record_undo(otto_kit::t!("files-undo-move"), result.changes);
+        self.reload_all();
+        Ok(())
     }
 
     /// Sort by `key`, in the direction that key reads best in — and remember
@@ -9508,6 +9599,79 @@ mod palette_tests {
         assert!(dir.0.join("reports").is_dir());
         // A second one with the same name is an error, not a "reports 2".
         assert!(browser.new_folder_named("reports").is_err());
+    }
+
+    /// A pattern selects what is on screen, and nothing else.
+    #[test]
+    fn select_matching_picks_the_files_the_pattern_names() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt", "D.PNG"]);
+        browser.select_matching("*.png").expect("three match");
+        let selected: Vec<String> = browser
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        // A lowercase pattern also takes the shouty extension.
+        assert_eq!(selected, vec!["a.png", "b.png", "D.PNG"]);
+    }
+
+    /// A pattern carrying case means that case.
+    #[test]
+    fn a_pattern_with_case_in_it_is_matched_with_case() {
+        let (mut browser, _dir) = browser_over(&["a.png", "D.PNG"]);
+        browser.select_matching("*.PNG").expect("one matches");
+        let selected: Vec<String> = browser
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+        assert_eq!(selected, vec!["D.PNG"]);
+    }
+
+    /// A pattern matching nothing is a refusal, and leaves the selection be.
+    #[test]
+    fn a_pattern_matching_nothing_is_refused() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.select(0, 0);
+        assert!(browser.select_matching("*.png").is_err());
+        assert_eq!(browser.selected_entries().len(), 1);
+    }
+
+    /// Moving the selection is the move a cut and paste would make.
+    #[test]
+    fn move_to_folder_moves_the_selection() {
+        let (mut browser, dir) = browser_over(&["a.txt"]);
+        std::fs::create_dir(dir.0.join("inbox")).unwrap();
+        browser.select(0, 0);
+        browser
+            .move_selection_to("inbox")
+            .expect("the folder is there");
+        assert!(dir.0.join("inbox/a.txt").is_file());
+        assert!(!dir.0.join("a.txt").exists());
+        assert_eq!(browser.undo.len(), 1);
+    }
+
+    /// A folder cannot be moved inside itself: the subtree would go somewhere
+    /// it can no longer be reached from.
+    #[test]
+    fn a_folder_is_not_moved_into_itself() {
+        let (mut browser, dir) = browser_over(&["a.txt"]);
+        std::fs::create_dir_all(dir.0.join("outer/inner")).unwrap();
+        browser.reload_all();
+        for _ in 0..500 {
+            if browser.columns[0].poll() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let outer = browser
+            .visible(0)
+            .iter()
+            .position(|entry| entry.name == "outer")
+            .expect("outer is listed");
+        browser.select(0, outer);
+        assert!(browser.move_selection_to("outer/inner").is_err());
+        assert!(dir.0.join("outer/inner").is_dir());
     }
 
     /// Opening the palette changes nothing underneath it, and closing it
