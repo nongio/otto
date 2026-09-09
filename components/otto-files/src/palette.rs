@@ -161,7 +161,19 @@ impl Palette {
     }
 
     /// Which row is highlighted, or `None` when there is nothing to highlight.
+    ///
+    /// Argument mode answers from the argument's own highlight rather than
+    /// from the command list's. The two are separate — backing out of an
+    /// argument has to put the highlight back on the command it came from —
+    /// and reporting the wrong one here draws a bar that Return does not act
+    /// on, which is worse than drawing none. `None` in argument mode means the
+    /// typed text stands on its own, which is the usual state for a path.
     pub fn highlighted(&self) -> Option<usize> {
+        if let Some(session) = self.arg.as_ref() {
+            // Rows are one-to-one with completions here, so the completion's
+            // index is the row's.
+            return session.highlight;
+        }
         self.rows.get(self.highlight).map(|_| self.highlight)
     }
 
@@ -895,6 +907,50 @@ mod tests {
         palette.on_key(Key::Down, mods());
         palette.on_key(Key::Tab, mods());
         assert_eq!(palette.input().value(), "/usr/share");
+    }
+
+    /// The bug this pins: the palette holds a command highlight and an
+    /// argument highlight, and argument mode has to report the second. It once
+    /// reported the first, so the bar sat on whatever row the command had
+    /// occupied and no arrow key moved it.
+    #[test]
+    fn the_arrows_move_the_highlight_through_the_answers() {
+        let mut palette = open(commands());
+        type_text(&mut palette, "go to path");
+        palette.on_key(Key::Tab, mods());
+        palette.set_completions(vec![
+            Completion::new("/usr/bin", "bin"),
+            Completion::new("/usr/lib", "lib"),
+            Completion::new("/usr/src", "src"),
+        ]);
+        // Nothing is highlighted until an arrow key says so: what was typed
+        // stands on its own.
+        assert_eq!(palette.highlighted(), None);
+        palette.on_key(Key::Down, mods());
+        assert_eq!(palette.highlighted(), Some(0));
+        palette.on_key(Key::Down, mods());
+        assert_eq!(palette.highlighted(), Some(1));
+        palette.on_key(Key::Up, mods());
+        assert_eq!(palette.highlighted(), Some(0));
+    }
+
+    /// And what is highlighted is what Return acts on.
+    #[test]
+    fn the_highlight_the_arrows_moved_is_the_one_return_takes() {
+        let mut palette = open(commands());
+        type_text(&mut palette, "go to path");
+        palette.on_key(Key::Tab, mods());
+        palette.set_completions(vec![
+            Completion::new("/usr/bin", "bin"),
+            Completion::new("/usr/lib", "lib"),
+        ]);
+        palette.on_key(Key::Down, mods());
+        palette.on_key(Key::Down, mods());
+        assert_eq!(palette.highlighted(), Some(1));
+        assert_eq!(
+            palette.on_key(Key::Enter, mods()),
+            Outcome::Run(Request::new(id::GO_TO_PATH, Some("/usr/lib".into())))
+        );
     }
 
     #[test]

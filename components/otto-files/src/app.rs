@@ -7177,6 +7177,8 @@ impl FilesApp {
             for ch in query.chars() {
                 let key = match ch {
                     '\t' => palette::Key::Tab,
+                    '\u{2193}' => palette::Key::Down,
+                    '\u{2191}' => palette::Key::Up,
                     ch => palette::Key::Edit(TextInputKey::Char(ch)),
                 };
                 if let Some(palette) = browser.palette.as_mut() {
