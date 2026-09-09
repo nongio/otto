@@ -17,8 +17,10 @@
 mod bench;
 
 pub mod app;
+pub mod command;
 pub mod dbus;
 pub mod model;
+pub mod palette;
 pub mod pane_surfaces;
 pub mod perf;
 pub mod picker;

@@ -291,6 +291,63 @@ files-delete-count-immediately =
     }
 
 
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = Run a command
+files-palette-no-matches = No command matches
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+        [one] Command palette, { $count } command
+       *[other] Command palette, { $count } commands
+    }
+
+files-command-group-go = Go
+files-command-group-file = File
+files-command-group-edit = Edit
+files-command-group-view = View
+
+files-command-back = Back
+files-command-forward = Forward
+files-command-up = Up
+files-command-go-to-path = Go to Path
+files-command-go-to-place = Go to Place
+files-command-undo = Undo
+files-command-select-all = Select All
+files-command-change-view = Change View
+files-command-sort-by = Sort By
+files-command-show-hidden = Show Hidden Files
+files-command-hide-hidden = Hide Hidden Files
+files-command-quick-look = Quick Look
+files-command-search = Search
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = Go to path
+files-command-go-to-place-prompt = Go to place
+files-command-rename-prompt = Rename to
+files-command-new-folder-prompt = New folder named
+files-command-change-view-prompt = View
+files-command-sort-by-prompt = Sort by
+files-command-search-prompt = Search for
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = path
+files-command-arg-place = place
+files-command-arg-name = name
+files-command-arg-view = view
+files-command-arg-sort = key
+files-command-arg-query = text
+
+files-view-list = List
+files-view-grid = Grid
+files-view-columns = Columns
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = That isn’t a name a file can have
+files-name-taken = “{ $name }” is already there
+
 ## Files — sidebar and columns
 
 files-places = Places
