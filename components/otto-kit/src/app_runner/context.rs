@@ -44,6 +44,12 @@ thread_local! {
     /// Where the desktop's text cursor was last reported, in layout
     /// coordinates. `None` means no application has said.
     static TEXT_CURSOR: RefCell<Option<(i32, i32, i32, i32)>> = const { RefCell::new(None) };
+
+    /// The last caret rectangle actually sent to the compositor, so a redraw
+    /// that moved nothing sends nothing. `None` means the compositor's idea of
+    /// our caret is stale or absent — after a keyboard leave, say — and the
+    /// next report goes out whatever it says.
+    static REPORTED_TEXT_CURSOR: RefCell<Option<(i32, i32, i32, i32)>> = const { RefCell::new(None) };
     /// Modifier state from the last `wl_keyboard.modifiers`. Kept because a key
     /// event does not carry it, and Shift+Tab has to be told from Tab.
     static CURRENT_MODIFIERS: RefCell<super::Modifiers> = RefCell::new(super::Modifiers::default());
@@ -258,6 +264,18 @@ pub struct AppContextData {
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
     pub otto_text_cursor_manager:
         Option<crate::protocols::otto_text_cursor_manager_v1::OttoTextCursorManagerV1>,
+    /// The other side of the caret: `otto_text_cursor_manager_v1` says where
+    /// *someone else's* caret is, this says where ours is. `None` on a
+    /// compositor without `zwp_text_input_v3`.
+    pub text_input_manager: Option<
+        wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+    >,
+    /// One per application rather than one per surface: the protocol object
+    /// hangs off the seat, and the compositor pairs whatever caret we report
+    /// with whichever of our surfaces currently holds the keyboard. `None`
+    /// until a seat with a keyboard turns up.
+    pub text_input:
+        Option<wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::ZwpTextInputV3>,
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
@@ -1448,6 +1466,71 @@ impl<'a> AppContext<'a> {
 
     pub(crate) fn set_text_cursor(caret: Option<(i32, i32, i32, i32)>) {
         TEXT_CURSOR.with(|stored| *stored.borrow_mut() = caret);
+    }
+
+    /// Tell the compositor where this application's own text caret is, as
+    /// `(x, y, width, height)` in surface-local points, or `None` when nothing
+    /// is being edited.
+    ///
+    /// Call it from the draw path, every frame, with whatever the focused
+    /// field's [`TextInput::caret_rect`](crate::components::text_input::TextInput::caret_rect) says
+    /// offset to where the field was drawn. A caret that has not moved sends
+    /// nothing, so a per-frame call costs a comparison.
+    ///
+    /// This is a *report*, not input-method support: the text input is never
+    /// enabled, because enabling it promises to render preedit text and take
+    /// committed strings back, which the toolkit does not do yet. Otto records
+    /// the rectangle either way — deliberately, so a desktop with no input
+    /// method running can still put a character picker or a completion list
+    /// beside the text. Whoever teaches [`TextInput`](crate::components::text_input::TextInput) about
+    /// preedit should send `enable` here and handle the events.
+    pub fn report_text_cursor(caret: Option<(f32, f32, f32, f32)>) {
+        let Some(text_input) = Self::with_global(|ctx| ctx.data.text_input.clone()) else {
+            return;
+        };
+
+        // The compositor keeps the caret against the surface holding the
+        // keyboard, and drops the request outright when that is not one of
+        // ours. Forgetting what we sent means the next report after focus
+        // comes back goes out even if the caret never moved.
+        if Self::keyboard_focus().is_none() {
+            REPORTED_TEXT_CURSOR.with(|last| *last.borrow_mut() = None);
+            return;
+        }
+
+        // Surface-local points, rounded out: a caret is about a point wide and
+        // rounding it to nothing would leave whatever sits beside it nothing
+        // to align to.
+        let caret = caret.map(|(x, y, w, h)| {
+            (
+                x.round() as i32,
+                y.round() as i32,
+                (w.round() as i32).max(1),
+                (h.round() as i32).max(1),
+            )
+        });
+        let Some(caret) = caret else {
+            // Nothing is being edited. There is no request for "no caret" —
+            // `set_cursor_rectangle` cannot be cleared — so the last position
+            // stands, which is what a panel wants anyway: it is still where
+            // the text was.
+            REPORTED_TEXT_CURSOR.with(|last| *last.borrow_mut() = None);
+            return;
+        };
+        let moved =
+            REPORTED_TEXT_CURSOR.with(|last| last.borrow_mut().replace(caret) != Some(caret));
+        if !moved {
+            return;
+        }
+        let (x, y, width, height) = caret;
+        text_input.set_cursor_rectangle(x, y, width, height);
+        text_input.commit();
+    }
+
+    /// Forget what the compositor was last told, so the next report is sent
+    /// even if the caret has not moved. Called when the keyboard leaves.
+    pub(crate) fn forget_reported_text_cursor() {
+        REPORTED_TEXT_CURSOR.with(|last| *last.borrow_mut() = None);
     }
 
     pub fn keyboard_focus() -> Option<ObjectId> {

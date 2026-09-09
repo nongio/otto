@@ -9,6 +9,8 @@
 //! here does I/O while someone is typing: a keystroke must never wait on a
 //! disk scan.
 
+use otto_kit::matching::score;
+
 /// One row: something that can be picked.
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -140,63 +142,6 @@ pub fn rank(items: &[Item], query: &str) -> Vec<Match> {
     // fully tied query look the same.
     matches.sort_by_key(|m| std::cmp::Reverse(m.score));
     matches
-}
-
-/// Score `query` as a subsequence of `text`, or `None` if it is not one.
-///
-/// The shape of the score is what makes a launcher feel right: a match at the
-/// start of a word beats one in the middle, a run of adjacent characters beats
-/// the same characters scattered, and a short name beats a long one that
-/// happens to contain the same letters.
-fn score(text: &str, query: &str) -> Option<i32> {
-    let hay: Vec<char> = text.to_lowercase().chars().collect();
-    let needle: Vec<char> = query.to_lowercase().chars().collect();
-    if needle.is_empty() {
-        return Some(0);
-    }
-    if needle.len() > hay.len() {
-        return None;
-    }
-
-    let mut score = 0i32;
-    let mut cursor = 0usize;
-    let mut previous: Option<usize> = None;
-
-    for &wanted in &needle {
-        // Spaces in the query separate words rather than having to be matched:
-        // "fire dev" should find "Firefox Developer Edition".
-        if wanted == ' ' {
-            previous = None;
-            continue;
-        }
-        let found = hay[cursor..].iter().position(|&c| c == wanted)? + cursor;
-
-        score += 8;
-        let boundary = found == 0
-            || matches!(
-                hay[found - 1],
-                ' ' | '-' | '_' | '.' | '/' | ':' | '(' | '['
-            );
-        if boundary {
-            score += 14;
-        }
-        if found == 0 {
-            score += 20;
-        }
-        match previous {
-            Some(last) if found == last + 1 => score += 12,
-            Some(last) => score -= (found - last - 1).min(10) as i32,
-            None => {}
-        }
-
-        previous = Some(found);
-        cursor = found + 1;
-    }
-
-    // Prefer the shorter of two names that both match: "Files" over
-    // "Files (Nautilus) Preferences".
-    score -= (hay.len() / 6) as i32;
-    Some(score)
 }
 
 #[cfg(test)]

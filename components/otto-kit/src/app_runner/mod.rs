@@ -530,6 +530,12 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // any compositor but Otto, which is why it is optional.
         let otto_text_cursor_manager: Option<otto_text_cursor_manager_v1::OttoTextCursorManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
+        // Where *our* caret is, which the compositor hands to input methods
+        // and to anything watching `otto_text_cursor_manager_v1`. The object
+        // itself needs a seat and is made in `new_capability`.
+        let text_input_manager: Option<
+            wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        > = globals.bind(&qh, 1..=1, ()).ok();
         let session_lock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
@@ -567,6 +573,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             output_state,
             surface_style_manager,
             otto_text_cursor_manager,
+            text_input_manager,
+            text_input: None,
             wlr_layer_shell,
             subcompositor,
             otto_dock_manager,
@@ -931,14 +939,25 @@ impl<A: App + 'static> SeatHandler for AppData<A> {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard
-            && self
+        if capability == Capability::Keyboard {
+            if self
                 .context_data
                 .seat_state
                 .get_keyboard(qh, &seat, None)
                 .is_err()
-        {
-            eprintln!("Failed to create keyboard");
+            {
+                eprintln!("Failed to create keyboard");
+            }
+            // A text input goes with the keyboard, and only with the first
+            // one: the caret is the application's, not the seat's, and a
+            // second seat reporting the same rectangle would only overwrite
+            // it. Kept alive for the run — destroying the object drops the
+            // compositor's record of where our text is.
+            if self.context_data.text_input.is_none() {
+                if let Some(manager) = &self.context_data.text_input_manager {
+                    self.context_data.text_input = Some(manager.get_text_input(&seat, qh, ()));
+                }
+            }
         }
 
         if capability == Capability::Pointer {
@@ -1159,6 +1178,10 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
             AppContext::set_keyboard_focus(None);
         }
         AppContext::dispatch_keyboard_leave(&surface.id());
+        // The compositor keeps our caret against the surface that had the
+        // keyboard; once it moves on, whatever we report next has to go out
+        // again even if the caret itself never moved.
+        AppContext::forget_reported_text_cursor();
         let ctx = AppContext::new(&self.context_data);
         self.app.on_keyboard_leave(&ctx, surface);
     }
@@ -1753,6 +1776,46 @@ impl<A: App + 'static> Dispatch<otto_dock_manager_v1::OttoDockManagerV1, ()> for
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl<A: App + 'static>
+    Dispatch<
+        wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        (),
+    > for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        _event: wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // The manager has no events.
+    }
+}
+
+impl<A: App + 'static>
+    Dispatch<wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::ZwpTextInputV3, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::ZwpTextInputV3,
+        _event: wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Nothing to do with any of them yet. `enter`, `leave` and `done` are
+        // bookkeeping this side does not keep — the toolkit follows its own
+        // keyboard focus — and `preedit_string` and `commit_string` only
+        // arrive for an *enabled* text input, which
+        // [`AppContext::report_text_cursor`] deliberately never sends. When
+        // the toolkit grows preedit, this is where the input method's text
+        // comes in.
     }
 }
 
