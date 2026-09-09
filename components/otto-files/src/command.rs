@@ -453,6 +453,7 @@ pub mod id {
     pub const SELECT_ALL: &str = "select_all";
     pub const SELECT_MATCHING: &str = "select_matching";
     pub const MOVE_TO: &str = "move_to";
+    pub const NEW_FOLDER_WITH_SELECTION: &str = "new_folder_with_selection";
     pub const UNDO: &str = "undo";
     /// The three views, by name. Their ids double as the values
     /// [`CHANGE_VIEW`] takes, so there is one spelling of "grid".
@@ -655,6 +656,26 @@ impl CommandProvider for Builtin {
                 } else {
                     otto_kit::t_owned!("files-move-count-to-trash", count = s.target_count() as f64)
                 };
+                let folder_title = if s.target_count() == 1 {
+                    otto_kit::t_owned!("files-new-folder-with-selection")
+                } else {
+                    otto_kit::t_owned!(
+                        "files-new-folder-with-count",
+                        count = s.target_count() as f64
+                    )
+                };
+                out.push(
+                    Command::new(id::NEW_FOLDER_WITH_SELECTION, folder_title, Group::File)
+                        .with_keywords(["group", "gather", "collect", "into folder"])
+                        .with_arg(
+                            ArgSpec::new(
+                                otto_kit::t_owned!("files-command-new-folder-prompt"),
+                                otto_kit::t_owned!("files-command-arg-name"),
+                                ArgKind::Text,
+                            )
+                            .with_placeholder("untitled folder"),
+                        ),
+                );
                 out.push(
                     Command::new(
                         id::MOVE_TO,

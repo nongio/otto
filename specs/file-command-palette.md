@@ -39,8 +39,14 @@ a path to go to or a new name to give a file.
 
 ### Opening and closing
 
-- Ctrl+P opens the palette. It opens over the browser window, just below the
-  header and near its right edge, and takes the keyboard whole while it is up.
+- Ctrl+P opens the palette. It opens over the browser window, tucked under the
+  lower part of the header and near its right edge, and takes the keyboard
+  whole while it is up.
+- The card's top band — the line being typed — is a handle: dragging it moves
+  the panel. It is clamped to the window, so it can never be put somewhere it
+  holds the keyboard from out of sight. A fresh open always puts it back where
+  it belongs; a panel that reappeared wherever it was last left would be a
+  placement to undo before the window could be read.
 - The palette is unavailable in the file picker, whose window is answering a
   request rather than managing files.
 - Escape closes it, in one step, without running anything. Ctrl+P while it is
@@ -143,6 +149,7 @@ the palette adds no new capability.
 | Edit | Cut, Copy, Paste, Select All, Undo | — |
 | Edit | Select Matching | glob pattern, shown as it is typed |
 | File | Move to Folder | path (folders only) |
+| File | New Folder with Selection | name, optional; empty means the default |
 | View | List View, Grid View, Column View | — (the one already on is not offered) |
 | View | Change View | choice of the three |
 | View | Sort By | choice of sort keys |
@@ -191,6 +198,13 @@ the palette adds no new capability.
   provider that needs to look at the disk offers what it already knows.
   Argument completion may touch the disk, and does so the way the location bar
   already does.
+- **Gathering the selection into a new folder is one operation.** The folder
+  and the moves into it take a single undo entry, recorded so that taking it
+  back walks them in the right order: the files come out first, and the folder
+  — empty again — goes last. If nothing could be moved in, the folder is
+  removed rather than left behind as the only trace of a command that failed.
+  It is offered in the context menu as well as the palette; from the menu the
+  folder takes the default name and lands in rename.
 - **Selecting by pattern matches the listing on screen**, not the directory:
   hidden files stay out of it unless they are being shown, and a filtered
   listing narrows what can be picked. Matching ignores case until the pattern

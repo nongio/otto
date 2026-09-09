@@ -437,6 +437,14 @@ struct Browser {
     /// start each keystroke's answer from, since a pattern narrowed by one
     /// character is a fresh question rather than a refinement of the last one.
     palette_selection: Option<SelectionMark>,
+    /// How far the palette has been dragged from where it opens, in points.
+    /// Reset every time it opens: a panel that came back where it was left
+    /// would be a placement the user has to undo before they can read the
+    /// window under it.
+    palette_offset: (f32, f32),
+    /// A drag of the palette in progress: where in the card the pointer took
+    /// hold, so the card follows the pointer without jumping to centre on it.
+    palette_drag: Option<(f32, f32)>,
     /// A palette command asked for Quick View. The panel and its decode belong
     /// to the window around the browser, so the request is left here for it.
     palette_quickview: bool,
@@ -874,6 +882,8 @@ impl Browser {
             pending_rename: None,
             palette: None,
             palette_selection: None,
+            palette_offset: (0.0, 0.0),
+            palette_drag: None,
             palette_quickview: false,
             commands: command::Registry::builtin(),
             path_entry: None,
@@ -3534,6 +3544,8 @@ impl Browser {
             commands,
             view::palette_field_style(AppContext::current_theme()),
         ));
+        self.palette_offset = (0.0, 0.0);
+        self.palette_drag = None;
         self.dirty = true;
     }
 
@@ -3662,6 +3674,71 @@ impl Browser {
                 palette::Completion::new(value, name)
             })
             .collect()
+    }
+
+    /// The card, where it is now — the resting rect moved by whatever drag has
+    /// been applied to it.
+    fn palette_card(&mut self) -> Rect {
+        let rows = self.palette_rows();
+        let view_rows: Vec<view::PaletteRow<'_>> = rows
+            .iter()
+            .map(|row| view::PaletteRow {
+                kind: row.kind,
+                title: &row.title,
+                badge: None,
+                subtitle: None,
+                shortcut: None,
+                highlighted: row.highlighted,
+            })
+            .collect();
+        let message = self
+            .palette
+            .as_ref()
+            .map(|_| ())
+            .and(self.palette_message())
+            .is_some();
+        view::palette_rect(self.size.0, &view_rows, message).with_offset(self.palette_offset)
+    }
+
+    /// The band a drag takes hold of: the card's top, where the field is.
+    ///
+    /// The field rather than a bar of its own — the palette is one card with a
+    /// line of text across the top of it, and a strip above that line would be
+    /// chrome for its own sake.
+    fn palette_grip_at(&mut self, x: f32, y: f32) -> bool {
+        let card = self.palette_card();
+        let grip = Rect::from_ltrb(
+            card.left,
+            card.top,
+            card.right,
+            card.top + view::PALETTE_FIELD_H,
+        );
+        grip.contains(skia_safe::Point::new(x, y))
+    }
+
+    /// Follow the pointer, keeping the card on screen.
+    ///
+    /// Clamped against the window rather than let go: a panel dragged off the
+    /// edge is one the user has to guess the way back to, and it holds the
+    /// keyboard while it is gone.
+    fn drag_palette_to(&mut self, x: f32, y: f32) {
+        let Some((grab_x, grab_y)) = self.palette_drag else {
+            return;
+        };
+        let card = self.palette_card();
+        // Where the card would be with no drag applied — the offset is
+        // measured from there, so it has to be taken back out first.
+        let resting = (
+            card.left - self.palette_offset.0,
+            card.top - self.palette_offset.1,
+        );
+        let left = (x - grab_x).clamp(0.0, (self.size.0 - card.width()).max(0.0));
+        // Never above the window, and never so far down that the field is off
+        // the bottom: the list can hang past the edge, but the line being
+        // typed may not.
+        let top = (y - grab_y).clamp(0.0, (self.size.1 - view::PALETTE_FIELD_H).max(0.0));
+        self.palette_offset = (left - resting.0, top - resting.1);
+        self.dirty = true;
     }
 
     /// The palette's rows as the view wants them, scrolled so the highlight is
@@ -3850,6 +3927,7 @@ impl Browser {
             id::SELECT_ALL => self.select_all(),
             id::SELECT_MATCHING => self.select_matching(arg)?,
             id::MOVE_TO => self.move_selection_to(arg)?,
+            id::NEW_FOLDER_WITH_SELECTION => self.new_folder_with_selection(arg)?,
             id::UNDO => self.undo_last(),
             // The three views by name share their ids with the values Change
             // View takes, so one arm answers for both.
@@ -3947,6 +4025,81 @@ impl Browser {
             "files-selected-count",
             count = count as f64
         ));
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Put the selection into a folder of its own, made for it.
+    ///
+    /// One undo entry covers both halves, and the folder is recorded *before*
+    /// the moves so that taking it back walks them in the right order: the
+    /// files come out first, and the folder — empty again — goes last.
+    ///
+    /// Given no name the folder takes the default one and lands in rename, the
+    /// way New Folder does; given one it is created with it.
+    fn new_folder_with_selection(&mut self, name: &str) -> Result<(), String> {
+        if self.trash {
+            return Err(otto_kit::t_owned!("files-trash-cant-rename"));
+        }
+        if self.is_synthetic() {
+            return Err(otto_kit::t_owned!("files-recent-not-a-folder"));
+        }
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        if paths.is_empty() {
+            return Err(otto_kit::t_owned!("files-nothing-selected"));
+        }
+
+        let name = name.trim();
+        let dest = self.current_directory();
+        let folder = if name.is_empty() {
+            model::create_folder(&dest)?
+        } else {
+            model::create_folder_named(&dest, name)?
+        };
+
+        let clip = model::Clipboard { paths, cut: true };
+        let result = model::paste(&clip, &folder, model::OnConflict::KeepBoth);
+
+        // Nothing made it in: take the folder away again rather than leaving
+        // an empty one behind as the only trace of a command that failed.
+        if result.changes.is_empty() {
+            let _ = std::fs::remove_dir(&folder);
+            return Err(result
+                .errors
+                .first()
+                .cloned()
+                .unwrap_or_else(|| otto_kit::t_owned!("files-nothing-selected")));
+        }
+
+        let mut changes = vec![model::Change::Created {
+            path: folder.clone(),
+        }];
+        changes.extend(result.changes.iter().cloned());
+        self.report(&result);
+        self.record_undo(
+            otto_kit::t!("files-undo-new-folder-with-selection"),
+            changes,
+        );
+
+        let folder_name = folder
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        // The re-read is off-thread, so the folder is not in the listing yet.
+        // Named without a name of its own goes into rename, the way the
+        // toolbar's New Folder does; named outright is already what was asked
+        // for, and is only selected.
+        if name.is_empty() {
+            self.pending_rename = Some((depth, folder_name));
+        } else {
+            self.pending_pick = Some((depth, Some(folder_name)));
+        }
+        self.reload_all();
         self.dirty = true;
         Ok(())
     }
@@ -4826,6 +4979,13 @@ impl Browser {
             if !items.is_empty() {
                 items.push(MenuItem::separator());
             }
+            let folder_label = if entries.len() == 1 {
+                otto_kit::t_owned!("files-new-folder-with-selection")
+            } else {
+                otto_kit::t_owned!("files-new-folder-with-count", count = entries.len() as f64)
+            };
+            items.push(MenuItem::action(folder_label).with_action_id("new_folder_with_selection"));
+            items.push(MenuItem::separator());
             items.push(MenuItem::action(otto_kit::t!("common-cut")).with_action_id("cut"));
             items.push(MenuItem::action(otto_kit::t!("common-copy")).with_action_id("copy"));
             items.push(MenuItem::separator());
@@ -6234,6 +6394,12 @@ impl App for FilesApp {
                         highlighted: row.highlighted,
                     })
                     .collect();
+                // The whole card moves together: drawn through the drag
+                // offset, hit-tested through the same one, so a dragged panel
+                // cannot end up clickable where it is not painted.
+                let offset = browser.palette_offset;
+                canvas.save();
+                canvas.translate(offset);
                 view::draw_palette(
                     canvas,
                     &theme,
@@ -6244,6 +6410,7 @@ impl App for FilesApp {
                         message: message.as_deref(),
                     },
                 );
+                canvas.restore();
 
                 // The prompt is not part of the field, so the field starts
                 // after it: what is typed is the argument, and the prefix
@@ -6268,11 +6435,12 @@ impl App for FilesApp {
                     let input = palette.input_mut();
                     input.state.placeholder = placeholder;
                     input.set_size(field.width() - lead, field.height());
+                    let origin = (field.left + lead + offset.0, field.top + offset.1);
                     canvas.save();
-                    canvas.translate((field.left + lead, field.top));
+                    canvas.translate(origin);
                     input.render_at(canvas, field.width() - lead, field.height());
                     canvas.restore();
-                    palette_caret = caret_in_window(input, (field.left + lead, field.top));
+                    palette_caret = caret_in_window(input, origin);
                 }
             }
 
@@ -8352,6 +8520,15 @@ impl FilesApp {
 
                 match event.kind {
                     PointerEventKind::Motion { .. } => {
+                        // The palette being dragged owns the pointer outright,
+                        // the same way a divider does.
+                        if browser.palette_drag.is_some() {
+                            browser.drag_palette_to(x, y);
+                            AppContext::set_cursor_shape(CursorShape::Grabbing);
+                            drop(browser);
+                            window_for_events.request_frame();
+                            continue;
+                        }
                         // A column divider being dragged owns the pointer
                         // outright — nothing else on this move should react.
                         if let Some((boundary, start_x, start_w)) = browser.column_resize {
@@ -8464,6 +8641,12 @@ impl FilesApp {
                         browser.dirty |= browser.controls.on_motion(control);
                     }
                     PointerEventKind::Release { .. } => {
+                        // The palette stays where it was let go of.
+                        if browser.palette_drag.take().is_some() {
+                            drop(browser);
+                            window_for_events.request_frame();
+                            continue;
+                        }
                         // A press that came up without travelling was a click —
                         // including one that left its narrowing until now.
                         browser.drag_armed = None;
@@ -8585,6 +8768,15 @@ impl FilesApp {
                                 "delete_forever" => browser.ask_delete_forever(),
                                 "empty_trash" => browser.ask_empty_trash(),
                                 "new_folder" => browser.new_folder(),
+                                "new_folder_with_selection" => {
+                                    // No name from a menu: the folder takes the
+                                    // default one and lands in rename, ready to
+                                    // be typed over.
+                                    if let Err(error) = browser.new_folder_with_selection("") {
+                                        browser.status = Some(error);
+                                        browser.dirty = true;
+                                    }
+                                }
                                 _ => {}
                             }
                             drop(browser);
@@ -8601,6 +8793,17 @@ impl FilesApp {
                         // there, rather than also selecting whatever file
                         // happened to be underneath.
                         if browser.palette.is_some() {
+                            // The top band is the handle, so a press there is
+                            // a drag rather than a pick.
+                            if browser.palette_grip_at(x, y) {
+                                let card = browser.palette_card();
+                                browser.palette_drag = Some((x - card.left, y - card.top));
+                                return;
+                            }
+                            let (x, y) = (
+                                x - browser.palette_offset.0,
+                                y - browser.palette_offset.1,
+                            );
                             let rows = browser.palette_rows();
                             let view_rows: Vec<view::PaletteRow<'_>> = rows
                                 .iter()
@@ -9897,6 +10100,94 @@ mod palette_tests {
         browser.close_palette();
         open_and_type(&mut browser, "zzzz");
         assert!(browser.palette_message().is_some());
+    }
+
+    /// The selection goes into a folder made for it, and one undo takes both
+    /// halves back — the files first, the folder after.
+    #[test]
+    fn new_folder_with_selection_gathers_the_files() {
+        let (mut browser, dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.select(0, 0);
+        let second = browser.visible(0)[1].selection_key();
+        browser.columns[0].selection.insert(second);
+        browser
+            .new_folder_with_selection("reports")
+            .expect("the name is free");
+
+        assert!(dir.0.join("reports/a.txt").is_file());
+        assert!(dir.0.join("reports/b.txt").is_file());
+        assert!(dir.0.join("c.txt").is_file());
+        assert!(!dir.0.join("a.txt").exists());
+        assert_eq!(browser.undo.len(), 1);
+
+        browser.undo_last();
+        assert!(dir.0.join("a.txt").is_file());
+        assert!(dir.0.join("b.txt").is_file());
+        assert!(!dir.0.join("reports").exists(), "the empty folder goes too");
+    }
+
+    /// With nothing selected there is nothing to gather, and no folder is left
+    /// behind by the attempt.
+    #[test]
+    fn new_folder_with_selection_needs_a_selection() {
+        let (mut browser, dir) = browser_over(&["a.txt"]);
+        browser.clear_selection();
+        assert!(browser.new_folder_with_selection("reports").is_err());
+        assert!(!dir.0.join("reports").exists());
+    }
+
+    /// The card follows the pointer, and stays where it is let go of.
+    #[test]
+    fn the_palette_is_dragged_by_its_top_band() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        let card = browser.palette_card();
+        assert!(browser.palette_grip_at(card.center_x(), card.top + 4.0));
+        assert!(!browser.palette_grip_at(card.center_x(), card.bottom - 4.0));
+
+        browser.palette_drag = Some((10.0, 10.0));
+        browser.drag_palette_to(400.0, 300.0);
+        let moved = browser.palette_card();
+        assert_eq!(moved.left, 390.0);
+        assert_eq!(moved.top, 290.0);
+    }
+
+    /// And cannot be dragged off the window, where it would hold the keyboard
+    /// from somewhere the user cannot see.
+    #[test]
+    fn the_palette_cannot_be_dragged_off_the_window() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        browser.palette_drag = Some((10.0, 10.0));
+
+        browser.drag_palette_to(-500.0, -500.0);
+        let card = browser.palette_card();
+        assert!(card.left >= 0.0 && card.top >= 0.0);
+
+        browser.drag_palette_to(5000.0, 5000.0);
+        let card = browser.palette_card();
+        assert!(card.left <= 1200.0 - card.width() + 0.5);
+        assert!(card.top <= 800.0 - view::PALETTE_FIELD_H + 0.5);
+    }
+
+    /// A fresh open puts it back where it belongs: a panel that reappeared
+    /// wherever it was last left is a placement to undo before the window can
+    /// be read.
+    #[test]
+    fn the_palette_opens_where_it_belongs_however_it_was_left() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        let resting = browser.palette_card();
+        browser.palette_drag = Some((10.0, 10.0));
+        browser.drag_palette_to(400.0, 300.0);
+        browser.close_palette();
+
+        browser.open_palette();
+        assert_eq!(browser.palette_card().left, resting.left);
+        assert_eq!(browser.palette_card().top, resting.top);
     }
 
     /// Opening the palette changes nothing underneath it, and closing it

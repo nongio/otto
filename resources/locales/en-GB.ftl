@@ -273,6 +273,14 @@ files-info-window-title = Info
 
 files-get-info = Get Info
 files-new-folder = New Folder
+files-new-folder-with-selection = New Folder with Selection
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+        [one] New Folder with { $count } Item
+       *[other] New Folder with { $count } Items
+    }
 files-move-to-trash = Move to Trash
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -453,6 +461,7 @@ files-undid = Undid { $label }
 files-undo-move = Move
 files-undo-copy = Copy
 files-undo-delete = Delete
+files-undo-new-folder-with-selection = New Folder with Selection
 files-undo-rename = Rename
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renamed to “{ $name }”
