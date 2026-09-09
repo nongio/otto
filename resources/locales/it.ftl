@@ -295,6 +295,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = Risorse
+files-recent = Recenti
 files-home = Home
 files-desktop = Scrivania
 files-documents = Documenti
@@ -303,6 +304,40 @@ files-music = Musica
 files-pictures = Immagini
 files-videos = Video
 files-trash = Cestino
+
+# Le intestazioni per giorno dell’elenco “Recenti”, sopra i file salvati in
+# ciascuno.
+files-recent-today = Oggi
+files-recent-yesterday = Ieri
+files-recent-this-week = Questa settimana
+files-recent-this-month = Questo mese
+files-recent-earlier = Precedenti
+# Mostrato quando un comando che richiede una cartella — ridenominare, aprire,
+# spostare nel Cestino, anteprima — è usato su un elenco che non ne ha nessuna
+# dietro: “Recenti” o i risultati di una ricerca.
+files-synthetic-no-action = Questo elenco non corrisponde a nessuna cartella.
+files-recent-grid-only = “Recenti” è mostrato come griglia.
+files-recent-not-a-folder = “Recenti” è un elenco, non una cartella.
+files-recent-no-location = “Recenti” non ha una posizione in cui andare.
+
+# La barra di filtro tra l’intestazione e l’elenco e ciò che riporta.
+files-search-placeholder = Filtra “{ $folder }”
+files-search-scope-folder = Questa cartella
+files-search-scope-everywhere = Ovunque
+files-search-found =
+    { $count ->
+        [one] { $count } risultato
+        [many] { $count } risultati
+       *[other] { $count } risultati
+    }
+files-search-none = Nessun risultato
+files-search-no-columns = I risultati non hanno colonne da mostrare.
+# Mostrato al posto del numero di risultati quando l’indicizzazione dei file
+# del sistema non è in funzione. La ricerca e “Recenti” passano entrambe da lì,
+# quindi senza di essa nessuna delle due può rispondere — e un elenco vuoto si
+# leggerebbe come “il file non esiste” invece che come “nessuno ha potuto
+# cercare”.
+files-search-unavailable = Indicizzazione file disattivata
 
 files-column-name = Nome
 files-column-size = Dimensione

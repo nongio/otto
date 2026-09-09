@@ -52,6 +52,9 @@ pub struct Scene {
     header: Layer,
     /// The picker's action row. Hidden in the browser, which has none.
     footer: Layer,
+    /// The breadcrumb strip along the bottom. Hidden in the picker, whose
+    /// bottom edge belongs to the action row.
+    path_bar: Layer,
     /// The paper the file area sits on. Clips, so a column panned past the
     /// window edge is cut off by the engine rather than by a `clip_rect` this
     /// client has to remember to balance.
@@ -141,6 +144,8 @@ struct LayoutKey {
     panes: usize,
     preview: bool,
     footer: u32,
+    band: u32,
+    path_bar: u32,
 }
 
 /// Everything one column's rows are drawn from, reduced to something cheap to
@@ -198,6 +203,7 @@ impl Scene {
         let sidebar = new_layer("files-sidebar");
         let header = new_layer("files-header");
         let footer = new_layer("files-footer");
+        let path_bar = new_layer("files-path-bar");
         let content = new_layer("files-content");
         let preview = new_layer("files-preview");
 
@@ -207,6 +213,7 @@ impl Scene {
         let _ = root.add_sublayer(&content);
         let _ = root.add_sublayer(&header);
         let _ = root.add_sublayer(&footer);
+        let _ = root.add_sublayer(&path_bar);
         let _ = content.add_sublayer(&preview);
 
         // `clip_children`, not just `clip_content`: what has to be cut off at
@@ -223,6 +230,7 @@ impl Scene {
             sidebar,
             header,
             footer,
+            path_bar,
             content,
             panes: Vec::new(),
             preview,
@@ -269,7 +277,6 @@ impl Scene {
     /// comes and goes with the focus — and composited by the engine, not
     /// painted per frame.
     fn sync_materials(&mut self, f: &Frame) {
-        let theme = f.theme;
         let dark = view::is_dark();
         // Translucent only while there is a blur to be translucent over. See
         // [`view::opaque`].
@@ -301,16 +308,25 @@ impl Scene {
             .is_some_and(|(was_dark, was_blurred)| was_dark == dark && was_blurred != f.blurred);
         let transition = fades.then(|| Transition::ease_out_quad(MATERIAL_FADE));
 
+        // The sidebar takes the same material as everything else on this
+        // window's chrome — see [`view::panel_material`] — rather than the
+        // toolkit's sidebar colour, which is a shade apart and showed as a
+        // seam down the edge where the two met.
         let sidebar = self
             .sidebar
-            .set_background_color(fill(theme.material_sidebar), transition.clone());
+            .set_background_color(fill(view::panel_material()), transition.clone());
         self.header
-            .set_background_color(fill(view::header_material()), transition.clone());
+            .set_background_color(fill(view::panel_material()), transition.clone());
         // The action row is the same material as the header, and for the same
         // reason: it is chrome laid over the window's blur, not a hole in it.
         // Without a ground it reads as bare blur with buttons floating on it.
         self.footer
-            .set_background_color(fill(view::header_material()), transition.clone());
+            .set_background_color(fill(view::panel_material()), transition.clone());
+        // The path bar is chrome laid over the blur too, and the same material
+        // as the header keeps the window's top and bottom edges reading as one
+        // frame around the listing.
+        self.path_bar
+            .set_background_color(fill(view::panel_material()), transition.clone());
         // The content ground is opaque either way — there is no blur behind
         // the file area to be translucent over — so it never fades.
         self.content
@@ -368,6 +384,10 @@ impl Scene {
             panes: f.panes.len(),
             preview: f.preview.is_some(),
             footer: f.footer.to_bits(),
+            // The filter strip grows the header panel and shortens the
+            // content one, so opening it has to relayout.
+            band: view::search_band_h().to_bits(),
+            path_bar: f.path_bar_h.to_bits(),
         };
         if self.layout.as_ref() == Some(&key) {
             return;
@@ -375,13 +395,13 @@ impl Scene {
         self.layout = Some(key);
 
         let sidebar_w = view::sidebar_w();
-        let header_h = view::HEADER_H;
+        let header_h = view::header_h();
 
         // The full *window* height, not the file area's: the sidebar is one
-        // column of material running from the titlebar to the bottom edge,
-        // and stopping it at the content's bottom leaves the picker's
-        // bottom-left corner unpainted beside the action row.
-        place(&self.sidebar, 0.0, 0.0, sidebar_w, f.height + f.footer);
+        // column of material running from the titlebar to the bottom edge, and
+        // stopping it at the content's bottom leaves the desktop showing
+        // through beside the path bar and the picker's action row.
+        place(&self.sidebar, 0.0, 0.0, sidebar_w, f.window_h());
         place(
             &self.header,
             sidebar_w,
@@ -389,28 +409,51 @@ impl Scene {
             (f.width - sidebar_w).max(0.0),
             header_h,
         );
+        // The path bar is drawn *inside* this panel rather than on one of
+        // its own: it is the bottom edge of the file area, sharing the paper
+        // the rows sit on, and a panel of its own would put a seam between
+        // them that says they are different surfaces. Always its full height —
+        // the bar's content comes and goes with the selection, the band does
+        // not, or every row would move whenever it did.
+        let path_bar_h = view::PATH_BAR_H;
         place(
             &self.content,
             sidebar_w,
             header_h,
             (f.width - sidebar_w).max(0.0),
-            (f.height - header_h).max(0.0),
+            (f.height + path_bar_h - header_h).max(0.0),
         );
-        // `f.height` is the file area's bottom, so the row starts exactly
-        // where the content ends. Beside the sidebar rather than over it, the
-        // way the header is — the sidebar is one column of material running
-        // the full height of the window.
+        // Anchored to the window's bottom edge, which is below the path bar
+        // as well as below the content: `f.height` is the file area's bottom
+        // and no longer the last thing above the row. Beside the sidebar
+        // rather than over it, the way the header is — the sidebar is one
+        // column of material running the full height of the window.
         if f.footer > 0.0 {
             self.footer.set_hidden(false);
             place(
                 &self.footer,
                 sidebar_w,
-                f.height,
+                f.height + f.path_bar_h,
                 (f.width - sidebar_w).max(0.0),
                 f.footer,
             );
         } else {
             self.footer.set_hidden(true);
+        }
+
+        // Between the file area and the action row: `f.height` is the file
+        // area's bottom, and the picker's row is anchored to the window's.
+        if f.path_bar_h > 0.0 {
+            self.path_bar.set_hidden(false);
+            place(
+                &self.path_bar,
+                sidebar_w,
+                f.height,
+                (f.width - sidebar_w).max(0.0),
+                f.path_bar_h,
+            );
+        } else {
+            self.path_bar.set_hidden(true);
         }
     }
 
@@ -888,7 +931,7 @@ fn place_in_content(layer: &Layer, full: Rect, window_h: f32) {
         full.left - view::sidebar_w(),
         0.0,
         full.width(),
-        (window_h - view::HEADER_H).max(0.0),
+        (window_h - view::header_h()).max(0.0),
     );
 }
 
@@ -969,6 +1012,14 @@ mod tests {
         };
         let theme = Theme::light();
         let frame = Frame {
+            search: None,
+            index_available: true,
+            search_focused: false,
+            search_placeholder: "",
+            search_scope: crate::model::SearchScope::Folder,
+            grid_sections: view::GridSections::FLAT,
+            show_folders: false,
+            mode_locked: false,
             trash: None,
             width: 1100.0,
             height: 700.0,
@@ -1003,6 +1054,9 @@ mod tests {
             quickview_expanded: false,
             drop_target: None,
             marquee: None,
+            path_bar: Vec::new(),
+            path_bar_h: view::PATH_BAR_H,
+            path_crumb_hover: None,
             path_entry: false,
             thumbs: Some(&store),
         };

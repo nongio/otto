@@ -292,6 +292,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = Orte
+files-recent = Zuletzt benutzt
 files-home = Persönlicher Ordner
 files-desktop = Schreibtisch
 files-documents = Dokumente
@@ -300,6 +301,38 @@ files-music = Musik
 files-pictures = Bilder
 files-videos = Videos
 files-trash = Papierkorb
+
+# Die Tagesüberschriften der Liste „Zuletzt benutzt“, über den jeweils darin
+# gesicherten Dateien.
+files-recent-today = Heute
+files-recent-yesterday = Gestern
+files-recent-this-week = Früher diese Woche
+files-recent-this-month = Früher diesen Monat
+files-recent-earlier = Früher
+# Wird gezeigt, wenn ein Befehl, der einen Ordner braucht — umbenennen, öffnen,
+# in den Papierkorb legen, Vorschau —, auf eine Liste angewendet wird, hinter
+# der keiner steht: „Zuletzt benutzt“ oder Suchergebnisse.
+files-synthetic-no-action = Hinter dieser Liste steht kein Ordner.
+files-recent-grid-only = „Zuletzt benutzt“ wird als Raster gezeigt.
+files-recent-not-a-folder = „Zuletzt benutzt“ ist eine Liste, kein Ordner.
+files-recent-no-location = „Zuletzt benutzt“ hat keinen Ort, der geöffnet werden kann.
+
+# Die Filterleiste zwischen Titelleiste und Liste und was sie meldet.
+files-search-placeholder = „{ $folder }“ filtern
+files-search-scope-folder = Dieser Ordner
+files-search-scope-everywhere = Überall
+files-search-found =
+    { $count ->
+        [one] { $count } Ergebnis
+       *[other] { $count } Ergebnisse
+    }
+files-search-none = Nichts gefunden
+files-search-no-columns = Für Ergebnisse gibt es keine Spalten.
+# Wird anstelle der Ergebniszahl gezeigt, wenn die Dateiindizierung des Systems
+# nicht läuft. Suche und „Zuletzt benutzt“ gehen beide durch sie hindurch, also
+# kann ohne sie keine von beiden antworten — und eine leere Liste läse sich als
+# „Datei nicht vorhanden“ statt als „es konnte niemand nachsehen“.
+files-search-unavailable = Dateiindizierung ist aus
 
 files-column-name = Name
 files-column-size = Größe

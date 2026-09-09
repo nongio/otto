@@ -19,6 +19,9 @@ tracing = "0.1"
 libc = "0.2"
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
+# The sidebar's user configuration; see `places_config`.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 

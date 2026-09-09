@@ -348,6 +348,35 @@ struct Browser {
     /// a path would still be the browser; this is set once, at startup, by
     /// the entry point that opened the window.
     trash: bool,
+    /// This window is showing the Recent listing rather than a directory:
+    /// what was written most recently across the user's folders, newest first,
+    /// under a heading per day.
+    ///
+    /// Unlike [`Self::trash`] this is a *mode*, not a shell — the same window
+    /// switches into it from the sidebar and back out again by clicking any
+    /// other place.
+    ///
+    /// The listing is real — [`crate::search`] fills it — but it has no
+    /// directory behind it, so every command that acts on a *place* is refused
+    /// while it is set. See [`Self::is_synthetic`].
+    recent: bool,
+    /// The search field's text, when it has been opened with Ctrl+F. `None`
+    /// is the whole of "there is no search": the filter strip is not drawn and
+    /// the listing sits back up against the header.
+    search: Option<TextInput>,
+    /// Where the search was started from, so clearing it puts the listing back
+    /// rather than leaving the window somewhere it never navigated to.
+    search_origin: Option<PathBuf>,
+    /// That listing's name, for the field's placeholder — "Filter Documents"
+    /// says what these rows are, which "Search" never did.
+    search_where: String,
+    /// Which scope pill is lit.
+    search_scope: model::SearchScope,
+    /// This window is showing search results rather than a directory.
+    searching: bool,
+    /// The recent listing's day sections, rebuilt whenever the listing is.
+    /// Empty — a flat grid — whenever [`Self::recent`] is false.
+    recent_sections: view::GridSections,
     /// Which of the Trash header's two buttons is held down.
     trash_pressed: Option<view::TrashAction>,
     /// The Get Info panel, when one is open. Not modal: it is a window of its
@@ -406,7 +435,8 @@ struct Browser {
     /// has not been read yet — and the question carries the count.
     pending_empty_ask: bool,
     /// A row to land the selection on once the reload that removed the old one
-    /// has landed: which pane, and the name to look for. Set by a delete —
+    /// has landed: which pane, and the [`Entry::selection_key`] to look for.
+    /// Set by a delete —
     /// the successor is chosen from the listing that is still on screen, and
     /// acted on against the one that replaces it.
     pending_pick: Option<(usize, Option<String>)>,
@@ -440,6 +470,17 @@ struct Browser {
     /// lights': a button arms on press and fires on release over the same
     /// button, so a press dragged off it changes nothing.
     footer_hover: Option<view::FooterButton>,
+    /// The path bar crumb under the pointer, drawn lit.
+    path_crumb_hover: Option<usize>,
+    /// Which sidebar row was last clicked.
+    ///
+    /// The highlight cannot be worked out from the path alone: two rows may
+    /// name the same folder — a configured shortcut pointing at Downloads, or
+    /// two of them pointing at one place — and matching on the path lights
+    /// whichever comes first, so the row actually clicked stays dark and
+    /// reads as not having worked. Remembering the row is the only way to
+    /// light the one that was pressed.
+    active_place: Option<usize>,
     footer_pressed: Option<view::FooterButton>,
     /// Pointer is over Quick View's close button.
     quickview_close_hovered: bool,
@@ -491,6 +532,28 @@ enum QuickviewPointer {
 struct Location {
     columns: Vec<ColumnState>,
     active: usize,
+    /// What the window was showing, when that was not a folder.
+    ///
+    /// Recent and search results are listings with no directory behind them,
+    /// and the sentinel path standing in for one is not somewhere that can be
+    /// re-read. Remembering the *listing* rather than its stand-in is what
+    /// lets Back and Forward pass through them: without it, stepping back into
+    /// one opened `/dev/null/otto-search` and drew the error of failing to.
+    synthetic: Option<Synthetic>,
+}
+
+/// A listing with no folder behind it, as the history remembers it.
+enum Synthetic {
+    Recent,
+    /// Everything needed to ask the question again — the answer is not stored,
+    /// because a search stepped back into should say what is on the disk now
+    /// rather than replay what it said before.
+    Search {
+        query: String,
+        scope: model::SearchScope,
+        origin: Option<PathBuf>,
+        label: String,
+    },
 }
 
 /// One pane of a remembered [`Location`]: where it was pointed and what was
@@ -526,6 +589,30 @@ struct RenameSession {
     input: TextInput,
 }
 
+/// How often the window wakes itself while something is moving: a scroll
+/// fling, a material fading, or a caret blinking.
+const IDLE_TICK: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// A focused field's caret as `(x, y, width, height)` in window coordinates,
+/// given where the field itself was drawn. `None` for a field that does not
+/// hold the keyboard — its caret is not on screen and is nobody's business.
+///
+/// Window coordinates are surface coordinates for this application: the
+/// toolkit sets a window geometry whose origin is the surface's, so there is
+/// no decoration offset to take back off before handing this to
+/// [`AppContext::report_text_cursor`](otto_kit::AppContext::report_text_cursor).
+fn caret_in_window(input: &TextInput, origin: (f32, f32)) -> Option<(f32, f32, f32, f32)> {
+    input.state.focused().then(|| {
+        let caret = input.caret_rect();
+        (
+            origin.0 + caret.left,
+            origin.1 + caret.top,
+            caret.width(),
+            caret.height(),
+        )
+    })
+}
+
 /// The uncached half of [`Browser::save_action`]: three syscalls, and the
 /// only place in the picker that touches the filesystem on the UI thread.
 fn probe_save_action(dir: &Path, name: &str) -> picker::SaveAction {
@@ -533,6 +620,63 @@ fn probe_save_action(dir: &Path, name: &str) -> picker::SaveAction {
         return picker::SaveAction::Blocked("files-save-permission-denied");
     }
     picker::save_action(name, existing_kind(&dir.join(name.trim())))
+}
+
+/// `target` broken into the crumbs the path bar draws, root first.
+///
+/// Split out from the browser so the naming rules — which are the whole of
+/// the interesting part — can be tested without a window.
+fn crumbs_for(
+    target: &Path,
+    leaf_icon: Vec<String>,
+    leaf_is_dir: bool,
+    home: Option<&Path>,
+) -> Vec<view::PathCrumb> {
+    let components: Vec<_> = target.components().collect();
+    let mut path = PathBuf::new();
+    let mut crumbs = Vec::with_capacity(components.len());
+
+    for (index, component) in components.iter().enumerate() {
+        path.push(component.as_os_str());
+        let leaf = index + 1 == components.len();
+
+        let (label, icon) = if home == Some(path.as_path()) {
+            // The home directory keeps its name on disk — the header titles
+            // it that way too, and a bar that reads "/ › home › Home" spends
+            // a crumb saying the same word twice. What it gets instead is the
+            // sidebar's icon, which is the part that makes it findable.
+            (
+                component.as_os_str().to_string_lossy().into_owned(),
+                vec!["user-home".to_string()],
+            )
+        } else if matches!(component, std::path::Component::RootDir) {
+            // The volume the whole trail hangs off. Named by its one
+            // character rather than by a word: every other crumb is what the
+            // thing is called on disk, and inventing a name here — a
+            // hostname, "Computer" — would be the only guess in the row.
+            ("/".to_string(), vec!["drive-harddisk".to_string()])
+        } else {
+            let name = component.as_os_str().to_string_lossy().into_owned();
+            if leaf {
+                (name, leaf_icon.clone())
+            } else {
+                (
+                    name,
+                    vec!["folder".to_string(), "inode-directory".to_string()],
+                )
+            }
+        };
+
+        crumbs.push(view::PathCrumb {
+            label,
+            icon,
+            path: path.clone(),
+            // Everything above the leaf is a directory by construction; the
+            // leaf is one only when what is selected is a folder.
+            is_dir: !leaf || leaf_is_dir,
+        });
+    }
+    crumbs
 }
 
 /// What is at `path` today: `None` for nothing, `Some(true)` for a directory,
@@ -650,6 +794,13 @@ impl Browser {
             preview_video_painted: 0,
             quickview_follow: false,
             trash: false,
+            recent: false,
+            search: None,
+            search_where: String::new(),
+            search_scope: model::SearchScope::default(),
+            search_origin: None,
+            searching: false,
+            recent_sections: view::GridSections::default(),
             trash_pressed: None,
             status: None,
             undo: Vec::new(),
@@ -666,6 +817,8 @@ impl Browser {
             confirm: None,
             save_probe: RefCell::new(None),
             footer_hover: None,
+            path_crumb_hover: None,
+            active_place: None,
             footer_pressed: None,
             quickview_close_hovered: false,
             quickview_expand_hovered: false,
@@ -732,9 +885,343 @@ impl Browser {
         browser
     }
 
+    // -- The Recent place ---------------------------------------------------
+
+    /// Show the Recent listing: what was written most recently across the
+    /// user's folders, newest first, under a heading per day.
+    ///
+    /// Not a navigation. The column stack is replaced by a single pane holding
+    /// a listing with no directory behind it, and the location — the path bar,
+    /// the location field, Back and Forward — is left out of it entirely. The
+    /// way out is clicking another place.
+    ///
+    /// The scan starts with the pane: [`Column::recent`] hands the request to
+    /// [`crate::search`], and the tiles arrive in batches while the window is
+    /// already up.
+    fn show_recent(&mut self) {
+        if self.recent {
+            return;
+        }
+        self.recent = true;
+        self.path_entry = None;
+        self.rename = None;
+        self.marquee = None;
+        // The grid is the whole point — a wall of thumbnails scanned by eye —
+        // and Miller columns mean nothing without a hierarchy. The sort is the
+        // view's premise rather than a preference, so it is set here and the
+        // control that would change it is disabled.
+        self.mode = ViewMode::Grid;
+        self.sort = SortKey::Modified;
+        self.ascending = false;
+        self.sort_pinned = false;
+        self.columns = vec![Column::recent()];
+        self.active = 0;
+        self.rebuild_recent_sections();
+        self.dirty = true;
+    }
+
+    /// Leave the Recent listing, on the way to somewhere real.
+    ///
+    /// Clears the flag without navigating: the caller is about to, and doing
+    /// both here would read the directory twice.
+    fn leave_recent(&mut self) {
+        if !self.recent {
+            return;
+        }
+        self.recent = false;
+        self.recent_sections = view::GridSections::default();
+        let (sort, ascending) = Self::default_sort(self.mode);
+        self.sort = sort;
+        self.ascending = ascending;
+    }
+
+    /// Rebuild the day sections from the listing as it is now ordered.
+    ///
+    /// Driven off the *visible* order rather than the snapshot, so the
+    /// headings describe the tiles actually under them however the listing has
+    /// been filtered. Cheap enough to redo per frame at the sizes this view
+    /// deals in; the real version will key it off the column's epoch.
+    fn rebuild_recent_sections(&mut self) {
+        if !self.recent {
+            if !self.recent_sections.is_flat() {
+                self.recent_sections = view::GridSections::default();
+            }
+            return;
+        }
+        let now = std::time::SystemTime::now();
+        let buckets: Vec<crate::recent::Bucket> = self
+            .visible(0)
+            .iter()
+            .map(|e| crate::recent::bucket_of(e.modified, now))
+            .collect();
+
+        let mut sections: Vec<view::GridSection> = Vec::new();
+        for (index, bucket) in buckets.iter().enumerate() {
+            match sections.last_mut() {
+                // A run continues only while the bucket is the same one, so a
+                // bucket that somehow reappeared later would open a second
+                // heading rather than be folded into the first. That cannot
+                // happen under a date sort, and drawing it wrong if it ever
+                // did would be worse than drawing the heading twice.
+                Some(last) if last.header.as_deref() == Some(bucket.label()) => {
+                    last.count += 1;
+                }
+                _ => sections.push(view::GridSection {
+                    header: Some(bucket.label().to_string()),
+                    first: index,
+                    count: 1,
+                }),
+            }
+        }
+        let sections = view::GridSections(sections);
+        if self.recent_sections != sections {
+            self.recent_sections = sections;
+            self.dirty = true;
+        }
+    }
+
+    // -- Search --------------------------------------------------------------
+
+    /// Whether this window is showing a listing with no directory behind it —
+    /// Recent, or search results.
+    ///
+    /// Every command that acts on a *place* rather than on a file asks this:
+    /// there is nowhere to paste into, nothing for Ctrl+L to resolve against,
+    /// and no hierarchy for Miller columns to show.
+    fn is_synthetic(&self) -> bool {
+        self.recent || self.searching
+    }
+
+    /// Open the search field and put the caret in it. A second Ctrl+F closes
+    /// it, the way Ctrl+L toggles the path entry.
+    ///
+    /// Except when the strip is open but has given the keyboard back to the
+    /// listing — clicked away from, to go and look at what was found. Ctrl+F
+    /// then means what it meant the first time: put the caret back in the
+    /// query. Closing a strip whose results are on screen, when the ring is
+    /// not even lit, would be answering a question nobody asked.
+    fn toggle_search(&mut self) {
+        if let Some(input) = self.search.as_mut() {
+            if input.state.focused() {
+                self.clear_search();
+            } else {
+                input.state.set_focused(true);
+                input.state.select_all();
+                self.dirty = true;
+            }
+            return;
+        }
+        self.path_entry = None;
+        self.rename = None;
+        self.search_origin = Some(self.current_path());
+        self.search_where = self.title();
+        self.search = Some(TextInput::editing(
+            String::new(),
+            view::search_field_style(AppContext::current_theme()),
+        ));
+        // Opening the strip moves everything below it down, so the geometry
+        // has to know before anything is measured or hit-tested.
+        view::set_search_band(true);
+        self.dirty = true;
+    }
+
+    /// Switch which haystack the query runs against, keeping the query.
+    fn set_search_scope(&mut self, scope: model::SearchScope) {
+        if self.search_scope == scope {
+            return;
+        }
+        self.search_scope = scope;
+        self.run_search();
+        self.dirty = true;
+    }
+
+    /// Hand the keyboard from the query back to the listing, leaving the
+    /// strip, the query and the results exactly where they are.
+    ///
+    /// The two ways out of the field — clicking a result, or arrowing down
+    /// into one — mean the same thing and have to do the same thing, which is
+    /// why they share this rather than each blurring the field their own way.
+    /// Nothing here closes the search: what you found is still on screen, and
+    /// Ctrl+F or a click in the field comes back to it.
+    ///
+    /// Answers whether the keyboard actually moved, so a caller that was
+    /// already in the listing does not ask for a repaint that draws the same
+    /// frame.
+    fn blur_search(&mut self) -> bool {
+        let moved = self
+            .search
+            .as_ref()
+            .is_some_and(|input| input.state.focused());
+        if moved {
+            if let Some(input) = self.search.as_mut() {
+                input.state.set_focused(false);
+            }
+            self.dirty = true;
+        }
+        moved
+    }
+
+    /// Put the field away and the listing back.
+    ///
+    /// Restoring rather than staying put is the point of `search_origin`: an
+    /// abandoned search is not a navigation, and leaving the window on a
+    /// results set with no field to explain it would be worse than either.
+    fn clear_search(&mut self) {
+        let origin = self
+            .search_origin
+            .clone()
+            .or_else(model::home_dir)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        if self.searching {
+            self.leave_synthetic_to(&origin);
+        } else {
+            self.close_search();
+        }
+    }
+
+    /// Take the search down without going anywhere, and say whether results
+    /// were on screen.
+    ///
+    /// The half of [`Self::clear_search`] that every *other* way out of a
+    /// search wants: clicking a place in the sidebar, or a folder in the path
+    /// bar, is a navigation to somewhere chosen, and restoring the folder the
+    /// search began in first would read a directory only to throw it away —
+    /// and would leave that detour in the history behind the Back button.
+    ///
+    /// The same shape as [`Self::leave_recent`], and for the same reason: the
+    /// caller is about to navigate, and doing it here as well would do it
+    /// twice.
+    fn close_search(&mut self) -> bool {
+        self.search = None;
+        self.search_where = String::new();
+        self.search_scope = model::SearchScope::default();
+        self.search_origin = None;
+        view::set_search_band(false);
+        self.dirty = true;
+        std::mem::take(&mut self.searching)
+    }
+
+    /// Put a remembered search back on screen and ask it again.
+    ///
+    /// The results are re-run rather than restored: an index answers about the
+    /// disk as it is, and stepping back into a search to be shown files that
+    /// have since been renamed away would be a worse answer than the one it
+    /// gave the first time.
+    fn enter_search(
+        &mut self,
+        query: String,
+        scope: model::SearchScope,
+        origin: Option<PathBuf>,
+        label: String,
+    ) {
+        self.path_entry = None;
+        self.rename = None;
+        self.search_origin = origin;
+        self.search_where = label;
+        self.search_scope = scope;
+        self.search = Some(TextInput::editing(
+            query,
+            view::search_field_style(AppContext::current_theme()),
+        ));
+        view::set_search_band(true);
+        self.run_search();
+    }
+
+    /// The query as it stands, trimmed. `None` when the field is closed or has
+    /// nothing worth searching for.
+    fn query(&self) -> Option<String> {
+        let text = self.search.as_ref()?.value().trim().to_string();
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Rebuild the results from the query.
+    ///
+    /// Both scopes are the same question put to the desktop's index, differing
+    /// only in how much of the disk they let it answer from:
+    /// [`SearchScope::Folder`] narrows it to the folder the search was opened
+    /// in and everything below, [`SearchScope::Everywhere`] to the whole of
+    /// home. Neither looks at what happens to be on screen — a filter over the
+    /// visible rows would find nothing in the subfolders, which is most of
+    /// what "this folder" means to the person asking.
+    ///
+    /// An empty query puts the listing the search started from back.
+    fn run_search(&mut self) {
+        let Some(query) = self.query() else {
+            if self.searching {
+                let origin = self
+                    .search_origin
+                    .clone()
+                    .or_else(model::home_dir)
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                self.searching = false;
+                self.navigate_to(&origin);
+            }
+            return;
+        };
+
+        // Restarted from scratch on every keystroke. The search debounces and
+        // abandons whatever the last one started, so holding a key down costs
+        // one query rather than one per character.
+        let request = match self.search_scope {
+            model::SearchScope::Folder => {
+                let dir = self
+                    .search_origin
+                    .clone()
+                    .unwrap_or_else(|| self.current_path());
+                crate::search::Request::folder(query, dir)
+            }
+            model::SearchScope::Everywhere => crate::search::Request::everywhere(query),
+        };
+        let column = Column::searching(request);
+
+        if !self.searching {
+            // Only the way in. A second query is the same page asking a
+            // different question, and stacking one history entry per Return
+            // would make Back a way to walk your own typing backwards.
+            self.record_location();
+        }
+        self.searching = true;
+        self.recent = false;
+        self.recent_sections = view::GridSections::default();
+        // Grid or List, but never Miller: results have no hierarchy. Whichever
+        // of the two the user was in is kept.
+        if self.mode == ViewMode::Columns {
+            self.mode = ViewMode::Grid;
+        }
+        self.columns = vec![column];
+        self.active = 0;
+        self.dirty = true;
+    }
+
+    /// Refuse something a listing with no directory behind it cannot do.
+    ///
+    /// The files are real, but the pane is not a folder: there is nothing to
+    /// paste beside, no location for Ctrl+L to resolve against, and no
+    /// directory for a new folder to appear in. Every command that acts on the
+    /// *place* lands here.
+    ///
+    /// Commands that act on a file do not: previewing it, and opening it, are
+    /// about the file alone and work wherever it was found. Opening a *folder*
+    /// found this way leaves the listing rather than descending inside it —
+    /// see [`Self::leave_synthetic_to`].
+    fn refuse_synthetic(&mut self) {
+        self.refuse(otto_kit::t_owned!("files-synthetic-no-action"));
+    }
+
     /// Switch view, taking the new view's default sort unless the user has
     /// pinned one of their own by clicking a column header.
     fn set_mode(&mut self, mode: ViewMode) {
+        // Recent is a grid or it is nothing — see `Frame::mode_locked`.
+        if self.recent && mode != ViewMode::Grid {
+            self.refuse(otto_kit::t_owned!("files-recent-grid-only"));
+            return;
+        }
+        // Results have no hierarchy for Miller columns to show, but they read
+        // perfectly well as either a list or a grid.
+        if self.searching && mode == ViewMode::Columns {
+            self.refuse(otto_kit::t_owned!("files-search-no-columns"));
+            return;
+        }
         self.mode = mode;
         if !self.sort_pinned {
             let (sort, ascending) = Self::default_sort(mode);
@@ -769,11 +1256,107 @@ impl Browser {
         }
     }
 
+    /// How much of the window height the path bar takes.
+    ///
+    /// Zero in the picker, whose bottom edge belongs to the action row, and
+    /// zero in the Trash, where every path would spell out the same stretch
+    /// of `.local/share/Trash` — the Original-location column already says
+    /// the thing a user of that window wants to know.
+    fn path_bar_h(&self) -> f32 {
+        if self.picker.is_some() || self.trash {
+            0.0
+        } else {
+            view::PATH_BAR_H
+        }
+    }
+
     /// The bottom of the *file area*, which is the window bottom less the
-    /// action row. Every piece of geometry in [`view`] takes this as its
-    /// `height`, so none of it has to know the row exists.
+    /// chrome under it — the path bar, and the picker's action row. Every
+    /// piece of geometry in [`view`] takes this as its `height`, so none of
+    /// it has to know either one exists.
     fn content_h(&self) -> f32 {
-        self.size.1 - self.footer_h()
+        self.size.1 - self.footer_h() - self.path_bar_h()
+    }
+
+    /// What the path bar spells out: the one thing selected in the active
+    /// column, or the column's own directory when nothing — or a crowd — is
+    /// selected. Carries the leaf's icon chain and whether it is a directory,
+    /// both of which the bar needs and neither of which the path itself says.
+    fn path_bar_target(&self) -> Option<(PathBuf, Vec<String>, bool)> {
+        let depth = self.active.min(self.columns.len() - 1);
+        let column = &self.columns[depth];
+        if column.selection.len() == 1 {
+            if let Some(key) = column.selection.iter().next() {
+                if let Some(entry) = column
+                    .snapshot
+                    .entries
+                    .iter()
+                    .find(|e| &e.selection_key() == key)
+                {
+                    return Some((entry.path.clone(), entry.icon_chain(), entry.is_dir));
+                }
+            }
+        }
+        // Recent and search results have no directory of their own: the
+        // sentinel standing in for one is not a path, and spelling it out
+        // would be worse than saying nothing. Their bar fills in as soon as a
+        // row is selected, which is the case it is there for.
+        (!self.is_synthetic()).then(|| (column.path.clone(), vec!["folder".to_string()], true))
+    }
+
+    /// That path, one crumb per component, root first.
+    ///
+    /// The home directory is named the way the sidebar names it rather than by
+    /// the login it is called on disk — a trail reading `/ › home › riccardo`
+    /// is the truth, but "Home" is the answer to the question the bar is
+    /// asking.
+    fn path_crumbs(&self) -> Vec<view::PathCrumb> {
+        if self.path_bar_h() == 0.0 {
+            return Vec::new();
+        }
+        let Some((target, leaf_icon, leaf_is_dir)) = self.path_bar_target() else {
+            return Vec::new();
+        };
+        crumbs_for(
+            &target,
+            leaf_icon,
+            leaf_is_dir,
+            model::home_dir().as_deref(),
+        )
+    }
+
+    /// The crumb under `(x, y)` and where it leads, if it leads anywhere.
+    fn path_crumb_target(&self, x: f32, y: f32) -> Option<PathBuf> {
+        let crumbs = self.path_crumbs();
+        let index = view::path_crumb_at(x, y, &crumbs, self.size.0, self.size.1, self.footer_h())?;
+        Some(crumbs[index].path.clone())
+    }
+
+    /// Which crumb the pointer is over, for the hover lighting.
+    fn path_crumb_hovered(&self, x: f32, y: f32) -> Option<usize> {
+        let crumbs = self.path_crumbs();
+        view::path_crumb_at(x, y, &crumbs, self.size.0, self.size.1, self.footer_h())
+    }
+
+    /// Which sidebar row is lit.
+    ///
+    /// The row that was clicked, while the window is still showing what it
+    /// led to — that is the only way to tell two rows naming the same folder
+    /// apart. Arriving anywhere else, the first row whose path matches, which
+    /// is what lights Documents when you walk into it from Home.
+    fn selected_place(&self) -> Option<usize> {
+        // A search is nowhere: results and their sentinel path are not a
+        // place, and matching on it lit Recent as soon as anyone typed.
+        if self.searching {
+            return None;
+        }
+        let here = &self.columns[0].path;
+        if let Some(index) = self.active_place {
+            if self.places.get(index).is_some_and(|p| &p.path == here) {
+                return Some(index);
+            }
+        }
+        self.places.iter().position(|p| &p.path == here)
     }
 
     /// The entries of column `depth`, filtered and sorted for display.
@@ -1069,7 +1652,13 @@ impl Browser {
         let area = view::content_viewport(self.size.0, self.content_h(), self.mode);
         let scroll = self.columns[depth].scroll.offset();
         let range = match self.mode {
-            view::ViewMode::Grid => view::grid_visible_range(area, entries.len(), scroll, area),
+            view::ViewMode::Grid => view::grid_visible_range_in(
+                area,
+                &self.recent_sections,
+                entries.len(),
+                scroll,
+                area,
+            ),
             view::ViewMode::List => {
                 view::RowStrip::list(self.size.0, entries.len(), scroll).visible(area)
             }
@@ -1182,6 +1771,7 @@ impl Browser {
     /// hidden files toggled. A scroll view with stale metrics clamps to the
     /// wrong end.
     fn sync_scroll_metrics(&mut self) {
+        self.rebuild_recent_sections();
         let (width, height) = (self.size.0, self.content_h());
         let mode = self.mode;
         let miller_w = self.miller_w;
@@ -1204,7 +1794,10 @@ impl Browser {
 
         for (depth, &count) in counts.iter().enumerate() {
             let viewport = view::pane_viewport(width, height, mode, depth, pan, miller_w);
-            let content = view::pane_content_height(width, height, mode, count);
+            // The day headings are part of the content: measured without them
+            // the grid is short by their height and the last row is unreachable.
+            let content =
+                view::pane_content_height_in(width, height, mode, count, &self.recent_sections);
             // A column being re-read has no entries *yet*, and telling its
             // scroll view how long *that* is would clamp the offset to the top
             // — permanently, since the offset is not restored when the listing
@@ -1263,6 +1856,56 @@ impl Browser {
         )
         .map(|(depth, _)| depth)
         .unwrap_or(self.active)
+    }
+
+    /// Whether a caret is on screen and blinking. The cheap half of
+    /// [`Self::focused_input`], for the idle clock — a field that has been
+    /// blurred draws no caret and is no reason to keep waking the window.
+    fn has_focused_input(&self) -> bool {
+        self.rename
+            .as_ref()
+            .map(|session| &session.input)
+            .or(self.path_entry.as_ref())
+            .or(self.save_name.as_ref())
+            .or(self.search.as_ref())
+            .is_some_and(|input| input.state.focused())
+    }
+
+    /// The field holding the keyboard, if any.
+    ///
+    /// The order is [`Self::on_key_event`]'s own precedence, so the caret that
+    /// blinks is always the caret the keys are going to: a rename takes the
+    /// keyboard from everything, then the path entry, then the picker's name
+    /// field, and the filter strip's query last.
+    fn focused_input(&mut self) -> Option<&mut TextInput> {
+        if let Some(session) = self.rename.as_mut() {
+            return Some(&mut session.input);
+        }
+        if let Some(input) = self.path_entry.as_mut() {
+            return Some(input);
+        }
+        if let Some(input) = self.save_name.as_mut() {
+            return Some(input);
+        }
+        self.search.as_mut()
+    }
+
+    /// Advance the focused field's caret blink, and say whether the caret
+    /// changed phase.
+    ///
+    /// Only the phase change is worth a repaint. The clock ticks at 125 Hz
+    /// with everything else; the caret turns over about twice a second, and
+    /// repainting the window on every tick to draw the same caret would be a
+    /// hundred wasted frames for each one that shows something new.
+    fn tick_caret(&mut self, delta: f32) -> bool {
+        match self.focused_input() {
+            Some(input) => {
+                let was = input.caret_visible();
+                input.tick(delta);
+                was != input.caret_visible()
+            }
+            None => false,
+        }
     }
 
     /// Whether any pane still has motion to run — momentum, an overscroll
@@ -1332,7 +1975,7 @@ impl Browser {
 
         let column = &mut self.columns[depth];
         column.selection.clear();
-        column.selection.insert(entry.name.clone());
+        column.selection.insert(entry.selection_key());
         column.cursor = Some(index);
         column.anchor = Some(index);
 
@@ -1426,12 +2069,17 @@ impl Browser {
         // the unscrolled grid: `grid_cell_rect(area, i, 0.0)` is where cell `i`
         // sits in that same space.
         let area = view::content_viewport(self.size.0, self.size.1, ViewMode::Grid);
-        let names: Vec<String> = self.visible(depth).iter().map(|e| e.name.clone()).collect();
-        let caught = view::grid_cells_in_rect(area, names.len(), 0.0, band);
+        let keys: Vec<String> = self
+            .visible(depth)
+            .iter()
+            .map(|e| e.selection_key())
+            .collect();
+        let caught =
+            view::grid_cells_in_rect_in(area, &self.recent_sections, keys.len(), 0.0, band);
 
         let last = caught.last().copied();
         for index in caught {
-            selection.insert(names[index].clone());
+            selection.insert(keys[index].clone());
         }
 
         let column = &mut self.columns[depth];
@@ -1462,12 +2110,12 @@ impl Browser {
         if depth >= self.columns.len() {
             return;
         }
-        let Some(name) = self.visible(depth).get(index).map(|e| e.name.clone()) else {
+        let Some(key) = self.visible(depth).get(index).map(|e| e.selection_key()) else {
             return;
         };
         let column = &mut self.columns[depth];
-        if !column.selection.remove(&name) {
-            column.selection.insert(name);
+        if !column.selection.remove(&key) {
+            column.selection.insert(key);
         }
         column.cursor = Some(index);
         column.anchor = Some(index);
@@ -1484,14 +2132,18 @@ impl Browser {
         if depth >= self.columns.len() {
             return;
         }
-        let names: Vec<String> = self.visible(depth).iter().map(|e| e.name.clone()).collect();
-        if index >= names.len() {
+        let keys: Vec<String> = self
+            .visible(depth)
+            .iter()
+            .map(|e| e.selection_key())
+            .collect();
+        if index >= keys.len() {
             return;
         }
         let anchor = self.columns[depth]
             .anchor
             .unwrap_or(index)
-            .min(names.len() - 1);
+            .min(keys.len() - 1);
         let (lo, hi) = if anchor <= index {
             (anchor, index)
         } else {
@@ -1500,8 +2152,8 @@ impl Browser {
 
         let column = &mut self.columns[depth];
         column.selection.clear();
-        for name in &names[lo..=hi] {
-            column.selection.insert(name.clone());
+        for key in &keys[lo..=hi] {
+            column.selection.insert(key.clone());
         }
         column.cursor = Some(index);
         self.active = depth;
@@ -1511,9 +2163,13 @@ impl Browser {
 
     fn select_all(&mut self) {
         let depth = self.active;
-        let names: Vec<String> = self.visible(depth).iter().map(|e| e.name.clone()).collect();
+        let keys: Vec<String> = self
+            .visible(depth)
+            .iter()
+            .map(|e| e.selection_key())
+            .collect();
         let column = &mut self.columns[depth];
-        column.selection = names.into_iter().collect();
+        column.selection = keys.into_iter().collect();
         self.columns.truncate(depth + 1);
         self.dirty = true;
     }
@@ -1532,7 +2188,7 @@ impl Browser {
         let selection = &self.columns[depth].selection;
         self.visible(depth)
             .into_iter()
-            .filter(|e| selection.contains(&e.name))
+            .filter(|e| selection.contains(&e.selection_key()))
             .cloned()
             .collect()
     }
@@ -1541,6 +2197,10 @@ impl Browser {
     /// it is Finder's, in every view mode.
     fn start_rename(&mut self) {
         if self.rename.is_some() {
+            return;
+        }
+        if self.is_synthetic() {
+            self.refuse_synthetic();
             return;
         }
         // Renaming a trashed file would rewrite the name its sidecar is
@@ -1589,7 +2249,12 @@ impl Browser {
             Ok(()) => {
                 if let Some(column) = self.columns.get_mut(session.depth) {
                     column.selection.clear();
-                    column.selection.insert(new_name.clone());
+                    // The renamed file, by its new path: the key moves with
+                    // the file, so remembering the old one would leave the
+                    // selection pointing at something that is not there.
+                    column
+                        .selection
+                        .insert(target.to_string_lossy().into_owned());
                 }
                 self.status = Some(otto_kit::t_owned!(
                     "files-renamed-to",
@@ -1691,7 +2356,7 @@ impl Browser {
         }
         self.visible(depth)
             .get(index)
-            .is_some_and(|entry| column.selection.contains(&entry.name))
+            .is_some_and(|entry| column.selection.contains(&entry.selection_key()))
     }
 
     /// Record a plain click on a row/cell, opening it if this is the second
@@ -1869,6 +2534,14 @@ impl Browser {
         }
 
         if entry.is_dir {
+            // A folder found by a search, or listed in Recent, is a real
+            // folder somewhere on the disk — but there is no hierarchy under a
+            // result to descend *into*. Opening it is going there, which means
+            // leaving the listing, with the listing left behind Back.
+            if self.is_synthetic() {
+                self.leave_synthetic_to(&entry.path);
+                return;
+            }
             match self.mode {
                 ViewMode::Columns => {
                     if depth + 1 < self.columns.len() {
@@ -1955,7 +2628,7 @@ impl Browser {
         let picked: Vec<PathBuf> = self
             .visible(depth)
             .into_iter()
-            .filter(|e| column.selection.contains(&e.name))
+            .filter(|e| column.selection.contains(&e.selection_key()))
             .filter(|e| session.selectable(&e.name, e.is_dir))
             .map(|e| e.path.clone())
             .collect();
@@ -1993,7 +2666,7 @@ impl Browser {
             let picked: Vec<&Entry> = self
                 .visible(depth)
                 .into_iter()
-                .filter(|e| e.is_dir && column.selection.contains(&e.name))
+                .filter(|e| e.is_dir && column.selection.contains(&e.selection_key()))
                 .collect();
             if let [only] = picked.as_slice() {
                 return Some(only.path.clone());
@@ -2306,6 +2979,18 @@ impl Browser {
                 })
                 .collect(),
             active: self.active,
+            synthetic: if self.searching {
+                Some(Synthetic::Search {
+                    query: self.query().unwrap_or_default(),
+                    scope: self.search_scope,
+                    origin: self.search_origin.clone(),
+                    label: self.search_where.clone(),
+                })
+            } else if self.recent {
+                Some(Synthetic::Recent)
+            } else {
+                None
+            },
         }
     }
 
@@ -2321,6 +3006,26 @@ impl Browser {
     /// Replace the column stack with a remembered one, as Back and Forward
     /// both do.
     fn restore_location(&mut self, location: Location) {
+        // Whatever is up now is being left, whichever kind of listing the one
+        // arriving turns out to be.
+        self.close_search();
+        self.leave_recent();
+        match location.synthetic {
+            Some(Synthetic::Recent) => {
+                self.show_recent();
+                return;
+            }
+            Some(Synthetic::Search {
+                query,
+                scope,
+                origin,
+                label,
+            }) => {
+                self.enter_search(query, scope, origin, label);
+                return;
+            }
+            None => {}
+        }
         self.columns = location
             .columns
             .into_iter()
@@ -2344,7 +3049,7 @@ impl Browser {
 
     /// Finish a Back/Forward step once its directories have been read.
     ///
-    /// The selection is held by name, so it survives the reload untouched;
+    /// The selection is held by key, so it survives the reload untouched;
     /// the cursor is an index, so it is re-derived from that selection rather
     /// than trusted — a file added or removed while the user was away would
     /// otherwise leave the keyboard one row off from the highlight. Then the
@@ -2370,7 +3075,10 @@ impl Browser {
             let Some(first) = self.columns[depth].selection.iter().next().cloned() else {
                 continue;
             };
-            let index = self.visible(depth).iter().position(|e| e.name == first);
+            let index = self
+                .visible(depth)
+                .iter()
+                .position(|e| e.selection_key() == first);
             if let Some(index) = index {
                 self.columns[depth].cursor = Some(index);
                 self.columns[depth].anchor = Some(index);
@@ -2447,10 +3155,33 @@ impl Browser {
     /// Replace the whole stack, as clicking a place does.
     fn navigate_to(&mut self, path: &Path) {
         self.record_location();
+        self.go_to(path);
+    }
+
+    /// Show `path` without touching the history.
+    ///
+    /// For the callers that have already recorded where they were — leaving a
+    /// search or Recent has to record the *listing* before taking it down,
+    /// because once it is down there is nothing left to record but the
+    /// sentinel standing in for its directory.
+    fn go_to(&mut self, path: &Path) {
         self.columns = vec![Column::new(path.to_path_buf())];
         self.active = 0;
         self.pan.scroll_to(0.0);
         self.dirty = true;
+    }
+
+    /// Leave whatever synthetic listing is up and go to `path`, with the
+    /// listing left behind Back.
+    fn leave_synthetic_to(&mut self, path: &Path) {
+        if self.is_synthetic() {
+            self.record_location();
+            self.close_search();
+            self.leave_recent();
+            self.go_to(path);
+        } else {
+            self.navigate_to(path);
+        }
     }
 
     /// Open the path entry on the directory being shown, with the whole path
@@ -2458,6 +3189,12 @@ impl Browser {
     /// separator is there so the first Tab completes a child rather than
     /// re-completing the folder the user is already in.
     fn open_path_entry(&mut self) {
+        // A synthetic listing has no location to resolve a typed path
+        // against, and the sentinel behind it must never be offered as one.
+        if self.is_synthetic() {
+            self.refuse(otto_kit::t_owned!("files-recent-no-location"));
+            return;
+        }
         let mut path = self.current_directory().to_string_lossy().into_owned();
         if !path.ends_with('/') {
             path.push('/');
@@ -2527,13 +3264,13 @@ impl Browser {
             return;
         }
         if path.is_file() {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            let key = Some(path.to_string_lossy().into_owned());
             if let Some(parent) = path.parent() {
                 self.path_entry = None;
                 self.navigate_to(parent);
                 // The parent's listing is read off-thread, so the row to land
                 // on does not exist yet — see `pending_pick`.
-                self.pending_pick = Some((0, name));
+                self.pending_pick = Some((0, key));
                 return;
             }
         }
@@ -2924,6 +3661,12 @@ impl Browser {
     /// pool with progress and cancellation, and that is the next change; the
     /// `OpResult` it returns is already the shape that path reports.
     fn paste(&mut self) {
+        // A synthetic listing is not a folder: there is nowhere in it to put
+        // anything.
+        if self.is_synthetic() {
+            self.refuse(otto_kit::t_owned!("files-recent-not-a-folder"));
+            return;
+        }
         // Pasting into the Trash would put files there with no sidecar
         // saying where they came from — items that can never be put back.
         // Trashing is how a file gets in; that path writes the sidecar.
@@ -2982,7 +3725,8 @@ impl Browser {
                 let count = self.visible_len(depth);
                 let scroll = self.columns[depth].scroll.offset();
                 let area = view::content_viewport(width, height, ViewMode::Grid);
-                view::grid_cell_at(area, x, y, count, scroll).map(|i| (depth, i))
+                view::grid_cell_at_in(area, &self.recent_sections, x, y, count, scroll)
+                    .map(|i| (depth, i))
             }
             ViewMode::List => {
                 let depth = self.columns.len() - 1;
@@ -3030,6 +3774,11 @@ impl Browser {
             return None;
         }
         if let Some(index) = view::place_at(x, y, self.places.len()) {
+            // Recent is a listing, not a folder. There is nowhere for a drop
+            // on it to put anything, so it takes none.
+            if self.places[index].recent {
+                return None;
+            }
             return Some(DropTarget::Place {
                 index,
                 path: self.places[index].path.clone(),
@@ -3255,8 +4004,9 @@ impl Browser {
         let scroll = self.columns[depth].scroll.offset();
 
         match self.mode {
-            ViewMode::Grid => view::grid_cell_rect(
+            ViewMode::Grid => view::grid_cell_rect_in(
                 view::content_viewport(width, height, ViewMode::Grid),
+                &self.recent_sections,
                 index,
                 scroll,
             ),
@@ -3295,7 +4045,7 @@ impl Browser {
                 let already_selected = self
                     .visible(depth)
                     .get(index)
-                    .is_some_and(|e| self.columns[depth].selection.contains(&e.name));
+                    .is_some_and(|e| self.columns[depth].selection.contains(&e.selection_key()));
                 if already_selected {
                     self.active = depth;
                 } else {
@@ -3455,6 +4205,10 @@ impl Browser {
     /// to be decided *here*, against the listing still on screen — once the
     /// re-read lands there is nothing left to measure the gap from.
     fn move_selected_to_trash(&mut self) {
+        if self.is_synthetic() {
+            self.refuse_synthetic();
+            return;
+        }
         let depth = self.active.min(self.columns.len().saturating_sub(1));
         let paths: Vec<PathBuf> = self
             .selected_entries()
@@ -3468,7 +4222,7 @@ impl Browser {
         let result = model::move_to_trash(&paths);
         self.report(&result);
         self.record_undo(otto_kit::t!("files-undo-delete"), result.changes);
-        // By name, before the re-read: the selection is held by name, so this
+        // By key, before the re-read: the selection is held by key, so this
         // is already the right answer for `resync_cursors` when the listing
         // lands. `settle_pick` then does the rest — the child column a newly
         // selected directory wants, or the walk out of a folder left empty.
@@ -3584,8 +4338,8 @@ impl Browser {
         column.selection.clear();
         column.cursor = None;
         column.anchor = None;
-        if let Some(name) = successor.clone() {
-            column.selection.insert(name);
+        if let Some(key) = successor.clone() {
+            column.selection.insert(key);
         }
         self.pending_pick = Some((depth, successor));
         self.reload_all();
@@ -3599,18 +4353,20 @@ impl Browser {
     fn successor_after_delete(&self, depth: usize) -> Option<String> {
         let doomed = &self.columns[depth].selection;
         let entries = self.visible(depth);
-        let last = entries.iter().rposition(|e| doomed.contains(&e.name))?;
+        let last = entries
+            .iter()
+            .rposition(|e| doomed.contains(&e.selection_key()))?;
         entries
             .iter()
             .skip(last + 1)
-            .find(|e| !doomed.contains(&e.name))
+            .find(|e| !doomed.contains(&e.selection_key()))
             .or_else(|| {
                 entries[..last]
                     .iter()
                     .rev()
-                    .find(|e| !doomed.contains(&e.name))
+                    .find(|e| !doomed.contains(&e.selection_key()))
             })
-            .map(|e| e.name.clone())
+            .map(|e| e.selection_key())
     }
 
     /// Land the selection a delete set aside, once the re-read has arrived.
@@ -3624,7 +4380,7 @@ impl Browser {
         if self.pending_pick.is_none() || self.loading() {
             return;
         }
-        let Some((depth, name)) = self.pending_pick.take() else {
+        let Some((depth, key)) = self.pending_pick.take() else {
             return;
         };
         if depth >= self.columns.len() {
@@ -3635,9 +4391,11 @@ impl Browser {
         // on the survivor, or on nothing at all — the panel has to be told.
         self.quickview_follow = self.quickview.is_some();
 
-        let index = name
-            .as_deref()
-            .and_then(|name| self.visible(depth).iter().position(|e| e.name == name));
+        let index = key.as_deref().and_then(|key| {
+            self.visible(depth)
+                .iter()
+                .position(|e| e.selection_key() == key)
+        });
         if let Some(index) = index {
             self.select_at(depth, index, false);
             self.reveal_cursor();
@@ -3663,6 +4421,10 @@ impl Browser {
     /// place, the way Finder and Explorer's New Folder both do.
     fn new_folder(&mut self) {
         if self.trash {
+            return;
+        }
+        if self.is_synthetic() {
+            self.refuse(otto_kit::t_owned!("files-recent-not-a-folder"));
             return;
         }
         let dest = self.columns[self.active].path.clone();
@@ -3724,7 +4486,7 @@ impl Browser {
         let pane = view::PaneData {
             selected: entries
                 .iter()
-                .map(|e| column.selection.contains(&e.name))
+                .map(|e| column.selection.contains(&e.selection_key()))
                 .collect(),
             cursor: column.cursor,
             entries,
@@ -3768,6 +4530,12 @@ impl Browser {
     /// when there is nothing to preview. The decode itself is the caller's to
     /// run off the UI thread — this only moves the state.
     fn begin_quickview(&mut self) -> Option<(PathBuf, u64, Rect)> {
+        // Recent and search results preview like any other listing. Their
+        // rows are real files with real paths, and since the selection is
+        // keyed by path — see [`Entry::selection_key`] — the row the panel is
+        // anchored to survives the next batch landing under it. Previewing is
+        // most of what those two panes are *for*: finding a file you cannot
+        // quite name is how you got there.
         let entry = self.selected_entry();
         if std::env::var_os("OTTO_FILES_QV_TRACE").is_some() {
             eprintln!("qv begin: selected={:?}", entry.as_ref().map(|e| &e.name));
@@ -4154,7 +4922,7 @@ impl Browser {
     /// Put every cursor back on what is selected, after a listing was replaced
     /// underneath it.
     ///
-    /// The selection is by name and survives; the cursor is an index into the
+    /// The selection is by key and survives; the cursor is an index into the
     /// visible order and does not, so a file appearing above the selection
     /// would otherwise leave the keyboard one row off from the highlight.
     /// Nothing is scrolled: a change somebody else made must not move the
@@ -4164,7 +4932,10 @@ impl Browser {
             let Some(first) = self.columns[depth].selection.iter().next().cloned() else {
                 continue;
             };
-            let index = self.visible(depth).iter().position(|e| e.name == first);
+            let index = self
+                .visible(depth)
+                .iter()
+                .position(|e| e.selection_key() == first);
             self.columns[depth].cursor = index;
             self.columns[depth].anchor = index;
         }
@@ -4211,6 +4982,16 @@ impl Browser {
         if self.trash {
             return otto_kit::t_owned!("files-trash");
         }
+        // The sentinel behind the recent listing is not a place name, and it
+        // is not shown anywhere else either.
+        if self.recent {
+            return otto_kit::t_owned!("files-recent");
+        }
+        // Results are titled by what was asked for. The field itself is on the
+        // subtitle row and holds the caret, not the answer.
+        if let Some(query) = self.query().filter(|_| self.searching) {
+            return query;
+        }
         let path = if self.mode == ViewMode::Columns {
             self.columns[self.active].path.clone()
         } else {
@@ -4233,6 +5014,25 @@ impl Browser {
         let depth = self.active.min(self.columns.len() - 1);
         if self.columns[depth].loading() {
             return otto_kit::t_owned!("files-loading");
+        }
+        // A result set counts what was found, not what a folder holds — and
+        // says so plainly when it found nothing, since an empty grid under a
+        // query reads as broken rather than as an answer.
+        //
+        // Unless nothing was able to look: search goes to the desktop's index,
+        // and with the indexer off there is no answer at all. Saying "nothing
+        // found" there would be a wrong answer rather than an empty one, and
+        // it would send the person looking for a file that is on the disk.
+        if (self.searching || self.recent) && !self.columns[depth].search_available {
+            return otto_kit::t_owned!("files-search-unavailable");
+        }
+        if self.searching {
+            let count = self.visible_len(depth);
+            return if count == 0 {
+                otto_kit::t_owned!("files-search-none")
+            } else {
+                otto_kit::t_owned!("files-search-found", count = count as i64)
+            };
         }
         let selected = self.columns[depth].selection.len();
         if selected > 1 {
@@ -4291,7 +5091,7 @@ impl Browser {
                 view::PaneData {
                     selected: entries
                         .iter()
-                        .map(|e| column.selection.contains(&e.name))
+                        .map(|e| column.selection.contains(&e.selection_key()))
                         .collect(),
                     cursor: column.cursor,
                     entries,
@@ -4335,16 +5135,33 @@ impl Browser {
             title,
             subtitle: self.subtitle(),
             places: &self.places,
-            selected_place: self
-                .places
-                .iter()
-                .position(|p| p.path == self.columns[0].path),
+            selected_place: self.selected_place(),
             cut: if self.clipboard.cut {
                 self.clipboard.paths.clone()
             } else {
                 Default::default()
             },
             mode: self.mode,
+            grid_sections: &self.recent_sections,
+            // Recent has no path bar and no common parent, so a tile has to
+            // name its own folder or there is nothing saying where a file came
+            // from.
+            // Results share no parent either — unless the search was scoped
+            // to one folder, where naming it under every tile says nothing.
+            show_folders: self.recent
+                || (self.searching && self.search_scope == model::SearchScope::Everywhere),
+            mode_locked: self.recent,
+            search: self.search.as_ref().map(|input| input.value()),
+            // Only the synthetic panes depend on the index; a directory
+            // listing is read straight off the disk and cannot be unavailable.
+            index_available: !(self.searching || self.recent)
+                || self.columns[self.active.min(self.columns.len() - 1)].search_available,
+            search_focused: self
+                .search
+                .as_ref()
+                .is_some_and(|input| input.state.focused()),
+            search_placeholder: &self.search_where,
+            search_scope: self.search_scope,
             panes,
             active: self.active,
             pan: self.pan.offset(),
@@ -4382,6 +5199,9 @@ impl Browser {
             thumbs: Some(&self.thumbs),
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
             marquee: self.marquee_band(),
+            path_bar: self.path_crumbs(),
+            path_bar_h: self.path_bar_h(),
+            path_crumb_hover: self.path_crumb_hover,
             path_entry: self.path_entry.is_some(),
             trash: self.trash.then(|| view::TrashChrome {
                 // Put Back acts on the selection; Empty Trash acts on the can.
@@ -4594,11 +5414,18 @@ impl App for FilesApp {
                     // Centred on the *window*, not the file area: Quick View
                     // is a card floating over the whole picker, and the
                     // action row is behind it rather than beside it.
-                    let resting = quickview::panel_rect(frame.width, frame.height + frame.footer);
+                    let resting = quickview::panel_rect(frame.width, frame.window_h());
                     view::draw_quickview(canvas, &frame, session, resting);
                 }
             }
             drop(frame);
+
+            // Where each field's caret ended up this frame, filled in as the
+            // fields are drawn because only the draw knows where they went.
+            let mut rename_caret = None;
+            let mut path_caret = None;
+            let mut search_caret = None;
+            let mut save_caret = None;
 
             if let Some(session) = browser.rename.as_ref() {
                 let (depth, index) = (session.depth, session.index);
@@ -4630,6 +5457,7 @@ impl App for FilesApp {
                 canvas.translate((rect.left, rect.top));
                 session.input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
+                rename_caret = caret_in_window(&session.input, (rect.left, rect.top));
             }
 
             // The path entry's value, over the box the header drew for it —
@@ -4642,6 +5470,23 @@ impl App for FilesApp {
                 canvas.translate((rect.left, rect.top));
                 input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
+                path_caret = caret_in_window(input, (rect.left, rect.top));
+            }
+
+            // The query, over the capsule the header drew for it. Inset past
+            // the magnifier, so the text starts clear of the glyph rather than
+            // underneath it.
+            if browser.search.is_some() {
+                let rect = view::search_field_rect(browser.size.0);
+                let text_w = rect.width() - view::SEARCH_TEXT_INSET - 8.0;
+                let input = browser.search.as_mut().unwrap();
+                input.set_size(text_w, rect.height());
+                let origin = (rect.left + view::SEARCH_TEXT_INSET, rect.top);
+                canvas.save();
+                canvas.translate(origin);
+                input.render_at(canvas, text_w, rect.height());
+                canvas.restore();
+                search_caret = caret_in_window(input, origin);
             }
 
             // The save field's value, over the box the action row drew for
@@ -4657,7 +5502,20 @@ impl App for FilesApp {
                 canvas.translate((rect.left, rect.top));
                 input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
+                save_caret = caret_in_window(input, (rect.left, rect.top));
             }
+
+            // Tell the compositor where the text is, so an input method — or
+            // the emoji picker, or anything else watching
+            // `otto_text_cursor_manager_v1` — can put itself beside the word
+            // being typed instead of in the middle of the screen.
+            //
+            // The `or` chain is [`Browser::focused_input`]'s precedence rather
+            // than the order the fields are painted in: the caret to report is
+            // the one the keys are going to.
+            otto_kit::AppContext::report_text_cursor(
+                rename_caret.or(path_caret).or(save_caret).or(search_caret),
+            );
 
             // Last of all, because it is modal and dims everything above.
             if let Some(sheet) = browser.confirm.as_ref() {
@@ -4772,7 +5630,8 @@ impl App for FilesApp {
             ViewMode::Grid => {
                 let cells =
                     view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
-                Box::new(move |index| view::grid_cell_rect(cells, index, scroll))
+                let sections = browser.recent_sections.clone();
+                Box::new(move |index| view::grid_cell_rect_in(cells, &sections, index, scroll))
             }
         };
 
@@ -4795,7 +5654,7 @@ impl App for FilesApp {
                             description.push_str(&crate::model::format_size(size));
                         }
                         node.set_description(description);
-                        node.set_selected(selection.contains(&entry.name));
+                        node.set_selected(selection.contains(&entry.selection_key()));
                         node.add_action(Action::Click);
                     });
                 }
@@ -4889,7 +5748,9 @@ impl App for FilesApp {
             // advance here rather than on input, since they keep running after
             // the gesture ends.
             let scrolled = browser.tick_scroll();
-            let animating = browser.quickview_animating()
+            let blinking = browser.tick_caret(IDLE_TICK.as_secs_f32());
+            let animating = blinking
+                | browser.quickview_animating()
                 | browser.tick_quickview_exit()
                 | browser.tick_open_pulse()
                 // A video frame landing in the preview column, or in a
@@ -5044,8 +5905,11 @@ impl App for FilesApp {
             || browser.opening.is_some()
             // The panel materials' fade runs on this client's own engine, and
             // an engine only advances when it is ticked.
-            || self.frost.as_ref().is_some_and(|frost| frost.is_fading());
-        animating.then(|| std::time::Duration::from_millis(8))
+            || self.frost.as_ref().is_some_and(|frost| frost.is_fading())
+            // A blinking caret needs the same steady clock, and for the same
+            // reason: nothing else is going to ask for the next frame.
+            || browser.has_focused_input();
+        animating.then_some(IDLE_TICK)
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
@@ -5255,6 +6119,117 @@ impl App for FilesApp {
                 return;
             }
 
+            // The search field holds the caret while it is open, but it is
+            // deliberately *leaky* — unlike the path entry, which owns the
+            // keyboard whole. Vertical motion and Return go to the listing
+            // rather than to the query, so the results are one key away and
+            // nobody has to Tab out of the field to reach what they found.
+            //
+            // Focused, not merely open: clicking a result hands the keyboard
+            // back to the listing, and from there Space has to preview the
+            // file rather than put a space in a query nobody is typing. What
+            // still works on a blurred strip works further down — Escape
+            // clears the search in the unwinding chain, Ctrl+F puts the caret
+            // back.
+            if browser
+                .search
+                .as_ref()
+                .is_some_and(|input| input.state.focused())
+            {
+                let editing = match event.keysym {
+                    Keysym::Escape => {
+                        browser.clear_search();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    Keysym::f if ctrl => {
+                        browser.clear_search();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    // Vertical motion is how you leave the query for the
+                    // results, so it takes the keyboard with it rather than
+                    // reaching over from the field: one Down both moves the
+                    // selection onto a file and makes that file the thing the
+                    // keyboard is talking to, so the next Space previews it
+                    // instead of typing into a query you have stopped writing.
+                    // The strip stays open and the text stays in it — Ctrl+F
+                    // or a click in the field comes back.
+                    Keysym::Up
+                    | Keysym::Down
+                    | Keysym::Page_Up
+                    | Keysym::Page_Down
+                    | Keysym::Tab => {
+                        browser.blur_search();
+                        None
+                    }
+                    // Return is what runs the query. Typing only writes it:
+                    // a search of the whole index on every keystroke spends a
+                    // round trip apiece to answer questions half-asked, and
+                    // the answer to three letters of a word is mostly noise
+                    // that the fourth letter throws away.
+                    //
+                    // The caret stays in the field, so a query that found the
+                    // wrong thing can be edited and asked again without
+                    // reaching for anything.
+                    Keysym::Return | Keysym::KP_Enter if browser.query().is_some() => {
+                        browser.run_search();
+                        drop(browser);
+                        self.render();
+                        return;
+                    }
+                    // With nothing typed there is no query to run, so Return
+                    // means what it means everywhere else: open what is
+                    // selected.
+                    Keysym::Return | Keysym::KP_Enter => None,
+                    Keysym::Left => Some(TextInputKey::Left),
+                    Keysym::Right => Some(TextInputKey::Right),
+                    Keysym::Home => Some(TextInputKey::Home),
+                    Keysym::End => Some(TextInputKey::End),
+                    Keysym::BackSpace => Some(TextInputKey::Backspace),
+                    Keysym::Delete => Some(TextInputKey::Delete),
+                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
+                    Keysym::c if ctrl => Some(TextInputKey::Copy),
+                    Keysym::x if ctrl => Some(TextInputKey::Cut),
+                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
+                    // Every other chord belongs to the window, not the field.
+                    _ if ctrl => None,
+                    _ => event
+                        .utf8
+                        .as_ref()
+                        .and_then(|s| s.chars().next())
+                        .map(TextInputKey::Char),
+                };
+                if let Some(key) = editing {
+                    let mods = KeyMods { shift, ctrl };
+                    let response = browser.search.as_mut().map(|input| input.on_key(key, mods));
+                    match response {
+                        Some(TextInputResponse::Clipboard(text)) => {
+                            clipboard::set_text(&text, serial);
+                            browser.dirty = true;
+                        }
+                        Some(TextInputResponse::Changed) => {
+                            // Typing does not search — Return does. An
+                            // *emptied* field is not a half-written query
+                            // though, it is a cancel, and puts back the
+                            // listing the search was opened in.
+                            if browser.query().is_none() {
+                                browser.run_search();
+                            } else {
+                                browser.dirty = true;
+                            }
+                        }
+                        Some(_) => browser.dirty = true,
+                        None => {}
+                    }
+                    drop(browser);
+                    self.render();
+                    return;
+                }
+            }
+
             // In Save mode the name field holds the keyboard focus: what the
             // user is doing is naming a file, so printable keys are the name
             // rather than type-ahead, and Backspace edits it rather than
@@ -5424,6 +6399,11 @@ impl App for FilesApp {
                     // as everything else that is up.
                     if browser.info.is_some() {
                         browser.close_info();
+                    } else if browser.searching {
+                        // The field can be closed with results still up. That
+                        // is still a search, and Escape's job is to put back
+                        // what was on screen before it.
+                        browser.clear_search();
                     } else if browser.close_quickview() {
                         // The preview took it.
                     } else if menu_open {
@@ -5455,6 +6435,9 @@ impl App for FilesApp {
                 // The location, made editable — Ctrl+L everywhere but the
                 // picker, whose header is a toolbar with no title to replace.
                 Keysym::l if ctrl && browser.picker.is_none() => browser.open_path_entry(),
+                Keysym::f if ctrl && browser.picker.is_none() && !browser.trash => {
+                    browser.toggle_search()
+                }
                 // What a double-click does, from the keyboard: descend into a
                 // directory, or activate a file. Return is not free for this —
                 // it renames, the way it does on the desktop this follows — so
@@ -6273,6 +7256,59 @@ impl FilesApp {
                     continue;
                 }
 
+                // The filter strip, while it is open: a click in the field
+                // places the caret, a click on a pill changes the scope.
+                // Unlike the path entry, clicking away does *not* dismiss it —
+                // the results are still on screen, and leaving the field means
+                // going to look at what you found.
+                if matches!(event.kind, PointerEventKind::Press { button, .. } if button != BTN_RIGHT)
+                    && browser.search.is_some()
+                {
+                    let point = skia_safe::Point::new(x, y);
+                    let field = view::search_field_rect(width);
+                    if field.contains(point) {
+                        if let Some(input) = browser.search.as_mut() {
+                            // Clicking into the field is how the keyboard
+                            // comes back after a click on the listing sent it
+                            // away, so focus is taken before the caret is
+                            // placed — an unfocused field ignores keys.
+                            input.state.set_focused(true);
+                            input.on_pointer_down(
+                                x - field.left - view::SEARCH_TEXT_INSET,
+                                1,
+                                shift,
+                            );
+                        }
+                        browser.dirty = true;
+                        drop(browser);
+                        window_for_events.request_frame();
+                        continue;
+                    }
+                    let pills = view::search_scope_rects(width).into_iter().zip([
+                        model::SearchScope::Folder,
+                        model::SearchScope::Everywhere,
+                    ]);
+                    if let Some((_, scope)) = pills.into_iter().find(|(r, _)| r.contains(point)) {
+                        browser.set_search_scope(scope);
+                        drop(browser);
+                        window_for_events.request_frame();
+                        continue;
+                    }
+                    if view::search_band_rect(width).contains(point) {
+                        drop(browser);
+                        continue;
+                    }
+                    // Below the strip: the click belongs to the listing, and
+                    // so does the keyboard from here on. Without this the
+                    // query keeps taking keys after you have clicked a file,
+                    // and Space types a space instead of opening Quick View
+                    // on what you just selected. The strip stays open — the
+                    // results are still what you are looking at — it simply
+                    // stops being where the typing goes. Falls through rather
+                    // than continuing: the click still has a file to land on.
+                    browser.blur_search();
+                }
+
                 // A click in the path entry places the caret; a click
                 // anywhere else puts the title back, the way clicking away
                 // from a location bar dismisses it.
@@ -6370,6 +7406,64 @@ impl FilesApp {
                             if button != BTN_RIGHT && browser.footer_pressed.is_some() =>
                         {
                             browser.footer_release(hit);
+                            drop(browser);
+                            window_for_events.request_frame();
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // The path bar takes the pointer before the listing does, for
+                // the same reason the action row does: its geometry is in
+                // *window* coordinates, and the strip begins exactly where the
+                // file area's bottom is.
+                if browser.path_bar_h() > 0.0 {
+                    let bar = view::path_bar_rect(width, browser.size.1, browser.footer_h());
+                    let inside = bar.contains(skia_safe::Point::new(x, y));
+
+                    match event.kind {
+                        PointerEventKind::Motion { .. } => {
+                            let hit = inside
+                                .then(|| browser.path_crumb_hovered(x, y))
+                                .flatten();
+                            if browser.path_crumb_hover != hit {
+                                browser.path_crumb_hover = hit;
+                                browser.dirty = true;
+                            }
+                            if inside {
+                                AppContext::set_cursor_shape(CursorShape::Default);
+                                drop(browser);
+                                continue;
+                            }
+                        }
+                        PointerEventKind::Leave { .. } => {
+                            if browser.path_crumb_hover.take().is_some() {
+                                browser.dirty = true;
+                            }
+                        }
+                        // A crumb is a step, taken on press — it navigates,
+                        // and there is nothing to arm. The resize edge along
+                        // the window's bottom still wins: it runs under this
+                        // strip, and a grab there is a grab of the window.
+                        PointerEventKind::Press { button, .. }
+                            if button != BTN_RIGHT
+                                && inside
+                                && resize::edge_at(
+                                    Rect::from_wh(width, browser.size.1),
+                                    x,
+                                    y,
+                                )
+                                .is_none() =>
+                        {
+                            if let Some(path) = browser.path_crumb_target(x, y) {
+                                // Going to a result's folder is a navigation,
+                                // not an abandoned query: the strip closes
+                                // rather than putting the folder the search
+                                // began in back, and the search itself stays
+                                // behind Back.
+                                browser.leave_synthetic_to(&path);
+                            }
                             drop(browser);
                             window_for_events.request_frame();
                             continue;
@@ -6707,14 +7801,28 @@ impl FilesApp {
                                 browser.set_mode(mode);
                             }
                         } else if let Some(index) = view::place_at(x, y, browser.places.len()) {
-                            let path = browser.places[index].path.clone();
-                            browser.navigate_to(&path);
+                            // Picking a place is leaving whatever synthetic
+                            // listing was up: results are not a place, and a
+                            // window still calling itself a search while
+                            // showing a folder refuses half its own menu.
+                            browser.active_place = Some(index);
+                            if browser.places[index].recent {
+                                browser.record_location();
+                                browser.close_search();
+                                browser.show_recent();
+                            } else {
+                                let path = browser.places[index].path.clone();
+                                browser.leave_synthetic_to(&path);
+                            }
                         } else if browser.mode == ViewMode::Grid {
                             let depth = browser.columns.len() - 1;
                             let count = browser.visible(depth).len();
                             let scroll = browser.columns[depth].scroll.offset();
                             let area = view::content_viewport(width, height, ViewMode::Grid);
-                            if let Some(index) = view::grid_cell_at(area, x, y, count, scroll) {
+                            let sections = browser.recent_sections.clone();
+                            if let Some(index) =
+                                view::grid_cell_at_in(area, &sections, x, y, count, scroll)
+                            {
                                 if ctrl {
                                     browser.note_ctrl_row_click(depth, index);
                                 } else if shift {
@@ -7112,6 +8220,21 @@ fn run_app(
 }
 
 #[cfg(test)]
+impl Browser {
+    /// Whether the row called `name` in pane `depth` is selected.
+    ///
+    /// Tests set their listings up by name, but the selection is keyed by
+    /// path — see [`Entry::selection_key`] — so this is the translation
+    /// between the two, in one place rather than at every assertion.
+    fn selected_named(&self, depth: usize, name: &str) -> bool {
+        let selection = &self.columns[depth].selection;
+        self.visible(depth)
+            .iter()
+            .any(|e| e.name == name && selection.contains(&e.selection_key()))
+    }
+}
+
+#[cfg(test)]
 mod sort_default_tests {
     use super::*;
 
@@ -7256,7 +8379,7 @@ mod typeahead_tests {
             .expect("named folder")
             .to_string_lossy()
             .to_string();
-        assert!(browser.columns[browser.active].selection.contains(&name));
+        assert!(browser.selected_named(browser.active, &name));
         assert_eq!(session.input.value(), name);
     }
 
@@ -7514,7 +8637,7 @@ mod dnd_tests {
     fn row_point(index: usize) -> (f32, f32) {
         (
             view::sidebar_w() + 100.0,
-            view::HEADER_H + view::COLUMNS_H + view::ROW_H * index as f32 + view::ROW_H / 2.0,
+            view::header_h() + view::COLUMNS_H + view::ROW_H * index as f32 + view::ROW_H / 2.0,
         )
     }
 
@@ -7547,7 +8670,7 @@ mod dnd_tests {
         browser.press_entry(0, b);
 
         assert_eq!(browser.columns[0].selection.len(), 1);
-        assert!(browser.columns[0].selection.contains("b.txt"));
+        assert!(browser.selected_named(0, "b.txt"));
     }
 
     /// A press on one of several selected entries leaves the group alone, so
@@ -7583,7 +8706,7 @@ mod dnd_tests {
         browser.release_entry();
 
         assert_eq!(browser.columns[0].selection.len(), 1);
-        assert!(browser.columns[0].selection.contains("b.txt"));
+        assert!(browser.selected_named(0, "b.txt"));
     }
 
     /// A drag cancels the deferred narrowing outright: the group is what
@@ -7648,7 +8771,7 @@ mod dnd_tests {
             .state
             .set_offset(view::sidebar_w() + panes as f32 * browser.miller_w - browser.size.0);
         let (w, h) = browser.size;
-        let y = view::HEADER_H + 80.0;
+        let y = view::header_h() + 80.0;
         let edge_x = w - 1.0;
 
         assert!(
@@ -7751,7 +8874,7 @@ mod dnd_tests {
 
         assert_eq!(browser.columns[0].selection.len(), 1);
         assert!(
-            browser.columns[0].selection.contains("a.txt"),
+            browser.selected_named(0, "a.txt"),
             "the click that happened is the one that counts"
         );
     }
@@ -7781,16 +8904,39 @@ mod dnd_tests {
     #[test]
     fn the_sidebar_takes_a_drop_only_on_a_place() {
         let (browser, _dir) = browser_over(&["a.txt"], &[]);
-        assert!(!browser.places.is_empty(), "the sidebar has places");
+        // The first place that is a real folder. Recent leads the sidebar and
+        // is a listing rather than a directory, so a drop on it has nowhere
+        // to go and it is skipped here — see below, where that is asserted.
+        let folder = browser
+            .places
+            .iter()
+            .position(|p| !p.recent)
+            .expect("the sidebar has a folder");
 
-        let place = view::place_rect(0);
+        let place = view::place_rect(folder);
         let hit = browser
             .drop_target_at(place.center_x(), place.center_y())
             .expect("a place takes a drop");
-        assert_eq!(hit.path(), &browser.places[0].path);
+        assert_eq!(hit.path(), &browser.places[folder].path);
 
         // The header band above the first place is chrome, and takes nothing.
         assert_eq!(browser.drop_target_at(20.0, 4.0), None);
+    }
+
+    #[test]
+    fn recent_takes_no_drop() {
+        let (browser, _dir) = browser_over(&["a.txt"], &[]);
+        let index = browser
+            .places
+            .iter()
+            .position(|p| p.recent)
+            .expect("Recent is in the sidebar");
+        let row = view::place_rect(index);
+        assert_eq!(
+            browser.drop_target_at(row.center_x(), row.center_y()),
+            None,
+            "Recent is a listing, so there is nowhere in it to put a file"
+        );
     }
 
     #[test]
@@ -8029,11 +9175,13 @@ mod dnd_tests {
         let (x, y) = cell_center(1);
         browser.update_marquee(x, y);
 
-        let selected = &browser.columns[0].selection;
-        assert!(selected.contains(&names[1]), "the band caught the cell");
         assert!(
-            !selected.contains(&names[0]),
-            "and left the one it never reached: {selected:?}"
+            browser.selected_named(0, &names[1]),
+            "the band caught the cell"
+        );
+        assert!(
+            !browser.selected_named(0, &names[0]),
+            "and left the one it never reached"
         );
     }
 
@@ -8052,9 +9200,9 @@ mod dnd_tests {
 
         browser.update_marquee(x0 + 1.0, y0);
 
-        assert_eq!(
-            browser.columns[0].selection.iter().collect::<Vec<_>>(),
-            vec![&names[0]],
+        assert_eq!(browser.columns[0].selection.len(), 1);
+        assert!(
+            browser.selected_named(0, &names[0]),
             "only the one still under the band"
         );
     }
@@ -8070,9 +9218,14 @@ mod dnd_tests {
         browser.begin_marquee(0, x - view::CELL_W / 2.0 + 1.0, y, true);
         browser.update_marquee(x, y);
 
-        let selected = &browser.columns[0].selection;
-        assert!(selected.contains(&names[0]), "the earlier click survived");
-        assert!(selected.contains(&names[2]), "and the band added to it");
+        assert!(
+            browser.selected_named(0, &names[0]),
+            "the earlier click survived"
+        );
+        assert!(
+            browser.selected_named(0, &names[2]),
+            "and the band added to it"
+        );
     }
 
     /// A band the size of a point catches nothing — which is exactly what a
@@ -8290,7 +9443,7 @@ mod watch_tests {
     }
 
     /// A refresh must not disturb what the user is doing: the selection is
-    /// held by name and survives, and the cursor is put back on it even though
+    /// held by key and survives, and the cursor is put back on it even though
     /// the new file sorts above it and moved every index down one.
     #[test]
     fn a_refresh_keeps_the_selection_and_the_cursor_together() {
@@ -8309,7 +9462,7 @@ mod watch_tests {
         });
         assert!(landed, "the new file never appeared");
 
-        assert!(browser.columns[0].selection.contains("z.txt"));
+        assert!(browser.selected_named(0, "z.txt"));
         assert_eq!(at_cursor(&browser).as_deref(), Some("z.txt"));
     }
 
@@ -8419,11 +9572,17 @@ mod delete_tests {
         (browser, dir)
     }
 
+    /// The selected rows, by name and in view order. The selection itself is
+    /// keyed by path — see [`Entry::selection_key`] — but what these tests are
+    /// about is which rows, and they name their fixtures.
     fn selected(browser: &Browser) -> Vec<String> {
-        browser.columns[browser.active]
-            .selection
+        let depth = browser.active;
+        let selection = &browser.columns[depth].selection;
+        browser
+            .visible(depth)
             .iter()
-            .cloned()
+            .filter(|e| selection.contains(&e.selection_key()))
+            .map(|e| e.name.clone())
             .collect()
     }
 
@@ -8667,7 +9826,7 @@ mod path_entry_tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert!(
-            browser.columns[0].selection.contains("report.txt"),
+            browser.selected_named(0, "report.txt"),
             "the file the path named was never selected"
         );
     }
@@ -9055,5 +10214,767 @@ mod trash_tests {
 
         assert!(browser.confirm.is_none(), "no question for a trip to Trash");
         assert!(!dir.0.join("a.txt").exists());
+    }
+}
+
+#[cfg(test)]
+mod caret_report_tests {
+    use super::*;
+    use otto_kit::components::text_input::{KeyMods, TextInputKey};
+
+    fn field(value: &str) -> TextInput {
+        TextInput::editing(
+            value,
+            otto_kit::components::text_input::TextInputStyle::default(),
+        )
+        .with_size(200.0, 24.0)
+    }
+
+    /// What the compositor is told is the caret's box moved to wherever the
+    /// field was painted — a caret reported at the field's own origin would
+    /// put an input method in the window's top-left corner.
+    #[test]
+    fn the_reported_caret_is_offset_to_where_the_field_was_drawn() {
+        let mut input = field("Documents");
+        input.on_key(TextInputKey::Home, KeyMods::default());
+        let local = input.caret_rect();
+
+        let (x, y, w, h) = caret_in_window(&input, (120.0, 96.0)).expect("a focused field reports");
+        assert_eq!((x, y), (120.0 + local.left, 96.0 + local.top));
+        assert_eq!((w, h), (local.width(), local.height()));
+        assert!(h > 0.0, "and a caret you could stand something next to");
+    }
+
+    /// A field that does not hold the keyboard has no caret on screen, and
+    /// reporting its position would move an input method to a field the user
+    /// is not typing in.
+    #[test]
+    fn an_unfocused_field_reports_nothing() {
+        let mut input = field("Documents");
+        input.state.set_focused(false);
+        assert!(caret_in_window(&input, (120.0, 96.0)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    /// A browser sitting on a real directory, so leaving a search has
+    /// somewhere truthful to go back to.
+    fn browser_at(dir: &std::path::Path) -> Browser {
+        Browser::new(dir.to_path_buf())
+    }
+
+    /// Type a query with the scope pill set to Everywhere, which hands the
+    /// search to a worker and comes back with the pane still filling.
+    fn type_query(browser: &mut Browser, query: &str) {
+        browser.toggle_search();
+        browser.search_scope = model::SearchScope::Everywhere;
+        if let Some(input) = browser.search.as_mut() {
+            input.set_value(query.to_string());
+        }
+        browser.run_search();
+    }
+
+    fn named(names: &[&str]) -> Vec<Entry> {
+        names
+            .iter()
+            .map(|name| Entry {
+                name: (*name).to_string(),
+                path: PathBuf::from("/tmp").join(name),
+                is_dir: false,
+                is_symlink: false,
+                hidden: false,
+                kind: otto_kit::filetype::Kind::Text,
+                size: Some(0),
+                modified: None,
+                origin: None,
+            })
+            .collect()
+    }
+
+    /// This-folder scope searches the folder, not the rows that happen to be
+    /// on screen in it. Filtering the visible listing would be instant and
+    /// wrong: nearly everything "in this folder" is in a subfolder of it, and
+    /// a scope that quietly meant "the names you can already see" would be the
+    /// one search people trust least.
+    #[test]
+    fn this_folder_scope_searches_the_folder_rather_than_the_rows_on_screen() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        browser.columns[0].snapshot.entries =
+            named(&["ledger.txt", "ledger-2026.txt", "photo.png"]);
+
+        browser.toggle_search();
+        assert_eq!(
+            browser.search_scope,
+            model::SearchScope::Folder,
+            "this folder is the default"
+        );
+        if let Some(input) = browser.search.as_mut() {
+            input.set_value("ledger".to_string());
+        }
+        browser.run_search();
+
+        assert!(browser.searching, "the window is showing results");
+        assert!(
+            browser.columns[0].loading(),
+            "which are being looked up rather than filtered out of the pane"
+        );
+        assert!(
+            browser.columns[0].snapshot.entries.is_empty(),
+            "and the rows that were on screen are not passed off as the answer"
+        );
+    }
+
+    /// Leaving the query for the results — by clicking one or by arrowing
+    /// into one — takes the keyboard along, so the keys that act on a file
+    /// reach the file. What it must *not* do is close the search: the results
+    /// are the whole reason you went down there.
+    #[test]
+    fn leaving_the_query_moves_the_keyboard_without_closing_the_search() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        type_query(&mut browser, "ledger");
+
+        assert!(browser.blur_search(), "the keyboard moved");
+        let input = browser.search.as_ref().expect("the strip is still open");
+        assert!(!input.state.focused(), "and the query no longer takes keys");
+        assert_eq!(input.value(), "ledger", "but it still says what you typed");
+        assert!(browser.searching, "and the results are still on screen");
+
+        // Already in the listing: nothing moved, so nothing needs redrawing.
+        assert!(!browser.blur_search());
+    }
+
+    /// Ctrl+F on a strip that has given the keyboard back puts the caret in
+    /// the query rather than closing it: the results are still up, and the
+    /// only reason to press it again is to go on typing.
+    #[test]
+    fn ctrl_f_takes_the_keyboard_back_before_it_closes_anything() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        browser.toggle_search();
+        assert!(browser.search.is_some());
+
+        // Arrowed down into the results: the strip stays, the keyboard goes.
+        browser.blur_search();
+
+        browser.toggle_search();
+        let input = browser.search.as_ref().expect("the strip is still open");
+        assert!(input.state.focused(), "and it has the caret back");
+
+        // Only now does it close.
+        browser.toggle_search();
+        assert!(browser.search.is_none());
+    }
+
+    /// The caret is only asked to blink while a field actually holds the
+    /// keyboard — otherwise the window would wake 125 times a second to draw
+    /// a caret nobody can see.
+    #[test]
+    fn the_caret_blinks_only_while_a_field_has_the_keyboard() {
+        use otto_kit::components::text_input::CARET_BLINK_PERIOD;
+
+        let mut browser = browser_at(&std::env::temp_dir());
+        assert!(!browser.has_focused_input(), "nothing is being edited");
+        assert!(
+            !browser.tick_caret(CARET_BLINK_PERIOD),
+            "and so nothing changed phase"
+        );
+
+        browser.toggle_search();
+        assert!(browser.has_focused_input(), "the filter strip has it");
+
+        // Half a period turns the caret over exactly once; the rest of that
+        // half does not turn it over again.
+        assert!(browser.tick_caret(CARET_BLINK_PERIOD * 0.6));
+        assert!(!browser.tick_caret(CARET_BLINK_PERIOD * 0.1));
+
+        browser.clear_search();
+        assert!(!browser.has_focused_input(), "and gives it back on Escape");
+    }
+
+    /// Switching the pill re-runs the same query against the other haystack
+    /// rather than dropping it.
+    #[test]
+    fn changing_scope_keeps_the_query() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        browser.columns[0].snapshot.entries = named(&["nothing-matching.txt"]);
+        type_query(&mut browser, "pdf");
+        assert!(
+            browser.columns[0].loading(),
+            "Everywhere handed the query to a worker"
+        );
+
+        browser.set_search_scope(model::SearchScope::Folder);
+        assert_eq!(
+            browser.query().as_deref(),
+            Some("pdf"),
+            "the query survived"
+        );
+        assert!(
+            browser.columns[0].snapshot.entries.is_empty(),
+            "this folder has no pdf in it, so the results should be empty"
+        );
+    }
+
+    #[test]
+    fn ctrl_f_opens_the_field_and_a_second_press_closes_it() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        assert!(browser.search.is_none(), "the field starts closed");
+        browser.toggle_search();
+        assert!(browser.search.is_some(), "Ctrl+F opens it");
+        browser.toggle_search();
+        assert!(browser.search.is_none(), "a second press closes it");
+    }
+
+    /// Neither scope can answer on the keystroke that asked: both go to the
+    /// desktop's index, on a worker. What they must not do is invent something
+    /// to show in the meantime.
+    #[test]
+    fn an_everywhere_search_leaves_the_pane_filling_rather_than_guessing() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        type_query(&mut browser, "invoice");
+
+        assert!(browser.searching, "the window is showing results");
+        assert!(browser.columns[0].loading(), "and they are still arriving");
+        assert!(
+            browser.columns[0].snapshot.entries.is_empty(),
+            "with nothing fabricated to fill the gap"
+        );
+        assert!(
+            browser.columns[0].awaiting_first_listing(),
+            "so the pane says it is working rather than showing an empty result"
+        );
+    }
+
+    /// An abandoned search is not a navigation: Escape puts back the folder
+    /// Ctrl+F was pressed in, not wherever the results came from.
+    #[test]
+    fn clearing_the_search_returns_to_where_it_started() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        let origin = browser.current_path();
+
+        type_query(&mut browser, "pdf");
+        assert!(browser.searching);
+
+        browser.clear_search();
+        assert!(!browser.searching, "the results are gone");
+        assert!(browser.search.is_none(), "and so is the field");
+        assert_eq!(browser.current_path(), origin, "back where it started");
+    }
+
+    /// Emptying the field is the same as leaving: a query of nothing is not a
+    /// search for everything.
+    #[test]
+    fn emptying_the_field_puts_the_listing_back() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        let origin = browser.current_path();
+
+        type_query(&mut browser, "pdf");
+        if let Some(input) = browser.search.as_mut() {
+            input.set_value(String::new());
+        }
+        browser.run_search();
+
+        assert!(!browser.searching);
+        assert_eq!(browser.current_path(), origin);
+        assert!(browser.search.is_some(), "the field itself stays open");
+    }
+
+    /// Results have no hierarchy, so Miller columns are refused — but list and
+    /// grid both read a result set perfectly well.
+    #[test]
+    fn results_can_be_a_list_or_a_grid_but_never_columns() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        type_query(&mut browser, "pdf");
+
+        browser.set_mode(ViewMode::List);
+        assert_eq!(browser.mode, ViewMode::List);
+        browser.set_mode(ViewMode::Grid);
+        assert_eq!(browser.mode, ViewMode::Grid);
+
+        browser.set_mode(ViewMode::Columns);
+        assert_eq!(browser.mode, ViewMode::Grid, "Columns was refused");
+        assert!(browser.status.is_some(), "and said why");
+    }
+
+    /// The tiles are real files, but they come from a dozen directories at
+    /// once and the pane has none of them behind it — so every command that
+    /// needs a folder is refused.
+    #[test]
+    fn a_result_cannot_be_acted_on_as_though_it_were_in_a_folder() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        type_query(&mut browser, "pdf");
+        assert!(browser.is_synthetic());
+
+        browser.start_rename();
+        assert!(browser.rename.is_none(), "rename was refused");
+        assert!(browser.status.is_some(), "and said why");
+    }
+
+    /// Previewing is most of what Recent and search are for: you go there
+    /// because you cannot quite name the file, and looking at it is how you
+    /// tell which one it is. It was refused while the selection was keyed by
+    /// name and the rows were fabricated; both of those are gone.
+    #[test]
+    fn a_result_can_be_previewed_even_though_it_is_not_in_a_folder() {
+        let dir = std::env::temp_dir();
+        let file = dir.join(format!("otto-files-qv-{}.txt", std::process::id()));
+        std::fs::write(&file, b"preview me").unwrap();
+
+        let mut browser = browser_at(&dir);
+        browser.columns[0].snapshot.entries =
+            vec![model::entry_for_path(&file).expect("a real file")];
+        browser.searching = true;
+        browser.select(0, 0);
+
+        let started = browser.begin_quickview();
+        std::fs::remove_file(&file).ok();
+
+        let (path, _, _) = started.expect("Quick View opened on a result");
+        assert_eq!(path, file, "and on the file the cursor is actually on");
+        assert!(browser.quickview.is_some(), "with the panel up");
+    }
+
+    /// A search is not a place, so the sidebar lights nothing while one is on
+    /// screen. Results and Recent are both listings with no directory behind
+    /// them; while they shared one sentinel path, the sidebar matched it
+    /// against the Recent place and lit it as soon as anyone typed — telling
+    /// the person they had navigated somewhere they had not.
+    #[test]
+    fn searching_does_not_light_up_recent_in_the_sidebar() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        let recent_place = browser
+            .places
+            .iter()
+            .position(|p| p.recent)
+            .expect("Recent leads the sidebar");
+
+        type_query(&mut browser, "invoice");
+        assert!(browser.searching, "results are on screen");
+        assert!(!browser.recent, "and this is not Recent");
+
+        let lit = browser
+            .places
+            .iter()
+            .position(|p| p.path == browser.columns[0].path);
+        assert_ne!(lit, Some(recent_place), "Recent is not lit");
+        assert_eq!(
+            lit, None,
+            "and neither is anything else: a search is nowhere"
+        );
+    }
+
+    /// Finding a folder and opening it is most of what a search is for. It
+    /// cannot descend *into* a result — there is no hierarchy under one — so
+    /// it goes there instead, leaving the search behind Back.
+    #[test]
+    fn opening_a_folder_from_the_results_goes_to_it() {
+        let root = std::env::temp_dir().join(format!("otto-files-open-{}", std::process::id()));
+        let target = root.join("Projects");
+        std::fs::create_dir_all(&target).unwrap();
+
+        let mut browser = browser_at(&root);
+        type_query(&mut browser, "projects");
+        // Standing in for what the index would have found.
+        browser.columns[0].snapshot.entries = vec![model::entry_for_path(&target).unwrap()];
+        browser.select(0, 0);
+
+        browser.open_selection();
+        let landed = browser.current_path();
+        let searching = browser.searching;
+        let back = browser.back.len();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(landed, target, "it went to the folder it found");
+        assert!(!searching, "and stopped being a search");
+        assert!(back > 0, "with the search behind Back");
+    }
+
+    /// A search is a place the window has been, so Back steps out of it to
+    /// the folder it was asked from and Forward steps back into it — asking
+    /// the question again rather than replaying the answer, because the disk
+    /// may have moved on since.
+    #[test]
+    fn back_and_forward_step_through_a_search() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        let folder = browser.current_path();
+
+        type_query(&mut browser, "invoice");
+        assert!(browser.searching);
+
+        browser.go_back();
+        assert!(!browser.searching, "Back leaves the search");
+        assert!(browser.search.is_none(), "and takes the strip down with it");
+        assert_eq!(browser.current_path(), folder, "back where it was asked");
+
+        browser.go_forward();
+        assert!(browser.searching, "Forward steps back into it");
+        assert_eq!(
+            browser.query().as_deref(),
+            Some("invoice"),
+            "with the question it was asking"
+        );
+    }
+
+    /// Refining a query is the same page asking again, not a new one. One
+    /// history entry per Return would make Back a way to walk your own typing
+    /// backwards, which is not what anyone reaches for it to do.
+    #[test]
+    fn refining_a_query_does_not_stack_up_history() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        type_query(&mut browser, "inv");
+        let after_entering = browser.back.len();
+
+        for query in ["invo", "invoi", "invoice"] {
+            if let Some(input) = browser.search.as_mut() {
+                input.set_value(query.to_string());
+            }
+            browser.run_search();
+        }
+        assert_eq!(browser.back.len(), after_entering, "still one way back");
+
+        browser.go_back();
+        assert!(!browser.searching, "and it leaves the search outright");
+    }
+
+    /// Two rows can name the same folder — a configured shortcut pointing at
+    /// Downloads, say. Matching the highlight on the path alone lit whichever
+    /// came first, so clicking the other one navigated correctly and left the
+    /// row you pressed dark, which reads as a click that did not work.
+    #[test]
+    fn the_row_that_was_clicked_is_the_row_that_lights() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+
+        // Two rows, one folder.
+        browser.places = vec![
+            model::Place {
+                label: "Downloads".into(),
+                path: dir.clone(),
+                icon: "folder-download".into(),
+                recent: false,
+            },
+            model::Place {
+                label: "Inbox".into(),
+                path: dir.clone(),
+                icon: "folder".into(),
+                recent: false,
+            },
+        ];
+
+        // Nothing clicked yet: the first row that matches, as before.
+        assert_eq!(browser.selected_place(), Some(0));
+
+        browser.active_place = Some(1);
+        assert_eq!(
+            browser.selected_place(),
+            Some(1),
+            "the second row lights when it is the one that was pressed"
+        );
+
+        // Somewhere the clicked row does not lead: back to matching by path.
+        browser.columns[0].path = PathBuf::from("/");
+        assert_eq!(browser.selected_place(), None);
+    }
+
+    /// Picking a place in the sidebar leaves the search. Results are not a
+    /// place, and a window still calling itself a search while showing a
+    /// folder refuses half its own menu — rename, paste and New Folder all
+    /// check whether the listing is synthetic.
+    #[test]
+    fn choosing_a_place_leaves_the_search_behind() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        type_query(&mut browser, "invoice");
+        assert!(browser.searching && browser.search.is_some());
+
+        // What the sidebar's handler does with a place that is not Recent.
+        let was_searching = browser.close_search();
+
+        assert!(
+            was_searching,
+            "and says results were up, so it can navigate"
+        );
+        assert!(!browser.searching, "the window is no longer a search");
+        assert!(browser.search.is_none(), "the strip is down");
+        assert!(!browser.is_synthetic(), "and acts like a folder again");
+        assert_eq!(view::search_band_h(), 0.0, "the band gave its line back");
+    }
+
+    /// Closing without going anywhere is the point of the split: the caller
+    /// navigates. Escape still restores the folder the search began in.
+    #[test]
+    fn closing_a_search_leaves_the_caller_to_navigate() {
+        let dir = std::env::temp_dir();
+        let mut browser = browser_at(&dir);
+        let before = browser.current_path();
+        type_query(&mut browser, "invoice");
+
+        assert!(browser.close_search());
+        assert!(
+            !browser.close_search(),
+            "a second close has no results to report"
+        );
+
+        // Escape, by contrast, puts the folder back.
+        let mut browser = browser_at(&dir);
+        type_query(&mut browser, "invoice");
+        browser.clear_search();
+        assert_eq!(browser.current_path(), before);
+    }
+
+    /// The bar earns its line in the listings that have no folder behind
+    /// them: a search result is a file from anywhere on the disk, and the
+    /// title says what you asked for rather than where the answer came from.
+    #[test]
+    fn the_path_bar_names_where_a_selected_result_actually_lives() {
+        let root = std::env::temp_dir().join(format!("otto-files-pb-{}", std::process::id()));
+        let nested = root.join("Projects").join("otto");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("notes.txt");
+        std::fs::write(&file, b"x").unwrap();
+
+        let mut browser = browser_at(&root);
+        browser.columns[0].snapshot.entries = vec![model::entry_for_path(&file).unwrap()];
+        browser.searching = true;
+        browser.select(0, 0);
+
+        let crumbs = browser.path_crumbs();
+        let labels: Vec<&str> = crumbs.iter().map(|c| c.label.as_str()).collect();
+
+        // With nothing selected there is no folder to fall back on: the
+        // sentinel standing in for one is not a path worth spelling out.
+        browser.clear_selection();
+        let empty_handed = browser.path_crumbs();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(labels.last(), Some(&"notes.txt"), "{labels:?}");
+        assert!(
+            labels.contains(&"otto") && labels.contains(&"Projects"),
+            "and names the folders holding it: {labels:?}"
+        );
+        assert!(empty_handed.is_empty(), "and says nothing when it cannot");
+    }
+
+    /// The bands below the file area have to add back up to the window.
+    /// Anything drawn the full height of it — the sidebar, the divider beside
+    /// it — is placed from this sum, and a band added without being counted
+    /// here left the desktop showing through the strip nothing reached.
+    #[test]
+    fn the_bands_below_the_file_area_add_up_to_the_window() {
+        let mut browser = browser_at(&std::env::temp_dir());
+        browser.size = (900.0, 600.0);
+        assert_eq!(
+            browser.content_h() + browser.path_bar_h() + browser.footer_h(),
+            browser.size.1
+        );
+        assert_eq!(
+            browser.path_bar_h(),
+            view::PATH_BAR_H,
+            "the browser always gives the bar its line, whatever it has to say"
+        );
+    }
+
+    /// Two files with the same name in one listing is ordinary in Recent and
+    /// in search results — they come from different folders. Keyed by name,
+    /// clicking one selected all of them, and every command that acts on the
+    /// selection then acted on all of them.
+    #[test]
+    fn same_named_results_from_different_folders_select_one_at_a_time() {
+        let root = std::env::temp_dir().join(format!("otto-files-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for sub in ["one", "two", "three"] {
+            std::fs::create_dir_all(root.join(sub)).unwrap();
+            std::fs::write(root.join(sub).join("Cargo.toml"), b"x").unwrap();
+        }
+
+        let mut browser = browser_at(&root);
+        browser.columns[0].snapshot.entries = ["one", "two", "three"]
+            .iter()
+            .map(|sub| model::entry_for_path(&root.join(sub).join("Cargo.toml")).unwrap())
+            .collect();
+        browser.searching = true;
+
+        browser.select(0, 1);
+        let selected: Vec<&str> = browser.columns[0]
+            .snapshot
+            .entries
+            .iter()
+            .filter(|e| browser.columns[0].selection.contains(&e.selection_key()))
+            .map(|e| e.path.to_str().unwrap())
+            .collect();
+
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(selected.len(), 1, "one row, not three: {selected:?}");
+        assert!(selected[0].contains("two"), "and the one clicked");
+    }
+}
+
+#[cfg(test)]
+mod path_bar_tests {
+    use super::*;
+
+    fn icons_of(crumbs: &[view::PathCrumb]) -> Vec<&str> {
+        crumbs
+            .iter()
+            .map(|c| c.icon.first().map(String::as_str).unwrap_or(""))
+            .collect()
+    }
+
+    fn labels_of(crumbs: &[view::PathCrumb]) -> Vec<&str> {
+        crumbs.iter().map(|c| c.label.as_str()).collect()
+    }
+
+    /// Every component becomes a crumb, and each one carries the path that
+    /// far — that is what makes a click on it a step back up the trail.
+    #[test]
+    fn each_crumb_carries_the_path_down_to_itself() {
+        let crumbs = crumbs_for(
+            Path::new("/home/ada/Pictures/holiday.png"),
+            vec!["image-png".to_string()],
+            false,
+            None,
+        );
+
+        assert_eq!(
+            labels_of(&crumbs),
+            ["/", "home", "ada", "Pictures", "holiday.png"]
+        );
+        assert_eq!(
+            crumbs.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
+            [
+                PathBuf::from("/"),
+                PathBuf::from("/home"),
+                PathBuf::from("/home/ada"),
+                PathBuf::from("/home/ada/Pictures"),
+                PathBuf::from("/home/ada/Pictures/holiday.png"),
+            ]
+        );
+        // The leaf is a file, so it leads nowhere; everything above it does.
+        assert_eq!(
+            crumbs.iter().map(|c| c.is_dir).collect::<Vec<_>>(),
+            [true, true, true, true, false]
+        );
+        // The leaf wears the entry's own icon; the trail above it is folders,
+        // and the root is the volume they hang off.
+        assert_eq!(
+            icons_of(&crumbs),
+            ["drive-harddisk", "folder", "folder", "folder", "image-png"]
+        );
+    }
+
+    /// A selected folder is a crumb like any other, and it leads somewhere.
+    #[test]
+    fn a_selected_folder_ends_the_trail_as_a_step() {
+        let crumbs = crumbs_for(
+            Path::new("/home/ada/Pictures"),
+            vec!["folder".to_string()],
+            true,
+            None,
+        );
+        assert!(crumbs.last().unwrap().is_dir);
+        assert_eq!(
+            crumbs.last().unwrap().path,
+            PathBuf::from("/home/ada/Pictures")
+        );
+    }
+
+    /// The home directory keeps its name and takes the sidebar's icon, and
+    /// only that one component does — a folder deeper down that happens to
+    /// share the name is an ordinary folder.
+    #[test]
+    fn home_wears_the_sidebar_icon_and_keeps_its_name() {
+        let crumbs = crumbs_for(
+            Path::new("/home/ada/ada"),
+            vec!["folder".to_string()],
+            true,
+            Some(Path::new("/home/ada")),
+        );
+
+        assert_eq!(labels_of(&crumbs), ["/", "home", "ada", "ada"]);
+        assert_eq!(
+            icons_of(&crumbs),
+            ["drive-harddisk", "folder", "user-home", "folder"]
+        );
+        assert_eq!(crumbs[2].path, PathBuf::from("/home/ada"));
+    }
+
+    fn entry(dir: &str, name: &str, is_dir: bool) -> Entry {
+        Entry {
+            name: name.to_string(),
+            path: Path::new(dir).join(name),
+            is_dir,
+            is_symlink: false,
+            hidden: false,
+            kind: if is_dir {
+                otto_kit::filetype::Kind::Folder
+            } else {
+                otto_kit::filetype::Kind::Image
+            },
+            size: Some(1),
+            modified: None,
+            origin: None,
+        }
+    }
+
+    /// What the bar spells out is the *selection* — the whole point of it. A
+    /// window whose active column has one thing selected reads out that
+    /// thing's path, not the folder it is sitting in.
+    #[test]
+    fn one_selected_file_is_what_the_bar_spells_out() {
+        let mut browser = Browser::new(PathBuf::from("/home/ada"));
+        browser.columns[0].snapshot.entries = vec![
+            entry("/home/ada", "holiday.png", false),
+            entry("/home/ada", "notes.txt", false),
+        ];
+
+        // Nothing selected: the column's own directory.
+        let (path, _, is_dir) = browser.path_bar_target().expect("a real folder");
+        assert_eq!(path, PathBuf::from("/home/ada"));
+        assert!(is_dir);
+
+        // Keyed by path — see `Entry::selection_key` — because a listing that
+        // merges folders can hold two files of the same name.
+        browser.columns[0]
+            .selection
+            .insert("/home/ada/holiday.png".to_string());
+        let (path, icon, is_dir) = browser.path_bar_target().expect("the selected file");
+        assert_eq!(path, PathBuf::from("/home/ada/holiday.png"));
+        assert!(!is_dir);
+        assert!(!icon.is_empty(), "the leaf carries the entry's own icon");
+
+        // More than one, and there is no single path to give: the bar falls
+        // back to where they all are.
+        browser.columns[0]
+            .selection
+            .insert("/home/ada/notes.txt".to_string());
+        assert_eq!(
+            browser.path_bar_target().map(|(path, ..)| path),
+            Some(PathBuf::from("/home/ada"))
+        );
+    }
+
+    /// The strip is chrome the file area stops short of, the same way it stops
+    /// short of the picker's action row.
+    #[test]
+    fn the_file_area_stops_above_the_strip() {
+        let mut browser = Browser::new(std::env::temp_dir());
+        browser.size = (1100.0, 700.0);
+
+        assert_eq!(browser.path_bar_h(), view::PATH_BAR_H);
+        assert_eq!(browser.content_h(), 700.0 - view::PATH_BAR_H);
+
+        // The Trash window has no strip: every path in it would spell out the
+        // same stretch of `.local/share/Trash`.
+        browser.trash = true;
+        assert_eq!(browser.path_bar_h(), 0.0);
+        assert_eq!(browser.content_h(), 700.0);
+        assert!(browser.path_crumbs().is_empty());
     }
 }

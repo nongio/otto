@@ -12,7 +12,7 @@ use otto_kit::icons;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
 
-use crate::model::{self, Column, Entry, Place, SortKey};
+use crate::model::{self, Column, Entry, Place, SearchScope, SortKey};
 
 /// The size the window asks for on first map; after that the compositor is in
 /// charge and everything draws against the configured size.
@@ -84,7 +84,15 @@ fn nav_hidden() -> bool {
 /// What a listing with nothing in it says. An empty Trash is a state worth
 /// naming — it is the one every user wants to reach — where an empty folder
 /// is just a folder.
-fn empty_message() -> &'static str {
+///
+/// A pane that was filled by the desktop's index says something else again
+/// when the indexer is off: there is a difference between a folder with
+/// nothing in it and a question nothing was able to answer, and the empty pane
+/// is where the person is actually looking when they find out.
+fn empty_message(f: &Frame) -> &'static str {
+    if !f.index_available {
+        return otto_kit::t!("files-search-unavailable");
+    }
     match shell() {
         Shell::Browser => otto_kit::t!("files-folder-empty"),
         Shell::Trash => otto_kit::t!("files-trash-empty"),
@@ -97,6 +105,41 @@ pub const PREVIEW_W: f32 = 280.0;
 /// The "big header": tall enough for a large title with a subtitle under it,
 /// which is what makes the window read as a document rather than a dialog.
 pub const HEADER_H: f32 = 92.0;
+
+/// The filter strip's height, when it is open: a field on one line with the
+/// air above and below it that keeps it off both the header's hairline and
+/// the column names underneath.
+pub const SEARCH_BAND_H: f32 = 46.0;
+
+/// Whether the filter strip is open.
+///
+/// Process-global for the same reason [`otto_kit::controls_side`] is: the
+/// strip changes where *everything* below the header sits, and the two dozen
+/// geometry functions that answer that question take an area and an index, not
+/// a browser. Threading a flag through all of them to say the same thing at
+/// every call site would be noise; one window per process makes it honest.
+static SEARCH_BAND: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Open or close the strip. Called when Ctrl+F toggles the field, before
+/// anything asks where the content starts.
+pub fn set_search_band(open: bool) {
+    SEARCH_BAND.store(
+        if open { SEARCH_BAND_H as u32 } else { 0 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// How much room the strip is taking right now — zero while it is closed.
+pub fn search_band_h() -> f32 {
+    SEARCH_BAND.load(std::sync::atomic::Ordering::Relaxed) as f32
+}
+
+/// Where the content starts: the header, plus the filter strip when it is
+/// open. Everything below the chrome measures from here, so opening the strip
+/// pushes the listing down instead of drawing over it.
+pub fn header_h() -> f32 {
+    HEADER_H + search_band_h()
+}
 
 /// The picker's action row along the bottom: filter control on the left,
 /// Cancel and the accept button on the right. Zero in the browser, which has
@@ -214,6 +257,75 @@ pub fn path_field_rect(width: f32) -> Rect {
 /// Tall enough for the title-sized text the field replaces.
 const PATH_FIELD_H: f32 = 32.0;
 
+/// The filter strip: a band the full width of the content, between the header
+/// and whatever the content starts with.
+///
+/// Not in the header. A field up there reads as a property of the window; down
+/// here, directly over the rows and sharing their left margin, it reads as
+/// *filtering these rows* — and there is room beside it for the scope, which
+/// there was not. It exists only while the search is open, so the listing is
+/// back at [`HEADER_H`] the moment Escape closes it.
+pub fn search_band_rect(width: f32) -> Rect {
+    Rect::from_ltrb(sidebar_w(), HEADER_H, width, HEADER_H + SEARCH_BAND_H)
+}
+
+/// The field itself: everything in the strip the scope chips do not take.
+pub fn search_field_rect(width: f32) -> Rect {
+    let band = search_band_rect(width);
+    let right = band.right - CONTENT_PAD - controls_clearance();
+    let chips = search_scope_rects(width);
+    let chip_edge = chips[0].left - SEARCH_CHIP_GAP * 2.0;
+    Rect::from_ltrb(
+        band.left + CONTENT_PAD,
+        band.center_y() - SEARCH_FIELD_H / 2.0,
+        chip_edge.min(right),
+        band.center_y() + SEARCH_FIELD_H / 2.0,
+    )
+}
+
+/// The two scope pills on the strip's trailing edge, in [`SearchScope`] order:
+/// this folder, then everywhere.
+pub fn search_scope_rects(width: f32) -> [Rect; 2] {
+    let band = search_band_rect(width);
+    let right = band.right - CONTENT_PAD - controls_clearance();
+    let cy = band.center_y();
+    let everywhere = Rect::from_ltrb(
+        right - SEARCH_CHIP_EVERYWHERE_W,
+        cy - SEARCH_CHIP_H / 2.0,
+        right,
+        cy + SEARCH_CHIP_H / 2.0,
+    );
+    let folder = Rect::from_ltrb(
+        everywhere.left - SEARCH_CHIP_GAP - SEARCH_CHIP_FOLDER_W,
+        everywhere.top,
+        everywhere.left - SEARCH_CHIP_GAP,
+        everywhere.bottom,
+    );
+    [folder, everywhere]
+}
+
+/// What you type reads at the size of the rows it is filtering. The strip
+/// sits directly over the listing, and a query in smaller type than its own
+/// results looks like a caption rather than the thing you are writing.
+const SEARCH_TEXT_STYLE: TextStyle = styles::BODY;
+
+/// Tall enough for [`SEARCH_TEXT_STYLE`] with air around it, and a bigger
+/// target to click into than the header capsule this replaced.
+const SEARCH_FIELD_H: f32 = 30.0;
+/// How far the text starts inside the field, leaving room for the magnifier.
+pub const SEARCH_TEXT_INSET: f32 = 28.0;
+/// The placeholder alone clears the caret by this much — see the call site.
+const SEARCH_PLACEHOLDER_NUDGE: f32 = 2.0;
+/// The scope pills. One fixed width for both, rather than measured ones: the
+/// field's right edge should not jitter as the labels change language, and two
+/// pills of different widths beside each other read as two different controls.
+/// Sized for the longest translation of either label — Spanish's "En todas
+/// partes" at fifteen characters — since a clipped scope is worse than air.
+const SEARCH_CHIP_H: f32 = 22.0;
+const SEARCH_CHIP_GAP: f32 = 6.0;
+const SEARCH_CHIP_FOLDER_W: f32 = 112.0;
+const SEARCH_CHIP_EVERYWHERE_W: f32 = 112.0;
+
 /// One Miller pane's default width. Every pane shares one width — a column
 /// whose width changes as you descend is disorienting, and this is what makes
 /// the view scannable — but that shared width is user-resizable.
@@ -322,18 +434,84 @@ pub enum ViewMode {
 /// in list view).
 pub fn content_viewport(width: f32, height: f32, mode: ViewMode) -> Rect {
     let top = match mode {
-        ViewMode::List => HEADER_H + COLUMNS_H,
-        ViewMode::Columns | ViewMode::Grid => HEADER_H,
+        ViewMode::List => header_h() + COLUMNS_H,
+        ViewMode::Columns | ViewMode::Grid => header_h(),
     };
     Rect::from_ltrb(sidebar_w(), top, width, height)
 }
 
 // --- Icon grid geometry -----------------------------------------------------
 //
-// These four functions know nothing about the browser: give them an area and a
-// cell index and they answer where it goes. That is what makes the grid
-// reusable for a desktop surface, which has the same cells and none of the
-// chrome. They are the shape `icon_grid` takes when it moves into otto-kit.
+// These functions know nothing about the browser: give them an area and a cell
+// index and they answer where it goes. That is what makes the grid reusable for
+// a desktop surface, which has the same cells and none of the chrome. They are
+// the shape `icon_grid` takes when it moves into otto-kit.
+//
+// Each has a `_in` form taking [`GridSections`], which breaks the lattice into
+// runs opened by a heading, and a bare form that is the `_in` form over
+// [`GridSections::FLAT`]. One implementation, two arities: a plain directory
+// listing is the sectioned grid with a single unheaded section, so the two
+// cannot drift apart.
+
+/// The height of a section heading, including the air above and below it.
+pub const GRID_HEADER_H: f32 = 34.0;
+
+/// One heading and the run of cells beneath it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridSection {
+    /// `None` for a section that draws no heading — which is how an ordinary
+    /// directory listing is expressed.
+    pub header: Option<String>,
+    /// Index of this section's first entry in the pane's visible order.
+    pub first: usize,
+    pub count: usize,
+}
+
+/// How the icon grid is broken up vertically.
+///
+/// Empty means one plain lattice over the whole listing, which is every
+/// directory. The Recent place fills it with one section per day-bucket.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GridSections(pub Vec<GridSection>);
+
+impl GridSections {
+    /// The unsectioned grid: what every directory listing uses.
+    pub const FLAT: &'static GridSections = &GridSections(Vec::new());
+
+    pub fn is_flat(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The sections as the geometry wants them, which is never empty: a flat
+    /// grid is one unheaded section covering everything.
+    fn runs(&self, count: usize) -> Vec<GridSection> {
+        if self.0.is_empty() {
+            return vec![GridSection {
+                header: None,
+                first: 0,
+                count,
+            }];
+        }
+        self.0.clone()
+    }
+
+    /// The y of each section's *heading*, relative to the top of the content,
+    /// paired with the section. The section's first row of cells sits
+    /// `GRID_HEADER_H` below that when it has a heading, and at it when it
+    /// does not.
+    fn walk(&self, count: usize, cols: usize) -> Vec<(GridSection, f32)> {
+        let mut y = 0.0;
+        let mut out = Vec::new();
+        for section in self.runs(count) {
+            let rows = section.count.div_ceil(cols);
+            let height =
+                section.header.is_some() as u8 as f32 * GRID_HEADER_H + rows as f32 * CELL_H;
+            out.push((section, y));
+            y += height;
+        }
+        out
+    }
+}
 
 /// How many cells fit across `area`. Never zero, so a very narrow window
 /// degrades to one column rather than dividing by it.
@@ -343,18 +521,93 @@ pub fn grid_columns(area: Rect) -> usize {
 
 /// The cell rect for `index`, in `area`, scrolled by `scroll`.
 pub fn grid_cell_rect(area: Rect, index: usize, scroll: f32) -> Rect {
+    grid_cell_rect_in(area, GridSections::FLAT, index, scroll)
+}
+
+/// [`grid_cell_rect`] against a sectioned grid.
+///
+/// An index past the end of every section falls back to the flat lattice
+/// rather than returning nothing: callers ask for a cell rect while a listing
+/// is being replaced underneath them, and an empty rect off screen is a less
+/// surprising answer than a panic.
+pub fn grid_cell_rect_in(area: Rect, sections: &GridSections, index: usize, scroll: f32) -> Rect {
     let cols = grid_columns(area);
-    let (row, col) = (index / cols, index % cols);
+    let (row, col) = match section_position(sections, index, cols) {
+        Some(pos) => pos,
+        None => return Rect::new_empty(),
+    };
     Rect::from_xywh(
         area.left + GRID_PAD + col as f32 * CELL_W,
-        area.top + GRID_PAD + row as f32 * CELL_H - scroll,
+        area.top + GRID_PAD + row - scroll,
         CELL_W,
         CELL_H,
     )
 }
 
+/// Where `index` sits: its top in content coordinates, and its column.
+fn section_position(sections: &GridSections, index: usize, cols: usize) -> Option<(f32, usize)> {
+    if sections.is_flat() {
+        return Some(((index / cols) as f32 * CELL_H, index % cols));
+    }
+    // The count is only needed to size the synthetic flat section, which the
+    // branch above already took, so zero is safe here.
+    for (section, y) in sections.walk(0, cols) {
+        if index < section.first || index >= section.first + section.count {
+            continue;
+        }
+        let local = index - section.first;
+        let top = y
+            + section.header.is_some() as u8 as f32 * GRID_HEADER_H
+            + (local / cols) as f32 * CELL_H;
+        return Some((top, local % cols));
+    }
+    None
+}
+
+/// The heading rects to draw, each with its text, in window coordinates.
+///
+/// Only sections with a heading appear. A heading whose section is entirely
+/// scrolled past is still returned — the caller pins it to the top of the band
+/// so it stays legible while its own tiles are being scrolled through.
+pub fn grid_section_headers(
+    area: Rect,
+    sections: &GridSections,
+    scroll: f32,
+) -> Vec<(Rect, String)> {
+    if sections.is_flat() {
+        return Vec::new();
+    }
+    let cols = grid_columns(area);
+    sections
+        .walk(0, cols)
+        .into_iter()
+        .filter_map(|(section, y)| {
+            let header = section.header?;
+            let rect = Rect::from_xywh(
+                area.left + GRID_PAD,
+                area.top + GRID_PAD + y - scroll,
+                area.width() - GRID_PAD * 2.0,
+                GRID_HEADER_H,
+            );
+            Some((rect, header))
+        })
+        .collect()
+}
+
 /// The cell index under `(x, y)`, if any.
 pub fn grid_cell_at(area: Rect, x: f32, y: f32, count: usize, scroll: f32) -> Option<usize> {
+    grid_cell_at_in(area, GridSections::FLAT, x, y, count, scroll)
+}
+
+/// [`grid_cell_at`] against a sectioned grid.
+pub fn grid_cell_at_in(
+    area: Rect,
+    sections: &GridSections,
+    x: f32,
+    y: f32,
+    count: usize,
+    scroll: f32,
+) -> Option<usize> {
     if !area.contains(Point::new(x, y)) {
         return None;
     }
@@ -365,12 +618,27 @@ pub fn grid_cell_at(area: Rect, x: f32, y: f32, count: usize, scroll: f32) -> Op
         return None;
     }
     let col = (local_x / CELL_W) as usize;
-    let row = (local_y / CELL_H) as usize;
     if col >= cols {
         return None;
     }
-    let index = row * cols + col;
-    (index < count).then_some(index)
+    for (section, top) in sections.walk(count, cols) {
+        let header_h = section.header.is_some() as u8 as f32 * GRID_HEADER_H;
+        let rows = section.count.div_ceil(cols);
+        let cells_top = top + header_h;
+        let cells_bottom = cells_top + rows as f32 * CELL_H;
+        if local_y < cells_top {
+            // In this section's heading band, or the air above it. A click
+            // there is a click on nothing, not on the row below.
+            return None;
+        }
+        if local_y >= cells_bottom {
+            continue;
+        }
+        let row = ((local_y - cells_top) / CELL_H) as usize;
+        let index = section.first + row * cols + col;
+        return (index < section.first + section.count && index < count).then_some(index);
+    }
+    None
 }
 
 /// The cells that intersect `band` — the visible strip of the grid, in the
@@ -386,8 +654,47 @@ pub fn grid_visible_range(
     scroll: f32,
     band: Rect,
 ) -> std::ops::Range<usize> {
+    grid_visible_range_in(area, GridSections::FLAT, count, scroll, band)
+}
+
+/// [`grid_visible_range`] against a sectioned grid.
+///
+/// Still one contiguous range: sections partition the listing in order, so
+/// everything between the first visible cell and the last is visible too, with
+/// only the headings interleaved.
+pub fn grid_visible_range_in(
+    area: Rect,
+    sections: &GridSections,
+    count: usize,
+    scroll: f32,
+    band: Rect,
+) -> std::ops::Range<usize> {
     if count == 0 || band.is_empty() {
         return 0..0;
+    }
+    if !sections.is_flat() {
+        let cols = grid_columns(area);
+        let top = area.top + GRID_PAD - scroll;
+        let (lo, hi) = (band.top - top, band.bottom - top);
+        let mut first = None;
+        let mut end = 0;
+        for (section, y) in sections.walk(count, cols) {
+            let cells_top = y + section.header.is_some() as u8 as f32 * GRID_HEADER_H;
+            let rows = section.count.div_ceil(cols);
+            if cells_top > hi {
+                break;
+            }
+            if cells_top + rows as f32 * CELL_H < lo {
+                continue;
+            }
+            let first_row = (((lo - cells_top) / CELL_H).floor().max(0.0) as usize).min(rows);
+            let last_row = (((hi - cells_top) / CELL_H).floor().max(0.0) as usize + 1).min(rows);
+            let start = (section.first + first_row * cols).min(count);
+            first = Some(first.map_or(start, |f: usize| f.min(start)));
+            end = end.max((section.first + last_row * cols).min(count));
+        }
+        let first = first.unwrap_or(0);
+        return first..end.max(first);
     }
     let cols = grid_columns(area);
     let top = area.top + GRID_PAD - scroll;
@@ -411,6 +718,33 @@ pub fn grid_visible_range(
 /// row of icons select them: requiring containment would mean drawing a box
 /// carefully around each one.
 pub fn grid_cells_in_rect(area: Rect, count: usize, scroll: f32, band: Rect) -> Vec<usize> {
+    grid_cells_in_rect_in(area, GridSections::FLAT, count, scroll, band)
+}
+
+/// [`grid_cells_in_rect`] against a sectioned grid.
+///
+/// The sectioned branch walks the listing rather than solving for it in closed
+/// form. That is fine where it is used — the Recent place, whose listing is
+/// bounded — and the flat branch below, which is every directory and the one
+/// that has to survive ten thousand files, keeps its closed form untouched.
+pub fn grid_cells_in_rect_in(
+    area: Rect,
+    sections: &GridSections,
+    count: usize,
+    scroll: f32,
+    band: Rect,
+) -> Vec<usize> {
+    if !sections.is_flat() {
+        if count == 0 || (band.width() <= 0.0 && band.height() <= 0.0) {
+            return Vec::new();
+        }
+        return (0..count)
+            .filter(|&i| {
+                let cell = grid_cell_rect_in(area, sections, i, scroll);
+                !cell.is_empty() && cell.intersects(band)
+            })
+            .collect();
+    }
     // A band with no extent at all catches nothing, even sitting squarely
     // over a cell: that band is a click on empty space, and a click on empty
     // space means nothing is selected. A band flat in *one* axis is still a
@@ -447,9 +781,22 @@ pub fn grid_cells_in_rect(area: Rect, count: usize, scroll: f32, band: Rect) -> 
 
 /// Total height `count` cells need in `area`.
 pub fn grid_content_height(area: Rect, count: usize) -> f32 {
+    grid_content_height_in(area, GridSections::FLAT, count)
+}
+
+/// [`grid_content_height`] against a sectioned grid — the cells plus every
+/// heading between them.
+pub fn grid_content_height_in(area: Rect, sections: &GridSections, count: usize) -> f32 {
     let cols = grid_columns(area);
-    let rows = count.div_ceil(cols);
-    rows as f32 * CELL_H + GRID_PAD * 2.0
+    let total: f32 = sections
+        .walk(count, cols)
+        .iter()
+        .map(|(section, _)| {
+            section.header.is_some() as u8 as f32 * GRID_HEADER_H
+                + section.count.div_ceil(cols) as f32 * CELL_H
+        })
+        .sum();
+    total + GRID_PAD * 2.0
 }
 
 pub fn place_rect(index: usize) -> Rect {
@@ -468,10 +815,16 @@ pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
 }
 
 /// The split button holding both arrows, before the title.
+///
+/// On [`CONTROL_CY`] rather than on the title's own centre. The nav pair and
+/// the view switcher are one row of controls spanning the header, and the eye
+/// reads them against each other across the width of the window — where three
+/// points of difference is plainly visible — rather than against the title
+/// text beside them, whose optical centre sits lower than its box.
 pub fn nav_group_rect() -> Rect {
     Rect::from_xywh(
         sidebar_w() + CONTENT_PAD,
-        TITLE_CY - NAV_BTN_H / 2.0,
+        CONTROL_CY - NAV_BTN_H / 2.0,
         NAV_GROUP_W,
         NAV_BTN_H,
     )
@@ -516,16 +869,22 @@ pub enum NavButton {
 pub fn switcher_rect(width: f32) -> Rect {
     Rect::from_xywh(
         width - CONTENT_PAD - controls_clearance() - 114.0,
-        SWITCHER_CY - SWITCHER_H / 2.0,
+        CONTROL_CY - SWITCHER_H / 2.0,
         114.0,
         SWITCHER_H,
     )
 }
 
-/// The switcher's height and optical centre in the header. The traffic lights
-/// line up on the same centre when they share the trailing edge with it.
+/// The height of the header's controls, and the line they all sit on: the nav
+/// pair at the leading edge, the view switcher at the trailing one, and the
+/// traffic lights when they share that edge with the switcher.
+///
+/// One centre for all of them, because they are read as a row across the
+/// header. It is not the title's centre — text is centred optically rather
+/// than on its box — so a control lined up with the title's text is visibly
+/// out of line with the controls at the other end of the window.
 const SWITCHER_H: f32 = 26.0;
-const SWITCHER_CY: f32 = 37.0;
+const CONTROL_CY: f32 = 37.0;
 
 /// How much of the header's trailing edge the traffic lights claim — nothing
 /// at all when they are over at the leading edge.
@@ -549,7 +908,7 @@ pub fn window_controls(width: f32) -> WindowControls {
         // its centre line rather than at the window's own corner inset —
         // two things side by side that don't line up read as a mistake.
         ControlsSide::Right => controls
-            .at(width - CONTENT_PAD - group_w, SWITCHER_CY - group_h / 2.0)
+            .at(width - CONTENT_PAD - group_w, CONTROL_CY - group_h / 2.0)
             .with_reversed(true),
     }
 }
@@ -586,7 +945,7 @@ const TRASH_BTN_INSET: f32 = 12.0;
 fn trash_actions_cy() -> f32 {
     match otto_kit::controls_side::side() {
         ControlsSide::Left => title_cy(),
-        ControlsSide::Right => SWITCHER_CY,
+        ControlsSide::Right => CONTROL_CY,
     }
 }
 
@@ -686,7 +1045,7 @@ pub fn column_boundary_at(
     width: f32,
     widths: ListColumnWidths,
 ) -> Option<ColumnBoundary> {
-    if !(HEADER_H..=HEADER_H + COLUMNS_H).contains(&y) || x < sidebar_w() {
+    if !(header_h()..=header_h() + COLUMNS_H).contains(&y) || x < sidebar_w() {
         return None;
     }
     let (size_x, kind_x, modified_x) = column_edges(width, widths);
@@ -801,7 +1160,7 @@ impl RowStrip {
     /// column-name band.
     pub fn list(width: f32, count: usize, scroll: f32) -> Self {
         Self {
-            top: HEADER_H + COLUMNS_H - scroll,
+            top: header_h() + COLUMNS_H - scroll,
             left: sidebar_w(),
             width: width - sidebar_w(),
             count,
@@ -881,7 +1240,7 @@ pub fn row_at(x: f32, y: f32, width: f32, height: f32, count: usize, scroll: f32
 /// must not shift because its pane is half off-screen.
 pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
     let left = sidebar_w() + depth as f32 * miller_w - pan;
-    Rect::from_ltrb(left, HEADER_H, left + miller_w, height)
+    Rect::from_ltrb(left, header_h(), left + miller_w, height)
 }
 
 /// The preview pane's untruncated rect — a trailing member of the stack, one
@@ -889,7 +1248,7 @@ pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> R
 /// wide rather than sharing the columns' width.
 pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
     let left = sidebar_w() + columns_len as f32 * miller_w - pan;
-    Rect::from_ltrb(left, HEADER_H, left + PREVIEW_W, height)
+    Rect::from_ltrb(left, header_h(), left + PREVIEW_W, height)
 }
 
 /// What a drag hovering the window would drop onto, so it can be outlined.
@@ -1344,7 +1703,7 @@ pub fn miller_boundary_at(
     pane_count: usize,
     miller_w: f32,
 ) -> Option<usize> {
-    if !(HEADER_H..=height).contains(&y) || x < sidebar_w() {
+    if !(header_h()..=height).contains(&y) || x < sidebar_w() {
         return None;
     }
     let viewport_right = width;
@@ -1357,7 +1716,7 @@ pub fn miller_boundary_at(
 }
 
 pub fn column_at(x: f32, y: f32, width: f32, widths: ListColumnWidths) -> Option<SortKey> {
-    if !(HEADER_H..=HEADER_H + COLUMNS_H).contains(&y) || x < sidebar_w() {
+    if !(header_h()..=header_h() + COLUMNS_H).contains(&y) || x < sidebar_w() {
         return None;
     }
     let (size_x, kind_x, modified_x) = column_edges(width, widths);
@@ -1425,6 +1784,204 @@ pub fn miller_visible_range(f: &Frame, depth: usize) -> (usize, usize) {
     ));
     let range = strip.visible(band);
     (range.start, range.end)
+}
+
+// ---------------------------------------------------------------------------
+// The path bar
+// ---------------------------------------------------------------------------
+//
+// A breadcrumb strip along the bottom of the window, spelling out where the
+// selection actually is. The header says where the *window* is, and in Miller
+// view — where the thing selected can be three columns back — that is not the
+// same answer. Geometry first, drawing second, and the hit test reads the same
+// rects the paint does, like every other control in this file.
+
+/// The strip's height. Small: it is a caption on the window, not a control
+/// surface, and every point it takes is a point of listing.
+pub const PATH_BAR_H: f32 = 26.0;
+/// What the trail keeps from the strip's leading and trailing edges.
+const PATH_BAR_PAD: f32 = 12.0;
+const PATH_BAR_ICON: f32 = 14.0;
+/// Icon to its own label.
+const PATH_BAR_GAP: f32 = 5.0;
+/// The chevron cell between one crumb and the next.
+const PATH_BAR_SEP: f32 = 16.0;
+
+/// One component of the path the bar spells out.
+pub struct PathCrumb {
+    pub label: String,
+    /// Icon names, best first — the entry's own chain for the leaf, the plain
+    /// folder icon for every directory above it.
+    pub icon: Vec<String>,
+    /// Where a click on this crumb goes. Only directories are clickable; the
+    /// leaf of a file's path is a label and nothing more.
+    pub path: std::path::PathBuf,
+    pub is_dir: bool,
+}
+
+/// The strip itself, beside the sidebar and above the picker's action row —
+/// the sidebar is one column of material running the full height of the
+/// window, so the bar starts where it ends, the way the header does.
+pub fn path_bar_rect(width: f32, window_height: f32, footer: f32) -> Rect {
+    let bottom = window_height - footer;
+    Rect::from_ltrb(sidebar_w(), bottom - PATH_BAR_H, width, bottom)
+}
+
+/// One crumb's width: its icon, the gap, and its name.
+fn crumb_w(crumb: &PathCrumb) -> f32 {
+    PATH_BAR_ICON + PATH_BAR_GAP + styles::FOOTNOTE.font().measure_str(&crumb.label, None).0
+}
+
+/// Where each crumb sits, in window coordinates.
+///
+/// Laid out from the left, and shifted left by the overflow when the trail is
+/// longer than the strip: what the eye needs is the *end* of the path — the
+/// file and the folder holding it — so it is the root that runs off the edge,
+/// under the clip [`draw_path_bar`] takes.
+pub fn path_crumb_rects(
+    crumbs: &[PathCrumb],
+    width: f32,
+    window_height: f32,
+    footer: f32,
+) -> Vec<Rect> {
+    let bar = path_bar_rect(width, window_height, footer);
+    let total: f32 = crumbs.iter().map(crumb_w).sum::<f32>()
+        + PATH_BAR_SEP * crumbs.len().saturating_sub(1) as f32;
+    let room = (bar.width() - PATH_BAR_PAD * 2.0).max(0.0);
+    let mut x = bar.left + PATH_BAR_PAD + (room - total).min(0.0);
+
+    crumbs
+        .iter()
+        .map(|crumb| {
+            let w = crumb_w(crumb);
+            let rect = Rect::from_ltrb(x, bar.top + 2.0, x + w, bar.bottom - 2.0);
+            x += w + PATH_BAR_SEP;
+            rect
+        })
+        .collect()
+}
+
+/// Which crumb is under `(x, y)`, if it is one that leads anywhere.
+pub fn path_crumb_at(
+    x: f32,
+    y: f32,
+    crumbs: &[PathCrumb],
+    width: f32,
+    window_height: f32,
+    footer: f32,
+) -> Option<usize> {
+    let point = Point::new(x, y);
+    if !path_bar_rect(width, window_height, footer).contains(point) {
+        return None;
+    }
+    path_crumb_rects(crumbs, width, window_height, footer)
+        .iter()
+        .position(|rect| rect.contains(point))
+        .filter(|&index| crumbs[index].is_dir)
+}
+
+fn draw_path_bar(canvas: &Canvas, f: &Frame) {
+    if f.path_bar.is_empty() {
+        return;
+    }
+    let theme = f.theme;
+    let bar = path_bar_rect(f.width, f.window_h(), f.footer);
+    let rects = path_crumb_rects(&f.path_bar, f.width, f.window_h(), f.footer);
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // The hairline is what separates the strip from the file area; the strip's
+    // own ground is the scene layer's material, the same one the header sits
+    // on.
+    paint.set_color(theme.fill_tertiary);
+    paint.set_stroke_width(1.0);
+    canvas.draw_line(
+        Point::new(bar.left, bar.top),
+        Point::new(bar.right, bar.top),
+        &paint,
+    );
+
+    canvas.save();
+    canvas.clip_rect(bar, ClipOp::Intersect, true);
+
+    let last = f.path_bar.len() - 1;
+    for (index, (crumb, rect)) in f.path_bar.iter().zip(&rects).enumerate() {
+        // The leaf is what the bar is about; everything above it is the way
+        // there, and reads one step quieter.
+        let leading = index < last;
+        let tone = if leading {
+            theme.text_secondary
+        } else {
+            theme.text_primary
+        };
+
+        if f.path_crumb_hover == Some(index) {
+            paint.set_style(skia_safe::paint::Style::Fill);
+            paint.set_color(theme.material_highlight);
+            let pad = Rect::from_ltrb(rect.left - 5.0, rect.top, rect.right + 5.0, rect.bottom);
+            canvas.draw_rrect(RRect::new_rect_xy(pad, 5.0, 5.0), &paint);
+        }
+
+        let names: Vec<&str> = crumb.icon.iter().map(String::as_str).collect();
+        if let Some(image) = icons::cached_icon_chain(&names, PATH_BAR_ICON as i32) {
+            let dst = Rect::from_xywh(
+                rect.left,
+                rect.center_y() - PATH_BAR_ICON / 2.0,
+                PATH_BAR_ICON,
+                PATH_BAR_ICON,
+            );
+            // Recoloured the way the sidebar's places are, and for the same
+            // reason: at this size the theme's art is a monochrome outline
+            // baked at whatever tone its author chose, which is rarely one
+            // that survives both colour schemes.
+            let mut icon_paint = Paint::default();
+            icon_paint.set_color_filter(skia_safe::color_filters::blend(
+                tone,
+                skia_safe::BlendMode::SrcIn,
+            ));
+            canvas.draw_image_rect(&image, None, dst, &icon_paint);
+        }
+
+        Label::new(&crumb.label)
+            .with_style(if leading {
+                styles::FOOTNOTE
+            } else {
+                styles::FOOTNOTE_EMPHASIZED
+            })
+            .with_color(tone)
+            .centered_on(rect.left + PATH_BAR_ICON + PATH_BAR_GAP, rect.center_y())
+            .render(canvas);
+
+        if leading {
+            draw_crumb_chevron(
+                canvas,
+                rect.right + PATH_BAR_SEP / 2.0,
+                bar.center_y(),
+                theme,
+            );
+        }
+    }
+
+    canvas.restore();
+}
+
+/// The separator: a chevron rather than a slash, so the trail reads as steps
+/// taken rather than as a path typed out.
+fn draw_crumb_chevron(canvas: &Canvas, cx: f32, cy: f32, theme: &Theme) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.2);
+    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+    paint.set_stroke_join(skia_safe::paint::Join::Round);
+    paint.set_color(theme.text_tertiary);
+
+    let mut path = PathBuilder::new();
+    path.move_to(Point::new(cx - 2.0, cy - 3.5));
+    path.line_to(Point::new(cx + 1.5, cy));
+    path.line_to(Point::new(cx - 2.0, cy + 3.5));
+    canvas.draw_path(&path.detach(), &paint);
 }
 
 // ---------------------------------------------------------------------------
@@ -1620,7 +2177,7 @@ fn draw_footer(canvas: &Canvas, f: &Frame) {
         return;
     };
     let theme = f.theme;
-    let window_h = f.height + f.footer;
+    let window_h = f.window_h();
 
     // A hairline, not a filled strip: the row sits on the same material the
     // rest of the window does, and only needs separating from the listing.
@@ -1829,8 +2386,22 @@ pub fn is_dark() -> bool {
 
 /// How tall one pane's content is, for the same three views.
 pub fn pane_content_height(width: f32, height: f32, mode: ViewMode, count: usize) -> f32 {
+    pane_content_height_in(width, height, mode, count, GridSections::FLAT)
+}
+
+/// [`pane_content_height`] against a sectioned grid — what the scroll view has
+/// to be told, or the headings' height is scrolled off the bottom.
+pub fn pane_content_height_in(
+    width: f32,
+    height: f32,
+    mode: ViewMode,
+    count: usize,
+    sections: &GridSections,
+) -> f32 {
     match mode {
-        ViewMode::Grid => grid_content_height(content_viewport(width, height, mode), count),
+        ViewMode::Grid => {
+            grid_content_height_in(content_viewport(width, height, mode), sections, count)
+        }
         // Miller rows start a little way down the pane; the list starts flush.
         ViewMode::Columns => content_height(count) + MILLER_ROW_INSET,
         ViewMode::List => content_height(count),
@@ -2045,14 +2616,83 @@ pub struct Frame<'a> {
     /// shows its view switcher, and the third list column reads out where
     /// each row came from instead of what kind of file it is.
     pub trash: Option<TrashChrome>,
+    /// How the icon grid is broken into day-headed sections. Empty — which is
+    /// [`GridSections::FLAT`] — for every directory listing; filled only by
+    /// the Recent place.
+    pub grid_sections: &'a GridSections,
+    /// Whether a grid tile names the folder it came from under its caption.
+    /// True only where the listing has no single parent, which is Recent.
+    pub show_folders: bool,
+    /// The search query, when the field has been opened. `None` closes the
+    /// filter strip altogether: nothing about search is on screen until Ctrl+F
+    /// asks for it.
+    pub search: Option<&'a str>,
+    /// The path bar's segments, outermost folder first, ending in the thing
+    /// the bar is describing. Empty hides the bar — a pane with no path to
+    /// show, which is a search that has not landed yet.
+
+    /// Whether the pane's contents could be looked up at all. False only for
+    /// Recent and search results when the desktop's file indexer is not
+    /// running — an ordinary directory listing needs nothing but the disk and
+    /// is always available.
+    pub index_available: bool,
+    /// Whether the query field holds the keyboard. Separate from
+    /// [`Self::search`] because the strip stays open after a click on the
+    /// listing: the results are still worth looking at, but the keys have gone
+    /// back to them, and only the field that is actually taking them wears the
+    /// ring.
+    pub search_focused: bool,
+    /// What the empty field says — "Filter Documents", naming the listing the
+    /// strip is sitting over.
+    pub search_placeholder: &'a str,
+    /// Which scope pill is lit.
+    pub search_scope: SearchScope,
+    /// The view switcher is showing the only view this listing has. Recent is
+    /// a grid or it is nothing: a list of it would be the same rows the list
+    /// view already gives a folder, and Miller columns need a hierarchy. The
+    /// other two segments are drawn dimmed rather than hidden, so the switcher
+    /// keeps its shape and it is visible *why* they cannot be picked.
+    pub mode_locked: bool,
     /// The rubber band being dragged out over the icon grid, in window
     /// coordinates. Grid view only: rows span their pane's whole width, so a
     /// band over a list or a Miller column could only ever say what dragging
     /// down the rows already says.
     pub marquee: Option<Rect>,
+    /// The breadcrumb trail along the window's bottom edge, root first. Empty
+    /// where there is no path bar at all — the picker, which already has an
+    /// action row down there.
+    ///
+    /// Like [`Frame::footer`], the strip is *below* [`Frame::height`]: the
+    /// file area stops short of it before the frame is built, so no geometry
+    /// below has to know it exists. Chrome that spans the whole window uses
+    /// [`Frame::window_h`].
+    pub path_bar: Vec<PathCrumb>,
+    /// How much of the window the path bar takes.
+    ///
+    /// Handed over rather than worked out from [`Self::path_bar`], because an
+    /// empty trail means two different things: the picker and the Trash have
+    /// no bar at all, while a search with nothing selected has a bar with
+    /// nothing to say — and that one still holds its line, or every tile in
+    /// the grid would move as the selection did. Only the host knows which it
+    /// is, and its answer is what the file area was measured against.
+    pub path_bar_h: f32,
+    /// The crumb under the pointer, drawn lit — it leads somewhere, and a
+    /// thing that can be clicked should say so before it is.
+    pub path_crumb_hover: Option<usize>,
 }
 
 impl Frame<'_> {
+    /// The whole window's height: the file area, plus the chrome under it.
+    ///
+    /// [`Self::height`] is the *file area's* bottom, which is the window less
+    /// the path bar and less the picker's action row. Anything that runs the
+    /// full height of the window — the sidebar, the divider beside it — has to
+    /// add both back, and adding only one of them leaves a strip of the
+    /// desktop showing along the bottom.
+    pub fn window_h(&self) -> f32 {
+        self.height + self.path_bar_h + self.footer
+    }
+
     /// The third list column's heading. It is the Kind column everywhere but
     /// the Trash, where what a file *is* matters much less than where it came
     /// from — that is the one thing a row in the trash carries that a row
@@ -2155,6 +2795,12 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     }
     draw_header(canvas, f);
 
+    // The filter strip, when Ctrl+F has opened it. Everything below already
+    // measures from [`header_h`], so it has the band to itself.
+    if search_band_h() > 0.0 {
+        draw_search_band(canvas, f);
+    }
+
     // The traffic lights ride over both, because with the controls at the
     // trailing edge they sit above the header rather than above the sidebar.
     //
@@ -2192,9 +2838,11 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     paint.set_stroke_width(1.0);
     canvas.draw_line(
         Point::new(sidebar_w(), 0.0),
-        Point::new(sidebar_w(), f.height + f.footer),
+        Point::new(sidebar_w(), f.window_h()),
         &paint,
     );
+
+    draw_path_bar(canvas, f);
 
     if f.action_row.is_some() {
         draw_footer(canvas, f);
@@ -2297,7 +2945,7 @@ pub fn draw_confirm(
     canvas.draw_rect(Rect::from_ltrb(0.0, 0.0, width, window_height), &paint);
 
     let card = confirm_card_rect(width, window_height);
-    paint.set_color(header_material());
+    paint.set_color(panel_material());
     canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
 
     Label::new(data.message)
@@ -2691,7 +3339,7 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
             canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
         }
 
-        if let Some(image) = icons::cached_icon_chain(&[place.icon, "folder"], 16) {
+        if let Some(image) = icons::cached_icon_chain(&[place.icon.as_str(), "folder"], 16) {
             let dst = Rect::from_xywh(rect.left + 8.0, rect.center_y() - 8.0, 16.0, 16.0);
             // The theme's small-size art is a monochrome outline glyph baked
             // at whatever colour the theme authored it in — usually a dark
@@ -2776,8 +3424,8 @@ fn draw_header(canvas: &Canvas, f: &Frame) {
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(sidebar_w(), HEADER_H),
-        Point::new(f.width, HEADER_H),
+        Point::new(sidebar_w(), header_h()),
+        Point::new(f.width, header_h()),
         &paint,
     );
 }
@@ -2794,6 +3442,118 @@ fn draw_path_field(canvas: &Canvas, f: &Frame) {
     paint.set_stroke_width(1.0);
     paint.set_color(accent(f.theme));
     canvas.draw_rrect(RRect::new_rect_xy(field, 6.0, 6.0), &paint);
+}
+
+/// The filter strip: the field, the scope pills, and the hairline that closes
+/// the band off from the listing below it.
+///
+/// Like [`draw_path_field`] it paints no query text — the host renders the
+/// `TextInput` over this afterwards. The placeholder is drawn here rather than
+/// by the field, because an empty `TextInput` has nothing to say and the field
+/// still has to read as a search box while it is empty.
+pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
+    let theme = f.theme;
+    let band = search_band_rect(f.width);
+    let field = search_field_rect(f.width);
+
+    // No ground: the header panel's material already runs the full
+    // [`header_h`], strip included, and painting it again here would double
+    // the translucency and leave a visible seam at [`HEADER_H`].
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // The field is sunk into the strip rather than raised off it: a recess is
+    // what says "type here" on a band that is itself chrome.
+    paint.set_color(theme.fill_quaternary);
+    canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    // The accent ring means "the keys are coming here", so it follows the
+    // keyboard rather than the strip: click a file and the ring goes quiet
+    // while the query and its results stay up.
+    paint.set_color(if f.search_focused {
+        accent(theme)
+    } else {
+        theme.fill_tertiary
+    });
+    canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Fill);
+
+    // The magnifier: a circle and a stub of a handle, drawn rather than
+    // fetched, so it cannot go missing on a sparse icon theme.
+    let cx = field.left + 14.0;
+    let cy = field.center_y();
+    let mut glass = Paint::default();
+    glass.set_anti_alias(true);
+    glass.set_style(skia_safe::paint::Style::Stroke);
+    glass.set_stroke_width(1.3);
+    glass.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glass.set_color(theme.text_tertiary);
+    canvas.draw_circle((cx - 0.5, cy - 1.0), 4.5, &glass);
+    canvas.draw_line(
+        Point::new(cx + 2.8, cy + 2.4),
+        Point::new(cx + 5.6, cy + 5.2),
+        &glass,
+    );
+
+    if f.search.is_none_or(str::is_empty) {
+        Label::new(otto_kit::t_owned!(
+            "files-search-placeholder",
+            folder = f.search_placeholder
+        ))
+        .with_style(SEARCH_TEXT_STYLE)
+        .with_color(theme.text_tertiary)
+        // Nudged clear of the caret, which sits exactly on the inset: with
+        // the placeholder starting there too, the bar lands on top of its
+        // first letter instead of in front of it.
+        .centered_on(
+            field.left + SEARCH_TEXT_INSET + SEARCH_PLACEHOLDER_NUDGE,
+            field.center_y(),
+        )
+        .render(canvas);
+    }
+
+    for (rect, scope) in search_scope_rects(f.width)
+        .into_iter()
+        .zip([SearchScope::Folder, SearchScope::Everywhere])
+    {
+        // Both pills carry a ground. Only the lit one is filled, but the
+        // other still has to read as something you can press — a label alone
+        // on this material disappears.
+        let on = scope == f.search_scope;
+        paint.set_color(if on {
+            theme.fill_primary
+        } else {
+            theme.fill_tertiary
+        });
+        canvas.draw_rrect(
+            RRect::new_rect_xy(rect, rect.height() / 2.0, rect.height() / 2.0),
+            &paint,
+        );
+        Label::new(scope.label())
+            // A step under the query beside them: the scope is a qualifier on
+            // what you are typing, not part of it.
+            .with_style(styles::SUBHEADLINE)
+            .with_color(if on {
+                theme.text_primary
+            } else {
+                theme.text_secondary
+            })
+            // `centered_at`, not `centered_on`: the label has to be measured
+            // to sit in the middle of the pill, and the labels are different
+            // lengths in every language.
+            .centered_at(rect.center_x(), rect.center_y())
+            .render(canvas);
+    }
+
+    paint.set_color(theme.fill_tertiary);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    canvas.draw_line(
+        Point::new(band.left, band.bottom),
+        Point::new(band.right, band.bottom),
+        &paint,
+    );
 }
 
 /// The picker's location control: a folder icon and the current directory's
@@ -2950,10 +3710,12 @@ fn draw_switcher(canvas: &Canvas, f: &Frame) {
     let cy = rect.center_y();
     for (i, mode) in SWITCHER_MODES.iter().enumerate() {
         let cx = rect.left + seg * i as f32 + seg / 2.0;
-        paint.set_color(if *mode == f.mode {
-            theme.text_primary
-        } else {
-            theme.text_secondary
+        paint.set_color(match (*mode == f.mode, f.mode_locked) {
+            (true, _) => theme.text_primary,
+            // A locked switcher's other segments are not merely unselected,
+            // they are unavailable, and the quieter ink says so.
+            (false, true) => theme.text_tertiary,
+            (false, false) => theme.text_secondary,
         });
         match mode {
             // Three stacked lines.
@@ -3021,22 +3783,26 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             theme.text_tertiary,
         );
     } else if pane.entries.is_empty() {
-        draw_centered(canvas, area, empty_message(), theme.text_tertiary);
+        draw_centered(canvas, area, empty_message(f), theme.text_tertiary);
     } else {
         // Only the rows of cells the viewport is asking for are drawn.
         let band = pane.band(area);
-        for index in grid_visible_range(area, pane.entries.len(), pane.scroll, band) {
-            let cell = grid_cell_rect(area, index, pane.scroll);
-            draw_grid_cell(
+        let sections = f.grid_sections;
+        for index in grid_visible_range_in(area, sections, pane.entries.len(), pane.scroll, band) {
+            let cell = grid_cell_rect_in(area, sections, index, pane.scroll);
+            let entry = pane.entries[index];
+            draw_grid_cell_with(
                 canvas,
                 theme,
-                pane.entries[index],
+                entry,
                 cell,
                 pane.is_selected(index),
                 f.renaming == Some((f.panes.len() - 1, index)),
-                f.thumbnail(pane.entries[index]),
+                f.thumbnail(entry),
+                f.show_folders.then(|| containing_folder(entry)).flatten(),
             );
         }
+        draw_grid_headers(canvas, theme, area, sections, pane.scroll, band);
     }
 
     if let Some(band) = f.marquee {
@@ -3045,6 +3811,56 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
 
     canvas.restore();
     pane.draw_scrollbar(canvas, theme);
+}
+
+/// The name of the directory an entry sits in — the grid's substitute for a
+/// path bar in a listing whose entries have no common parent.
+fn containing_folder(entry: &Entry) -> Option<&str> {
+    entry.path.parent()?.file_name()?.to_str()
+}
+
+/// The day headings over a sectioned grid.
+///
+/// A heading whose own tiles are being scrolled through is **pinned to the top
+/// of the band** rather than allowed to leave with them, so there is always a
+/// heading saying what you are looking at. It is released as the next section's
+/// heading arrives, pushed up by it rather than sliding under it — which is
+/// what makes the transition read as one list rather than as a jump.
+fn draw_grid_headers(
+    canvas: &Canvas,
+    theme: &Theme,
+    area: Rect,
+    sections: &GridSections,
+    scroll: f32,
+    band: Rect,
+) {
+    let headers = grid_section_headers(area, sections, scroll);
+    for (index, (rect, text)) in headers.iter().enumerate() {
+        let next_top = headers.get(index + 1).map(|(r, _)| r.top);
+        // This section is finished once the following heading has reached the
+        // top of the band; until then, hold this one there.
+        let stuck = rect.top.max(band.top);
+        let top = match next_top {
+            Some(next) if next <= stuck + GRID_HEADER_H => next - GRID_HEADER_H,
+            _ => stuck,
+        };
+        if top + GRID_HEADER_H < band.top || top > band.bottom {
+            continue;
+        }
+        let placed = Rect::from_xywh(rect.left, top, rect.width(), GRID_HEADER_H);
+        // The heading sits on the file area's own ground so the tiles it is
+        // holding still slide underneath it rather than showing through.
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(content_ground());
+        canvas.draw_rect(placed, &paint);
+
+        Label::new(text.as_str())
+            .with_style(styles::SUBHEADLINE_EMPHASIZED)
+            .with_color(theme.text_secondary)
+            .centered_on(placed.left + 2.0, placed.center_y() + 3.0)
+            .render(canvas);
+    }
 }
 
 /// The rubber band: a wash of the accent over what it covers, with a hairline
@@ -3080,6 +3896,27 @@ pub fn draw_grid_cell(
     selected: bool,
     renaming: bool,
     thumb: Option<&skia_safe::Image>,
+) {
+    draw_grid_cell_with(canvas, theme, entry, cell, selected, renaming, thumb, None)
+}
+
+/// [`draw_grid_cell`] with a second line under the caption, naming the folder
+/// the file is in.
+///
+/// The Recent place is a listing with no path bar and no single parent, so
+/// without this a tile says what a file is called and nothing about where it
+/// came from. Drawn quieter than the caption: it identifies, it does not
+/// compete.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_grid_cell_with(
+    canvas: &Canvas,
+    theme: &Theme,
+    entry: &Entry,
+    cell: Rect,
+    selected: bool,
+    renaming: bool,
+    thumb: Option<&skia_safe::Image>,
+    subline: Option<&str>,
 ) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -3120,7 +3957,15 @@ pub fn draw_grid_cell(
 
     // Two lines at most, the second elided — a long name must not push the
     // grid out of alignment.
-    let (first, second) = split_label(&entry.name, 13);
+    // A cell with a folder line under it gets **one** line of name, elided.
+    // The cell is a fixed height, and a name that wrapped to two lines would
+    // push the folder past the bottom of it and under the next section's
+    // heading. In a listing sorted by date the folder is the more useful of
+    // the two anyway — the tail of a long file name is what can go.
+    let (first, second) = match subline {
+        Some(_) => (one_line_label(&entry.name, 13), String::new()),
+        None => split_label(&entry.name, 13),
+    };
     let text_color = if selected {
         Color::WHITE
     } else {
@@ -3167,6 +4012,34 @@ pub fn draw_grid_cell(
             .centered_at(cell.center_x(), label_center_y + offset)
             .render(canvas);
     }
+
+    if let Some(folder) = subline.filter(|_| !renaming) {
+        // Under whichever caption line was the last one drawn, so a name that
+        // wrapped to two lines does not have the folder printed over it.
+        let used = if second.is_empty() {
+            0.0
+        } else {
+            GRID_LABEL_LINE
+        };
+        Label::new(folder)
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_tertiary)
+            .centered_at(cell.center_x(), label_center_y + used + GRID_LABEL_LINE)
+            .render(canvas);
+    }
+}
+
+/// A name on one line of `per_line` characters, eliding the tail.
+///
+/// The counterpart of [`split_label`] for a cell whose second line is spoken
+/// for — the Recent grid, where it is the folder.
+fn one_line_label(name: &str, per_line: usize) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= per_line {
+        return name.to_string();
+    }
+    let head: String = chars[..per_line.saturating_sub(1)].iter().collect();
+    format!("{head}…")
 }
 
 /// Split a name across at most two lines of `per_line` characters, eliding the
@@ -3218,7 +4091,7 @@ fn draw_column_strip(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let (size_x, kind_x, modified_x) = column_edges(f.width, f.list_columns);
     // Optical centre of the column strip, not a baseline.
-    let cy = HEADER_H + COLUMNS_H / 2.0;
+    let cy = header_h() + COLUMNS_H / 2.0;
 
     for (key, x) in [
         (SortKey::Name, sidebar_w() + CONTENT_PAD),
@@ -3258,8 +4131,8 @@ fn draw_column_strip(canvas: &Canvas, f: &Frame) {
     paint.set_color(theme.fill_tertiary);
     paint.set_stroke_width(1.0);
     canvas.draw_line(
-        Point::new(sidebar_w(), HEADER_H + COLUMNS_H),
-        Point::new(f.width, HEADER_H + COLUMNS_H),
+        Point::new(sidebar_w(), header_h() + COLUMNS_H),
+        Point::new(f.width, header_h() + COLUMNS_H),
         &paint,
     );
 }
@@ -3289,7 +4162,7 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
         return;
     }
     if pane.entries.is_empty() {
-        draw_centered(canvas, viewport, empty_message(), theme.text_tertiary);
+        draw_centered(canvas, viewport, empty_message(f), theme.text_tertiary);
         canvas.restore();
         return;
     }
@@ -3557,6 +4430,23 @@ pub fn path_field_style(theme: Theme) -> TextInputStyle {
     style
 }
 
+/// The search field. The recess is drawn by [`draw_search_band`] underneath,
+/// so the input paints no ground of its own; it takes the strip's smaller
+/// type, the same size the scope pills beside it use.
+pub fn search_field_style(theme: Theme) -> TextInputStyle {
+    let mut style = TextInputStyle::with_theme(theme);
+    style.background = Color::TRANSPARENT;
+    style.text_style = SEARCH_TEXT_STYLE;
+    // The strip already rings the field in the accent while it holds the
+    // caret. The input's own ring would draw a second one just inside it.
+    style.focus_ring_width = 0.0;
+    // The host translates the input to [`SEARCH_TEXT_INSET`], which is where
+    // the placeholder is drawn too. Any padding on top of that would put the
+    // caret to the left of the text it is supposed to be sitting in front of.
+    style.horizontal_padding = 0.0;
+    style
+}
+
 /// The header band: [`content_ground`] with a little alpha taken out of it.
 /// Much more opaque than the sidebar — the title sits here and the file list
 /// starts a hairline below, so the backdrop may only be hinted at.
@@ -3572,11 +4462,24 @@ pub fn opaque(color: Color) -> Color {
     Color::from_argb(0xFF, color.r(), color.g(), color.b())
 }
 
-pub fn header_material() -> Color {
+/// The material every piece of this window's chrome is made of: the sidebar,
+/// the header, the picker's action row and the confirmation card.
+///
+/// One value rather than one per panel. They meet along shared edges — the
+/// sidebar runs the full height of the window with the header beside it — and
+/// two materials a few percent apart read as a seam between them rather than
+/// as a deliberate difference, which is exactly what nobody wants to see in
+/// the corner where they meet.
+///
+/// Deliberately *not* [`otto_kit::theme::Theme::material_sidebar`], which the
+/// settings window draws its own sidebar from: this is one window's judgement
+/// about its own chrome, and changing the toolkit's value to express it would
+/// restyle every other application that has a sidebar.
+pub fn panel_material() -> Color {
     if matches!(current_color_scheme(), ColorScheme::Dark) {
-        Color::from_argb(0xE6, 0x1C, 0x1C, 0x1E)
+        Color::from_argb(0xF2, 0x1C, 0x1C, 0x1E)
     } else {
-        Color::from_argb(0xE6, 0xFF, 0xFF, 0xFF)
+        Color::from_argb(0xF2, 0xFF, 0xFF, 0xFF)
     }
 }
 
@@ -4852,6 +5755,320 @@ mod fit_tests {
 mod geometry_tests {
     use super::*;
 
+    /// The search field shares the header's trailing edge with the view
+    /// switcher, one row below it. If the two ever overlapped, the field would
+    /// be drawn under a control that swallows its clicks — and a drag inside
+    /// it has to select text rather than picking the whole window up.
+    ///
+    /// Both control sides in one test on purpose: `controls_side` is process
+    /// global, and two tests setting it would race each other under the test
+    /// harness's threads. `search_band` is global for the same reason, so this
+    /// restores it too.
+    #[test]
+    fn the_headers_controls_all_sit_on_one_line() {
+        // The nav pair at one end of the header and the view switcher at the
+        // other are read against each other across the window, where a few
+        // points of difference is plainly visible. They were three apart,
+        // because the arrows were centred on the title's text rather than on
+        // the line the other controls share.
+        for width in [720.0_f32, 1440.0] {
+            let nav = nav_group_rect();
+            let switcher = switcher_rect(width);
+            assert_eq!(
+                nav.center_y(),
+                switcher.center_y(),
+                "nav {nav:?} vs switcher {switcher:?} at {width}"
+            );
+            assert_eq!(nav.height(), switcher.height(), "and the same height");
+        }
+    }
+
+    #[test]
+    fn the_filter_strip_lays_out_and_moves_the_listing_down() {
+        use otto_kit::controls_side::{self, ControlsSide};
+        let restore = controls_side::side();
+        set_search_band(true);
+        for side in [ControlsSide::Left, ControlsSide::Right] {
+            controls_side::set(side);
+            for width in [720.0, 1024.0, 1600.0] {
+                let band = search_band_rect(width);
+                let field = search_field_rect(width);
+                let [folder, everywhere] = search_scope_rects(width);
+
+                assert!(
+                    band.top >= HEADER_H && band.bottom <= header_h(),
+                    "the strip is not inside the band it claims at {width}"
+                );
+                assert!(
+                    field.right <= folder.left,
+                    "field {field:?} runs into the scope pills at {width} on {side:?}"
+                );
+                assert!(
+                    folder.right <= everywhere.left,
+                    "the pills overlap at {width}"
+                );
+                assert!(
+                    everywhere.right <= width,
+                    "the pills run off the window at {width}"
+                );
+                assert!(
+                    field.left >= sidebar_w() && field.width() > 120.0,
+                    "field {field:?} is over the sidebar or too narrow at {width}"
+                );
+
+                // The strip is below the titlebar, so a drag in it is a text
+                // drag rather than a window move — and the header above it is
+                // still draggable.
+                assert!(!is_drag_area(field.center_x(), field.center_y(), width));
+                assert!(is_drag_area(field.center_x(), HEADER_H - 8.0, width));
+            }
+        }
+
+        // The listing starts under the strip while it is open, and back
+        // against the header once it closes.
+        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
+            let open = content_viewport(1024.0, 700.0, mode).top;
+            set_search_band(false);
+            let shut = content_viewport(1024.0, 700.0, mode).top;
+            assert_eq!(open - shut, SEARCH_BAND_H, "{mode:?}");
+            set_search_band(true);
+        }
+
+        set_search_band(false);
+        controls_side::set(restore);
+    }
+
+    /// Build a grid broken into runs of `sizes`, each with a heading.
+    fn sectioned(sizes: &[usize]) -> GridSections {
+        let mut first = 0;
+        GridSections(
+            sizes
+                .iter()
+                .enumerate()
+                .map(|(i, &count)| {
+                    let section = GridSection {
+                        header: Some(format!("Section {i}")),
+                        first,
+                        count,
+                    };
+                    first += count;
+                    section
+                })
+                .collect(),
+        )
+    }
+
+    /// The whole sectioned-grid refactor rests on this: a listing with no
+    /// sections must lay out exactly as it did before the sections existed.
+    /// Every directory in the browser takes this path, so if the two forms
+    /// ever disagree it is the ordinary case that breaks, not the new one.
+    #[test]
+    fn an_unsectioned_grid_lays_out_exactly_as_a_flat_one() {
+        for width in [420.0, 640.0, 900.0, 1440.0] {
+            let area = content_viewport(width, 600.0, ViewMode::Grid);
+            for count in [0, 1, 7, 30, 199] {
+                let flat = GridSections::default();
+                assert_eq!(
+                    grid_content_height_in(area, &flat, count),
+                    grid_content_height(area, count),
+                    "content height at {width} for {count}"
+                );
+                for index in 0..count {
+                    assert_eq!(
+                        grid_cell_rect_in(area, &flat, index, 0.0),
+                        grid_cell_rect(area, index, 0.0),
+                        "cell {index} at {width}"
+                    );
+                }
+                // And the hit test answers identically, cell centre by cell
+                // centre — including for the cells below the viewport, where
+                // both forms must agree that there is nothing there.
+                for index in 0..count {
+                    let cell = grid_cell_rect(area, index, 0.0);
+                    let (px, py) = (cell.center_x(), cell.center_y());
+                    assert_eq!(
+                        grid_cell_at_in(area, &flat, px, py, count, 0.0),
+                        grid_cell_at(area, px, py, count, 0.0),
+                        "hit test at cell {index}, width {width}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A heading occupies real height, so the cells under it are pushed down
+    /// by exactly that much and the content grows by one heading per section.
+    #[test]
+    fn a_heading_pushes_its_own_cells_down_and_nothing_else() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let cols = grid_columns(area);
+        let sections = sectioned(&[cols, cols]);
+        let count = cols * 2;
+
+        // The first section's first cell sits one heading below where a flat
+        // grid would have put it.
+        let flat_first = grid_cell_rect(area, 0, 0.0);
+        let first = grid_cell_rect_in(area, &sections, 0, 0.0);
+        assert_eq!(first.top - flat_first.top, GRID_HEADER_H);
+
+        // The second section's first cell is a further heading down again.
+        let second = grid_cell_rect_in(area, &sections, cols, 0.0);
+        assert_eq!(second.top - first.top, CELL_H + GRID_HEADER_H);
+
+        assert_eq!(
+            grid_content_height_in(area, &sections, count),
+            grid_content_height(area, count) + GRID_HEADER_H * 2.0,
+        );
+    }
+
+    /// What is drawn and what is clickable cannot disagree: every cell's own
+    /// centre hit-tests back to that cell, and a point in a heading band hits
+    /// nothing at all.
+    #[test]
+    fn a_sectioned_grid_hit_tests_where_it_draws() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let sections = sectioned(&[3, 5, 1]);
+        let count = 9;
+        for index in 0..count {
+            let cell = grid_cell_rect_in(area, &sections, index, 0.0);
+            assert!(area.contains(Point::new(cell.center_x(), cell.center_y())));
+            assert_eq!(
+                grid_cell_at_in(
+                    area,
+                    &sections,
+                    cell.center_x(),
+                    cell.center_y(),
+                    count,
+                    0.0
+                ),
+                Some(index),
+                "cell {index}"
+            );
+        }
+        // The band the second heading occupies belongs to no cell.
+        let headers = grid_section_headers(area, &sections, 0.0);
+        assert_eq!(headers.len(), 3, "one heading per section");
+        let (band, _) = &headers[1];
+        assert_eq!(
+            grid_cell_at_in(
+                area,
+                &sections,
+                band.left + 4.0,
+                band.center_y(),
+                count,
+                0.0
+            ),
+            None,
+            "a click on a heading is a click on nothing"
+        );
+    }
+
+    /// The visible range has to cover everything drawn in the band, headings
+    /// and all, or tiles at a section boundary are simply missing.
+    #[test]
+    fn the_visible_range_covers_the_band_across_a_heading() {
+        let area = content_viewport(900.0, 600.0, ViewMode::Grid);
+        let cols = grid_columns(area);
+        let sections = sectioned(&[cols, cols]);
+        let count = cols * 2;
+        let band = Rect::from_ltrb(area.left, area.top, area.right, area.bottom);
+        let range = grid_visible_range_in(area, &sections, count, 0.0, band);
+        for index in 0..count {
+            let cell = grid_cell_rect_in(area, &sections, index, 0.0);
+            if cell.top < band.bottom && cell.bottom > band.top {
+                assert!(
+                    range.contains(&index),
+                    "cell {index} is drawn in the band but is outside {range:?}"
+                );
+            }
+        }
+    }
+
+    fn crumb(label: &str, is_dir: bool) -> PathCrumb {
+        PathCrumb {
+            label: label.to_string(),
+            icon: vec!["folder".to_string()],
+            path: std::path::PathBuf::from(label),
+            is_dir,
+        }
+    }
+
+    /// The trail runs left to right in path order, each crumb clear of the
+    /// one before it, and the whole row inside the strip it is drawn on.
+    #[test]
+    fn the_path_bar_lays_its_crumbs_out_in_order() {
+        let crumbs = vec![
+            crumb("/", true),
+            crumb("home", true),
+            crumb("pictures", true),
+            crumb("holiday.png", false),
+        ];
+        let bar = path_bar_rect(1100.0, 700.0, 0.0);
+        let rects = path_crumb_rects(&crumbs, 1100.0, 700.0, 0.0);
+
+        assert_eq!(rects.len(), crumbs.len());
+        assert!(rects[0].left >= bar.left);
+        assert!(rects.last().unwrap().right <= bar.right);
+        for pair in rects.windows(2) {
+            assert!(pair[1].left > pair[0].right, "crumbs overlap: {pair:?}");
+        }
+        for rect in &rects {
+            assert!(rect.top >= bar.top && rect.bottom <= bar.bottom);
+        }
+    }
+
+    /// A path too long for the window loses its *root*, not its leaf: the
+    /// file and the folder holding it are what the bar exists to say.
+    #[test]
+    fn an_overlong_trail_keeps_its_leaf() {
+        let crumbs: Vec<PathCrumb> = std::iter::once(crumb("/", true))
+            .chain((0..40).map(|i| crumb(&format!("directory-{i}"), true)))
+            .collect();
+        let bar = path_bar_rect(1100.0, 700.0, 0.0);
+        let rects = path_crumb_rects(&crumbs, 1100.0, 700.0, 0.0);
+
+        assert!(rects[0].left < bar.left, "the root should run off the edge");
+        assert!(rects.last().unwrap().right <= bar.right);
+    }
+
+    /// Only crumbs that lead somewhere answer a click. The leaf of a file's
+    /// path is a label, and the strip's empty stretch is nothing at all.
+    #[test]
+    fn only_a_directory_crumb_takes_a_click() {
+        let crumbs = vec![crumb("/", true), crumb("holiday.png", false)];
+        let rects = path_crumb_rects(&crumbs, 1100.0, 700.0, 0.0);
+        let bar = path_bar_rect(1100.0, 700.0, 0.0);
+
+        let hit = |rect: Rect| {
+            path_crumb_at(
+                rect.center_x(),
+                rect.center_y(),
+                &crumbs,
+                1100.0,
+                700.0,
+                0.0,
+            )
+        };
+        assert_eq!(hit(rects[0]), Some(0));
+        assert_eq!(hit(rects[1]), None);
+        assert_eq!(
+            path_crumb_at(bar.right - 2.0, bar.center_y(), &crumbs, 1100.0, 700.0, 0.0),
+            None
+        );
+        // Above the strip is the listing's, not the bar's.
+        assert_eq!(
+            path_crumb_at(
+                rects[0].center_x(),
+                bar.top - 4.0,
+                &crumbs,
+                1100.0,
+                700.0,
+                0.0
+            ),
+            None
+        );
+    }
+
     /// The rubber band's hit test has to agree with where the cells are
     /// drawn — a band around a cell's own rect catches that cell and only it.
     #[test]
@@ -5225,7 +6442,7 @@ mod geometry_tests {
         );
         assert!(!anchor.is_empty());
         // Inside the window, and below the header — a real place on screen.
-        assert!(anchor.top >= HEADER_H, "{anchor:?}");
+        assert!(anchor.top >= header_h(), "{anchor:?}");
         assert!(anchor.left >= sidebar_w(), "{anchor:?}");
         // The icon, not the row: a square the size the icon is drawn at,
         // rather than a band running the width of the file area.
@@ -5366,7 +6583,11 @@ mod geometry_tests {
 
     #[test]
     fn an_off_screen_miller_pane_offers_nothing() {
-        let strip = RowStrip::miller(Rect::from_xywh(-500.0, HEADER_H, MILLER_W, 600.0), 500, 0.0);
+        let strip = RowStrip::miller(
+            Rect::from_xywh(-500.0, header_h(), MILLER_W, 600.0),
+            500,
+            0.0,
+        );
         assert!(strip.visible(Rect::new_empty()).is_empty());
     }
 
@@ -5408,6 +6629,14 @@ mod geometry_tests {
 
         let theme = Theme::light();
         let frame = Frame {
+            search: None,
+            index_available: true,
+            search_focused: false,
+            search_placeholder: "",
+            search_scope: SearchScope::Folder,
+            grid_sections: GridSections::FLAT,
+            show_folders: false,
+            mode_locked: false,
             trash: None,
             action_row: None,
             footer: 0.0,
@@ -5416,6 +6645,9 @@ mod geometry_tests {
             quickview_expanded: false,
             drop_target: None,
             marquee: None,
+            path_bar: Vec::new(),
+            path_bar_h: PATH_BAR_H,
+            path_crumb_hover: None,
             path_entry: false,
             width: 1100.0,
             height,
@@ -5462,7 +6694,7 @@ mod geometry_tests {
         let owned = entries(3_000);
         // A window tall enough to hold every row is the "draw it all" case:
         // the band covers the whole content, so nothing is skipped.
-        let whole = HEADER_H + COLUMNS_H + content_height(owned.len());
+        let whole = header_h() + COLUMNS_H + content_height(owned.len());
 
         let all = list_ops(&owned, whole, 0.0);
         let windowed = list_ops(&owned, 700.0, 15_000.0);

@@ -297,6 +297,7 @@ files-delete-count-immediately =
 ## Files — sidebar and columns
 
 files-places = Miejsca
+files-recent = Ostatnio używane
 files-home = Dom
 files-desktop = Pulpit
 files-documents = Dokumenty
@@ -305,6 +306,40 @@ files-music = Muzyka
 files-pictures = Obrazy
 files-videos = Filmy
 files-trash = Kosz
+
+# Nagłówki dni listy „Ostatnio używane”, nad plikami zapisanymi w każdym z
+# nich.
+files-recent-today = Dzisiaj
+files-recent-yesterday = Wczoraj
+files-recent-this-week = Wcześniej w tym tygodniu
+files-recent-this-month = Wcześniej w tym miesiącu
+files-recent-earlier = Wcześniej
+# Pokazywane, gdy polecenie wymagające folderu — zmiana nazwy, otwarcie,
+# przeniesienie do kosza, podgląd — zostanie użyte na liście, za którą nie stoi
+# żaden folder: „Ostatnio używane” lub wyniki wyszukiwania.
+files-synthetic-no-action = Ta lista nie odpowiada żadnemu folderowi.
+files-recent-grid-only = „Ostatnio używane” jest pokazywane jako siatka.
+files-recent-not-a-folder = „Ostatnio używane” to lista, nie folder.
+files-recent-no-location = „Ostatnio używane” nie ma położenia, do którego można przejść.
+
+# Pasek filtrowania między nagłówkiem a listą i to, co zgłasza.
+files-search-placeholder = Filtruj: { $folder }
+files-search-scope-folder = Ten folder
+files-search-scope-everywhere = Wszędzie
+files-search-found =
+    { $count ->
+        [one] { $count } wynik
+        [few] { $count } wyniki
+        [many] { $count } wyników
+       *[other] { $count } wyniku
+    }
+files-search-none = Nic nie znaleziono
+files-search-no-columns = Wyniki nie mają kolumn do pokazania.
+# Pokazywane zamiast liczby wyników, gdy indeksowanie plików w systemie nie
+# działa. Wyszukiwanie i „Ostatnio używane” korzystają z niego, więc bez niego
+# żadne z nich nie odpowie — a pusta lista czytałaby się jako „nie ma takiego
+# pliku”, a nie jako „nic nie mogło poszukać”.
+files-search-unavailable = Indeksowanie plików jest wyłączone
 
 files-column-name = Nazwa
 files-column-size = Rozmiar
