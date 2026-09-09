@@ -3234,11 +3234,15 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
             .render(canvas);
 
         if let Some(badge) = row.badge {
+            // The row's own size, not a footnote: it is part of the same
+            // phrase as the title — "Go to Path › path" — and a smaller run
+            // reads as an annotation about the row rather than as the rest of
+            // what the row says.
             let advance = styles::BODY.font().measure_str(row.title, None).0;
             Label::new(badge)
-                .with_style(styles::FOOTNOTE)
+                .with_style(styles::BODY)
                 .with_color(dim_color)
-                .centered_on(title_x + advance + 10.0, rect.center_y() + 1.0)
+                .centered_on(title_x + advance + 10.0, rect.center_y())
                 .render(canvas);
         }
 
