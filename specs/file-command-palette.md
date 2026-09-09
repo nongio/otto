@@ -42,11 +42,17 @@ a path to go to or a new name to give a file.
 - Ctrl+P opens the palette. It opens over the browser window, tucked under the
   lower part of the header and near its right edge, and takes the keyboard
   whole while it is up.
-- The card's top band — the line being typed — is a handle: dragging it moves
-  the panel. It is clamped to the window, so it can never be put somewhere it
-  holds the keyboard from out of sight. A fresh open always puts it back where
-  it belongs; a panel that reappeared wherever it was last left would be a
-  placement to undo before the window could be read.
+- The card is a surface of its own, not paint on the window. It may therefore
+  be dragged clear of the window entirely — off its edge, over the desktop —
+  which a card painted into the window's own buffer cannot be, there being no
+  pixels out there to draw on.
+- The whole card is a handle: pressing anywhere on it and dragging moves the
+  panel. Nothing on the card is clicked — rows are picked with the keyboard
+  only — so it can be caught wherever it happens to be, including the part of
+  it hanging off the window. It is clamped to the *display*, so it can never
+  be put somewhere it holds the keyboard from out of sight. A fresh open
+  always puts it back where it belongs; a panel that reappeared wherever it
+  was last left would be a placement to undo before the window could be read.
 - The palette is unavailable in the file picker, whose window is answering a
   request rather than managing files.
 - Escape closes it, in one step, without running anything. Ctrl+P while it is
@@ -69,7 +75,8 @@ a path to go to or a new name to give a file.
 - While a query is present the list is flat and ranked, with the group shown as
   a dim badge on each row rather than as a heading.
 - Up and Down move the highlight; the list scrolls to keep it visible. Home and
-  End go to the ends.
+  End go to the ends. The pointer does not pick: a press on a row takes hold of
+  the card to drag it (see *Opening and closing*).
 - Each row shows the command's title, its group badge, and — where it has one —
   the keyboard shortcut it is also bound to, right-aligned. A command that
   takes an argument shows its argument label after the title, dimmed, as
@@ -215,6 +222,35 @@ the palette adds no new capability.
   window closes the palette with it. It is drawn over a shadow rather than over
   a dimmed window, because a dim is how this window says *modal* and the
   palette is not.
+- **The card is a subsurface, not a popup.** Both escape the window; only one
+  can be dragged. A popup's position belongs to the compositor — it is moved by
+  handing back a new positioner and waiting for the answer, a round trip per
+  motion event, and the compositor's constraint adjustment may put it somewhere
+  other than where it was dropped. A subsurface's position is the client's, so
+  the card lands where it is put. A subsurface also takes no keyboard focus,
+  which is what lets the palette's keys go on arriving at the toplevel exactly
+  as they did when it was painted into the window.
+- **The pointer is taken on a surface that does not move.** Pointer positions
+  arrive relative to the surface under the pointer, so a surface that is being
+  dragged is a moving ruler: each motion event re-applies a correction that is
+  already in flight, and the card runs away from the hand. The card therefore
+  takes no pointer input of its own. An invisible, input-only surface the size
+  of the display sits over it while the palette is up and never moves; every
+  press and every drag is measured against that, and the card follows exactly.
+  A press on it outside the card is the click that dismisses the palette.
+- **How far it may be dragged has to be asked for.** A client is never told
+  where its own window sits, so the display's edges are not knowable from
+  inside; the compositor is asked once per opening, and until it answers the
+  window's own edges stand in — the old limit, wrong only in being too strict.
+  The answer is relative to the window and so means nothing once the window
+  moves, which for the length of one palette session it does not.
+- **The material belongs to the compositor.** On its own surface the card is
+  frosted: the compositor blurs and tints what is actually behind the *window*,
+  and casts the shadow outside the card's bounds. Neither is possible in the
+  window's own buffer, where a blur can only sample the listing the card is
+  already covering — which is why the card read as the same colour on the same
+  colour, and why a hairline was needed to say where its edge was. The hairline
+  stays, over the frost rather than in place of it.
 - **A click outside the card closes the palette and stops there.** It must not
   also select whatever file was underneath: the click that dismisses something
   is spent on dismissing it.
@@ -253,6 +289,11 @@ the palette adds no new capability.
   answer is wanted, and cannot be corrupted by editing. It also keeps the query
   recoverable: Backspace out of the argument and the search is exactly as it
   was.
+- **A surface rather than a clamp.** The card was held inside the window
+  because it was painted there, and the clamp was presented as a courtesy —
+  keeping the panel findable — when it was really the shape of the buffer
+  showing through. Giving the card its own surface removes the reason, and the
+  courtesy survives on its own terms as a clamp to the display.
 - **Grouped when resting, flat when searching.** The resting list is a map of
   what the window can do and is read by eye; a ranked list is read by position
   and headings only get in its way.

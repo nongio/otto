@@ -442,6 +442,13 @@ struct Browser {
     /// would be a placement the user has to undo before they can read the
     /// window under it.
     palette_offset: (f32, f32),
+    /// The display the palette may be dragged around, in window points, as the
+    /// compositor last answered. `None` until it has, and the drag then falls
+    /// back to the window's own edges.
+    palette_display: Option<Rect>,
+    /// Where the palette's caret is, in window points, when the card is on a
+    /// surface of its own and so is painted outside the window's draw.
+    palette_caret: Option<(f32, f32, f32, f32)>,
     /// A drag of the palette in progress: where in the card the pointer took
     /// hold, so the card follows the pointer without jumping to centre on it.
     palette_drag: Option<(f32, f32)>,
@@ -567,13 +574,13 @@ struct SelectionMark {
 /// several places — a command's title, its group's label, an argument's name.
 /// Gathering it here keeps the draw closure from having to hold the palette
 /// borrowed while it paints.
-struct PaletteRowData {
-    kind: view::PaletteRowKind,
-    title: String,
-    badge: Option<String>,
-    subtitle: Option<String>,
-    shortcut: Option<String>,
-    highlighted: bool,
+pub struct PaletteRowData {
+    pub kind: view::PaletteRowKind,
+    pub title: String,
+    pub badge: Option<String>,
+    pub subtitle: Option<String>,
+    pub shortcut: Option<String>,
+    pub highlighted: bool,
 }
 
 /// What the host window still has to do after a palette command ran.
@@ -883,6 +890,8 @@ impl Browser {
             palette: None,
             palette_selection: None,
             palette_offset: (0.0, 0.0),
+            palette_display: None,
+            palette_caret: None,
             palette_drag: None,
             palette_quickview: false,
             commands: command::Registry::builtin(),
@@ -3545,6 +3554,8 @@ impl Browser {
             view::palette_field_style(AppContext::current_theme()),
         ));
         self.palette_offset = (0.0, 0.0);
+        self.palette_display = None;
+        self.palette_caret = None;
         self.palette_drag = None;
         self.dirty = true;
     }
@@ -3700,27 +3711,122 @@ impl Browser {
         view::palette_rect(self.size.0, &view_rows, message).with_offset(self.palette_offset)
     }
 
-    /// The band a drag takes hold of: the card's top, where the field is.
+    /// A press at `(x, y)` in window points, while the palette is up.
     ///
-    /// The field rather than a bar of its own — the palette is one card with a
-    /// line of text across the top of it, and a strip above that line would be
-    /// chrome for its own sake.
-    fn palette_grip_at(&mut self, x: f32, y: f32) -> bool {
+    /// The card is a handle and nothing else: a press anywhere on it takes
+    /// hold of it, and a press anywhere else lets the palette go. Rows are not
+    /// clicked — picking is the keyboard's, and a card that is all handle can
+    /// be dragged from wherever it was caught, which is what a card that
+    /// wanders off the window needs.
+    ///
+    /// One method rather than two because the press reaches the browser two
+    /// ways — through the palette's own catcher surface when the card has one,
+    /// and through the toplevel when it is painted into the window — and both
+    /// arrive here in the same coordinates.
+    fn palette_press(&mut self, x: f32, y: f32) {
         let card = self.palette_card();
-        let grip = Rect::from_ltrb(
-            card.left,
-            card.top,
-            card.right,
-            card.top + view::PALETTE_FIELD_H,
+        if card.contains(skia_safe::Point::new(x, y)) {
+            self.palette_drag = Some((x - card.left, y - card.top));
+        } else {
+            // A click outside the card dismisses the palette and stops there,
+            // rather than also selecting whatever file was underneath.
+            self.close_palette();
+        }
+        self.dirty = true;
+    }
+
+    /// Everything the palette's own surface needs, with its text owned.
+    ///
+    /// Owned rather than borrowed because the surface's draw closure needs the
+    /// palette back, mutably, to render its text field into the same canvas.
+    fn palette_frame(&mut self) -> Option<pane_surfaces::PaletteFrame> {
+        self.palette.as_ref()?;
+        let rows = self.palette_rows();
+        let message = self.palette_message();
+        let prompt = self.palette.as_ref().and_then(|p| p.prompt());
+        let view_rows: Vec<view::PaletteRow<'_>> = rows
+            .iter()
+            .map(|row| view::PaletteRow {
+                kind: row.kind,
+                title: &row.title,
+                badge: row.badge.as_deref(),
+                subtitle: row.subtitle.as_deref(),
+                shortcut: row.shortcut.as_deref(),
+                highlighted: row.highlighted,
+            })
+            .collect();
+        let resting = view::palette_rect(self.size.0, &view_rows, message.is_some());
+        drop(view_rows);
+        Some(pane_surfaces::PaletteFrame {
+            resting,
+            card: resting.with_offset(self.palette_offset),
+            prompt,
+            message,
+            rows,
+        })
+    }
+
+    /// Paint the palette's text field, in window points.
+    ///
+    /// Split out of the card's drawing because the field renders itself and so
+    /// needs the palette borrowed mutably, which the card's owned frame
+    /// deliberately does not hold. Records where the caret ended up, since on
+    /// its own surface this runs outside the window's draw and so outside the
+    /// chain that reports it.
+    fn paint_palette_field(&mut self, canvas: &skia_safe::Canvas) {
+        let width = self.size.0;
+        let field = view::palette_field_rect(width);
+        let prompt = self.palette.as_ref().and_then(|p| p.prompt());
+        // The prompt is not part of the field, so the field starts after it:
+        // what is typed is the argument, and the prefix cannot be edited.
+        let lead = prompt
+            .as_deref()
+            .map(|prompt| {
+                otto_kit::typography::styles::BODY_EMPHASIZED
+                    .font()
+                    .measure_str(prompt, None)
+                    .0
+                    + 8.0
+            })
+            .unwrap_or(0.0);
+        let placeholder = self
+            .palette
+            .as_ref()
+            .map(|p| p.placeholder())
+            .unwrap_or_default();
+        let offset = self.palette_offset;
+        let Some(palette) = self.palette.as_mut() else {
+            return;
+        };
+        let input = palette.input_mut();
+        input.state.placeholder = placeholder;
+        input.set_size(field.width() - lead, field.height());
+        let origin = (field.left + lead, field.top);
+        canvas.save();
+        canvas.translate(origin);
+        input.render_at(canvas, field.width() - lead, field.height());
+        canvas.restore();
+        // Reported in window points like every other caret, which stays
+        // meaningful once the card is dragged clear of the window: the offset
+        // says where it went.
+        self.palette_caret = caret_in_window(
+            self.palette.as_ref().expect("checked above").input(),
+            (origin.0 + offset.0, origin.1 + offset.1),
         );
-        grip.contains(skia_safe::Point::new(x, y))
     }
 
     /// Follow the pointer, keeping the card on screen.
     ///
-    /// Clamped against the window rather than let go: a panel dragged off the
-    /// edge is one the user has to guess the way back to, and it holds the
-    /// keyboard while it is gone.
+    /// On its own surface the card may leave the window — that is the point of
+    /// the surface — so the window's edges are no longer the limit. The
+    /// *display's* are: a panel dragged off the screen is one nobody can find
+    /// the way back to, and it holds the keyboard while it is gone.
+    ///
+    /// The client is never told where its own window sits, so where the
+    /// display is has to be asked for; see
+    /// [`pane_surfaces::PaneSurfaces::palette_display`]. Until the answer
+    /// arrives the window stands in for it, which is the old behaviour and
+    /// wrong only in being too strict.
     fn drag_palette_to(&mut self, x: f32, y: f32) {
         let Some((grab_x, grab_y)) = self.palette_drag else {
             return;
@@ -3732,13 +3838,25 @@ impl Browser {
             card.left - self.palette_offset.0,
             card.top - self.palette_offset.1,
         );
-        let left = (x - grab_x).clamp(0.0, (self.size.0 - card.width()).max(0.0));
-        // Never above the window, and never so far down that the field is off
-        // the bottom: the list can hang past the edge, but the line being
-        // typed may not.
-        let top = (y - grab_y).clamp(0.0, (self.size.1 - view::PALETTE_FIELD_H).max(0.0));
+        let bounds = self.palette_bounds();
+        let left = (x - grab_x).clamp(bounds.left, (bounds.right - card.width()).max(bounds.left));
+        // Never above the top edge, and never so far down that the field is
+        // off the bottom: the list may hang past it, but the line being typed
+        // may not.
+        let top = (y - grab_y).clamp(
+            bounds.top,
+            (bounds.bottom - view::PALETTE_FIELD_H).max(bounds.top),
+        );
         self.palette_offset = (left - resting.0, top - resting.1);
         self.dirty = true;
+    }
+
+    /// How far the palette may be dragged, in window points: the display when
+    /// the compositor has said where it is, and the window until then.
+    fn palette_bounds(&self) -> Rect {
+        self.palette_display
+            .filter(|_| pane_surfaces::palette_on_surface())
+            .unwrap_or_else(|| Rect::from_wh(self.size.0, self.size.1))
     }
 
     /// The palette's rows as the view wants them, scrolled so the highlight is
@@ -6150,6 +6268,10 @@ struct FilesApp {
     /// render path for the pointer callback below. See
     /// [`pane_surfaces::PaneSurfaces::quickview_target`].
     quickview_target: Arc<Mutex<Option<(wayland_client::backend::ObjectId, Rect)>>>,
+    /// The palette's surface and where it sits in window points, for the same
+    /// reason Quick View has one: dragged clear of the window, the card is
+    /// over pixels the toplevel is never told about.
+    palette_target: Arc<Mutex<Option<(wayland_client::backend::ObjectId, Rect)>>>,
     /// The picker's request queue, when this process is serving
     /// `org.otto.FilePicker1`. `None` in the browser.
     picker_queue: Option<crate::dbus::SharedQueue>,
@@ -6378,7 +6500,7 @@ impl App for FilesApp {
             // sheet. Its card is drawn from rows gathered first, then the
             // field's text over the box the card left for it — the same
             // two-step the rename and path fields take.
-            if browser.palette.is_some() {
+            if browser.palette.is_some() && !pane_surfaces::palette_on_surface() {
                 let width = browser.size.0;
                 let rows = browser.palette_rows();
                 let message = browser.palette_message();
@@ -6408,6 +6530,7 @@ impl App for FilesApp {
                         prompt: prompt.as_deref(),
                         rows: view_rows,
                         message: message.as_deref(),
+                        on_surface: false,
                     },
                 );
                 canvas.restore();
@@ -6454,6 +6577,11 @@ impl App for FilesApp {
             // the one the keys are going to.
             otto_kit::AppContext::report_text_cursor(
                 palette_caret
+                    .or(browser
+                        .palette
+                        .is_some()
+                        .then_some(browser.palette_caret)
+                        .flatten())
                     .or(rename_caret)
                     .or(path_caret)
                     .or(save_caret)
@@ -6488,6 +6616,9 @@ impl App for FilesApp {
 
         self.install_dnd(&window);
         self.install_quickview_pointer();
+        if pane_surfaces::palette_on_surface() {
+            self.install_palette_pointer();
+        }
         self.install_info_window_pointer();
         self.install_pointer(&window, self.context_menu.clone().unwrap());
         self.install_frame_loop(&window);
@@ -7600,7 +7731,7 @@ impl FilesApp {
         let quickview = browser
             .quickview_visible()
             .map(|session| (session, browser.quickview_generation));
-        let painted = match self.pane_surfaces.as_mut() {
+        let mut painted = match self.pane_surfaces.as_mut() {
             Some(panes) => panes.sync(&parent, &frame, quickview),
             None => false,
         };
@@ -7617,6 +7748,33 @@ impl FilesApp {
             .pane_surfaces
             .as_ref()
             .and_then(pane_surfaces::PaneSurfaces::quickview_target);
+
+        // The palette's card, on its own surface. Synced apart from the rest
+        // because painting it needs the browser back mutably — its field
+        // renders itself — which the `Frame` above cannot allow while it
+        // lives. See `PaneSurfaces::sync_palette`.
+        if pane_surfaces::palette_on_surface() {
+            let theme = browser.theme();
+            let size = browser.size;
+            let palette = browser.palette_frame();
+            // Ask where the display is while the card is up, so a drag knows
+            // how far it may go. The answer is relative to the window, so it
+            // is only worth having for as long as the window stays put.
+            browser.palette_display = self
+                .pane_surfaces
+                .as_mut()
+                .filter(|_| palette.is_some())
+                .and_then(pane_surfaces::PaneSurfaces::palette_display);
+            if let Some(panes) = self.pane_surfaces.as_mut() {
+                painted |= panes.sync_palette(&parent, &theme, size, palette.as_ref(), |canvas| {
+                    browser.paint_palette_field(canvas)
+                });
+            }
+            *self.palette_target.lock().unwrap() = self
+                .pane_surfaces
+                .as_ref()
+                .and_then(pane_surfaces::PaneSurfaces::palette_target);
+        }
         painted
     }
 
@@ -7786,6 +7944,77 @@ impl FilesApp {
             };
             if repaint {
                 window.request_frame();
+            }
+        });
+    }
+
+    /// The palette's card handles its own pointer, for the same reason Quick
+    /// View's does: dragged clear of the window, it sits over pixels the
+    /// toplevel is never told about.
+    ///
+    /// Everything is put back into window points before it is acted on, so the
+    /// card is hit-tested against the same rects it was painted from and a
+    /// click means the same thing whichever surface it arrived on.
+    ///
+    /// A drag continues to arrive here even once the pointer has left the
+    /// card, because a held button holds the pointer to the surface that took
+    /// the press. That is what lets the card keep up with a fast drag instead
+    /// of being dropped the moment the pointer outruns it.
+    fn install_palette_pointer(&self) {
+        let state = Arc::clone(&self.state);
+        let target = Arc::clone(&self.palette_target);
+
+        AppContext::register_pointer_callback(move |events| {
+            for event in events {
+                use smithay_client_toolkit::seat::pointer::PointerEventKind;
+                use wayland_client::Proxy;
+                let trace = std::env::var_os("OTTO_FILES_PALETTE_TRACE").is_some();
+                let Some((surface, rect)) = target.lock().unwrap().clone() else {
+                    if trace {
+                        eprintln!("palette ptr: no target; event on {:?}", event.surface.id());
+                    }
+                    continue;
+                };
+                if event.surface.id() != surface {
+                    if trace {
+                        eprintln!(
+                            "palette ptr: event on {:?} {:?}, catcher is {:?}",
+                            event.surface.id(),
+                            event.kind,
+                            surface
+                        );
+                    }
+                    continue;
+                }
+                // Surface-local, as the compositor reports it, shifted back
+                // into the window points everything else measures in.
+                let x = event.position.0 as f32 + rect.left;
+                let y = event.position.1 as f32 + rect.top;
+                if trace {
+                    eprintln!(
+                        "palette ptr: {:?} local=({:.0},{:.0}) rect={:?} -> window=({x:.0},{y:.0})",
+                        event.kind, event.position.0, event.position.1, rect
+                    );
+                }
+                let mut browser = state.lock().unwrap();
+                if browser.palette.is_none() {
+                    continue;
+                }
+                match event.kind {
+                    PointerEventKind::Press { .. } => {
+                        browser.palette_press(x, y);
+                    }
+                    PointerEventKind::Motion { .. } if browser.palette_drag.is_some() => {
+                        browser.drag_palette_to(x, y);
+                    }
+                    // The card stays where it was let go of.
+                    PointerEventKind::Release { .. } => {
+                        browser.dirty |= browser.palette_drag.take().is_some();
+                    }
+                    _ => {}
+                }
+                drop(browser);
+                AppContext::request_wakeup();
             }
         });
     }
@@ -8793,64 +9022,7 @@ impl FilesApp {
                         // there, rather than also selecting whatever file
                         // happened to be underneath.
                         if browser.palette.is_some() {
-                            // The top band is the handle, so a press there is
-                            // a drag rather than a pick.
-                            if browser.palette_grip_at(x, y) {
-                                let card = browser.palette_card();
-                                browser.palette_drag = Some((x - card.left, y - card.top));
-                                return;
-                            }
-                            let (x, y) = (
-                                x - browser.palette_offset.0,
-                                y - browser.palette_offset.1,
-                            );
-                            let rows = browser.palette_rows();
-                            let view_rows: Vec<view::PaletteRow<'_>> = rows
-                                .iter()
-                                .map(|row| view::PaletteRow {
-                                    kind: row.kind,
-                                    title: &row.title,
-                                    badge: None,
-                                    subtitle: None,
-                                    shortcut: None,
-                                    highlighted: row.highlighted,
-                                })
-                                .collect();
-                            let hit = view::palette_row_at(x, y, width, &view_rows);
-                            let inside = view::palette_rect(
-                                width,
-                                &view_rows,
-                                browser.palette_message().is_some(),
-                            )
-                            .contains(skia_safe::Point::new(x, y));
-                            drop(view_rows);
-                            drop(rows);
-                            match hit {
-                                Some(row) => {
-                                    let picked = browser
-                                        .palette
-                                        .as_mut()
-                                        .is_some_and(|palette| palette.highlight_row(row));
-                                    if picked {
-                                        let mods = KeyMods {
-                                            shift: false,
-                                            ctrl: false,
-                                        };
-                                        if let Some(outcome) = browser
-                                            .palette
-                                            .as_mut()
-                                            .map(|palette| palette.on_key(palette::Key::Enter, mods))
-                                        {
-                                            browser.settle_palette(outcome, serial);
-                                        }
-                                    }
-                                }
-                                None if !inside => {
-                                    browser.close_palette();
-                                }
-                                None => {}
-                            }
-                            browser.dirty = true;
+                            browser.palette_press(x, y);
                             return;
                         }
 
@@ -9350,6 +9522,7 @@ fn run_app(
         modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
         quickview_target: Arc::new(Mutex::new(None)),
+        palette_target: Arc::new(Mutex::new(None)),
         picker_queue,
     };
 
@@ -10136,15 +10309,35 @@ mod palette_tests {
         assert!(!dir.0.join("reports").exists());
     }
 
-    /// The card follows the pointer, and stays where it is let go of.
+    /// The whole card is a handle: a press anywhere on it — the field, a row,
+    /// the bottom edge — takes hold, and the card then follows the pointer and
+    /// stays where it is let go of. Nothing on it is clicked.
     #[test]
-    fn the_palette_is_dragged_by_its_top_band() {
+    fn the_palette_is_a_handle_all_over() {
         let (mut browser, _dir) = browser_over(&["a.txt"]);
         browser.size = (1200.0, 800.0);
         browser.open_palette();
         let card = browser.palette_card();
-        assert!(browser.palette_grip_at(card.center_x(), card.top + 4.0));
-        assert!(!browser.palette_grip_at(card.center_x(), card.bottom - 4.0));
+        let rows = browser
+            .palette
+            .as_ref()
+            .map(|p| p.rows().len())
+            .unwrap_or(0);
+        assert!(rows > 1, "the resting list should offer something");
+
+        // A press on a row is a grab, not a pick: the highlight does not move
+        // and nothing runs.
+        let before = browser.palette.as_ref().and_then(|p| p.highlighted());
+        browser.palette_press(card.center_x(), card.bottom - 4.0);
+        assert!(browser.palette_drag.is_some());
+        assert!(
+            browser.palette.is_some(),
+            "a press on the card must not close it"
+        );
+        assert_eq!(
+            browser.palette.as_ref().and_then(|p| p.highlighted()),
+            before
+        );
 
         browser.palette_drag = Some((10.0, 10.0));
         browser.drag_palette_to(400.0, 300.0);
@@ -10153,10 +10346,24 @@ mod palette_tests {
         assert_eq!(moved.top, 290.0);
     }
 
+    /// A press anywhere else lets the palette go, and the click is spent on
+    /// that: the selection underneath is exactly what it was.
+    #[test]
+    fn a_press_off_the_palette_closes_it_and_nothing_else() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt"]);
+        browser.size = (1200.0, 800.0);
+        let selection = browser.columns[0].selection.clone();
+        browser.open_palette();
+        browser.palette_press(20.0, 700.0);
+        assert!(browser.palette.is_none());
+        assert!(browser.palette_drag.is_none());
+        assert_eq!(browser.columns[0].selection, selection);
+    }
+
     /// And cannot be dragged off the window, where it would hold the keyboard
     /// from somewhere the user cannot see.
     #[test]
-    fn the_palette_cannot_be_dragged_off_the_window() {
+    fn the_palette_is_held_to_the_window_until_the_display_is_known() {
         let (mut browser, _dir) = browser_over(&["a.txt"]);
         browser.size = (1200.0, 800.0);
         browser.open_palette();
@@ -10170,6 +10377,51 @@ mod palette_tests {
         let card = browser.palette_card();
         assert!(card.left <= 1200.0 - card.width() + 0.5);
         assert!(card.top <= 800.0 - view::PALETTE_FIELD_H + 0.5);
+    }
+
+    /// On its own surface the card may leave the window — that is what the
+    /// surface is for — but not the display. The window here sits 200 points
+    /// in from the display's left edge, so a card dragged to -100 is off the
+    /// window and still on screen.
+    #[test]
+    fn the_palette_leaves_the_window_but_not_the_display() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        // In window points, so the display starts left of and above the
+        // window's own origin — which is what negative coordinates mean here.
+        browser.palette_display = Some(Rect::from_ltrb(-200.0, -100.0, 1720.0, 980.0));
+        browser.palette_drag = Some((10.0, 10.0));
+
+        browser.drag_palette_to(-100.0, -50.0);
+        let card = browser.palette_card();
+        assert!(card.left < 0.0, "the card should hang off the window");
+        assert!(card.top < 0.0, "the card should rise above the window");
+
+        // And no further than the display.
+        browser.drag_palette_to(-5000.0, -5000.0);
+        let card = browser.palette_card();
+        assert!(card.left >= -200.0 - 0.5);
+        assert!(card.top >= -100.0 - 0.5);
+
+        browser.drag_palette_to(5000.0, 5000.0);
+        let card = browser.palette_card();
+        assert!(card.left <= 1720.0 - card.width() + 0.5);
+        assert!(card.top <= 980.0 - view::PALETTE_FIELD_H + 0.5);
+    }
+
+    /// The answer is relative to the window, so it only means anything for as
+    /// long as the window stays put — one palette session.
+    #[test]
+    fn a_fresh_palette_asks_where_the_display_is_again() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        browser.palette_display = Some(Rect::from_ltrb(-200.0, -100.0, 1720.0, 980.0));
+        browser.close_palette();
+
+        browser.open_palette();
+        assert_eq!(browser.palette_display, None);
     }
 
     /// A fresh open puts it back where it belongs: a panel that reappeared

@@ -3044,6 +3044,17 @@ pub struct PaletteData<'a> {
     /// Shown in place of the list: why the last attempt did not work, or that
     /// nothing matches.
     pub message: Option<&'a str>,
+    /// Whether the card is being drawn into a surface of its own rather than
+    /// into the window's buffer.
+    ///
+    /// On its own surface the compositor owns the material: it blurs what is
+    /// actually behind the window, tints it for legibility and casts the
+    /// shadow outside the card's bounds — none of which this canvas can do,
+    /// because a blur painted here can only sample the window's own pixels.
+    /// So the shadow and the opaque ground are dropped and the translucent
+    /// popup material is used instead, which is what the compositor's blur
+    /// expects to sit under.
+    pub on_surface: bool,
 }
 
 /// Which rows are on screen, given where the highlight is.
@@ -3146,23 +3157,33 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     let card = palette_rect(width, &data.rows, message);
 
     // A shadow rather than a dim over the window: the palette is not modal,
-    // and dimming the listing behind it would say that it was.
-    paint.set_color(theme.shadow);
-    paint.set_mask_filter(skia_safe::MaskFilter::blur(
-        skia_safe::BlurStyle::Normal,
-        14.0,
-        false,
-    ));
-    canvas.draw_rrect(
-        RRect::new_rect_xy(card.with_offset((0.0, 6.0)), 14.0, 14.0),
-        &paint,
-    );
-    paint.set_mask_filter(None);
+    // and dimming the listing behind it would say that it was. Painted here
+    // only while the card is in the window's buffer — on its own surface the
+    // compositor casts it, and outside the card's bounds, which is the one
+    // place a shadow is worth having.
+    if !data.on_surface {
+        paint.set_color(theme.shadow);
+        paint.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            14.0,
+            false,
+        ));
+        canvas.draw_rrect(
+            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), 14.0, 14.0),
+            &paint,
+        );
+        paint.set_mask_filter(None);
+    }
 
-    // Filled in, not the translucent material: the material is meant to sit
-    // over the compositor's blur, and this card is inside the window's own
-    // surface with nothing behind it but the listing it is covering.
-    paint.set_color(content_ground());
+    // The translucent material when the compositor is blurring behind this
+    // surface, and filled in when the card is inside the window's own buffer:
+    // there the material would be a tint over the listing it is covering,
+    // with no blur underneath to justify it.
+    paint.set_color(if data.on_surface {
+        theme.material_popup
+    } else {
+        content_ground()
+    });
     canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
 
     // The hairline is what says the card is above the listing rather than part
