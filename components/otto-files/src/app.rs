@@ -442,6 +442,12 @@ struct Browser {
     /// would be a placement the user has to undo before they can read the
     /// window under it.
     palette_offset: (f32, f32),
+    /// When the caret was last advanced, so the blink runs on real time.
+    /// The update loop runs as often as anything asks it to — a surface
+    /// repainting, a pointer callback waking it — and a blink that counted
+    /// passes rather than seconds sped up whenever the loop did, which read
+    /// as a nervous caret in the palette.
+    caret_clock: Option<std::time::Instant>,
     /// The palette's list, scrolling under its field: momentum, the band past
     /// either end and the fading bar, the same view the columns run on. Owned
     /// here rather than by the palette because the palette is I/O-free and
@@ -902,6 +908,7 @@ impl Browser {
             palette: None,
             palette_selection: None,
             palette_offset: (0.0, 0.0),
+            caret_clock: None,
             palette_memory: None,
             palette_memory_on_disk: false,
             palette_scroll: ScrollView::new(Rect::new_empty()),
@@ -2062,6 +2069,17 @@ impl Browser {
                 was != input.caret_visible()
             }
             None => false,
+        }
+    }
+
+    /// Seconds since the caret was last advanced — real time, not a count of
+    /// passes through the loop. Capped so a stall does not land as one long
+    /// step, and one idle tick's worth on the first call.
+    fn caret_elapsed(&mut self) -> f32 {
+        let now = std::time::Instant::now();
+        match self.caret_clock.replace(now) {
+            Some(last) => now.duration_since(last).as_secs_f32().min(0.25),
+            None => IDLE_TICK.as_secs_f32(),
         }
     }
 
@@ -7102,7 +7120,8 @@ impl App for FilesApp {
             // advance here rather than on input, since they keep running after
             // the gesture ends.
             let scrolled = browser.tick_scroll();
-            let blinking = browser.tick_caret(IDLE_TICK.as_secs_f32());
+            let elapsed = browser.caret_elapsed();
+            let blinking = browser.tick_caret(elapsed);
             let animating = blinking
                 | browser.quickview_animating()
                 | browser.tick_quickview_exit()
@@ -7944,6 +7963,7 @@ impl FilesApp {
                 let key = match ch {
                     '\t' => palette::Key::Tab,
                     '\n' => palette::Key::Enter,
+                    '\u{1b}' => palette::Key::Escape,
                     '\u{2193}' => palette::Key::Down,
                     '\u{2191}' => palette::Key::Up,
                     ch => palette::Key::Edit(TextInputKey::Char(ch)),
