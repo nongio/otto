@@ -64,14 +64,18 @@ vibrancy even though the content behind it lives on other planes.
   window committed a new buffer whose rect intersects such a region
   (promoted commits produce no scene damage, so the commit flag is the only
   change signal); a rebuild triggers exactly one re-render of each
-  blur-bearing plane. The consumer regions are: the dock strip, the switcher
-  strip, and — for the overlay plane — the layer-shell chrome surfaces'
-  rects (top bar, islands) plus the bounds of any mapped popup, each outset
-  by the blur sampling radius, in the steady state; the interest widens to
-  the full output only while something transient or unbounded is up (expose,
-  OSD, tiling overlay, DnD, a selector animation). A steady-state window
-  redrawing below the chrome band, or beside an open menu, therefore rebuilds
-  nothing.
+  blur-bearing plane. The consumer regions are: the frosted shapes the dock
+  and the switcher actually draw (the bar, a hovered icon's label, the
+  switcher card — not their whole strips), and — for the overlay plane —
+  the layer-shell chrome surfaces' rects (top bar, islands) plus the bounds
+  of any mapped popup, each outset by the blur's reach (the band past a
+  shape's edge whose content still affects the blurred result), in the
+  steady state; the interest widens to the full output only while something
+  transient or unbounded is up (expose, OSD, tiling overlay, DnD, a selector
+  animation). A steady-state window redrawing below the chrome band, beside
+  an open menu, or in the part of the dock strip the bar does not cover,
+  therefore rebuilds nothing. Until a dock or switcher plane has reported
+  its shapes, its whole strip stands in as the region.
   Rebuilds caused by desktop damage (bg/middle planes, promoted commits) are
   additionally rate-limited (currently one per 100 ms): a client committing
   full-rect damage at frame rate under a blur consumer must not force the
@@ -89,8 +93,19 @@ vibrancy even though the content behind it lives on other planes.
   judder, and those states are transient so they cannot re-open the idle
   rebuild storm. The composite is downscaled (currently 1/4 resolution) — a low-res
   backdrop is imperceptible after blurring but far cheaper.
-  Damage skipped this way marks the composite dirty so a later-activating
-  consumer still gets fresh content. Frames that bypass the plane path
+  Damage deferred this way marks the composite dirty so it is caught up on
+  the next allowed frame. Damage that misses every consumer region does
+  not: while any consumer is up, a video playing beside the dock — in a
+  composited or a promoted window alike — leaves the composite untouched
+  and marks nothing, so an idle blur costs nothing under a busy desktop.
+  Such damage is remembered instead, and when the consumer regions change
+  (a dock label appears, the bar magnifies, the switcher opens) and the new
+  regions cover content that changed since the last rebuild, the composite
+  rebuilds immediately, bypassing the rate limit, so the newly frosted area
+  never shows stale content; a region change over untouched content costs
+  nothing. With no consumer up at all, any on-screen damage marks the
+  composite dirty so the first consumer to activate gets fresh content.
+  Frames that bypass the plane path
   entirely while still consuming engine damage (fullscreen direct scanout,
   forced full-GPU composite) also mark the composite dirty, so the first
   planes frame after them rebuilds instead of seeding consumers with stale
@@ -253,9 +268,11 @@ vibrancy even though the content behind it lives on other planes.
   transitioning" for those frames while `show_all` is not yet committed —
   the expose plane leaves the stack, the windows plane is pushed, and the
   screen flicks back to the normal layout mid-gesture.
-- When a lower plane records damage, the composite is rebuilt and the
+- When a lower plane records damage under a blur consumer's region, the
+  composite is rebuilt (subject to the rate limit above) and the
   blur-bearing planes re-render once with the new backdrop (triggered by
-  the fresh snapshot's unique id).
+  the fresh snapshot's unique id). Damage that misses every region rebuilds
+  nothing until a region grows over it.
 - A stable fullscreen workspace (single window, no animation, no capture,
   no swipe, no mapped popup — the overlay plane holding popups is dropped
   in this mode) direct-scans the client buffer on the PRIMARY plane with all
@@ -567,6 +584,18 @@ so seeding it alone would leave the window underneath sharp.
   than probing back up, because the overcommit that caused the underrun is
   a property of the current output configuration and content and would
   simply recur.
+- The dock and switcher blur regions were once their whole strips (a full
+  output width by a quarter of the height for the dock, while the bar at
+  rest covers a fraction of that), and any on-screen desktop damage —
+  hitting a region or not — marked the composite dirty whenever a consumer
+  was up. Together those meant a video playing anywhere on screen, or a
+  promoted window redrawing at frame rate, rebuilt the composite and every
+  blur plane at the rate-limit cadence for as long as the dock was visible.
+  Regions now follow the frosted shapes actually drawn, and damage that
+  misses every region is dropped rather than carried as staleness. What
+  makes dropping safe is remembering it: a region that later grows over
+  changed content rebuilds at once, so the only cost moves to the moment a
+  label or the switcher appears, and only when something underneath changed.
 
 ## Open Questions
 

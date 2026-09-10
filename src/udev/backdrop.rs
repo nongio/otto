@@ -133,6 +133,11 @@ fn draw_popups(
     canvas.restore_to_count(save);
 }
 
+/// How far past a blur shape's edge the content beneath still affects the
+/// blurred result. Damage within this band of a consumer counts as hitting
+/// it; the same reach pads the chrome rects of the overlay plane.
+pub(super) const BLUR_REACH: f32 = 160.0;
+
 /// Minimum spacing between two backdrop rebuilds caused by DESKTOP damage
 /// (bg/middle planes, promoted commits, popup repaints). A client redrawing
 /// at frame rate under a blur consumer must not force the composite plus a
@@ -177,6 +182,14 @@ struct RebuildInputs {
     popup_structural: bool,
     /// On-screen lower-plane damage exists (whether or not it hits interest).
     lower_damaged: bool,
+    /// The tracked consumer regions changed and now cover damage that was
+    /// dropped as uninteresting since the last rebuild (the dock label
+    /// appeared over a window that repainted meanwhile, the switcher opened).
+    /// The composite is stale exactly there, so it rebuilds right away —
+    /// discrete and rare, so it bypasses the rate limit. A region change
+    /// over untouched content (the bar magnifying over a still desktop)
+    /// costs nothing.
+    uncovered_damage: bool,
     /// An interactive animation is running (expose, a workspace swipe or its
     /// settle animation): the blur must track the moving content per frame —
     /// a 10 Hz blur under a 120 Hz scroll reads as judder — so the rate
@@ -207,17 +220,27 @@ fn decide_rebuild(i: RebuildInputs) -> RebuildDecision {
         || i.last_desktop_rebuild
             .is_none_or(|t| i.now.duration_since(t) >= DESKTOP_REBUILD_MIN_INTERVAL);
     let rebuild = i.any_consumer
-        && (!i.have_backdrop || (desktop_trigger && desktop_rate_ok) || i.popup_structural);
+        && (!i.have_backdrop
+            || i.uncovered_damage
+            || (desktop_trigger && desktop_rate_ok)
+            || i.popup_structural);
+    // Staleness worth carrying: with a consumer up, only damage that hit one
+    // of its regions and was deferred by the rate limit — popup damage
+    // included, since it is folded into the overlay backdrop. A window
+    // animating away from every blur area must not keep the composite
+    // churning; the only way that area matters later is the interest
+    // growing, which rebuilds on its own. With no consumer nothing is
+    // tracked, so any damage counts: the next consumer needs fresh content.
+    let dirty_after = if rebuild {
+        false
+    } else if i.any_consumer {
+        i.dirty || i.bg_hit || i.middle_hit || i.promoted_hits || i.popup_hit
+    } else {
+        i.dirty || i.lower_damaged || i.popup_hit
+    };
     RebuildDecision {
         rebuild,
-        dirty_after: if rebuild {
-            false
-        } else {
-            // Popup damage is folded into the overlay backdrop, so a popup
-            // repaint held back by the rate limit is staleness that has to
-            // reach the next allowed frame just like lower-plane damage.
-            i.dirty || i.lower_damaged || i.popup_hit
-        },
+        dirty_after,
         stamp_desktop_rebuild: rebuild.then_some(i.now),
     }
 }
@@ -373,11 +396,29 @@ pub(super) fn update_backdrop_and_upper_planes(
                 )
             })
         };
+        // A plane's blur consumers are the `BackgroundBlur` shapes in its
+        // subtree, outset by the blur's reach — at rest the dock bar covers
+        // a fraction of its strip, and a window repainting in the rest of
+        // it changes nothing the bar shows. The strip is the fallback until
+        // the subtree has reported its shapes.
+        let consumer_rects = |el: &Option<SceneDmabufElement>| -> Vec<layers::skia::Rect> {
+            let mut rects = el
+                .as_ref()
+                .map(|el| el.subtree_blur_rects())
+                .unwrap_or_default();
+            if rects.is_empty() {
+                return strip_rect(el).into_iter().collect();
+            }
+            for r in &mut rects {
+                r.outset((BLUR_REACH, BLUR_REACH));
+            }
+            rects
+        };
         if dock_visible {
-            interest.extend(strip_rect(&surface.dock_dmabuf_element));
+            interest.extend(consumer_rects(&surface.dock_dmabuf_element));
         }
         if switcher_active {
-            interest.extend(strip_rect(&surface.switcher_dmabuf_element));
+            interest.extend(consumer_rects(&surface.switcher_dmabuf_element));
         }
     }
     let intersects = |r: &layers::skia::Rect| rect_hits_interest(&interest, r);
@@ -388,6 +429,14 @@ pub(super) fn update_backdrop_and_upper_planes(
             intersects(&r.with_offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32))))
         });
     let any_consumer = !interest.is_empty();
+    // Damage that misses every tracked region is dropped, but remembered:
+    // when the regions change, the composite only has to be rebuilt if the
+    // newly tracked area changed underneath in the meantime.
+    let uncovered_damage = any_consumer
+        && interest != surface.backdrop_interest
+        && surface
+            .backdrop_missed_damage
+            .is_some_and(|m| intersects(&m));
     // Damage that lands entirely outside this output's buffer can never reach
     // any consumer — now or after one activates later — so it must not mark the
     // composite dirty. The common case is a window on a workspace scrolled off
@@ -423,6 +472,7 @@ pub(super) fn update_backdrop_and_upper_planes(
         popup_hit: overlay_active && popup_damage.is_some(),
         popup_structural: overlay_active && popup_structural,
         lower_damaged,
+        uncovered_damage,
         fluid: expose_active || fluid_animation,
         last_desktop_rebuild: surface.last_desktop_rebuild,
         now: std::time::Instant::now(),
@@ -432,7 +482,7 @@ pub(super) fn update_backdrop_and_upper_planes(
     // backdrop rebuild this frame, plus the engine's pending transactions —
     // the signal that keeps the render loop out of idle. One line per frame
     // while the toggle exists; for chasing "the compositor never sleeps".
-    if std::path::Path::new("/tmp/otto-perfdbg").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-perfdbg") {
         let mut txs = engine.debug_pending_transactions();
         let tx_count = txs.len();
         txs.truncate(8);
@@ -446,7 +496,7 @@ pub(super) fn update_backdrop_and_upper_planes(
             .collect();
         tracing::info!(
             target: "otto::perfdbg",
-            "rebuild={rebuild} dirty={} bg={:?} mid={:?} popup={:?} bg_hit={} mid_hit={} promoted_hits={} popup_struct={popup_structural} overlay_active={overlay_active} tx={tx_count} {txs:?}",
+            "rebuild={rebuild} dirty={} bg={:?} mid={:?} popup={:?} bg_hit={} mid_hit={} promoted_hits={} popup_struct={popup_structural} overlay_active={overlay_active} interest={interest:?} uncovered={uncovered_damage} missed={:?} tx={tx_count} {txs:?}",
             surface.backdrop_dirty,
             bg_damage,
             middle_damage,
@@ -454,9 +504,38 @@ pub(super) fn update_backdrop_and_upper_planes(
             hits_interest(&bg_damage),
             hits_interest(&middle_damage),
             promoted_hits,
+            surface.backdrop_missed_damage,
         );
     }
     surface.backdrop_dirty = decision.dirty_after;
+    if interest != surface.backdrop_interest {
+        surface.backdrop_interest = interest.clone();
+    }
+    if decision.rebuild {
+        surface.backdrop_missed_damage = None;
+    } else {
+        let mut missed = surface.backdrop_missed_damage;
+        let mut note = |r: layers::skia::Rect| {
+            if !intersects(&r) {
+                missed = Some(missed.map_or(r, |mut m| {
+                    m.join(r);
+                    m
+                }));
+            }
+        };
+        if let Some(r) = bg_damage.filter(|_| on_screen(&bg_damage)) {
+            note(r);
+        }
+        if let Some(r) = middle_damage.filter(|_| on_screen(&middle_damage)) {
+            note(r);
+        }
+        if promoted_commit {
+            for (_, r) in promoted {
+                note(r.with_offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32))));
+            }
+        }
+        surface.backdrop_missed_damage = missed;
+    }
     if let Some(t) = decision.stamp_desktop_rebuild {
         surface.last_desktop_rebuild = Some(t);
     }
@@ -746,10 +825,49 @@ mod tests {
             popup_hit: false,
             popup_structural: false,
             lower_damaged: false,
+            uncovered_damage: false,
             fluid: false,
             last_desktop_rebuild: None,
             now,
         }
+    }
+
+    #[test]
+    fn damage_missing_every_consumer_neither_rebuilds_nor_dirties() {
+        // A video playing away from the dock strip: on-screen damage every
+        // frame, none of it under a blur consumer. Nothing to rebuild, and
+        // nothing to carry — otherwise the flag alone drives a rebuild per
+        // rate-limit window for content nobody blurs.
+        let t0 = Instant::now();
+        let frame = Duration::from_millis(8);
+        let mut dirty = false;
+        for n in 0..250 {
+            let d = decide_rebuild(RebuildInputs {
+                dirty,
+                lower_damaged: true,
+                now: t0 + frame * n,
+                ..quiet(t0)
+            });
+            assert!(!d.rebuild, "frame {n} rebuilt without a consumer hit");
+            dirty = d.dirty_after;
+            assert!(!dirty, "frame {n} carried staleness nobody consumes");
+        }
+    }
+
+    #[test]
+    fn uncovered_damage_rebuilds_immediately() {
+        // Damage outside the tracked regions was dropped; the moment a region
+        // change tracks that area (the dock label appears, the switcher
+        // opens) the composite is stale there and has to be rebuilt —
+        // regardless of the rate limit.
+        let t0 = Instant::now();
+        let d = decide_rebuild(RebuildInputs {
+            uncovered_damage: true,
+            last_desktop_rebuild: Some(t0 - Duration::from_millis(1)),
+            ..quiet(t0)
+        });
+        assert!(d.rebuild);
+        assert!(!d.dirty_after);
     }
 
     #[test]

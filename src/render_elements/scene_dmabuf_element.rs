@@ -325,6 +325,32 @@ impl SceneDmabufElement {
         Some(skia_surface.gr_context.clone())
     }
 
+    /// The `BackgroundBlur` shapes under this element's subtree, in global
+    /// scene coordinates: exactly the areas whose look depends on what lies
+    /// beneath the plane. lay-rs bubbles every descendant blur shape onto
+    /// the subtree root, so one lookup covers the whole plane. Empty until
+    /// the subtree's first engine update.
+    pub fn subtree_blur_rects(&self) -> Vec<layers::skia::Rect> {
+        let inner = self.inner.lock().unwrap();
+        let Some(node) = inner.node_ref else {
+            return Vec::new();
+        };
+        let Some(render_layer) = inner.engine.render_layer(&node) else {
+            return Vec::new();
+        };
+        let to_global = render_layer.transform_33;
+        render_layer
+            .backdrop_blur_region
+            .as_ref()
+            .map(|rrects| {
+                rrects
+                    .iter()
+                    .map(|rrect| to_global.map_rect(rrect.rect()).0)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Damage recorded under this element's subtree since the engine's last
     /// `clear_damage()`, in global scene coordinates.
     pub fn subtree_damage(&self) -> Option<layers::skia::Rect> {
@@ -508,7 +534,7 @@ impl SceneDmabufElement {
         // Debug (`/tmp/otto-bgdbg`): the inputs that decide whether this plane
         // repaints, and over what region. A background flash shows up here as a
         // frame whose clip/damage covers only part of the buffer.
-        let bgdbg = std::path::Path::new("/tmp/otto-bgdbg").exists();
+        let bgdbg = crate::debug_hooks::toggle("/tmp/otto-bgdbg");
         if bgdbg {
             tracing::info!(
                 target: "otto::bgdbg",
@@ -838,7 +864,7 @@ impl SceneDmabufElement {
             skia_surface.gr_context.flush_and_submit_surface(
                 &mut skia_surface.surface,
                 // A/B (`/tmp/otto-bgsync`): block on this plane's own GPU work.
-                if self.label == "bg" && std::path::Path::new("/tmp/otto-bgsync").exists() {
+                if self.label == "bg" && crate::debug_hooks::toggle("/tmp/otto-bgsync") {
                     layers::skia::gpu::SyncCpu::Yes
                 } else {
                     layers::skia::gpu::SyncCpu::No
@@ -1047,7 +1073,7 @@ impl Element for SceneDmabufElement {
             None => DamageSet::from_slice(&[full]),
             _ => DamageSet::default(),
         };
-        if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+        if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
             tracing::info!(
                 target: "otto::bgdbg",
                 "{}: damage_since(asked={:?} cur={:?}) -> {:?}",
@@ -1103,7 +1129,7 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
     ) -> Option<UnderlyingStorage<'_>> {
         let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
         let inner = self.inner.lock().unwrap();
-        if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+        if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
             tracing::info!(
                 target: "otto::slot",
                 "{}: TO-KMS slot={:?} keepalive={}",

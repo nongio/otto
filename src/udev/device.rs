@@ -680,6 +680,8 @@ impl Otto<UdevData> {
                 backdrop_raw_image: None,
                 backdrop_preblurred: false,
                 backdrop_dirty: false,
+                backdrop_interest: Vec::new(),
+                backdrop_missed_damage: None,
                 last_desktop_rebuild: None,
                 backdrop_bg_image: None,
                 backdrop_bg_raw: None,

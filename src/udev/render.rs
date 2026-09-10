@@ -116,7 +116,7 @@ impl Otto<UdevData> {
         };
 
         // Debug (`/tmp/otto-slow`): a VBlank line proves page flips complete.
-        if std::path::Path::new("/tmp/otto-slow").exists() {
+        if crate::debug_hooks::toggle("/tmp/otto-slow") {
             tracing::info!(target: "otto::planes", "SLOW vblank on {crtc:?}");
         }
         let schedule_render =
@@ -393,7 +393,12 @@ impl Otto<UdevData> {
                 })
                 .cloned()
         });
-        let allow_fullscreen_scanout = std::env::var_os("DISABLE_DIRECT_SCANOUT").is_none()
+        // Read once: the environment does not change under a running session,
+        // and this runs per frame.
+        static DIRECT_SCANOUT_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let direct_scanout_disabled = *DIRECT_SCANOUT_DISABLED
+            .get_or_init(|| std::env::var_os("DISABLE_DIRECT_SCANOUT").is_some());
+        let allow_fullscreen_scanout = !direct_scanout_disabled
             && this_output
                 .as_ref()
                 .map(|o| self.workspaces.is_fullscreen_and_stable_on_output(o))
@@ -853,7 +858,7 @@ impl Otto<UdevData> {
         // Debug (`/tmp/otto-bgdbg`): hidden flags along the chain the background
         // plane hangs off, so a black bg buffer can be told apart from a hidden
         // ancestor inheriting down onto it.
-        if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+        if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
             if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
                 tracing::info!(
                     target: "otto::bgdbg",
@@ -1039,7 +1044,7 @@ impl Otto<UdevData> {
         // a blur artefact ever needs it back.
         if popups_open {
             if let Some(el) = &surface.overlay_dmabuf_element {
-                if std::path::Path::new("/tmp/otto-popup-fullframe").exists() {
+                if crate::debug_hooks::toggle("/tmp/otto-popup-fullframe") {
                     el.request_full_render();
                 } else {
                     el.request_full_clip_when_rendering();
@@ -1084,7 +1089,7 @@ impl Otto<UdevData> {
         // next frame (needs a frame trigger, e.g. moving the cursor).
         // Remove the file and touch it again to re-trigger.
         {
-            let want = std::path::Path::new("/tmp/otto-full-redraw").exists();
+            let want = crate::debug_hooks::toggle("/tmp/otto-full-redraw");
             if want && !surface.full_redraw_done {
                 surface.full_redraw_done = true;
                 tracing::info!(target: "otto::planes", "debug full redraw requested");
@@ -1124,7 +1129,7 @@ impl Otto<UdevData> {
             {
                 el.request_full_render();
             }
-            if std::path::Path::new("/tmp/otto-dump-transition").exists() {
+            if crate::debug_hooks::toggle("/tmp/otto-dump-transition") {
                 surface.transition_dump_left = 8;
             }
         }
@@ -1189,7 +1194,7 @@ impl Otto<UdevData> {
                 } else {
                     // ~3σ of the full-res blur (sigma 40): content further
                     // away cannot visibly change what the blur samples.
-                    const BLUR_PAD: f32 = 160.0;
+                    const BLUR_PAD: f32 = super::backdrop::BLUR_REACH;
                     let out_scale = output.current_scale().fractional_scale() as f32;
                     let map = layer_map_for_output(&output);
                     let rects: Vec<layers::skia::Rect> = map
@@ -2727,7 +2732,7 @@ pub(super) fn render_output_frame<'a>(
                                         // with every client frame — a constant value here means
                                         // the surface's damage bag never ticks and the plane
                                         // keeps scanning the first buffer forever.
-                                        if std::path::Path::new("/tmp/otto-slow").exists() {
+                                        if crate::debug_hooks::toggle("/tmp/otto-slow") {
                                             tracing::info!(
                                                 target: "otto::planes",
                                                 "SLOW topwin {win_id:?} commit={:?}",
@@ -2764,7 +2769,7 @@ pub(super) fn render_output_frame<'a>(
                 &mut workspace_render_elements,
             );
 
-            if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+            if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
                 tracing::info!(
                     target: "otto::bgdbg",
                     "FRAME elements={} expose={} win_content={} dock={} switcher={} overlay={} scanout={}",
@@ -2831,7 +2836,7 @@ pub(super) fn render_output_frame<'a>(
     // Debug (`/tmp/otto-slow`): frame-by-frame slideshow — sleep 100ms per
     // frame and log a frame counter with the mode and element set, so a
     // human-visible glitch can be matched 1:1 to a logged frame.
-    if std::path::Path::new("/tmp/otto-slow").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-slow") {
         static FRAME_NO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = FRAME_NO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         use smithay::backend::renderer::element::Element as _;
@@ -2926,7 +2931,7 @@ pub(super) fn render_output_frame<'a>(
     // Debug (`/tmp/otto-slow`): log the frame outcome — pairs with the
     // pre-render SLOW frame line so a frozen screen can be attributed to
     // either "no flip queued" (rendered=false) or a post-queue problem.
-    if std::path::Path::new("/tmp/otto-slow").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-slow") {
         tracing::info!(target: "otto::planes", "SLOW result: rendered={rendered}");
     }
 

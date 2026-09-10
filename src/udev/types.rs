@@ -276,10 +276,18 @@ pub struct SurfaceData {
     /// on the next rebuild. Tracked separately from `backdrop_dirty`, which
     /// also fires for middle-plane damage.
     pub(super) backdrop_bg_dirty: bool,
-    /// Lower-plane damage occurred while no blur consumer needed the
-    /// composite (or outside every active consumer's region); the next
-    /// frame with an active consumer must rebuild even without new damage.
+    /// Staleness carried across frames that skipped a rebuild: damage hit a
+    /// consumer's region but the rate limit deferred it, or damage landed
+    /// while no consumer was tracking anything. The next frame with an
+    /// active consumer must rebuild even without new damage.
     pub(super) backdrop_dirty: bool,
+    /// The consumer regions the composite was last kept fresh for. Damage
+    /// outside them is dropped, so a change in the set forces a rebuild.
+    pub(super) backdrop_interest: Vec<layers::skia::Rect>,
+    /// On-screen damage that missed every tracked region since the last
+    /// rebuild. If the regions change to cover any of it, the composite is
+    /// stale there and rebuilds at once.
+    pub(super) backdrop_missed_damage: Option<layers::skia::Rect>,
     /// When the composite was last rebuilt because of desktop (bg/middle/
     /// promoted-window) damage. Those rebuilds are rate-limited: a client
     /// committing at frame rate under a blur consumer (a maximized window's
