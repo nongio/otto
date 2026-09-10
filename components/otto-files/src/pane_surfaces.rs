@@ -178,6 +178,14 @@ struct PaneSurface {
     /// it: a parent-relative position sent after the centring would simply
     /// undo it.
     output_centered: bool,
+    /// A size and position the compositor has not been told about yet.
+    ///
+    /// The style protocol applies a size the moment it arrives, not on the
+    /// next commit, so claiming a new size while the old buffer is still
+    /// attached has the compositor draw the old pixels stretched to the new
+    /// bounds until the paint lands. A resize therefore waits here and is
+    /// claimed by [`PaneSurface::draw`], right after the buffer that fits it.
+    claim: Option<(Rect, f32)>,
 }
 
 /// The per-column subsurfaces, pooled the way the scene pools its pane layers.
@@ -362,7 +370,7 @@ impl PaneSurfaces {
             // the correct half rather than a squeezed whole.
             let width = full.width();
             let origin = (clipped.left, clipped.top);
-            pane.surface.draw(|canvas| {
+            pane.draw(|canvas| {
                 canvas.save();
                 canvas.translate((dx, 0.0));
                 scene::paint_column(canvas, f, depth, width);
@@ -561,7 +569,7 @@ impl PaneSurfaces {
                     PALETTE_MARGIN - palette.resting.top,
                 );
                 let data = palette.data();
-                pane.surface.draw(|canvas| {
+                pane.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
                     canvas.save();
                     canvas.translate(shift);
@@ -653,7 +661,7 @@ impl PaneSurfaces {
         // buffer is not mapped and takes no input.
         if resized || pane.key == 0 {
             pane.key = 1;
-            pane.surface.draw(|canvas| {
+            pane.draw(|canvas| {
                 canvas.clear(skia_safe::Color::TRANSPARENT);
             });
             painted = true;
@@ -784,7 +792,7 @@ impl PaneSurfaces {
         pane.key = key;
         let origin = (rect.left, rect.top);
         let started = qv_trace::now();
-        pane.surface.draw(|canvas| {
+        pane.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
@@ -878,7 +886,7 @@ impl PaneSurfaces {
             .and_then(otto_kit::preview::Pixels::to_image);
         let theme = f.theme.clone();
         let origin = (rect.left, rect.top);
-        pane.surface.draw(|canvas| {
+        pane.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
@@ -950,7 +958,7 @@ impl PaneSurfaces {
         pane.bar = bar;
         let origin = (strip.left, strip.top);
         let theme = f.theme;
-        pane.surface.draw(|canvas| {
+        pane.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
@@ -1086,6 +1094,7 @@ impl PaneSurfaces {
             hidden: false,
             takes_input: false,
             output_centered: false,
+            claim: None,
         })
     }
 }
@@ -1122,19 +1131,46 @@ impl PaneSurface {
         // A move does too, now that the bar is drawn in window coordinates
         // shifted by this rect's origin.
         self.bar = f32::NAN;
+        // The wl position is what the pointer is hit-tested against; it is
+        // parent state and lands with the parent's commit, so it is safe to
+        // send now whatever the buffer is.
         self.surface.set_position(rect.left as i32, rect.top as i32);
-        if let Some(style) = self.surface.layer() {
-            // Claiming the size stops the compositor re-deriving both size and
-            // position from the surface tree — see `ScrollSurfaces`, which
-            // depends on the same rule.
+        if resized || self.claim.is_some() {
+            // Not claimed yet: the buffer on screen is the old size, and the
+            // compositor would stretch it. The draw that follows claims it,
+            // with the new buffer in hand — and a move that lands while a
+            // claim is waiting joins it rather than overtaking it.
+            self.claim = Some((rect, scale));
+            return resized;
+        }
+        Self::claim_bounds(&self.surface, rect, scale);
+        self.surface.commit();
+        resized
+    }
+
+    /// Tell the compositor where this surface is and how big. Claiming the
+    /// size stops it re-deriving both size and position from the surface
+    /// tree — see `ScrollSurfaces`, which depends on the same rule.
+    fn claim_bounds(surface: &SubsurfaceSurface, rect: Rect, scale: f32) {
+        if let Some(style) = surface.layer() {
             style.set_size(
                 (rect.width() * scale) as f64,
                 (rect.height() * scale) as f64,
             );
             style.set_position((rect.left * scale) as f64, (rect.top * scale) as f64);
         }
-        self.surface.commit();
-        resized
+    }
+
+    /// Paint the surface, and claim any size it has been waiting to claim.
+    ///
+    /// The paint attaches and commits a buffer of the current size; the claim
+    /// goes out right behind it, in the same flush, so the compositor never
+    /// holds a new size with an old buffer.
+    fn draw(&mut self, paint: impl FnOnce(&skia_safe::Canvas)) {
+        self.surface.draw(paint);
+        if let Some((rect, scale)) = self.claim.take() {
+            Self::claim_bounds(&self.surface, rect, scale);
+        }
     }
 
     /// Say whether the surface answers for the pointer over its own area.

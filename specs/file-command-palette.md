@@ -262,6 +262,14 @@ the palette adds no new capability.
   request) for what it says back. The two shipped samples,
   `components/otto-files/scripts/zip` and `unzip`, are the proof of the
   boundary and the template for the next ones (conversion, OCR).
+- **A resize is claimed after its buffer, never before.** The style
+  protocol applies a size the moment the request arrives, so telling the
+  compositor a new size while the old buffer is still attached has it draw
+  the old pixels stretched into the new bounds until the paint lands — the
+  card visibly stretches as the list grows and shrinks under typing. A pane
+  surface therefore holds a resize as a pending claim and sends the size and
+  position right behind the paint that carries the matching buffer, in the
+  same flush; a move alone is claimed at once.
 - **A dry run's lines can be toggled.** Down from the field moves the
   highlight into the dry run, Space leaves the highlighted file out of the
   run or brings it back, and a click on a line does the same; a line left
