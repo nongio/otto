@@ -5453,7 +5453,65 @@ impl Browser {
             items.push(MenuItem::action(label).with_action_id("trash"));
         }
 
+        // What the providers offer for this situation — scripts, the pattern
+        // rename — after the window's own items. The menu asks the same
+        // registry the palette does, so a script that shows up in one shows
+        // up in the other; picking one goes through the palette, which is
+        // where a command's argument and its dry run live.
+        let situation = self.situation();
+        let provided: Vec<command::Command> = self
+            .commands
+            .commands(&situation)
+            .into_iter()
+            .filter(|command| command.namespace().is_some())
+            .collect();
+        if !provided.is_empty() {
+            if !items.is_empty() {
+                items.push(MenuItem::separator());
+            }
+            for command in provided {
+                let label = if command.arg.is_some() {
+                    format!("{}…", command.title)
+                } else {
+                    command.title.clone()
+                };
+                items.push(MenuItem::action(label).with_action_id(command.id));
+            }
+        }
+
         items
+    }
+
+    /// Carry out a provider command picked from a menu.
+    ///
+    /// One that takes an argument opens the palette in its field, initial
+    /// value and dry run included, so the menu is a shortcut into the same
+    /// interaction rather than a second one; one that does not runs at once.
+    fn run_menu_command(&mut self, id: &str, serial: u32) {
+        let takes_arg = self
+            .commands
+            .commands(&self.situation())
+            .iter()
+            .any(|command| command.id == id && command.arg.is_some());
+        if takes_arg {
+            self.open_palette();
+            let opened = self
+                .palette
+                .as_mut()
+                .is_some_and(|palette| palette.open_on(id));
+            if opened {
+                self.preview_palette_argument();
+                self.palette_reveal_highlight();
+            } else {
+                self.close_palette();
+            }
+            return;
+        }
+        match self.run_request(&command::Request::new(id, None), serial) {
+            Ok(_) => {}
+            Err(error) => self.status = Some(error),
+        }
+        self.dirty = true;
     }
 
     /// Say out loud what an operation did.
@@ -9414,6 +9472,8 @@ impl FilesApp {
                                         browser.dirty = true;
                                     }
                                 }
+                                // A provider's command, by its namespaced id.
+                                id if id.contains(':') => browser.run_menu_command(id, serial),
                                 _ => {}
                             }
                             drop(browser);
@@ -10638,6 +10698,35 @@ mod palette_tests {
         assert_eq!(browser.undo.len(), undos - 1);
         assert!(dir.0.join("IMG_001.jpg").exists());
         assert!(dir.0.join("IMG_002.jpg").exists());
+    }
+
+    /// The right-click menu lists what the providers offer, and picking one
+    /// that takes an argument lands in the palette's field with the dry run
+    /// already showing.
+    #[test]
+    fn the_context_menu_offers_provider_commands_through_the_palette() {
+        let (mut browser, _dir) = browser_over(&["a.jpg", "b.jpg"]);
+        browser.clear_selection();
+        browser.select_matching("*.jpg").unwrap();
+        let items = browser.context_menu_items(-1.0, -1.0);
+        let labels: Vec<String> = items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                otto_kit::prelude::MenuItemKind::Action { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect();
+        let rename = otto_kit::t_owned!("files-rename-many", count = 2);
+        assert!(
+            labels.iter().any(|l| l == &format!("{rename}…")),
+            "{labels:?}"
+        );
+
+        browser.run_menu_command(rename::RENAME_MANY, 0);
+        let palette = browser.palette.as_ref().expect("the palette opened");
+        assert!(palette.prompt().is_some(), "in the argument field");
+        assert_eq!(palette.input().value(), "{name}");
+        assert_eq!(browser.palette_rows().len(), 2, "the dry run is showing");
     }
 
     /// Down into the dry run and Space leaves a file out; the dry run is

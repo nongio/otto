@@ -283,6 +283,12 @@ the palette adds no new capability.
   the field, where a space is a space, and what was toggled out stays out.
   The provider never learns of the toggle: it is asked about a smaller
   selection, and the host threads its lines back among the names left out.
+- **The right-click menu offers the providers' commands too.** After the
+  window's own items, the menu asks the same registry the palette does and
+  lists whatever applies to the selection — scripts, the pattern rename — so
+  a script is never palette-only. A command with an argument is shown with
+  an ellipsis and opens the palette in its field, initial value and dry run
+  included; one without runs at once.
 - **Availability is computed against a snapshot, not the live browser.** A
   provider is asked for its commands with a description of the situation —
   where the window is, what is selected, whether it is the Trash, what the

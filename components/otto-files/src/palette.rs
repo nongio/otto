@@ -664,6 +664,27 @@ impl Palette {
 
     // === Modes ===
 
+    /// Open straight onto one command, by id — what a menu item does when it
+    /// stands for a palette command. A command that takes an argument opens
+    /// in its field; one that does not is simply highlighted, ready for
+    /// Return. `false` when no such command is on offer.
+    pub fn open_on(&mut self, id: &str) -> bool {
+        let Some(index) = self.commands.iter().position(|command| command.id == id) else {
+            return false;
+        };
+        if let Some(row) = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Command(i) if *i == index))
+        {
+            self.highlight = row;
+        }
+        if self.commands[index].arg.is_some() {
+            self.enter_arg(index);
+        }
+        true
+    }
+
     fn enter_arg(&mut self, command: usize) {
         let Some(spec) = self.commands[command].arg.clone() else {
             return;
