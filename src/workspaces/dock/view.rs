@@ -1293,15 +1293,21 @@ impl DockView {
     }
 
     pub fn available_icon_size(&self) -> (f32, f32) {
-        let state = self.get_state();
+        // Runs every frame (the plane strip thickness depends on it), so
+        // read the counts under the lock rather than cloning the model.
+        let (width, apps_len, windows_len) = {
+            let state = self.state.read().unwrap();
+            (
+                state.width,
+                state.display_entries_len() as f32,
+                state.minimized_windows.len() as f32,
+            )
+        };
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
-        let available_width = state.width as f32 - 20.0 * draw_scale;
+        let available_width = width as f32 - 20.0 * draw_scale;
         let base_icon_size = 95.0;
         let dock_size_multiplier = Config::with(|c| c.dock.size.clamp(0.5, 2.0)) as f32;
         let icon_size: f32 = base_icon_size * dock_size_multiplier * draw_scale;
-
-        let apps_len = self.display_entries(&state).len() as f32;
-        let windows_len = state.minimized_windows.len() as f32;
 
         let mut component_padding_h: f32 = icon_size * 0.09 * draw_scale;
         if component_padding_h > 5.0 * draw_scale {

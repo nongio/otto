@@ -123,7 +123,12 @@ underneath it.
 
 The whole dock strip is also a candidate for its own hardware plane — see
 [DRM Planes](drm_plane.md), where the dock buffer is a band rather than a
-full-screen buffer precisely so its animations stay cheap.
+full-screen buffer precisely so its animations stay cheap. The strip's
+thickness is asked for every frame (`plane_strip_thickness_px` →
+`available_icon_size`), so that path reads the width and entry count under
+the model's read lock instead of cloning the model. The blur backdrop behind
+the bar tracks the bar's own frosted shapes, not the strip: a window
+repainting in the empty part of the band does not rebuild it.
 
 ## Configuration
 
