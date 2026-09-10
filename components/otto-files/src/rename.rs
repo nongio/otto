@@ -433,15 +433,13 @@ impl CommandProvider for RenameProvider {
     }
 
     fn commands(&self, situation: &Situation) -> Vec<Command> {
-        if situation.trash || situation.selection.is_empty() {
+        // A batch, by definition: one file has the plain Rename, and offering
+        // a pattern for it would put two renames in the list for one thing.
+        if situation.trash || situation.selection.len() < 2 {
             return Vec::new();
         }
         let count = situation.selection.len();
-        let title = if count > 1 {
-            otto_kit::t_owned!("files-rename-many", count = count as i64)
-        } else {
-            otto_kit::t_owned!("files-rename-pattern")
-        };
+        let title = otto_kit::t_owned!("files-rename-many", count = count as i64);
         vec![Command::new(RENAME_MANY, title, Group::File)
             .with_keywords(["batch", "pattern", "number", "sequence", "rename"])
             .with_arg(
@@ -608,16 +606,21 @@ mod provider_tests {
     }
 
     #[test]
-    fn it_is_offered_for_a_selection_and_never_in_the_trash() {
+    fn it_is_offered_for_several_files_and_never_for_one_or_in_the_trash() {
         let dir = Path::new("/tmp/x");
         assert!(RenameProvider
             .commands(&situation(dir, &[], &[]))
             .is_empty());
-        let one = RenameProvider.commands(&situation(dir, &["a.txt"], &["a.txt"]));
-        assert_eq!(one.len(), 1);
-        assert_eq!(one[0].id, RENAME_MANY);
-        assert!(one[0].arg.as_ref().is_some_and(|arg| arg.preview));
-        let mut trash = situation(dir, &["a.txt"], &[]);
+        // One file has the plain Rename; a pattern is for a batch.
+        assert!(RenameProvider
+            .commands(&situation(dir, &["a.txt"], &["a.txt"]))
+            .is_empty());
+        let two =
+            RenameProvider.commands(&situation(dir, &["a.txt", "b.txt"], &["a.txt", "b.txt"]));
+        assert_eq!(two.len(), 1);
+        assert_eq!(two[0].id, RENAME_MANY);
+        assert!(two[0].arg.as_ref().is_some_and(|arg| arg.preview));
+        let mut trash = situation(dir, &["a.txt", "b.txt"], &[]);
         trash.trash = true;
         assert!(RenameProvider.commands(&trash).is_empty());
     }

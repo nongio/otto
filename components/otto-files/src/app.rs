@@ -1080,6 +1080,19 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Go to Recent from wherever the window is, as a navigation: the place
+    /// being left is recorded behind Back, and a search that was up comes
+    /// down — results are not somewhere Recent can sit on top of. The one
+    /// way in for the sidebar and the palette alike.
+    fn enter_recent(&mut self) {
+        if self.recent {
+            return;
+        }
+        self.record_location();
+        self.close_search();
+        self.show_recent();
+    }
+
     /// Leave the Recent listing, on the way to somewhere real.
     ///
     /// Clears the flag without navigating: the caller is about to, and doing
@@ -4364,6 +4377,11 @@ impl Browser {
             }
             id::GO_TO_PLACE => {
                 let path = PathBuf::from(arg);
+                // The Recent place is a sentinel, not a folder.
+                if crate::recent::is_sentinel(&path) {
+                    self.enter_recent();
+                    return Ok(Followup::Nothing);
+                }
                 if !path.is_dir() {
                     return Err(otto_kit::t_owned!("files-no-such-folder", path = arg));
                 }
@@ -4423,7 +4441,7 @@ impl Browser {
                     self.run_search();
                 }
             }
-            id::RECENT => self.show_recent(),
+            id::RECENT => self.enter_recent(),
             other => return Err(format!("Unknown command: {other}")),
         }
         Ok(Followup::Nothing)
@@ -4771,7 +4789,8 @@ impl Browser {
         if viewport.is_empty() {
             return;
         }
-        let (top, item_h) = view::item_span(width, height, self.mode, index);
+        let (top, item_h) =
+            view::item_span_in(width, height, self.mode, &self.recent_sections, index);
 
         let scroll = &mut self.columns[depth].scroll;
         let offset = scroll.offset();
@@ -9584,9 +9603,7 @@ impl FilesApp {
                             // showing a folder refuses half its own menu.
                             browser.active_place = Some(index);
                             if browser.places[index].recent {
-                                browser.record_location();
-                                browser.close_search();
-                                browser.show_recent();
+                                browser.enter_recent();
                             } else {
                                 let path = browser.places[index].path.clone();
                                 browser.leave_synthetic_to(&path);
@@ -10698,6 +10715,25 @@ mod palette_tests {
         assert_eq!(browser.undo.len(), undos - 1);
         assert!(dir.0.join("IMG_001.jpg").exists());
         assert!(dir.0.join("IMG_002.jpg").exists());
+    }
+
+    /// Recent reached from the palette — by name or as the place — takes a
+    /// search down with it, the way the sidebar already did.
+    #[test]
+    fn going_to_recent_from_the_palette_closes_the_search() {
+        for id in [command::id::RECENT, command::id::GO_TO_PLACE] {
+            let (mut browser, _dir) = browser_over(&["a.txt"]);
+            browser.searching = true;
+            view::set_search_band(true);
+            let arg = (id == command::id::GO_TO_PLACE).then(|| crate::recent::SENTINEL.to_string());
+            browser
+                .run_request(&command::Request::new(id, arg), 0)
+                .unwrap();
+            assert!(browser.recent, "{id}: in Recent");
+            assert!(!browser.searching, "{id}: the search came down");
+            assert!(browser.search.is_none(), "{id}: no search field either");
+            assert!(!browser.back.is_empty(), "{id}: the search is behind Back");
+        }
     }
 
     /// The right-click menu lists what the providers offer, and picking one

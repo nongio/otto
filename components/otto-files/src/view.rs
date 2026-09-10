@@ -2447,6 +2447,23 @@ pub fn pane_content_height_in(
 /// the geometry a "scroll the cursor into view" needs; the other half is the
 /// pane's viewport height, from [`pane_viewport`].
 pub fn item_span(width: f32, height: f32, mode: ViewMode, index: usize) -> (f32, f32) {
+    item_span_in(width, height, mode, GridSections::FLAT, index)
+}
+
+/// [`item_span`] against a sectioned grid — Recent, whose day headings push
+/// every tile below them further down than the flat lattice says.
+pub fn item_span_in(
+    width: f32,
+    height: f32,
+    mode: ViewMode,
+    sections: &GridSections,
+    index: usize,
+) -> (f32, f32) {
+    if mode == ViewMode::Grid && !sections.is_flat() {
+        let area = content_viewport(width, height, mode);
+        let cell = grid_cell_rect_in(area, sections, index, 0.0);
+        return (cell.top - area.top, CELL_H);
+    }
     match mode {
         ViewMode::List => (index as f32 * ROW_H, ROW_H),
         // Miller rows start a little way down the pane.

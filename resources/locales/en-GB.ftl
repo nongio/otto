@@ -365,7 +365,6 @@ files-nothing-matches = Nothing matches “{ $pattern }”
 
 # Renaming a selection from one pattern — see `rename.rs` for the pattern.
 files-rename-many = Rename { $count } Items
-files-rename-pattern = Rename with Pattern
 # The dry run's summary line under the palette's rows.
 files-rename-preview = Renames { $count } of { $total }
 files-rename-preview-unchanged = Nothing would change

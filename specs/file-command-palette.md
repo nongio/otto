@@ -164,7 +164,7 @@ the palette adds no new capability.
 | Edit | Select Matching | glob pattern, shown as it is typed |
 | File | Move to Folder | path (folders only) |
 | File | New Folder with Selection | name, optional; empty means the default |
-| File | Rename N Items / Rename with Pattern | pattern, shown as a dry run while it is typed |
+| File | Rename N Items | pattern, shown as a dry run while it is typed; two or more selected |
 | View | List View, Grid View, Column View | — (the one already on is not offered) |
 | View | Change View | choice of the three |
 | View | Sort By | choice of sort keys |
@@ -179,8 +179,9 @@ the palette adds no new capability.
 
 ### Renaming a selection from a pattern
 
-- Offered whenever anything is selected, outside the Trash: "Rename 3 Items",
-  or "Rename with Pattern" for one. The argument is the new name with holes in
+- Offered when two or more items are selected, outside the Trash: "Rename 3
+  Items". One file has the plain Rename, and a pattern beside it would be two
+  renames in the list for one thing. The argument is the new name with holes in
   it, filled from each file in turn; it opens as `{name}` so that Return with
   nothing typed changes nothing.
 - The holes: `{name}` and `{ext}` are the original name and extension; `{n}`
