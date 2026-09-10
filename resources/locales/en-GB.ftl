@@ -378,6 +378,11 @@ files-rename-invalid = { $count ->
    *[other] { $count } names would be empty
 }
 files-renamed-count = Renamed { $count } items
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = Running { $title }…
+files-script-failed-quietly = The script failed without saying why
+files-script-timed-out = The script took too long
 files-nothing-selected = Nothing is selected
 files-cant-move-into-itself = A folder can’t be moved into itself
 # $count is how many entries a pattern selected.

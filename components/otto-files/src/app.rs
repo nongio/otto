@@ -1,6 +1,6 @@
 use crate::{
     command, model, palette, pane_surfaces, perf, picker, quickview, remembered, rename, scene,
-    thumbcache, thumbnails, view,
+    scripts, thumbcache, thumbnails, view,
 };
 
 use std::cell::RefCell;
@@ -919,6 +919,7 @@ impl Browser {
             commands: {
                 let mut registry = command::Registry::builtin();
                 registry.add(Box::new(rename::RenameProvider));
+                registry.add(Box::new(scripts::ScriptProvider::new()));
                 registry
             },
             path_entry: None,
@@ -6145,6 +6146,15 @@ impl Browser {
         }
         if let Some(depth) = vanished {
             self.follow_vanished(depth);
+            changed = true;
+        }
+        // What a provider's earlier runs — a script, most likely — have
+        // finished with, applied the same way as a run that answered at once.
+        for landed in self.commands.poll() {
+            match landed {
+                Ok(effect) => self.apply_effect(effect),
+                Err(reason) => self.status = Some(reason),
+            }
             changed = true;
         }
         changed

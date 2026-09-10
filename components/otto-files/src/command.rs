@@ -20,6 +20,7 @@
 use std::path::PathBuf;
 
 use otto_kit::matching;
+use serde::Serialize;
 
 // ---------------------------------------------------------------------------
 // The vocabulary
@@ -221,7 +222,7 @@ pub struct Request {
 // ---------------------------------------------------------------------------
 
 /// A place the window can be sent, as a provider sees it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PlaceRef {
     pub label: String,
     pub path: PathBuf,
@@ -233,7 +234,7 @@ pub struct PlaceRef {
 /// Deliberately a description rather than a handle. A provider that does not
 /// live in this process must be able to answer the same question from the same
 /// facts, so there is nothing here it could not be sent.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Situation {
     /// The directory the active pane is showing.
     pub path: PathBuf,
@@ -329,6 +330,14 @@ pub trait CommandProvider: Send {
         let _ = situation;
         Err(format!("{} cannot be run here", request.id))
     }
+
+    /// Anything a run started earlier has finished with. A provider whose
+    /// commands take a while — a script compressing a folder — answers `run`
+    /// at once with what to say meanwhile, and hands the real effect back
+    /// here when it lands. Called on the host's idle tick.
+    fn poll(&mut self) -> Vec<Result<Effect, String>> {
+        Vec::new()
+    }
 }
 
 /// A dry run of an argument as typed, for the palette to show.
@@ -409,6 +418,14 @@ impl Registry {
             .iter_mut()
             .find(|provider| provider.namespace() == namespace)?;
         Some(provider.run(request, situation))
+    }
+
+    /// Collect what every provider's earlier runs have finished with.
+    pub fn poll(&mut self) -> Vec<Result<Effect, String>> {
+        self.providers
+            .iter_mut()
+            .flat_map(|provider| provider.poll())
+            .collect()
     }
 
     /// Ask the provider a request names what it would do. `None` for the

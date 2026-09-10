@@ -30,6 +30,7 @@ pub mod recent;
 pub mod remembered;
 pub mod rename;
 pub mod scene;
+pub mod scripts;
 pub mod search;
 pub mod thumbcache;
 pub mod thumbnails;

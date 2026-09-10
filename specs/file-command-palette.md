@@ -240,14 +240,24 @@ the palette adds no new capability.
   reaches the window any other way. Rename is built this way, in-process, as
   the proof — it is exactly the shape a script takes.
 - **Scripts live in `~/.config/otto/files-scripts/`** (under
-  `$XDG_CONFIG_HOME`). A script is one more provider on the same seam, in
-  another process: it describes its commands once, at startup, with the
-  conditions they need — a selection, certain extensions — so that gathering
-  commands on Ctrl+P still touches no disk; it is asked for a dry run and to
-  run with the situation and the request as data. The first two, to prove the
-  boundary, are zip and unzip. Slow scripts — OCR, conversion — will need to
-  finish later and report progress; the effect is data so that can be added
-  without reshaping it.
+  `$XDG_CONFIG_HOME`; `OTTO_FILES_SCRIPTS` overrides the directory). Every
+  executable there is one more provider on the same seam, in another process
+  (`scripts.rs`, which documents the wire format). At startup, on a thread of
+  its own, each is asked once to `describe` its commands together with the
+  conditions they need — how many targets, which extensions, files or folders
+  — so that Ctrl+P still touches no disk: the host checks the conditions
+  against the situation itself. A command's ids are `scripts:<script>.<id>`.
+  A script is asked to `preview` (a dry run, under a deadline of well under a
+  second, since it runs under the keyboard) and to `run`, each with the
+  request, the targets and the whole situation as JSON on stdin; a run's
+  changes come back as data and are recorded for undo exactly as an
+  in-process provider's are. A run happens on a worker thread and its effect
+  lands through the provider's `poll` on the browser's idle tick, so a slow
+  script never holds the window; the status line says it is running
+  meanwhile. A non-zero exit is a failure, and the last line of stderr is the
+  message shown. The two shipped samples, `components/otto-files/scripts/zip`
+  and `unzip`, are the proof of the boundary and the template for the next
+  ones (conversion, OCR).
 - **Availability is computed against a snapshot, not the live browser.** A
   provider is asked for its commands with a description of the situation —
   where the window is, what is selected, whether it is the Trash, what the

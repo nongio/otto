@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Extract the selected zip archives, each into a folder of its own.
+
+A sample script for Otto Files' command palette. Copy it to
+~/.config/otto/files-scripts/ and it shows up as "Extract Archive" whenever
+every selected item is a .zip. The protocol is described at the top of
+components/otto-files/src/scripts.rs.
+
+    unzip describe          what this script offers, once, at startup
+    unzip preview < json    what a run would do — nothing is touched
+    unzip run < json        do it, and say what changed
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+
+def describe():
+    return {
+        "commands": [
+            {
+                "id": "extract",
+                "title": "Extract Archive",
+                "keywords": ["unzip", "unpack", "decompress", "expand"],
+                "group": "file",
+                "when": {"targets": "some", "extensions": ["zip"], "kinds": "files"},
+                "arg": {
+                    "prompt": "Extract into",
+                    "label": "folder",
+                    "placeholder": "{stem}",
+                    "initial": "{stem}",
+                    "preview": True,
+                },
+                "undo": "Extract",
+            }
+        ]
+    }
+
+
+def plan(request):
+    """One (archive, folder, conflict) per target. The argument is a pattern
+    so that several archives can each get their own folder: `{stem}` is the
+    archive's name without `.zip`, `{n}` counts from 1."""
+    pattern = (request.get("arg") or "").strip() or "{stem}"
+    directory = request["situation"]["path"]
+    out = []
+    seen = set()
+    for n, archive in enumerate(request["targets"], start=1):
+        stem = os.path.splitext(os.path.basename(archive))[0]
+        name = pattern.replace("{stem}", stem).replace("{n}", str(n))
+        folder = os.path.join(directory, name)
+        conflict = os.path.exists(folder) or "/" in name or folder in seen
+        seen.add(folder)
+        out.append((archive, folder, conflict))
+    return out
+
+
+def preview(request):
+    plans = plan(request)
+    rows = [
+        {
+            "from": os.path.basename(archive),
+            "to": os.path.basename(folder) + "/",
+            "conflict": conflict,
+        }
+        for archive, folder, conflict in plans
+    ]
+    conflicts = sum(1 for _, _, c in plans if c)
+    if conflicts:
+        note = f"{conflicts} folder{'s' if conflicts != 1 else ''} already there"
+    else:
+        note = f"Extracts {len(plans)} archive{'s' if len(plans) != 1 else ''}"
+    return {"rows": rows, "note": note}
+
+
+def run(request):
+    plans = plan(request)
+    if any(conflict for _, _, conflict in plans):
+        sys.exit(preview(request)["note"])
+    changes = []
+    for archive, folder, _ in plans:
+        result = subprocess.run(
+            ["unzip", "-q", "-d", folder, archive],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            sys.exit((result.stderr or result.stdout).strip() or "unzip failed")
+        changes.append({"kind": "created", "path": folder})
+    count = len(plans)
+    return {
+        "status": f"Extracted {count} archive{'s' if count != 1 else ''}",
+        "changes": changes,
+        "reload": True,
+    }
+
+
+def main():
+    verb = sys.argv[1] if len(sys.argv) > 1 else ""
+    if verb == "describe":
+        out = describe()
+    elif verb in ("preview", "run"):
+        request = json.load(sys.stdin)
+        out = preview(request) if verb == "preview" else run(request)
+    else:
+        sys.exit(f"usage: {sys.argv[0]} describe|preview|run")
+    json.dump(out, sys.stdout)
+
+
+if __name__ == "__main__":
+    main()
