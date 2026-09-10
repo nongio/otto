@@ -3597,6 +3597,41 @@ impl Browser {
         }
     }
 
+    /// The situation a palette command is previewed and run against: the
+    /// window's, less whatever the dry run's lines were toggled out of it.
+    fn palette_situation(&self) -> command::Situation {
+        let mut situation = self.situation();
+        let excluded = self
+            .palette
+            .as_ref()
+            .map(|palette| palette.excluded())
+            .unwrap_or_default();
+        if !excluded.is_empty() {
+            situation.selection.retain(|path| {
+                !path
+                    .file_name()
+                    .is_some_and(|name| excluded.contains(&*name.to_string_lossy()))
+            });
+        }
+        situation
+    }
+
+    /// What a palette command would act on, by name and in order: the
+    /// selection, or the cursor's entry when nothing is selected. The list
+    /// a dry run's lines are threaded onto.
+    fn palette_targets(&self) -> Vec<String> {
+        let situation = self.situation();
+        if situation.selection.is_empty() {
+            return situation.cursor_name.into_iter().collect();
+        }
+        situation
+            .selection
+            .iter()
+            .filter_map(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect()
+    }
+
     /// Ctrl+P. Asks every provider what it can offer *now* and opens onto the
     /// answer; nothing re-gathers while the palette is up.
     fn open_palette(&mut self) {
@@ -3684,21 +3719,26 @@ impl Browser {
             self.dirty = true;
             return;
         }
-        // A provider's command: ask it for the dry run and show that.
+        // A provider's command: ask it for the dry run — without whatever
+        // has been toggled out — and thread its lines back among the names
+        // left out, so those can be brought back.
         if command::Request::new(id.clone(), None)
             .namespace()
             .is_some()
         {
-            let situation = self.situation();
+            let situation = self.palette_situation();
+            let targets = self.palette_targets();
             let request = command::Request::new(id, Some(typed));
             let preview = self.commands.preview(&request, &situation);
             if let Some(palette) = self.palette.as_mut() {
-                match preview {
-                    Some(preview) => {
-                        palette.set_preview(preview.rows);
-                        palette.set_note(preview.note);
-                    }
-                    None => palette.set_preview(Vec::new()),
+                let excluded = palette.excluded();
+                let (rows, note) = match preview {
+                    Some(preview) => (preview.rows, preview.note),
+                    None => (Vec::new(), None),
+                };
+                palette.set_preview(palette::PreviewLine::merge(&targets, &excluded, rows));
+                if note.is_some() {
+                    palette.set_note(note);
                 }
             }
             self.dirty = true;
@@ -3825,6 +3865,17 @@ impl Browser {
             return;
         }
         if let Some(row) = self.palette_row_under(x, y) {
+            // A dry-run line is toggled, not picked: the file leaves the run
+            // or comes back, and the dry run is made again without it.
+            let toggled = self
+                .palette
+                .as_mut()
+                .is_some_and(|palette| palette.toggle_row(row));
+            if toggled {
+                self.preview_palette_argument();
+                self.dirty = true;
+                return;
+            }
             let picked = self
                 .palette
                 .as_mut()
@@ -4102,12 +4153,13 @@ impl Browser {
                     PaletteRowData {
                         kind: view::PaletteRowKind::Preview {
                             conflict: line.conflict,
+                            excluded: line.excluded,
                         },
                         title: line.to.clone(),
                         badge: None,
                         subtitle: Some(line.from.clone()),
                         shortcut: None,
-                        highlighted: false,
+                        highlighted: highlight == Some(index),
                     }
                 }
             })
@@ -4271,7 +4323,7 @@ impl Browser {
         use command::id;
 
         if request.namespace().is_some() {
-            let situation = self.situation();
+            let situation = self.palette_situation();
             let effect = self
                 .commands
                 .run(request, &situation)
@@ -10511,11 +10563,17 @@ mod palette_tests {
         assert_eq!(rows[0].subtitle.as_deref(), Some("IMG_001.jpg"));
         assert_eq!(
             rows[0].kind,
-            view::PaletteRowKind::Preview { conflict: false }
+            view::PaletteRowKind::Preview {
+                conflict: false,
+                excluded: false
+            }
         );
         assert_eq!(
             rows[1].kind,
-            view::PaletteRowKind::Preview { conflict: true },
+            view::PaletteRowKind::Preview {
+                conflict: true,
+                excluded: false
+            },
             "Holiday 2.jpg is already in the folder"
         );
         assert_eq!(
@@ -10561,6 +10619,105 @@ mod palette_tests {
         assert_eq!(browser.undo.len(), undos - 1);
         assert!(dir.0.join("IMG_001.jpg").exists());
         assert!(dir.0.join("IMG_002.jpg").exists());
+    }
+
+    /// Down into the dry run and Space leaves a file out; the dry run is
+    /// made again without it, and so is the run. A click on a line does the
+    /// same, and a space typed in the field is still a space.
+    #[test]
+    fn a_dry_run_line_can_be_toggled_out_of_the_run_and_back() {
+        let (mut browser, dir) = browser_over(&["a.jpg", "b.jpg", "c.jpg"]);
+        browser.clear_selection();
+        browser.select_matching("*.jpg").unwrap();
+        browser.open_palette();
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        let press = |browser: &mut Browser, key: palette::Key| {
+            let outcome = browser.palette.as_mut().unwrap().on_key(key, mods);
+            browser.settle_palette(outcome, 0);
+        };
+        let type_in = |browser: &mut Browser, text: &str| {
+            for ch in text.chars() {
+                press(browser, palette::Key::Edit(TextInputKey::Char(ch)));
+            }
+        };
+        type_in(&mut browser, "rename 3");
+        press(&mut browser, palette::Key::Tab);
+        type_in(&mut browser, "Pic {n}");
+        let titles = |browser: &Browser| -> Vec<(String, String, bool)> {
+            browser
+                .palette_rows()
+                .into_iter()
+                .map(|row| {
+                    let excluded = matches!(
+                        row.kind,
+                        view::PaletteRowKind::Preview { excluded: true, .. }
+                    );
+                    (row.subtitle.unwrap_or_default(), row.title, excluded)
+                })
+                .collect()
+        };
+        assert_eq!(
+            titles(&browser),
+            vec![
+                ("a.jpg".into(), "Pic 1.jpg".into(), false),
+                ("b.jpg".into(), "Pic 2.jpg".into(), false),
+                ("c.jpg".into(), "Pic 3.jpg".into(), false),
+            ]
+        );
+
+        // Down onto the first line, down again, Space: b is out and c takes
+        // its number.
+        press(&mut browser, palette::Key::Down);
+        press(&mut browser, palette::Key::Down);
+        assert_eq!(browser.palette.as_ref().unwrap().highlighted(), Some(1));
+        press(&mut browser, palette::Key::Edit(TextInputKey::Char(' ')));
+        assert_eq!(
+            titles(&browser),
+            vec![
+                ("a.jpg".into(), "Pic 1.jpg".into(), false),
+                ("b.jpg".into(), String::new(), true),
+                ("c.jpg".into(), "Pic 2.jpg".into(), false),
+            ]
+        );
+        assert!(
+            browser.palette_rows()[1].highlighted,
+            "the highlight stays put"
+        );
+        assert_eq!(
+            browser.palette_message().as_deref(),
+            Some(otto_kit::t_owned!("files-rename-preview", count = 2, total = 2).as_str())
+        );
+
+        // Space again brings it back; a click on the third line takes that
+        // one out instead.
+        press(&mut browser, palette::Key::Edit(TextInputKey::Char(' ')));
+        assert!(!titles(&browser)[1].2);
+        assert!(browser.palette.as_mut().unwrap().toggle_row(2));
+        browser.preview_palette_argument();
+        assert_eq!(titles(&browser)[2], ("c.jpg".into(), String::new(), true));
+
+        // Typing goes back to the field, where a space is a space.
+        press(&mut browser, palette::Key::Edit(TextInputKey::Char('s')));
+        press(&mut browser, palette::Key::Edit(TextInputKey::Char(' ')));
+        assert_eq!(
+            browser.palette.as_ref().unwrap().input().value(),
+            "Pic {n}s "
+        );
+        assert!(titles(&browser)[2].2, "what was toggled out stays out");
+
+        // Return renames the two that are in, and c is untouched.
+        for _ in 0..2 {
+            press(&mut browser, palette::Key::Edit(TextInputKey::Backspace));
+        }
+        press(&mut browser, palette::Key::Enter);
+        assert!(browser.palette.is_none());
+        assert!(dir.0.join("Pic 1.jpg").exists());
+        assert!(dir.0.join("Pic 2.jpg").exists());
+        assert!(dir.0.join("c.jpg").exists());
+        assert!(!dir.0.join("Pic 3.jpg").exists());
     }
 
     #[test]

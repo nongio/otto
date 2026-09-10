@@ -262,6 +262,15 @@ the palette adds no new capability.
   request) for what it says back. The two shipped samples,
   `components/otto-files/scripts/zip` and `unzip`, are the proof of the
   boundary and the template for the next ones (conversion, OCR).
+- **A dry run's lines can be toggled.** Down from the field moves the
+  highlight into the dry run, Space leaves the highlighted file out of the
+  run or brings it back, and a click on a line does the same; a line left
+  out keeps its name, struck through behind a hollow mark, so it can be
+  brought back. The dry run is made again without it — numbers close up,
+  conflicts clear — and Return runs on what is left in. Typing returns to
+  the field, where a space is a space, and what was toggled out stays out.
+  The provider never learns of the toggle: it is asked about a smaller
+  selection, and the host threads its lines back among the names left out.
 - **Availability is computed against a snapshot, not the live browser.** A
   provider is asked for its commands with a description of the situation —
   where the window is, what is selected, whether it is the Trash, what the

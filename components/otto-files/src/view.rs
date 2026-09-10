@@ -3057,10 +3057,11 @@ pub enum PaletteRowKind {
     /// Something that can be picked — a command, or an answer to an argument.
     Item,
     /// One line of a dry run: the row's title is what a thing would become,
-    /// its subtitle what it is now. Read, not picked. `conflict` says the
-    /// outcome is not possible as things stand, and the line is drawn to say
-    /// so.
-    Preview { conflict: bool },
+    /// its subtitle what it is now. Not picked, but toggled: a click or Space
+    /// leaves the thing out of the run. `conflict` says the outcome is not
+    /// possible as things stand, `excluded` that the line has been toggled
+    /// off; each is drawn to say so.
+    Preview { conflict: bool, excluded: bool },
 }
 
 /// One line of the palette's list, ready to draw.
@@ -3212,8 +3213,10 @@ pub fn palette_row_rect(width: f32, rows: &[PaletteRow<'_>], index: usize) -> Re
 pub fn palette_row_at(x: f32, y: f32, width: f32, rows: &[PaletteRow<'_>]) -> Option<usize> {
     let point = Point::new(x, y);
     (0..rows.len()).find(|&index| {
-        rows[index].kind == PaletteRowKind::Item
-            && palette_row_rect(width, rows, index).contains(point)
+        matches!(
+            rows[index].kind,
+            PaletteRowKind::Item | PaletteRowKind::Preview { .. }
+        ) && palette_row_rect(width, rows, index).contains(point)
     })
 }
 
@@ -3349,22 +3352,69 @@ fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteD
                 .render(canvas);
             continue;
         }
-        if let PaletteRowKind::Preview { conflict } = row.kind {
-            // "old → new": what it is, dimmed, then what it would become — in
-            // the palette's red when it cannot, so the one line that would
-            // stop the whole batch is the one that stands out.
+        if let PaletteRowKind::Preview { conflict, excluded } = row.kind {
+            // "● old → new": what it is, dimmed, then what it would become —
+            // in the palette's red when it cannot, so the one line that would
+            // stop the whole batch is the one that stands out. A line toggled
+            // out keeps only its name, struck through, behind a hollow mark.
+            if row.highlighted {
+                paint.set_color(accent(theme));
+                canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
+            }
+            let (strong, dim, red) = if row.highlighted {
+                (
+                    Color::WHITE,
+                    Color::from_argb(0xC8, 0xFF, 0xFF, 0xFF),
+                    Color::WHITE,
+                )
+            } else {
+                (theme.text_primary, theme.text_tertiary, theme.accent_red)
+            };
             let font = styles::BODY.font();
             let mut x = rect.left + 8.0;
+
+            // The mark: a disc for a line in the run, a ring for one left out.
+            let mark = Point::new(x + 4.0, rect.center_y());
+            let mut mark_paint = Paint::default();
+            mark_paint.set_anti_alias(true);
+            mark_paint.set_color(if excluded { dim } else { strong });
+            if excluded {
+                mark_paint.set_style(skia_safe::PaintStyle::Stroke);
+                mark_paint.set_stroke_width(1.5);
+                canvas.draw_circle(mark, 3.5, &mark_paint);
+            } else {
+                canvas.draw_circle(mark, 4.0, &mark_paint);
+            }
+            x += 8.0 + 10.0;
+
+            if excluded {
+                let name = row.subtitle.unwrap_or(row.title);
+                Label::new(name)
+                    .with_style(styles::BODY)
+                    .with_color(dim)
+                    .centered_on(x, rect.center_y())
+                    .render(canvas);
+                let advance = font.measure_str(name, None).0;
+                let mut strike = Paint::default();
+                strike.set_color(dim);
+                strike.set_stroke_width(1.0);
+                canvas.draw_line(
+                    Point::new(x, rect.center_y()),
+                    Point::new(x + advance, rect.center_y()),
+                    &strike,
+                );
+                continue;
+            }
             if let Some(from) = row.subtitle {
                 Label::new(from)
                     .with_style(styles::BODY)
-                    .with_color(theme.text_tertiary)
+                    .with_color(dim)
                     .centered_on(x, rect.center_y())
                     .render(canvas);
                 x += font.measure_str(from, None).0 + 8.0;
                 Label::new("→")
                     .with_style(styles::BODY)
-                    .with_color(theme.text_tertiary)
+                    .with_color(dim)
                     .centered_on(x, rect.center_y())
                     .render(canvas);
                 x += font.measure_str("→", None).0 + 8.0;
@@ -3375,11 +3425,7 @@ fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteD
                 } else {
                     styles::BODY
                 })
-                .with_color(if conflict {
-                    theme.accent_red
-                } else {
-                    theme.text_primary
-                })
+                .with_color(if conflict { red } else { strong })
                 .centered_on(x, rect.center_y())
                 .render(canvas);
             continue;
@@ -6251,10 +6297,13 @@ mod geometry_tests {
     }
 
     #[test]
-    fn a_dry_run_line_is_not_a_target_and_its_summary_sits_under_the_list() {
+    fn a_dry_run_line_can_be_hit_and_its_summary_sits_under_the_list() {
         let rows = vec![
             PaletteRow {
-                kind: PaletteRowKind::Preview { conflict: false },
+                kind: PaletteRowKind::Preview {
+                    conflict: false,
+                    excluded: false,
+                },
                 title: "Holiday 1.jpg",
                 badge: None,
                 subtitle: Some("IMG_001.jpg"),
@@ -6262,7 +6311,10 @@ mod geometry_tests {
                 highlighted: false,
             },
             PaletteRow {
-                kind: PaletteRowKind::Preview { conflict: true },
+                kind: PaletteRowKind::Preview {
+                    conflict: true,
+                    excluded: false,
+                },
                 title: "Holiday 2.jpg",
                 badge: None,
                 subtitle: Some("IMG_002.jpg"),
@@ -6270,10 +6322,11 @@ mod geometry_tests {
                 highlighted: false,
             },
         ];
-        let rect = palette_row_rect(1200.0, &rows, 0);
+        let rect = palette_row_rect(1200.0, &rows, 1);
         assert_eq!(
             palette_row_at(rect.center_x(), rect.center_y(), 1200.0, &rows),
-            None
+            Some(1),
+            "a line is something to toggle, so it is something to hit"
         );
         let bare = palette_rect(1200.0, &rows, false);
         let noted = palette_rect(1200.0, &rows, true);

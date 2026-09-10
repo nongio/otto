@@ -7,6 +7,8 @@
 //! what a half-typed path could be completed to — that is I/O, so the host
 //! does it and hands the answers back through [`Palette::set_completions`].
 
+use std::collections::HashSet;
+
 use otto_kit::prelude::{KeyMods, TextInput, TextInputKey, TextInputResponse, TextInputStyle};
 
 use crate::command::{rank, ArgKind, Choice, Command, Group, Request};
@@ -56,9 +58,74 @@ pub enum Row {
     /// completions.
     Completion(usize),
     /// One line of a dry run — what the argument as typed would do to one
-    /// thing — by its index into the session's preview. Read, never chosen:
-    /// Return runs the command, not the line.
+    /// thing — by its index into the session's preview. Never *chosen*:
+    /// Return runs the command, not the line. But a line can be highlighted
+    /// and toggled, which leaves its file out of the run.
     Preview(usize),
+}
+
+/// One line of the dry run on show: what a thing is, what it would become,
+/// and whether it has been left out of the run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewLine {
+    pub from: String,
+    pub to: String,
+    pub conflict: bool,
+    /// Toggled off: the file is named so it can be toggled back, but the
+    /// command will not touch it and the dry run was made without it.
+    pub excluded: bool,
+}
+
+impl PreviewLine {
+    /// Lay a provider's dry run over the full list of targets, so the ones
+    /// left out still have a line to be brought back by.
+    ///
+    /// A provider answers for the targets it was given — the included ones —
+    /// and, when it answers one line per target, its lines are threaded back
+    /// among the excluded names in the targets' order. A provider that says
+    /// something else (one line for the whole batch, say) has its lines shown
+    /// as they are, with the excluded names after them.
+    pub fn merge(
+        targets: &[String],
+        excluded: &HashSet<String>,
+        rows: Vec<crate::command::PreviewRow>,
+    ) -> Vec<PreviewLine> {
+        let left_out = |name: &String| PreviewLine {
+            from: name.clone(),
+            to: String::new(),
+            conflict: false,
+            excluded: true,
+        };
+        let included = targets
+            .iter()
+            .filter(|name| !excluded.contains(*name))
+            .count();
+        let mut rows = rows.into_iter().map(|row| PreviewLine {
+            from: row.from,
+            to: row.to,
+            conflict: row.conflict,
+            excluded: false,
+        });
+        if rows.len() == included {
+            return targets
+                .iter()
+                .map(|name| {
+                    if excluded.contains(name) {
+                        left_out(name)
+                    } else {
+                        rows.next().expect("one row per included target")
+                    }
+                })
+                .collect();
+        }
+        rows.chain(
+            targets
+                .iter()
+                .filter(|name| excluded.contains(*name))
+                .map(left_out),
+        )
+        .collect()
+    }
 }
 
 /// Something an argument could be completed to.
@@ -111,7 +178,10 @@ struct ArgSession {
     saved_query: String,
     /// What the argument as typed would do, from the host, when the command
     /// can say. Shown as the rows while it is not empty.
-    preview: Vec<crate::command::PreviewRow>,
+    preview: Vec<PreviewLine>,
+    /// The names toggled out of the run from the dry run's lines. The host
+    /// leaves these out of what it asks the provider to preview and to do.
+    excluded: HashSet<String>,
 }
 
 /// The palette.
@@ -237,9 +307,9 @@ impl Palette {
     /// click on a row does.
     pub fn highlight_row(&mut self, row: usize) -> bool {
         match self.rows.get(row) {
-            Some(Row::Command(_)) | Some(Row::Completion(_)) => {
+            Some(Row::Command(_)) | Some(Row::Completion(_)) | Some(Row::Preview(_)) => {
                 self.highlight = row;
-                if let (Some(session), Some(Row::Completion(index))) =
+                if let (Some(session), Some(Row::Completion(index) | Row::Preview(index))) =
                     (self.arg.as_mut(), self.rows.get(row))
                 {
                     session.highlight = Some(*index);
@@ -248,6 +318,54 @@ impl Palette {
             }
             _ => false,
         }
+    }
+
+    /// Toggle the dry-run line at `row` in or out of the run — what a click
+    /// on one does. `false` when the row is not a dry-run line.
+    pub fn toggle_row(&mut self, row: usize) -> bool {
+        match self.rows.get(row) {
+            Some(Row::Preview(index)) => {
+                let index = *index;
+                self.highlight_row(row);
+                self.toggle_line(index)
+            }
+            _ => false,
+        }
+    }
+
+    fn toggle_line(&mut self, index: usize) -> bool {
+        let Some(session) = self.arg.as_mut() else {
+            return false;
+        };
+        let Some(line) = session.preview.get_mut(index) else {
+            return false;
+        };
+        line.excluded = !line.excluded;
+        if line.excluded {
+            session.excluded.insert(line.from.clone());
+        } else {
+            session.excluded.remove(&line.from);
+        }
+        true
+    }
+
+    /// Whether a dry-run line has the highlight, which is when Space toggles
+    /// rather than types.
+    fn on_preview_line(&self) -> bool {
+        self.arg.as_ref().is_some_and(|session| {
+            !session.preview.is_empty()
+                && session
+                    .highlight
+                    .is_some_and(|index| index < session.preview.len())
+        })
+    }
+
+    /// The names toggled out of the run. Empty outside argument mode.
+    pub fn excluded(&self) -> HashSet<String> {
+        self.arg
+            .as_ref()
+            .map(|session| session.excluded.clone())
+            .unwrap_or_default()
     }
 
     /// Whether the list is the grouped resting one rather than a ranked list.
@@ -325,19 +443,26 @@ impl Palette {
 
     /// Show what the argument as typed would do, line by line, in place of
     /// the completions. Nothing outside argument mode.
-    pub fn set_preview(&mut self, rows: Vec<crate::command::PreviewRow>) {
+    pub fn set_preview(&mut self, lines: Vec<PreviewLine>) {
         let Some(session) = self.arg.as_mut() else {
             return;
         };
-        if session.preview == rows {
+        if session.preview == lines {
             return;
         }
-        session.preview = rows;
+        session.preview = lines;
+        // A highlight past the end of a shorter list means nothing.
+        if session
+            .highlight
+            .is_some_and(|index| index >= session.preview.len())
+        {
+            session.highlight = None;
+        }
         self.rebuild_rows();
     }
 
     /// The dry run on show, if any.
-    pub fn preview(&self) -> &[crate::command::PreviewRow] {
+    pub fn preview(&self) -> &[PreviewLine] {
         match &self.arg {
             Some(session) => &session.preview,
             None => &[],
@@ -438,6 +563,14 @@ impl Palette {
                 self.complete();
                 Outcome::Changed
             }
+            // Down into the dry run, Space to leave a line out or bring it
+            // back. Only there: in the field, a space is a space.
+            Key::Edit(TextInputKey::Char(' ')) if self.on_preview_line() => {
+                if let Some(index) = self.arg.as_ref().and_then(|session| session.highlight) {
+                    self.toggle_line(index);
+                }
+                Outcome::Changed
+            }
             Key::Edit(TextInputKey::Backspace) if self.arg_is_empty() => {
                 // The prefix is not text and is never eaten a character at a
                 // time: Backspace at the start of an empty argument is the way
@@ -456,6 +589,11 @@ impl Palette {
         let Some(session) = self.arg.as_mut() else {
             return Outcome::Ignored;
         };
+        // Editing is being back in the field: a highlight left on a dry-run
+        // line would make the next Space a toggle instead of a space.
+        if !session.preview.is_empty() {
+            session.highlight = None;
+        }
         let response = session.input.on_key(edit, mods);
         if let TextInputResponse::Clipboard(text) = response {
             return Outcome::Clipboard(text);
@@ -503,10 +641,17 @@ impl Palette {
         let Some(session) = self.arg.as_mut() else {
             return;
         };
-        if session.completions.is_empty() {
+        // The list is the dry run while there is one, the completions
+        // otherwise — whichever the rows are showing.
+        let len = if session.preview.is_empty() {
+            session.completions.len()
+        } else {
+            session.preview.len()
+        };
+        if len == 0 {
             return;
         }
-        let last = session.completions.len() as isize - 1;
+        let last = len as isize - 1;
         session.highlight = Some(match session.highlight {
             // Down out of the field lands on the first answer; up out of it
             // lands on the last, so both ends are one key away.
@@ -550,6 +695,7 @@ impl Palette {
             highlight,
             saved_query: self.query.value().to_string(),
             preview: Vec::new(),
+            excluded: HashSet::new(),
         });
         self.rebuild_rows();
     }
