@@ -81,7 +81,7 @@ def describe():
                     "prompt": by_locale("prompt"),
                     "label": by_locale("label"),
                     "placeholder": "Archive.zip",
-                    "initial": "{stem}.zip",
+                    "initial": "Archive.zip",
                     "preview": True,
                 },
                 "undo": by_locale("undo"),
@@ -91,16 +91,9 @@ def describe():
 
 
 def archive_name(request):
-    """The archive the argument names. `{stem}` is the first target's name
-    without its extension, or the folder's name when several are selected,
-    which is what a person means by "zip these"."""
-    targets = request["targets"]
-    if len(targets) == 1:
-        stem = os.path.splitext(os.path.basename(targets[0]))[0]
-    else:
-        stem = os.path.basename(request["situation"]["path"]) or "Archive"
-    name = (request.get("arg") or "").strip() or "{stem}.zip"
-    name = name.replace("{stem}", stem).replace("{count}", str(len(targets)))
+    """The archive the argument names — "Archive.zip" when nothing is
+    typed, and always a .zip."""
+    name = (request.get("arg") or "").strip() or "Archive.zip"
     if not name.lower().endswith(".zip"):
         name += ".zip"
     return name
@@ -115,11 +108,11 @@ def plan(request):
 
 
 def preview(request):
+    # Every target lands in the one archive, so the rows only name what goes
+    # in — no arrow, nothing per row to be wrong — and the note says where,
+    # or that the name is taken.
     name, _, conflict = plan(request)
-    rows = [
-        {"from": os.path.basename(t), "to": name, "conflict": conflict}
-        for t in request["targets"]
-    ]
+    rows = [{"from": os.path.basename(t)} for t in request["targets"]]
     count = len(rows)
     if conflict:
         note = tr(request, "exists", name=name)

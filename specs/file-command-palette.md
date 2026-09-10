@@ -259,7 +259,11 @@ the palette adds no new capability.
   description may be given per locale and the host picks (exact tag, then
   language, then English), keywords in every language match, and the locale
   is handed to the script on every call (`OTTO_LOCALE`, and `locale` in the
-  request) for what it says back. The two shipped samples,
+  request) for what it says back. A dry-run line may carry only a name, for
+  a command whose outcome is one thing (an archive) rather than one per
+  target; and when a text argument opens on an initial value with an
+  extension, only the stem is selected, so typing replaces the name and
+  keeps the suffix. The two shipped samples,
   `components/otto-files/scripts/zip` and `unzip`, are the proof of the
   boundary and the template for the next ones (conversion, OCR).
 - **A resize is claimed after its buffer, never before.** The style

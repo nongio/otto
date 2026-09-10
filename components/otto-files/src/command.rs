@@ -304,6 +304,14 @@ pub trait CommandProvider: Send {
     /// the disk or the network: a provider offers what it already knows.
     fn commands(&self, situation: &Situation) -> Vec<Command>;
 
+    /// Whether this provider knows everything it is going to offer. A
+    /// provider that finds its commands in the background says `false`
+    /// until they have landed. Only the palette's test driver waits on it —
+    /// a person opening the palette gets whatever has answered by then.
+    fn settled(&self) -> bool {
+        true
+    }
+
     /// What one of this provider's commands *would* do with the argument as
     /// typed so far — shown in the palette after every keystroke, for a
     /// command whose argument is [previewed](ArgSpec::previewed).
@@ -402,6 +410,11 @@ impl Registry {
             .iter()
             .flat_map(|provider| provider.commands(situation))
             .collect()
+    }
+
+    /// Whether every provider has finished finding what it offers.
+    pub fn settled(&self) -> bool {
+        self.providers.iter().all(|provider| provider.settled())
     }
 
     /// Hand a request to the provider whose namespace it names. `None` when

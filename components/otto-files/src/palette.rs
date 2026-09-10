@@ -682,7 +682,15 @@ impl Palette {
         };
         let mut input = field(&initial, &self.style);
         if !initial.is_empty() {
-            input.state.select_all();
+            // A name is retyped up to its extension — "Archive" in
+            // "Archive.zip" — so the kind of file stays put. Anything else
+            // is replaced whole.
+            let keep_extension = matches!(spec.kind, ArgKind::Text);
+            let stem = initial
+                .rfind('.')
+                .filter(|&dot| keep_extension && dot > 0 && dot + 1 < initial.len())
+                .unwrap_or(initial.len());
+            input.state.select_range(0..stem);
         }
         self.arg = Some(ArgSession {
             command,

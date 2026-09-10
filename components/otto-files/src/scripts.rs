@@ -22,7 +22,7 @@
 //!     "group": "file",
 //!     "when": { "targets": "some", "extensions": ["zip"], "kinds": "files" },
 //!     "arg": { "prompt": "Archive name", "label": "name",
-//!              "placeholder": "Archive.zip", "initial": "{stem}.zip",
+//!              "placeholder": "Archive.zip", "initial": "Archive.zip",
 //!              "preview": true },
 //!     "undo": "Compress"
 //! } ] }
@@ -59,9 +59,14 @@
 //! nothing:
 //!
 //! ```json
-//! { "rows": [ { "from": "a.png", "to": "Holiday.zip", "conflict": false } ],
-//!   "note": "2 items into Holiday.zip" }
+//! { "rows": [ { "from": "a.png", "to": "a.jpg", "conflict": false } ],
+//!   "note": "2 items converted" }
 //! ```
+//!
+//! A row is what one target would become; a row with no `to` just names the
+//! target — for a command whose outcome is one thing made of them all, like
+//! an archive, the rows say what goes in and the note says where. A person
+//! can toggle a row out of the run.
 //!
 //! A run answers with what it did, and the host records the changes for undo:
 //!
@@ -82,8 +87,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -352,6 +358,7 @@ struct PreviewReply {
 #[derive(Debug, Deserialize)]
 struct PreviewRowReply {
     from: String,
+    #[serde(default)]
     to: String,
     #[serde(default)]
     conflict: bool,
@@ -619,6 +626,9 @@ pub struct ScriptProvider {
     /// Runs in flight report here.
     finished: Receiver<Result<Effect, String>>,
     report: Sender<Result<Effect, String>>,
+    /// How many runs are still going — what they did changes what is
+    /// offered next (an Undo), so the provider is not settled until they land.
+    running: Arc<AtomicUsize>,
 }
 
 impl ScriptProvider {
@@ -648,6 +658,7 @@ impl ScriptProvider {
             discovering: Mutex::new(discovering),
             finished,
             report,
+            running: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -761,6 +772,11 @@ impl CommandProvider for ScriptProvider {
             .collect()
     }
 
+    fn settled(&self) -> bool {
+        self.take_discovered();
+        self.discovering.lock().unwrap().is_none() && self.running.load(Ordering::Acquire) == 0
+    }
+
     fn preview(&self, request: &Request, situation: &Situation) -> Option<Preview> {
         let command = self.find(&request.id)?;
         let input = self.input(&command, request, situation);
@@ -801,12 +817,18 @@ impl CommandProvider for ScriptProvider {
         let report = self.report.clone();
         let locale = self.locale.clone();
         let title = command.described.title.get(&locale);
-        std::thread::Builder::new()
+        let running = Arc::clone(&self.running);
+        running.fetch_add(1, Ordering::AcqRel);
+        let spawned = std::thread::Builder::new()
             .name("files-script-run".into())
             .spawn(move || {
                 let _ = report.send(Self::run_now(&command, &locale, &input));
-            })
-            .map_err(|err| err.to_string())?;
+                running.fetch_sub(1, Ordering::AcqRel);
+            });
+        if let Err(err) = spawned {
+            self.running.fetch_sub(1, Ordering::AcqRel);
+            return Err(err.to_string());
+        }
         // The palette closes on this; what the script did arrives through
         // `poll`, and the status line says so meanwhile.
         Ok(Effect {
@@ -1088,7 +1110,12 @@ esac
         let request = Request::new("scripts:zip.compress", Some("Bundle".into()));
         let preview = provider.preview(&request, &situation).unwrap();
         assert_eq!(preview.rows.len(), 2);
-        assert_eq!(preview.rows[0].to, "Bundle.zip");
+        assert_eq!(preview.rows[0].from, "a.txt");
+        assert_eq!(
+            preview.rows[0].to, "",
+            "an archive's rows only name what goes in"
+        );
+        assert_eq!(preview.note.as_deref(), Some("2 items into “Bundle.zip”"));
         provider.run(&request, &situation).unwrap();
         let effect = wait_for(&mut provider).unwrap();
         assert!(dir.0.join("Bundle.zip").is_file());
@@ -1101,13 +1128,15 @@ esac
             .map(|c| c.id)
             .collect();
         assert!(offered.contains(&"scripts:unzip.extract".to_string()));
-        let request = Request::new("scripts:unzip.extract", Some("{stem}-out".into()));
+        // Extracting asks nothing: each archive goes into a folder named
+        // after it.
+        let request = Request::new("scripts:unzip.extract", None);
         let preview = provider.preview(&request, &situation).unwrap();
-        assert_eq!(preview.rows[0].to, "Bundle-out/");
+        assert_eq!(preview.rows[0].to, "Bundle/");
         assert!(!preview.rows[0].conflict);
         provider.run(&request, &situation).unwrap();
         wait_for(&mut provider).unwrap();
-        assert!(dir.0.join("Bundle-out/Photos/b.txt").is_file());
+        assert!(dir.0.join("Bundle/Photos/b.txt").is_file());
 
         // Running again would land on the folder that is now there.
         let preview = provider.preview(&request, &situation).unwrap();

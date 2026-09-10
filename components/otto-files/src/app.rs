@@ -3749,9 +3749,9 @@ impl Browser {
             // standing; the palette says so in its note rather than as an
             // error, since a half-typed pattern is not wrong.
             let _ = self.select_matching(&typed);
-            let note = self
-                .path_bar_note()
-                .unwrap_or_else(|| otto_kit::t_owned!("files-nothing-matches"));
+            let note = self.path_bar_note().unwrap_or_else(|| {
+                otto_kit::t_owned!("files-nothing-matches", pattern = typed.as_str())
+            });
             if let Some(palette) = self.palette.as_mut() {
                 palette.set_note(Some(note));
             }
@@ -4155,9 +4155,16 @@ impl Browser {
                             conflict: line.conflict,
                             excluded: line.excluded,
                         },
-                        title: line.to.clone(),
+                        // A line in the run that names no outcome — "these
+                        // go in" — is just the name; there is no arrow to
+                        // draw. A line toggled out keeps its shape.
+                        title: if line.to.is_empty() && !line.excluded {
+                            line.from.clone()
+                        } else {
+                            line.to.clone()
+                        },
                         badge: None,
-                        subtitle: Some(line.from.clone()),
+                        subtitle: (!line.to.is_empty() || line.excluded).then(|| line.from.clone()),
                         shortcut: None,
                         highlighted: highlight == Some(index),
                     }
@@ -8002,8 +8009,24 @@ impl FilesApp {
         if browser.palette_auto.is_none() || browser.visible(depth).is_empty() {
             return;
         }
+        // Scripts describe themselves in the background, and the palette
+        // offers what has answered when it opens — so a query typed this
+        // early would miss them; a script's run lands later too, and the
+        // Undo it leaves behind is only offered once it has. Wait for a
+        // later pass; a person cannot press Ctrl+P that soon.
+        if !browser.commands.settled() {
+            return;
+        }
+        // One segment per pass, so the wait above holds between them as well.
         let query = browser.palette_auto.take().unwrap_or_default();
-        browser.columns[depth].cursor = Some(0);
+        let (segment, rest) = match query.split_once('|') {
+            Some((segment, rest)) => (segment.to_owned(), Some(rest.to_owned())),
+            None => (query, None),
+        };
+        browser.palette_auto = rest;
+        if browser.columns[depth].cursor.is_none() {
+            browser.columns[depth].cursor = Some(0);
+        }
         let mods = KeyMods {
             shift: false,
             ctrl: false,
@@ -8014,31 +8037,27 @@ impl FilesApp {
         // newline is Return, which runs the command; and `|` opens the palette
         // again for another go — `$'select m\t*\n|rename\tHoliday {n}'`
         // selects everything and then shows the rename's dry run on it.
-        for segment in query.split('|') {
-            if browser.palette.is_none() {
-                browser.open_palette();
-            }
-            if segment == "1" {
-                continue;
-            }
-            for ch in segment.chars() {
-                let key = match ch {
-                    '\t' => palette::Key::Tab,
-                    '\n' => palette::Key::Enter,
-                    '\u{1b}' => palette::Key::Escape,
-                    '\u{2193}' => palette::Key::Down,
-                    '\u{2191}' => palette::Key::Up,
-                    ch => palette::Key::Edit(TextInputKey::Char(ch)),
-                };
-                let Some(outcome) = browser
-                    .palette
-                    .as_mut()
-                    .map(|palette| palette.on_key(key, mods))
-                else {
-                    break;
-                };
-                browser.settle_palette(outcome, 0);
-            }
+        if browser.palette.is_none() {
+            browser.open_palette();
+        }
+        let keys = if segment == "1" { "" } else { segment.as_str() };
+        for ch in keys.chars() {
+            let key = match ch {
+                '\t' => palette::Key::Tab,
+                '\n' => palette::Key::Enter,
+                '\u{1b}' => palette::Key::Escape,
+                '\u{2193}' => palette::Key::Down,
+                '\u{2191}' => palette::Key::Up,
+                ch => palette::Key::Edit(TextInputKey::Char(ch)),
+            };
+            let Some(outcome) = browser
+                .palette
+                .as_mut()
+                .map(|palette| palette.on_key(key, mods))
+            else {
+                break;
+            };
+            browser.settle_palette(outcome, 0);
         }
         browser.dirty = true;
     }
@@ -10516,7 +10535,7 @@ mod palette_tests {
         }
         assert_eq!(
             browser.palette_message().as_deref(),
-            Some(otto_kit::t_owned!("files-nothing-matches").as_str())
+            Some(otto_kit::t_owned!("files-nothing-matches", pattern = "*.pngx").as_str())
         );
         assert!(browser.palette.as_ref().unwrap().error().is_none());
     }
