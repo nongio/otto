@@ -28,6 +28,15 @@
 //! } ] }
 //! ```
 //!
+//! Every string a person reads — `title`, `undo`, the `arg`'s `prompt`,
+//! `label`, `placeholder` and `initial` — may instead be an object keyed by
+//! locale, `{ "en": "Compress to Zip", "it": "Comprimi in Zip" }`; the host
+//! picks the window's locale, then the same language, then English.
+//! `keywords` may be keyed the same way, and every locale's words match.
+//! The locale is also handed to the script itself, as `OTTO_LOCALE` in the
+//! environment on every call and as `locale` in the JSON below, for what it
+//! says back at preview and run time.
+//!
 //! Everything but `id` and `title` is optional. `when` is the whole of what
 //! decides whether the command is offered, so that opening the palette never
 //! runs a script: `targets` is `"some"` (default), `"one"`, `"none"` or
@@ -39,7 +48,7 @@
 //! `script preview` and `script run` — with this on standard input:
 //!
 //! ```json
-//! { "command": "compress", "arg": "Holiday.zip",
+//! { "command": "compress", "arg": "Holiday.zip", "locale": "en-GB",
 //!   "targets": ["/home/me/Pictures/a.png", "/home/me/Pictures/b.png"],
 //!   "situation": { "path": "/home/me/Pictures", "selection": [...], ... } }
 //! ```
@@ -69,7 +78,7 @@
 //! long as it takes, on a worker thread, and its effect arrives through
 //! [`CommandProvider::poll`].
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
@@ -104,12 +113,67 @@ struct Description {
     commands: Vec<Described>,
 }
 
+/// A string a person reads, given once or once per locale:
+/// `"title": "Compress to Zip"` or
+/// `"title": { "en": "Compress to Zip", "it": "Comprimi in Zip" }`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(untagged)]
+enum Text {
+    One(String),
+    ByLocale(BTreeMap<String, String>),
+}
+
+impl Text {
+    /// The string for `locale`: the exact tag, then the same language, then
+    /// English, then whatever was given first. Case does not matter and `_`
+    /// reads as `-`, so `pt_BR` finds `pt-BR`.
+    fn get(&self, locale: &str) -> String {
+        match self {
+            Text::One(text) => text.clone(),
+            Text::ByLocale(map) => {
+                let wanted = locale.replace('_', "-").to_ascii_lowercase();
+                let language = wanted.split('-').next().unwrap_or_default().to_owned();
+                let pick = |test: &dyn Fn(&str) -> bool| {
+                    map.iter()
+                        .find(|(tag, _)| test(&tag.replace('_', "-").to_ascii_lowercase()))
+                        .map(|(_, text)| text.clone())
+                };
+                pick(&|tag| tag == wanted)
+                    .or_else(|| pick(&|tag| tag.split('-').next() == Some(&language)))
+                    .or_else(|| pick(&|tag| tag.split('-').next() == Some("en")))
+                    .or_else(|| map.values().next().cloned())
+                    .unwrap_or_default()
+            }
+        }
+    }
+}
+
+/// Keywords, likewise: one list, or one per locale.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(untagged)]
+enum Words {
+    One(Vec<String>),
+    ByLocale(BTreeMap<String, Vec<String>>),
+}
+
+impl Words {
+    /// Every locale's words at once: a keyword is never shown, only matched,
+    /// so a person who thinks of the command in another language still finds
+    /// it.
+    fn all(&self) -> Vec<String> {
+        match self {
+            Words::One(words) => words.clone(),
+            Words::ByLocale(map) => map.values().flatten().cloned().collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 struct Described {
     id: String,
-    title: String,
+    title: Text,
     #[serde(default)]
-    keywords: Vec<String>,
+    keywords: Option<Words>,
     #[serde(default)]
     group: GroupName,
     #[serde(default)]
@@ -118,7 +182,7 @@ struct Described {
     arg: Option<DescribedArg>,
     /// What to call the run in the undo history. The title when absent.
     #[serde(default)]
-    undo: Option<String>,
+    undo: Option<Text>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
@@ -176,13 +240,13 @@ enum Kinds {
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 struct DescribedArg {
-    prompt: String,
+    prompt: Text,
     #[serde(default)]
-    label: Option<String>,
+    label: Option<Text>,
     #[serde(default)]
-    placeholder: Option<String>,
+    placeholder: Option<Text>,
     #[serde(default)]
-    initial: Option<String>,
+    initial: Option<Text>,
     #[serde(default)]
     preview: bool,
 }
@@ -234,23 +298,24 @@ impl ScriptCommand {
         }
     }
 
-    fn command(&self) -> Command {
+    fn command(&self, locale: &str) -> Command {
         let d = &self.described;
-        let mut command = Command::new(&self.full_id, &d.title, Group::from(d.group))
-            .with_keywords(d.keywords.iter().cloned());
+        let mut command = Command::new(&self.full_id, d.title.get(locale), Group::from(d.group))
+            .with_keywords(d.keywords.as_ref().map(Words::all).unwrap_or_default());
         if let Some(arg) = &d.arg {
             let mut spec = ArgSpec::new(
-                &arg.prompt,
+                arg.prompt.get(locale),
                 arg.label
-                    .clone()
+                    .as_ref()
+                    .map(|label| label.get(locale))
                     .unwrap_or_else(|| otto_kit::t_owned!("files-command-arg-name")),
                 ArgKind::Text,
             );
             if let Some(placeholder) = &arg.placeholder {
-                spec = spec.with_placeholder(placeholder);
+                spec = spec.with_placeholder(placeholder.get(locale));
             }
             if let Some(initial) = &arg.initial {
-                spec = spec.with_initial(initial);
+                spec = spec.with_initial(initial.get(locale));
             }
             if arg.preview {
                 spec = spec.previewed();
@@ -269,6 +334,9 @@ impl ScriptCommand {
 struct Input<'a> {
     command: &'a str,
     arg: Option<&'a str>,
+    /// The window's locale, as a BCP 47 tag, so what a script says back is
+    /// in the person's language. Also in the environment as `OTTO_LOCALE`.
+    locale: &'a str,
     targets: &'a [PathBuf],
     situation: &'a Situation,
 }
@@ -356,11 +424,13 @@ impl Outcome {
 fn call(
     script: &Path,
     verb: &str,
+    locale: &str,
     input: Option<&[u8]>,
     deadline: Option<Duration>,
 ) -> Result<Outcome, String> {
     let mut child = Process::new(script)
         .arg(verb)
+        .env("OTTO_LOCALE", locale)
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -428,12 +498,12 @@ fn wait_until(child: &mut Child, deadline: Duration) -> Option<std::process::Exi
 }
 
 /// Ask one script what it offers.
-fn describe(script: &Path) -> Vec<ScriptCommand> {
+fn describe(script: &Path, locale: &str) -> Vec<ScriptCommand> {
     let stem = script
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let outcome = match call(script, "describe", None, Some(DESCRIBE_DEADLINE)) {
+    let outcome = match call(script, "describe", locale, None, Some(DESCRIBE_DEADLINE)) {
         Ok(outcome) => outcome,
         Err(err) => {
             tracing::warn!("files-scripts: {err}");
@@ -470,7 +540,7 @@ fn describe(script: &Path) -> Vec<ScriptCommand> {
 }
 
 /// Every executable in `dir`, by name, described.
-fn discover(dir: &Path) -> Vec<ScriptCommand> {
+fn discover(dir: &Path, locale: &str) -> Vec<ScriptCommand> {
     use std::os::unix::fs::PermissionsExt;
 
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -491,7 +561,10 @@ fn discover(dir: &Path) -> Vec<ScriptCommand> {
         })
         .collect();
     scripts.sort();
-    scripts.iter().flat_map(|script| describe(script)).collect()
+    scripts
+        .iter()
+        .flat_map(|script| describe(script, locale))
+        .collect()
 }
 
 /// Where the scripts are, honouring `XDG_CONFIG_HOME`. `OTTO_FILES_SCRIPTS`
@@ -535,6 +608,9 @@ fn keep(label: &str) -> &'static str {
 
 /// The scripts directory, as a provider.
 pub struct ScriptProvider {
+    /// The window's locale, told to every script and used to pick among
+    /// the texts a description gives per locale.
+    locale: String,
     /// What has been described so far. Behind a mutex because the seam asks
     /// for commands through `&self` and discovery lands from another thread.
     commands: Mutex<Vec<ScriptCommand>>,
@@ -550,22 +626,24 @@ impl ScriptProvider {
     /// its own thread, so the window's start is not held up by a slow script
     /// and Ctrl+P finds whatever has answered by then.
     pub fn new() -> Self {
-        Self::over(scripts_dir())
+        Self::over(scripts_dir(), otto_kit::i18n::current_locale())
     }
 
-    fn over(dir: Option<PathBuf>) -> Self {
+    fn over(dir: Option<PathBuf>, locale: String) -> Self {
         let (report, finished) = mpsc::channel();
         let discovering = dir.map(|dir| {
             let (tx, rx) = mpsc::channel();
+            let locale = locale.clone();
             std::thread::Builder::new()
                 .name("files-scripts".into())
                 .spawn(move || {
-                    let _ = tx.send(discover(&dir));
+                    let _ = tx.send(discover(&dir, &locale));
                 })
                 .expect("spawn discovery thread");
             rx
         });
         Self {
+            locale,
             commands: Mutex::new(Vec::new()),
             discovering: Mutex::new(discovering),
             finished,
@@ -576,8 +654,13 @@ impl ScriptProvider {
     /// The provider over `dir`, with discovery already done. For tests.
     #[cfg(test)]
     fn discovered(dir: &Path) -> Self {
-        let provider = Self::over(None);
-        *provider.commands.lock().unwrap() = discover(dir);
+        Self::discovered_in(dir, "en-GB")
+    }
+
+    #[cfg(test)]
+    fn discovered_in(dir: &Path, locale: &str) -> Self {
+        let provider = Self::over(None, locale.to_owned());
+        *provider.commands.lock().unwrap() = discover(dir, locale);
         provider
     }
 
@@ -602,11 +685,12 @@ impl ScriptProvider {
             .cloned()
     }
 
-    fn input(command: &ScriptCommand, request: &Request, situation: &Situation) -> Vec<u8> {
+    fn input(&self, command: &ScriptCommand, request: &Request, situation: &Situation) -> Vec<u8> {
         let targets = targets_of(situation);
         let input = Input {
             command: &command.described.id,
             arg: request.arg.as_deref(),
+            locale: &self.locale,
             targets: &targets,
             situation,
         };
@@ -614,8 +698,8 @@ impl ScriptProvider {
     }
 
     /// Run `command` to completion and turn what it says into an effect.
-    fn run_now(command: &ScriptCommand, input: &[u8]) -> Result<Effect, String> {
-        let outcome = call(&command.script, "run", Some(input), None)?;
+    fn run_now(command: &ScriptCommand, locale: &str, input: &[u8]) -> Result<Effect, String> {
+        let outcome = call(&command.script, "run", locale, Some(input), None)?;
         if !outcome.success {
             return Err(outcome.complaint());
         }
@@ -637,11 +721,12 @@ impl ScriptProvider {
         let label = command
             .described
             .undo
-            .as_deref()
-            .unwrap_or(&command.described.title);
+            .as_ref()
+            .unwrap_or(&command.described.title)
+            .get(locale);
         Ok(Effect {
             status: reply.status,
-            undo_label: (!changes.is_empty()).then(|| keep(label)),
+            undo_label: (!changes.is_empty()).then(|| keep(&label)),
             changes,
             reload: reply.reload,
         })
@@ -672,16 +757,17 @@ impl CommandProvider for ScriptProvider {
             .unwrap()
             .iter()
             .filter(|command| command.offered(situation, &targets))
-            .map(ScriptCommand::command)
+            .map(|command| command.command(&self.locale))
             .collect()
     }
 
     fn preview(&self, request: &Request, situation: &Situation) -> Option<Preview> {
         let command = self.find(&request.id)?;
-        let input = Self::input(&command, request, situation);
+        let input = self.input(&command, request, situation);
         let outcome = call(
             &command.script,
             "preview",
+            &self.locale,
             Some(&input),
             Some(PREVIEW_DEADLINE),
         )
@@ -711,13 +797,14 @@ impl CommandProvider for ScriptProvider {
         let command = self
             .find(&request.id)
             .ok_or_else(|| format!("{} is not a script here", request.id))?;
-        let input = Self::input(&command, request, situation);
+        let input = self.input(&command, request, situation);
         let report = self.report.clone();
-        let title = command.described.title.clone();
+        let locale = self.locale.clone();
+        let title = command.described.title.get(&locale);
         std::thread::Builder::new()
             .name("files-script-run".into())
             .spawn(move || {
-                let _ = report.send(Self::run_now(&command, &input));
+                let _ = report.send(Self::run_now(&command, &locale, &input));
             })
             .map_err(|err| err.to_string())?;
         // The palette closes on this; what the script did arrives through
@@ -1027,6 +1114,47 @@ esac
         assert!(preview.rows[0].conflict);
         provider.run(&request, &situation).unwrap();
         assert!(wait_for(&mut provider).is_err());
+    }
+
+    #[test]
+    fn a_script_may_speak_several_languages() {
+        let dir = Dir::new("l10n");
+        dir.script(
+            "hello",
+            r#"
+case "$1" in
+  describe)
+    printf '%s' '{"commands":[{"id":"hi","title":{"en":"Say Hello","it":"Saluta","pt-BR":"Diga oi"},
+      "keywords":{"en":["greet"],"it":["ciao"]},
+      "arg":{"prompt":{"en":"To whom","it":"A chi"},"placeholder":"..."}}]}'
+    ;;
+  preview) printf '{"note":"%s"}' "$OTTO_LOCALE" ;;
+esac
+"#,
+        );
+        let situation = situation(&dir.0, &["a.txt"]);
+
+        let italian = ScriptProvider::discovered_in(&dir.0, "it-IT");
+        let command = italian.commands(&situation).remove(0);
+        assert_eq!(command.title, "Saluta");
+        assert_eq!(command.arg.as_ref().unwrap().prompt, "A chi");
+        assert!(command.keywords.contains(&"greet".to_string()));
+        assert!(command.keywords.contains(&"ciao".to_string()));
+
+        let brazilian = ScriptProvider::discovered_in(&dir.0, "pt_BR");
+        assert_eq!(brazilian.commands(&situation).remove(0).title, "Diga oi");
+
+        let german = ScriptProvider::discovered_in(&dir.0, "de");
+        assert_eq!(german.commands(&situation).remove(0).title, "Say Hello");
+
+        // The script itself is told, too.
+        let preview = italian
+            .preview(
+                &Request::new("scripts:hello.hi", Some("x".into())),
+                &situation,
+            )
+            .unwrap();
+        assert_eq!(preview.note.as_deref(), Some("it-IT"));
     }
 
     fn situation_with(dir: &Path, selection: &[&str]) -> Situation {

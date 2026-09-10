@@ -16,24 +16,75 @@ import os
 import subprocess
 import sys
 
+# What the script says, per language. `describe` hands the whole table over
+# and the host picks; at preview and run time the host says which locale it
+# is in (OTTO_LOCALE, and "locale" in the request) and `tr` picks here.
+STRINGS = {
+    "en": {
+        "title": "Compress to Zip",
+        "keywords": ["archive", "zip", "pack"],
+        "prompt": "Archive name",
+        "label": "name",
+        "undo": "Compress",
+        "exists": "“{name}” is already there",
+        "into": "{count} item into “{name}”",
+        "into_many": "{count} items into “{name}”",
+        "done": "Compressed {count} item into “{name}”",
+        "done_many": "Compressed {count} items into “{name}”",
+    },
+    "it": {
+        "title": "Comprimi in Zip",
+        "keywords": ["archivio", "zip", "comprimi"],
+        "prompt": "Nome dell’archivio",
+        "label": "nome",
+        "undo": "Compressione",
+        "exists": "“{name}” esiste già",
+        "into": "{count} elemento in “{name}”",
+        "into_many": "{count} elementi in “{name}”",
+        "done": "Compresso {count} elemento in “{name}”",
+        "done_many": "Compressi {count} elementi in “{name}”",
+    },
+}
+
+
+def strings(locale):
+    """The table for a locale: exact, then its language, then English."""
+    tag = (locale or "en").replace("_", "-").lower()
+    for candidate in (tag, tag.split("-")[0], "en"):
+        for key in STRINGS:
+            if key.lower() == candidate:
+                return STRINGS[key]
+    return STRINGS["en"]
+
+
+def tr(request, key, count=1, **args):
+    table = strings(request.get("locale") or os.environ.get("OTTO_LOCALE"))
+    if count != 1 and key + "_many" in table:
+        key += "_many"
+    return table[key].format(count=count, **args)
+
+
+def by_locale(key):
+    return {tag: table[key] for tag, table in STRINGS.items()}
+
 
 def describe():
     return {
         "commands": [
             {
                 "id": "compress",
-                "title": "Compress to Zip",
-                "keywords": ["archive", "zip", "pack"],
+                "title": by_locale("title"),
+                "keywords": by_locale("keywords"),
                 "group": "file",
                 "when": {"targets": "some"},
                 "arg": {
-                    "prompt": "Archive name",
-                    "label": "name",
+                    "prompt": by_locale("prompt"),
+                    "label": by_locale("label"),
                     "placeholder": "Archive.zip",
                     "initial": "{stem}.zip",
                     "preview": True,
                 },
-                "undo": "Compress",
+                "undo": by_locale("undo"),
             }
         ]
     }
@@ -71,16 +122,16 @@ def preview(request):
     ]
     count = len(rows)
     if conflict:
-        note = f"“{name}” is already there"
+        note = tr(request, "exists", name=name)
     else:
-        note = f"{count} item{'s' if count != 1 else ''} into “{name}”"
+        note = tr(request, "into", count=count, name=name)
     return {"rows": rows, "note": note}
 
 
 def run(request):
     name, destination, conflict = plan(request)
     if conflict:
-        sys.exit(f"“{name}” is already there")
+        sys.exit(tr(request, "exists", name=name))
     directory = request["situation"]["path"]
     # Paths relative to the listing's directory, so the archive holds
     # "Photos/a.png" rather than "/home/me/Pictures/Photos/a.png".
@@ -95,7 +146,7 @@ def run(request):
         sys.exit((result.stderr or result.stdout).strip() or "zip failed")
     count = len(relative)
     return {
-        "status": f"Compressed {count} item{'s' if count != 1 else ''} into “{name}”",
+        "status": tr(request, "done", count=count, name=name),
         "changes": [{"kind": "created", "path": destination}],
         "reload": True,
     }

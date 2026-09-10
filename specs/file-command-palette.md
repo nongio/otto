@@ -255,9 +255,13 @@ the palette adds no new capability.
   lands through the provider's `poll` on the browser's idle tick, so a slow
   script never holds the window; the status line says it is running
   meanwhile. A non-zero exit is a failure, and the last line of stderr is the
-  message shown. The two shipped samples, `components/otto-files/scripts/zip`
-  and `unzip`, are the proof of the boundary and the template for the next
-  ones (conversion, OCR).
+  message shown. Scripts speak the window's language: every text in a
+  description may be given per locale and the host picks (exact tag, then
+  language, then English), keywords in every language match, and the locale
+  is handed to the script on every call (`OTTO_LOCALE`, and `locale` in the
+  request) for what it says back. The two shipped samples,
+  `components/otto-files/scripts/zip` and `unzip`, are the proof of the
+  boundary and the template for the next ones (conversion, OCR).
 - **Availability is computed against a snapshot, not the live browser.** A
   provider is asked for its commands with a description of the situation —
   where the window is, what is selected, whether it is the Trash, what the

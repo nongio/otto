@@ -16,24 +16,75 @@ import os
 import subprocess
 import sys
 
+# What the script says, per language; see the zip sample for how the host
+# and the script share the choosing.
+STRINGS = {
+    "en": {
+        "title": "Extract Archive",
+        "keywords": ["unzip", "unpack", "decompress", "expand"],
+        "prompt": "Extract into",
+        "label": "folder",
+        "undo": "Extract",
+        "taken": "{count} folder already there",
+        "taken_many": "{count} folders already there",
+        "extracts": "Extracts {count} archive",
+        "extracts_many": "Extracts {count} archives",
+        "done": "Extracted {count} archive",
+        "done_many": "Extracted {count} archives",
+    },
+    "it": {
+        "title": "Estrai archivio",
+        "keywords": ["unzip", "decomprimi", "scompatta", "espandi"],
+        "prompt": "Estrai in",
+        "label": "cartella",
+        "undo": "Estrazione",
+        "taken": "{count} cartella esiste già",
+        "taken_many": "{count} cartelle esistono già",
+        "extracts": "Estrae {count} archivio",
+        "extracts_many": "Estrae {count} archivi",
+        "done": "Estratto {count} archivio",
+        "done_many": "Estratti {count} archivi",
+    },
+}
+
+
+def strings(locale):
+    tag = (locale or "en").replace("_", "-").lower()
+    for candidate in (tag, tag.split("-")[0], "en"):
+        for key in STRINGS:
+            if key.lower() == candidate:
+                return STRINGS[key]
+    return STRINGS["en"]
+
+
+def tr(request, key, count=1, **args):
+    table = strings(request.get("locale") or os.environ.get("OTTO_LOCALE"))
+    if count != 1 and key + "_many" in table:
+        key += "_many"
+    return table[key].format(count=count, **args)
+
+
+def by_locale(key):
+    return {tag: table[key] for tag, table in STRINGS.items()}
+
 
 def describe():
     return {
         "commands": [
             {
                 "id": "extract",
-                "title": "Extract Archive",
-                "keywords": ["unzip", "unpack", "decompress", "expand"],
+                "title": by_locale("title"),
+                "keywords": by_locale("keywords"),
                 "group": "file",
                 "when": {"targets": "some", "extensions": ["zip"], "kinds": "files"},
                 "arg": {
-                    "prompt": "Extract into",
-                    "label": "folder",
+                    "prompt": by_locale("prompt"),
+                    "label": by_locale("label"),
                     "placeholder": "{stem}",
                     "initial": "{stem}",
                     "preview": True,
                 },
-                "undo": "Extract",
+                "undo": by_locale("undo"),
             }
         ]
     }
@@ -69,9 +120,9 @@ def preview(request):
     ]
     conflicts = sum(1 for _, _, c in plans if c)
     if conflicts:
-        note = f"{conflicts} folder{'s' if conflicts != 1 else ''} already there"
+        note = tr(request, "taken", count=conflicts)
     else:
-        note = f"Extracts {len(plans)} archive{'s' if len(plans) != 1 else ''}"
+        note = tr(request, "extracts", count=len(plans))
     return {"rows": rows, "note": note}
 
 
@@ -91,7 +142,7 @@ def run(request):
         changes.append({"kind": "created", "path": folder})
     count = len(plans)
     return {
-        "status": f"Extracted {count} archive{'s' if count != 1 else ''}",
+        "status": tr(request, "done", count=count),
         "changes": changes,
         "reload": True,
     }
