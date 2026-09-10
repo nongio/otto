@@ -123,6 +123,11 @@ pub struct Palette {
     arg: Option<ArgSession>,
     /// Why the last attempt did not work, shown in place of the list.
     error: Option<String>,
+    /// What the argument being typed is doing right now — how many items a
+    /// pattern has picked, say. Set by the host after each preview and shown
+    /// where an error would be; cleared by the next key like an error is,
+    /// since it was about text that is now being changed.
+    note: Option<String>,
     /// The first row on screen. The list is longer than the card whenever the
     /// query is short, and this is what keeps the highlight in view.
     scroll: usize,
@@ -143,6 +148,7 @@ impl Palette {
             highlight: 0,
             arg: None,
             error: None,
+            note: None,
             scroll: 0,
             style,
         };
@@ -214,6 +220,11 @@ impl Palette {
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// The live result of the argument being typed, if the host has one.
+    pub fn note(&self) -> Option<&str> {
+        self.note.as_deref()
     }
 
     /// The first row on screen, and where the view puts it after scrolling.
@@ -310,12 +321,19 @@ impl Palette {
         self.error = Some(error.into());
     }
 
+    /// Say what the argument as typed is doing — the answer a previewed
+    /// argument produced. Shown until the next key changes the question.
+    pub fn set_note(&mut self, note: Option<String>) {
+        self.note = note;
+    }
+
     // === Keys ===
 
     pub fn on_key(&mut self, key: Key, mods: KeyMods) -> Outcome {
         // Any key at all clears the last complaint: it was about text that is
         // now being changed.
         let had_error = self.error.take().is_some();
+        self.note = None;
         let outcome = if self.arg.is_some() {
             self.arg_key(key, mods)
         } else {
@@ -995,9 +1013,15 @@ mod tests {
         type_text(&mut palette, "/nowhere");
         palette.set_error("No such folder");
         assert_eq!(palette.error(), Some("No such folder"));
+        palette.set_note(Some("3 of 9 selected".into()));
+        assert_eq!(palette.note(), Some("3 of 9 selected"));
         // The next keystroke is about the text, so the complaint goes.
         palette.on_key(Key::Edit(TextInputKey::Backspace), mods());
         assert!(palette.error().is_none());
+        assert!(
+            palette.note().is_none(),
+            "a note is about text that has now changed"
+        );
         assert_eq!(palette.input().value(), "/nowher");
     }
 }

@@ -1880,8 +1880,21 @@ pub fn path_crumb_at(
         .filter(|&index| crumbs[index].is_dir)
 }
 
+/// Where the strip's caption ends and the trail must stop: the bar's right
+/// edge less the caption and its padding, or the bar's right edge when there
+/// is no caption.
+pub fn path_bar_trail_right(bar: Rect, note: Option<&str>) -> f32 {
+    match note {
+        Some(note) => {
+            let width = styles::FOOTNOTE.font().measure_str(note, None).0;
+            bar.right - PATH_BAR_PAD - width - PATH_BAR_PAD
+        }
+        None => bar.right,
+    }
+}
+
 fn draw_path_bar(canvas: &Canvas, f: &Frame) {
-    if f.path_bar.is_empty() {
+    if f.path_bar.is_empty() && f.path_bar_note.is_none() {
         return;
     }
     let theme = f.theme;
@@ -1902,8 +1915,29 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
         &paint,
     );
 
+    // The selection count, at the trailing end, in the trail's quieter tone:
+    // a fact about the listing, not a step through it.
+    if let Some(note) = f.path_bar_note.as_deref() {
+        let width = styles::FOOTNOTE.font().measure_str(note, None).0;
+        Label::new(note)
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_secondary)
+            .centered_on(bar.right - PATH_BAR_PAD - width, bar.center_y())
+            .render(canvas);
+    }
+    if f.path_bar.is_empty() {
+        return;
+    }
+
     canvas.save();
-    canvas.clip_rect(bar, ClipOp::Intersect, true);
+    // The trail stops short of the caption rather than running under it.
+    let trail = Rect::from_ltrb(
+        bar.left,
+        bar.top,
+        path_bar_trail_right(bar, f.path_bar_note.as_deref()),
+        bar.bottom,
+    );
+    canvas.clip_rect(trail, ClipOp::Intersect, true);
 
     let last = f.path_bar.len() - 1;
     for (index, (crumb, rect)) in f.path_bar.iter().zip(&rects).enumerate() {
@@ -2679,6 +2713,9 @@ pub struct Frame<'a> {
     /// The crumb under the pointer, drawn lit — it leads somewhere, and a
     /// thing that can be clicked should say so before it is.
     pub path_crumb_hover: Option<usize>,
+    /// A caption at the strip's trailing end: how much is selected, while
+    /// anything is. The trail gives way to it rather than running under it.
+    pub path_bar_note: Option<String>,
 }
 
 impl Frame<'_> {
@@ -6419,6 +6456,18 @@ mod geometry_tests {
     /// The trail runs left to right in path order, each crumb clear of the
     /// one before it, and the whole row inside the strip it is drawn on.
     #[test]
+    fn the_trail_gives_way_to_the_selection_count() {
+        let bar = path_bar_rect(1100.0, 700.0, 0.0);
+        assert_eq!(path_bar_trail_right(bar, None), bar.right);
+        let with = path_bar_trail_right(bar, Some("3 of 61 selected"));
+        assert!(
+            with < bar.right - 60.0,
+            "the caption needs its width and padding"
+        );
+        assert!(with > bar.left, "the caption never eats the whole strip");
+    }
+
+    #[test]
     fn the_path_bar_lays_its_crumbs_out_in_order() {
         let crumbs = vec![
             crumb("/", true),
@@ -7071,6 +7120,7 @@ mod geometry_tests {
             path_bar: Vec::new(),
             path_bar_h: PATH_BAR_H,
             path_crumb_hover: None,
+            path_bar_note: None,
             path_entry: false,
             width: 1100.0,
             height,

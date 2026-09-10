@@ -134,8 +134,11 @@ a path to go to or a new name to give a file.
   again rather than leaving the last, narrower one standing.
 - Abandoning the palette — Escape, a click outside, losing focus — puts back
   exactly what was there when it opened. Running the command keeps the answer.
-- A partial argument that matches nothing leaves the restored state standing
-  and says nothing: it is half-typed, not wrong.
+- The palette says what the argument is doing as it is typed, in the line
+  where an error would go: "3 of 61 selected" for a pattern, and "Nothing
+  matches" when it picks nothing. That is a note, not an error — a half-typed
+  pattern is not wrong — and the next key clears it along with the question it
+  answered. The restored state stands underneath either way.
 
 ### The first set of commands
 

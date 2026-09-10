@@ -3636,8 +3636,15 @@ impl Browser {
         }
         if id == command::id::SELECT_MATCHING {
             // A pattern that matches nothing leaves the restored selection
-            // standing and says nothing: it is half-typed, not wrong.
+            // standing; the palette says so in its note rather than as an
+            // error, since a half-typed pattern is not wrong.
             let _ = self.select_matching(&typed);
+            let note = self
+                .path_bar_note()
+                .unwrap_or_else(|| otto_kit::t_owned!("files-nothing-matches"));
+            if let Some(palette) = self.palette.as_mut() {
+                palette.set_note(Some(note));
+            }
         }
         self.dirty = true;
     }
@@ -3953,6 +3960,11 @@ impl Browser {
         let palette = self.palette.as_ref()?;
         if let Some(error) = palette.error() {
             return Some(error.to_string());
+        }
+        // What the argument being typed is doing right now, when the host
+        // has said — the live answer to a previewed pattern.
+        if let Some(note) = palette.note() {
+            return Some(note.to_string());
         }
         // Only about the *command* list. An argument with nothing under it —
         // a name, a pattern, anything free-text — has no completions by
@@ -6006,6 +6018,24 @@ impl Browser {
             .unwrap_or_else(|| path.to_string_lossy().into_owned())
     }
 
+    /// The path bar's caption: how much of the listing is selected, while
+    /// anything is. One item counts too — the header only speaks up past one,
+    /// but the bar is where the selection is read at a glance.
+    fn path_bar_note(&self) -> Option<String> {
+        if self.columns.is_empty() {
+            return None;
+        }
+        let depth = self.active.min(self.columns.len() - 1);
+        let selected = self.columns[depth].selection.len();
+        (selected > 0).then(|| {
+            otto_kit::t_owned!(
+                "files-status-selected",
+                count = selected as i64,
+                total = self.visible_len(depth) as i64
+            )
+        })
+    }
+
     fn subtitle(&self) -> String {
         // A first preview pays D-Bus activation, so this can be visible for a
         // moment. Saying so beats a keystroke that appears to do nothing.
@@ -6206,6 +6236,7 @@ impl Browser {
             path_bar: self.path_crumbs(),
             path_bar_h: self.path_bar_h(),
             path_crumb_hover: self.path_crumb_hover,
+            path_bar_note: self.path_bar_note(),
             path_entry: self.path_entry.is_some(),
             trash: self.trash.then(|| view::TrashChrome {
                 // Put Back acts on the selection; Empty Trash acts on the can.
@@ -10085,6 +10116,69 @@ mod palette_tests {
     }
 
     /// A pattern selects what is on screen, and nothing else.
+    #[test]
+    fn the_path_bar_counts_the_selection() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt"]);
+        browser.clear_selection();
+        assert_eq!(browser.path_bar_note(), None);
+        browser.select_matching("*.png").unwrap();
+        assert_eq!(
+            browser.path_bar_note().as_deref(),
+            Some(otto_kit::t_owned!("files-status-selected", count = 2, total = 3).as_str())
+        );
+    }
+
+    /// Typing a pattern says what it is picking as it goes, and says plainly
+    /// when it picks nothing — in the palette, not as an error.
+    #[test]
+    fn a_previewed_pattern_reports_its_count_in_the_palette() {
+        let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt"]);
+        browser.clear_selection();
+        browser.open_palette();
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        for ch in "select m".chars() {
+            browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Char(ch)), mods);
+        }
+        browser
+            .palette
+            .as_mut()
+            .unwrap()
+            .on_key(palette::Key::Tab, mods);
+        assert!(browser.palette.as_ref().unwrap().prompt().is_some());
+        for ch in "*.png".chars() {
+            let outcome = browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Char(ch)), mods);
+            browser.settle_palette(outcome, 0);
+        }
+        assert_eq!(
+            browser.palette_message().as_deref(),
+            Some(otto_kit::t_owned!("files-status-selected", count = 2, total = 3).as_str())
+        );
+        for ch in "x".chars() {
+            let outcome = browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Char(ch)), mods);
+            browser.settle_palette(outcome, 0);
+        }
+        assert_eq!(
+            browser.palette_message().as_deref(),
+            Some(otto_kit::t_owned!("files-nothing-matches").as_str())
+        );
+        assert!(browser.palette.as_ref().unwrap().error().is_none());
+    }
+
     #[test]
     fn select_matching_picks_the_files_the_pattern_names() {
         let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt", "D.PNG"]);

@@ -221,6 +221,10 @@ the answer to "what am I actually looking at", without a trip to Get Info.
 - **What it spells out** — the one thing selected in the active column. With
   nothing selected, or with several things selected, there is no single path
   to give and it falls back to that column's own directory.
+- **The count** — while anything is selected, the strip's trailing end says
+  how much: "3 of 61 selected". One item counts too, unlike the header, which
+  only speaks up past one — the bar is where the selection is read at a
+  glance. The trail stops short of the caption rather than running under it.
 - **Naming** — every crumb is what the thing is called on disk. The root is
   `/`, wearing the volume icon: naming it in words would mean inventing a
   name — a hostname, "Computer" — where every other crumb is a fact. The home

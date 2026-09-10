@@ -1055,6 +1055,7 @@ mod tests {
             drop_target: None,
             marquee: None,
             path_bar: Vec::new(),
+            path_bar_note: None,
             path_bar_h: view::PATH_BAR_H,
             path_crumb_hover: None,
             path_entry: false,
