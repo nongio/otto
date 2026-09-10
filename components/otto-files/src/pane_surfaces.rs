@@ -124,6 +124,8 @@ pub struct PaletteFrame {
     /// Shown in place of the list.
     pub message: Option<String>,
     pub rows: Vec<crate::app::PaletteRowData>,
+    /// Where the list has scrolled to, and the state of its bar.
+    pub scroll: otto_kit::components::scroll::ScrollState,
 }
 
 impl PaletteFrame {
@@ -145,6 +147,7 @@ impl PaletteFrame {
                 .collect(),
             message: self.message.as_deref(),
             on_surface: true,
+            scroll: Some(self.scroll),
         }
     }
 }

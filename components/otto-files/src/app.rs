@@ -442,6 +442,11 @@ struct Browser {
     /// would be a placement the user has to undo before they can read the
     /// window under it.
     palette_offset: (f32, f32),
+    /// The palette's list, scrolling under its field: momentum, the band past
+    /// either end and the fading bar, the same view the columns run on. Owned
+    /// here rather than by the palette because the palette is I/O-free and
+    /// clock-free, and a scroll view keeps time.
+    palette_scroll: ScrollView,
     /// The display the palette may be dragged around, in window points, as the
     /// compositor last answered. `None` until it has, and the drag then falls
     /// back to the window's own edges.
@@ -890,6 +895,7 @@ impl Browser {
             palette: None,
             palette_selection: None,
             palette_offset: (0.0, 0.0),
+            palette_scroll: ScrollView::new(Rect::new_empty()),
             palette_display: None,
             palette_caret: None,
             palette_drag: None,
@@ -2051,6 +2057,7 @@ impl Browser {
     fn scroll_animating(&self) -> bool {
         self.pan.is_animating()
             || self.columns.iter().any(|c| c.scroll.is_animating())
+            || self.palette_scroll.is_animating()
             || self.quickview_pan_animating()
     }
 
@@ -2065,6 +2072,9 @@ impl Browser {
             if column.scroll.is_animating() {
                 moved |= column.scroll.tick();
             }
+        }
+        if self.palette_scroll.is_animating() {
+            moved |= self.palette_scroll.tick();
         }
         // The open preview's picture pans on scroll views of its own, and
         // they fling and spring like any other.
@@ -3572,6 +3582,7 @@ impl Browser {
             view::palette_field_style(AppContext::current_theme()),
         ));
         self.palette_offset = (0.0, 0.0);
+        self.palette_scroll = ScrollView::new(Rect::new_empty());
         self.palette_display = None;
         self.palette_caret = None;
         self.palette_drag = None;
@@ -3715,49 +3726,105 @@ impl Browser {
     /// The card, where it is now — the resting rect moved by whatever drag has
     /// been applied to it.
     fn palette_card(&mut self) -> Rect {
-        let rows = self.palette_rows();
-        let view_rows: Vec<view::PaletteRow<'_>> = rows
-            .iter()
-            .map(|row| view::PaletteRow {
-                kind: row.kind,
-                title: &row.title,
-                badge: None,
-                subtitle: None,
-                shortcut: None,
-                highlighted: row.highlighted,
-            })
-            .collect();
-        let message = self
-            .palette
-            .as_ref()
-            .map(|_| ())
-            .and(self.palette_message())
-            .is_some();
+        let rows = self.palette_layout();
+        let view_rows = Self::palette_view_rows(&rows);
+        let message = self.palette_message().is_some();
         view::palette_rect(self.size.0, &view_rows, message).with_offset(self.palette_offset)
+    }
+
+    /// The band a drag takes hold of: the card's top, where the field is.
+    ///
+    /// The field rather than a bar of its own — the palette is one card with a
+    /// line of text across the top of it, and a strip above that line would be
+    /// chrome for its own sake. The rows below it are for picking.
+    fn palette_grip_at(&mut self, x: f32, y: f32) -> bool {
+        let card = self.palette_card();
+        Rect::from_ltrb(
+            card.left,
+            card.top,
+            card.right,
+            card.top + view::PALETTE_FIELD_H,
+        )
+        .contains(skia_safe::Point::new(x, y))
     }
 
     /// A press at `(x, y)` in window points, while the palette is up.
     ///
-    /// The card is a handle and nothing else: a press anywhere on it takes
-    /// hold of it, and a press anywhere else lets the palette go. Rows are not
-    /// clicked — picking is the keyboard's, and a card that is all handle can
-    /// be dragged from wherever it was caught, which is what a card that
-    /// wanders off the window needs.
+    /// The top band takes hold of the card; a row is picked, the way Return
+    /// picks the highlighted one; the rest of the card is inert; and a press
+    /// anywhere else lets the palette go, spending the click on that rather
+    /// than on whatever file was underneath.
     ///
-    /// One method rather than two because the press reaches the browser two
-    /// ways — through the palette's own catcher surface when the card has one,
-    /// and through the toplevel when it is painted into the window — and both
-    /// arrive here in the same coordinates.
-    fn palette_press(&mut self, x: f32, y: f32) {
-        let card = self.palette_card();
-        if card.contains(skia_safe::Point::new(x, y)) {
+    /// One method for both doors the press can come through — the palette's
+    /// own catcher surface, and the toplevel when the card is painted into the
+    /// window — since both arrive in the same coordinates.
+    fn palette_press(&mut self, x: f32, y: f32, serial: u32) {
+        if self.palette_grip_at(x, y) {
+            let card = self.palette_card();
             self.palette_drag = Some((x - card.left, y - card.top));
-        } else {
-            // A click outside the card dismisses the palette and stops there,
-            // rather than also selecting whatever file was underneath.
+            self.dirty = true;
+            return;
+        }
+        if let Some(row) = self.palette_row_under(x, y) {
+            let picked = self
+                .palette
+                .as_mut()
+                .is_some_and(|palette| palette.highlight_row(row));
+            if picked {
+                let mods = KeyMods {
+                    shift: false,
+                    ctrl: false,
+                };
+                if let Some(outcome) = self
+                    .palette
+                    .as_mut()
+                    .map(|palette| palette.on_key(palette::Key::Enter, mods))
+                {
+                    self.settle_palette(outcome, serial);
+                }
+            }
+            self.dirty = true;
+            return;
+        }
+        let card = self.palette_card();
+        if !card.contains(skia_safe::Point::new(x, y)) {
             self.close_palette();
         }
         self.dirty = true;
+    }
+
+    /// The pointer moving over the list, with no button down: the row under it
+    /// takes the highlight, so what Return would do is always what the pointer
+    /// is resting on.
+    fn palette_hover(&mut self, x: f32, y: f32) {
+        let Some(row) = self.palette_row_under(x, y) else {
+            return;
+        };
+        let moved = self.palette.as_mut().is_some_and(|palette| {
+            palette.highlighted() != Some(row) && palette.highlight_row(row)
+        });
+        self.dirty |= moved;
+    }
+
+    /// A scroll over the card. The list flings and springs like a column's:
+    /// a touchpad's stream carries momentum and stretches past the ends, a
+    /// notched wheel steps.
+    fn palette_wheel(&mut self, x: f32, y: f32, dy: f32, stop: bool, discrete: bool) {
+        let card = self.palette_card();
+        if !card.contains(skia_safe::Point::new(x, y)) {
+            return;
+        }
+        let _ = self.palette_layout();
+        let scroll = &mut self.palette_scroll;
+        let moved = if stop {
+            scroll.on_wheel_end();
+            true
+        } else if discrete {
+            scroll.on_wheel_discrete(dy)
+        } else {
+            scroll.on_wheel(dy)
+        };
+        self.dirty |= moved;
     }
 
     /// Everything the palette's own surface needs, with its text owned.
@@ -3766,20 +3833,10 @@ impl Browser {
     /// palette back, mutably, to render its text field into the same canvas.
     fn palette_frame(&mut self) -> Option<pane_surfaces::PaletteFrame> {
         self.palette.as_ref()?;
-        let rows = self.palette_rows();
+        let rows = self.palette_layout();
         let message = self.palette_message();
         let prompt = self.palette.as_ref().and_then(|p| p.prompt());
-        let view_rows: Vec<view::PaletteRow<'_>> = rows
-            .iter()
-            .map(|row| view::PaletteRow {
-                kind: row.kind,
-                title: &row.title,
-                badge: row.badge.as_deref(),
-                subtitle: row.subtitle.as_deref(),
-                shortcut: row.shortcut.as_deref(),
-                highlighted: row.highlighted,
-            })
-            .collect();
+        let view_rows = Self::palette_view_rows(&rows);
         let resting = view::palette_rect(self.size.0, &view_rows, message.is_some());
         drop(view_rows);
         Some(pane_surfaces::PaletteFrame {
@@ -3788,6 +3845,7 @@ impl Browser {
             prompt,
             message,
             rows,
+            scroll: self.palette_scroll.state,
         })
     }
 
@@ -3886,26 +3944,17 @@ impl Browser {
 
     /// The palette's rows as the view wants them, scrolled so the highlight is
     /// on screen.
-    fn palette_rows(&mut self) -> Vec<PaletteRowData> {
-        let Some(palette) = self.palette.as_mut() else {
+    fn palette_rows(&self) -> Vec<PaletteRowData> {
+        let Some(palette) = self.palette.as_ref() else {
             return Vec::new();
         };
-        let len = palette.rows().len();
-        let window = view::palette_window(
-            len,
-            palette.highlighted(),
-            palette.scroll(),
-            view::PALETTE_MAX_ROWS,
-        );
-        palette.set_scroll(window.start);
-
-        let palette = self.palette.as_ref().expect("checked above");
         let highlight = palette.highlighted();
         let resting = palette.resting();
-        let mut rows: Vec<PaletteRowData> = palette.rows()[window.clone()]
+        palette
+            .rows()
             .iter()
-            .zip(window)
-            .map(|(row, index)| match row {
+            .enumerate()
+            .map(|(index, row)| match row {
                 palette::Row::Heading(group) => PaletteRowData {
                     kind: view::PaletteRowKind::Heading,
                     title: group.label(),
@@ -3943,16 +3992,73 @@ impl Browser {
                     }
                 }
             })
-            .collect::<Vec<_>>();
-        // A group named with nothing under it reads as broken rather than as
-        // scrolled, so the window never ends on a heading.
-        while rows
-            .last()
-            .is_some_and(|row| row.kind == view::PaletteRowKind::Heading)
-        {
-            rows.pop();
+            .collect()
+    }
+
+    /// Size the list's scroll view to the rows it holds, and return those
+    /// rows. Everything that measures the list — painting, hit-testing,
+    /// revealing the highlight — goes through here, so they cannot disagree.
+    fn palette_layout(&mut self) -> Vec<PaletteRowData> {
+        let rows = self.palette_rows();
+        let message = self.palette_message().is_some();
+        let view_rows = Self::palette_view_rows(&rows);
+        let viewport = view::palette_list_rect(self.size.0, &view_rows, message);
+        let content = view::palette_content_h(&view_rows);
+        drop(view_rows);
+        if self.palette_scroll.state.viewport() != viewport {
+            self.palette_scroll.set_viewport(viewport);
+        }
+        if self.palette_scroll.state.content_length() != content {
+            self.palette_scroll.set_content_length(content);
         }
         rows
+    }
+
+    /// The rows as the view measures them — text borrowed, nothing else.
+    fn palette_view_rows(rows: &[PaletteRowData]) -> Vec<view::PaletteRow<'_>> {
+        rows.iter()
+            .map(|row| view::PaletteRow {
+                kind: row.kind,
+                title: &row.title,
+                badge: row.badge.as_deref(),
+                subtitle: row.subtitle.as_deref(),
+                shortcut: row.shortcut.as_deref(),
+                highlighted: row.highlighted,
+            })
+            .collect()
+    }
+
+    /// Scroll the list by the least that brings the highlighted row into
+    /// view. After every key, so the arrows walk a long list a row at a time.
+    fn palette_reveal_highlight(&mut self) {
+        let Some(highlight) = self.palette.as_ref().and_then(|p| p.highlighted()) else {
+            return;
+        };
+        let rows = self.palette_layout();
+        let view_rows = Self::palette_view_rows(&rows);
+        if highlight >= view_rows.len() {
+            return;
+        }
+        let row = view::palette_row_rect(self.size.0, &view_rows, highlight);
+        let viewport = self.palette_scroll.state.viewport();
+        let offset = view::palette_reveal(row, viewport, self.palette_scroll.offset());
+        if offset != self.palette_scroll.offset() {
+            self.palette_scroll.scroll_to(offset);
+        }
+    }
+
+    /// Which row of the list is under `(x, y)` in window points, through the
+    /// list's scroll: the rows are hit-tested where they lie, shifted by how
+    /// far they have been scrolled.
+    fn palette_row_under(&mut self, x: f32, y: f32) -> Option<usize> {
+        let rows = self.palette_layout();
+        let view_rows = Self::palette_view_rows(&rows);
+        let (x, y) = (x - self.palette_offset.0, y - self.palette_offset.1);
+        let viewport = self.palette_scroll.state.viewport();
+        if !viewport.contains(skia_safe::Point::new(x, y)) {
+            return None;
+        }
+        view::palette_row_at(x, y + self.palette_scroll.offset(), self.size.0, &view_rows)
     }
 
     /// What to show in place of the list: a refusal, or that nothing matches.
@@ -4006,6 +4112,7 @@ impl Browser {
             palette::Outcome::Changed => {
                 self.refresh_palette_completions();
                 self.preview_palette_argument();
+                self.palette_reveal_highlight();
                 self.dirty = true;
             }
             palette::Outcome::Ignored => {}
@@ -6551,7 +6658,7 @@ impl App for FilesApp {
             // two-step the rename and path fields take.
             if browser.palette.is_some() && !pane_surfaces::palette_on_surface() {
                 let width = browser.size.0;
-                let rows = browser.palette_rows();
+                let rows = browser.palette_layout();
                 let message = browser.palette_message();
                 let prompt = browser.palette.as_ref().and_then(|p| p.prompt());
                 let view_rows: Vec<view::PaletteRow<'_>> = rows
@@ -6580,6 +6687,7 @@ impl App for FilesApp {
                         rows: view_rows,
                         message: message.as_deref(),
                         on_surface: false,
+                        scroll: Some(browser.palette_scroll.state),
                     },
                 );
                 canvas.restore();
@@ -8050,15 +8158,27 @@ impl FilesApp {
                     continue;
                 }
                 match event.kind {
-                    PointerEventKind::Press { .. } => {
-                        browser.palette_press(x, y);
+                    PointerEventKind::Press { serial, .. } => {
+                        browser.palette_press(x, y, serial);
                     }
                     PointerEventKind::Motion { .. } if browser.palette_drag.is_some() => {
                         browser.drag_palette_to(x, y);
                     }
+                    PointerEventKind::Motion { .. } => {
+                        browser.palette_hover(x, y);
+                    }
                     // The card stays where it was let go of.
                     PointerEventKind::Release { .. } => {
                         browser.dirty |= browser.palette_drag.take().is_some();
+                    }
+                    PointerEventKind::Axis { vertical, .. } => {
+                        browser.palette_wheel(
+                            x,
+                            y,
+                            vertical.absolute as f32,
+                            vertical.stop,
+                            vertical.discrete != 0,
+                        );
                     }
                     _ => {}
                 }
@@ -9071,7 +9191,7 @@ impl FilesApp {
                         // there, rather than also selecting whatever file
                         // happened to be underneath.
                         if browser.palette.is_some() {
-                            browser.palette_press(x, y);
+                            browser.palette_press(x, y, serial);
                             return;
                         }
 
@@ -10421,41 +10541,119 @@ mod palette_tests {
         assert!(!dir.0.join("reports").exists());
     }
 
-    /// The whole card is a handle: a press anywhere on it — the field, a row,
-    /// the bottom edge — takes hold, and the card then follows the pointer and
-    /// stays where it is let go of. Nothing on it is clicked.
+    /// The top band takes hold of the card; a row is picked, not grabbed.
     #[test]
-    fn the_palette_is_a_handle_all_over() {
+    fn the_top_band_drags_and_the_rows_pick() {
         let (mut browser, _dir) = browser_over(&["a.txt"]);
         browser.size = (1200.0, 800.0);
         browser.open_palette();
         let card = browser.palette_card();
-        let rows = browser
-            .palette
-            .as_ref()
-            .map(|p| p.rows().len())
-            .unwrap_or(0);
-        assert!(rows > 1, "the resting list should offer something");
 
-        // A press on a row is a grab, not a pick: the highlight does not move
-        // and nothing runs.
-        let before = browser.palette.as_ref().and_then(|p| p.highlighted());
-        browser.palette_press(card.center_x(), card.bottom - 4.0);
-        assert!(browser.palette_drag.is_some());
+        browser.palette_press(card.center_x(), card.top + 4.0, 0);
         assert!(
-            browser.palette.is_some(),
-            "a press on the card must not close it"
+            browser.palette_drag.is_some(),
+            "the field band is the handle"
         );
-        assert_eq!(
-            browser.palette.as_ref().and_then(|p| p.highlighted()),
-            before
-        );
+        browser.palette_drag = None;
+
+        // The first row that asks for an argument: pressing it enters
+        // argument mode, the same as Return on it would.
+        let rows = browser.palette_layout();
+        let view_rows = Browser::palette_view_rows(&rows);
+        let target = rows
+            .iter()
+            .position(|row| row.badge.is_some())
+            .expect("a command with an argument");
+        let rect = view::palette_row_rect(1200.0, &view_rows, target);
+        drop(view_rows);
+        browser.palette_press(rect.center_x(), rect.center_y(), 0);
+        assert!(browser.palette_drag.is_none(), "a row is not a handle");
+        assert!(browser.palette.as_ref().unwrap().prompt().is_some());
 
         browser.palette_drag = Some((10.0, 10.0));
         browser.drag_palette_to(400.0, 300.0);
         let moved = browser.palette_card();
         assert_eq!(moved.left, 390.0);
         assert_eq!(moved.top, 290.0);
+    }
+
+    /// The row under the pointer is the highlighted one, so Return always does
+    /// what the pointer is resting on.
+    #[test]
+    fn hovering_a_row_highlights_it() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        let rows = browser.palette_layout();
+        let view_rows = Browser::palette_view_rows(&rows);
+        let items: Vec<usize> = (0..rows.len())
+            .filter(|&i| rows[i].kind == view::PaletteRowKind::Item)
+            .collect();
+        assert!(items.len() >= 2);
+        let second = view::palette_row_rect(1200.0, &view_rows, items[1]);
+        drop(view_rows);
+        browser.palette_hover(second.center_x(), second.center_y());
+        assert_eq!(
+            browser.palette.as_ref().unwrap().highlighted(),
+            Some(items[1])
+        );
+        // A heading is read, not hovered.
+        if let Some(heading) = rows
+            .iter()
+            .position(|r| r.kind == view::PaletteRowKind::Heading)
+        {
+            let rows2 = browser.palette_layout();
+            let view_rows = Browser::palette_view_rows(&rows2);
+            let rect = view::palette_row_rect(1200.0, &view_rows, heading);
+            drop(view_rows);
+            browser.palette_hover(rect.center_x(), rect.center_y());
+            assert_eq!(
+                browser.palette.as_ref().unwrap().highlighted(),
+                Some(items[1])
+            );
+        }
+    }
+
+    /// The list is a scroll view: a wheel over it moves the rows, and the
+    /// arrows keep the highlight in view by the least that shows it.
+    #[test]
+    fn the_list_scrolls_under_the_wheel_and_the_arrows() {
+        let (mut browser, _dir) = browser_over(&["a.txt", "b.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        let rows = browser.palette_layout();
+        assert!(
+            rows.len() > view::PALETTE_MAX_ROWS,
+            "the resting list should be longer than the viewport"
+        );
+        let content = browser.palette_scroll.state.content_length();
+        let viewport = browser.palette_scroll.state.viewport();
+        assert!(content > viewport.height());
+
+        let card = browser.palette_card();
+        browser.palette_wheel(card.center_x(), card.center_y(), 3.0, false, true);
+        assert!(
+            browser.palette_scroll.offset() > 0.0,
+            "a notch scrolls the list"
+        );
+        browser.palette_scroll.scroll_to(0.0);
+
+        // Arrow down past the bottom of the viewport: the list follows.
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        for _ in 0..rows.len() {
+            let outcome = browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Down, mods);
+            browser.settle_palette(outcome, 0);
+        }
+        let offset = browser.palette_scroll.offset();
+        assert!(offset > 0.0, "the highlight at the end pulls the list down");
+        assert!(offset <= content - viewport.height() + 0.5);
     }
 
     /// A press anywhere else lets the palette go, and the click is spent on
@@ -10466,7 +10664,7 @@ mod palette_tests {
         browser.size = (1200.0, 800.0);
         let selection = browser.columns[0].selection.clone();
         browser.open_palette();
-        browser.palette_press(20.0, 700.0);
+        browser.palette_press(20.0, 700.0, 0);
         assert!(browser.palette.is_none());
         assert!(browser.palette_drag.is_none());
         assert_eq!(browser.columns[0].selection, selection);

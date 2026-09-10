@@ -130,7 +130,6 @@ pub struct Palette {
     note: Option<String>,
     /// The first row on screen. The list is longer than the card whenever the
     /// query is short, and this is what keeps the highlight in view.
-    scroll: usize,
     /// How the field is drawn. Held rather than looked up, because argument
     /// mode builds a second field and the two must match — and because a test
     /// has no theme to look one up from.
@@ -149,7 +148,6 @@ impl Palette {
             arg: None,
             error: None,
             note: None,
-            scroll: 0,
             style,
         };
         palette.refilter();
@@ -225,15 +223,6 @@ impl Palette {
     /// The live result of the argument being typed, if the host has one.
     pub fn note(&self) -> Option<&str> {
         self.note.as_deref()
-    }
-
-    /// The first row on screen, and where the view puts it after scrolling.
-    pub fn scroll(&self) -> usize {
-        self.scroll
-    }
-
-    pub fn set_scroll(&mut self, first: usize) {
-        self.scroll = first;
     }
 
     /// Put the highlight on `row`, if it is one that can be chosen. What the
@@ -593,7 +582,6 @@ impl Palette {
             .collect();
         self.rebuild_rows();
         // A fresh query is a fresh list: start at the top of it.
-        self.scroll = 0;
         self.highlight = 0;
         self.settle_highlight(1);
     }

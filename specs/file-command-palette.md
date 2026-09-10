@@ -46,13 +46,12 @@ a path to go to or a new name to give a file.
   be dragged clear of the window entirely — off its edge, over the desktop —
   which a card painted into the window's own buffer cannot be, there being no
   pixels out there to draw on.
-- The whole card is a handle: pressing anywhere on it and dragging moves the
-  panel. Nothing on the card is clicked — rows are picked with the keyboard
-  only — so it can be caught wherever it happens to be, including the part of
-  it hanging off the window. It is clamped to the *display*, so it can never
-  be put somewhere it holds the keyboard from out of sight. A fresh open
-  always puts it back where it belongs; a panel that reappeared wherever it
-  was last left would be a placement to undo before the window could be read.
+- The card's top band — the line being typed — is the handle: pressing there
+  and dragging moves the panel, including when that band hangs off the
+  window. It is clamped to the *display*, so it can never be put somewhere it
+  holds the keyboard from out of sight. A fresh open always puts it back where
+  it belongs; a panel that reappeared wherever it was last left would be a
+  placement to undo before the window could be read.
 - The palette is unavailable in the file picker, whose window is answering a
   request rather than managing files.
 - Escape closes it, in one step, without running anything. Ctrl+P while it is
@@ -75,8 +74,11 @@ a path to go to or a new name to give a file.
 - While a query is present the list is flat and ranked, with the group shown as
   a dim badge on each row rather than as a heading.
 - Up and Down move the highlight; the list scrolls to keep it visible. Home and
-  End go to the ends. The pointer does not pick: a press on a row takes hold of
-  the card to drag it (see *Opening and closing*).
+  End go to the ends.
+- The pointer works the list the way it works a column: the row under it takes
+  the highlight as it moves, so Return always does what the pointer is resting
+  on; a click on a row picks it, exactly as Return on it would; a scroll over
+  the card scrolls the list.
 - Each row shows the command's title, its group badge, and — where it has one —
   the keyboard shortcut it is also bound to, right-aligned. A command that
   takes an argument shows its argument label after the title, dimmed, as
@@ -174,11 +176,15 @@ the palette adds no new capability.
 
 ### Where the list scrolls
 
-- At most ten rows are on screen. A longer list scrolls under the highlight, by
-  the least that brings the highlight back into view — so arrowing through it
-  moves one row at a time rather than a page.
-- The card grows downwards as the list grows: the field stays where it is, so
-  what is being typed never moves.
+- At most ten rows' worth of list is on screen; a longer list is a scroll view
+  under the field, the same one the columns run on — a touchpad fling carries
+  momentum, the rows stretch past either end and spring back, a notched wheel
+  steps, and the bar fades in while it moves and out when it stops.
+- The keyboard scrolls it by the least that brings the highlight back into
+  view, so arrowing through a long list moves one row at a time rather than a
+  page.
+- The card grows downwards as the list grows, up to that cap: the field stays
+  where it is, so what is being typed never moves.
 
 ### Accessibility
 

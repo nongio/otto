@@ -3092,30 +3092,10 @@ pub struct PaletteData<'a> {
     /// popup material is used instead, which is what the compositor's blur
     /// expects to sit under.
     pub on_surface: bool,
-}
-
-/// Which rows are on screen, given where the highlight is.
-///
-/// Scrolls by the least that puts the highlight back in view, so arrowing
-/// through a long list moves one row at a time rather than jumping a page.
-pub fn palette_window(
-    len: usize,
-    highlight: Option<usize>,
-    first: usize,
-    max: usize,
-) -> std::ops::Range<usize> {
-    if len <= max {
-        return 0..len;
-    }
-    let mut first = first.min(len - max);
-    if let Some(highlight) = highlight {
-        if highlight < first {
-            first = highlight;
-        } else if highlight >= first + max {
-            first = highlight + 1 - max;
-        }
-    }
-    first..(first + max).min(len)
+    /// The list's scroll view, when the host runs one: where the rows have
+    /// scrolled to, how far past an end they are stretched, and how much of
+    /// the bar to show. `None` draws the rows where they lie.
+    pub scroll: Option<ScrollState>,
 }
 
 fn palette_row_h(kind: PaletteRowKind) -> f32 {
@@ -3131,11 +3111,50 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
     let w = PALETTE_W.min(width - 48.0).max(240.0);
     let left = (width - w - PALETTE_RIGHT_INSET).max(0.0);
     let mut height = PALETTE_FIELD_H;
-    let body: f32 = rows.iter().map(|row| palette_row_h(row.kind)).sum();
+    let body = palette_list_h(rows);
     if body > 0.0 || message {
         height += PALETTE_PAD * 2.0 + if message { PALETTE_ROW_H } else { body };
     }
     Rect::from_xywh(left, PALETTE_TOP, w, height)
+}
+
+/// How tall the whole list is, laid out end to end.
+pub fn palette_content_h(rows: &[PaletteRow<'_>]) -> f32 {
+    rows.iter().map(|row| palette_row_h(row.kind)).sum()
+}
+
+/// How tall the list's *viewport* is: the whole list up to
+/// [`PALETTE_MAX_ROWS`] rows' worth, past which it scrolls.
+pub fn palette_list_h(rows: &[PaletteRow<'_>]) -> f32 {
+    palette_content_h(rows).min(PALETTE_MAX_ROWS as f32 * PALETTE_ROW_H)
+}
+
+/// The list's viewport: the band under the field the rows scroll through.
+pub fn palette_list_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect {
+    let card = palette_rect(width, rows, message);
+    Rect::from_xywh(
+        card.left + PALETTE_PAD,
+        card.top + PALETTE_FIELD_H + PALETTE_PAD,
+        card.width() - PALETTE_PAD * 2.0,
+        palette_list_h(rows),
+    )
+}
+
+/// The least the list has to scroll from `offset` for `row` — a rect in the
+/// list's own, unscrolled coordinates — to be wholly inside `viewport`.
+///
+/// By the least, so arrowing through a long list moves it one row at a time
+/// rather than jumping a page; a row already in view leaves it where it is.
+pub fn palette_reveal(row: Rect, viewport: Rect, offset: f32) -> f32 {
+    let top = row.top - viewport.top;
+    let bottom = row.bottom - viewport.top;
+    if top < offset {
+        top
+    } else if bottom > offset + viewport.height() {
+        bottom - viewport.height()
+    } else {
+        offset
+    }
 }
 
 /// The field, inset in the card's top band.
@@ -3270,6 +3289,35 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
         return;
     }
 
+    match data.scroll {
+        // The rows scroll under the field: drawn where they lie in the list,
+        // shifted and clipped by the view — which also paints the bar and
+        // shows the stretch past either end, since a stretched offset simply
+        // moves them further than the content allows.
+        Some(state) => {
+            // The renderer hands over a canvas in the *content's* own
+            // coordinates — the list's first row at the origin — while the row
+            // rects are measured from the window's corner like everything
+            // else in this file. Shift by the viewport's origin so the two
+            // agree, and the offset the renderer applied does the scrolling.
+            let viewport = state.viewport();
+            otto_kit::components::scroll::ScrollRenderer::draw(
+                canvas,
+                &state,
+                theme,
+                |canvas, _visible| {
+                    canvas.translate((-viewport.left, -viewport.top));
+                    draw_palette_rows(canvas, theme, width, data);
+                },
+            )
+        }
+        None => draw_palette_rows(canvas, theme, width, data),
+    }
+}
+
+fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteData<'_>) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
     for (index, row) in data.rows.iter().enumerate() {
         let rect = palette_row_rect(width, &data.rows, index);
         if row.kind == PaletteRowKind::Heading {
@@ -6131,34 +6179,40 @@ mod geometry_tests {
         }
     }
 
-    /// A short list is all on screen, and does not scroll at all.
-    #[test]
-    fn a_short_palette_list_does_not_scroll() {
-        assert_eq!(palette_window(4, Some(3), 0, PALETTE_MAX_ROWS), 0..4);
-    }
-
-    /// A long one scrolls by the least that brings the highlight back — one
-    /// row per arrow key, not a page.
-    #[test]
-    fn the_palette_scrolls_the_least_that_shows_the_highlight() {
-        let max = 5;
-        assert_eq!(palette_window(20, Some(4), 0, max), 0..5);
-        assert_eq!(palette_window(20, Some(5), 0, max), 1..6);
-        assert_eq!(palette_window(20, Some(6), 1, max), 2..7);
-        // Back up, and it scrolls the other way by one.
-        assert_eq!(palette_window(20, Some(1), 2, max), 1..6);
-    }
-
-    /// The window never runs off the end, however far the remembered scroll is.
-    #[test]
-    fn the_palette_window_stays_inside_the_list() {
-        let window = palette_window(12, None, 99, 5);
-        assert_eq!(window, 7..12);
-    }
-
     /// The card hangs off the right edge and tucks under the header — over its
     /// lower part, so the panel reads as belonging to this window, but clear
     /// of the title and the traffic lights above it.
+    #[test]
+    fn the_list_scrolls_the_least_that_shows_the_row() {
+        let viewport = Rect::from_xywh(0.0, 100.0, 500.0, 320.0);
+        // Ten rows of 32 fit exactly; the eleventh is out of view below.
+        let row = |i: f32| Rect::from_xywh(0.0, 100.0 + i * 32.0, 500.0, 32.0);
+        assert_eq!(palette_reveal(row(3.0), viewport, 0.0), 0.0);
+        assert_eq!(palette_reveal(row(10.0), viewport, 0.0), 32.0);
+        assert_eq!(palette_reveal(row(11.0), viewport, 32.0), 64.0);
+        // And back up: a row above the window brings it to the top.
+        assert_eq!(palette_reveal(row(1.0), viewport, 64.0), 32.0);
+    }
+
+    #[test]
+    fn a_long_list_is_capped_and_scrolls_rather_than_growing() {
+        let rows: Vec<PaletteRow<'_>> = (0..30)
+            .map(|_| PaletteRow {
+                kind: PaletteRowKind::Item,
+                title: "x",
+                badge: None,
+                subtitle: None,
+                shortcut: None,
+                highlighted: false,
+            })
+            .collect();
+        let list = palette_list_rect(1200.0, &rows, false);
+        assert_eq!(list.height(), PALETTE_MAX_ROWS as f32 * PALETTE_ROW_H);
+        assert!(palette_content_h(&rows) > list.height());
+        let card = palette_rect(1200.0, &rows, false);
+        assert_eq!(card.bottom, list.bottom + PALETTE_PAD);
+    }
+
     #[test]
     fn the_palette_overlaps_the_header_and_hangs_off_the_right_edge() {
         let rows = [item("Copy")];
