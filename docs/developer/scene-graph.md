@@ -305,6 +305,8 @@ sets a `key` (`output_<name>`, `workspaces_<name>`, `background_plane_<name>`,
 
 Two runtime levers on the plane path, polled about once a second:
 
+These toggles exist only in `debug-hooks` builds (`--features dev` includes it).
+
 - `touch /tmp/otto-tint` — washes the GPU-composite fallback red, so anything
   that did *not* get a hardware plane is immediately visible.
 - `touch /tmp/otto-no-scanout` — disables window promotion, for A/B comparison.

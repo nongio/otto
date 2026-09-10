@@ -830,14 +830,13 @@ pub fn run_winit() {
             // Tell any window that has moved where it is now. Diffed against
             // what was last sent, so a desktop at rest sends nothing.
             crate::surface_style::send_desktop_frames(&mut state);
-            // Scripted-gesture driver, same hook udev installs. Costs a file
-            // existence check per iteration until a script appears.
-            crate::debug_gesture::tick(&mut state);
-            // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
-            // builtin shortcut action as if its key was pressed. Shared with
-            // the udev backend; see `poll_debug_action_file`.
-            if state.poll_debug_action_file() {
-                state.backend_data.request_redraw();
+            // Scripted-gesture driver and action file, same hooks udev
+            // installs; `debug-hooks` builds only.
+            if crate::debug_hooks::ENABLED {
+                crate::debug_gesture::tick(&mut state);
+                if state.poll_debug_action_file() {
+                    state.backend_data.request_redraw();
+                }
             }
             display_handle.flush_clients().unwrap();
         }

@@ -580,9 +580,9 @@ pub fn run_udev() {
             }
         }
 
-        // Scripted-gesture driver (`/tmp/otto-gesture`). Idle and allocation-free
-        // until that file appears, so it costs a file-existence check per tick.
-        {
+        // Scripted-gesture driver (`/tmp/otto-gesture`), `debug-hooks` builds
+        // only: the timer alone wakes the loop 125 times a second.
+        if crate::debug_hooks::ENABLED {
             let interval = std::time::Duration::from_millis(8);
             state
                 .handle
@@ -786,7 +786,7 @@ pub fn run_udev() {
             // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
             // builtin shortcut action as if its key was pressed. Shared with
             // the winit backend; see `poll_debug_action_file`.
-            if state.poll_debug_action_file() {
+            if crate::debug_hooks::ENABLED && state.poll_debug_action_file() {
                 // Real key events request a redraw as a side effect; without
                 // it the scheduled lay-rs transactions never tick and the
                 // action stays invisible.

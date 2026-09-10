@@ -43,11 +43,9 @@ static QUEUE: Mutex<VecDeque<Step>> = Mutex::new(VecDeque::new());
 
 /// Parse the script file into `queue` and delete it, so one write runs once.
 fn load_script(queue: &mut VecDeque<Step>) {
-    let path = script_path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Some(text) = crate::debug_hooks::take_file(&script_path()) else {
         return;
     };
-    let _ = std::fs::remove_file(&path);
 
     let mut gestures = 0usize;
     for line in text.lines() {

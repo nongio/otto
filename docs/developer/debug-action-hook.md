@@ -12,6 +12,12 @@ reads a file; if it holds the name of a builtin shortcut action, Otto runs
 that action exactly as if its key had been pressed, then requests a redraw so
 the scheduled `lay-rs` transactions actually tick.
 
+Like every file-driven hook (`touch /tmp/otto-*` toggles, the scripted
+gesture driver), it exists only in builds with the `debug-hooks` feature,
+which `dev` enables: a file read per loop turn is not something a release
+session should pay for. Build with `cargo build --features "debug-hooks"`
+(or `dev`) to use it; see `src/debug_hooks.rs`.
+
 ```sh
 echo ExposeShowAll > /tmp/otto-action
 ```

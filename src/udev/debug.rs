@@ -1,5 +1,6 @@
 //! Runtime debug tooling for the plane pipeline: /tmp touch-file toggles,
-//! per-plane PNG dumps, and the 1 Hz frame-realization log.
+//! per-plane PNG dumps, and the 1 Hz frame-realization log. The toggles
+//! only exist in `debug-hooks` builds (see `crate::debug_hooks`).
 
 use smithay::backend::renderer::element::RenderElementStates;
 
@@ -41,7 +42,7 @@ fn refresh_debug_toggles(surface: &mut SurfaceData) {
     use smithay::backend::renderer::DebugFlags;
     use std::sync::atomic::Ordering;
 
-    let tint = std::path::Path::new("/tmp/otto-tint").exists();
+    let tint = crate::debug_hooks::toggle("/tmp/otto-tint");
     let flags = if tint {
         DebugFlags::TINT
     } else {
@@ -54,14 +55,14 @@ fn refresh_debug_toggles(surface: &mut SurfaceData) {
     TINT_COMPOSITE.store(tint, Ordering::Relaxed);
 
     NO_SCANOUT.store(
-        std::path::Path::new("/tmp/otto-no-scanout").exists(),
+        crate::debug_hooks::toggle("/tmp/otto-no-scanout"),
         Ordering::Relaxed,
     );
     NO_WINDOW_PLANE.store(
-        std::path::Path::new("/tmp/otto-no-window-plane").exists(),
+        crate::debug_hooks::toggle("/tmp/otto-no-window-plane"),
         Ordering::Relaxed,
     );
-    if std::path::Path::new("/tmp/otto-dump-planes").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-dump-planes") {
         let _ = std::fs::remove_file("/tmp/otto-dump-planes");
         DUMP_PLANES.store(true, Ordering::Relaxed);
     }

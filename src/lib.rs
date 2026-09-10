@@ -16,6 +16,7 @@ pub mod background_effect;
 #[cfg(any(feature = "udev", feature = "xwayland", feature = "headless"))]
 pub mod cursor;
 pub mod debug_gesture;
+pub mod debug_hooks;
 pub mod drawing;
 pub mod focus;
 #[cfg(feature = "headless")]
