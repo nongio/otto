@@ -1087,6 +1087,20 @@ impl PaneSurfaces {
     }
 }
 
+impl Drop for PaneSurface {
+    /// A surface let go of is torn down, not merely forgotten.
+    ///
+    /// `SubsurfaceSurface` has no `Drop` of its own: dropping one leaves the
+    /// wl_surface mapped, with its buffer and its input region, until the
+    /// process exits. For the palette's catcher that meant a dead,
+    /// display-sized surface still on top after the palette closed — taking
+    /// every press meant for the window, and for the next palette's catcher
+    /// stacked underneath it. So the card could be moved exactly once.
+    fn drop(&mut self) {
+        self.surface.destroy();
+    }
+}
+
 impl PaneSurface {
     /// Returns whether the surface had to be reallocated, which is the
     /// expensive half of a move.
