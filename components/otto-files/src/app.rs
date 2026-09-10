@@ -1,6 +1,6 @@
 use crate::{
-    command, model, palette, pane_surfaces, perf, picker, quickview, scene, thumbcache, thumbnails,
-    view,
+    command, model, palette, pane_surfaces, perf, picker, quickview, remembered, rename, scene,
+    thumbcache, thumbnails, view,
 };
 
 use std::cell::RefCell;
@@ -447,6 +447,13 @@ struct Browser {
     /// here rather than by the palette because the palette is I/O-free and
     /// clock-free, and a scroll view keeps time.
     palette_scroll: ScrollView,
+    /// Where the palette was last left, as an offset from where it opens, so
+    /// the next open finds it there. Kept for the session always; written to
+    /// the state file as well once the host has handed one over.
+    palette_memory: Option<(f32, f32)>,
+    /// Whether the remembered offset is also kept on disk — set by the host,
+    /// never by a test.
+    palette_memory_on_disk: bool,
     /// The display the palette may be dragged around, in window points, as the
     /// compositor last answered. `None` until it has, and the drag then falls
     /// back to the window's own edges.
@@ -895,12 +902,18 @@ impl Browser {
             palette: None,
             palette_selection: None,
             palette_offset: (0.0, 0.0),
+            palette_memory: None,
+            palette_memory_on_disk: false,
             palette_scroll: ScrollView::new(Rect::new_empty()),
             palette_display: None,
             palette_caret: None,
             palette_drag: None,
             palette_quickview: false,
-            commands: command::Registry::builtin(),
+            commands: {
+                let mut registry = command::Registry::builtin();
+                registry.add(Box::new(rename::RenameProvider));
+                registry
+            },
             path_entry: None,
             typeahead: None,
             pending_restore: false,
@@ -3539,6 +3552,7 @@ impl Browser {
                 .into_iter()
                 .map(|e| e.path)
                 .collect(),
+            siblings: visible.iter().map(|entry| entry.name.clone()).collect(),
             cursor_name: cursor.map(|entry| entry.name.clone()),
             cursor_is_dir: cursor.is_some_and(|entry| entry.is_dir),
             trash: self.trash,
@@ -3581,11 +3595,14 @@ impl Browser {
             commands,
             view::palette_field_style(AppContext::current_theme()),
         ));
-        self.palette_offset = (0.0, 0.0);
+        // Where it was last left, if anywhere — brought back on screen below
+        // in case the window has shrunk since.
+        self.palette_offset = self.palette_memory.unwrap_or_default();
         self.palette_scroll = ScrollView::new(Rect::new_empty());
         self.palette_display = None;
         self.palette_caret = None;
         self.palette_drag = None;
+        self.clamp_palette();
         self.dirty = true;
     }
 
@@ -3642,6 +3659,29 @@ impl Browser {
         };
         self.restore_palette_selection();
         if typed.trim().is_empty() {
+            if let Some(palette) = self.palette.as_mut() {
+                palette.set_preview(Vec::new());
+            }
+            self.dirty = true;
+            return;
+        }
+        // A provider's command: ask it for the dry run and show that.
+        if command::Request::new(id.clone(), None)
+            .namespace()
+            .is_some()
+        {
+            let situation = self.situation();
+            let request = command::Request::new(id, Some(typed));
+            let preview = self.commands.preview(&request, &situation);
+            if let Some(palette) = self.palette.as_mut() {
+                match preview {
+                    Some(preview) => {
+                        palette.set_preview(preview.rows);
+                        palette.set_note(preview.note);
+                    }
+                    None => palette.set_preview(Vec::new()),
+                }
+            }
             self.dirty = true;
             return;
         }
@@ -3833,6 +3873,7 @@ impl Browser {
     /// palette back, mutably, to render its text field into the same canvas.
     fn palette_frame(&mut self) -> Option<pane_surfaces::PaletteFrame> {
         self.palette.as_ref()?;
+        self.clamp_palette();
         let rows = self.palette_layout();
         let message = self.palette_message();
         let prompt = self.palette.as_ref().and_then(|p| p.prompt());
@@ -3934,6 +3975,52 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Keep the card inside the bounds it may be dragged around: a remembered
+    /// position from a larger window, or a display answer that has just
+    /// arrived, may otherwise leave it out of reach.
+    fn clamp_palette(&mut self) {
+        if self.palette.is_none() {
+            return;
+        }
+        let card = self.palette_card();
+        let resting = (
+            card.left - self.palette_offset.0,
+            card.top - self.palette_offset.1,
+        );
+        let bounds = self.palette_bounds();
+        let left = card
+            .left
+            .clamp(bounds.left, (bounds.right - card.width()).max(bounds.left));
+        let top = card.top.clamp(
+            bounds.top,
+            (bounds.bottom - view::PALETTE_FIELD_H).max(bounds.top),
+        );
+        let offset = (left - resting.0, top - resting.1);
+        if offset != self.palette_offset {
+            self.palette_offset = offset;
+            self.dirty = true;
+        }
+    }
+
+    /// The card has been let go of: it stays where it is, and the next open
+    /// finds it there.
+    fn palette_dropped(&mut self) {
+        self.palette_memory = Some(self.palette_offset);
+        if self.palette_memory_on_disk {
+            let mut remembered = remembered::Remembered::load();
+            remembered.palette.offset = Some(self.palette_offset);
+            remembered.save();
+        }
+        self.dirty = true;
+    }
+
+    /// Take on what was remembered from the last run, and remember on disk
+    /// from here on.
+    pub fn remember(&mut self, remembered: &remembered::Remembered) {
+        self.palette_memory = remembered.palette.offset;
+        self.palette_memory_on_disk = true;
+    }
+
     /// How far the palette may be dragged, in window points: the display when
     /// the compositor has said where it is, and the window until then.
     fn palette_bounds(&self) -> Rect {
@@ -3989,6 +4076,19 @@ impl Browser {
                         subtitle: completion.subtitle.clone(),
                         shortcut: None,
                         highlighted: highlight == Some(index),
+                    }
+                }
+                palette::Row::Preview(line) => {
+                    let line = &palette.preview()[*line];
+                    PaletteRowData {
+                        kind: view::PaletteRowKind::Preview {
+                            conflict: line.conflict,
+                        },
+                        title: line.to.clone(),
+                        badge: None,
+                        subtitle: Some(line.from.clone()),
+                        shortcut: None,
+                        highlighted: false,
                     }
                 }
             })
@@ -4125,6 +4225,23 @@ impl Browser {
         std::mem::take(&mut self.palette_quickview)
     }
 
+    /// Take on board what a provider's command did: the status line, the undo
+    /// entry, the re-read. The one place a provider's outcome touches the
+    /// window, so a provider in another process would go through the same
+    /// door.
+    fn apply_effect(&mut self, effect: command::Effect) {
+        if let Some(status) = effect.status {
+            self.status = Some(status);
+        }
+        if let Some(label) = effect.undo_label {
+            self.record_undo(label, effect.changes);
+        }
+        if effect.reload {
+            self.reload_all();
+        }
+        self.dirty = true;
+    }
+
     /// Carry out a request the palette produced.
     ///
     /// The host answers for its own namespace because it is the only thing
@@ -4134,8 +4251,14 @@ impl Browser {
     fn run_request(&mut self, request: &command::Request, serial: u32) -> Result<Followup, String> {
         use command::id;
 
-        if let Some(result) = self.commands.run(request) {
-            return result.map(|()| Followup::Nothing);
+        if request.namespace().is_some() {
+            let situation = self.situation();
+            let effect = self
+                .commands
+                .run(request, &situation)
+                .unwrap_or_else(|| Err(format!("{} has no provider", request.id)))?;
+            self.apply_effect(effect);
+            return Ok(Followup::Nothing);
         }
 
         let arg = request.arg.as_deref().unwrap_or_default().trim();
@@ -7800,27 +7923,39 @@ impl FilesApp {
         }
         let query = browser.palette_auto.take().unwrap_or_default();
         browser.columns[depth].cursor = Some(0);
-        browser.open_palette();
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
         // A value other than a bare "1" is typed in, so a screenshot can be
         // taken of the palette part-way through a query rather than at rest.
-        if query != "1" && !query.is_empty() {
-            let mods = KeyMods {
-                shift: false,
-                ctrl: false,
-            };
-            // A tab in the value is a Tab press, so argument mode can be
-            // looked at too: `OTTO_FILES_PALETTE_AUTO=$'go to path\t/usr/'`.
-            for ch in query.chars() {
+        // A tab is a Tab press, so argument mode can be looked at too; a
+        // newline is Return, which runs the command; and `|` opens the palette
+        // again for another go — `$'select m\t*\n|rename\tHoliday {n}'`
+        // selects everything and then shows the rename's dry run on it.
+        for segment in query.split('|') {
+            if browser.palette.is_none() {
+                browser.open_palette();
+            }
+            if segment == "1" {
+                continue;
+            }
+            for ch in segment.chars() {
                 let key = match ch {
                     '\t' => palette::Key::Tab,
+                    '\n' => palette::Key::Enter,
                     '\u{2193}' => palette::Key::Down,
                     '\u{2191}' => palette::Key::Up,
                     ch => palette::Key::Edit(TextInputKey::Char(ch)),
                 };
-                if let Some(palette) = browser.palette.as_mut() {
-                    palette.on_key(key, mods);
-                }
-                browser.refresh_palette_completions();
+                let Some(outcome) = browser
+                    .palette
+                    .as_mut()
+                    .map(|palette| palette.on_key(key, mods))
+                else {
+                    break;
+                };
+                browser.settle_palette(outcome, 0);
             }
         }
         browser.dirty = true;
@@ -8169,7 +8304,9 @@ impl FilesApp {
                     }
                     // The card stays where it was let go of.
                     PointerEventKind::Release { .. } => {
-                        browser.dirty |= browser.palette_drag.take().is_some();
+                        if browser.palette_drag.take().is_some() {
+                            browser.palette_dropped();
+                        }
                     }
                     PointerEventKind::Axis { vertical, .. } => {
                         browser.palette_wheel(
@@ -9041,6 +9178,7 @@ impl FilesApp {
                     PointerEventKind::Release { .. } => {
                         // The palette stays where it was let go of.
                         if browser.palette_drag.take().is_some() {
+                            browser.palette_dropped();
                             drop(browser);
                             window_for_events.request_frame();
                             continue;
@@ -9555,7 +9693,9 @@ fn app_id() -> &'static str {
 
 /// Open a browser window at `start` and run until it is closed.
 pub fn run_browser(start: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    run_app(Browser::new(start), None)
+    let mut browser = Browser::new(start);
+    browser.remember(&remembered::Remembered::load());
+    run_app(browser, None)
 }
 
 /// Open the Trash window and run until it is closed.
@@ -10299,6 +10439,100 @@ mod palette_tests {
         assert!(browser.palette.as_ref().unwrap().error().is_none());
     }
 
+    /// The whole rename, through the palette: the command is offered for the
+    /// selection, the dry run appears line by line as the pattern is typed
+    /// with its summary under it, a taken name is called out and refused, and
+    /// Return renames everything in one undo step.
+    #[test]
+    fn renaming_a_selection_shows_its_dry_run_and_then_does_it() {
+        let (mut browser, dir) =
+            browser_over(&["IMG_001.jpg", "IMG_002.jpg", "Holiday 2.jpg", "notes.txt"]);
+        browser.clear_selection();
+        browser.select_matching("IMG*").unwrap();
+        browser.open_palette();
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        let type_in = |browser: &mut Browser, text: &str| {
+            for ch in text.chars() {
+                let outcome = browser
+                    .palette
+                    .as_mut()
+                    .unwrap()
+                    .on_key(palette::Key::Edit(TextInputKey::Char(ch)), mods);
+                browser.settle_palette(outcome, 0);
+            }
+        };
+        type_in(&mut browser, "rename 2");
+        let outcome = browser
+            .palette
+            .as_mut()
+            .unwrap()
+            .on_key(palette::Key::Tab, mods);
+        browser.settle_palette(outcome, 0);
+        assert!(browser.palette.as_ref().unwrap().prompt().is_some());
+
+        // The initial `{name}` is selected whole; typing replaces it.
+        type_in(&mut browser, "Holiday {n}");
+        let rows = browser.palette_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title, "Holiday 1.jpg");
+        assert_eq!(rows[0].subtitle.as_deref(), Some("IMG_001.jpg"));
+        assert_eq!(
+            rows[0].kind,
+            view::PaletteRowKind::Preview { conflict: false }
+        );
+        assert_eq!(
+            rows[1].kind,
+            view::PaletteRowKind::Preview { conflict: true },
+            "Holiday 2.jpg is already in the folder"
+        );
+        assert_eq!(
+            browser.palette_message().as_deref(),
+            Some(otto_kit::t_owned!("files-rename-conflicts", count = 1).as_str())
+        );
+        // Return refuses while a name is taken, and nothing has moved.
+        let outcome = browser
+            .palette
+            .as_mut()
+            .unwrap()
+            .on_key(palette::Key::Enter, mods);
+        browser.settle_palette(outcome, 0);
+        assert!(browser.palette.is_some());
+        assert!(dir.0.join("IMG_001.jpg").exists());
+
+        // A pattern that clears: everything renamed, one undo step.
+        for _ in 0..3 {
+            let outcome = browser
+                .palette
+                .as_mut()
+                .unwrap()
+                .on_key(palette::Key::Edit(TextInputKey::Backspace), mods);
+            browser.settle_palette(outcome, 0);
+        }
+        type_in(&mut browser, "{n@5}");
+        assert_eq!(
+            browser.palette_message().as_deref(),
+            Some(otto_kit::t_owned!("files-rename-preview", count = 2, total = 2).as_str())
+        );
+        let outcome = browser
+            .palette
+            .as_mut()
+            .unwrap()
+            .on_key(palette::Key::Enter, mods);
+        browser.settle_palette(outcome, 0);
+        assert!(browser.palette.is_none(), "a clean run closes the palette");
+        assert!(dir.0.join("Holiday 5.jpg").exists());
+        assert!(dir.0.join("Holiday 6.jpg").exists());
+        assert!(!dir.0.join("IMG_001.jpg").exists());
+        let undos = browser.undo.len();
+        browser.undo_last();
+        assert_eq!(browser.undo.len(), undos - 1);
+        assert!(dir.0.join("IMG_001.jpg").exists());
+        assert!(dir.0.join("IMG_002.jpg").exists());
+    }
+
     #[test]
     fn select_matching_picks_the_files_the_pattern_names() {
         let (mut browser, _dir) = browser_over(&["a.png", "b.png", "c.txt", "D.PNG"]);
@@ -10734,17 +10968,42 @@ mod palette_tests {
         assert_eq!(browser.palette_display, None);
     }
 
-    /// A fresh open puts it back where it belongs: a panel that reappeared
-    /// wherever it was last left is a placement to undo before the window can
-    /// be read.
+    /// The next open finds the card where it was last left — and brought back
+    /// inside the window if that has shrunk in the meantime.
     #[test]
-    fn the_palette_opens_where_it_belongs_however_it_was_left() {
+    fn the_palette_reopens_where_it_was_left() {
+        let (mut browser, _dir) = browser_over(&["a.txt"]);
+        browser.size = (1200.0, 800.0);
+        browser.open_palette();
+        browser.palette_drag = Some((10.0, 10.0));
+        browser.drag_palette_to(400.0, 300.0);
+        browser.palette_dropped();
+        let left_at = browser.palette_card();
+        browser.close_palette();
+
+        browser.open_palette();
+        assert_eq!(browser.palette_card(), left_at);
+        browser.close_palette();
+
+        // A narrower window: still on screen.
+        browser.size = (500.0, 800.0);
+        browser.open_palette();
+        let card = browser.palette_card();
+        assert!(card.right <= 500.0 + 0.5, "clamped into the smaller window");
+        assert!(card.left >= 0.0);
+    }
+
+    #[test]
+    fn a_palette_never_dropped_opens_where_it_belongs() {
         let (mut browser, _dir) = browser_over(&["a.txt"]);
         browser.size = (1200.0, 800.0);
         browser.open_palette();
         let resting = browser.palette_card();
         browser.palette_drag = Some((10.0, 10.0));
         browser.drag_palette_to(400.0, 300.0);
+        // Closed mid-drag, never let go of: nothing to remember.
+        browser.palette_drag = None;
+        browser.palette_memory = None;
         browser.close_palette();
 
         browser.open_palette();

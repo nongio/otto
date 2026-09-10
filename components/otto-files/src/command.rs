@@ -239,6 +239,9 @@ pub struct Situation {
     pub path: PathBuf,
     /// What is selected, deepest pane only.
     pub selection: Vec<PathBuf>,
+    /// Every name in the listing the selection was made from — what a new
+    /// name would have to avoid. Already in memory, so no I/O to gather.
+    pub siblings: Vec<String>,
     /// The name under the cursor, selected or not.
     pub cursor_name: Option<String>,
     /// Whether the cursor is on a directory.
@@ -300,15 +303,68 @@ pub trait CommandProvider: Send {
     /// the disk or the network: a provider offers what it already knows.
     fn commands(&self, situation: &Situation) -> Vec<Command>;
 
+    /// What one of this provider's commands *would* do with the argument as
+    /// typed so far — shown in the palette after every keystroke, for a
+    /// command whose argument is [previewed](ArgSpec::previewed).
+    ///
+    /// A dry run: it must change nothing. Called from the keyboard, so it
+    /// should be quick, and it answers from the situation the palette opened
+    /// on rather than looking again. The default has nothing to show.
+    fn preview(&self, request: &Request, situation: &Situation) -> Option<Preview> {
+        let _ = (request, situation);
+        None
+    }
+
     /// Carry out one of this provider's commands.
     ///
     /// The host never calls this for its own namespace — it is the only thing
     /// holding the window, so it routes its own commands internally. A
     /// provider that lives elsewhere implements this; the default refuses,
     /// which is the right answer for one that only describes.
-    fn run(&mut self, request: &Request) -> Result<(), String> {
+    ///
+    /// What came of it is handed back as data — a status line, and the moves
+    /// and creations the host records for undo — rather than done to the
+    /// window directly, since a provider in another process could not.
+    fn run(&mut self, request: &Request, situation: &Situation) -> Result<Effect, String> {
+        let _ = situation;
         Err(format!("{} cannot be run here", request.id))
     }
+}
+
+/// A dry run of an argument as typed, for the palette to show.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Preview {
+    /// One line per thing the command would touch: what it is, and what it
+    /// would become.
+    pub rows: Vec<PreviewRow>,
+    /// A summary under the rows — "3 of 5 renamed, 1 name collides".
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewRow {
+    pub from: String,
+    pub to: String,
+    /// The outcome is not possible as things stand — a name already taken,
+    /// say — and the row is drawn to say so.
+    pub conflict: bool,
+}
+
+/// What running a command did, for the host to record.
+///
+/// Data rather than side effects on the window: the same shape works for a
+/// provider in this process and for a script in another. `changes` are what
+/// undo needs — files moved, files created — in the order they happened, so
+/// undoing walks them backwards.
+#[derive(Debug, Clone, Default)]
+pub struct Effect {
+    /// The status line, if the command has something to say.
+    pub status: Option<String>,
+    /// What to call this in the undo history — "Undid Rename".
+    pub undo_label: Option<&'static str>,
+    pub changes: Vec<crate::model::Change>,
+    /// Whether the listing has to be re-read to show the outcome.
+    pub reload: bool,
 }
 
 /// Every provider, asked together.
@@ -342,13 +398,27 @@ impl Registry {
     /// Hand a request to the provider whose namespace it names. `None` when
     /// the request belongs to the host's own namespace, which the host runs
     /// itself.
-    pub fn run(&mut self, request: &Request) -> Option<Result<(), String>> {
+    pub fn run(
+        &mut self,
+        request: &Request,
+        situation: &Situation,
+    ) -> Option<Result<Effect, String>> {
         let namespace = request.namespace()?;
         let provider = self
             .providers
             .iter_mut()
             .find(|provider| provider.namespace() == namespace)?;
-        Some(provider.run(request))
+        Some(provider.run(request, situation))
+    }
+
+    /// Ask the provider a request names what it would do. `None` for the
+    /// host's own namespace, and for a provider with nothing to show.
+    pub fn preview(&self, request: &Request, situation: &Situation) -> Option<Preview> {
+        let namespace = request.namespace()?;
+        self.providers
+            .iter()
+            .find(|provider| provider.namespace() == namespace)?
+            .preview(request, situation)
     }
 }
 
@@ -1057,6 +1127,37 @@ mod tests {
     #[test]
     fn the_registry_leaves_the_hosts_own_requests_to_the_host() {
         let mut registry = Registry::builtin();
-        assert!(registry.run(&Request::new(id::GO_UP, None)).is_none());
+        let situation = browsing();
+        assert!(registry
+            .run(&Request::new(id::GO_UP, None), &situation)
+            .is_none());
+        assert!(registry
+            .preview(&Request::new(id::GO_UP, Some("x".into())), &situation)
+            .is_none());
+    }
+
+    /// A provider that describes but neither previews nor runs gets the
+    /// defaults: nothing to show, and a refusal.
+    #[test]
+    fn a_provider_that_only_describes_refuses_to_run() {
+        struct Quiet;
+        impl CommandProvider for Quiet {
+            fn namespace(&self) -> &'static str {
+                "quiet"
+            }
+            fn commands(&self, _: &Situation) -> Vec<Command> {
+                vec![Command::new("quiet:one", "One", Group::File)]
+            }
+        }
+        let mut registry = Registry::builtin();
+        registry.add(Box::new(Quiet));
+        let situation = browsing();
+        let request = Request::new("quiet:one", None);
+        assert!(registry.preview(&request, &situation).is_none());
+        assert!(matches!(registry.run(&request, &situation), Some(Err(_))));
+        assert!(registry
+            .commands(&situation)
+            .iter()
+            .any(|c| c.id == "quiet:one"));
     }
 }

@@ -3056,6 +3056,11 @@ pub enum PaletteRowKind {
     Heading,
     /// Something that can be picked — a command, or an answer to an argument.
     Item,
+    /// One line of a dry run: the row's title is what a thing would become,
+    /// its subtitle what it is now. Read, not picked. `conflict` says the
+    /// outcome is not possible as things stand, and the line is drawn to say
+    /// so.
+    Preview { conflict: bool },
 }
 
 /// One line of the palette's list, ready to draw.
@@ -3101,7 +3106,7 @@ pub struct PaletteData<'a> {
 fn palette_row_h(kind: PaletteRowKind) -> f32 {
     match kind {
         PaletteRowKind::Heading => PALETTE_HEADING_H,
-        PaletteRowKind::Item => PALETTE_ROW_H,
+        PaletteRowKind::Item | PaletteRowKind::Preview { .. } => PALETTE_ROW_H,
     }
 }
 
@@ -3113,9 +3118,21 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
     let mut height = PALETTE_FIELD_H;
     let body = palette_list_h(rows);
     if body > 0.0 || message {
-        height += PALETTE_PAD * 2.0 + if message { PALETTE_ROW_H } else { body };
+        height += PALETTE_PAD * 2.0 + body + palette_footer_h(rows, message);
     }
     Rect::from_xywh(left, PALETTE_TOP, w, height)
+}
+
+/// The line the message takes: the whole body when there are no rows — it
+/// stands in for the list — and a footer under the list when there are, so a
+/// dry run can be summed up beneath its lines.
+pub fn palette_footer_h(rows: &[PaletteRow<'_>], message: bool) -> f32 {
+    if message {
+        PALETTE_ROW_H
+    } else {
+        let _ = rows;
+        0.0
+    }
 }
 
 /// How tall the whole list is, laid out end to end.
@@ -3278,15 +3295,19 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     }
 
     if let Some(message) = data.message {
+        // Under the rows when there are rows, in their place when there are
+        // none: either way the last line of the card.
         Label::new(message)
             .with_style(styles::BODY)
             .with_color(theme.text_secondary)
             .centered_on(
                 card.left + PALETTE_PAD + 8.0,
-                card.top + PALETTE_FIELD_H + PALETTE_PAD + PALETTE_ROW_H / 2.0,
+                card.bottom - PALETTE_PAD - PALETTE_ROW_H / 2.0,
             )
             .render(canvas);
-        return;
+        if data.rows.is_empty() {
+            return;
+        }
     }
 
     match data.scroll {
@@ -3325,6 +3346,41 @@ fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteD
                 .with_style(styles::FOOTNOTE_EMPHASIZED)
                 .with_color(theme.text_tertiary)
                 .centered_on(rect.left + 8.0, rect.center_y() + 3.0)
+                .render(canvas);
+            continue;
+        }
+        if let PaletteRowKind::Preview { conflict } = row.kind {
+            // "old → new": what it is, dimmed, then what it would become — in
+            // the palette's red when it cannot, so the one line that would
+            // stop the whole batch is the one that stands out.
+            let font = styles::BODY.font();
+            let mut x = rect.left + 8.0;
+            if let Some(from) = row.subtitle {
+                Label::new(from)
+                    .with_style(styles::BODY)
+                    .with_color(theme.text_tertiary)
+                    .centered_on(x, rect.center_y())
+                    .render(canvas);
+                x += font.measure_str(from, None).0 + 8.0;
+                Label::new("→")
+                    .with_style(styles::BODY)
+                    .with_color(theme.text_tertiary)
+                    .centered_on(x, rect.center_y())
+                    .render(canvas);
+                x += font.measure_str("→", None).0 + 8.0;
+            }
+            Label::new(row.title)
+                .with_style(if conflict {
+                    styles::BODY_EMPHASIZED
+                } else {
+                    styles::BODY
+                })
+                .with_color(if conflict {
+                    theme.accent_red
+                } else {
+                    theme.text_primary
+                })
+                .centered_on(x, rect.center_y())
                 .render(canvas);
             continue;
         }
@@ -6192,6 +6248,41 @@ mod geometry_tests {
         assert_eq!(palette_reveal(row(11.0), viewport, 32.0), 64.0);
         // And back up: a row above the window brings it to the top.
         assert_eq!(palette_reveal(row(1.0), viewport, 64.0), 32.0);
+    }
+
+    #[test]
+    fn a_dry_run_line_is_not_a_target_and_its_summary_sits_under_the_list() {
+        let rows = vec![
+            PaletteRow {
+                kind: PaletteRowKind::Preview { conflict: false },
+                title: "Holiday 1.jpg",
+                badge: None,
+                subtitle: Some("IMG_001.jpg"),
+                shortcut: None,
+                highlighted: false,
+            },
+            PaletteRow {
+                kind: PaletteRowKind::Preview { conflict: true },
+                title: "Holiday 2.jpg",
+                badge: None,
+                subtitle: Some("IMG_002.jpg"),
+                shortcut: None,
+                highlighted: false,
+            },
+        ];
+        let rect = palette_row_rect(1200.0, &rows, 0);
+        assert_eq!(
+            palette_row_at(rect.center_x(), rect.center_y(), 1200.0, &rows),
+            None
+        );
+        let bare = palette_rect(1200.0, &rows, false);
+        let noted = palette_rect(1200.0, &rows, true);
+        assert_eq!(noted.height(), bare.height() + PALETTE_ROW_H);
+        // The list itself does not move to make room: the footer is below it.
+        assert_eq!(
+            palette_list_rect(1200.0, &rows, true),
+            palette_list_rect(1200.0, &rows, false)
+        );
     }
 
     #[test]

@@ -49,9 +49,11 @@ a path to go to or a new name to give a file.
 - The card's top band — the line being typed — is the handle: pressing there
   and dragging moves the panel, including when that band hangs off the
   window. It is clamped to the *display*, so it can never be put somewhere it
-  holds the keyboard from out of sight. A fresh open always puts it back where
-  it belongs; a panel that reappeared wherever it was last left would be a
-  placement to undo before the window could be read.
+  holds the keyboard from out of sight. The next open finds the card where it
+  was last dropped — kept for the session, and in
+  `$XDG_STATE_HOME/otto/files.toml` across runs, as an offset from where it
+  opens so that a window moved or resized in between still gets a sensible
+  place — and brought back inside the bounds if the window has shrunk.
 - The palette is unavailable in the file picker, whose window is answering a
   request rather than managing files.
 - Escape closes it, in one step, without running anything. Ctrl+P while it is
@@ -162,6 +164,7 @@ the palette adds no new capability.
 | Edit | Select Matching | glob pattern, shown as it is typed |
 | File | Move to Folder | path (folders only) |
 | File | New Folder with Selection | name, optional; empty means the default |
+| File | Rename N Items / Rename with Pattern | pattern, shown as a dry run while it is typed |
 | View | List View, Grid View, Column View | — (the one already on is not offered) |
 | View | Change View | choice of the three |
 | View | Sort By | choice of sort keys |
@@ -173,6 +176,33 @@ the palette adds no new capability.
   Trash, Undo with an empty stack.
 - A command's title reflects what it would do to the current selection where
   the menus already do so — "Move 3 Items to Trash".
+
+### Renaming a selection from a pattern
+
+- Offered whenever anything is selected, outside the Trash: "Rename 3 Items",
+  or "Rename with Pattern" for one. The argument is the new name with holes in
+  it, filled from each file in turn; it opens as `{name}` so that Return with
+  nothing typed changes nothing.
+- The holes: `{name}` and `{ext}` are the original name and extension; `{n}`
+  is the file's number in the selection from 1, `{n:3}` padded, `{n@10}`
+  started at ten; `{1}`, `{2}`, `{-1}` are the words of the original name
+  split at spaces, underscores, dashes and dots, and `{2..}`, `{1..3}`,
+  `{..-2}` runs of them; `{name:1..4}` picks characters by position the same
+  way. Positions count from one, ranges include both ends, negatives count
+  from the back — one rule throughout. A brace that spells none of these is
+  left as typed, so a half-written hole reads as what it is.
+- A pattern that names no extension — no `{ext}` and no dot in its own text —
+  keeps each file's extension: `Holiday {n}` on `IMG_001.jpg` is
+  `Holiday 1.jpg`.
+- The list under the field is the dry run, one line per file — `IMG_001.jpg →
+  Holiday 1.jpg` — with the summary beneath it: "Renames 3 of 3", or the first
+  thing wrong. A name already taken, by another file in the batch or by
+  something in the folder that is not being renamed, is drawn in red and the
+  summary says so; Return then refuses and nothing moves. A name another file
+  is *giving up* is not taken: `1 → 2, 2 → 3` is fine, because the renames go
+  through temporary names.
+- Running it is one undo entry. The dry run's lines are read, not picked:
+  the arrows do nothing on them and Return runs the command.
 
 ### Where the list scrolls
 
@@ -202,6 +232,22 @@ the palette adds no new capability.
   written down as data — otherwise the later extension system needs the seam
   rebuilt rather than reused. The built-in commands are one provider, with no
   privileges the seam does not give every provider.
+- **The seam carries a dry run out and the outcome back, both as data.** A
+  provider may answer `preview(request, situation)` with lines and a summary
+  for the palette to show as the argument is typed, and `run` answers with an
+  *effect*: a status line, and the moves and creations the host records for
+  undo. The host applies an effect in one place; nothing a provider does
+  reaches the window any other way. Rename is built this way, in-process, as
+  the proof — it is exactly the shape a script takes.
+- **Scripts live in `~/.config/otto/files-scripts/`** (under
+  `$XDG_CONFIG_HOME`). A script is one more provider on the same seam, in
+  another process: it describes its commands once, at startup, with the
+  conditions they need — a selection, certain extensions — so that gathering
+  commands on Ctrl+P still touches no disk; it is asked for a dry run and to
+  run with the situation and the request as data. The first two, to prove the
+  boundary, are zip and unzip. Slow scripts — OCR, conversion — will need to
+  finish later and report progress; the effect is data so that can be added
+  without reshaping it.
 - **Availability is computed against a snapshot, not the live browser.** A
   provider is asked for its commands with a description of the situation —
   where the window is, what is selected, whether it is the Trash, what the

@@ -55,6 +55,10 @@ pub enum Row {
     /// An answer to the argument being typed, by its index into the session's
     /// completions.
     Completion(usize),
+    /// One line of a dry run — what the argument as typed would do to one
+    /// thing — by its index into the session's preview. Read, never chosen:
+    /// Return runs the command, not the line.
+    Preview(usize),
 }
 
 /// Something an argument could be completed to.
@@ -105,6 +109,9 @@ struct ArgSession {
     /// The prefix is never edited a character at a time, so this is the only
     /// way back.
     saved_query: String,
+    /// What the argument as typed would do, from the host, when the command
+    /// can say. Shown as the rows while it is not empty.
+    preview: Vec<crate::command::PreviewRow>,
 }
 
 /// The palette.
@@ -316,6 +323,27 @@ impl Palette {
         self.note = note;
     }
 
+    /// Show what the argument as typed would do, line by line, in place of
+    /// the completions. Nothing outside argument mode.
+    pub fn set_preview(&mut self, rows: Vec<crate::command::PreviewRow>) {
+        let Some(session) = self.arg.as_mut() else {
+            return;
+        };
+        if session.preview == rows {
+            return;
+        }
+        session.preview = rows;
+        self.rebuild_rows();
+    }
+
+    /// The dry run on show, if any.
+    pub fn preview(&self) -> &[crate::command::PreviewRow] {
+        match &self.arg {
+            Some(session) => &session.preview,
+            None => &[],
+        }
+    }
+
     // === Keys ===
 
     pub fn on_key(&mut self, key: Key, mods: KeyMods) -> Outcome {
@@ -521,6 +549,7 @@ impl Palette {
             },
             highlight,
             saved_query: self.query.value().to_string(),
+            preview: Vec::new(),
         });
         self.rebuild_rows();
     }
@@ -631,9 +660,17 @@ impl Palette {
 
     fn rebuild_rows(&mut self) {
         self.rows.clear();
-        if self.arg.is_some() {
-            self.rows
-                .extend((0..self.completions().len()).map(Row::Completion));
+        if let Some(session) = self.arg.as_ref() {
+            // A dry run stands in for the completions while there is one: the
+            // two are never both worth showing, and a command that previews
+            // is one whose argument is free text with nothing to complete.
+            if !session.preview.is_empty() {
+                self.rows
+                    .extend((0..session.preview.len()).map(Row::Preview));
+            } else {
+                self.rows
+                    .extend((0..session.completions.len()).map(Row::Completion));
+            }
             return;
         }
         if self.resting() {

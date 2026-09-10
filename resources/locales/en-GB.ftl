@@ -343,6 +343,7 @@ files-command-sort-by-prompt = Sort by
 files-command-search-prompt = Search for
 files-command-select-matching-prompt = Select matching
 files-command-move-to-prompt = Move to
+files-command-rename-many-prompt = Rename to
 
 # The one-word name of what a command is asking for, shown dimmed after its
 # title in the list.
@@ -361,6 +362,22 @@ files-view-columns = Columns
 files-name-invalid = That isn’t a name a file can have
 files-no-pattern = Type a pattern, such as *.png
 files-nothing-matches = Nothing matches “{ $pattern }”
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many = Rename { $count } Items
+files-rename-pattern = Rename with Pattern
+# The dry run's summary line under the palette's rows.
+files-rename-preview = Renames { $count } of { $total }
+files-rename-preview-unchanged = Nothing would change
+files-rename-conflicts = { $count ->
+    [one] One name is already taken
+   *[other] { $count } names are already taken
+}
+files-rename-invalid = { $count ->
+    [one] One name would be empty
+   *[other] { $count } names would be empty
+}
+files-renamed-count = Renamed { $count } items
 files-nothing-selected = Nothing is selected
 files-cant-move-into-itself = A folder can’t be moved into itself
 # $count is how many entries a pattern selected.

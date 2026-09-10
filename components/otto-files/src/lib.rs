@@ -27,6 +27,8 @@ pub mod picker;
 pub mod places_config;
 pub mod quickview;
 pub mod recent;
+pub mod remembered;
+pub mod rename;
 pub mod scene;
 pub mod search;
 pub mod thumbcache;
