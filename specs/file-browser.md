@@ -1407,6 +1407,10 @@ With [quickview.md](./quickview.md), recorded so they are not reopened:
   scaled decode it was making anyway, at the standard buckets only.
 - The cache is **small images only**. Full-resolution decoding is each
   consumer's own business; the cache never serves it and never brokers it.
+- The browser's in-memory thumbnail store is bounded **by bytes as well as by
+  count**. The count assumes a grid cell's worth of pixels each; the byte
+  budget is what actually holds when a thumbnail comes back larger than
+  asked, so a screenshots folder cannot fill memory with resident frames.
 - File-type detection lives in **otto-kit**, not otto-files, and splits into
   name-based (display, filters, associations) and content-based (decoder
   dispatch). Content never overrides the name for display.

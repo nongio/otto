@@ -650,7 +650,11 @@ matching this text.
 - **A 200 MP image** is never decoded at full resolution. The worker decodes at
   the smallest sample size that still exceeds twice the window's pixel size, and
   refuses above a fixed pixel budget when the codec cannot decode scaled, in
-  which case the file gets a metadata card. **Zooming re-decodes** rather than
+  which case the file gets a metadata card. A codec that cannot sample at
+  all — PNG — decodes whole within that budget and is then **resampled to fit
+  the requested size in the worker**, so what crosses the pipe and what the
+  caller keeps is never larger than was asked for: a full-frame screenshot
+  requested as a thumbnail arrives as a thumbnail. **Zooming re-decodes** rather than
   upscaling the fit-sized decode: past roughly 1:1 the worker decodes the
   visible region at a finer sample size, so zooming into a large photograph
   shows detail instead of blur. The previous frame stays on screen while that

@@ -42,6 +42,14 @@ pub const MAX_IN_FLIGHT: usize = 4;
 /// resident.
 pub const CAPACITY: usize = 512;
 
+/// How many bytes of decoded thumbnails to keep, whatever their count.
+///
+/// The count assumes a grid cell's worth of pixels each; a thumbnail that
+/// came back larger — a decoder that could not sample, a shared-cache entry
+/// at a bigger size than asked — would make 512 of them gigabytes. The
+/// budget is the ceiling the count was standing in for.
+pub const BUDGET_BYTES: usize = 96 << 20;
+
 /// Where one file's thumbnail has got to.
 enum State {
     /// Somebody is looking for it.
@@ -61,6 +69,16 @@ struct Slot {
     modified: Option<SystemTime>,
     /// Insertion order, for eviction.
     stamp: u64,
+}
+
+impl Slot {
+    /// The decoded bytes this slot holds resident.
+    fn bytes(&self) -> usize {
+        match &self.state {
+            State::Ready(image) => image.width() as usize * image.height() as usize * 4,
+            _ => 0,
+        }
+    }
 }
 
 /// One file to fetch a thumbnail for.
@@ -88,6 +106,8 @@ pub enum Found {
 #[derive(Default)]
 pub struct Store {
     slots: HashMap<PathBuf, Slot>,
+    /// Decoded bytes held by the `Ready` slots, kept against [`BUDGET_BYTES`].
+    bytes: usize,
     in_flight: usize,
     clock: u64,
     /// Bumped whenever something lands that changes what a pane would draw.
@@ -204,14 +224,15 @@ impl Store {
     fn insert(&mut self, path: PathBuf, modified: Option<SystemTime>, state: State) {
         self.clock = self.clock.wrapping_add(1);
         let stamp = self.clock;
-        self.slots.insert(
-            path,
-            Slot {
-                state,
-                modified,
-                stamp,
-            },
-        );
+        let slot = Slot {
+            state,
+            modified,
+            stamp,
+        };
+        self.bytes += slot.bytes();
+        if let Some(replaced) = self.slots.insert(path, slot) {
+            self.bytes = self.bytes.saturating_sub(replaced.bytes());
+        }
         self.evict();
     }
 
@@ -222,7 +243,7 @@ impl Store {
     /// folder, where insertion order and recency are near enough the same
     /// thing.
     fn evict(&mut self) {
-        while self.slots.len() > CAPACITY {
+        while self.slots.len() > CAPACITY || self.bytes > BUDGET_BYTES {
             let Some(oldest) = self
                 .slots
                 .iter()
@@ -235,7 +256,13 @@ impl Store {
             else {
                 return;
             };
-            self.slots.remove(&oldest);
+            self.remove(&oldest);
+        }
+    }
+
+    fn remove(&mut self, path: &Path) {
+        if let Some(slot) = self.slots.remove(path) {
+            self.bytes = self.bytes.saturating_sub(slot.bytes());
         }
     }
 
@@ -243,6 +270,7 @@ impl Store {
     /// have changed under every path at once.
     pub fn clear(&mut self) {
         self.slots.clear();
+        self.bytes = 0;
         // In-flight jobs are deliberately still counted: they are still
         // running, and their results will be dropped on arrival by the mtime
         // check. Zeroing the count here would let the ceiling be exceeded.
@@ -419,6 +447,35 @@ mod tests {
 
         store.finish(PathBuf::from("/tmp/b"), mtime, Found::Thumbnail(image()));
         assert_ne!(store.epoch(), before);
+    }
+
+    /// A handful of full-frame pictures is over the budget long before the
+    /// count is: the oldest go, whatever the count says.
+    #[test]
+    fn evicts_by_bytes_before_count() {
+        let mut store = Store::new();
+        let big = || {
+            let info = skia::ImageInfo::new_n32_premul((2880, 1920), None);
+            let bytes = vec![0u8; 2880 * 1920 * 4];
+            skia::images::raster_from_data(&info, skia::Data::new_copy(&bytes), 2880 * 4).unwrap()
+        };
+        let per = 2880 * 1920 * 4;
+        let fits = BUDGET_BYTES / per;
+        for i in 0..fits + 3 {
+            store.insert(
+                PathBuf::from(format!("/tmp/shot-{i}.png")),
+                None,
+                State::Ready(big()),
+            );
+        }
+        assert!(store.bytes <= BUDGET_BYTES, "{} bytes held", store.bytes);
+        assert_eq!(store.slots.len(), fits);
+        assert!(!store.slots.contains_key(Path::new("/tmp/shot-0.png")));
+        assert!(store
+            .slots
+            .contains_key(Path::new(&format!("/tmp/shot-{}.png", fits + 2))));
+        store.clear();
+        assert_eq!(store.bytes, 0);
     }
 
     #[test]
