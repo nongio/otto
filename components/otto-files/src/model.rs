@@ -1697,6 +1697,25 @@ pub fn create_folder(dest: &Path) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Create a folder with the name somebody gave, under `dest`.
+///
+/// Distinct from [`create_folder`], which picks the name itself and so can
+/// never collide: a name that was asked for is either free or an error, and
+/// quietly creating "name 2" instead would be answering a different question.
+pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+        return Err(otto_kit::t_owned!("files-name-invalid"));
+    }
+    let target = dest.join(name);
+    if target.exists() {
+        return Err(otto_kit::t_owned!("files-name-taken", name = name));
+    }
+    std::fs::create_dir(&target)
+        .map_err(|err| otto_kit::t_owned!("files-new-folder-failed", error = err.to_string()))?;
+    Ok(target)
+}
+
 // ---------------------------------------------------------------------------
 // Trash
 // ---------------------------------------------------------------------------

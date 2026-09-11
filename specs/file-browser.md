@@ -221,6 +221,10 @@ the answer to "what am I actually looking at", without a trip to Get Info.
 - **What it spells out** — the one thing selected in the active column. With
   nothing selected, or with several things selected, there is no single path
   to give and it falls back to that column's own directory.
+- **The count** — while anything is selected, the strip's trailing end says
+  how much: "3 of 61 selected". One item counts too, unlike the header, which
+  only speaks up past one — the bar is where the selection is read at a
+  glance. The trail stops short of the caption rather than running under it.
 - **Naming** — every crumb is what the thing is called on disk. The root is
   `/`, wearing the volume icon: naming it in words would mean inventing a
   name — a hostname, "Computer" — where every other crumb is a fact. The home
@@ -442,7 +446,10 @@ and a superseded search is abandoned through a generation counter rather than
 interrupted — the same contract `Directory` already has. A query is debounced,
 so holding a key down costs one search rather than one per character. Until the
 answer lands the pane says it is working; it never invents rows to fill the
-gap.
+gap. Navigating away before the answer lands — to a place, Home, a typed path,
+by any route — discards it: the results pane and its search die together, the
+window shows the folder it was sent to, and the search or Recent listing is
+left behind Back, not still standing over the folder.
 
 **One source: the desktop's index.** Both scopes, and Recent, are answered by
 **LocalSearch (TinySPARQL)** over D-Bus. There is no second implementation to
@@ -1400,6 +1407,10 @@ With [quickview.md](./quickview.md), recorded so they are not reopened:
   scaled decode it was making anyway, at the standard buckets only.
 - The cache is **small images only**. Full-resolution decoding is each
   consumer's own business; the cache never serves it and never brokers it.
+- The browser's in-memory thumbnail store is bounded **by bytes as well as by
+  count**. The count assumes a grid cell's worth of pixels each; the byte
+  budget is what actually holds when a thumbnail comes back larger than
+  asked, so a screenshots folder cannot fill memory with resident frames.
 - File-type detection lives in **otto-kit**, not otto-files, and splits into
   name-based (display, filters, associations) and content-based (decoder
   dispatch). Content never overrides the name for display.

@@ -497,6 +497,111 @@ files-month-oct = 10月
 files-month-nov = 11月
 files-month-dec = 12月
 
+## Files — commands
+
+files-new-folder-with-selection = 選択項目から新規フォルダ
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+       *[other] { $count } 項目から新規フォルダ
+    }
+
+
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = コマンドを実行
+files-palette-no-matches = 一致するコマンドはありません
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+       *[other] コマンドパレット、{ $count } 個のコマンド
+    }
+
+files-command-group-go = 移動
+files-command-group-file = ファイル
+files-command-group-edit = 編集
+files-command-group-view = 表示
+
+files-command-back = 戻る
+files-command-forward = 進む
+files-command-up = 上へ
+files-command-go-to-path = パスへ移動
+files-command-go-to-place = 場所へ移動
+files-command-undo = 取り消す
+files-command-select-all = すべてを選択
+files-command-select-matching = 一致する項目を選択
+files-command-move-to = フォルダへ移動
+files-command-change-view = 表示を変更
+files-command-sort-by = 並べ替え
+files-command-show-hidden = 隠しファイルを表示
+files-command-hide-hidden = 隠しファイルを非表示
+files-command-quick-look = クイックルック
+files-command-search = 検索
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = パスへ移動
+files-command-go-to-place-prompt = 場所へ移動
+files-command-rename-prompt = 新しい名前
+files-command-new-folder-prompt = 新規フォルダ名
+files-command-change-view-prompt = 表示
+files-command-sort-by-prompt = 並べ替え
+files-command-search-prompt = 検索
+files-command-select-matching-prompt = 一致する項目
+files-command-move-to-prompt = 移動先
+files-command-rename-many-prompt = 新しい名前
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = パス
+files-command-arg-place = 場所
+files-command-arg-name = 名前
+files-command-arg-view = 表示
+files-command-arg-sort = 基準
+files-command-arg-query = テキスト
+files-command-arg-pattern = パターン
+
+files-view-list = リスト
+files-view-grid = グリッド
+files-view-columns = カラム
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = ファイルに使える名前ではありません
+files-no-pattern = パターンを入力（例：*.png）
+files-nothing-matches = 「{ $pattern }」に一致する項目はありません
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many = { $count } 項目を名称変更
+# The dry run's summary line under the palette's rows.
+files-rename-preview = { $total } 項目中 { $count } 項目を名称変更
+files-rename-preview-unchanged = 変更はありません
+files-rename-conflicts = { $count ->
+   *[other] { $count } 個の名前はすでに使われています
+}
+files-rename-invalid = { $count ->
+   *[other] { $count } 個の名前が空になります
+}
+files-renamed-count = { $count } 項目を名称変更しました
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = { $title }を実行中…
+files-script-failed-quietly = スクリプトは理由を示さずに失敗しました
+files-script-timed-out = スクリプトに時間がかかりすぎました
+files-nothing-selected = 何も選択されていません
+files-cant-move-into-itself = フォルダを自分自身の中には移動できません
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+       *[other] { $count } 項目を選択
+    }
+files-name-taken = 「{ $name }」はすでにあります
+
+
+## Files — status
+
+files-undo-new-folder-with-selection = 選択項目から新規フォルダ
+
 
 ## Bar
 ##

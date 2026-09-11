@@ -279,12 +279,16 @@ impl Scene {
     fn sync_materials(&mut self, f: &Frame) {
         let dark = view::is_dark();
         // Translucent only while there is a blur to be translucent over. See
-        // [`view::opaque`].
+        // [`view::opaque`]. Where the compositor has no blur to offer at all,
+        // the panels take a solid shade of their own rather than the white of
+        // the content they frame.
         let fill = |color: skia_safe::Color| {
             paint_color(if f.blurred {
                 color
-            } else {
+            } else if otto_kit::backdrop::blur_available() {
                 view::opaque(color)
+            } else {
+                view::solid_panel_material()
             })
         };
         let previous = self.materials;
@@ -1055,6 +1059,7 @@ mod tests {
             drop_target: None,
             marquee: None,
             path_bar: Vec::new(),
+            path_bar_note: None,
             path_bar_h: view::PATH_BAR_H,
             path_crumb_hover: None,
             path_entry: false,

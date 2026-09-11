@@ -34,6 +34,7 @@ jobs:
       portal: ${{ steps.filter.outputs.portal }}
       packaging: ${{ steps.filter.outputs.packaging }}
       rust: ${{ steps.filter.outputs.rust }}
+      files: ${{ steps.filter.outputs.files }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -76,6 +77,10 @@ jobs:
           PORTAL='^components/xdg-desktop-portal-otto/'
           # Every component except the two with their own filters above.
           UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/'
+          # The file browser and the two crates only it links (verified with
+          # `cargo tree -p otto-files --depth 1`). Its unit tests are the
+          # largest suite in the workspace, so they run only when it changed.
+          BROWSER='^components/(otto-files|otto-quickview|otto-media-kit)/'
           PACKAGING='^PKGBUILD|^(Cargo\.toml)$|^(resources|scripts)/|^\.github/workflows/ci\.yml$'
 
           shared=false; matches "$SHARED" && shared=true
@@ -98,13 +103,16 @@ jobs:
           if $shared || $kit || echo "$FILES" | grep -qP "$UI"; then ui=true; else ui=false; fi
           echo "ui=$ui" >> "$GITHUB_OUTPUT"
 
+          if $shared || $kit || matches "$BROWSER"; then files=true; else files=false; fi
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
           if matches "$PACKAGING"; then packaging=true; else packaging=false; fi
           echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
 
           if $compositor || $ui || $rdp || $portal; then rust=true; else rust=false; fi
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
 
-          echo "--- compositor=$compositor ui=$ui rdp=$rdp portal=$portal packaging=$packaging rust=$rust"
+          echo "--- compositor=$compositor ui=$ui files=$files rdp=$rdp portal=$portal packaging=$packaging rust=$rust"
 
   format:
     runs-on: ubuntu-24.04
@@ -172,8 +180,13 @@ jobs:
       - name: Run tests
         timeout-minutes: 20
         # otto-rdp is bin-only, so this never covers it — see the RDP step.
+        # otto-files has its own step below, gated on its own paths.
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
-        run: cargo test --locked --lib --workspace
+        run: cargo test --locked --lib --workspace --exclude otto-files
+      - name: Run file browser tests
+        timeout-minutes: 15
+        if: needs.changes.outputs.files == 'true'
+        run: cargo test --locked --lib -p otto-files
       - name: Run headless integration tests
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'

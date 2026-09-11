@@ -1880,8 +1880,21 @@ pub fn path_crumb_at(
         .filter(|&index| crumbs[index].is_dir)
 }
 
+/// Where the strip's caption ends and the trail must stop: the bar's right
+/// edge less the caption and its padding, or the bar's right edge when there
+/// is no caption.
+pub fn path_bar_trail_right(bar: Rect, note: Option<&str>) -> f32 {
+    match note {
+        Some(note) => {
+            let width = styles::FOOTNOTE.font().measure_str(note, None).0;
+            bar.right - PATH_BAR_PAD - width - PATH_BAR_PAD
+        }
+        None => bar.right,
+    }
+}
+
 fn draw_path_bar(canvas: &Canvas, f: &Frame) {
-    if f.path_bar.is_empty() {
+    if f.path_bar.is_empty() && f.path_bar_note.is_none() {
         return;
     }
     let theme = f.theme;
@@ -1902,8 +1915,29 @@ fn draw_path_bar(canvas: &Canvas, f: &Frame) {
         &paint,
     );
 
+    // The selection count, at the trailing end, in the trail's quieter tone:
+    // a fact about the listing, not a step through it.
+    if let Some(note) = f.path_bar_note.as_deref() {
+        let width = styles::FOOTNOTE.font().measure_str(note, None).0;
+        Label::new(note)
+            .with_style(styles::FOOTNOTE)
+            .with_color(theme.text_secondary)
+            .centered_on(bar.right - PATH_BAR_PAD - width, bar.center_y())
+            .render(canvas);
+    }
+    if f.path_bar.is_empty() {
+        return;
+    }
+
     canvas.save();
-    canvas.clip_rect(bar, ClipOp::Intersect, true);
+    // The trail stops short of the caption rather than running under it.
+    let trail = Rect::from_ltrb(
+        bar.left,
+        bar.top,
+        path_bar_trail_right(bar, f.path_bar_note.as_deref()),
+        bar.bottom,
+    );
+    canvas.clip_rect(trail, ClipOp::Intersect, true);
 
     let last = f.path_bar.len() - 1;
     for (index, (crumb, rect)) in f.path_bar.iter().zip(&rects).enumerate() {
@@ -2413,6 +2447,23 @@ pub fn pane_content_height_in(
 /// the geometry a "scroll the cursor into view" needs; the other half is the
 /// pane's viewport height, from [`pane_viewport`].
 pub fn item_span(width: f32, height: f32, mode: ViewMode, index: usize) -> (f32, f32) {
+    item_span_in(width, height, mode, GridSections::FLAT, index)
+}
+
+/// [`item_span`] against a sectioned grid — Recent, whose day headings push
+/// every tile below them further down than the flat lattice says.
+pub fn item_span_in(
+    width: f32,
+    height: f32,
+    mode: ViewMode,
+    sections: &GridSections,
+    index: usize,
+) -> (f32, f32) {
+    if mode == ViewMode::Grid && !sections.is_flat() {
+        let area = content_viewport(width, height, mode);
+        let cell = grid_cell_rect_in(area, sections, index, 0.0);
+        return (cell.top - area.top, CELL_H);
+    }
     match mode {
         ViewMode::List => (index as f32 * ROW_H, ROW_H),
         // Miller rows start a little way down the pane.
@@ -2679,6 +2730,9 @@ pub struct Frame<'a> {
     /// The crumb under the pointer, drawn lit — it leads somewhere, and a
     /// thing that can be clicked should say so before it is.
     pub path_crumb_hover: Option<usize>,
+    /// A caption at the strip's trailing end: how much is selected, while
+    /// anything is. The trail gives way to it rather than running under it.
+    pub path_bar_note: Option<String>,
 }
 
 impl Frame<'_> {
@@ -2983,6 +3037,475 @@ pub fn draw_confirm(
         data.pressed == Some(ConfirmButton::Accept),
         true,
     );
+}
+
+// ---------------------------------------------------------------------------
+// The command palette
+// ---------------------------------------------------------------------------
+//
+// A card near the top of the window: a field, and under it either the
+// commands on offer or the answers to the argument being typed. Geometry
+// first, drawing second, so the hit test reads the same rects the paint does.
+// See `specs/file-command-palette.md`.
+
+pub const PALETTE_W: f32 = 560.0;
+pub const PALETTE_FIELD_H: f32 = 46.0;
+pub const PALETTE_ROW_H: f32 = 32.0;
+pub const PALETTE_HEADING_H: f32 = 26.0;
+pub const PALETTE_PAD: f32 = 8.0;
+/// How far down the window the card's top edge rests, before any drag. Over
+/// the lower part of the header rather than clear of it: the panel belongs to
+/// this window, and tucking it under the title says so. Near the top rather
+/// than centred, so what is being typed does not move when the list under it
+/// grows.
+pub const PALETTE_TOP: f32 = HEADER_H - 30.0;
+/// How far the card's right edge sits from the window's. Nearly flush: the
+/// panel belongs to this window, and hanging it off the right keeps the
+/// sidebar and the first column in view beside it.
+pub const PALETTE_RIGHT_INSET: f32 = 12.0;
+/// The most rows on screen at once. Past this the list scrolls under the
+/// highlight — a card taller than this stops reading as a card.
+pub const PALETTE_MAX_ROWS: usize = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteRowKind {
+    /// A group's name, in the resting list. Never highlighted.
+    Heading,
+    /// Something that can be picked — a command, or an answer to an argument.
+    Item,
+    /// One line of a dry run: the row's title is what a thing would become,
+    /// its subtitle what it is now. Not picked, but toggled: a click or Space
+    /// leaves the thing out of the run. `conflict` says the outcome is not
+    /// possible as things stand, `excluded` that the line has been toggled
+    /// off; each is drawn to say so.
+    Preview { conflict: bool, excluded: bool },
+}
+
+/// One line of the palette's list, ready to draw.
+pub struct PaletteRow<'a> {
+    pub kind: PaletteRowKind,
+    pub title: &'a str,
+    /// The group a ranked row came from, or the argument a command will ask
+    /// for. Dim, right after the title.
+    pub badge: Option<&'a str>,
+    /// A second, dimmer fact — a place's path. Right-aligned.
+    pub subtitle: Option<&'a str>,
+    /// The chord this is also bound to. Right-aligned, dimmest.
+    pub shortcut: Option<&'a str>,
+    pub highlighted: bool,
+}
+
+/// What the palette is showing.
+pub struct PaletteData<'a> {
+    /// The non-editable prefix in front of the field, while an argument is
+    /// being answered.
+    pub prompt: Option<&'a str>,
+    pub rows: Vec<PaletteRow<'a>>,
+    /// Shown in place of the list: why the last attempt did not work, or that
+    /// nothing matches.
+    pub message: Option<&'a str>,
+    /// Whether the card is being drawn into a surface of its own rather than
+    /// into the window's buffer.
+    ///
+    /// On its own surface the compositor owns the material: it blurs what is
+    /// actually behind the window, tints it for legibility and casts the
+    /// shadow outside the card's bounds — none of which this canvas can do,
+    /// because a blur painted here can only sample the window's own pixels.
+    /// So the shadow and the opaque ground are dropped and the translucent
+    /// popup material is used instead, which is what the compositor's blur
+    /// expects to sit under.
+    pub on_surface: bool,
+    /// The list's scroll view, when the host runs one: where the rows have
+    /// scrolled to, how far past an end they are stretched, and how much of
+    /// the bar to show. `None` draws the rows where they lie.
+    pub scroll: Option<ScrollState>,
+}
+
+fn palette_row_h(kind: PaletteRowKind) -> f32 {
+    match kind {
+        PaletteRowKind::Heading => PALETTE_HEADING_H,
+        PaletteRowKind::Item | PaletteRowKind::Preview { .. } => PALETTE_ROW_H,
+    }
+}
+
+/// The card. Its height follows what is in it, so an empty query and a
+/// one-match query are not the same box.
+pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect {
+    let w = PALETTE_W.min(width - 48.0).max(240.0);
+    let left = (width - w - PALETTE_RIGHT_INSET).max(0.0);
+    let mut height = PALETTE_FIELD_H;
+    let body = palette_list_h(rows);
+    if body > 0.0 || message {
+        height += PALETTE_PAD * 2.0 + body + palette_footer_h(rows, message);
+    }
+    Rect::from_xywh(left, PALETTE_TOP, w, height)
+}
+
+/// The line the message takes: the whole body when there are no rows — it
+/// stands in for the list — and a footer under the list when there are, so a
+/// dry run can be summed up beneath its lines.
+pub fn palette_footer_h(rows: &[PaletteRow<'_>], message: bool) -> f32 {
+    if message {
+        PALETTE_ROW_H
+    } else {
+        let _ = rows;
+        0.0
+    }
+}
+
+/// How tall the whole list is, laid out end to end.
+pub fn palette_content_h(rows: &[PaletteRow<'_>]) -> f32 {
+    rows.iter().map(|row| palette_row_h(row.kind)).sum()
+}
+
+/// How tall the list's *viewport* is: the whole list up to
+/// [`PALETTE_MAX_ROWS`] rows' worth, past which it scrolls.
+pub fn palette_list_h(rows: &[PaletteRow<'_>]) -> f32 {
+    palette_content_h(rows).min(PALETTE_MAX_ROWS as f32 * PALETTE_ROW_H)
+}
+
+/// The list's viewport: the band under the field the rows scroll through.
+pub fn palette_list_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect {
+    let card = palette_rect(width, rows, message);
+    Rect::from_xywh(
+        card.left + PALETTE_PAD,
+        card.top + PALETTE_FIELD_H + PALETTE_PAD,
+        card.width() - PALETTE_PAD * 2.0,
+        palette_list_h(rows),
+    )
+}
+
+/// The least the list has to scroll from `offset` for `row` — a rect in the
+/// list's own, unscrolled coordinates — to be wholly inside `viewport`.
+///
+/// By the least, so arrowing through a long list moves it one row at a time
+/// rather than jumping a page; a row already in view leaves it where it is.
+pub fn palette_reveal(row: Rect, viewport: Rect, offset: f32) -> f32 {
+    let top = row.top - viewport.top;
+    let bottom = row.bottom - viewport.top;
+    if top < offset {
+        top
+    } else if bottom > offset + viewport.height() {
+        bottom - viewport.height()
+    } else {
+        offset
+    }
+}
+
+/// The field, inset in the card's top band.
+///
+/// Independent of what is in the list: the card grows downwards, so the field
+/// does not move when the list under it does.
+pub fn palette_field_rect(width: f32) -> Rect {
+    let card = palette_rect(width, &[], false);
+    Rect::from_ltrb(
+        card.left + 14.0,
+        card.top,
+        card.right - 14.0,
+        card.top + PALETTE_FIELD_H,
+    )
+}
+
+/// Where row `index` of `rows` is drawn.
+pub fn palette_row_rect(width: f32, rows: &[PaletteRow<'_>], index: usize) -> Rect {
+    let card = palette_rect(width, rows, false);
+    let top: f32 = rows[..index]
+        .iter()
+        .map(|row| palette_row_h(row.kind))
+        .sum();
+    let y = card.top + PALETTE_FIELD_H + PALETTE_PAD + top;
+    Rect::from_xywh(
+        card.left + PALETTE_PAD,
+        y,
+        card.width() - PALETTE_PAD * 2.0,
+        palette_row_h(rows[index].kind),
+    )
+}
+
+/// Which row of the palette is under `(x, y)`, if any.
+///
+/// `None` covers both "the card, but not a row" and "outside the card
+/// altogether" — the caller tells them apart with [`palette_rect`], because
+/// only one of them closes the palette.
+pub fn palette_row_at(x: f32, y: f32, width: f32, rows: &[PaletteRow<'_>]) -> Option<usize> {
+    let point = Point::new(x, y);
+    (0..rows.len()).find(|&index| {
+        matches!(
+            rows[index].kind,
+            PaletteRowKind::Item | PaletteRowKind::Preview { .. }
+        ) && palette_row_rect(width, rows, index).contains(point)
+    })
+}
+
+/// Draw the card over the finished window.
+///
+/// The field's *text* is not painted here — the text input owns its caret and
+/// selection and paints them itself, the same two-step the rename and path
+/// fields take. This draws the box it goes in.
+pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteData<'_>) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    let message = data.message.is_some();
+    let card = palette_rect(width, &data.rows, message);
+
+    // A shadow rather than a dim over the window: the palette is not modal,
+    // and dimming the listing behind it would say that it was. Painted here
+    // only while the card is in the window's buffer — on its own surface the
+    // compositor casts it, and outside the card's bounds, which is the one
+    // place a shadow is worth having.
+    if !data.on_surface {
+        paint.set_color(theme.shadow);
+        paint.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            14.0,
+            false,
+        ));
+        canvas.draw_rrect(
+            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), 14.0, 14.0),
+            &paint,
+        );
+        paint.set_mask_filter(None);
+    }
+
+    // The translucent material when the compositor is blurring behind this
+    // surface, and filled in when the card is inside the window's own buffer:
+    // there the material would be a tint over the listing it is covering,
+    // with no blur underneath to justify it. On a surface of its own it is
+    // still filled in wherever the compositor cannot frost a subsurface — see
+    // `Theme::card_material`.
+    paint.set_color(if data.on_surface {
+        otto_kit::frosting::material(theme.card_material())
+    } else {
+        content_ground()
+    });
+    canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
+
+    // The hairline is what says the card is above the listing rather than part
+    // of it: the ground is the same colour on both sides of the edge, exactly
+    // as it is around the Get Info panel. On its own surface the compositor
+    // draws this; here the card is inside the window's own buffer, so it is
+    // painted.
+    paint.set_color(theme.hairline());
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(Theme::HAIRLINE_WIDTH);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(card.with_inset((0.5, 0.5)), 14.0, 14.0),
+        &paint,
+    );
+    paint.set_style(skia_safe::paint::Style::Fill);
+
+    let field = palette_field_rect(width);
+    if let Some(prompt) = data.prompt {
+        Label::new(prompt)
+            .with_style(styles::BODY_EMPHASIZED)
+            .with_color(theme.text_secondary)
+            .centered_on(field.left, field.center_y())
+            .render(canvas);
+    }
+
+    // The hairline under the field, drawn only when there is something below
+    // it to be separated from.
+    if !data.rows.is_empty() || message {
+        paint.set_color(theme.fill_tertiary);
+        paint.set_stroke_width(1.0);
+        canvas.draw_line(
+            Point::new(card.left, card.top + PALETTE_FIELD_H),
+            Point::new(card.right, card.top + PALETTE_FIELD_H),
+            &paint,
+        );
+    }
+
+    if let Some(message) = data.message {
+        // Under the rows when there are rows, in their place when there are
+        // none: either way the last line of the card.
+        Label::new(message)
+            .with_style(styles::BODY)
+            .with_color(theme.text_secondary)
+            .centered_on(
+                card.left + PALETTE_PAD + 8.0,
+                card.bottom - PALETTE_PAD - PALETTE_ROW_H / 2.0,
+            )
+            .render(canvas);
+        if data.rows.is_empty() {
+            return;
+        }
+    }
+
+    match data.scroll {
+        // The rows scroll under the field: drawn where they lie in the list,
+        // shifted and clipped by the view — which also paints the bar and
+        // shows the stretch past either end, since a stretched offset simply
+        // moves them further than the content allows.
+        Some(state) => {
+            // The renderer hands over a canvas in the *content's* own
+            // coordinates — the list's first row at the origin — while the row
+            // rects are measured from the window's corner like everything
+            // else in this file. Shift by the viewport's origin so the two
+            // agree, and the offset the renderer applied does the scrolling.
+            let viewport = state.viewport();
+            otto_kit::components::scroll::ScrollRenderer::draw(
+                canvas,
+                &state,
+                theme,
+                |canvas, _visible| {
+                    canvas.translate((-viewport.left, -viewport.top));
+                    draw_palette_rows(canvas, theme, width, data);
+                },
+            )
+        }
+        None => draw_palette_rows(canvas, theme, width, data),
+    }
+}
+
+fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteData<'_>) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    for (index, row) in data.rows.iter().enumerate() {
+        let rect = palette_row_rect(width, &data.rows, index);
+        if row.kind == PaletteRowKind::Heading {
+            Label::new(row.title)
+                .with_style(styles::FOOTNOTE_EMPHASIZED)
+                .with_color(theme.text_tertiary)
+                .centered_on(rect.left + 8.0, rect.center_y() + 3.0)
+                .render(canvas);
+            continue;
+        }
+        if let PaletteRowKind::Preview { conflict, excluded } = row.kind {
+            // "● old → new": what it is, dimmed, then what it would become —
+            // in the palette's red when it cannot, so the one line that would
+            // stop the whole batch is the one that stands out. A line toggled
+            // out keeps only its name, struck through, behind a hollow mark.
+            if row.highlighted {
+                paint.set_color(accent(theme));
+                canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
+            }
+            let (strong, dim, red) = if row.highlighted {
+                (
+                    Color::WHITE,
+                    Color::from_argb(0xC8, 0xFF, 0xFF, 0xFF),
+                    Color::WHITE,
+                )
+            } else {
+                (theme.text_primary, theme.text_tertiary, theme.accent_red)
+            };
+            let font = styles::BODY.font();
+            let mut x = rect.left + 8.0;
+
+            // The mark: a disc for a line in the run, a ring for one left out.
+            let mark = Point::new(x + 4.0, rect.center_y());
+            let mut mark_paint = Paint::default();
+            mark_paint.set_anti_alias(true);
+            mark_paint.set_color(if excluded { dim } else { strong });
+            if excluded {
+                mark_paint.set_style(skia_safe::PaintStyle::Stroke);
+                mark_paint.set_stroke_width(1.5);
+                canvas.draw_circle(mark, 3.5, &mark_paint);
+            } else {
+                canvas.draw_circle(mark, 4.0, &mark_paint);
+            }
+            x += 8.0 + 10.0;
+
+            if excluded {
+                let name = row.subtitle.unwrap_or(row.title);
+                Label::new(name)
+                    .with_style(styles::BODY)
+                    .with_color(dim)
+                    .centered_on(x, rect.center_y())
+                    .render(canvas);
+                let advance = font.measure_str(name, None).0;
+                let mut strike = Paint::default();
+                strike.set_color(dim);
+                strike.set_stroke_width(1.0);
+                canvas.draw_line(
+                    Point::new(x, rect.center_y()),
+                    Point::new(x + advance, rect.center_y()),
+                    &strike,
+                );
+                continue;
+            }
+            if let Some(from) = row.subtitle {
+                Label::new(from)
+                    .with_style(styles::BODY)
+                    .with_color(dim)
+                    .centered_on(x, rect.center_y())
+                    .render(canvas);
+                x += font.measure_str(from, None).0 + 8.0;
+                Label::new("→")
+                    .with_style(styles::BODY)
+                    .with_color(dim)
+                    .centered_on(x, rect.center_y())
+                    .render(canvas);
+                x += font.measure_str("→", None).0 + 8.0;
+            }
+            Label::new(row.title)
+                .with_style(if conflict {
+                    styles::BODY_EMPHASIZED
+                } else {
+                    styles::BODY
+                })
+                .with_color(if conflict { red } else { strong })
+                .centered_on(x, rect.center_y())
+                .render(canvas);
+            continue;
+        }
+
+        if row.highlighted {
+            paint.set_color(accent(theme));
+            canvas.draw_rrect(RRect::new_rect_xy(rect, 7.0, 7.0), &paint);
+        }
+        let (title_color, dim_color) = if row.highlighted {
+            (Color::WHITE, Color::from_argb(0xC8, 0xFF, 0xFF, 0xFF))
+        } else {
+            (theme.text_primary, theme.text_tertiary)
+        };
+
+        let title_x = rect.left + 8.0;
+        Label::new(row.title)
+            .with_style(styles::BODY)
+            .with_color(title_color)
+            .centered_on(title_x, rect.center_y())
+            .render(canvas);
+
+        if let Some(badge) = row.badge {
+            // The row's own size, not a footnote: it is part of the same
+            // phrase as the title — "Go to Path › path" — and a smaller run
+            // reads as an annotation about the row rather than as the rest of
+            // what the row says.
+            let advance = styles::BODY.font().measure_str(row.title, None).0;
+            Label::new(badge)
+                .with_style(styles::BODY)
+                .with_color(dim_color)
+                .centered_on(title_x + advance + 10.0, rect.center_y())
+                .render(canvas);
+        }
+
+        // The right edge, filled from the outside in: the shortcut hard
+        // against it, then whatever second fact the row has.
+        let mut right = rect.right - 8.0;
+        if let Some(shortcut) = row.shortcut {
+            let advance = styles::FOOTNOTE.font().measure_str(shortcut, None).0;
+            Label::new(shortcut)
+                .with_style(styles::FOOTNOTE)
+                .with_color(dim_color)
+                .centered_on(right - advance, rect.center_y() + 1.0)
+                .render(canvas);
+            right -= advance + 12.0;
+        }
+        if let Some(subtitle) = row.subtitle {
+            let font = styles::FOOTNOTE.font();
+            let available = right - title_x - 120.0;
+            if available > 40.0 {
+                let text = ellipsize(&font, subtitle, available);
+                let advance = font.measure_str(&text, None).0;
+                Label::new(text)
+                    .with_style(styles::FOOTNOTE)
+                    .with_color(dim_color)
+                    .centered_on(right - advance, rect.center_y() + 1.0)
+                    .render(canvas);
+            }
+        }
+    }
 }
 
 /// The preview pane's content, as a closure the scene records into its own
@@ -4424,6 +4947,19 @@ pub fn save_field_style(theme: Theme) -> TextInputStyle {
 
 /// The path entry's field. Like the save field, the box is drawn by the
 /// header underneath, so the input paints no ground of its own.
+/// The palette's field: bare, like the location bar's, and a size up — it is
+/// the thing being looked at while the panel is open.
+pub fn palette_field_style(theme: Theme) -> TextInputStyle {
+    let mut style = TextInputStyle::with_theme(theme);
+    style.background = Color::TRANSPARENT;
+    // No ring: the card is the focus, and a box drawn inside a box that is
+    // already the only thing taking keys says nothing.
+    style.focus_ring_width = 0.0;
+    style.horizontal_padding = 0.0;
+    style.text_style = styles::TITLE_3;
+    style
+}
+
 pub fn path_field_style(theme: Theme) -> TextInputStyle {
     let mut style = TextInputStyle::with_theme(theme);
     style.background = Color::TRANSPARENT;
@@ -4481,6 +5017,22 @@ pub fn panel_material() -> Color {
     } else {
         Color::from_argb(0xF2, 0xFF, 0xFF, 0xFF)
     }
+}
+
+/// The chrome's material on a compositor with no blur at all.
+///
+/// [`opaque`] of [`panel_material`] is the content's own white, which is right
+/// for a moment — an unfocused window whose frost comes back on the next
+/// click — and wrong for good: sidebar, header and listing merge into one
+/// sheet. This is the toolkit's solid sidebar shade instead.
+pub fn solid_panel_material() -> Color {
+    let dark = matches!(current_color_scheme(), ColorScheme::Dark);
+    let mut theme = if dark {
+        Theme::dark_palette()
+    } else {
+        Theme::light_palette()
+    };
+    theme.with_solid_materials(dark).material_sidebar
 }
 
 pub fn row_colors(theme: &Theme, selected: bool) -> (Color, Color) {
@@ -5753,6 +6305,147 @@ mod fit_tests {
 
 #[cfg(test)]
 mod geometry_tests {
+    fn item(title: &str) -> PaletteRow<'_> {
+        PaletteRow {
+            kind: PaletteRowKind::Item,
+            title,
+            badge: None,
+            subtitle: None,
+            shortcut: None,
+            highlighted: false,
+        }
+    }
+
+    /// The card hangs off the right edge and tucks under the header — over its
+    /// lower part, so the panel reads as belonging to this window, but clear
+    /// of the title and the traffic lights above it.
+    #[test]
+    fn the_list_scrolls_the_least_that_shows_the_row() {
+        let viewport = Rect::from_xywh(0.0, 100.0, 500.0, 320.0);
+        // Ten rows of 32 fit exactly; the eleventh is out of view below.
+        let row = |i: f32| Rect::from_xywh(0.0, 100.0 + i * 32.0, 500.0, 32.0);
+        assert_eq!(palette_reveal(row(3.0), viewport, 0.0), 0.0);
+        assert_eq!(palette_reveal(row(10.0), viewport, 0.0), 32.0);
+        assert_eq!(palette_reveal(row(11.0), viewport, 32.0), 64.0);
+        // And back up: a row above the window brings it to the top.
+        assert_eq!(palette_reveal(row(1.0), viewport, 64.0), 32.0);
+    }
+
+    #[test]
+    fn a_dry_run_line_can_be_hit_and_its_summary_sits_under_the_list() {
+        let rows = vec![
+            PaletteRow {
+                kind: PaletteRowKind::Preview {
+                    conflict: false,
+                    excluded: false,
+                },
+                title: "Holiday 1.jpg",
+                badge: None,
+                subtitle: Some("IMG_001.jpg"),
+                shortcut: None,
+                highlighted: false,
+            },
+            PaletteRow {
+                kind: PaletteRowKind::Preview {
+                    conflict: true,
+                    excluded: false,
+                },
+                title: "Holiday 2.jpg",
+                badge: None,
+                subtitle: Some("IMG_002.jpg"),
+                shortcut: None,
+                highlighted: false,
+            },
+        ];
+        let rect = palette_row_rect(1200.0, &rows, 1);
+        assert_eq!(
+            palette_row_at(rect.center_x(), rect.center_y(), 1200.0, &rows),
+            Some(1),
+            "a line is something to toggle, so it is something to hit"
+        );
+        let bare = palette_rect(1200.0, &rows, false);
+        let noted = palette_rect(1200.0, &rows, true);
+        assert_eq!(noted.height(), bare.height() + PALETTE_ROW_H);
+        // The list itself does not move to make room: the footer is below it.
+        assert_eq!(
+            palette_list_rect(1200.0, &rows, true),
+            palette_list_rect(1200.0, &rows, false)
+        );
+    }
+
+    #[test]
+    fn a_long_list_is_capped_and_scrolls_rather_than_growing() {
+        let rows: Vec<PaletteRow<'_>> = (0..30)
+            .map(|_| PaletteRow {
+                kind: PaletteRowKind::Item,
+                title: "x",
+                badge: None,
+                subtitle: None,
+                shortcut: None,
+                highlighted: false,
+            })
+            .collect();
+        let list = palette_list_rect(1200.0, &rows, false);
+        assert_eq!(list.height(), PALETTE_MAX_ROWS as f32 * PALETTE_ROW_H);
+        assert!(palette_content_h(&rows) > list.height());
+        let card = palette_rect(1200.0, &rows, false);
+        assert_eq!(card.bottom, list.bottom + PALETTE_PAD);
+    }
+
+    #[test]
+    fn the_palette_overlaps_the_header_and_hangs_off_the_right_edge() {
+        let rows = [item("Copy")];
+        let card = palette_rect(1200.0, &rows, false);
+        assert!(card.top < HEADER_H, "it tucks under the header");
+        assert!(
+            card.top > HEADER_H / 2.0,
+            "but not so far up that it covers the title"
+        );
+        assert_eq!(card.right, 1200.0 - PALETTE_RIGHT_INSET);
+    }
+
+    /// A window too narrow for the card still gets one, hard against the left.
+    #[test]
+    fn a_narrow_window_still_gets_a_card() {
+        let rows = [item("Copy")];
+        let card = palette_rect(200.0, &rows, false);
+        assert!(card.left >= 0.0);
+        assert!(card.width() > 0.0);
+    }
+
+    /// The field does not move when the list under it grows: the card grows
+    /// downwards, so what is being typed stays put.
+    #[test]
+    fn the_palette_field_does_not_move_with_the_list() {
+        let empty = palette_field_rect(900.0);
+        let rows = [item("Copy"), item("Paste"), item("Undo")];
+        let card = palette_rect(900.0, &rows, false);
+        assert_eq!(palette_field_rect(900.0), empty);
+        assert!(card.bottom > empty.bottom, "the card grows downwards");
+    }
+
+    /// A heading is read, never clicked.
+    #[test]
+    fn a_palette_heading_is_not_a_target() {
+        let rows = [
+            PaletteRow {
+                kind: PaletteRowKind::Heading,
+                ..item("Go")
+            },
+            item("Up"),
+        ];
+        let heading = palette_row_rect(900.0, &rows, 0);
+        assert_eq!(
+            palette_row_at(heading.center_x(), heading.center_y(), 900.0, &rows),
+            None
+        );
+        let row = palette_row_rect(900.0, &rows, 1);
+        assert_eq!(
+            palette_row_at(row.center_x(), row.center_y(), 900.0, &rows),
+            Some(1)
+        );
+    }
+
     use super::*;
 
     /// The search field shares the header's trailing edge with the view
@@ -5995,6 +6688,18 @@ mod geometry_tests {
 
     /// The trail runs left to right in path order, each crumb clear of the
     /// one before it, and the whole row inside the strip it is drawn on.
+    #[test]
+    fn the_trail_gives_way_to_the_selection_count() {
+        let bar = path_bar_rect(1100.0, 700.0, 0.0);
+        assert_eq!(path_bar_trail_right(bar, None), bar.right);
+        let with = path_bar_trail_right(bar, Some("3 of 61 selected"));
+        assert!(
+            with < bar.right - 60.0,
+            "the caption needs its width and padding"
+        );
+        assert!(with > bar.left, "the caption never eats the whole strip");
+    }
+
     #[test]
     fn the_path_bar_lays_its_crumbs_out_in_order() {
         let crumbs = vec![
@@ -6648,6 +7353,7 @@ mod geometry_tests {
             path_bar: Vec::new(),
             path_bar_h: PATH_BAR_H,
             path_crumb_hover: None,
+            path_bar_note: None,
             path_entry: false,
             width: 1100.0,
             height,

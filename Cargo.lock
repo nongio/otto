@@ -5171,6 +5171,7 @@ dependencies = [
  "otto-media-kit",
  "otto-quickview",
  "serde",
+ "serde_json",
  "skia-safe",
  "smithay-client-toolkit",
  "tokio",

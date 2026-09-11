@@ -515,6 +515,122 @@ files-month-nov = Nov
 files-month-dec = Dez
 
 
+## Files — commands (palette additions)
+
+files-new-folder-with-selection = Nova pasta com a seleção
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+        [one] Nova pasta com { $count } item
+        [many] Nova pasta com { $count } itens
+       *[other] Nova pasta com { $count } itens
+    }
+
+
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = Executar um comando
+files-palette-no-matches = Nenhum comando corresponde
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+        [one] Paleta de comandos, { $count } comando
+        [many] Paleta de comandos, { $count } comandos
+       *[other] Paleta de comandos, { $count } comandos
+    }
+
+files-command-group-go = Ir
+files-command-group-file = Arquivo
+files-command-group-edit = Editar
+files-command-group-view = Visualizar
+
+files-command-back = Voltar
+files-command-forward = Avançar
+files-command-up = Pasta superior
+files-command-go-to-path = Ir para o caminho
+files-command-go-to-place = Ir para o local
+files-command-undo = Desfazer
+files-command-select-all = Selecionar tudo
+files-command-select-matching = Selecionar correspondentes
+files-command-move-to = Mover para a pasta
+files-command-change-view = Alterar visualização
+files-command-sort-by = Ordenar por
+files-command-show-hidden = Mostrar arquivos ocultos
+files-command-hide-hidden = Ocultar arquivos ocultos
+files-command-quick-look = Visualização rápida
+files-command-search = Buscar
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = Ir para o caminho
+files-command-go-to-place-prompt = Ir para o local
+files-command-rename-prompt = Renomear para
+files-command-new-folder-prompt = Nova pasta chamada
+files-command-change-view-prompt = Visualização
+files-command-sort-by-prompt = Ordenar por
+files-command-search-prompt = Buscar por
+files-command-select-matching-prompt = Selecionar correspondentes a
+files-command-move-to-prompt = Mover para
+files-command-rename-many-prompt = Renomear para
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = caminho
+files-command-arg-place = local
+files-command-arg-name = nome
+files-command-arg-view = visualização
+files-command-arg-sort = chave
+files-command-arg-query = texto
+files-command-arg-pattern = padrão
+
+files-view-list = Lista
+files-view-grid = Grade
+files-view-columns = Colunas
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = Esse não é um nome que um arquivo possa ter
+files-no-pattern = Digite um padrão, como *.png
+files-nothing-matches = Nada corresponde a “{ $pattern }”
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many = Renomear { $count } itens
+# The dry run's summary line under the palette's rows.
+files-rename-preview = Renomeia { $count } de { $total }
+files-rename-preview-unchanged = Nada mudaria
+files-rename-conflicts = { $count ->
+    [one] Um nome já está em uso
+    [many] { $count } nomes já estão em uso
+   *[other] { $count } nomes já estão em uso
+}
+files-rename-invalid = { $count ->
+    [one] Um nome ficaria vazio
+    [many] { $count } nomes ficariam vazios
+   *[other] { $count } nomes ficariam vazios
+}
+files-renamed-count = { $count } itens renomeados
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = Executando { $title }…
+files-script-failed-quietly = O script falhou sem dizer por quê
+files-script-timed-out = O script demorou demais
+files-nothing-selected = Nada está selecionado
+files-cant-move-into-itself = Uma pasta não pode ser movida para dentro de si mesma
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+        [one] { $count } item selecionado
+        [many] { $count } itens selecionados
+       *[other] { $count } itens selecionados
+    }
+files-name-taken = “{ $name }” já está lá
+
+
+## Files — status (palette additions)
+
+files-undo-new-folder-with-selection = Nova pasta com a seleção
+
+
 ## Bar
 ##
 ## The menu bar across the top of the screen.

@@ -247,6 +247,15 @@ token, background-blurred, with the desktop's corner radius and shadow. It reads
 as the same kind of surface as the bar's menus and the launcher's card, because
 it is.
 
+Under a compositor without Otto's surface style, the panel is not blurred: it
+is a subsurface of the host's own window, and a standard blur protocol only
+ever blurs behind the *window*, never behind one of its subsurfaces, so
+turning it on here would show the host's own file listing sharp through a
+translucent panel. The panel draws the theme's solid popup material instead —
+the same fallback the command palette uses for the same reason — under either
+a compositor with no blur protocol at all or one that offers only the
+standard, window-level one.
+
 Dismissal: space, Escape, the close control, a click outside the panel, or the
 host closing it for any reason of its own. The embedded panel has no focus-loss
 rule of its own — the host's window losing focus is the host's business, and a
@@ -650,7 +659,11 @@ matching this text.
 - **A 200 MP image** is never decoded at full resolution. The worker decodes at
   the smallest sample size that still exceeds twice the window's pixel size, and
   refuses above a fixed pixel budget when the codec cannot decode scaled, in
-  which case the file gets a metadata card. **Zooming re-decodes** rather than
+  which case the file gets a metadata card. A codec that cannot sample at
+  all — PNG — decodes whole within that budget and is then **resampled to fit
+  the requested size in the worker**, so what crosses the pipe and what the
+  caller keeps is never larger than was asked for: a full-frame screenshot
+  requested as a thumbnail arrives as a thumbnail. **Zooming re-decodes** rather than
   upscaling the fit-sized decode: past roughly 1:1 the worker decodes the
   visible region at a finer sample size, so zooming into a large photograph
   shows detail instead of blur. The previous frame stays on screen while that

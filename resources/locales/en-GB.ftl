@@ -273,6 +273,14 @@ files-info-window-title = Info
 
 files-get-info = Get Info
 files-new-folder = New Folder
+files-new-folder-with-selection = New Folder with Selection
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+        [one] New Folder with { $count } Item
+       *[other] New Folder with { $count } Items
+    }
 files-move-to-trash = Move to Trash
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -290,6 +298,99 @@ files-delete-count-immediately =
        *[other] Delete { $count } Items Immediately
     }
 
+
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = Run a command
+files-palette-no-matches = No command matches
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+        [one] Command palette, { $count } command
+       *[other] Command palette, { $count } commands
+    }
+
+files-command-group-go = Go
+files-command-group-file = File
+files-command-group-edit = Edit
+files-command-group-view = View
+
+files-command-back = Back
+files-command-forward = Forward
+files-command-up = Up
+files-command-go-to-path = Go to Path
+files-command-go-to-place = Go to Place
+files-command-undo = Undo
+files-command-select-all = Select All
+files-command-select-matching = Select Matching
+files-command-move-to = Move to Folder
+files-command-change-view = Change View
+files-command-sort-by = Sort By
+files-command-show-hidden = Show Hidden Files
+files-command-hide-hidden = Hide Hidden Files
+files-command-quick-look = Quick Look
+files-command-search = Search
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = Go to path
+files-command-go-to-place-prompt = Go to place
+files-command-rename-prompt = Rename to
+files-command-new-folder-prompt = New folder named
+files-command-change-view-prompt = View
+files-command-sort-by-prompt = Sort by
+files-command-search-prompt = Search for
+files-command-select-matching-prompt = Select matching
+files-command-move-to-prompt = Move to
+files-command-rename-many-prompt = Rename to
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = path
+files-command-arg-place = place
+files-command-arg-name = name
+files-command-arg-view = view
+files-command-arg-sort = key
+files-command-arg-query = text
+files-command-arg-pattern = pattern
+
+files-view-list = List
+files-view-grid = Grid
+files-view-columns = Columns
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = That isn’t a name a file can have
+files-no-pattern = Type a pattern, such as *.png
+files-nothing-matches = Nothing matches “{ $pattern }”
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many = Rename { $count } Items
+# The dry run's summary line under the palette's rows.
+files-rename-preview = Renames { $count } of { $total }
+files-rename-preview-unchanged = Nothing would change
+files-rename-conflicts = { $count ->
+    [one] One name is already taken
+   *[other] { $count } names are already taken
+}
+files-rename-invalid = { $count ->
+    [one] One name would be empty
+   *[other] { $count } names would be empty
+}
+files-renamed-count = Renamed { $count } items
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = Running { $title }…
+files-script-failed-quietly = The script failed without saying why
+files-script-timed-out = The script took too long
+files-nothing-selected = Nothing is selected
+files-cant-move-into-itself = A folder can’t be moved into itself
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+        [one] { $count } item selected
+       *[other] { $count } items selected
+    }
+files-name-taken = “{ $name }” is already there
 
 ## Files — sidebar and columns
 
@@ -381,6 +482,7 @@ files-undid = Undid { $label }
 files-undo-move = Move
 files-undo-copy = Copy
 files-undo-delete = Delete
+files-undo-new-folder-with-selection = New Folder with Selection
 files-undo-rename = Rename
 # $name is a file or folder name, already wrapped in quotation marks.
 files-renamed-to = Renamed to “{ $name }”

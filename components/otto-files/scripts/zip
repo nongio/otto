@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Compress the selection into a zip archive.
+
+A sample script for Otto Files' command palette. Copy it to
+~/.config/otto/files-scripts/ and it shows up as "Compress to Zip" whenever
+something is selected. The protocol is described at the top of
+components/otto-files/src/scripts.rs.
+
+    zip describe          what this script offers, once, at startup
+    zip preview < json    what a run would do — nothing is touched
+    zip run < json        do it, and say what changed
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+# What the script says, per language. `describe` hands the whole table over
+# and the host picks; at preview and run time the host says which locale it
+# is in (OTTO_LOCALE, and "locale" in the request) and `tr` picks here.
+STRINGS = {
+    "en": {
+        "title": "Compress to Zip",
+        "keywords": ["archive", "zip", "pack"],
+        "prompt": "Archive name",
+        "label": "name",
+        "undo": "Compress",
+        "exists": "“{name}” is already there",
+        "into": "{count} item into “{name}”",
+        "into_many": "{count} items into “{name}”",
+        "done": "Compressed {count} item into “{name}”",
+        "done_many": "Compressed {count} items into “{name}”",
+    },
+    "it": {
+        "title": "Comprimi in Zip",
+        "keywords": ["archivio", "zip", "comprimi"],
+        "prompt": "Nome dell’archivio",
+        "label": "nome",
+        "undo": "Compressione",
+        "exists": "“{name}” esiste già",
+        "into": "{count} elemento in “{name}”",
+        "into_many": "{count} elementi in “{name}”",
+        "done": "Compresso {count} elemento in “{name}”",
+        "done_many": "Compressi {count} elementi in “{name}”",
+    },
+}
+
+
+def strings(locale):
+    """The table for a locale: exact, then its language, then English."""
+    tag = (locale or "en").replace("_", "-").lower()
+    for candidate in (tag, tag.split("-")[0], "en"):
+        for key in STRINGS:
+            if key.lower() == candidate:
+                return STRINGS[key]
+    return STRINGS["en"]
+
+
+def tr(request, key, count=1, **args):
+    table = strings(request.get("locale") or os.environ.get("OTTO_LOCALE"))
+    if count != 1 and key + "_many" in table:
+        key += "_many"
+    return table[key].format(count=count, **args)
+
+
+def by_locale(key):
+    return {tag: table[key] for tag, table in STRINGS.items()}
+
+
+def describe():
+    return {
+        "commands": [
+            {
+                "id": "compress",
+                "title": by_locale("title"),
+                "keywords": by_locale("keywords"),
+                "group": "file",
+                "when": {"targets": "some"},
+                "arg": {
+                    "prompt": by_locale("prompt"),
+                    "label": by_locale("label"),
+                    "placeholder": "Archive.zip",
+                    "initial": "Archive.zip",
+                    "preview": True,
+                },
+                "undo": by_locale("undo"),
+            }
+        ]
+    }
+
+
+def archive_name(request):
+    """The archive the argument names — "Archive.zip" when nothing is
+    typed, and always a .zip."""
+    name = (request.get("arg") or "").strip() or "Archive.zip"
+    if not name.lower().endswith(".zip"):
+        name += ".zip"
+    return name
+
+
+def plan(request):
+    name = archive_name(request)
+    directory = request["situation"]["path"]
+    destination = os.path.join(directory, name)
+    conflict = os.path.exists(destination) or "/" in name
+    return name, destination, conflict
+
+
+def preview(request):
+    # Every target lands in the one archive, so the rows only name what goes
+    # in — no arrow, nothing per row to be wrong — and the note says where,
+    # or that the name is taken.
+    name, _, conflict = plan(request)
+    rows = [{"from": os.path.basename(t)} for t in request["targets"]]
+    count = len(rows)
+    if conflict:
+        note = tr(request, "exists", name=name)
+    else:
+        note = tr(request, "into", count=count, name=name)
+    return {"rows": rows, "note": note}
+
+
+def run(request):
+    name, destination, conflict = plan(request)
+    if conflict:
+        sys.exit(tr(request, "exists", name=name))
+    directory = request["situation"]["path"]
+    # Paths relative to the listing's directory, so the archive holds
+    # "Photos/a.png" rather than "/home/me/Pictures/Photos/a.png".
+    relative = [os.path.relpath(t, directory) for t in request["targets"]]
+    result = subprocess.run(
+        ["zip", "-r", "-q", "-y", destination, *relative],
+        cwd=directory,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        sys.exit((result.stderr or result.stdout).strip() or "zip failed")
+    count = len(relative)
+    return {
+        "status": tr(request, "done", count=count, name=name),
+        "changes": [{"kind": "created", "path": destination}],
+        "reload": True,
+    }
+
+
+def main():
+    verb = sys.argv[1] if len(sys.argv) > 1 else ""
+    if verb == "describe":
+        out = describe()
+    elif verb in ("preview", "run"):
+        request = json.load(sys.stdin)
+        out = preview(request) if verb == "preview" else run(request)
+    else:
+        sys.exit(f"usage: {sys.argv[0]} describe|preview|run")
+    json.dump(out, sys.stdout)
+
+
+if __name__ == "__main__":
+    main()

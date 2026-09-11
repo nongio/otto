@@ -72,7 +72,14 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
         }
     };
 
-    match to_pixels(&image, intrinsic) {
+    // A codec that cannot sample — PNG has no sample size at all — has just
+    // handed back the whole picture whatever was asked for, and a screenshot
+    // requested as a 256-pixel thumbnail would otherwise go down the pipe and
+    // into the caller's cache at 22 MB. Fit it into the target here, where
+    // the resample costs one pass in the worker rather than a resident
+    // full-size copy in the browser for as long as the thumbnail lives.
+    let fit = fit_within(scaled, target);
+    match to_pixels_at(&image, intrinsic, fit) {
         Some(pixels) => PreviewPayload::Pixels {
             pixels,
             pages: 1,
@@ -80,6 +87,20 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
         },
         None => payload::unavailable(otto_kit::t_owned!("quickview-error-image-readback")),
     }
+}
+
+/// `size` shrunk, aspect kept, until it fits in `bounds`. Never grown.
+fn fit_within(size: ISize, bounds: ISize) -> ISize {
+    if size.width <= bounds.width && size.height <= bounds.height {
+        return size;
+    }
+    let scale = (bounds.width as f32 / size.width as f32)
+        .min(bounds.height as f32 / size.height as f32)
+        .min(1.0);
+    ISize::new(
+        ((size.width as f32 * scale).round() as i32).max(1),
+        ((size.height as f32 * scale).round() as i32).max(1),
+    )
 }
 
 /// SVG, rendered at the size it will be shown rather than at some nominal one,
@@ -204,8 +225,13 @@ fn too_large(intrinsic: ISize, request: &Request) -> PreviewPayload {
 /// Copy a decoded image out into a plain premultiplied RGBA buffer, which is
 /// all the wire format and the drawing side know about.
 pub(crate) fn to_pixels(image: &skia_safe::Image, intrinsic: ISize) -> Option<Pixels> {
-    let width = image.width().max(0) as u32;
-    let height = image.height().max(0) as u32;
+    to_pixels_at(image, intrinsic, image.dimensions())
+}
+
+/// Read `image` back at `size`, resampling on the way when the two differ.
+fn to_pixels_at(image: &skia_safe::Image, intrinsic: ISize, size: ISize) -> Option<Pixels> {
+    let width = size.width.max(0) as u32;
+    let height = size.height.max(0) as u32;
     let info = ImageInfo::new(
         (width as i32, height as i32),
         skia_safe::ColorType::RGBA8888,
@@ -214,26 +240,87 @@ pub(crate) fn to_pixels(image: &skia_safe::Image, intrinsic: ISize) -> Option<Pi
     );
     let row_bytes = width as usize * 4;
     let mut data = vec![0u8; row_bytes * height as usize];
-    image
-        .read_pixels(
+    let read = if size == image.dimensions() {
+        image.read_pixels(
             &info,
             &mut data,
             row_bytes,
             (0, 0),
             skia_safe::image::CachingHint::Disallow,
         )
-        .then_some(Pixels {
-            width,
-            height,
-            intrinsic_width: intrinsic.width.max(0) as u32,
-            intrinsic_height: intrinsic.height.max(0) as u32,
-            data,
-        })
+    } else {
+        let target = skia_safe::Pixmap::new(&info, &mut data, row_bytes)?;
+        image.scale_pixels(
+            &target,
+            skia_safe::SamplingOptions::new(
+                skia_safe::FilterMode::Linear,
+                skia_safe::MipmapMode::Linear,
+            ),
+            skia_safe::image::CachingHint::Disallow,
+        )
+    };
+    read.then_some(Pixels {
+        width,
+        height,
+        intrinsic_width: intrinsic.width.max(0) as u32,
+        intrinsic_height: intrinsic.height.max(0) as u32,
+        data,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PNG cannot be decoded at a sample size, so without a resample a big
+    /// one would come back whole however small the request.
+    #[test]
+    fn a_png_asked_for_small_comes_back_small() {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1200, 900)).unwrap();
+        surface.canvas().clear(skia_safe::Color::RED);
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+            .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("otto-quickview-fit-{}.png", std::process::id()));
+        std::fs::write(&path, png.as_bytes()).unwrap();
+        let mut file = File::open(&path).unwrap();
+        let request = Request {
+            width: 128,
+            height: 128,
+            ..Request::default()
+        };
+        let payload = raster(&mut file, &request);
+        let _ = std::fs::remove_file(&path);
+        let PreviewPayload::Pixels { pixels, .. } = payload else {
+            panic!("pixels expected");
+        };
+        assert_eq!((pixels.width, pixels.height), (128, 96));
+        assert_eq!(
+            (pixels.intrinsic_width, pixels.intrinsic_height),
+            (1200, 900)
+        );
+        assert_eq!(pixels.data.len(), 128 * 96 * 4);
+        // Still red after the resample, and premultiplied opaque.
+        assert_eq!(&pixels.data[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn fitting_keeps_the_aspect_and_never_grows() {
+        assert_eq!(
+            fit_within(ISize::new(2880, 1920), ISize::new(256, 256)),
+            ISize::new(256, 171)
+        );
+        assert_eq!(
+            fit_within(ISize::new(100, 80), ISize::new(256, 256)),
+            ISize::new(100, 80)
+        );
+        assert_eq!(
+            fit_within(ISize::new(1000, 4000), ISize::new(512, 512)),
+            ISize::new(128, 512)
+        );
+    }
 
     #[test]
     fn target_never_exceeds_the_source() {

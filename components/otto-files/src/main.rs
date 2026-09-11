@@ -9,7 +9,8 @@ use std::path::PathBuf;
 /// `current_icon_theme()` stays empty. An empty theme name makes every icon
 /// lookup search `hicolor` alone, which ships no `folder` or mimetype icons —
 /// so the whole listing draws without icons. The theme comes from Otto's own
-/// settings, surfaced through the settings portal.
+/// settings, surfaced through the settings portal, or from the desktop's own
+/// setting elsewhere — see `otto_kit::icon_theme`.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // First, before the tokio runtime starts a thread and before anything
     // connects to Wayland. The sandboxed decode worker is *this binary*

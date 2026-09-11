@@ -1452,36 +1452,51 @@ impl ContextMenu {
     // === Utilities ===
 
     fn apply_surface_effects(style: &ContextMenuStyle, popup: &PopupSurface) {
-        if let Some(scene_surface) = popup.base_surface().surface_style() {
-            // The renderer already paints `style.background_color()` into the
-            // buffer. Setting it on the scene layer as well composites it
-            // twice, so a translucent material lands far more opaque than the
-            // same menu drawn compositor-side (the dock's).
-            // Shadow geometry is in physical pixels, so it scales with the
-            // output; values match the compositor-side menus (the dock's) so a
-            // menu looks the same wherever it is drawn. The corner radius does
-            // NOT get scaled here — it has to agree with the rounding the
-            // renderer paints into the buffer, and scaling it makes the bar's
-            // menus visibly rounder than the dock's.
-            let scale = crate::app_runner::context::AppContext::fractional_scale();
-            let shadow = style.theme.shadow;
-            scene_surface.set_corner_radius(style.corner_radius as f64);
-            scene_surface.set_masks_to_bounds(ClipMode::Enabled);
-            scene_surface.set_shadow(
-                shadow.a() as f64 / 255.0,
-                16.0 * scale,
-                0.0,
-                4.0 * scale,
-                shadow.r() as f64 / 255.0,
-                shadow.g() as f64 / 255.0,
-                shadow.b() as f64 / 255.0,
+        let Some(scene_surface) = popup.base_surface().surface_style() else {
+            // Without Otto's surface style the menu paints its own rounded
+            // body, and the most another compositor can add is the blur
+            // behind it — following that rounding, not the square surface.
+            let (width, height) = popup.base_surface().size();
+            crate::backdrop::set_blur(
+                popup.wl_surface(),
+                Some(crate::backdrop::BlurShape::RoundedRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: width as f32,
+                    height: height as f32,
+                    radius: style.corner_radius,
+                }),
             );
-            scene_surface.set_blend_mode(if crate::frosting::enabled() {
-                BlendMode::BackgroundBlur
-            } else {
-                BlendMode::Normal
-            });
-        }
+            return;
+        };
+        // The renderer already paints `style.background_color()` into the
+        // buffer. Setting it on the scene layer as well composites it
+        // twice, so a translucent material lands far more opaque than the
+        // same menu drawn compositor-side (the dock's).
+        // Shadow geometry is in physical pixels, so it scales with the
+        // output; values match the compositor-side menus (the dock's) so a
+        // menu looks the same wherever it is drawn. The corner radius does
+        // NOT get scaled here — it has to agree with the rounding the
+        // renderer paints into the buffer, and scaling it makes the bar's
+        // menus visibly rounder than the dock's.
+        let scale = crate::app_runner::context::AppContext::fractional_scale();
+        let shadow = style.theme.shadow;
+        scene_surface.set_corner_radius(style.corner_radius as f64);
+        scene_surface.set_masks_to_bounds(ClipMode::Enabled);
+        scene_surface.set_shadow(
+            shadow.a() as f64 / 255.0,
+            16.0 * scale,
+            0.0,
+            4.0 * scale,
+            shadow.r() as f64 / 255.0,
+            shadow.g() as f64 / 255.0,
+            shadow.b() as f64 / 255.0,
+        );
+        scene_surface.set_blend_mode(if crate::frosting::enabled() {
+            BlendMode::BackgroundBlur
+        } else {
+            BlendMode::Normal
+        });
     }
 
     // === State Access ===
