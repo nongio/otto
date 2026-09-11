@@ -3128,11 +3128,22 @@ fn palette_row_h(kind: PaletteRowKind) -> f32 {
     }
 }
 
+/// The palette card's corner radius.
+///
+/// One number for everything that has to agree about the card's shape: its
+/// fill, its hairline, the shadow painted when it is in the window's buffer,
+/// and the rounded clip the compositor frosts and shadows it with when it is
+/// on a surface of its own. Kept in step by hand they drifted, and a hairline
+/// a fraction off the edge it outlines is exactly the flaw the eye goes to.
+pub const PALETTE_RADIUS: f32 = 14.0;
+
 /// The card. Its height follows what is in it, so an empty query and a
 /// one-match query are not the same box.
 pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect {
     let w = PALETTE_W.min(width - 48.0).max(240.0);
-    let left = (width - w - PALETTE_RIGHT_INSET).max(0.0);
+    // Whole points: the card is its own surface, placed at an integer
+    // position, and a fractional edge would sit a fraction off the clip.
+    let left = (width - w - PALETTE_RIGHT_INSET).max(0.0).round();
     let mut height = PALETTE_FIELD_H;
     let body = palette_list_h(rows);
     if body > 0.0 || message {
@@ -3262,7 +3273,7 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
             false,
         ));
         canvas.draw_rrect(
-            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), 14.0, 14.0),
+            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), PALETTE_RADIUS, PALETTE_RADIUS),
             &paint,
         );
         paint.set_mask_filter(None);
@@ -3279,21 +3290,33 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     } else {
         content_ground()
     });
-    canvas.draw_rrect(RRect::new_rect_xy(card, 14.0, 14.0), &paint);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(card, PALETTE_RADIUS, PALETTE_RADIUS),
+        &paint,
+    );
 
     // The hairline is what says the card is above the listing rather than part
     // of it: the ground is the same colour on both sides of the edge, exactly
     // as it is around the Get Info panel. On its own surface the compositor
     // draws this; here the card is inside the window's own buffer, so it is
     // painted.
+    //
+    // A ring rather than a stroke: the card's own rounded rect, less the same
+    // shape one hairline in. A stroke centred half a point inside the edge
+    // needs its radius shrunk by that half point to stay concentric, and with
+    // the card's radius kept it was not — the corner curve pulled away from
+    // the card's edge, leaving a sliver of material outside the line exactly
+    // where the compositor's rounded clip meets it. Built from the card's
+    // rect, the outer edge of the ring *is* the card's edge, at every radius.
     paint.set_color(theme.hairline());
-    paint.set_style(skia_safe::paint::Style::Stroke);
-    paint.set_stroke_width(Theme::HAIRLINE_WIDTH);
-    canvas.draw_rrect(
-        RRect::new_rect_xy(card.with_inset((0.5, 0.5)), 14.0, 14.0),
-        &paint,
+    let outer = RRect::new_rect_xy(card, PALETTE_RADIUS, PALETTE_RADIUS);
+    let inset = Theme::HAIRLINE_WIDTH;
+    let inner = RRect::new_rect_xy(
+        card.with_inset((inset, inset)),
+        PALETTE_RADIUS - inset,
+        PALETTE_RADIUS - inset,
     );
-    paint.set_style(skia_safe::paint::Style::Fill);
+    canvas.draw_drrect(outer, inner, &paint);
 
     let field = palette_field_rect(width);
     if let Some(prompt) = data.prompt {
