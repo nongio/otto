@@ -26,6 +26,30 @@ const OTTO_DESKTOP_KEYS: &[(&str, &str)] = &[
     ("tiling-decoration", "tiling.decoration"),
 ];
 
+/// Where GTK — and so Chrome, Firefox and every libadwaita app drawing its own
+/// titlebar — looks for which end of the bar its window buttons go at.
+const WM_PREFERENCES: &str = "org.gnome.desktop.wm.preferences";
+const BUTTON_LAYOUT: &str = "button-layout";
+
+/// The GNOME `button-layout` string for Otto's controls: the buttons before
+/// the colon go at the leading edge, those after it at the trailing one.
+///
+/// The order is the one Otto draws its own dots in, so a client-decorated
+/// window reads the same as a server-decorated one beside it: close outermost
+/// at either end, and the zoom button only when the desktop shows one.
+fn button_layout(side: &str, maximize: bool) -> String {
+    let mut buttons = vec!["close", "minimize"];
+    if maximize {
+        buttons.push("maximize");
+    }
+    if side == "right" {
+        buttons.reverse();
+        format!(":{}", buttons.join(","))
+    } else {
+        format!("{}:", buttons.join(","))
+    }
+}
+
 /// Otto's identifier for a key in the `org.otto.desktop` namespace.
 fn otto_desktop_id(key: &str) -> Option<&'static str> {
     OTTO_DESKTOP_KEYS
@@ -101,6 +125,16 @@ impl SettingsPortal {
         }
         namespaces.insert("org.otto.desktop".to_string(), desktop);
 
+        // The controls' side again, in the shape toolkits outside Otto read.
+        match self.read_button_layout().await {
+            Ok(layout) => {
+                let mut wm = HashMap::new();
+                wm.insert(BUTTON_LAYOUT.to_string(), layout);
+                namespaces.insert(WM_PREFERENCES.to_string(), wm);
+            }
+            Err(err) => debug!(?err, "compositor has no window controls side"),
+        }
+
         Ok(namespaces)
     }
 
@@ -130,6 +164,7 @@ impl SettingsPortal {
                 let sound_theme = self.read_sound_theme().await?;
                 Ok(Value::from(sound_theme).try_into().unwrap())
             }
+            (WM_PREFERENCES, BUTTON_LAYOUT) => self.read_button_layout().await,
             _ => Err(fdo::Error::Failed(format!(
                 "Unknown setting: {}.{}",
                 namespace, key
@@ -207,6 +242,23 @@ impl SettingsPortal {
             error!(?err, id, "Failed to read setting from compositor");
             fdo::Error::Failed(format!("Failed to read `{id}`: {err}"))
         })
+    }
+
+    /// The controls' side and the zoom button, as a GNOME `button-layout`.
+    ///
+    /// The side is required — without it there is nothing to say, and a
+    /// guess would override whatever the toolkit would otherwise pick. The
+    /// zoom button falls back to hidden, Otto's default.
+    async fn read_button_layout(&self) -> fdo::Result<OwnedValue> {
+        let side = String::try_from(self.read_setting("window_controls_side").await?)
+            .map_err(|err| fdo::Error::Failed(format!("Unexpected controls side: {err}")))?;
+        let maximize = match self.read_setting("show_maximize_button").await {
+            Ok(value) => bool::try_from(value).unwrap_or(false),
+            Err(_) => false,
+        };
+        Value::from(button_layout(&side, maximize))
+            .try_into()
+            .map_err(|err| fdo::Error::Failed(format!("Failed to encode button layout: {err}")))
     }
 
     /// Helper to match namespace patterns (supports trailing wildcard).
@@ -290,8 +342,14 @@ fn portal_keys_for(id: &str) -> &'static [(&'static str, &'static str)] {
         "audio.sound_theme" => &[("org.gnome.desktop.sound", "theme-name")],
         "rounded_corners" => &[("org.otto.desktop", "rounded-corners")],
         "frosting" => &[("org.otto.desktop", "frosting")],
-        "window_controls_side" => &[("org.otto.desktop", "window-controls-side")],
-        "show_maximize_button" => &[("org.otto.desktop", "maximize-button")],
+        "window_controls_side" => &[
+            ("org.otto.desktop", "window-controls-side"),
+            (WM_PREFERENCES, BUTTON_LAYOUT),
+        ],
+        "show_maximize_button" => &[
+            ("org.otto.desktop", "maximize-button"),
+            (WM_PREFERENCES, BUTTON_LAYOUT),
+        ],
         "tiling.decoration" => &[("org.otto.desktop", "tiling-decoration")],
         _ => &[],
     }
@@ -340,4 +398,30 @@ pub async fn spawn_change_relay(connection: Connection, client: OttoClient) -> z
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Close stays outermost at either end, the zoom button comes and goes
+    /// with the setting, and the colon puts the group on the right side.
+    #[test]
+    fn button_layout_follows_side_and_zoom() {
+        assert_eq!(button_layout("left", false), "close,minimize:");
+        assert_eq!(button_layout("left", true), "close,minimize,maximize:");
+        assert_eq!(button_layout("right", false), ":minimize,close");
+        assert_eq!(button_layout("right", true), ":maximize,minimize,close");
+    }
+
+    /// Both settings that feed the layout re-announce it when they change.
+    #[test]
+    fn button_layout_is_relayed_for_both_inputs() {
+        for id in ["window_controls_side", "show_maximize_button"] {
+            assert!(
+                portal_keys_for(id).contains(&(WM_PREFERENCES, BUTTON_LAYOUT)),
+                "{id}"
+            );
+        }
+    }
 }
