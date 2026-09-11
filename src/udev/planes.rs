@@ -9,7 +9,6 @@ use smithay::backend::allocator::{gbm::GbmDevice, Fourcc};
 use smithay::backend::drm::{DrmDeviceFd, DrmNode};
 use smithay::reexports::drm::control::crtc;
 
-use crate::config::DockPosition;
 use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
 use crate::render_elements::workspace_render_elements::WorkspaceRenderElements;
 use crate::workspaces::OutputWorkspaces;
@@ -55,18 +54,9 @@ pub(super) fn ensure_plane_elements(
     gbm: &GbmDevice<DrmDeviceFd>,
     crtc: crtc::Handle,
     mode_size: (i32, i32),
-    dock_position: DockPosition,
-    dock_reach: i32,
 ) {
     let (w, h) = mode_size;
     let render_node = surface.render_node;
-
-    // The dock plane is a strip along the edge the dock lives on, so moving the
-    // dock invalidates it: drop it and let it be rebuilt against the new edge.
-    if surface.dock_plane_position != Some(dock_position) {
-        surface.dock_dmabuf_element = None;
-        surface.dock_plane_position = Some(dock_position);
-    }
 
     ensure_plane(
         &mut surface.scene_dmabuf_element,
@@ -146,53 +136,10 @@ pub(super) fn ensure_plane_elements(
         None,
     );
 
-    // Strip-sized planes: full output width, cropped bands of their
-    // full-screen containers via the element viewport. Small buffers
-    // mean dock/switcher animations no longer redraw a full-screen
-    // plane, and the KMS watermark cost scales with plane size.
+    // The switcher plane starts as a centred band and follows its content
+    // from there (`fit_plane`). The dock has no plane of its own: it draws
+    // on the overlay plane (see `Workspaces::new_output_workspaces`).
     let switcher_strip_h = (h / 2).min(960);
-    // The dock strip follows the dock: a bottom band, or a side column. It is
-    // at least a fixed fraction of the output, and grows to the dock's own
-    // reach — a big dock, fully magnified, at the top of a launch bounce with
-    // its label open, would otherwise hop straight out of the strip and be
-    // cropped mid-air.
-    let (dock_size, dock_origin) = match dock_position {
-        DockPosition::Bottom => {
-            let strip_h = (h / 4).min(480).max(dock_reach).min(h);
-            ((w, strip_h), (0, h - strip_h))
-        }
-        // Wider than the bottom band is tall: a side dock's tooltips and
-        // context menus open *across* the strip, and anything that reaches past
-        // its edge is cropped away.
-        DockPosition::Left => {
-            let strip_w = (w / 2).min(960).max(dock_reach).min(w);
-            ((strip_w, h), (0, 0))
-        }
-        DockPosition::Right => {
-            let strip_w = (w / 2).min(960).max(dock_reach).min(w);
-            ((strip_w, h), (w - strip_w, 0))
-        }
-    };
-    ensure_plane(
-        &mut surface.dock_dmabuf_element,
-        engine,
-        gbm,
-        render_node,
-        crtc,
-        dock_size,
-        Fourcc::Argb8888,
-        false,
-        "dock",
-        Some(dock_origin),
-    );
-    // The dock's reach changes with its configuration (size, magnification):
-    // follow it. `resize` is a no-op at the same size, and this runs before
-    // the frame renders, so a re-allocation never costs the plane a frame.
-    if let Some(el) = surface.dock_dmabuf_element.as_mut() {
-        if el.resize(dock_size) {
-            el.set_origin(dock_origin);
-        }
-    }
     ensure_plane(
         &mut surface.switcher_dmabuf_element,
         engine,
@@ -232,10 +179,6 @@ pub(super) fn wire_plane_nodes(surface: &SurfaceData, ows: &OutputWorkspaces) {
     }
     if let Some(el) = &surface.switcher_dmabuf_element {
         el.set_node_ref(ows.switcher_plane.id);
-        el.set_scene_origin(origin);
-    }
-    if let Some(el) = &surface.dock_dmabuf_element {
-        el.set_node_ref(ows.dock_plane.id);
         el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.window_dmabuf_element {
@@ -293,6 +236,147 @@ pub(super) fn wire_window_plane(
     }
     surface.window_plane_active = true;
     true
+}
+
+/// Where a content-fitted plane currently is, and for how long its content
+/// has been smaller than that.
+#[derive(Default)]
+pub(super) struct PlaneFit {
+    rect: Option<smithay::utils::Rectangle<i32, smithay::utils::Physical>>,
+    smaller_since: Option<std::time::Instant>,
+}
+
+/// Planes snap outward to this grid, so a bar growing a few pixels (an
+/// island expanding, an icon magnifying) does not re-allocate the swapchain
+/// on every frame of the animation.
+const PLANE_FIT_GRID: i32 = 64;
+/// A plane shrinks back to its content only after the content has stayed
+/// smaller for this long: a menu that closes and reopens keeps its buffer.
+const PLANE_FIT_SHRINK_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The union of what is actually drawn under `root`, in output-local
+/// physical px, clipped to the output. `None` when nothing is drawn.
+///
+/// The plane root and the positioning containers under it span the whole
+/// output while drawing nothing, so their bounds say nothing about the
+/// content. The walk descends through such containers and stops at the first
+/// layer that draws (background, content, border, shadow), taking its bounds
+/// with children — shadows and content overflow included, as the painter
+/// sees them.
+pub(super) fn plane_content_bounds(
+    root: &layers::prelude::Layer,
+    scene_origin: (i32, i32),
+    mode_size: (i32, i32),
+) -> Option<smithay::utils::Rectangle<i32, smithay::utils::Physical>> {
+    fn walk(layer: &layers::prelude::Layer, acc: &mut Option<layers::skia::Rect>) {
+        for child in layer.children() {
+            if child.hidden() {
+                continue;
+            }
+            if child.render_layer().visible {
+                let r = child.render_bounds_with_children_transformed();
+                if r.is_empty() {
+                    continue;
+                }
+                match acc {
+                    Some(a) => a.join(r),
+                    None => *acc = Some(r),
+                }
+            } else {
+                walk(&child, acc);
+            }
+        }
+    }
+    let mut acc: Option<layers::skia::Rect> = None;
+    walk(root, &mut acc);
+    let r = acc?;
+    let (mw, mh) = mode_size;
+    let x = (r.left().floor() as i32 - scene_origin.0).max(0);
+    let y = (r.top().floor() as i32 - scene_origin.1).max(0);
+    let x2 = (r.right().ceil() as i32 - scene_origin.0).min(mw);
+    let y2 = (r.bottom().ceil() as i32 - scene_origin.1).min(mh);
+    if x2 <= x || y2 <= y {
+        return None;
+    }
+    Some(smithay::utils::Rectangle::new(
+        (x, y).into(),
+        (x2 - x, y2 - y).into(),
+    ))
+}
+
+/// Size and place a chrome plane to its content for this frame.
+///
+/// The KMS plane budget on i915 is memory bandwidth, charged per plane
+/// area, so a full-screen plane carrying a 100 px bar is what keeps a second
+/// window off its plane. The plane follows its content instead: it grows the
+/// moment the content does (before the render, so nothing is ever cropped)
+/// and shrinks back only after the content has been smaller for a while.
+/// Sizes snap outward to a grid so animations do not churn the swapchain.
+///
+/// `content == None` (nothing drawn) leaves the plane as it is: an inactive
+/// plane is neither rendered nor pushed, and its buffer is released after
+/// [`PLANE_RELEASE_AFTER`] anyway.
+pub(super) fn fit_plane(
+    el: &mut SceneDmabufElement,
+    content: Option<smithay::utils::Rectangle<i32, smithay::utils::Physical>>,
+    mode_size: (i32, i32),
+    fit: &mut PlaneFit,
+    label: &'static str,
+) {
+    let Some(content) = content else {
+        return;
+    };
+    let (mw, mh) = mode_size;
+    let snap_down = |v: i32| (v / PLANE_FIT_GRID) * PLANE_FIT_GRID;
+    let snap_up = |v: i32| ((v + PLANE_FIT_GRID - 1) / PLANE_FIT_GRID) * PLANE_FIT_GRID;
+    let x = snap_down(content.loc.x).max(0);
+    let y = snap_down(content.loc.y).max(0);
+    let x2 = snap_up(content.loc.x + content.size.w).min(mw);
+    let y2 = snap_up(content.loc.y + content.size.h).min(mh);
+    let wanted = smithay::utils::Rectangle::<i32, smithay::utils::Physical>::new(
+        (x, y).into(),
+        (x2 - x, y2 - y).into(),
+    );
+    let now = std::time::Instant::now();
+    let target = match fit.rect {
+        // Content still fits: keep the buffer, unless it has been oversized
+        // for long enough to shrink.
+        Some(cur) if cur.contains_rect(wanted) => {
+            if cur == wanted {
+                fit.smaller_since = None;
+                return;
+            }
+            let since = *fit.smaller_since.get_or_insert(now);
+            if now.duration_since(since) < PLANE_FIT_SHRINK_AFTER {
+                return;
+            }
+            wanted
+        }
+        // Content grew past the buffer: cover both the old and the new area,
+        // so a plane that alternates between two spots does not flip-flop.
+        Some(cur) => {
+            let mut merged = cur.merge(wanted);
+            merged.loc.x = merged.loc.x.max(0);
+            merged.loc.y = merged.loc.y.max(0);
+            merged.size.w = merged.size.w.min(mw - merged.loc.x);
+            merged.size.h = merged.size.h.min(mh - merged.loc.y);
+            merged
+        }
+        None => wanted,
+    };
+    fit.smaller_since = None;
+    fit.rect = Some(target);
+    let resized = el.resize((target.size.w, target.size.h));
+    let moved = el.position != (target.loc.x, target.loc.y);
+    if moved {
+        el.set_origin((target.loc.x, target.loc.y));
+    }
+    // A new buffer, or the same buffer showing a different crop of the
+    // scene: either way nothing in it is valid.
+    if resized || moved {
+        el.request_full_render();
+    }
+    tracing::debug!(target: "otto::planes", "{label} plane fitted to {target:?}");
 }
 
 /// Push a plane element into the frame's element list if it has a dmabuf.

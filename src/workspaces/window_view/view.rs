@@ -159,7 +159,10 @@ impl WindowView {
     /// drops the blur once nothing can be seen through it. Same sequence
     /// otto-kit's `Window` runs for a client that draws its own bar.
     fn fade_decoration_material(&self, model: &WindowDecorationModel, animate: bool) {
-        let frosted = model.active;
+        // Frosted while focused — and only while the desktop frosts its
+        // chrome at all (`frosting`); otherwise the bar wears the opaque form
+        // whether focused or not.
+        let frosted = model.active && crate::theme::frosting();
         let tint = decoration_for(model).material_tint(frosted);
         let color = skia::Color4f::from(tint);
         let color = layers::types::Color::new_rgba(color.r, color.g, color.b, color.a);

@@ -3,11 +3,7 @@
 // Handles session setup, GPU initialization, libinput configuration,
 // and the main event loop for the udev backend.
 
-use std::{
-    collections::HashMap,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::atomic::Ordering, time::Duration};
 
 use smithay::{
     backend::{
@@ -140,7 +136,7 @@ pub fn run_udev() {
         fps_texture: None,
 
         context_id: None, // Will be set after device initialization
-        render_requested: AtomicBool::new(false),
+        redraw_generation: std::sync::atomic::AtomicU64::new(0),
         damage_generation: 0,
         underrun_penalty: 0,
         last_screencast_kick: None,
@@ -214,8 +210,8 @@ pub fn run_udev() {
             data.process_input_event(&dh, event);
             // Input may move the cursor or trigger visual changes — request a render.
             data.backend_data
-                .render_requested
-                .store(true, std::sync::atomic::Ordering::Release);
+                .redraw_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Release);
         })
         .unwrap();
 
@@ -580,9 +576,9 @@ pub fn run_udev() {
             }
         }
 
-        // Scripted-gesture driver (`/tmp/otto-gesture`). Idle and allocation-free
-        // until that file appears, so it costs a file-existence check per tick.
-        {
+        // Scripted-gesture driver (`/tmp/otto-gesture`), `debug-hooks` builds
+        // only: the timer alone wakes the loop 125 times a second.
+        if crate::debug_hooks::ENABLED {
             let interval = std::time::Duration::from_millis(8);
             state
                 .handle
@@ -715,78 +711,49 @@ pub fn run_udev() {
     }
 
     while state.running.load(Ordering::SeqCst) {
-        // Use tight timing when animations are active or the idle countdown
-        // is still running (recent input/damage keeps us at frame rate).
-        let has_animations = state.scene_element.has_pending_animations();
-        let has_active_countdown = state
-            .backend_data
-            .backends
-            .values()
-            .flat_map(|d| d.surfaces.values())
-            .any(|s| s.idle_countdown > 0);
-        let dispatch_timeout = if has_animations || has_active_countdown {
-            Some(Duration::from_millis(1))
-        } else {
-            Some(Duration::from_secs(1))
-        };
-
-        let result = event_loop.dispatch(dispatch_timeout, &mut state);
+        // Draw deadlines and VBlank follow-ups are calloop timers, and every
+        // other reason to draw arrives as an event, so the loop has nothing
+        // to poll for: the timeout only bounds a turn with nothing to do.
+        let result = event_loop.dispatch(Some(Duration::from_secs(1)), &mut state);
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            // If a redraw was requested (e.g. client commit, input), reset
-            // idle countdowns. Only trigger an explicit render() when fully
-            // idle (countdown was 0) to kick-start the render loop; otherwise
-            // the existing reschedule timer will pick it up — calling render()
-            // while a timer is pending causes double-renders and stuttering.
-            let was_requested = state
-                .backend_data
-                .render_requested
-                .swap(false, Ordering::AcqRel);
-            // Scene animations wake the loop too. A transaction scheduled from
-            // a background thread (the app switcher's model poller, say) sets
-            // no redraw flag, so with nothing else committing — the last app
-            // just quit — the loop stays idle, the transaction never ticks,
-            // and the next input event snaps the layer to its end state with
-            // no animation at all. Re-read after the dispatch: the task may
-            // have scheduled during it. Once a render lands, `render_surface`
-            // holds `idle_countdown` at 3 for as long as animations are
-            // pending, so the normal reschedule chain takes it from here.
+            // Wake idle surfaces. A surface with a pass on its way is left
+            // alone — that pass runs after whatever just happened and sees it;
+            // kicking a second one causes double renders and stutter.
+            //
+            // Two wake sources: a redraw request (input, a client commit) the
+            // surface's last pass predates, and scene animations. The latter
+            // sets no request — a transaction scheduled from a background
+            // thread (the app switcher's model poller, say) with nothing else
+            // committing would otherwise never tick, and the next input event
+            // would snap the layer to its end state. Re-read after the
+            // dispatch: the task may have scheduled during it.
+            let redraw_gen = state.backend_data.redraw_generation.load(Ordering::Acquire);
             let animations_pending = state.scene_element.has_pending_animations();
-            if was_requested || animations_pending {
-                // Idle is a PER-SURFACE property: with multiple outputs one
-                // can be idle (no timer, no VBlank pending) while another is
-                // mid-loop. Kick exactly the idle ones — resetting a busy
-                // surface's countdown is enough, its pending timer/VBlank
-                // consumes it. (Kicking only when ALL surfaces were idle
-                // wedged multi-output: an idle surface's countdown got reset
-                // to 3 with no render scheduled, nothing ever decremented it,
-                // so `all(== 0)` never held again and input stopped waking
-                // the render loop entirely.)
-                let mut kick: Vec<(
-                    smithay::backend::drm::DrmNode,
-                    smithay::reexports::drm::control::crtc::Handle,
-                )> = Vec::new();
-                for (node, device) in state.backend_data.backends.iter_mut() {
-                    for (crtc, surface) in device.surfaces.iter_mut() {
-                        if surface.idle_countdown == 0 {
-                            kick.push((*node, *crtc));
-                        }
-                        // Short tail after the last input/commit — enough to absorb
-                        // one missed event gap without flapping fast/slow dispatch.
-                        // (Was 30 ≈ 500 ms which kept the 1 kHz poll loop hot
-                        // through entire animations with no benefit.)
-                        surface.idle_countdown = 3;
+            let mut kick: Vec<(
+                smithay::backend::drm::DrmNode,
+                smithay::reexports::drm::control::crtc::Handle,
+            )> = Vec::new();
+            for (node, device) in state.backend_data.backends.iter_mut() {
+                for (crtc, surface) in device.surfaces.iter_mut() {
+                    if super::schedule::wake_idle_surface(
+                        surface.frame_scheduled,
+                        redraw_gen,
+                        surface.seen_redraw_gen,
+                        animations_pending,
+                    ) {
+                        kick.push((*node, *crtc));
                     }
                 }
-                for (node, crtc) in kick {
-                    state.render(node, Some(crtc));
-                }
+            }
+            for (node, crtc) in kick {
+                state.render(node, Some(crtc));
             }
             // Debug hook: `echo ActionName > $OTTO_ACTION_FILE` executes a
             // builtin shortcut action as if its key was pressed. Shared with
             // the winit backend; see `poll_debug_action_file`.
-            if state.poll_debug_action_file() {
+            if crate::debug_hooks::ENABLED && state.poll_debug_action_file() {
                 // Real key events request a redraw as a side effect; without
                 // it the scheduled lay-rs transactions never tick and the
                 // action stays invisible.

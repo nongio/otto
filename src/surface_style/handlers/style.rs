@@ -537,9 +537,17 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
                 // would land behind that same-pass content and leave the window
                 // underneath sharp. Opt into the raw background plus a real
                 // blur, exactly as the server-side titlebar does.
-                sstyle
-                    .layer
-                    .set_blur_include_content(blend_mode == LayrsBlendMode::BackgroundBlur);
+                //
+                // Layer-shell chrome (the bar, the islands) is the exception:
+                // it draws on the overlay plane with nothing of its own plane
+                // behind it, so it seeds the pre-blurred backdrop — which the
+                // compositor keeps blurred exactly under these shapes — and
+                // skips the blur pass. A refresh of the bar is then a copy, not
+                // a blur, which is what makes a video playing under it cheap.
+                sstyle.layer.set_blur_include_content(
+                    blend_mode == LayrsBlendMode::BackgroundBlur
+                        && !state.is_layer_shell_surface(&sstyle.surface),
+                );
                 trigger_window_update(state, &sstyle.surface.id());
 
                 let surface_id = sstyle.surface.id();

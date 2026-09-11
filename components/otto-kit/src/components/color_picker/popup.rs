@@ -297,7 +297,11 @@ impl ColorPickerPopup {
             shadow.g() as f64 / 255.0,
             shadow.b() as f64 / 255.0,
         );
-        surface_style.set_blend_mode(BlendMode::BackgroundBlur);
+        surface_style.set_blend_mode(if crate::frosting::enabled() {
+            BlendMode::BackgroundBlur
+        } else {
+            BlendMode::Normal
+        });
     }
 
     fn handle_press(inner: &Rc<RefCell<PopupInner>>, x: f32, y: f32) {

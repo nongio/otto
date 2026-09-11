@@ -36,6 +36,7 @@ use crate::controls_side::ControlsSide;
 const NAMESPACE: &str = "org.otto.desktop";
 
 const ROUNDED_CORNERS: &str = "rounded-corners";
+const FROSTING: &str = "frosting";
 const WINDOW_CONTROLS_SIDE: &str = "window-controls-side";
 const MAXIMIZE_BUTTON: &str = "maximize-button";
 
@@ -65,6 +66,7 @@ pub fn spawn_desktop_appearance_watcher() {
 /// compositor means going back to the names.
 const OTTO_IDS: &[(&str, &str)] = &[
     ("rounded_corners", ROUNDED_CORNERS),
+    ("frosting", FROSTING),
     ("window_controls_side", WINDOW_CONTROLS_SIDE),
     ("show_maximize_button", MAXIMIZE_BUTTON),
 ];
@@ -149,6 +151,10 @@ fn apply(key: &str, value: Value<'_>) -> bool {
             crate::corners::set(rounded);
             true
         }
+        (FROSTING, Value::Bool(enabled)) => {
+            crate::frosting::set(enabled);
+            true
+        }
         (MAXIMIZE_BUTTON, Value::Bool(shown)) => {
             crate::maximize_button::set(shown);
             true
@@ -185,7 +191,12 @@ async fn run_watcher() -> Result<(), zbus::Error> {
     let proxy = SettingsProxy::new(&conn).await?;
 
     let mut changed = false;
-    for key in [ROUNDED_CORNERS, WINDOW_CONTROLS_SIDE, MAXIMIZE_BUTTON] {
+    for key in [
+        ROUNDED_CORNERS,
+        FROSTING,
+        WINDOW_CONTROLS_SIDE,
+        MAXIMIZE_BUTTON,
+    ] {
         match proxy.read(NAMESPACE, key).await {
             Ok(owned) => changed |= apply(key, owned.into()),
             Err(e) => tracing::debug!("{NAMESPACE} {key} read failed (portal absent?): {e}"),
@@ -244,7 +255,12 @@ mod tests {
     fn both_channels_follow_the_same_settings() {
         let mut direct: Vec<_> = OTTO_IDS.iter().map(|(_, key)| *key).collect();
         direct.sort_unstable();
-        let mut portal = vec![ROUNDED_CORNERS, WINDOW_CONTROLS_SIDE, MAXIMIZE_BUTTON];
+        let mut portal = vec![
+            ROUNDED_CORNERS,
+            FROSTING,
+            WINDOW_CONTROLS_SIDE,
+            MAXIMIZE_BUTTON,
+        ];
         portal.sort_unstable();
         assert_eq!(direct, portal);
     }

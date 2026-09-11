@@ -41,7 +41,7 @@ pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
         // the paint would double up. An unfocused window has no blur, so its
         // bar is filled in rather than left translucent over the desktop.
         backdrop_blur: 0.0,
-        blurred: state.active,
+        blurred: state.active && crate::theme::frosting(),
         // The tint rides on the decoration layer instead of this paint, so
         // focus can fade it between the frosted and the opaque form without
         // repainting the bar — see `WindowView::fade_decoration_material`.

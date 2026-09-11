@@ -43,6 +43,46 @@ const BACKDROP_SCALE: f32 = 0.25;
 /// blur (which leaves a faded, seed-exposing rim at the layer edge).
 const BACKDROP_BLUR_SIGMA: f32 = 10.0;
 
+/// How far past its shape a consumer's blur reads, in full-resolution
+/// physical px: three sigma of the full-res blur (`BACKDROP_BLUR_SIGMA /
+/// BACKDROP_SCALE`), the same reach lay-rs uses for an in-scene blur. Every
+/// consumer rect is outset by this before it is used for anything — the
+/// pre-blur input, the damage interest, the tracked-region bookkeeping — so
+/// content just outside the dock, a menu or the bar tints their edges the way
+/// a true blur would, and a repaint within that band rebuilds the composite.
+const BLUR_REACH: f32 = BACKDROP_BLUR_SIGMA * 3.0 / BACKDROP_SCALE;
+
+/// Union overlapping or touching rects until none overlap: fewer, larger
+/// blur passes over the same consumers.
+fn coalesce(regions: &[layers::skia::Rect]) -> Vec<layers::skia::Rect> {
+    let mut out: Vec<layers::skia::Rect> = Vec::new();
+    for r in regions {
+        let mut r = *r;
+        loop {
+            let hit = out.iter().position(|o| {
+                r.left() <= o.right()
+                    && r.right() >= o.left()
+                    && r.top() <= o.bottom()
+                    && r.bottom() >= o.top()
+            });
+            match hit {
+                Some(i) => {
+                    let o = out.swap_remove(i);
+                    r.join(o);
+                }
+                None => break,
+            }
+        }
+        out.push(r);
+    }
+    out
+}
+
+/// `r` grown by the blur reach on every side.
+fn with_reach(r: layers::skia::Rect) -> layers::skia::Rect {
+    r.with_outset((BLUR_REACH, BLUR_REACH))
+}
+
 /// The vibrancy tone map is lay-rs' own — see
 /// [`layers::drawing::vibrancy_color_filter`].
 ///
@@ -56,10 +96,19 @@ const BACKDROP_BLUR_SIGMA: f32 = 10.0;
 /// Gaussian-blur `image` into a fresh same-size GPU surface, apply the vibrancy
 /// tone map, and return the snapshot. Returns `None` if the surface or filter
 /// can't be built (caller falls back to the raw image).
+///
+/// `regions` (image coords) are where consumers sample, each already grown
+/// by the blur reach (`BLUR_REACH`): each is blurred on its own with mirrored
+/// edges at the grown boundary, so inside the consumer's own shape every
+/// sample the kernel takes is real content, and the mirroring only ever
+/// affects the outer band nobody reads. Elsewhere the image is left as is:
+/// nobody samples it. `None` blurs the whole image, for consumers whose
+/// shapes are not known.
 fn blur_image(
     image: &layers::skia::Image,
     ctx: &mut layers::skia::gpu::DirectContext,
     sigma: f32,
+    regions: Option<&[layers::skia::Rect]>,
 ) -> Option<layers::skia::Image> {
     let info = layers::skia::ImageInfo::new(
         (image.width(), image.height()),
@@ -77,20 +126,58 @@ fn blur_image(
         false,
         false,
     )?;
-    let blur = layers::skia::image_filters::blur(
-        (sigma, sigma),
-        layers::skia::TileMode::Clamp,
-        None,
-        None,
-    )?;
     // Tone map on top of the blur: one filter chain, one pass.
-    let filter = layers::skia::image_filters::color_filter(vibrancy_color_filter(), blur, None)?;
-    let mut paint = layers::skia::Paint::default();
-    paint.set_image_filter(filter);
+    let blurred_paint = |input: Option<layers::skia::ImageFilter>| {
+        let blur = layers::skia::image_filters::blur(
+            (sigma, sigma),
+            layers::skia::TileMode::Clamp,
+            input,
+            None,
+        )?;
+        let filter =
+            layers::skia::image_filters::color_filter(vibrancy_color_filter(), blur, None)?;
+        let mut paint = layers::skia::Paint::default();
+        paint.set_image_filter(filter);
+        Some(paint)
+    };
     {
         let canvas = surface.canvas();
         canvas.clear(layers::skia::Color4f::new(0.0, 0.0, 0.0, 1.0));
-        canvas.draw_image(image, (0, 0), Some(&paint));
+        match regions {
+            None => {
+                canvas.draw_image(image, (0, 0), Some(&blurred_paint(None)?));
+            }
+            Some(regions) => {
+                canvas.draw_image(image, (0, 0), None);
+                let bounds =
+                    layers::skia::Rect::from_wh(image.width() as f32, image.height() as f32);
+                // Each region is a filter graph and a GPU pass of its own, and
+                // the consumers come in clusters — the bar's halves and the
+                // islands all sit in one band at the top. Blur touching
+                // regions as one; at a quarter of the screen the band is a
+                // few hundred pixels wide and the extra area costs nothing.
+                let regions = coalesce(regions);
+                for region in &regions {
+                    let Some(region) = layers::skia::Rect::intersects2(region, bounds).then(|| {
+                        let mut r = *region;
+                        r.intersect(bounds);
+                        r
+                    }) else {
+                        continue;
+                    };
+                    let crop = layers::skia::image_filters::crop(
+                        region,
+                        layers::skia::TileMode::Mirror,
+                        None,
+                    )?;
+                    let paint = blurred_paint(Some(crop))?;
+                    canvas.save();
+                    canvas.clip_rect(region, None, None);
+                    canvas.draw_image(image, (0, 0), Some(&paint));
+                    canvas.restore();
+                }
+            }
+        }
     }
     ctx.flush_and_submit();
     Some(surface.image_snapshot())
@@ -177,6 +264,14 @@ struct RebuildInputs {
     popup_structural: bool,
     /// On-screen lower-plane damage exists (whether or not it hits interest).
     lower_damaged: bool,
+    /// The tracked consumer regions changed and now cover damage that was
+    /// dropped as uninteresting since the last rebuild (the dock label
+    /// appeared over a window that repainted meanwhile, the switcher opened).
+    /// The composite is stale exactly there, so it rebuilds right away —
+    /// discrete and rare, so it bypasses the rate limit. A region change
+    /// over untouched content (the bar magnifying over a still desktop)
+    /// costs nothing.
+    uncovered_damage: bool,
     /// An interactive animation is running (expose, a workspace swipe or its
     /// settle animation): the blur must track the moving content per frame —
     /// a 10 Hz blur under a 120 Hz scroll reads as judder — so the rate
@@ -207,17 +302,27 @@ fn decide_rebuild(i: RebuildInputs) -> RebuildDecision {
         || i.last_desktop_rebuild
             .is_none_or(|t| i.now.duration_since(t) >= DESKTOP_REBUILD_MIN_INTERVAL);
     let rebuild = i.any_consumer
-        && (!i.have_backdrop || (desktop_trigger && desktop_rate_ok) || i.popup_structural);
+        && (!i.have_backdrop
+            || i.uncovered_damage
+            || (desktop_trigger && desktop_rate_ok)
+            || i.popup_structural);
+    // Staleness worth carrying: with a consumer up, only damage that hit one
+    // of its regions and was deferred by the rate limit — popup damage
+    // included, since it is folded into the overlay backdrop. A window
+    // animating away from every blur area must not keep the composite
+    // churning; the only way that area matters later is the interest
+    // growing, which rebuilds on its own. With no consumer nothing is
+    // tracked, so any damage counts: the next consumer needs fresh content.
+    let dirty_after = if rebuild {
+        false
+    } else if i.any_consumer {
+        i.dirty || i.bg_hit || i.middle_hit || i.promoted_hits || i.popup_hit
+    } else {
+        i.dirty || i.lower_damaged || i.popup_hit
+    };
     RebuildDecision {
         rebuild,
-        dirty_after: if rebuild {
-            false
-        } else {
-            // Popup damage is folded into the overlay backdrop, so a popup
-            // repaint held back by the rate limit is staleness that has to
-            // reach the next allowed frame just like lower-plane damage.
-            i.dirty || i.lower_damaged || i.popup_hit
-        },
+        dirty_after,
         stamp_desktop_rebuild: rebuild.then_some(i.now),
     }
 }
@@ -234,9 +339,6 @@ fn popup_interest_rects(
     popup_root: Option<NodeRef>,
     scene_origin: (i32, i32),
 ) -> Vec<layers::skia::Rect> {
-    // ~3σ of the full-res blur: content further away cannot visibly change
-    // what the blur samples. Matches `BLUR_PAD` in `udev::render`.
-    const BLUR_PAD: f32 = 160.0;
     let Some(root) = popup_root.and_then(|r| engine.get_layer(&r)) else {
         return Vec::new();
     };
@@ -249,15 +351,14 @@ fn popup_interest_rects(
                 return None;
             }
             r.offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32)));
-            r.outset((BLUR_PAD, BLUR_PAD));
-            Some(r)
+            Some(with_reach(r))
         })
         .collect()
 }
 
 /// Rebuild the backdrop composites when needed, render the middle plane
 /// (windows or expose), and hand the fresh composites to the blur-bearing
-/// upper planes (overlay, switcher, dock), rendering the active ones. The
+/// upper planes (overlay, switcher), rendering the active ones. The
 /// overlay composite also folds in the popup subtree (see `draw_popups`). The
 /// bg plane must already be rendered by the caller.
 #[allow(clippy::too_many_arguments)] // plane-state plumbing, all of it per-frame
@@ -268,7 +369,6 @@ pub(super) fn update_backdrop_and_upper_planes(
     expose_active: bool,
     overlay_active: bool,
     switcher_active: bool,
-    dock_visible: bool,
     engine: &Arc<Engine>,
     popup_root: Option<NodeRef>,
     // Direct-scanout windows are hidden in the windows plane, so their pixels
@@ -338,6 +438,66 @@ pub(super) fn update_backdrop_and_upper_planes(
     // NOT rebuild — a rebuild forces every blur consumer to re-render
     // its full buffer. Damage skipped this way marks the composite
     // dirty so a later-activating consumer still gets fresh content.
+    // A plane's blur consumers are the `BackgroundBlur` shapes in its
+    // subtree — at rest the dock bar covers a fraction of its strip, and a
+    // window repainting in the rest of it changes nothing the bar shows. The
+    // strip is the fallback until the subtree has reported its shapes. Each
+    // shape is grown by the blur reach: the blur under the bar's edge reads
+    // that far past it, so a repaint in that band changes what the bar shows
+    // and the pre-blur input has to cover it.
+    let strip_rect = |el: &Option<SceneDmabufElement>| {
+        el.as_ref().map(|el| {
+            use smithay::backend::renderer::element::Element as _;
+            let geo = el.geometry(smithay::utils::Scale::from(1.0));
+            layers::skia::Rect::from_xywh(
+                geo.loc.x as f32,
+                geo.loc.y as f32,
+                geo.size.w as f32,
+                geo.size.h as f32,
+            )
+        })
+    };
+    let consumer_rects = |el: &Option<SceneDmabufElement>| -> Vec<layers::skia::Rect> {
+        let rects = el
+            .as_ref()
+            .map(|el| el.subtree_blur_rects())
+            .unwrap_or_default();
+        if rects.is_empty() {
+            return strip_rect(el).into_iter().map(with_reach).collect();
+        }
+        rects.into_iter().map(with_reach).collect()
+    };
+    let switcher_rects = if switcher_active {
+        consumer_rects(&surface.switcher_dmabuf_element)
+    } else {
+        Vec::new()
+    };
+    let popup_rects = if overlay_active {
+        popup_interest_rects(engine, popup_root, scene_origin)
+    } else {
+        Vec::new()
+    };
+    // The overlay plane's consumers: the blur shapes the layer-shell chrome
+    // declared (the bar, the islands) plus the `BackgroundBlur` shapes in the
+    // plane's own subtree (the dock bar and its labels, the OSD), all grown
+    // by the reach like every other consumer.
+    let chrome_rects: Vec<layers::skia::Rect> = if overlay_active {
+        overlay_interest
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(
+                surface
+                    .overlay_dmabuf_element
+                    .as_ref()
+                    .map(|el| el.subtree_blur_rects())
+                    .unwrap_or_default(),
+            )
+            .map(with_reach)
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut interest: Vec<layers::skia::Rect> = Vec::new();
     let full_output_interest = expose_active || (overlay_active && overlay_interest.is_none());
     if full_output_interest {
@@ -351,7 +511,7 @@ pub(super) fn update_backdrop_and_upper_planes(
         // Overlay chrome with known bounds (bar, islands): only damage
         // reaching those rects can change what their blur shows.
         if overlay_active {
-            interest.extend(overlay_interest.into_iter().flatten().copied());
+            interest.extend(chrome_rects.iter().copied());
             // Popups blur what is under them and are folded into this
             // plane's backdrop, so they are consumers too — but bounded
             // ones. Their own rects are the interest; a window redrawing
@@ -359,26 +519,9 @@ pub(super) fn update_backdrop_and_upper_planes(
             // samples, and treating an open popup as full-output interest
             // (which is what it used to mean) made every client commit
             // anywhere a rebuild trigger.
-            interest.extend(popup_interest_rects(engine, popup_root, scene_origin));
+            interest.extend(popup_rects.iter().copied());
         }
-        let strip_rect = |el: &Option<SceneDmabufElement>| {
-            el.as_ref().map(|el| {
-                use smithay::backend::renderer::element::Element as _;
-                let geo = el.geometry(smithay::utils::Scale::from(1.0));
-                layers::skia::Rect::from_xywh(
-                    geo.loc.x as f32,
-                    geo.loc.y as f32,
-                    geo.size.w as f32,
-                    geo.size.h as f32,
-                )
-            })
-        };
-        if dock_visible {
-            interest.extend(strip_rect(&surface.dock_dmabuf_element));
-        }
-        if switcher_active {
-            interest.extend(strip_rect(&surface.switcher_dmabuf_element));
-        }
+        interest.extend(switcher_rects.iter().copied());
     }
     let intersects = |r: &layers::skia::Rect| rect_hits_interest(&interest, r);
     let hits_interest = |d: &Option<layers::skia::Rect>| d.is_some_and(|r| intersects(&r));
@@ -388,6 +531,24 @@ pub(super) fn update_backdrop_and_upper_planes(
             intersects(&r.with_offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32))))
         });
     let any_consumer = !interest.is_empty();
+    // Damage that misses every tracked region is dropped, but remembered:
+    // when the regions change, the composite only has to be rebuilt if the
+    // newly tracked area changed underneath in the meantime.
+    // ... or when it starts sampling somewhere the confined pre-blur did
+    // not cover (the dock unhiding, a label appearing): blurred nowhere yet.
+    let newly_tracked = !full_output_interest
+        && interest.iter().any(|r| {
+            !surface
+                .backdrop_interest
+                .iter()
+                .any(|o| layers::skia::Contains::contains(o, *r))
+        });
+    let uncovered_damage = any_consumer
+        && interest != surface.backdrop_interest
+        && (newly_tracked
+            || surface
+                .backdrop_missed_damage
+                .is_some_and(|m| intersects(&m)));
     // Damage that lands entirely outside this output's buffer can never reach
     // any consumer — now or after one activates later — so it must not mark the
     // composite dirty. The common case is a window on a workspace scrolled off
@@ -413,6 +574,39 @@ pub(super) fn update_backdrop_and_upper_planes(
     // popup opening/closing/animating must rebuild too — its own subtree damage
     // (islands are a separate subtree, so their animations don't trigger this).
     let popup_damage = popup_root.and_then(|r| engine.subtree_damage(r));
+    // Which consumer's band the damage reached this frame. Remembered until
+    // that consumer is handed a fresh image, so a hit deferred by the rate
+    // limit still refreshes it on the rebuild that eventually runs.
+    let band_hit = |rects: &[layers::skia::Rect]| -> bool {
+        let hit = |d: &Option<layers::skia::Rect>| d.is_some_and(|r| rect_hits_interest(rects, &r));
+        hit(&bg_damage)
+            || hit(&middle_damage)
+            || (promoted_commit
+                && promoted.iter().any(|(_, r)| {
+                    rect_hits_interest(
+                        rects,
+                        &r.with_offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32))),
+                    )
+                }))
+    };
+    surface.backdrop_switcher_stale |= band_hit(&switcher_rects);
+    // Per consumer rect, so the overlay plane can repaint only the shapes
+    // whose backdrop actually changed (the dock's, not the bar's, for a video
+    // under the dock).
+    for r in chrome_rects.iter().chain(popup_rects.iter()) {
+        if band_hit(std::slice::from_ref(r)) {
+            surface.backdrop_overlay_stale = true;
+            surface.backdrop_overlay_hits.push(*r);
+        }
+    }
+    if overlay_active && (popup_damage.is_some() || popup_structural) {
+        surface.backdrop_overlay_stale = true;
+        surface.backdrop_overlay_hits.clear();
+        surface.backdrop_overlay_all = true;
+    }
+    // Everything is handed the new image when the tracked regions changed,
+    // when the interest is unbounded, or when there is no composite yet.
+    let refresh_all = full_output_interest || uncovered_damage || surface.backdrop_image.is_none();
     let decision = decide_rebuild(RebuildInputs {
         any_consumer,
         have_backdrop: surface.backdrop_image.is_some(),
@@ -423,6 +617,7 @@ pub(super) fn update_backdrop_and_upper_planes(
         popup_hit: overlay_active && popup_damage.is_some(),
         popup_structural: overlay_active && popup_structural,
         lower_damaged,
+        uncovered_damage,
         fluid: expose_active || fluid_animation,
         last_desktop_rebuild: surface.last_desktop_rebuild,
         now: std::time::Instant::now(),
@@ -432,7 +627,7 @@ pub(super) fn update_backdrop_and_upper_planes(
     // backdrop rebuild this frame, plus the engine's pending transactions —
     // the signal that keeps the render loop out of idle. One line per frame
     // while the toggle exists; for chasing "the compositor never sleeps".
-    if std::path::Path::new("/tmp/otto-perfdbg").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-perfdbg") {
         let mut txs = engine.debug_pending_transactions();
         let tx_count = txs.len();
         txs.truncate(8);
@@ -446,7 +641,7 @@ pub(super) fn update_backdrop_and_upper_planes(
             .collect();
         tracing::info!(
             target: "otto::perfdbg",
-            "rebuild={rebuild} dirty={} bg={:?} mid={:?} popup={:?} bg_hit={} mid_hit={} promoted_hits={} popup_struct={popup_structural} overlay_active={overlay_active} tx={tx_count} {txs:?}",
+            "rebuild={rebuild} dirty={} bg={:?} mid={:?} popup={:?} bg_hit={} mid_hit={} promoted_hits={} popup_struct={popup_structural} overlay_active={overlay_active} interest={interest:?} uncovered={uncovered_damage} missed={:?} tx={tx_count} {txs:?}",
             surface.backdrop_dirty,
             bg_damage,
             middle_damage,
@@ -454,9 +649,52 @@ pub(super) fn update_backdrop_and_upper_planes(
             hits_interest(&bg_damage),
             hits_interest(&middle_damage),
             promoted_hits,
+            surface.backdrop_missed_damage,
+        );
+    }
+    if decision.rebuild {
+        tracing::debug!(
+            target: "otto::planes",
+            "backdrop rebuild: dirty={} bg_hit={} mid_hit={} promoted_hit={} uncovered={uncovered_damage} interest={:?} promoted={:?} bg_damage={:?} mid_damage={:?}",
+            surface.backdrop_dirty,
+            hits_interest(&bg_damage),
+            hits_interest(&middle_damage),
+            promoted_hits,
+            interest.iter().map(|r| (r.left() as i32, r.top() as i32, r.right() as i32, r.bottom() as i32)).collect::<Vec<_>>(),
+            promoted.iter().map(|(_, r)| (r.left() as i32, r.top() as i32, r.right() as i32, r.bottom() as i32)).collect::<Vec<_>>(),
+            bg_damage.map(|r| (r.left() as i32, r.top() as i32, r.right() as i32, r.bottom() as i32)),
+            middle_damage.map(|r| (r.left() as i32, r.top() as i32, r.right() as i32, r.bottom() as i32)),
         );
     }
     surface.backdrop_dirty = decision.dirty_after;
+    if interest != surface.backdrop_interest {
+        surface.backdrop_interest = interest.clone();
+    }
+    if decision.rebuild {
+        surface.backdrop_missed_damage = None;
+    } else {
+        let mut missed = surface.backdrop_missed_damage;
+        let mut note = |r: layers::skia::Rect| {
+            if !intersects(&r) {
+                missed = Some(missed.map_or(r, |mut m| {
+                    m.join(r);
+                    m
+                }));
+            }
+        };
+        if let Some(r) = bg_damage.filter(|_| on_screen(&bg_damage)) {
+            note(r);
+        }
+        if let Some(r) = middle_damage.filter(|_| on_screen(&middle_damage)) {
+            note(r);
+        }
+        if promoted_commit {
+            for (_, r) in promoted {
+                note(r.with_offset((-(scene_origin.0 as f32), -(scene_origin.1 as f32))));
+            }
+        }
+        surface.backdrop_missed_damage = missed;
+    }
     if let Some(t) = decision.stamp_desktop_rebuild {
         surface.last_desktop_rebuild = Some(t);
     }
@@ -538,7 +776,9 @@ pub(super) fn update_backdrop_and_upper_planes(
                     // for `blur_include_content` layers — window titlebars and
                     // the expose hover label — which blur this plus whatever the
                     // same pass already painted behind them.
-                    let blurred = blur_image(&bg_small, &mut bs.context, BACKDROP_BLUR_SIGMA);
+                    // Whole: its consumers are window titlebars, which move
+                    // between the rebuilds this snapshot outlives.
+                    let blurred = blur_image(&bg_small, &mut bs.context, BACKDROP_BLUR_SIGMA, None);
                     surface.backdrop_bg_preblurred = blurred.is_some();
                     surface.backdrop_bg_image = Some(blurred.unwrap_or_else(|| bg_small.clone()));
                     surface.backdrop_bg_raw = Some(bg_small);
@@ -628,7 +868,27 @@ pub(super) fn update_backdrop_and_upper_planes(
                 // once for the dock/switcher planes (they must not show popups).
                 let desktop = bs.surface.image_snapshot();
                 surface.backdrop_raw_image = Some(desktop.clone());
-                let desktop_blurred = blur_image(&desktop, &mut bs.context, BACKDROP_BLUR_SIGMA);
+                let to_backdrop = |rects: &[layers::skia::Rect]| -> Vec<layers::skia::Rect> {
+                    rects
+                        .iter()
+                        .map(|r| {
+                            layers::skia::Rect::from_ltrb(
+                                r.left() * BACKDROP_SCALE,
+                                r.top() * BACKDROP_SCALE,
+                                r.right() * BACKDROP_SCALE,
+                                r.bottom() * BACKDROP_SCALE,
+                            )
+                        })
+                        .collect()
+                };
+                let strip_regions: Option<Vec<layers::skia::Rect>> =
+                    (!full_output_interest).then(|| to_backdrop(&switcher_rects));
+                let desktop_blurred = blur_image(
+                    &desktop,
+                    &mut bs.context,
+                    BACKDROP_BLUR_SIGMA,
+                    strip_regions.as_deref(),
+                );
                 surface.backdrop_preblurred = desktop_blurred.is_some();
                 surface.backdrop_image = Some(desktop_blurred.unwrap_or_else(|| desktop.clone()));
 
@@ -649,9 +909,52 @@ pub(super) fn update_backdrop_and_upper_planes(
                 } else {
                     desktop
                 };
-                let overlay_blurred =
-                    blur_image(&overlay_src, &mut bs.context, BACKDROP_BLUR_SIGMA);
+                // Chrome with known bounds and the popups sample it; without
+                // known bounds (expose, foreign layer-shell chrome) blur it all.
+                let overlay_regions: Option<Vec<layers::skia::Rect>> =
+                    match (full_output_interest, overlay_interest) {
+                        (false, Some(_)) => Some(to_backdrop(
+                            &[chrome_rects.as_slice(), popup_rects.as_slice()].concat(),
+                        )),
+                        _ => None,
+                    };
+                let overlay_blurred = blur_image(
+                    &overlay_src,
+                    &mut bs.context,
+                    BACKDROP_BLUR_SIGMA,
+                    overlay_regions.as_deref(),
+                );
                 surface.backdrop_overlay_image = Some(overlay_blurred.unwrap_or(overlay_src));
+
+                if refresh_all || surface.backdrop_switcher_stale {
+                    surface.backdrop_switcher_image = surface.backdrop_image.clone();
+                    surface.backdrop_switcher_stale = false;
+                }
+                if refresh_all || surface.backdrop_overlay_stale {
+                    surface.backdrop_overlay_handed = surface
+                        .backdrop_overlay_image
+                        .clone()
+                        .map(|img| (img, surface.backdrop_raw_image.clone()));
+                    surface.backdrop_overlay_stale = false;
+                    // Hit rects are output-local; the element compares them
+                    // with global scene rects.
+                    let regions: Vec<layers::skia::Rect> = if refresh_all
+                        || surface.backdrop_overlay_all
+                    {
+                        Vec::new()
+                    } else {
+                        surface
+                            .backdrop_overlay_hits
+                            .iter()
+                            .map(|r| r.with_offset((scene_origin.0 as f32, scene_origin.1 as f32)))
+                            .collect()
+                    };
+                    if let Some(el) = &surface.overlay_dmabuf_element {
+                        el.set_backdrop_regions(regions);
+                    }
+                    surface.backdrop_overlay_hits.clear();
+                    surface.backdrop_overlay_all = false;
+                }
             }
         } else if let Some(el) = middle_el {
             // No bg snapshot/context yet (first frames) — still render
@@ -685,15 +988,24 @@ pub(super) fn update_backdrop_and_upper_planes(
     // they blur raw desktop + the same-pass content painted behind them, so a
     // submenu blurs the menu it overlaps instead of letting it show through
     // sharp. Everything else in the plane seeds the pre-blurred image.
-    let overlay_raw = surface.backdrop_raw_image.clone();
+    // Each consumer gets the image it was last refreshed with (see
+    // `backdrop_switcher_image` & co.); the current one is only the fallback for
+    // a consumer that has never been handed anything.
     let overlay_backdrop = surface
-        .backdrop_overlay_image
+        .backdrop_overlay_handed
+        .clone()
+        .or_else(|| {
+            surface
+                .backdrop_overlay_image
+                .clone()
+                .or_else(|| surface.backdrop_image.clone())
+                .map(|img| (img, surface.backdrop_raw_image.clone()))
+        })
+        .map(|(img, raw)| (img, BACKDROP_SCALE, preblurred, raw));
+    let switcher_backdrop = surface
+        .backdrop_switcher_image
         .clone()
         .or_else(|| surface.backdrop_image.clone())
-        .map(|img| (img, BACKDROP_SCALE, preblurred, overlay_raw));
-    let upper_backdrop = surface
-        .backdrop_image
-        .clone()
         .map(|img| (img, BACKDROP_SCALE, preblurred, None));
     if let Some(el) = &surface.overlay_dmabuf_element {
         el.set_backdrop(overlay_backdrop);
@@ -711,14 +1023,8 @@ pub(super) fn update_backdrop_and_upper_planes(
         }
     }
     if let Some(el) = &surface.switcher_dmabuf_element {
-        el.set_backdrop(upper_backdrop.clone());
+        el.set_backdrop(switcher_backdrop);
         if switcher_active {
-            el.render(renderer.as_mut());
-        }
-    }
-    if let Some(el) = &surface.dock_dmabuf_element {
-        el.set_backdrop(upper_backdrop);
-        if dock_visible {
             el.render(renderer.as_mut());
         }
     }
@@ -746,10 +1052,49 @@ mod tests {
             popup_hit: false,
             popup_structural: false,
             lower_damaged: false,
+            uncovered_damage: false,
             fluid: false,
             last_desktop_rebuild: None,
             now,
         }
+    }
+
+    #[test]
+    fn damage_missing_every_consumer_neither_rebuilds_nor_dirties() {
+        // A video playing away from the dock strip: on-screen damage every
+        // frame, none of it under a blur consumer. Nothing to rebuild, and
+        // nothing to carry — otherwise the flag alone drives a rebuild per
+        // rate-limit window for content nobody blurs.
+        let t0 = Instant::now();
+        let frame = Duration::from_millis(8);
+        let mut dirty = false;
+        for n in 0..250 {
+            let d = decide_rebuild(RebuildInputs {
+                dirty,
+                lower_damaged: true,
+                now: t0 + frame * n,
+                ..quiet(t0)
+            });
+            assert!(!d.rebuild, "frame {n} rebuilt without a consumer hit");
+            dirty = d.dirty_after;
+            assert!(!dirty, "frame {n} carried staleness nobody consumes");
+        }
+    }
+
+    #[test]
+    fn uncovered_damage_rebuilds_immediately() {
+        // Damage outside the tracked regions was dropped; the moment a region
+        // change tracks that area (the dock label appears, the switcher
+        // opens) the composite is stale there and has to be rebuilt —
+        // regardless of the rate limit.
+        let t0 = Instant::now();
+        let d = decide_rebuild(RebuildInputs {
+            uncovered_damage: true,
+            last_desktop_rebuild: Some(t0 - Duration::from_millis(1)),
+            ..quiet(t0)
+        });
+        assert!(d.rebuild);
+        assert!(!d.dirty_after);
     }
 
     #[test]

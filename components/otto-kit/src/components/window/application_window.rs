@@ -258,7 +258,11 @@ impl ApplicationWindow {
             layer.set_background_color(0.9, 0.9, 0.9, 0.9);
             // layer.set_corner_radius(36.0);
             // layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
-            layer.set_blend_mode(BlendMode::BackgroundBlur);
+            layer.set_blend_mode(if crate::frosting::enabled() {
+                BlendMode::BackgroundBlur
+            } else {
+                BlendMode::Normal
+            });
         } else {
             println!("WARNING: No layer available for sidebar!");
         }

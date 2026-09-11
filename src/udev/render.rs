@@ -116,7 +116,7 @@ impl Otto<UdevData> {
         };
 
         // Debug (`/tmp/otto-slow`): a VBlank line proves page flips complete.
-        if std::path::Path::new("/tmp/otto-slow").exists() {
+        if crate::debug_hooks::toggle("/tmp/otto-slow") {
             tracing::info!(target: "otto::planes", "SLOW vblank on {crtc:?}");
         }
         let schedule_render =
@@ -220,6 +220,35 @@ impl Otto<UdevData> {
             }
             surface.prefetched_scene_damage = Some(scene_has_damage);
 
+            // The frame this VBlank acknowledges was the scheduled one. Only
+            // a reason schedules the next: scene damage, an animation, a
+            // redraw request the last pass predates (input, a commit), a
+            // promoted window's commit, or a consumer that needs every
+            // VBlank. Content at 30 fps then costs 30 passes a second, not
+            // one per refresh; an idle desktop costs none until an event.
+            surface.frame_scheduled = false;
+            let redraw_gen = self
+                .backend_data
+                .redraw_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+            let wants_frame =
+                super::schedule::wants_frame_after_vblank(&super::schedule::VblankInputs {
+                    scene_has_damage,
+                    continuous_frames: surface.continuous_frames,
+                    redraw_gen,
+                    seen_redraw_gen: surface.seen_redraw_gen,
+                    animations_pending: self.scene_element.has_pending_animations(),
+                    scanout_commit_pending: self
+                        .workspaces
+                        .scanout_commit_pending
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                });
+            if !wants_frame {
+                trace!("nothing to draw after VBlank on {:?}; idling", crtc);
+                return;
+            }
+            surface.frame_scheduled = true;
+
             // ── Frame-pipeline Phase 2: schedule the draw at the deadline ─────
             //
             // We want to submit the next page flip as close to the upcoming
@@ -314,14 +343,12 @@ impl Otto<UdevData> {
                     &surface.expose_dmabuf_element,
                     &surface.overlay_dmabuf_element,
                     &surface.switcher_dmabuf_element,
-                    &surface.dock_dmabuf_element,
                 ]
                 .into_iter()
                 .flatten()
                 {
                     el.request_full_render();
                 }
-                surface.idle_countdown = 3;
             }
         }
         let nodes: Vec<_> = self.backend_data.backends.keys().copied().collect();
@@ -393,7 +420,12 @@ impl Otto<UdevData> {
                 })
                 .cloned()
         });
-        let allow_fullscreen_scanout = std::env::var_os("DISABLE_DIRECT_SCANOUT").is_none()
+        // Read once: the environment does not change under a running session,
+        // and this runs per frame.
+        static DIRECT_SCANOUT_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let direct_scanout_disabled = *DIRECT_SCANOUT_DISABLED
+            .get_or_init(|| std::env::var_os("DISABLE_DIRECT_SCANOUT").is_some());
+        let allow_fullscreen_scanout = !direct_scanout_disabled
             && this_output
                 .as_ref()
                 .map(|o| self.workspaces.is_fullscreen_and_stable_on_output(o))
@@ -707,6 +739,12 @@ impl Otto<UdevData> {
         } else {
             return;
         };
+        // Everything requested up to now is seen by this pass; a request that
+        // lands later is owed another one (checked at VBlank and by the loop).
+        surface.seen_redraw_gen = self
+            .backend_data
+            .redraw_generation
+            .load(std::sync::atomic::Ordering::Acquire);
 
         // A demoted window's content was hidden/blanked in the windows plane
         // while it was promoted; on demotion force a full-buffer redraw so the
@@ -827,14 +865,39 @@ impl Otto<UdevData> {
                 &device_gbm,
                 crtc,
                 (mode.size.w, mode.size.h),
-                self.workspaces.dock.position(),
-                self.workspaces.dock.plane_strip_thickness_px(),
             );
         }
 
         // Every frame: point each plane element at its output's node.
         if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
             super::planes::wire_plane_nodes(surface, ows);
+            // The chrome planes follow their content (see `fit_plane`); this
+            // runs before anything renders because a resize drops the
+            // swapchain.
+            if let Some(mode) = output.current_mode() {
+                let mode_size = (mode.size.w, mode.size.h);
+                let pos = ows.output_layer.render_position();
+                let origin = (pos.x as i32, pos.y as i32);
+                for (el, root, fit, label) in [
+                    (
+                        &mut surface.overlay_dmabuf_element,
+                        &ows.overlay_plane,
+                        &mut surface.overlay_fit,
+                        "overlay",
+                    ),
+                    (
+                        &mut surface.switcher_dmabuf_element,
+                        &ows.switcher_plane,
+                        &mut surface.switcher_fit,
+                        "switcher",
+                    ),
+                ] {
+                    if let Some(el) = el.as_mut() {
+                        let content = super::planes::plane_content_bounds(root, origin, mode_size);
+                        super::planes::fit_plane(el, content, mode_size, fit, label);
+                    }
+                }
+            }
         }
         // The promoted-window plane also follows its window's size and
         // position, so it is wired separately — and before anything renders,
@@ -853,7 +916,7 @@ impl Otto<UdevData> {
         // Debug (`/tmp/otto-bgdbg`): hidden flags along the chain the background
         // plane hangs off, so a black bg buffer can be told apart from a hidden
         // ancestor inheriting down onto it.
-        if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+        if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
             if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
                 tracing::info!(
                     target: "otto::bgdbg",
@@ -981,8 +1044,12 @@ impl Otto<UdevData> {
         // first frame of its fade-out.
         let switcher_active = self.workspaces.app_switcher.is_visible()
             && self.workspaces.is_app_switcher_output(&output);
-        let overlay_active =
-            self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
+        // The dock lives on the overlay plane, so the plane is up whenever the
+        // dock is.
+        let dock_visible = chrome_output && !self.workspaces.dock.is_hidden_for_render();
+        let overlay_active = self.workspaces.is_overlay_ui_active(&output)
+            || self.dnd_icon.is_some()
+            || dock_visible;
         {
             use super::planes::maybe_release_plane;
             maybe_release_plane(
@@ -1011,6 +1078,7 @@ impl Otto<UdevData> {
         // can't flash ghost content.
         if overlay_active && !surface.overlay_was_active {
             if let Some(el) = &surface.overlay_dmabuf_element {
+                tracing::debug!(target: "otto::planes", "overlay full render: activation edge");
                 el.request_full_render();
             }
         }
@@ -1039,7 +1107,7 @@ impl Otto<UdevData> {
         // a blur artefact ever needs it back.
         if popups_open {
             if let Some(el) = &surface.overlay_dmabuf_element {
-                if std::path::Path::new("/tmp/otto-popup-fullframe").exists() {
+                if crate::debug_hooks::toggle("/tmp/otto-popup-fullframe") {
                     el.request_full_render();
                 } else {
                     el.request_full_clip_when_rendering();
@@ -1063,13 +1131,15 @@ impl Otto<UdevData> {
             surface.popup_teardown_seen = popup_teardown_gen;
             surface.backdrop_dirty = true;
             if let Some(el) = &surface.overlay_dmabuf_element {
+                tracing::debug!(target: "otto::planes", "overlay full render: popup teardown");
                 el.request_full_render();
             }
         }
         if surface.dock_menu_teardown_seen != dock_menu_teardown_gen {
             surface.dock_menu_teardown_seen = dock_menu_teardown_gen;
             surface.backdrop_dirty = true;
-            if let Some(el) = &surface.dock_dmabuf_element {
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                tracing::debug!(target: "otto::planes", "overlay full render: dock menu teardown");
                 el.request_full_render();
             }
         }
@@ -1084,7 +1154,7 @@ impl Otto<UdevData> {
         // next frame (needs a frame trigger, e.g. moving the cursor).
         // Remove the file and touch it again to re-trigger.
         {
-            let want = std::path::Path::new("/tmp/otto-full-redraw").exists();
+            let want = crate::debug_hooks::toggle("/tmp/otto-full-redraw");
             if want && !surface.full_redraw_done {
                 surface.full_redraw_done = true;
                 tracing::info!(target: "otto::planes", "debug full redraw requested");
@@ -1094,7 +1164,6 @@ impl Otto<UdevData> {
                     &surface.expose_dmabuf_element,
                     &surface.overlay_dmabuf_element,
                     &surface.switcher_dmabuf_element,
-                    &surface.dock_dmabuf_element,
                 ]
                 .into_iter()
                 .flatten()
@@ -1117,14 +1186,13 @@ impl Otto<UdevData> {
                 &surface.expose_dmabuf_element,
                 &surface.overlay_dmabuf_element,
                 &surface.switcher_dmabuf_element,
-                &surface.dock_dmabuf_element,
             ]
             .into_iter()
             .flatten()
             {
                 el.request_full_render();
             }
-            if std::path::Path::new("/tmp/otto-dump-transition").exists() {
+            if crate::debug_hooks::toggle("/tmp/otto-dump-transition") {
                 surface.transition_dump_left = 8;
             }
         }
@@ -1187,33 +1255,55 @@ impl Otto<UdevData> {
                 if foreign_chrome {
                     None
                 } else {
-                    // ~3σ of the full-res blur (sigma 40): content further
-                    // away cannot visibly change what the blur samples.
-                    const BLUR_PAD: f32 = 160.0;
+                    // The chrome's blur consumers are the shapes its surfaces
+                    // declared through otto-surface-style — root or
+                    // subsurface (an island's pills sit on a mostly
+                    // transparent canvas the size of its expanded state).
+                    // Positions are Otto's drawn geometry, output-local
+                    // physical px (see `shell::layer::drawn_geometry`). Chrome
+                    // without a declared blur draws over the plane below and
+                    // never samples the backdrop, so it adds nothing here; an
+                    // empty list is a real answer, not an unknown.
+                    use smithay::reexports::wayland_server::Resource as _;
+                    use smithay::wayland::compositor::{
+                        with_surface_tree_downward, SubsurfaceCachedState, TraversalAction,
+                    };
                     let out_scale = output.current_scale().fractional_scale() as f32;
                     let map = layer_map_for_output(&output);
-                    let rects: Vec<layers::skia::Rect> = map
-                        .layers()
-                        .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
-                        .filter_map(|l| map.layer_geometry(l))
-                        .map(|g| {
-                            let mut r = layers::skia::Rect::from_xywh(
-                                g.loc.x as f32 * out_scale,
-                                g.loc.y as f32 * out_scale,
-                                g.size.w as f32 * out_scale,
-                                g.size.h as f32 * out_scale,
+                    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
+                    let effects = &self.background_effects;
+                    let mut rects: Vec<layers::skia::Rect> = Vec::new();
+                    if let Some(output_geo) = self.workspaces.output_geometry(&output) {
+                        for l in map
+                            .layers()
+                            .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+                        {
+                            let g = crate::shell::layer::drawn_geometry(l.wl_surface(), output_geo);
+                            let root_loc: Point<i32, Logical> = g.loc - output_geo.loc;
+                            with_surface_tree_downward(
+                                l.wl_surface(),
+                                root_loc,
+                                |_, states, loc| {
+                                    let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+                                    TraversalAction::DoChildren(*loc + cs.current().location)
+                                },
+                                |surface, states, loc| {
+                                    let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+                                    let sloc = *loc + cs.current().location;
+                                    if let Some((bounds, _)) = effects.get(&surface.id()) {
+                                        rects.push(layers::skia::Rect::from_xywh(
+                                            (sloc.x + bounds.loc.x) as f32 * out_scale,
+                                            (sloc.y + bounds.loc.y) as f32 * out_scale,
+                                            bounds.size.w as f32 * out_scale,
+                                            bounds.size.h as f32 * out_scale,
+                                        ));
+                                    }
+                                },
+                                |_, _, _| true,
                             );
-                            r.outset((BLUR_PAD, BLUR_PAD));
-                            r
-                        })
-                        .collect();
-                    // No chrome rect at all while the plane is active is a
-                    // state this narrowing does not model — stay safe.
-                    if rects.is_empty() {
-                        None
-                    } else {
-                        Some(rects)
+                        }
                     }
+                    Some(rects)
                 }
             }
         };
@@ -1235,7 +1325,6 @@ impl Otto<UdevData> {
             expose_active,
             fullscreen_window.as_ref(),
             switcher_active,
-            chrome_output && !self.workspaces.dock.is_hidden_for_render(),
             overlay_active,
             {
                 // The windows plane must stay up while a workspace switch is
@@ -1672,46 +1761,25 @@ impl Otto<UdevData> {
             self.update_dnd();
         }
 
-        // Update the running average of render time and idle countdown (EMA with α=0.1)
+        // Update the running average of render time (EMA with α=0.1)
         let render_time_us = start.elapsed().as_micros() as f32;
         let has_animations = self.scene_element.has_pending_animations();
         let was_rendered = result.as_ref().map(|o| o.rendered).unwrap_or(false);
+        let (frame_scheduled, reschedule) =
+            super::schedule::after_pass(was_rendered, reschedule, has_animations);
         if let Some(device) = self.backend_data.backends.get_mut(&node) {
             if let Some(surface) = device.surfaces.get_mut(&crtc) {
                 surface.avg_render_time_us =
                     surface.avg_render_time_us * 0.9 + render_time_us * 0.1;
-                // Reset countdown on any activity: animations, actual frame
-                // submitted, or a render triggered by input/client commit.
-                // Short tail — see commentary in init.rs dispatch loop.
-                if has_animations || was_rendered {
-                    surface.idle_countdown = 3;
-                }
                 if was_rendered {
                     surface.has_rendered_once = true;
                 }
                 if result.is_ok() {
                     surface.rendered_damage_gen = frame_gen;
                 }
+                surface.frame_scheduled = frame_scheduled;
             }
         }
-
-        // Apply idle countdown: if reschedule was requested (no-damage path)
-        // but no animations, count down before going idle.
-        let reschedule = if reschedule && !has_animations {
-            let remaining = self
-                .backend_data
-                .backends
-                .get_mut(&node)
-                .and_then(|d| d.surfaces.get_mut(&crtc))
-                .map(|s| {
-                    s.idle_countdown = s.idle_countdown.saturating_sub(1);
-                    s.idle_countdown
-                })
-                .unwrap_or(0);
-            remaining > 0
-        } else {
-            reschedule
-        };
 
         if reschedule {
             let output_refresh = match output.current_mode() {
@@ -1758,10 +1826,10 @@ impl Otto<UdevData> {
             for (c, s) in d.surfaces.iter_mut() {
                 if s.rendered_damage_gen < gen {
                     all_caught_up = false;
-                    if s.idle_countdown == 0 {
+                    if !s.frame_scheduled {
                         // Marks the surface as scheduled — the same invariant
                         // the input kick in init.rs relies on.
-                        s.idle_countdown = 3;
+                        s.frame_scheduled = true;
                         lagging.push((*n, *c));
                     }
                 }
@@ -1974,7 +2042,6 @@ impl Otto<UdevData> {
                         return vec![scene_element.for_plane_subtree(&ows.lock_plane, origin)];
                     }
                     let mut stack = vec![
-                        scene_element.for_plane_subtree(&ows.dock_plane, origin),
                         scene_element.for_plane_subtree(&ows.switcher_plane, origin),
                         scene_element.for_plane_subtree(&ows.overlay_plane, origin),
                         scene_element.for_plane_subtree(&ows.expose_layer, origin),
@@ -2305,7 +2372,6 @@ pub(super) fn render_output_frame<'a>(
     expose_active: bool,
     fullscreen_window: Option<&WindowElement>,
     switcher_active: bool,
-    dock_visible: bool,
     overlay_active: bool,
     windows_plane_has_content: bool,
     screencopy_pending: bool,
@@ -2410,6 +2476,15 @@ pub(super) fn render_output_frame<'a>(
         surface.fps.tick();
         workspace_render_elements.push(WorkspaceRenderElements::Fps(element.clone()));
     }
+
+    // Reasons to draw that no event announces, so the VBlank handler has
+    // to keep passes coming while any of them holds.
+    // A fullscreen scanout window is not a reason: its commits arrive as
+    // `scanout_commit` events, one pass per frame, like a promoted window.
+    surface.continuous_frames = screencopy_pending
+        || dnd_needs_draw
+        || (pointer_in_output
+            && cursor_manager.is_current_cursor_animated(output_scale.round() as i32));
 
     let (output_elements, clear_color, should_draw) = {
         let cursor_needs_draw = pointer_in_output || cursor_left_output;
@@ -2588,7 +2663,6 @@ pub(super) fn render_output_frame<'a>(
                 expose_active,
                 overlay_active,
                 switcher_active,
-                dock_visible,
                 engine,
                 popup_root,
                 &promoted_buffers,
@@ -2598,11 +2672,9 @@ pub(super) fn render_output_frame<'a>(
                 overlay_interest.as_deref(),
             );
 
-            // Push top→bottom: dock, switcher (only while alive — an empty
-            // transparent strip would waste a plane), then overlay chrome.
-            if dock_visible {
-                push_ready(&surface.dock_dmabuf_element, &mut workspace_render_elements);
-            }
+            // Push top→bottom: switcher (only while alive — an empty
+            // transparent strip would waste a plane), then overlay chrome
+            // (bar, islands, dock, OSD, popups).
             if switcher_active {
                 push_ready(
                     &surface.switcher_dmabuf_element,
@@ -2686,8 +2758,9 @@ pub(super) fn render_output_frame<'a>(
                             let buf_x = pos.x as f64 - geo_loc.x;
                             let buf_y =
                                 pos.y as f64 + win.decoration_height() as f64 * scale.y - geo_loc.y;
-                            let elem =
-                                smithay::wayland::compositor::with_states(&wl_surface, |states| {
+                            let elem = smithay::wayland::compositor::with_states(
+                                &wl_surface,
+                                |states| {
                                     // Same location math as the tree walk in
                                     // render_elements_from_surface_tree: the
                                     // root element sits at origin + its view
@@ -2700,10 +2773,26 @@ pub(super) fn render_output_frame<'a>(
                                     {
                                         Some(view) => {
                                             location += view.offset.to_f64().to_physical(scale);
+                                            tracing::debug!(
+                                                target: "otto::planes",
+                                                "topwin view dst={:?} src={:?} offset={:?} loc={:?}",
+                                                view.dst,
+                                                view.src,
+                                                view.offset,
+                                                location,
+                                            );
                                         }
                                         // Unmapped — nothing to scan out.
                                         None => return Ok(None),
                                     }
+                                    // A plane is placed on whole pixels. A
+                                    // fractional origin makes smithay round
+                                    // the destination rect to a size one
+                                    // pixel off the buffer, and the kernel
+                                    // then attaches a hardware scaler to the
+                                    // plane — of which i915 has two per pipe.
+                                    let location: Point<f64, Physical> =
+                                        location.to_i32_round::<i32>().to_f64();
                                     WaylandSurfaceRenderElement::from_surface(
                                         renderer,
                                         &wl_surface,
@@ -2712,7 +2801,8 @@ pub(super) fn render_output_frame<'a>(
                                         1.0,
                                         Kind::ScanoutCandidate,
                                     )
-                                });
+                                },
+                            );
                             match elem {
                                 Ok(Some(e)) => {
                                     {
@@ -2727,7 +2817,7 @@ pub(super) fn render_output_frame<'a>(
                                         // with every client frame — a constant value here means
                                         // the surface's damage bag never ticks and the plane
                                         // keeps scanning the first buffer forever.
-                                        if std::path::Path::new("/tmp/otto-slow").exists() {
+                                        if crate::debug_hooks::toggle("/tmp/otto-slow") {
                                             tracing::info!(
                                                 target: "otto::planes",
                                                 "SLOW topwin {win_id:?} commit={:?}",
@@ -2764,14 +2854,13 @@ pub(super) fn render_output_frame<'a>(
                 &mut workspace_render_elements,
             );
 
-            if std::path::Path::new("/tmp/otto-bgdbg").exists() {
+            if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
                 tracing::info!(
                     target: "otto::bgdbg",
-                    "FRAME elements={} expose={} win_content={} dock={} switcher={} overlay={} scanout={}",
+                    "FRAME elements={} expose={} win_content={} switcher={} overlay={} scanout={}",
                     workspace_render_elements.len(),
                     expose_active,
                     windows_plane_has_content,
-                    dock_visible,
                     switcher_active,
                     overlay_active,
                     surface.shadow_only_windows.len(),
@@ -2831,7 +2920,7 @@ pub(super) fn render_output_frame<'a>(
     // Debug (`/tmp/otto-slow`): frame-by-frame slideshow — sleep 100ms per
     // frame and log a frame counter with the mode and element set, so a
     // human-visible glitch can be matched 1:1 to a logged frame.
-    if std::path::Path::new("/tmp/otto-slow").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-slow") {
         static FRAME_NO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = FRAME_NO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         use smithay::backend::renderer::element::Element as _;
@@ -2926,7 +3015,7 @@ pub(super) fn render_output_frame<'a>(
     // Debug (`/tmp/otto-slow`): log the frame outcome — pairs with the
     // pre-render SLOW frame line so a frozen screen can be attributed to
     // either "no flip queued" (rendered=false) or a post-queue problem.
-    if std::path::Path::new("/tmp/otto-slow").exists() {
+    if crate::debug_hooks::toggle("/tmp/otto-slow") {
         tracing::info!(target: "otto::planes", "SLOW result: rendered={rendered}");
     }
 

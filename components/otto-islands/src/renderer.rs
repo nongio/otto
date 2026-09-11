@@ -479,7 +479,11 @@ pub fn apply_island_style(
         ss.set_corner_radius(radius);
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.2, 2.0, 0.0, 8.0, 0.0, 0.0, 0.0);
-        ss.set_blend_mode(BlendMode::BackgroundBlur);
+        ss.set_blend_mode(if otto_kit::frosting::enabled() {
+            BlendMode::BackgroundBlur
+        } else {
+            BlendMode::Normal
+        });
         ss.set_contents_gravity(gravity);
         ss.set_anchor_point(0.5, 0.5);
     }

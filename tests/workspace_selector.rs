@@ -945,4 +945,145 @@ mod workspace_selector_tests {
 
         handle.stop();
     }
+
+    /// Dragging a window onto another workspace's preview is a gesture that
+    /// ends: once the window has landed, the previews are things the pointer
+    /// points at again, so hovering one must still reveal its close button.
+    #[test]
+    #[serial]
+    fn hovering_reveals_close_buttons_again_after_a_window_is_dropped_on_a_workspace() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut client, "Wanderer");
+        handle.with_state(|state| {
+            state.workspaces.add_workspace_to_output("headless");
+        });
+        handle.settle(300);
+
+        handle.toggle_expose();
+        handle.settle(400);
+
+        let order = workspace_indices(&handle);
+        assert!(order.len() >= 2, "expected at least two workspaces");
+        let current = handle.current_workspace_index();
+        let target_slot = if current == 0 { 1 } else { 0 };
+        let target = order[target_slot];
+        let remove_key = format!("workspace_selector_desktop_remove_{target}");
+
+        // Hovering works before the drag.
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_content_{target}"),
+        );
+        assert!(
+            handle.layer_opacity(&remove_key).unwrap_or(0.0) > 0.9,
+            "the target workspace should offer a close button to begin with"
+        );
+
+        // Grab the window's expose preview and carry it onto that workspace.
+        let scale = output_scale(&handle);
+        let preview = previews(&handle)
+            .into_iter()
+            .find(|p| p.0 == "Wanderer")
+            .expect("the window should have a preview");
+        let from = (
+            ((preview.1 + preview.3 / 2.0) / scale) as f64,
+            ((preview.2 + preview.4 / 2.0) / scale) as f64,
+        );
+        let to = preview_centre(&handle, target);
+
+        // Smithay sends an enter on first focus and motion only afterwards:
+        // land inside the window selector before aiming at the preview.
+        handle.pointer_move(5.0, from.1);
+        handle.settle(10);
+        handle.pointer_move(from.0, from.1);
+        handle.settle(60);
+        handle.pointer_press();
+        handle.settle(10);
+        for step in 1..=8 {
+            let t = step as f64 / 8.0;
+            handle.pointer_move(from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
+            handle.settle(20);
+        }
+        handle.pointer_release();
+        handle.settle(600);
+
+        let counts = handle.workspace_preview_window_counts();
+        assert_eq!(
+            counts[target_slot].1, 1,
+            "the window should have landed on the target workspace: {counts:?}"
+        );
+
+        // The gesture is over: the previews take hovers again.
+        handle.pointer_move(0.0, 0.0);
+        handle.settle(60);
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_content_{target}"),
+        );
+        assert!(
+            handle.layer_opacity(&remove_key).unwrap_or(0.0) > 0.9,
+            "hovering stopped revealing close buttons after a window was \
+             dragged onto a workspace"
+        );
+
+        handle.stop();
+    }
+
+    /// Removing a workspace re-homes its windows onto the one the user is on.
+    /// If exposé is open, those windows have to show up in its grid there and
+    /// then — the whole point of the gesture is that it shows what is on the
+    /// workspace.
+    #[test]
+    #[serial]
+    fn removing_a_workspace_puts_its_windows_in_the_open_expose() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut client, "Orphan");
+        handle.with_state(|state| {
+            state.workspaces.add_workspace_to_output("headless");
+        });
+        handle.settle(200);
+
+        // Park the window on the second workspace, staying on the first.
+        handle.with_state(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "Orphan")
+                .cloned()
+                .expect("window mapped");
+            state
+                .workspaces
+                .move_window_to_workspace(&window, 1, (100, 100));
+        });
+        handle.settle(300);
+        assert_eq!(
+            handle.current_workspace_index(),
+            0,
+            "the move should not have changed the current workspace"
+        );
+
+        handle.toggle_expose();
+        handle.settle(400);
+        assert!(
+            preview_titles(&handle).is_empty(),
+            "the current workspace has no windows yet: {:?}",
+            preview_titles(&handle)
+        );
+
+        handle.with_state(|state| {
+            state.workspaces.remove_workspace_from_output("headless", 1);
+        });
+        handle.settle(400);
+
+        assert_eq!(
+            preview_titles(&handle),
+            vec!["Orphan".to_string()],
+            "the removed workspace's window should have a preview in the \
+             exposé grid that is already open"
+        );
+
+        handle.stop();
+    }
 }

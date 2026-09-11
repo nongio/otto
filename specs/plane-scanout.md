@@ -64,14 +64,34 @@ vibrancy even though the content behind it lives on other planes.
   window committed a new buffer whose rect intersects such a region
   (promoted commits produce no scene damage, so the commit flag is the only
   change signal); a rebuild triggers exactly one re-render of each
-  blur-bearing plane. The consumer regions are: the dock strip, the switcher
-  strip, and — for the overlay plane — the layer-shell chrome surfaces'
-  rects (top bar, islands) plus the bounds of any mapped popup, each outset
-  by the blur sampling radius, in the steady state; the interest widens to
-  the full output only while something transient or unbounded is up (expose,
-  OSD, tiling overlay, DnD, a selector animation). A steady-state window
-  redrawing below the chrome band, or beside an open menu, therefore rebuilds
-  nothing.
+  blur-bearing plane. The consumer regions are: the frosted shapes the dock
+  and the switcher actually draw (the bar, a hovered icon's label, the
+  switcher card — not their whole strips), and — for the overlay plane —
+  the blur shapes the layer-shell chrome surfaces declared through
+  otto-surface-style (root or subsurface, positioned by the compositor's own
+  drawn geometry, not smithay's layer map, which arranges non-exclusive
+  panels below their own spacer) plus the bounds of any mapped popup. Chrome
+  without a declared blur is not a consumer. Every consumer rect is grown by
+  the blur's reach (three sigma of the full-resolution blur, 120 px at the
+  pre-blur's sigma) before it is used for anything: the pre-blur is confined
+  to each grown rect with mirrored edges at the grown boundary, so inside the
+  consumer's own shape every sample is real content and the edge is tinted
+  by what lies just outside it, the way a true blur would; and damage
+  landing in that band rebuilds the composite, because it changes what the
+  edge shows. A consumer region that was not part of the previous pre-blur
+  forces one rebuild. A rebuild does not refresh every consumer: each
+  chrome plane keeps the composite it was last handed and only receives the
+  new one when damage reached its own band since then (a deferred hit is
+  remembered), so a video repainting above the dock re-renders the dock
+  plane and leaves the bar's plane alone; and a plane whose backdrop changed
+  redraws only the union of its blur shapes, not its whole buffer. In the
+  steady state the interest widens to the full
+  output only while something transient or unbounded is up (expose, OSD,
+  tiling overlay, DnD, a selector animation). A steady-state window
+  redrawing more than the reach below the chrome band, beside an open menu,
+  or in the part of the dock strip the bar does not cover, therefore
+  rebuilds nothing. Until a dock or switcher plane has reported
+  its shapes, its whole strip stands in as the region.
   Rebuilds caused by desktop damage (bg/middle planes, promoted commits) are
   additionally rate-limited (currently one per 100 ms): a client committing
   full-rect damage at frame rate under a blur consumer must not force the
@@ -89,8 +109,19 @@ vibrancy even though the content behind it lives on other planes.
   judder, and those states are transient so they cannot re-open the idle
   rebuild storm. The composite is downscaled (currently 1/4 resolution) — a low-res
   backdrop is imperceptible after blurring but far cheaper.
-  Damage skipped this way marks the composite dirty so a later-activating
-  consumer still gets fresh content. Frames that bypass the plane path
+  Damage deferred this way marks the composite dirty so it is caught up on
+  the next allowed frame. Damage that misses every consumer region does
+  not: while any consumer is up, a video playing beside the dock — in a
+  composited or a promoted window alike — leaves the composite untouched
+  and marks nothing, so an idle blur costs nothing under a busy desktop.
+  Such damage is remembered instead, and when the consumer regions change
+  (a dock label appears, the bar magnifies, the switcher opens) and the new
+  regions cover content that changed since the last rebuild, the composite
+  rebuilds immediately, bypassing the rate limit, so the newly frosted area
+  never shows stale content; a region change over untouched content costs
+  nothing. With no consumer up at all, any on-screen damage marks the
+  composite dirty so the first consumer to activate gets fresh content.
+  Frames that bypass the plane path
   entirely while still consuming engine damage (fullscreen direct scanout,
   forced full-GPU composite) also mark the composite dirty, so the first
   planes frame after them rebuilds instead of seeding consumers with stale
@@ -106,10 +137,13 @@ vibrancy even though the content behind it lives on other planes.
   without this the topmost window would be absent from every blur backdrop
   (dock bubbles/popups showing pre-window content), and promote/demote
   transitions would visibly flip the blur between with-window and
-  without-window composites. Occluder-based demotion (below) still keeps
-  windows under the primary chrome strips unpromoted, but overlay UI that
-  appears above a promoted window (tooltips, dock popups, islands) relies
-  on this fold-in.
+  without-window composites. No compositor chrome is an occluder: the dock,
+  the OSD, the switcher, the top bar and the islands each sit on a plane
+  above any window plane and their blur relies on this fold-in, so a window
+  under any of them stays on its plane (verified: a playing video under the
+  dock bar and under the held-open switcher keeps its plane as far as the
+  bandwidth budget allows). Layer-shell geometry is in any case mostly
+  transparent reservation.
 
 ## Non-Goals
 
@@ -128,30 +162,28 @@ vibrancy even though the content behind it lives on other planes.
   multi-output.md).
 - Direct-scanout promotion is evaluated independently per output: candidates
   are drawn only from that output's own current workspace, and the
-  promoted-window cap (see below) applies per output, not globally. Dock and
-  OSD occluder rects are only applied on the primary output — that chrome is
-  primary-only and never occludes a secondary output's candidates. The
-  app-switcher occluder rect is applied on whichever output currently hosts
-  the switcher panel, which need not be the primary (see multi-output.md).
+  promoted-window cap (see below) applies per output, not globally.
   The set of windows actually applied to plane state
   is the union of every output's per-output candidate set, so one output's
   promotion decision cannot demote a window promoted on another output.
 - Likewise, an app switcher shown on one output does not block fullscreen
   direct scanout on another: the fullscreen-stability check consults the
   switcher's host output, not its global visibility.
-- The dock strip plane follows the dock's configured screen edge: a bottom
-  band for `dock.position = "bottom"`, a left or right column otherwise. The
-  strip is allocated against that edge, so moving the dock at runtime drops
-  and re-allocates the plane.
-- The strip's thickness is at least a fixed fraction of the output (a quarter
-  of its height for a bottom dock, half its width for a side dock, each
-  capped), and grows to the dock's own reach: the configured icon size fully
-  magnified, lifted by a launch bounce, with its label balloon open past it,
-  plus bar padding. A big dock's bouncing icon must never leave the strip and
-  be cropped mid-air. The reach follows the dock configuration (size,
-  magnification) live: the plane is re-allocated in place, before the frame
-  renders, when it changes.
-- The dock and app-switcher strip planes themselves are pushed only to the
+- The dock has no plane of its own: it draws on the overlay plane, in the
+  scene between the layer-shell chrome and the OSD/popups. i915 charges
+  every unscaled KMS plane the full CRTC pixel rate whatever its size (see
+  the budget note below), and at 2880x1920@120 that admits four planes: the
+  primary, one chrome plane, and two client planes — a dock plane of its
+  own was the second client's. The dock's frosted shapes are consumers of
+  the overlay plane's backdrop like the bar's, and a refresh under the dock
+  repaints only the dock's shapes (see the consumer regions above).
+- The overlay and switcher planes follow their content: each grows the
+  moment its drawn content does (before the render, so nothing is cropped),
+  snaps outward to a coarse grid so animations do not churn the swapchain,
+  and shrinks back only after the content has stayed smaller for a while.
+  With the dock on the overlay plane that plane spans the output whenever
+  the dock is up; the size buys render work, not bandwidth.
+- The app-switcher plane itself is pushed only to the
   CRTC of the output that actually hosts that chrome — always the primary
   for the dock, the switcher's current host output for the switcher; every
   other output never submits a plane for that role. This is both a
@@ -253,9 +285,11 @@ vibrancy even though the content behind it lives on other planes.
   transitioning" for those frames while `show_all` is not yet committed —
   the expose plane leaves the stack, the windows plane is pushed, and the
   screen flicks back to the normal layout mid-gesture.
-- When a lower plane records damage, the composite is rebuilt and the
+- When a lower plane records damage under a blur consumer's region, the
+  composite is rebuilt (subject to the rate limit above) and the
   blur-bearing planes re-render once with the new backdrop (triggered by
-  the fresh snapshot's unique id).
+  the fresh snapshot's unique id). Damage that misses every region rebuilds
+  nothing until a region grows over it.
 - A stable fullscreen workspace (single window, no animation, no capture,
   no swipe, no mapped popup — the overlay plane holding popups is dropped
   in this mode) direct-scans the client buffer on the PRIMARY plane with all
@@ -270,19 +304,26 @@ vibrancy even though the content behind it lives on other planes.
 - The 3-finger workspace swipe (finger-drag, before any animation) gates
   all direct scanout: the drag moves content with no animation flag, and a
   fixed plane would not follow it.
-- The promoted-window set is capped (currently 1): the hardware admits ~5
-  simultaneous planes and bg/windows/dock/cursor take four — a second
-  client plane evicts the windows plane, which costs more than
-  compositing the extra window. The cap is shared across both tiers: at
-  most one window is promoted per output, by one tier or the other. Tier 2
+- The promoted-window set is capped (currently 2). The plane budget on
+  i915 is memory bandwidth, and i915 charges every unscaled plane the
+  full CRTC pixel rate x bytes per pixel whatever its size (2.97 GB/s each
+  at 2880x1920@120), refusing the atomic test when no memory QGV point
+  covers the sum (13.17 GB/s on the reference laptop). That is a plane
+  COUNT in practice: four planes plus the cursor at that mode. Primary,
+  chrome overlay and two clients fill it, which is why the dock shares the
+  overlay plane; a third client is refused and smithay composites it, at
+  no cost while it is idle. Plane origins are snapped to whole
+  pixels: a fractional origin makes the destination rect a pixel off the
+  buffer, and i915 then attaches one of its two per-pipe scalers to the
+  plane. Tier 2 only runs when tier 1 promoted nothing, and takes at most
+  one window per output. Tier 2
   is the more exposed of the two here, because unlike tier 1 it does not
   also save the per-frame GPU pass — if its plane evicts the windows plane
   it is a straight loss, so it must be measured, not assumed.
-- Scanout candidate selection uses only STABLE geometry (dock bar bounds,
-  app-switcher/OSD view bounds, layer-shell Top/Overlay rects, window
-  rects) — never per-frame scene state such as bubbled blur regions, which
-  are rebuilt every engine update and oscillate promote/demote (content
-  flicker). A window overlapping any of those occluders, owning a MAPPED
+- Scanout candidate selection uses only STABLE geometry (window rects) —
+  never per-frame scene state such as bubbled blur regions, which are
+  rebuilt every engine update and oscillate promote/demote (content
+  flicker). A window owning a MAPPED
   popup (mapped, not merely alive — GTK keeps closed popovers' surfaces
   around for reuse), animating, or covered by a higher window is not
   promoted.
@@ -567,6 +608,18 @@ so seeding it alone would leave the window underneath sharp.
   than probing back up, because the overcommit that caused the underrun is
   a property of the current output configuration and content and would
   simply recur.
+- The dock and switcher blur regions were once their whole strips (a full
+  output width by a quarter of the height for the dock, while the bar at
+  rest covers a fraction of that), and any on-screen desktop damage —
+  hitting a region or not — marked the composite dirty whenever a consumer
+  was up. Together those meant a video playing anywhere on screen, or a
+  promoted window redrawing at frame rate, rebuilt the composite and every
+  blur plane at the rate-limit cadence for as long as the dock was visible.
+  Regions now follow the frosted shapes actually drawn, and damage that
+  misses every region is dropped rather than carried as staleness. What
+  makes dropping safe is remembering it: a region that later grows over
+  changed content rebuilds at once, so the only cost moves to the moment a
+  label or the switcher appears, and only when something underneath changed.
 
 ## Open Questions
 

@@ -904,10 +904,10 @@ fn apply_card_colour(card: &SubsurfaceSurface) {
         tracing::warn!("no otto-surface-style; the card will not be frosted");
         return;
     };
-    let colour = skia_safe::Color4f::from(at_least_opaque(
+    let colour = skia_safe::Color4f::from(otto_kit::frosting::material(at_least_opaque(
         AppContext::current_theme().material_popup,
         CARD_MIN_ALPHA,
-    ));
+    )));
     style.set_background_color(
         colour.r as f64,
         colour.g as f64,
@@ -921,7 +921,11 @@ fn apply_card_material(card: &SubsurfaceSurface) {
     let Some(style) = card.base_surface().surface_style() else {
         return;
     };
-    style.set_blend_mode(BlendMode::BackgroundBlur);
+    style.set_blend_mode(if otto_kit::frosting::enabled() {
+        BlendMode::BackgroundBlur
+    } else {
+        BlendMode::Normal
+    });
     // In points, not pixels: the compositor scales the radius itself, and
     // pre-scaling it here as well is what makes a card's corners come out
     // roughly `screen_scale` times rounder than asked — round enough, at this

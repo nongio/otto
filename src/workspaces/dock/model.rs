@@ -72,6 +72,23 @@ impl DockModel {
         entries
     }
 
+    /// How many entries [`Self::display_entries`] would return, without
+    /// building them — for layout maths that only needs the count.
+    pub fn display_entries_len(&self) -> usize {
+        let extra = self
+            .running_apps
+            .iter()
+            .filter(|running| !self.places.iter().any(|p| p.match_id == running.match_id))
+            .filter(|running| {
+                !self
+                    .launchers
+                    .iter()
+                    .any(|l| l.match_id == running.match_id)
+            })
+            .count();
+        self.launchers.len() + extra
+    }
+
     /// The places strip, each with whether its window is open — the same pair
     /// [`Self::display_entries`] returns, so both strips draw through one path.
     pub fn display_places(&self) -> Vec<(Application, bool)> {

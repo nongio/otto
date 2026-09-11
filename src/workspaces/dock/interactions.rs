@@ -54,11 +54,21 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         } else {
             data.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
         }
+        let scale = Config::with(|c| c.screen_scale);
+        // Magnification follows the pointer along the dock's long axis —
+        // through a drag as well, so the icon being carried stays in a dock
+        // that behaves as it does under any other pointer.
+        let along = if self.position().is_vertical() {
+            event.location.y
+        } else {
+            event.location.x
+        };
+        self.update_magnification_position((along * scale) as f32);
+
         // A drag on an icon owns the pointer just as a resize drag does.
         if self.icon_drag_update((event.location.x, event.location.y)) {
             return;
         }
-        let scale = Config::with(|c| c.screen_scale);
         if let Some(menu) = self
             .context_menu
             .read()
@@ -78,14 +88,6 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             menu.view.update_state(&menu_state);
         }
 
-        // Magnification follows the pointer along the dock's long axis.
-        let along = if self.position().is_vertical() {
-            event.location.y
-        } else {
-            event.location.x
-        };
-        self.update_magnification_position((along * scale) as f32);
-
         // Update label visibility: show tooltip for the hovered dock item only.
         // Skip while a context menu is open.
         if !self.has_menu_open() {
@@ -93,8 +95,9 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
         }
     }
     fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {
-        // A drag in flight keeps the dock flat and the icon lifted until the
-        // button comes back up, wherever the pointer has wandered off to.
+        // A drag in flight keeps the icon lifted, and the dock magnified where
+        // it last was, until the button comes back up — wherever the pointer
+        // has wandered off to.
         if self.is_icon_dragging() {
             return;
         }

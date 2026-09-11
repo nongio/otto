@@ -1442,8 +1442,10 @@ fn render_workspace_selector_view(
                                 },
                                 None,
                             ))
-                            .background_color(theme_colors().materials_ultrathick)
-                            .blend_mode(BlendMode::BackgroundBlur)
+                            .background_color(crate::theme::chrome_material(
+                                theme_colors().materials_ultrathick,
+                            ))
+                            .blend_mode(crate::theme::chrome_blend_mode())
                             .border_corner_radius(BorderRadius::new_single(25.0))
                             .content(draw_named_icon_any(&[
                                 "close-symbolic",
@@ -1514,8 +1516,10 @@ fn render_workspace_selector_view(
             },
             None,
         ))
-        .background_color(theme_colors().materials_medium)
-        .blend_mode(BlendMode::BackgroundBlur)
+        .background_color(crate::theme::chrome_material(
+            theme_colors().materials_medium,
+        ))
+        .blend_mode(crate::theme::chrome_blend_mode())
         .shadow_color(theme_colors().shadow_color)
         .shadow_offset(((0.0, -5.0).into(), None))
         .shadow_radius((20.0, None))

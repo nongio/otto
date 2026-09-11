@@ -175,7 +175,12 @@ snapping on release.
   the previews still fire as the dragged window crosses them, and without the
   gate they revealed the workspace close button and cleared the drop-target
   darkening on the way out. Only `set_drop_hover` drives the previews' look
-  until `end_window_selector_drag` lifts the flag.
+  until the flag is lifted. Every way out of the gesture has to lift it —
+  they all go through `clear_window_selector_drag`, which drops the carried
+  window and the gate together. The drop paths used to clear
+  `expose_dragged_window` by hand and left the gate stuck on, so after the
+  first window dropped on a workspace no preview ever offered its close
+  button again.
 - On drop with a target: `move_window_to_workspace` is called with the window's
   last known position. It drops the cached grid of the source and destination
   workspaces first (`invalidate_layout`), because the drag already re-laid the
@@ -318,7 +323,8 @@ instead.
   `cargo test --features headless --test workspace_selector` (and
   `--test app_switcher`).
 - **Debug lever:** `echo ActionName > $OTTO_ACTION_FILE` (default
-  `/tmp/otto-action`, polled once per frame by both backends — see
+  `/tmp/otto-action`, polled once per frame by both backends in
+  `debug-hooks` builds — see
   [the debug action hook](debug-action-hook.md)) runs a builtin shortcut
   action as if its key had been pressed — useful for driving `ExposeShowAll`,
   `ExposeShowDesktop` or workspace switches from a harness, since

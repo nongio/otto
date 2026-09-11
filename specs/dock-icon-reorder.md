@@ -37,26 +37,36 @@ is stored in.
    Below that distance the press is still a click and releasing launches or
    focuses the app as usual.
 2. A right-button press never starts a drag; it opens the icon's context menu.
-3. When the drag starts, the dock stops magnifying under the pointer and every
-   icon settles at its unmagnified size for the duration. Any tooltip is hidden.
-4. The dragged icon is lifted: it is drawn above its neighbours, slightly larger
-   than they are, and is **centred on the pointer** along the dock's long axis.
-   It does not follow the pointer across the dock — it stays in line with the row
-   of icons, so a drag away from the screen edge does not pull it out of the dock.
-4a. The icon is centred on the pointer from the first frame of the drag and stays
-   there while the dock settles out of its magnified shape (3). A magnified dock
-   is both fatter and differently placed than the flat one the drag works
-   against, so an icon positioned from what the dock looked like when the press
-   landed hangs off the pointer by the difference.
+3. The dock goes on magnifying under the pointer for the whole drag, exactly as
+   it does under any other pointer. Any tooltip is hidden.
+4. The dragged icon is lifted: it is drawn above its neighbours, a tenth larger
+   than the slot it came out of, and is **centred on the pointer** along the
+   dock's long axis. It does not follow the pointer across the dock — it stays in
+   line with the row of icons, so a drag away from the screen edge does not pull
+   it out of the dock.
+4a. The lifted icon is the size of the slot it left, magnification included, and
+   grows and shrinks with it. That slot is under the pointer, where the
+   magnification peaks, so a lifted icon is a large one and stays large for the
+   length of the drag.
+4b. The row the lifted icon lines up with is the row as it is drawn at that
+   moment: icons are aligned to the screen edge, so a magnified one sits further
+   from that edge than an unmagnified one, and the lifted icon sits with it.
 5. The slot the icon came from stays in the layout and stands empty. The dock
    neither grows nor shrinks while an icon is being dragged.
 
 ### Moving
 
-6. The dock is divided into slots of one icon each. The dragged icon takes the
-   slot its centre is nearest, so it changes places once it has covered half of
-   one. Every icon between the slot it left and the slot it took shifts one place
-   the other way, and **animates** into its new place rather than jumping.
+6. The dock is divided into slots of one icon each, of the sizes the
+   magnification gives them. The dragged icon takes **the slot the pointer is
+   over**, so it changes places when the pointer crosses from one slot into the
+   next. Every icon between the slot it left and the slot it took shifts one
+   place the other way, and **animates** into its new place rather than jumping —
+   by the width of the slot it crossed, which under magnification is not the
+   same for every icon.
+6a. A slot's size and position follow from its index and where the pointer is,
+   never from which application is standing in it, so a swap moves icons between
+   slots without moving the slots. The boundary the pointer crosses to cause a
+   swap therefore stays put across that swap, and is crossed once.
 7. A drag that moves several slots in one motion is the same thing: every icon it
    passed shifts one place, all of them animating.
 8. A drag is confined to the launcher section. The running apps that are not
@@ -75,20 +85,21 @@ is stored in.
 ### Ending
 
 11. Releasing the button drops the icon into the slot it currently occupies: it
-    animates from the pointer into that slot and settles at the size of its
-    neighbours, and the slot shows it again.
+    animates from the pointer into that slot, letting go of the tenth it was
+    lifted by to settle at the size the magnification gives that slot, and the
+    slot shows it again.
 12. The release that ends a drag does **not** activate the app.
 13. Once the icon is dropped, the new order is written to the stored bookmark
     list. Nothing is written if the icon ended where it started.
-14. After the drop the dock magnifies under the pointer again.
+14. The magnification never stopped, so the drop changes nothing about it.
 
 ## Constraints & Edge Cases
 
 - **Release outside the dock.** The button may come up anywhere. Wherever it
   does, the drag ends as in (11)–(14) and the icon is dropped in the slot it
   last occupied; the icon is never left lifted.
-- **The pointer leaving the dock mid-drag** does not end the drag and does not
-  restore magnification.
+- **The pointer leaving the dock mid-drag** does not end the drag. The dock
+  stays magnified where the pointer last was until the button comes up.
 - **Bookmarks the dock could not load** — an entry whose desktop file is missing —
   have no icon to drag and no place in the visible order. Persisting a new order
   must keep them, in their existing relative order, rather than dropping them.
@@ -104,10 +115,13 @@ is stored in.
   apps after; there is nowhere to store the position of an app that is only
   running. Rather than forbid the drag, dragging one promotes it — the user
   asking to place an app is asking to keep it.
-- **Magnification stands down during a drag.** Slot positions are what the drag
-  is measured against; magnifying them under the pointer would move the ground
-  the measurement stands on, and the icon would swap places with a neighbour it
-  had not visibly reached.
+- **Magnification stays on during a drag.** A dock that flattens the moment an
+  icon is picked up pulls the whole row out from under the hand carrying it, and
+  hands the icon back a second time on the drop. Keeping it on costs nothing in
+  precision: the magnified slots are an uneven ruler, but a ruler all the same,
+  because a slot's size depends on the pointer and not on what is standing in
+  it. The drag reads the ruler — it asks which slot the pointer is in — rather
+  than counting equal pitches out from where the press landed.
 - **A movement threshold, not a time delay.** Waiting before a press becomes a
   drag makes the dock feel unresponsive to clicks; a distance threshold
   distinguishes the two intentions immediately.

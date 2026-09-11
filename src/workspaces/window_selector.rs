@@ -851,11 +851,11 @@ pub fn view_window_selector(
                 None,
             ))
             .size((text_layer_size, None))
-            .blend_mode(layers::prelude::BlendMode::BackgroundBlur)
+            .blend_mode(crate::theme::chrome_blend_mode())
             .border_corner_radius((BorderRadius::new_single(8.0 * draw_scale), None))
             .background_color((
                 PaintColor::Solid {
-                    color: Color::new_rgba(1.0, 1.0, 1.0, 0.4),
+                    color: crate::theme::chrome_material(Color::new_rgba(1.0, 1.0, 1.0, 0.4)),
                 },
                 None,
             ))
@@ -1268,7 +1268,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                                     .unwrap_or_default();
 
                                 // Clear dragging state
-                                *otto.workspaces.expose_dragged_window.lock().unwrap() = None;
+                                otto.workspaces
+                                    .clear_window_selector_drag(Some(&drag_state.window_id));
 
                                 // Move window to target workspace
                                 // Note: unmap_window no longer removes the mirror layer to avoid SlotMap key issues
@@ -1299,7 +1300,8 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
                             // a single expose re-layout animation for all previews in sync.
                             self.restore_rect_to_state(drag_state.selection.clone());
                             self.restore_layer_order_from_state();
-                            *otto.workspaces.expose_dragged_window.lock().unwrap() = None;
+                            otto.workspaces
+                                .clear_window_selector_drag(Some(&drag_state.window_id));
                             otto.workspaces.expose_update_if_needed();
                         }
                     }

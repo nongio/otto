@@ -627,11 +627,9 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// and without it the scheduled lay-rs transactions never tick and the
     /// action stays invisible.
     pub(crate) fn poll_debug_action_file(&mut self) -> bool {
-        let path = debug_action_file_path();
-        let Ok(name) = fs::read_to_string(&path) else {
+        let Some(name) = crate::debug_hooks::take_file(&debug_action_file_path()) else {
             return false;
         };
-        let _ = fs::remove_file(&path);
         let name = name.trim();
         let resolved = crate::config::shortcuts::parse_builtin_name(name)
             .map(ShortcutAction::Builtin)

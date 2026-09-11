@@ -69,6 +69,20 @@ drawing their own — the top bar, and anything built on otto-kit — are told
 through the portal's `org.otto.desktop rounded-corners`, the same door
 `color-scheme` comes through.
 
+## Frosting
+
+```toml
+frosting = true
+```
+
+The translucent, blurred material behind the dock, the top bar, the launcher,
+the app switcher, the exposé labels, the OSD and the selectors. Set it to
+`false` and the same surfaces are drawn nearly opaque instead, and Otto
+stops blurring the desktop for them — which also saves the work of
+keeping those blurs fresh under a playing video. It takes effect immediately,
+by the same route as the corners: Otto repaints its own chrome, and the bar
+and the launcher are told through the portal's `org.otto.desktop frosting`.
+
 ## Wallpaper
 
 ```toml

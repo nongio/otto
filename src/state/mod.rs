@@ -704,6 +704,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.push("XDG_SESSION_CLASS=user".to_string());
                 assignments.extend(crate::locale_env::published().iter().cloned());
                 assignments.push(crate::export_rounded_corners());
+                assignments.push(crate::export_frosting());
                 assignments.push(crate::export_window_controls_side());
                 assignments.push(crate::export_maximize_button());
                 assignments.push(crate::export_color_scheme());
@@ -1082,6 +1083,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             #[cfg(feature = "metrics")]
             render_metrics: Arc::new(crate::render_metrics::RenderMetrics::new(backend_name)),
         }
+    }
+
+    /// Whether `surface` (root or subsurface) belongs to a layer-shell surface
+    /// on any output.
+    pub(crate) fn is_layer_shell_surface(&self, surface: &WlSurface) -> bool {
+        use smithay::desktop::{layer_map_for_output, WindowSurfaceType};
+        self.workspaces.outputs().any(|output| {
+            layer_map_for_output(output)
+                .layer_for_surface(surface, WindowSurfaceType::ALL)
+                .is_some()
+        })
     }
 
     /// Recalculate exclusive zones for an output from its layer shell surfaces

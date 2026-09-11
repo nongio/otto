@@ -200,52 +200,7 @@ impl LayerShellSurface {
         &self,
         output_geometry: Rectangle<i32, Logical>,
     ) -> Rectangle<i32, Logical> {
-        let anchor = self.anchor();
-        let (margin_top, margin_right, margin_bottom, margin_left) = self.margin();
-        let requested_size = self.requested_size();
-
-        let mut width = requested_size.w;
-        let mut height = requested_size.h;
-
-        // Handle horizontal anchoring
-        let anchor_left = anchor.contains(Anchor::LEFT);
-        let anchor_right = anchor.contains(Anchor::RIGHT);
-
-        let x = if anchor_left && anchor_right {
-            // Stretch horizontally
-            width = output_geometry.size.w - margin_left - margin_right;
-            output_geometry.loc.x + margin_left
-        } else if anchor_left {
-            output_geometry.loc.x + margin_left
-        } else if anchor_right {
-            output_geometry.loc.x + output_geometry.size.w - width - margin_right
-        } else {
-            // Center horizontally
-            output_geometry.loc.x + (output_geometry.size.w - width) / 2
-        };
-
-        // Handle vertical anchoring
-        let anchor_top = anchor.contains(Anchor::TOP);
-        let anchor_bottom = anchor.contains(Anchor::BOTTOM);
-
-        let y = if anchor_top && anchor_bottom {
-            // Stretch vertically
-            height = output_geometry.size.h - margin_top - margin_bottom;
-            output_geometry.loc.y + margin_top
-        } else if anchor_top {
-            output_geometry.loc.y + margin_top
-        } else if anchor_bottom {
-            output_geometry.loc.y + output_geometry.size.h - height - margin_bottom
-        } else {
-            // Center vertically
-            output_geometry.loc.y + (output_geometry.size.h - height) / 2
-        };
-
-        // Ensure non-negative dimensions
-        width = width.max(0);
-        height = height.max(0);
-
-        Rectangle::new((x, y).into(), (width, height).into())
+        drawn_geometry(self.layer_surface.wl_surface(), output_geometry)
     }
 
     /// Build a Taffy layout style that encodes the layer shell anchors and margins
@@ -345,4 +300,72 @@ impl PartialEq for LayerShellSurface {
     fn eq(&self, other: &Self) -> bool {
         self.id() == other.id()
     }
+}
+
+/// Where Otto draws a layer-shell surface: its anchor and margins against the
+/// output, in global logical coordinates. This is the geometry the scene
+/// uses; smithay's `LayerMap::layer_geometry` arranges non-exclusive surfaces
+/// *inside* other surfaces' exclusive zones instead (a top bar's panels land
+/// below its own spacer), so anything that compares chrome against windows —
+/// scanout occluders, blur interest — must use this one.
+pub fn drawn_geometry(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    output_geometry: Rectangle<i32, Logical>,
+) -> Rectangle<i32, Logical> {
+    let state = smithay::wayland::compositor::with_states(surface, |states| {
+        *states
+            .cached_state
+            .get::<LayerSurfaceCachedState>()
+            .current()
+    });
+    let anchor = state.anchor;
+    let (margin_top, margin_right, margin_bottom, margin_left) = (
+        state.margin.top,
+        state.margin.right,
+        state.margin.bottom,
+        state.margin.left,
+    );
+    let requested_size = state.size;
+    let mut width = requested_size.w;
+    let mut height = requested_size.h;
+
+    // Handle horizontal anchoring
+    let anchor_left = anchor.contains(Anchor::LEFT);
+    let anchor_right = anchor.contains(Anchor::RIGHT);
+
+    let x = if anchor_left && anchor_right {
+        // Stretch horizontally
+        width = output_geometry.size.w - margin_left - margin_right;
+        output_geometry.loc.x + margin_left
+    } else if anchor_left {
+        output_geometry.loc.x + margin_left
+    } else if anchor_right {
+        output_geometry.loc.x + output_geometry.size.w - width - margin_right
+    } else {
+        // Center horizontally
+        output_geometry.loc.x + (output_geometry.size.w - width) / 2
+    };
+
+    // Handle vertical anchoring
+    let anchor_top = anchor.contains(Anchor::TOP);
+    let anchor_bottom = anchor.contains(Anchor::BOTTOM);
+
+    let y = if anchor_top && anchor_bottom {
+        // Stretch vertically
+        height = output_geometry.size.h - margin_top - margin_bottom;
+        output_geometry.loc.y + margin_top
+    } else if anchor_top {
+        output_geometry.loc.y + margin_top
+    } else if anchor_bottom {
+        output_geometry.loc.y + output_geometry.size.h - height - margin_bottom
+    } else {
+        // Center vertically
+        output_geometry.loc.y + (output_geometry.size.h - height) / 2
+    };
+
+    // Ensure non-negative dimensions
+    width = width.max(0);
+    height = height.max(0);
+
+    Rectangle::new((x, y).into(), (width, height).into())
 }

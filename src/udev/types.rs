@@ -1,5 +1,4 @@
 use std::collections::hash_map::HashMap;
-use std::sync::atomic::AtomicBool;
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
 
@@ -86,8 +85,10 @@ pub struct UdevData {
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,
-    /// Flag set by `request_redraw` to trigger a render on next loop iteration.
-    pub(super) render_requested: AtomicBool,
+    /// Bumped by `request_redraw` (input, client commits). A surface whose
+    /// last pass predates the current value is owed a frame; compared, never
+    /// consumed, so every output sees every request.
+    pub(super) redraw_generation: std::sync::atomic::AtomicU64,
     /// Monotonic count of scene ticks that reported damage. The lay-rs
     /// damage flag is consumed by whichever output ticks first; surfaces
     /// compare `SurfaceData::rendered_damage_gen` against this to know a
@@ -147,10 +148,20 @@ pub struct SurfaceData {
     /// Exponential moving average of render time in microseconds.
     /// Used to schedule reschedule timers with proper headroom.
     pub(super) avg_render_time_us: f32,
-    /// Frames remaining before going idle. Reset on activity, counts down
-    /// each no-damage frame so animations that briefly report zero pending
-    /// transactions aren't cut short.
-    pub(super) idle_countdown: u32,
+    /// A draw pass is on its way: a deadline timer is inserted, or a frame
+    /// is queued and its VBlank decides the next one. While set, nothing
+    /// else schedules a pass for this surface — the pending one sees every
+    /// change that lands before it runs.
+    pub(super) frame_scheduled: bool,
+    /// The redraw-request generation the last pass started from. A newer
+    /// generation at VBlank means input or a commit arrived since, and the
+    /// next pass is owed.
+    pub(super) seen_redraw_gen: u64,
+    /// The last pass had a reason to draw every VBlank regardless of scene
+    /// damage: a fullscreen scanout window (its commits leave no scene
+    /// damage), a screencopy or screencast consumer, a drag icon, or an
+    /// animated cursor.
+    pub(super) continuous_frames: bool,
     /// Whether this surface has ever submitted a frame. An output must
     /// always draw its first frame: the global scene-damage flag may have
     /// been consumed by another output's render before this surface gets
@@ -227,13 +238,9 @@ pub struct SurfaceData {
     /// overlay plane. Pushed only while the switcher is alive.
     pub(super) switcher_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Strip-sized KMS plane for the dock (a band along the dock's own screen
-    /// edge). Topmost plane.
-    pub(super) dock_dmabuf_element:
-        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Which screen edge `dock_dmabuf_element` was allocated for, so the strip
-    /// can be rebuilt when the dock moves.
-    pub(super) dock_plane_position: Option<crate::config::DockPosition>,
+    /// Content-fitted size of the chrome planes — see `planes::fit_plane`.
+    pub(super) overlay_fit: super::planes::PlaneFit,
+    pub(super) switcher_fit: super::planes::PlaneFit,
     /// Downscaled composite of the planes below the overlay-UI plane
     /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
     /// vibrancy). Rebuilt only when a lower plane changes under the
@@ -276,10 +283,37 @@ pub struct SurfaceData {
     /// on the next rebuild. Tracked separately from `backdrop_dirty`, which
     /// also fires for middle-plane damage.
     pub(super) backdrop_bg_dirty: bool,
-    /// Lower-plane damage occurred while no blur consumer needed the
-    /// composite (or outside every active consumer's region); the next
-    /// frame with an active consumer must rebuild even without new damage.
+    /// Staleness carried across frames that skipped a rebuild: damage hit a
+    /// consumer's region but the rate limit deferred it, or damage landed
+    /// while no consumer was tracking anything. The next frame with an
+    /// active consumer must rebuild even without new damage.
     pub(super) backdrop_dirty: bool,
+    /// The consumer regions the composite was last kept fresh for. Damage
+    /// outside them is dropped, so a change in the set forces a rebuild.
+    pub(super) backdrop_interest: Vec<layers::skia::Rect>,
+    /// On-screen damage that missed every tracked region since the last
+    /// rebuild. If the regions change to cover any of it, the composite is
+    /// stale there and rebuilds at once.
+    pub(super) backdrop_missed_damage: Option<layers::skia::Rect>,
+    /// Per-consumer handoff. A rebuild produces a new composite, but a
+    /// consumer only re-renders its plane when the image it is handed
+    /// changes — so each keeps the image it was last given and only receives
+    /// the fresh one when damage reached its own blur band (or the set of
+    /// tracked regions changed). A video repainting above the dock refreshes
+    /// the dock plane, not the bar's.
+    pub(super) backdrop_switcher_image: Option<layers::skia::Image>,
+    /// The overlay's (pre-blurred, raw) pair — stacked popups need the raw one.
+    pub(super) backdrop_overlay_handed: Option<(layers::skia::Image, Option<layers::skia::Image>)>,
+    /// Damage reached this consumer's band since it was last handed an image;
+    /// carried across rate-limited frames so a deferred hit is not lost.
+    pub(super) backdrop_switcher_stale: bool,
+    pub(super) backdrop_overlay_stale: bool,
+    /// The overlay consumer rects whose band the damage reached since the
+    /// plane was last handed an image (output-local px); handed to the
+    /// element so it repaints only those shapes. Empty with the stale flag
+    /// set means every shape (popup structure, unbounded interest).
+    pub(super) backdrop_overlay_hits: Vec<layers::skia::Rect>,
+    pub(super) backdrop_overlay_all: bool,
     /// When the composite was last rebuilt because of desktop (bg/middle/
     /// promoted-window) damage. Those rebuilds are rate-limited: a client
     /// committing at frame rate under a blur consumer (a maximized window's

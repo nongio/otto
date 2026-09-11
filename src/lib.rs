@@ -16,6 +16,7 @@ pub mod background_effect;
 #[cfg(any(feature = "udev", feature = "xwayland", feature = "headless"))]
 pub mod cursor;
 pub mod debug_gesture;
+pub mod debug_hooks;
 pub mod drawing;
 pub mod focus;
 #[cfg(feature = "headless")]
@@ -76,6 +77,13 @@ pub fn configured_locales() -> Vec<String> {
 /// alongside the locale's.
 pub fn export_rounded_corners() -> String {
     otto_kit::corners::export(config::Config::with(|c| c.rounded_corners))
+}
+
+/// Publish `frosting` the same way: the bar and the launcher ask the
+/// compositor for their frost through the surface-style protocol, and they
+/// only know whether to ask by reading this.
+pub fn export_frosting() -> String {
+    otto_kit::frosting::export(config::Config::with(|c| c.frosting))
 }
 
 /// Publish `window_controls_side` the same way, and for the same reason: an

@@ -15,10 +15,9 @@ use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
 
 use super::{Backend, Otto};
 
-/// Live toggle for the cursor trace: `touch` this path to start logging what
-/// each client asks the pointer to look like, remove it to stop. A file check
-/// per cursor change costs nothing next to what a cursor change already does,
-/// and it beats a rebuild-and-relogin cycle to answer one question.
+/// Live toggle for the cursor trace (`debug-hooks` builds): `touch` this path
+/// to start logging what each client asks the pointer to look like, remove it
+/// to stop.
 const CURSOR_TRACE_TOGGLE: &str = "/tmp/otto-cursordbg";
 
 impl<BackendData: Backend> Otto<BackendData> {
@@ -28,7 +27,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// pointer that looks wrong over one window and right over every other is
     /// not diagnosable without knowing which of the two it is.
     fn log_cursor_image(&self, image: &CursorImageStatus) {
-        if !std::path::Path::new(CURSOR_TRACE_TOGGLE).exists() {
+        if !crate::debug_hooks::toggle(CURSOR_TRACE_TOGGLE) {
             return;
         }
 

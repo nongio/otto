@@ -510,7 +510,7 @@ pub fn setup_label(new_layer: &Layer, label_text: String, position: DockPosition
         // suffix on every rebuild.
         .key("dock_label")
         .shape(layers::prelude::Shape::from_path(&arrow_path))
-        .blend_mode(layers::prelude::BlendMode::BackgroundBlur)
+        .blend_mode(crate::theme::chrome_blend_mode())
         .layout_style(taffy::Style {
             position: taffy::Position::Absolute,
             max_size: taffy::geometry::Size {

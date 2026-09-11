@@ -67,7 +67,10 @@ strip shows.
    release parks it on one, but the pointer is carrying a workspace rather
    than pointing at one — so none of that counts as hovering. Any button
    already showing when the lift starts is put away, none appears until the
-   drop has finished, and hovering reveals them again afterwards.
+   drop has finished, and hovering reveals them again afterwards. The same
+   holds for a window being dragged out of exposé onto the strip: the previews
+   are its drop targets while it is in flight, and they take hovers again —
+   close buttons included — as soon as the window has landed.
 
 ### Moving
 

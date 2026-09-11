@@ -5176,7 +5176,7 @@ impl Browser {
             focused: self.focused,
             // A translucent material needs something blurred behind it to be
             // translucent over. See [`view::opaque`].
-            blurred: self.focused && self.blur_available,
+            blurred: self.focused && self.blur_available && otto_kit::frosting::enabled(),
             can_go_back: !self.back.is_empty(),
             can_go_forward: !self.forward.is_empty(),
             nav_pressed: self.nav_pressed,

@@ -48,6 +48,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "background_color"
             | "theme_scheme"
             | "rounded_corners"
+            | "frosting"
             | "window_controls_side"
             | "show_maximize_button"
             | "cursor_theme"
@@ -174,6 +175,15 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // carries it to the windows already on screen.
         "rounded_corners" => {
             crate::export_rounded_corners();
+            state.workspaces.rerender_chrome();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        // Frosting travels like the corners: the dock and the desktop's own
+        // panels read it while they draw, the bar and the launcher hear it
+        // from the portal and ask the compositor for their material again.
+        "frosting" => {
+            crate::export_frosting();
             state.workspaces.rerender_chrome();
             state.refresh_window_decorations();
             Ok(())
@@ -335,6 +345,7 @@ mod tests {
         for id in [
             "theme_scheme",
             "rounded_corners",
+            "frosting",
             "window_controls_side",
             "show_maximize_button",
             "cursor_theme",

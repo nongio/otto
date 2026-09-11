@@ -152,6 +152,18 @@ Promoted client windows are folded into that composite by blitting their
 dmabuf — the same buffer KMS scans out — so a shared window does not vanish
 from the blur behind the dock.
 
+The composite is rebuilt only when lower-plane damage lands under a blur
+consumer. A consumer is the set of `BackgroundBlur` shapes in a plane's
+subtree — the dock bar, a hovered label, the switcher card — each outset by
+`BLUR_REACH`, not the plane's whole strip; `SceneDmabufElement::
+subtree_blur_rects` reads them from lay-rs' bubbled-up `backdrop_blur_region`.
+Damage that misses every consumer rebuilds nothing and marks nothing, but is
+remembered (`SurfaceData::backdrop_missed_damage`): when the consumer set
+changes and the new set covers remembered damage, the composite rebuilds at
+once, bypassing the desktop rate limit. Both rules are unit-tested at the
+bottom of `backdrop.rs`; in `debug-hooks` builds, `touch /tmp/otto-perfdbg`
+logs the per-frame decision with its interest and missed rects.
+
 ## Debugging
 
 ```sh

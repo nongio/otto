@@ -107,6 +107,7 @@ async fn main() {
     // bar and every otto-kit window draw their own corners, in their own
     // processes, and none of them reads Otto's configuration.
     otto::export_rounded_corners();
+    otto::export_frosting();
     otto::export_window_controls_side();
     otto::export_maximize_button();
     otto::export_color_scheme();

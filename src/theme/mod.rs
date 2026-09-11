@@ -234,6 +234,41 @@ pub fn accent_color() -> Color {
     }
 }
 
+/// Whether the desktop's own chrome is frosted — see `Config::frosting`.
+/// Read through otto-kit's store so this process and the components agree.
+pub fn frosting() -> bool {
+    otto_kit::frosting::enabled()
+}
+
+/// The blend mode a piece of frosted chrome draws with: the backdrop blur
+/// while frosting is on, plain compositing when it is off.
+pub fn chrome_blend_mode() -> layers::types::BlendMode {
+    if frosting() {
+        layers::types::BlendMode::BackgroundBlur
+    } else {
+        layers::types::BlendMode::Normal
+    }
+}
+
+/// The least opaque a piece of chrome gets without its frost: a hint of what
+/// is behind it, no more — a see-through panel with nothing blurred behind
+/// it reads as a glitch.
+pub const UNFROSTED_MIN_ALPHA: f32 = 0.92;
+
+/// `color` as chrome wears it: the translucent material while frosting is
+/// on, the same hue taken up to at least [`UNFROSTED_MIN_ALPHA`] when it is
+/// off.
+pub fn chrome_material(color: Color) -> Color {
+    if frosting() {
+        color
+    } else {
+        Color {
+            alpha: color.alpha.max(UNFROSTED_MIN_ALPHA),
+            ..color
+        }
+    }
+}
+
 /// Resolve the accent from the configuration and publish it to the store.
 ///
 /// Call after anything that changes what the accent resolves to — the
