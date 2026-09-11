@@ -80,7 +80,7 @@ jobs:
           # The file browser and the two crates only it links (verified with
           # `cargo tree -p otto-files --depth 1`). Its unit tests are the
           # largest suite in the workspace, so they run only when it changed.
-          FILES='^components/(otto-files|otto-quickview|otto-media-kit)/'
+          BROWSER='^components/(otto-files|otto-quickview|otto-media-kit)/'
           PACKAGING='^PKGBUILD|^(Cargo\.toml)$|^(resources|scripts)/|^\.github/workflows/ci\.yml$'
 
           shared=false; matches "$SHARED" && shared=true
@@ -103,7 +103,7 @@ jobs:
           if $shared || $kit || echo "$FILES" | grep -qP "$UI"; then ui=true; else ui=false; fi
           echo "ui=$ui" >> "$GITHUB_OUTPUT"
 
-          if $shared || $kit || matches "$FILES"; then files=true; else files=false; fi
+          if $shared || $kit || matches "$BROWSER"; then files=true; else files=false; fi
           echo "files=$files" >> "$GITHUB_OUTPUT"
 
           if matches "$PACKAGING"; then packaging=true; else packaging=false; fi
