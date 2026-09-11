@@ -521,6 +521,133 @@ files-month-oct = жовт.
 files-month-nov = лист.
 files-month-dec = груд.
 
+## Files — commands
+
+files-new-folder-with-selection = Нова папка з вибраним
+# $count завжди два або більше; для одного елемента використовується
+# files-new-folder-with-selection.
+files-new-folder-with-count = Нова папка з { $count } елементами
+
+
+## Files — command palette
+
+# Панель, що відкривається через Ctrl+P: кілька літер назви команди — і вона
+# виконується.
+files-palette-placeholder = Виконати команду
+files-palette-no-matches = Немає відповідних команд
+# $count — скільки команд пропонує палітра; оголошується під час відкриття.
+files-palette-opened =
+    { $count ->
+        [one] Палітра команд, { $count } команда
+        [few] Палітра команд, { $count } команди
+        [many] Палітра команд, { $count } команд
+       *[other] Палітра команд, { $count } команди
+    }
+
+files-command-group-go = Перехід
+files-command-group-file = Файл
+files-command-group-edit = Редагування
+files-command-group-view = Вигляд
+
+files-command-back = Назад
+files-command-forward = Вперед
+files-command-up = Вгору
+files-command-go-to-path = Перейти до шляху
+files-command-go-to-place = Перейти до місця
+files-command-undo = Скасувати
+files-command-select-all = Вибрати все
+files-command-select-matching = Вибрати за шаблоном
+files-command-move-to = Перемістити до папки
+files-command-change-view = Змінити вигляд
+files-command-sort-by = Сортувати за
+files-command-show-hidden = Показати приховані файли
+files-command-hide-hidden = Сховати приховані файли
+files-command-quick-look = Швидкий перегляд
+files-command-search = Пошук
+
+# Нередагований префікс, який поле палітри носить, поки вводиться аргумент.
+# Після нього додаються двокрапка і пробіл.
+files-command-go-to-path-prompt = Перейти до шляху
+files-command-go-to-place-prompt = Перейти до місця
+files-command-rename-prompt = Перейменувати на
+files-command-new-folder-prompt = Нова папка з назвою
+files-command-change-view-prompt = Вигляд
+files-command-sort-by-prompt = Сортувати за
+files-command-search-prompt = Шукати
+files-command-select-matching-prompt = Вибрати за шаблоном
+files-command-move-to-prompt = Перемістити до
+files-command-rename-many-prompt = Перейменувати на
+
+# Назва того, що команда просить, одним словом — показується приглушено після
+# її заголовка у списку.
+files-command-arg-path = шлях
+files-command-arg-place = місце
+files-command-arg-name = назва
+files-command-arg-view = вигляд
+files-command-arg-sort = ключ
+files-command-arg-query = текст
+files-command-arg-pattern = шаблон
+
+files-view-list = Список
+files-view-grid = Сітка
+files-view-columns = Стовпці
+# Відмова, коли назва не могла б належати файлу — порожня або з похилою рискою.
+files-name-invalid = Файл не може мати таку назву
+files-no-pattern = Введіть шаблон, наприклад *.png
+files-nothing-matches = Нічого не відповідає «{ $pattern }»
+
+# Перейменування вибраного за одним шаблоном — сам шаблон див. у `rename.rs`.
+files-rename-many =
+    { $count ->
+        [one] Перейменувати { $count } елемент
+        [few] Перейменувати { $count } елементи
+        [many] Перейменувати { $count } елементів
+       *[other] Перейменувати { $count } елемента
+    }
+# Підсумковий рядок пробного запуску під рядками палітри.
+files-rename-preview = Перейменує { $count } з { $total }
+files-rename-preview-unchanged = Нічого не зміниться
+files-rename-conflicts = { $count ->
+    [one] Одна назва вже зайнята
+    [few] { $count } назви вже зайняті
+    [many] { $count } назв вже зайняті
+   *[other] { $count } назви вже зайняті
+}
+files-rename-invalid = { $count ->
+    [one] Одна назва була б порожня
+    [few] { $count } назви були б порожні
+    [many] { $count } назв були б порожні
+   *[other] { $count } назви були б порожні
+}
+files-renamed-count =
+    { $count ->
+        [one] Перейменовано { $count } елемент
+        [few] Перейменовано { $count } елементи
+        [many] Перейменовано { $count } елементів
+       *[other] Перейменовано { $count } елемента
+    }
+
+# Скрипти в ~/.config/otto/files-scripts/; див. components/otto-files/src/scripts.rs.
+files-script-running = Виконується { $title }…
+files-script-failed-quietly = Скрипт завершився без пояснення причини
+files-script-timed-out = Скрипт виконувався надто довго
+files-nothing-selected = Нічого не вибрано
+files-cant-move-into-itself = Папку не можна перемістити в себе саму
+# $count — скільки записів вибрав шаблон.
+files-selected-count =
+    { $count ->
+        [one] Вибрано { $count } елемент
+        [few] Вибрано { $count } елементи
+        [many] Вибрано { $count } елементів
+       *[other] Вибрано { $count } елемента
+    }
+files-name-taken = «{ $name }» тут уже є
+
+
+## Files — status
+
+files-undo-new-folder-with-selection = створення папки з вибраним
+
 
 ## Bar
 ##

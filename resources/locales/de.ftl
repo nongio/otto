@@ -508,6 +508,117 @@ files-month-nov = Nov.
 files-month-dec = Dez.
 
 
+## Files — commands
+
+files-new-folder-with-selection = Neuer Ordner mit Auswahl
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+        [one] Neuer Ordner mit { $count } Objekt
+       *[other] Neuer Ordner mit { $count } Objekten
+    }
+
+
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = Befehl ausführen
+files-palette-no-matches = Kein Befehl passt
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+        [one] Befehlspalette, { $count } Befehl
+       *[other] Befehlspalette, { $count } Befehle
+    }
+
+files-command-group-go = Gehe zu
+files-command-group-file = Ablage
+files-command-group-edit = Bearbeiten
+files-command-group-view = Darstellung
+
+files-command-back = Zurück
+files-command-forward = Vorwärts
+files-command-up = Nach oben
+files-command-go-to-path = Gehe zu Pfad
+files-command-go-to-place = Gehe zu Ort
+files-command-undo = Rückgängig
+files-command-select-all = Alles auswählen
+files-command-select-matching = Passende auswählen
+files-command-move-to = In Ordner verschieben
+files-command-change-view = Darstellung ändern
+files-command-sort-by = Sortieren nach
+files-command-show-hidden = Versteckte Dateien einblenden
+files-command-hide-hidden = Versteckte Dateien ausblenden
+files-command-quick-look = Übersicht
+files-command-search = Suchen
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = Gehe zu Pfad
+files-command-go-to-place-prompt = Gehe zu Ort
+files-command-rename-prompt = Umbenennen in
+files-command-new-folder-prompt = Neuer Ordner namens
+files-command-change-view-prompt = Darstellung
+files-command-sort-by-prompt = Sortieren nach
+files-command-search-prompt = Suchen nach
+files-command-select-matching-prompt = Passende auswählen
+files-command-move-to-prompt = Verschieben nach
+files-command-rename-many-prompt = Umbenennen in
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = Pfad
+files-command-arg-place = Ort
+files-command-arg-name = Name
+files-command-arg-view = Darstellung
+files-command-arg-sort = Kriterium
+files-command-arg-query = Text
+files-command-arg-pattern = Muster
+
+files-view-list = Liste
+files-view-grid = Raster
+files-view-columns = Spalten
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = So kann eine Datei nicht heißen
+files-no-pattern = Ein Muster eingeben, etwa *.png
+files-nothing-matches = Nichts passt zu „{ $pattern }“
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many = { $count } Objekte umbenennen
+# The dry run's summary line under the palette's rows.
+files-rename-preview = Benennt { $count } von { $total } um
+files-rename-preview-unchanged = Nichts würde sich ändern
+files-rename-conflicts = { $count ->
+    [one] Ein Name ist bereits vergeben
+   *[other] { $count } Namen sind bereits vergeben
+}
+files-rename-invalid = { $count ->
+    [one] Ein Name wäre leer
+   *[other] { $count } Namen wären leer
+}
+files-renamed-count = { $count } Objekte umbenannt
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = { $title } wird ausgeführt…
+files-script-failed-quietly = Das Skript ist ohne Begründung fehlgeschlagen
+files-script-timed-out = Das Skript hat zu lange gebraucht
+files-nothing-selected = Nichts ist ausgewählt
+files-cant-move-into-itself = Ein Ordner kann nicht in sich selbst verschoben werden
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+        [one] { $count } Objekt ausgewählt
+       *[other] { $count } Objekte ausgewählt
+    }
+files-name-taken = „{ $name }“ ist dort bereits vorhanden
+
+
+## Files — status
+
+files-undo-new-folder-with-selection = Neuer Ordner mit Auswahl
+
+
 ## Bar
 ##
 ## The menu bar across the top of the screen.

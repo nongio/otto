@@ -521,6 +521,139 @@ files-month-nov = нояб.
 files-month-dec = дек.
 
 
+## Files — commands (continued)
+
+files-new-folder-with-selection = Новая папка с выбранными элементами
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+        [one] Новая папка с { $count } элементом
+        [few] Новая папка с { $count } элементами
+        [many] Новая папка с { $count } элементами
+       *[other] Новая папка с { $count } элементами
+    }
+
+
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = Выполнить команду
+files-palette-no-matches = Нет подходящих команд
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+        [one] Палитра команд, { $count } команда
+        [few] Палитра команд, { $count } команды
+        [many] Палитра команд, { $count } команд
+       *[other] Палитра команд, { $count } команды
+    }
+
+files-command-group-go = Переход
+files-command-group-file = Файл
+files-command-group-edit = Правка
+files-command-group-view = Вид
+
+files-command-back = Назад
+files-command-forward = Вперёд
+files-command-up = Вверх
+files-command-go-to-path = Перейти к пути
+files-command-go-to-place = Перейти к месту
+files-command-undo = Отменить
+files-command-select-all = Выбрать все
+files-command-select-matching = Выбрать по шаблону
+files-command-move-to = Переместить в папку
+files-command-change-view = Изменить вид
+files-command-sort-by = Сортировать по
+files-command-show-hidden = Показать скрытые файлы
+files-command-hide-hidden = Скрыть скрытые файлы
+files-command-quick-look = Быстрый просмотр
+files-command-search = Поиск
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = Перейти к пути
+files-command-go-to-place-prompt = Перейти к месту
+files-command-rename-prompt = Переименовать в
+files-command-new-folder-prompt = Имя новой папки
+files-command-change-view-prompt = Вид
+files-command-sort-by-prompt = Сортировать по
+files-command-search-prompt = Найти
+files-command-select-matching-prompt = Выбрать по шаблону
+files-command-move-to-prompt = Переместить в
+files-command-rename-many-prompt = Переименовать в
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = путь
+files-command-arg-place = место
+files-command-arg-name = имя
+files-command-arg-view = вид
+files-command-arg-sort = критерий
+files-command-arg-query = текст
+files-command-arg-pattern = шаблон
+
+files-view-list = Список
+files-view-grid = Сетка
+files-view-columns = Колонки
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = Такое имя файлу не подходит
+files-no-pattern = Введите шаблон, например *.png
+files-nothing-matches = Ничто не соответствует «{ $pattern }»
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many =
+    { $count ->
+        [one] Переименовать { $count } элемент
+        [few] Переименовать { $count } элемента
+        [many] Переименовать { $count } элементов
+       *[other] Переименовать { $count } элемента
+    }
+# The dry run's summary line under the palette's rows.
+files-rename-preview = Переименует { $count } из { $total }
+files-rename-preview-unchanged = Ничего не изменится
+files-rename-conflicts = { $count ->
+    [one] { $count } имя уже занято
+    [few] { $count } имени уже заняты
+    [many] { $count } имён уже заняты
+   *[other] { $count } имени уже заняты
+}
+files-rename-invalid = { $count ->
+    [one] { $count } имя окажется пустым
+    [few] { $count } имени окажутся пустыми
+    [many] { $count } имён окажутся пустыми
+   *[other] { $count } имени окажутся пустыми
+}
+files-renamed-count =
+    { $count ->
+        [one] Переименован { $count } элемент
+        [few] Переименовано { $count } элемента
+        [many] Переименовано { $count } элементов
+       *[other] Переименовано { $count } элемента
+    }
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = Выполняется { $title }…
+files-script-failed-quietly = Скрипт завершился с ошибкой без объяснения
+files-script-timed-out = Скрипт выполнялся слишком долго
+files-nothing-selected = Ничего не выбрано
+files-cant-move-into-itself = Папку нельзя переместить в саму себя
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+        [one] Выбран { $count } элемент
+        [few] Выбрано { $count } элемента
+        [many] Выбрано { $count } элементов
+       *[other] Выбрано { $count } элемента
+    }
+files-name-taken = «{ $name }» уже существует
+
+
+## Files — status (continued)
+
+files-undo-new-folder-with-selection = Создание папки с выбранными элементами
+
+
 ## Bar
 ##
 ## The menu bar across the top of the screen.

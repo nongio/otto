@@ -498,6 +498,114 @@ files-month-nov = 11月
 files-month-dec = 12月
 
 
+## Files — commands
+
+files-new-folder-with-selection = 用所选项目新建文件夹
+# $count is always two or more; the single-item case uses
+# files-new-folder-with-selection.
+files-new-folder-with-count =
+    { $count ->
+       *[other] 用 { $count } 个项目新建文件夹
+    }
+
+
+## Files — command palette
+
+# The panel opened with Ctrl+P: type a few letters of a command's name to run it.
+files-palette-placeholder = 运行命令
+files-palette-no-matches = 没有匹配的命令
+# $count is how many commands the palette is offering; announced when it opens.
+files-palette-opened =
+    { $count ->
+       *[other] 命令面板，{ $count } 个命令
+    }
+
+files-command-group-go = 前往
+files-command-group-file = 文件
+files-command-group-edit = 编辑
+files-command-group-view = 显示
+
+files-command-back = 后退
+files-command-forward = 前进
+files-command-up = 上一级
+files-command-go-to-path = 前往路径
+files-command-go-to-place = 前往位置
+files-command-undo = 撤销
+files-command-select-all = 全选
+files-command-select-matching = 选择匹配项
+files-command-move-to = 移到文件夹
+files-command-change-view = 更改视图
+files-command-sort-by = 排序方式
+files-command-show-hidden = 显示隐藏文件
+files-command-hide-hidden = 不显示隐藏文件
+files-command-quick-look = 快速查看
+files-command-search = 搜索
+
+# The non-editable prefix the palette's field wears while an argument is being
+# typed. A colon and a space are added after it.
+files-command-go-to-path-prompt = 前往路径
+files-command-go-to-place-prompt = 前往位置
+files-command-rename-prompt = 重命名为
+files-command-new-folder-prompt = 新文件夹名称
+files-command-change-view-prompt = 视图
+files-command-sort-by-prompt = 排序方式
+files-command-search-prompt = 搜索
+files-command-select-matching-prompt = 选择匹配
+files-command-move-to-prompt = 移到
+files-command-rename-many-prompt = 重命名为
+
+# The one-word name of what a command is asking for, shown dimmed after its
+# title in the list.
+files-command-arg-path = 路径
+files-command-arg-place = 位置
+files-command-arg-name = 名称
+files-command-arg-view = 视图
+files-command-arg-sort = 依据
+files-command-arg-query = 文本
+files-command-arg-pattern = 模式
+
+files-view-list = 列表
+files-view-grid = 网格
+files-view-columns = 分栏
+# Refused when a name could not belong to a file — empty, or with a slash in it.
+files-name-invalid = 这不是文件可以使用的名称
+files-no-pattern = 输入一个模式，例如 *.png
+files-nothing-matches = 没有与“{ $pattern }”匹配的项目
+
+# Renaming a selection from one pattern — see `rename.rs` for the pattern.
+files-rename-many = 重命名 { $count } 个项目
+# The dry run's summary line under the palette's rows.
+files-rename-preview = 将重命名 { $total } 个中的 { $count } 个
+files-rename-preview-unchanged = 不会有任何变化
+files-rename-conflicts =
+    { $count ->
+       *[other] { $count } 个名称已被占用
+    }
+files-rename-invalid =
+    { $count ->
+       *[other] { $count } 个名称将为空
+    }
+files-renamed-count = 已重命名 { $count } 个项目
+
+# Scripts in ~/.config/otto/files-scripts/; see components/otto-files/src/scripts.rs.
+files-script-running = 正在运行{ $title }…
+files-script-failed-quietly = 脚本失败，未说明原因
+files-script-timed-out = 脚本耗时过长
+files-nothing-selected = 没有选择任何项目
+files-cant-move-into-itself = 文件夹无法移到其自身中
+# $count is how many entries a pattern selected.
+files-selected-count =
+    { $count ->
+       *[other] 已选择 { $count } 个项目
+    }
+files-name-taken = “{ $name }”已存在
+
+
+## Files — status
+
+files-undo-new-folder-with-selection = 用所选项目新建文件夹
+
+
 ## Bar
 ##
 ## The menu bar across the top of the screen.
