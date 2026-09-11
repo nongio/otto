@@ -3172,7 +3172,7 @@ pub fn draw_confirm(
 
 pub const PALETTE_W: f32 = 560.0;
 pub const PALETTE_FIELD_H: f32 = 46.0;
-pub const PALETTE_ROW_H: f32 = 32.0;
+pub const PALETTE_ROW_H: f32 = 28.0;
 pub const PALETTE_HEADING_H: f32 = 26.0;
 pub const PALETTE_PAD: f32 = 8.0;
 /// How far down the window the card's top edge rests, before any drag. Over
