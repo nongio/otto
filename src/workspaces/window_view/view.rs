@@ -258,7 +258,13 @@ impl WindowView {
         self.view_decoration.get_state()
     }
 
-    /// Update the activation state of the window shadow
+    /// Move the window's chrome — its shadow and its server-side titlebar —
+    /// to the focused or the unfocused look.
+    ///
+    /// Called when the keyboard focus changes, not only when the window next
+    /// commits. A client may ack the `activated` configure without painting,
+    /// and a promoted window's commits skip the scene import altogether, so a
+    /// bar that waited for the import kept whichever look it last had.
     pub fn set_active(&self, active: bool) {
         let current_state = self.view_base.get_state();
         let new_state = WindowViewBaseModel {
@@ -266,6 +272,16 @@ impl WindowView {
             ..current_state.clone()
         };
         self.view_base.update_state(&new_state);
+
+        let decoration = self.view_decoration.get_state();
+        // A bar that has never been built is given its focus by the import
+        // that builds it; starting one here would skip its first-state setup.
+        if decoration.width > 0.0 && decoration.active != active {
+            self.update_decoration(WindowDecorationModel {
+                active,
+                ..decoration
+            });
+        }
     }
 
     /// Hide/show the content layer for shadow-only (direct scanout) mode.

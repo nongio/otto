@@ -167,6 +167,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             if let Some(toplevel) = window.toplevel() {
                 toplevel.send_pending_configure();
             }
+            // Otto's own chrome for the window follows the same change, here
+            // rather than on the window's next commit: every `set_focus` lands
+            // in this handler, while only some callers go through
+            // `set_keyboard_focus_on_window`, and a window need not commit.
+            if let Some(view) = self.workspaces.get_window_view(&window.id()) {
+                view.set_active(active);
+            }
         }
     }
 }

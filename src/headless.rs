@@ -1034,6 +1034,24 @@ impl HeadlessHandle {
         })
     }
 
+    /// Whether the server-side titlebar is drawn in its focused look — the
+    /// state the bar's view was last given, which is what it is painted and
+    /// its material faded from. `None` when the window has no view.
+    pub fn window_decoration_active(&self, title: &str) -> Option<bool> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            state
+                .workspaces
+                .get_window_view(&window.id())
+                .map(|view| view.decoration_state().active)
+        })
+    }
+
     /// The headless output's fractional scale. Comes from the effective
     /// `screen_scale` setting, so a test whose expectation depends on the
     /// physical pixel grid has to derive it rather than assume 1.0.

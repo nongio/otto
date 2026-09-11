@@ -207,6 +207,15 @@ itself the moment one of its own menus opens. What a client *does* with the
 state is its own business; for otto-kit's own windows, see
 [otto-kit-window-focus](otto-kit-window-focus.md).
 
+The chrome Otto draws — the server-side bar and the window's shadow — follows
+the same focus, with the same popup rule, and changes when the focus does: on
+every keyboard focus change, whichever path made it (a click, a shortcut, a
+newly mapped window, a layer surface or the lock screen taking or returning the
+keyboard). It must not wait for the window's next commit. A client may ack the
+`activated` configure without painting, and a window promoted to a scanout
+plane never re-imports on commit, so a bar that waited would keep the look it
+had before.
+
 **Toggling.** The `ToggleDecorations` action flips the mode of every window
 that has negotiated one, and windows that have not are left alone.
 
