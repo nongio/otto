@@ -423,11 +423,12 @@ pub static SETTINGS: &[SettingSpec] = &[
     choice(
         "tiling.decoration",
         "Tiled window decoration",
-        "How much chrome a window keeps while it is tiled: a bar one text \
-         line high with its title and a close button, or no bar at all, with \
-         the focused tile marked by a hairline border.",
+        "How much chrome a window keeps while it is tiled: the same titlebar \
+         it wears while it floats, a bar one text line high with its title \
+         and a close button, or no bar at all, with the focused tile marked \
+         by a hairline border.",
         Live,
-        &["minimal", "none"],
+        &["normal", "minimal", "none"],
     ),
     ranged(
         "tiling.inner_gap",

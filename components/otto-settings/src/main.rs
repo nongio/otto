@@ -1372,8 +1372,11 @@ impl App for SettingsApp {
         if window.surface_style().is_none() {
             eprintln!("settings: no surface style — sidebar cannot be a material");
         }
+        // The window keeps the radius and re-sends it when the appearance or
+        // the tile decoration changes — a push straight at the style would be
+        // overwritten by the toolkit's default on the next such change.
+        window.set_frame_corner_radius(view::CORNER);
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::corner() as f64);
             style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
             // The pane scrolls in subsurfaces that sit over the window's own
             // buffer, so the window's rounded outline does not contain them:

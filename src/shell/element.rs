@@ -48,6 +48,7 @@ use crate::{focus::PointerFocusTarget, state::Backend};
 const VARIANT_FLOATING: u8 = 0;
 const VARIANT_MINIMAL: u8 = 1;
 const VARIANT_HIDDEN: u8 = 2;
+const VARIANT_NORMAL: u8 = 3;
 
 #[derive(Debug, Clone)]
 pub struct WindowElement(pub Arc<WindowElementInner>);
@@ -132,6 +133,7 @@ impl WindowElement {
         {
             VARIANT_MINIMAL => DecorationVariant::Minimal,
             VARIANT_HIDDEN => DecorationVariant::Hidden,
+            VARIANT_NORMAL => DecorationVariant::Normal,
             _ => DecorationVariant::Floating,
         }
     }
@@ -145,6 +147,7 @@ impl WindowElement {
                 DecorationVariant::Floating => VARIANT_FLOATING,
                 DecorationVariant::Minimal => VARIANT_MINIMAL,
                 DecorationVariant::Hidden => VARIANT_HIDDEN,
+                DecorationVariant::Normal => VARIANT_NORMAL,
             },
             std::sync::atomic::Ordering::Relaxed,
         );

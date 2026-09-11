@@ -30,13 +30,11 @@ pub const MIN_H: f32 = 360.0;
 pub const CORNER: f32 = 12.0;
 
 /// [`CORNER`], or square on a desktop configured without rounded corners —
-/// and square while the window is tiled, since a tile abuts its neighbours on
-/// every edge it touches.
+/// and whatever the tile decoration leaves a tile while the window is tiled:
+/// a smaller radius under *minimal*, square under the others, the same
+/// answer every other window on the desktop gives.
 pub fn corner() -> f32 {
-    if decoration_variant().is_tiled() {
-        return 0.0;
-    }
-    otto_kit::corners::radius(CORNER)
+    WindowDecoration::corner_radius_for(decoration_variant(), CORNER)
 }
 /// The window's own titlebar, while it floats.
 pub const TITLEBAR_H: f32 = 38.0;
@@ -44,7 +42,7 @@ pub const TITLEBAR_H: f32 = 38.0;
 /// The decoration this window is currently drawing.
 ///
 /// A tiled window abuts its neighbours, so it wears whatever
-/// `[tiling] decoration` reduces a tile to: the compact bar, or none at all
+/// `[tiling] decoration` leaves a tile: the full bar, the compact bar, or none
 /// (`specs/tiling.md`, *Decorations*). Kept here rather than passed around
 /// because every rectangle in this module is measured from the bar's height,
 /// and the pane's own surfaces are placed against the same number.
@@ -57,6 +55,7 @@ pub fn set_decoration_variant(variant: DecorationVariant) -> bool {
         DecorationVariant::Floating => 0,
         DecorationVariant::Minimal => 1,
         DecorationVariant::Hidden => 2,
+        DecorationVariant::Normal => 3,
     };
     VARIANT.swap(code, Ordering::Relaxed) != code
 }
@@ -65,6 +64,7 @@ fn decoration_variant() -> DecorationVariant {
     match VARIANT.load(Ordering::Relaxed) {
         1 => DecorationVariant::Minimal,
         2 => DecorationVariant::Hidden,
+        3 => DecorationVariant::Normal,
         _ => DecorationVariant::Floating,
     }
 }
@@ -75,7 +75,10 @@ fn decoration_variant() -> DecorationVariant {
 /// compositor-decorated window's beside it.
 pub fn titlebar_h() -> f32 {
     match decoration_variant() {
-        DecorationVariant::Floating => TITLEBAR_H,
+        // A tile under `decoration = "normal"` wears the full bar, and this
+        // window's full bar is its own — taller than the shared component's,
+        // and what every rectangle below it is measured from either way.
+        DecorationVariant::Floating | DecorationVariant::Normal => TITLEBAR_H,
         variant => WindowDecoration::height_for(variant),
     }
 }
@@ -435,7 +438,11 @@ fn titlebar_pad() -> f32 {
 /// whichever end of the bar they sit at, but still at the origin — the
 /// `Titlebar` places the group itself.
 fn window_controls() -> WindowControls {
-    WindowControls::new().with_reversed(otto_kit::controls_side::side() == ControlsSide::Right)
+    // Sized as the compositor sizes the dots on the bar next door: smaller
+    // on a minimal tile, the same group either way.
+    WindowControls::new()
+        .with_size(WindowDecoration::control_size_for(decoration_variant()))
+        .with_reversed(otto_kit::controls_side::side() == ControlsSide::Right)
 }
 
 /// The traffic lights for hit-testing, in window-local coordinates.
@@ -1590,7 +1597,10 @@ impl Settings {
             &self.title(),
             SIDEBAR_W + CONTENT_PAD,
             titlebar_h() / 2.0,
-            styles::TITLE_3_EMPHASIZED,
+            // The shared bar's type for the variant this window wears, so the
+            // title reads at the same size as a compositor-decorated
+            // window's beside it.
+            WindowDecoration::title_style_for(decoration_variant()),
             if self.active {
                 self.theme.text_primary
             } else {

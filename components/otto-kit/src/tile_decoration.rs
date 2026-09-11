@@ -8,7 +8,7 @@
 //! [`crate::desktop_appearance`] stores it here with [`set`].
 //!
 //! The setting only ever matters for a window the compositor has told is
-//! tiled: a floating window keeps its full decoration under both values.
+//! tiled: a floating window keeps its full decoration under every value.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -18,6 +18,11 @@ pub const ENV: &str = "OTTO_TILING_DECORATION";
 /// What a tile's decoration reduces to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TileDecoration {
+    /// The same bar a floating window wears — title, all three controls — on
+    /// a tile, which still squares its corners and drops its shadow. For a
+    /// desktop that tiles occasionally and wants its windows to look the same
+    /// either way.
+    Normal,
     /// A bar one text line high with the title and a close control, squared
     /// corners, no shadow. Otto's default, and i3's.
     #[default]
@@ -31,6 +36,7 @@ impl TileDecoration {
     /// The configuration token, and what goes on the wire.
     pub fn as_str(self) -> &'static str {
         match self {
+            TileDecoration::Normal => "normal",
             TileDecoration::Minimal => "minimal",
             TileDecoration::None => "none",
         }
@@ -40,6 +46,7 @@ impl TileDecoration {
     /// `None`, and the caller keeps the default rather than guessing.
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim().to_ascii_lowercase().as_str() {
+            "normal" => Some(TileDecoration::Normal),
             "minimal" => Some(TileDecoration::Minimal),
             "none" => Some(TileDecoration::None),
             _ => None,
@@ -47,7 +54,7 @@ impl TileDecoration {
     }
 }
 
-/// 0 = not resolved yet, 1 = minimal, 2 = none.
+/// 0 = not resolved yet, 1 = minimal, 2 = none, 3 = normal.
 static DECORATION: AtomicU8 = AtomicU8::new(0);
 
 /// What the desktop reduces a tile's decoration to.
@@ -62,6 +69,7 @@ pub fn decoration() -> TileDecoration {
             value
         }
         2 => TileDecoration::None,
+        3 => TileDecoration::Normal,
         _ => TileDecoration::Minimal,
     }
 }
@@ -73,6 +81,7 @@ pub fn set(value: TileDecoration) {
         match value {
             TileDecoration::Minimal => 1,
             TileDecoration::None => 2,
+            TileDecoration::Normal => 3,
         },
         Ordering::Relaxed,
     );
@@ -93,7 +102,11 @@ mod tests {
 
     #[test]
     fn tokens_round_trip() {
-        for value in [TileDecoration::Minimal, TileDecoration::None] {
+        for value in [
+            TileDecoration::Normal,
+            TileDecoration::Minimal,
+            TileDecoration::None,
+        ] {
             assert_eq!(TileDecoration::parse(value.as_str()), Some(value));
         }
         assert_eq!(TileDecoration::parse("  NONE "), Some(TileDecoration::None));

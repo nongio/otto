@@ -6753,9 +6753,9 @@ impl App for FilesApp {
             surface.xdg_window().set_app_id(app_id().to_string());
         }
 
-        if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::corner() as f64);
-        }
+        // The window keeps the radius and re-sends it when the appearance or
+        // the tile decoration changes.
+        window.set_frame_corner_radius(view::CORNER);
 
         // otto-kit's materials are translucent by design — they expect a
         // blurred backdrop behind them. Without one the desktop shows through
@@ -7425,6 +7425,16 @@ impl App for FilesApp {
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
+        // Whether the window is tiled arrives on the configure — otto-kit has
+        // already read it by the time this runs — and the chrome follows the
+        // decoration a tile wears: the lights' size and row, the header and
+        // sidebar under them, and the frame's corners, which the window
+        // itself re-sends.
+        if let Some(window) = self.window.as_ref() {
+            if view::set_decoration_variant(window.decoration_variant()) {
+                self.state.lock().unwrap().dirty = true;
+            }
+        }
         let mut browser = self.state.lock().unwrap();
         if let (Some(w), Some(h)) = (configure.new_size.0, configure.new_size.1) {
             browser.size = (w.get() as f32, h.get() as f32);

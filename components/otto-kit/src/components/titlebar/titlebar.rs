@@ -199,6 +199,11 @@ pub struct Titlebar {
     material: Option<TitlebarMaterial>,
     border_color: Option<Color>,
     padding: f32,
+    /// Inset from either end, when it differs from [`Self::padding`]. A bar
+    /// short enough that centring its contents leaves no room along the edges
+    /// sets this; everything else leaves it unset and is inset equally all
+    /// round.
+    horizontal_padding: Option<f32>,
 
     // Content
     title: Option<Box<dyn Renderable>>,
@@ -221,6 +226,7 @@ impl Titlebar {
             material: None,
             border_color: None,
             padding: 8.0,
+            horizontal_padding: None,
             title: None,
             leading: None,
             controls: None,
@@ -264,6 +270,19 @@ impl Titlebar {
     pub fn with_padding(mut self, padding: f32) -> Self {
         self.padding = padding;
         self
+    }
+
+    /// Inset the leading and trailing groups by `padding` instead of by
+    /// [`Self::with_padding`], leaving the vertical inset — and so the height
+    /// the groups are centred in — alone.
+    pub fn with_horizontal_padding(mut self, padding: f32) -> Self {
+        self.horizontal_padding = Some(padding);
+        self
+    }
+
+    /// The inset the groups sit at along the bar.
+    fn horizontal_padding(&self) -> f32 {
+        self.horizontal_padding.unwrap_or(self.padding)
     }
 
     /// Set the centered title
@@ -414,6 +433,7 @@ impl Renderable for Titlebar {
         }
 
         let content_height = self.height - self.padding * 2.0;
+        let horizontal_padding = self.horizontal_padding();
 
         // Measure both groups first: the title is centered in the space left
         // between them, and it must not slide under either side.
@@ -429,12 +449,12 @@ impl Renderable for Titlebar {
             .unwrap_or(0.0);
 
         let reserved_left = if leading_width > 0.0 {
-            leading_width + self.padding * 2.0
+            leading_width + horizontal_padding * 2.0
         } else {
             0.0
         };
         let reserved_right = if controls_width > 0.0 {
-            controls_width + self.padding * 2.0
+            controls_width + horizontal_padding * 2.0
         } else {
             0.0
         };
@@ -462,7 +482,7 @@ impl Renderable for Titlebar {
         if let Some(ref leading) = self.leading {
             leading.render_at(
                 canvas,
-                self.x + self.padding,
+                self.x + horizontal_padding,
                 self.y + self.padding,
                 content_height,
             );
@@ -470,7 +490,7 @@ impl Renderable for Titlebar {
 
         // Render controls on the right
         if let Some(ref controls) = self.controls {
-            let controls_x = self.x + self.width - controls_width - self.padding;
+            let controls_x = self.x + self.width - controls_width - horizontal_padding;
             let controls_y = self.y + self.padding;
             controls.render_at(canvas, controls_x, controls_y, content_height);
         }

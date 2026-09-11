@@ -35,6 +35,9 @@ type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>
 ///
 /// Currently has a toplevel window with a titlebar subsurface.
 /// Content and sidebar subsurfaces will be added incrementally.
+/// Corner radius of the floating frame, in logical points.
+const FRAME_CORNER_RADIUS: f32 = 36.0;
+
 #[derive(Clone)]
 pub struct ApplicationWindow {
     #[allow(clippy::arc_with_non_send_sync)]
@@ -80,7 +83,7 @@ impl ApplicationWindow {
             // rather than the flat white 2px it used to carry, which read as a
             // frame of its own on a light desktop.
             crate::surfaces::apply_hairline_border(layer);
-            layer.set_corner_radius(crate::corners::radius(36.0) as f64);
+            layer.set_corner_radius(crate::corners::radius(FRAME_CORNER_RADIUS) as f64);
             layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
         }
 
@@ -398,6 +401,23 @@ impl ApplicationWindow {
             if let Some(ref mut surface) = *surface_guard {
                 let _ = surface.handle_configure(configure, serial);
             }
+        }
+
+        // Whether the window is tiled arrives on the configure, and the
+        // frame's corners follow the decoration a tile wears — the same
+        // answer the shared bar gives, so frame and bar agree.
+        let variant = self
+            .surface
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|s| s.decoration_variant()))
+            .unwrap_or_default();
+        if let Some(style) = self.layer() {
+            let radius = crate::components::titlebar::WindowDecoration::corner_radius_for(
+                variant,
+                FRAME_CORNER_RADIUS,
+            );
+            style.set_corner_radius(radius as f64);
         }
 
         // Commit the toplevel surface after layer resize

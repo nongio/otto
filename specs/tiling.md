@@ -312,13 +312,25 @@ opening again to accept it, on the same curve.
 
 How much chrome a tile keeps is a setting, because users disagree about it.
 With *minimal*, the default, a tile gets a bar one text line high with the
-title and a close button, squared corners and no shadow: it is still the move
-handle and the route to the window's controls and menu. With *none* a tile
-gets no bar at all, and moving it is design mode or the keyboard. Tabbed and
-stacked containers draw their title strip under both settings, since it is the
-only way to see the windows they hide. The window frame keeps its rounded
-corners and its gap-borne separation from its neighbours when gaps are on;
-with gaps off the frame squares off, as it already does when maximized.
+title and the window controls drawn smaller, no shadow, and corners rounded at
+half the floating frame's radius — the full radius would swallow most of a bar
+that short: it is still the move handle and the route to the window's controls
+and menu. The controls are the same group as the floating bar's — close,
+minimize, and the zoom dot when the desktop shows it — since a tile is still
+minimized and zoomed from its bar. Its title is set one
+step down the type scale from the floating bar's, which is sized against more
+than twice the height, and its controls are inset far enough from the
+leading edge to clear the rounded corner. With *normal* a tile keeps exactly the
+titlebar it wears while it floats — the full height, the title at its usual
+size, all three controls — for a desktop that tiles occasionally and wants its
+windows to look the same either way; it still squares its corners and drops
+its shadow, since a tile abuts its neighbours whatever it wears on top. With
+*none* a tile gets no bar at all, and moving it is design mode or the
+keyboard. Tabbed and stacked containers draw their title strip under all
+three, since it is the only way to see the windows they hide. The frame's
+corners follow the bar under every decoration, whether the window is decorated
+by the compositor or draws its own chrome, so a row of tiles rounds — or
+squares — the same corner.
 
 The focused tile is marked with a border in the accent colour — a hairline one
 under *none*, where the other tiles get a neutral hairline. Drop shadows are
@@ -326,13 +338,21 @@ not drawn on tiles — nothing overlaps, so there is nothing to cast onto — an
 return when the window floats again.
 
 A window that draws its own decorations is tiled the same way and is given no
-bar under either setting; it is still moved by dragging whatever it treats as
+bar under any of the three; it is still moved by dragging whatever it treats as
 its titlebar, and the keyboard commands reach it unchanged. Because it is told
 which of its edges are tiled, it can square the corresponding corners and
 compact its own titlebar. Otto's own applications, which draw their titlebars
 themselves, follow the same setting from the client side: under *minimal* the
-titlebar takes its compact form, and under *none* they draw no bar and are
-moved by design mode or the keyboard.
+titlebar takes its compact form, under *normal* it stays exactly as it is when
+the window floats, and under *none* they draw no bar and are moved by design
+mode or the keyboard. An application whose chrome is not a bar — Files, whose
+controls sit at the top of a full-height sidebar beside a tall header — takes
+from the setting only what a bar would change. Under *minimal* its controls
+shrink and sit closer to the corner, as they do on the compact bar, and the
+header's rows and the sidebar's content move up by the same distance so the
+chrome stays one aligned block; the corner radius follows the bar's. Under
+*none* it draws no controls and moves the sidebar's content up into the row
+they left.
 
 ### What clients are told
 

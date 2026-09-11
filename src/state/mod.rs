@@ -2230,13 +2230,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             title: window.xdg_title(),
             active: is_focused,
             dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
-            // Maximized, fullscreen and tiled windows sit flush against
-            // their neighbours or the screen edges, so their frame — and with
-            // it the bar — squares off.
-            corner_radius: if window.is_maximized() || fullscreen || window.is_tiled() {
+            // Maximized and fullscreen windows sit flush against the screen
+            // edges, so their frame — and with it the bar — squares off. A
+            // tile's corners follow the decoration it wears: square under
+            // normal and none, a smaller radius under minimal, the same one
+            // otto-kit gives its own frames.
+            corner_radius: if window.is_maximized() || fullscreen {
                 0.0
             } else {
-                otto_kit::corners::radius(12.0)
+                otto_kit::components::titlebar::WindowDecoration::corner_radius_for(
+                    window.decoration_variant(),
+                    12.0,
+                )
             },
             controls_hovered: window_view.decoration_state().controls_hovered,
             pressed: window_view.decoration_state().pressed,

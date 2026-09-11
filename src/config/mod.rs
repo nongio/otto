@@ -1156,10 +1156,11 @@ pub struct TilingConfig {
     /// fraction. Clamped to `0.01..0.5`.
     #[serde(default = "default_tiling_resize_step")]
     pub resize_step: f32,
-    /// How much chrome a tile keeps: `"minimal"` — a bar one text line high
-    /// with the title and a close control — or `"none"`, where the focused
-    /// tile is marked with a hairline border instead. A floating window in a
-    /// tiling workspace keeps its full decoration either way.
+    /// How much chrome a tile keeps: `"normal"` — the same titlebar it wears
+    /// while it floats — `"minimal"`, a bar one text line high with the title
+    /// and a close control, or `"none"`, where the focused tile is marked
+    /// with a hairline border instead. A floating window in a tiling
+    /// workspace keeps its full decoration under all three.
     #[serde(default = "default_tiling_decoration")]
     pub decoration: String,
 }

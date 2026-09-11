@@ -4,7 +4,7 @@ pub mod resize;
 
 use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use wayland_client::protocol::wl_seat;
@@ -16,11 +16,26 @@ use wayland_client::Proxy;
 
 pub use application_window::{ApplicationWindow, WindowLayout};
 
+/// Corner radius of a floating window's frame, in logical points.
+const FRAME_CORNER_RADIUS: f32 = 16.0;
+
 /// Default layer augmentation - rounded corners and the palette's hairline
-fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1) {
-    layer.set_corner_radius(crate::corners::radius(16.0) as f64);
+fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1, radius: f32) {
+    layer.set_corner_radius(radius as f64);
     layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
     crate::surfaces::apply_hairline_border(layer);
+}
+
+/// `DecorationVariant` as a `u8`, so a window can remember the one its frame
+/// was last shaped for in an atomic.
+fn variant_code(variant: crate::components::titlebar::DecorationVariant) -> u8 {
+    use crate::components::titlebar::DecorationVariant;
+    match variant {
+        DecorationVariant::Floating => 0,
+        DecorationVariant::Minimal => 1,
+        DecorationVariant::Hidden => 2,
+        DecorationVariant::Normal => 3,
+    }
 }
 
 type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>;
@@ -84,6 +99,14 @@ pub struct Window {
     /// When and where the last press on the titlebar landed, for the double
     /// click that zooms the window — see [`Window::titlebar_press`].
     last_titlebar_press: PressMark,
+    /// The decoration variant the frame's corners were last shaped for, as
+    /// `DecorationVariant` maps to a `u8` — see [`Window::sync_frame_corners`].
+    frame_variant: Arc<AtomicU8>,
+    /// The frame's corner radius while the window floats, in logical points —
+    /// see [`Window::set_frame_corner_radius`]. What the window actually
+    /// wears follows the decoration variant; see
+    /// [`Window::frame_corner_radius`].
+    frame_radius: Arc<RwLock<f32>>,
 }
 
 impl Window {
@@ -100,7 +123,7 @@ impl Window {
         // Apply default layer styling immediately
         if let Some(surface_style) = surface.surface_style() {
             eprintln!("Applying corner radius to window surface style");
-            default_layer_augmentation(surface_style);
+            default_layer_augmentation(surface_style, crate::corners::radius(FRAME_CORNER_RADIUS));
         } else {
             eprintln!("Warning: No surface style available - window will not have rounded corners");
         }
@@ -121,6 +144,10 @@ impl Window {
             frosted: Arc::new(AtomicBool::new(false)),
             fades_own_material: Arc::new(AtomicBool::new(false)),
             last_titlebar_press: Arc::new(Mutex::new(None)),
+            frame_variant: Arc::new(AtomicU8::new(variant_code(
+                crate::components::titlebar::DecorationVariant::Floating,
+            ))),
+            frame_radius: Arc::new(RwLock::new(FRAME_CORNER_RADIUS)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -262,8 +289,37 @@ impl Window {
     /// this on every window when a watcher reports the appearance changed.
     pub fn refresh_style(&self) {
         if let Some(style) = self.surface_style() {
-            default_layer_augmentation(&style);
+            default_layer_augmentation(&style, self.frame_corner_radius());
         }
+    }
+
+    /// Round the frame's corners to `radius` while the window floats, instead
+    /// of the toolkit's default. Kept by the window rather than pushed once at
+    /// the style, so the radius survives an appearance change — which
+    /// re-sends every style — and follows the decoration a tile wears: the
+    /// window pushes [`Self::frame_corner_radius`] whenever either changes.
+    pub fn set_frame_corner_radius(&self, radius: f32) {
+        if let Ok(mut frame) = self.frame_radius.write() {
+            *frame = radius;
+        }
+        if let Some(style) = self.surface_style() {
+            style.set_corner_radius(self.frame_corner_radius() as f64);
+        }
+    }
+
+    /// The corner radius the frame wears right now: the floating one — see
+    /// [`Self::set_frame_corner_radius`] — shaped for the decoration variant,
+    /// and square on a desktop without rounded corners.
+    pub fn frame_corner_radius(&self) -> f32 {
+        let floating = self
+            .frame_radius
+            .read()
+            .map(|r| *r)
+            .unwrap_or(FRAME_CORNER_RADIUS);
+        crate::components::titlebar::WindowDecoration::corner_radius_for(
+            self.decoration_variant(),
+            floating,
+        )
     }
 
     /// Ask the compositor to blur what is behind this window.
@@ -500,6 +556,9 @@ impl Window {
         // and fades, since this is the one place it changes for a reason the
         // user can see.
         self.update_material(true);
+        // Whether the window is tiled arrives here too, and the frame's
+        // corners follow the decoration a tile wears.
+        self.sync_frame_corners();
         // Marked for repaint rather than repainted here. An interactive resize
         // sends a configure per pointer motion, and painting inline meant a
         // draw and an `eglSwapBuffers` on a buffer chain the driver had just
@@ -812,6 +871,25 @@ impl Window {
             DecorationVariant::tiled(crate::tile_decoration::decoration())
         } else {
             DecorationVariant::Floating
+        }
+    }
+
+    /// Shape the frame's corners for the decoration the window is drawing:
+    /// the full radius while it floats, the smaller one a minimal tile keeps,
+    /// and square for the other tiled variants — the same answer the bar
+    /// itself gives, so the two never disagree at the top corners.
+    ///
+    /// Pushed only when the variant changes. Called from every configure; an
+    /// appearance change re-sends the style through [`Self::refresh_style`],
+    /// so a `[tiling] decoration` change reaches the frame either way.
+    pub fn sync_frame_corners(&self) {
+        let variant = self.decoration_variant();
+        let code = variant_code(variant);
+        if self.frame_variant.swap(code, Ordering::Relaxed) == code {
+            return;
+        }
+        if let Some(style) = self.surface_style() {
+            style.set_corner_radius(self.frame_corner_radius() as f64);
         }
     }
 

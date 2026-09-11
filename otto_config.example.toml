@@ -451,11 +451,13 @@ colorize_icons = true
 # fraction of its extent.
 # resize_step = 0.05
 
-# How much chrome a window keeps while it is tiled. "minimal" gives it a bar
-# one text line high with its title and a close button, squared corners and no
-# shadow — i3's one-line title bar. "none" gives it no bar at all: the focused
+# How much chrome a window keeps while it is tiled. "normal" keeps the same
+# titlebar it wears while it floats — squared off at the corners and without
+# its shadow, since a tile abuts its neighbours, but otherwise unchanged.
+# "minimal" gives it a bar one text line high with its title and a close
+# button — i3's one-line title bar. "none" gives it no bar at all: the focused
 # tile is marked with a hairline border in the accent colour and the rest with
 # a neutral one, and a tile is then moved from the keyboard — sway's
 # `default_border pixel`. A floating window in a tiling workspace keeps its
-# full titlebar either way, and so does a window that draws its own.
+# full titlebar under all three, and so does a window that draws its own.
 # decoration = "minimal"

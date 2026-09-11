@@ -122,13 +122,6 @@ impl WindowControls {
         self
     }
 
-    /// Draw the close dot alone — the minimal bar a tile wears.
-    pub fn close_only(mut self) -> Self {
-        self.show_zoom = false;
-        self.show_minimize = false;
-        self
-    }
-
     /// The dots left to right.
     fn order(&self) -> Vec<WindowControl> {
         let mut order: Vec<WindowControl> = Self::ORDER

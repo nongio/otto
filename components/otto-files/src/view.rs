@@ -6,11 +6,14 @@
 
 use otto_kit::components::icon::Icon;
 use otto_kit::components::scroll::{ScrollRenderer, ScrollState};
-use otto_kit::components::titlebar::{WindowControl, WindowControls, WindowControlsState};
+use otto_kit::components::titlebar::{
+    DecorationVariant, WindowControl, WindowControls, WindowControlsState, WindowDecoration,
+};
 use otto_kit::controls_side::ControlsSide;
 use otto_kit::icons;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::model::{self, Column, Entry, Place, SearchScope, SortKey};
 
@@ -22,9 +25,113 @@ pub const MIN_W: f32 = 640.0;
 pub const MIN_H: f32 = 400.0;
 pub const CORNER: f32 = 12.0;
 
-/// [`CORNER`], or square on a desktop configured without rounded corners.
+/// [`CORNER`], or square on a desktop configured without rounded corners —
+/// and whatever the tile decoration leaves a tile while the window is tiled:
+/// a smaller radius under *minimal*, square under the others, the same
+/// answer every other window on the desktop gives.
 pub fn corner() -> f32 {
-    otto_kit::corners::radius(CORNER)
+    WindowDecoration::corner_radius_for(decoration_variant(), CORNER)
+}
+
+/// The decoration this window is currently wearing.
+///
+/// A tiled window abuts its neighbours, so it follows `[tiling] decoration`
+/// (`specs/tiling.md`, *Decorations*) — but the browser's chrome is a header
+/// beside a sidebar rather than a bar across the top, so only what a
+/// compositor-drawn bar would change changes here: the traffic lights' size,
+/// the frame's corners, and under *none*, which draws no bar at all, the
+/// sidebar's content moves up into the row the lights leave empty.
+static VARIANT: AtomicU8 = AtomicU8::new(0);
+
+/// Record the variant the compositor's last configure implies. Returns
+/// whether it changed, so the caller can repaint.
+pub fn set_decoration_variant(variant: DecorationVariant) -> bool {
+    let code = match variant {
+        DecorationVariant::Floating => 0,
+        DecorationVariant::Minimal => 1,
+        DecorationVariant::Hidden => 2,
+        DecorationVariant::Normal => 3,
+    };
+    VARIANT.swap(code, Ordering::Relaxed) != code
+}
+
+fn decoration_variant() -> DecorationVariant {
+    match VARIANT.load(Ordering::Relaxed) {
+        1 => DecorationVariant::Minimal,
+        2 => DecorationVariant::Hidden,
+        3 => DecorationVariant::Normal,
+        _ => DecorationVariant::Floating,
+    }
+}
+
+/// Whether the window draws its traffic lights at all: a tile under
+/// `decoration = "none"` has no bar, and the browser's lights go with it.
+fn controls_shown() -> bool {
+    decoration_variant() != DecorationVariant::Hidden
+}
+
+/// The traffic lights at the origin, sized for the decoration the window
+/// wears — the one group every placement below starts from.
+fn controls_group() -> WindowControls {
+    WindowControls::new().with_size(WindowDecoration::control_size_for(decoration_variant()))
+}
+
+/// How far the window's chrome — the lights, the header's rows and the
+/// sidebar's content — moves up under the decoration the window wears.
+///
+/// A minimal tile draws its lights smaller and closer to the top edge, and
+/// the header and sidebar follow by the same distance so the chrome stays one
+/// aligned block. Under *none* the header keeps its place; only the sidebar
+/// moves, into the row the absent lights leave — see [`sidebar_lift`].
+fn chrome_lift() -> f32 {
+    match decoration_variant() {
+        DecorationVariant::Minimal => {
+            let floating = CONTROLS_INSET + WindowDecoration::CONTROL_SIZE / 2.0;
+            let minimal = MINIMAL_CONTROLS_INSET + WindowDecoration::MINIMAL_CONTROL_SIZE / 2.0;
+            floating - minimal
+        }
+        _ => 0.0,
+    }
+}
+
+/// How far the sidebar's content moves up: with the chrome under a minimal
+/// tile, and into the lights' otherwise empty row when there are none.
+fn sidebar_lift() -> f32 {
+    if controls_shown() {
+        chrome_lift()
+    } else {
+        SIDEBAR_LIFT
+    }
+}
+
+/// What the sidebar gains when the lights' row is empty. Leaves the heading
+/// the same clearance from the top edge that the lights had.
+const SIDEBAR_LIFT: f32 = 30.0;
+
+/// How far in from the window's corner the lights sit under the decoration
+/// the window wears: a minimal tile's smaller dots sit closer to the edge,
+/// the way the compositor's own compact bar places them.
+fn controls_inset() -> f32 {
+    match decoration_variant() {
+        DecorationVariant::Minimal => MINIMAL_CONTROLS_INSET,
+        _ => CONTROLS_INSET,
+    }
+}
+
+/// The header's height under the decoration the window wears — [`HEADER_H`]
+/// less whatever the chrome moved up by.
+fn header_base_h() -> f32 {
+    HEADER_H - chrome_lift()
+}
+
+/// The control row's centre line under the decoration the window wears.
+fn control_cy() -> f32 {
+    CONTROL_CY - chrome_lift()
+}
+
+/// The picker toolbar's row under the decoration the window wears.
+fn toolbar_cy() -> f32 {
+    TOOLBAR_CY - chrome_lift()
 }
 
 /// Full-height sidebar — the header sits beside it, not above.
@@ -138,7 +245,7 @@ pub fn search_band_h() -> f32 {
 /// open. Everything below the chrome measures from here, so opening the strip
 /// pushes the listing down instead of drawing over it.
 pub fn header_h() -> f32 {
-    HEADER_H + search_band_h()
+    header_base_h() + search_band_h()
 }
 
 /// The picker's action row along the bottom: filter control on the left,
@@ -155,6 +262,8 @@ pub const ROW_H: f32 = 24.0;
 const CONTENT_PAD: f32 = 20.0;
 pub const ICON_SIZE: f32 = 18.0;
 const CONTROLS_INSET: f32 = 18.0;
+/// The same inset under a minimal tile, whose 11pt dots sit higher.
+const MINIMAL_CONTROLS_INSET: f32 = 10.0;
 /// Optical centres of the header's two text lines, within `HEADER_H`.
 const TITLE_CY: f32 = 40.0;
 const SUBTITLE_CY: f32 = 66.0;
@@ -168,9 +277,9 @@ const SUBTITLE_CY: f32 = 66.0;
 /// the trailing edge nothing is beside the title, and it stays put.
 fn title_cy() -> f32 {
     if shell() == Shell::Trash && otto_kit::controls_side::side() == ControlsSide::Left {
-        CONTROLS_INSET + WindowControls::new().size / 2.0
+        controls_inset() + controls_group().size / 2.0
     } else {
-        TITLE_CY
+        TITLE_CY - chrome_lift()
     }
 }
 
@@ -215,7 +324,10 @@ fn subtitle_x() -> f32 {
 /// when the desktop puts them at the trailing edge.
 fn leading_clearance() -> f32 {
     match otto_kit::controls_side::side() {
-        ControlsSide::Left => CONTROLS_INSET + WindowControls::new().width() + 14.0,
+        ControlsSide::Left if controls_shown() => {
+            controls_inset() + controls_group().width() + 14.0
+        }
+        ControlsSide::Left => 0.0,
         ControlsSide::Right => 0.0,
     }
 }
@@ -233,9 +345,9 @@ pub fn location_rect(width: f32) -> Rect {
         .max(sidebar_w() + CONTENT_PAD + NAV_GROUP_W + 16.0);
     Rect::from_ltrb(
         left,
-        TOOLBAR_CY - 15.0,
+        toolbar_cy() - 15.0,
         left + LOCATION_W,
-        TOOLBAR_CY + 15.0,
+        toolbar_cy() + 15.0,
     )
 }
 /// The path entry's field, in place of the header title.
@@ -266,7 +378,12 @@ const PATH_FIELD_H: f32 = 32.0;
 /// there was not. It exists only while the search is open, so the listing is
 /// back at [`HEADER_H`] the moment Escape closes it.
 pub fn search_band_rect(width: f32) -> Rect {
-    Rect::from_ltrb(sidebar_w(), HEADER_H, width, HEADER_H + SEARCH_BAND_H)
+    Rect::from_ltrb(
+        sidebar_w(),
+        header_base_h(),
+        width,
+        header_base_h() + SEARCH_BAND_H,
+    )
 }
 
 /// The field itself: everything in the strip the scope chips do not take.
@@ -804,7 +921,7 @@ pub fn place_rect(index: usize) -> Rect {
     const STEP: f32 = 30.0;
     Rect::from_xywh(
         10.0,
-        FIRST_Y + index as f32 * STEP,
+        FIRST_Y - sidebar_lift() + index as f32 * STEP,
         sidebar_w() - 20.0,
         26.0,
     )
@@ -824,7 +941,7 @@ pub fn place_at(x: f32, y: f32, count: usize) -> Option<usize> {
 pub fn nav_group_rect() -> Rect {
     Rect::from_xywh(
         sidebar_w() + CONTENT_PAD,
-        CONTROL_CY - NAV_BTN_H / 2.0,
+        control_cy() - NAV_BTN_H / 2.0,
         NAV_GROUP_W,
         NAV_BTN_H,
     )
@@ -869,7 +986,7 @@ pub enum NavButton {
 pub fn switcher_rect(width: f32) -> Rect {
     Rect::from_xywh(
         width - CONTENT_PAD - controls_clearance() - 114.0,
-        CONTROL_CY - SWITCHER_H / 2.0,
+        control_cy() - SWITCHER_H / 2.0,
         114.0,
         SWITCHER_H,
     )
@@ -891,7 +1008,8 @@ const CONTROL_CY: f32 = 37.0;
 fn controls_clearance() -> f32 {
     match otto_kit::controls_side::side() {
         ControlsSide::Left => 0.0,
-        ControlsSide::Right => WindowControls::new().width() + CONTENT_PAD,
+        ControlsSide::Right if controls_shown() => controls_group().width() + CONTENT_PAD,
+        ControlsSide::Right => 0.0,
     }
 }
 
@@ -899,16 +1017,16 @@ fn controls_clearance() -> f32 {
 /// desktop puts them at. `width` is the window's, not the sidebar's: at the
 /// trailing edge the group sits over the file area.
 pub fn window_controls(width: f32) -> WindowControls {
-    let controls = WindowControls::new();
+    let controls = controls_group();
     let group_w = controls.width();
     let group_h = controls.size;
     match otto_kit::controls_side::side() {
-        ControlsSide::Left => controls.at(CONTROLS_INSET, CONTROLS_INSET),
+        ControlsSide::Left => controls.at(controls_inset(), controls_inset()),
         // Sharing the trailing edge with the view switcher, the dots sit on
         // its centre line rather than at the window's own corner inset —
         // two things side by side that don't line up read as a mistake.
         ControlsSide::Right => controls
-            .at(width - CONTENT_PAD - group_w, CONTROL_CY - group_h / 2.0)
+            .at(width - CONTENT_PAD - group_w, control_cy() - group_h / 2.0)
             .with_reversed(true),
     }
 }
@@ -945,7 +1063,7 @@ const TRASH_BTN_INSET: f32 = 12.0;
 fn trash_actions_cy() -> f32 {
     match otto_kit::controls_side::side() {
         ControlsSide::Left => title_cy(),
-        ControlsSide::Right => CONTROL_CY,
+        ControlsSide::Right => control_cy(),
     }
 }
 
@@ -2476,7 +2594,7 @@ pub fn item_span_in(
 }
 
 pub fn is_drag_area(x: f32, y: f32, width: f32) -> bool {
-    if y > HEADER_H || x > width {
+    if y > header_base_h() || x > width {
         return false;
     }
     if switcher_rect(width).contains(Point::new(x, y)) {
@@ -2485,13 +2603,17 @@ pub fn is_drag_area(x: f32, y: f32, width: f32) -> bool {
     if nav_group_rect().contains(Point::new(x, y)) {
         return false;
     }
-    !window_controls(width)
-        .bounds()
-        .with_outset((4.0, 4.0))
-        .contains(Point::new(x, y))
+    !controls_shown()
+        || !window_controls(width)
+            .bounds()
+            .with_outset((4.0, 4.0))
+            .contains(Point::new(x, y))
 }
 
 pub fn control_at(x: f32, y: f32, width: f32) -> Option<WindowControl> {
+    if !controls_shown() {
+        return None;
+    }
     window_controls(width).control_at(x, y)
 }
 
@@ -2862,7 +2984,7 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     // window: it is dismissed with Cancel, and a close control beside it
     // would be a second, worse way to say the same thing — one that skips
     // the request's answer.
-    if f.action_row.is_none() {
+    if f.action_row.is_none() && controls_shown() {
         f.controls
             .apply(
                 window_controls(f.width)
@@ -3058,7 +3180,9 @@ pub const PALETTE_PAD: f32 = 8.0;
 /// this window, and tucking it under the title says so. Near the top rather
 /// than centred, so what is being typed does not move when the list under it
 /// grows.
-pub const PALETTE_TOP: f32 = HEADER_H - 30.0;
+fn palette_top() -> f32 {
+    header_base_h() - 30.0
+}
 /// How far the card's right edge sits from the window's. Nearly flush: the
 /// panel belongs to this window, and hanging it off the right keeps the
 /// sidebar and the first column in view beside it.
@@ -3149,7 +3273,7 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
     if body > 0.0 || message {
         height += PALETTE_PAD * 2.0 + body + palette_footer_h(rows, message);
     }
-    Rect::from_xywh(left, PALETTE_TOP, w, height)
+    Rect::from_xywh(left, palette_top(), w, height)
 }
 
 /// The line the message takes: the whole body when there are no rows — it
@@ -3871,7 +3995,7 @@ fn draw_sidebar(canvas: &Canvas, f: &Frame) {
     Label::new(otto_kit::t!("files-places"))
         .with_style(styles::SUBHEADLINE_EMPHASIZED)
         .with_color(theme.text_tertiary)
-        .centered_on(20.0, 54.0)
+        .centered_on(20.0, 54.0 - sidebar_lift())
         .render(canvas);
 
     for (i, place) in f.places.iter().enumerate() {
@@ -4110,7 +4234,7 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
 /// directories the reference layout has is the next thing it grows.
 fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
-    let cy = TOOLBAR_CY;
+    let cy = toolbar_cy();
     let rect = location_rect(f.width);
 
     let mut paint = Paint::default();

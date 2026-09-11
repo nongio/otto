@@ -375,19 +375,29 @@ buttons drawn by the compositor, as the titlebar controls are.
 Tiles want less chrome than floating windows, and i3 users disagree on how
 much less: i3 draws a one-line title bar by default, sway users very often
 set `default_border pixel 2` and keep only a coloured border. So it is a
-setting, `[tiling] decoration = "minimal" | "none"`, default `minimal`:
+setting, `[tiling] decoration = "normal" | "minimal" | "none"`, default
+`minimal`:
 
-- **minimal** — a bar one text line high with the title and a close button,
-  squared corners, no shadow. It keeps the move handle, the window menu and
-  the title, which is the spec's reason for keeping a bar at all.
+- **normal** — the bar the window wears while it floats: full height, the
+  title at its usual size, all three controls. Squared corners and no shadow
+  all the same, since a tile abuts its neighbours whatever it wears on top.
+- **minimal** — a bar one text line high with the title and the full control
+  group at 11pt, no shadow, and corners rounded at half the floating radius
+  (`WindowDecoration::MINIMAL_CORNER_RADIUS`) — 12pt on a 20pt bar swallows
+  most of the strip. It keeps the move handle, the window menu and the title,
+  which is the spec's reason for keeping a bar at all. Its title is set one
+  step down the type scale, and its controls inset far enough from the
+  leading edge to clear the rounded corner. `WindowDecoration::corner_radius_for`
+  is the one answer for every frame: the compositor's bar, otto-kit's window
+  frames and Settings' painted body all read it.
 - **none** — no bar; the focused tile gets a hairline border in the accent
   colour, the rest a neutral hairline. Moving a tile is then design mode or
   the keyboard. This is sway's `pixel` border.
 
-Tabbed and stacked containers draw their strip in both settings, since it
+Tabbed and stacked containers draw their strip under all three, since it
 is the only way to see the hidden windows. Client-side-decorated windows are
 told they are tiled on every touching edge and square off on their own; they
-get no bar in either setting. Floating windows in a tiling workspace keep
+get no bar under any of them. Floating windows in a tiling workspace keep
 the full floating decoration.
 
 The variant is chosen per window in `decoration_view.rs` from the
@@ -400,8 +410,9 @@ compositor-side variants never reach them. They follow the same setting
 from the client side:
 
 - the tiled xdg edge states in the configure tell the app it is tiled; the
-  otto-kit titlebar switches to its compact form and squares its corners
-  while any edge is tiled, as GTK does;
+  otto-kit titlebar switches to its compact form and rounds — or squares —
+  its corners for the variant while any edge is tiled, as GTK does; the
+  window's frame is re-rounded to match on the same configure;
 - the `minimal` / `none` choice goes out over `org.otto.Settings` like the
   theme and the controls side already do, so the app applies it live;
 - with `none` the app draws no bar and is moved by design mode or the
@@ -419,7 +430,7 @@ otto-kit apps.
 **Global tiling settings in Otto Settings.** A *Tiling* pane in
 `components/otto-settings` (a new file under `panes/`, discovered from the
 schema like the others) with every `[tiling]` key: decoration
-(`minimal`/`none`), inner and outer gap, smart gaps, resize step, and the
+(`normal`/`minimal`/`none`), inner and outer gap, smart gaps, resize step, and the
 (animation timing lives in `[animations]`, see "Animation configuration"). Each key
 gets a `spec(...)` entry in `src/settings/schema.rs` marked `Live` and an
 apply arm in `src/settings/apply.rs` that relays out every tiling workspace

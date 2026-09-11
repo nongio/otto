@@ -704,7 +704,7 @@ schema-locales-description = Preferred locales, most preferred first.
 
 # --- tiling ---
 schema-tiling-decoration-label = Tiled window decoration
-schema-tiling-decoration-description = How much chrome a window keeps while it is tiled: a bar one text line high with its title and a close button, or no bar at all, with the focused tile marked by a hairline border.
+schema-tiling-decoration-description = How much chrome a window keeps while it is tiled: the same titlebar it wears while it floats, a bar one text line high with its title and a close button, or no bar at all, with the focused tile marked by a hairline border.
 schema-tiling-inner-gap-label = Gap between tiles
 schema-tiling-inner-gap-description = Logical pixels left between two neighbouring tiles.
 schema-tiling-outer-gap-label = Gap around the tiles
