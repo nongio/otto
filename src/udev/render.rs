@@ -874,6 +874,39 @@ impl Otto<UdevData> {
         // Every frame: point each plane element at its output's node.
         if let Some(ows) = self.workspaces.output_workspaces.get(&output.name()) {
             super::planes::wire_plane_nodes(surface, ows);
+            // The chrome planes follow their content (see `fit_plane`); this
+            // runs before anything renders because a resize drops the
+            // swapchain.
+            if let Some(mode) = output.current_mode() {
+                let mode_size = (mode.size.w, mode.size.h);
+                let pos = ows.output_layer.render_position();
+                let origin = (pos.x as i32, pos.y as i32);
+                for (el, root, fit, label) in [
+                    (
+                        &mut surface.overlay_dmabuf_element,
+                        &ows.overlay_plane,
+                        &mut surface.overlay_fit,
+                        "overlay",
+                    ),
+                    (
+                        &mut surface.dock_dmabuf_element,
+                        &ows.dock_plane,
+                        &mut surface.dock_fit,
+                        "dock",
+                    ),
+                    (
+                        &mut surface.switcher_dmabuf_element,
+                        &ows.switcher_plane,
+                        &mut surface.switcher_fit,
+                        "switcher",
+                    ),
+                ] {
+                    if let Some(el) = el.as_mut() {
+                        let content = super::planes::plane_content_bounds(root, origin, mode_size);
+                        super::planes::fit_plane(el, content, mode_size, fit, label);
+                    }
+                }
+            }
         }
         // The promoted-window plane also follows its window's size and
         // position, so it is wired separately — and before anything renders,

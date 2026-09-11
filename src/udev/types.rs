@@ -245,6 +245,10 @@ pub struct SurfaceData {
     /// Which screen edge `dock_dmabuf_element` was allocated for, so the strip
     /// can be rebuilt when the dock moves.
     pub(super) dock_plane_position: Option<crate::config::DockPosition>,
+    /// Content-fitted size of the chrome planes — see `planes::fit_plane`.
+    pub(super) overlay_fit: super::planes::PlaneFit,
+    pub(super) dock_fit: super::planes::PlaneFit,
+    pub(super) switcher_fit: super::planes::PlaneFit,
     /// Downscaled composite of the planes below the overlay-UI plane
     /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
     /// vibrancy). Rebuilt only when a lower plane changes under the
