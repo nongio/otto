@@ -307,6 +307,58 @@ impl SkiaRenderer {
         if let Some(context) = self.context.as_mut() {
             context.reset(None);
         }
+        self.debug_gpu_memory();
+    }
+
+    /// `echo > /tmp/otto-purge-skia` drops everything Skia's resource cache
+    /// holds but is not using; `touch /tmp/otto-gpumem` logs the cache's
+    /// size once a second. Together they say whether GPU memory that stays
+    /// after a window closes is Skia's budgeted cache or something lost.
+    fn debug_gpu_memory(&mut self) {
+        if !crate::debug_hooks::ENABLED {
+            return;
+        }
+        let Some(context) = self.context.as_mut() else {
+            return;
+        };
+        if crate::debug_hooks::take_file("/tmp/otto-purge-skia").is_some() {
+            context.purge_unlocked_resources(skia::gpu::PurgeResourceOptions::AllResources);
+            tracing::info!(target: "otto::gpumem", "purged Skia's unlocked resources");
+        }
+        if crate::debug_hooks::toggle("/tmp/otto-gpumem") {
+            thread_local! {
+                static LAST: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+            }
+            let due = LAST.with(|last| {
+                let due = last
+                    .get()
+                    .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+                if due {
+                    last.set(Some(std::time::Instant::now()));
+                }
+                due
+            });
+            if due {
+                let usage = context.resource_cache_usage();
+                let (node_surfaces, node_surface_bytes) = layers::drawing::node_surfaces_stats();
+                let (stored, stored_bytes) = crate::textures_storage::stats();
+                tracing::info!(
+                    target: "otto::gpumem",
+                    "skia cache: {} resources, {} MiB used, {} MiB purgeable, {} MiB limit; \
+                     lay-rs node surfaces: {node_surfaces}, {} MiB; \
+                     surface textures: {stored}, {} MiB; client imports: {}; \
+                     unmapped windows still referenced: {}",
+                    usage.resource_count,
+                    usage.resource_bytes >> 20,
+                    context.resource_cache_purgeable_bytes() >> 20,
+                    context.resource_cache_limit() >> 20,
+                    node_surface_bytes >> 20,
+                    stored_bytes >> 20,
+                    self.dmabuf_cache.len(),
+                    crate::workspaces::zombie_windows(),
+                );
+            }
+        }
     }
 
     /// Delete the textures and EGLImages of plane slots dropped since the

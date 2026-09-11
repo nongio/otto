@@ -196,6 +196,19 @@ pub struct SuspendedOutput {
     pub global: Option<GlobalId>,
 }
 
+/// Every window unmapped so far, weakly — see [`zombie_windows`].
+static UNMAPPED_WINDOWS: std::sync::Mutex<Vec<std::sync::Weak<crate::shell::WindowElementInner>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// How many unmapped windows something still holds on to. A closed window
+/// that stays referenced keeps its surface, and with it every buffer the
+/// client ever attached; `debug-hooks` only.
+pub fn zombie_windows() -> usize {
+    let mut list = UNMAPPED_WINDOWS.lock().unwrap();
+    list.retain(|w| w.strong_count() > 0);
+    list.len()
+}
+
 pub struct Workspaces {
     model: Arc<RwLock<WorkspacesModel>>,
     pub output_workspaces: HashMap<String, OutputWorkspaces>,
@@ -3440,7 +3453,14 @@ impl Workspaces {
                 workspace_view.unmap_window(window_id);
             }
         });
-        self.windows_map.remove(window_id);
+        if let Some(window) = self.windows_map.remove(window_id) {
+            if crate::debug_hooks::ENABLED {
+                UNMAPPED_WINDOWS
+                    .lock()
+                    .unwrap()
+                    .push(std::sync::Arc::downgrade(&window.0));
+            }
+        }
         self.forget_window_focus(window_id);
         // Remove debug texture snapshot for this surface
         crate::textures_storage::remove(window_id);
