@@ -21,13 +21,24 @@ pub(super) fn debug_tick(
         .get_or_init(|| Mutex::new(Instant::now() - Duration::from_secs(2)))
         .lock()
         .unwrap();
-    if last.elapsed() < Duration::from_secs(1) {
+    // Realization changes are logged the frame they happen — a plane
+    // auction that flips between frames is invisible to a 1 Hz sample.
+    static LAST_REALIZATION: OnceLock<Mutex<String>> = OnceLock::new();
+    let summary = realization_summary(surface, states, expose_active);
+    let mut last_summary = LAST_REALIZATION
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap();
+    let changed = *last_summary != summary;
+    if last.elapsed() < Duration::from_secs(1) && !changed {
         return;
     }
-    *last = Instant::now();
-
-    refresh_debug_toggles(surface);
-    log_frame_realization(surface, states, expose_active);
+    *last_summary = summary.clone();
+    if last.elapsed() >= Duration::from_secs(1) {
+        *last = Instant::now();
+        refresh_debug_toggles(surface);
+    }
+    tracing::debug!(target: "otto::planes", "frame realization{}: {summary}", if changed { " CHANGED" } else { "" });
 }
 
 /// Debug: `touch /tmp/otto-tint` tints everything GPU-composited red
@@ -73,7 +84,11 @@ fn refresh_debug_toggles(surface: &mut SurfaceData) {
 /// not part of this frame at all), plus a histogram over every element
 /// smithay saw this frame — client buffers (direct scanout candidates)
 /// show up there even though their ids can't be matched to a plane.
-fn log_frame_realization(surface: &SurfaceData, states: &RenderElementStates, expose_active: bool) {
+fn realization_summary(
+    surface: &SurfaceData,
+    states: &RenderElementStates,
+    expose_active: bool,
+) -> String {
     let mut summary = String::new();
     macro_rules! log_state {
         ($el:expr, $name:literal) => {
@@ -103,12 +118,20 @@ fn log_frame_realization(surface: &SurfaceData, states: &RenderElementStates, ex
             P::Skipped => skip += 1,
         }
     }
-    tracing::debug!(
-        target: "otto::planes",
-        "frame realization: {summary}expose_active={expose_active} shadow_only={} elements: total={} zerocopy={zc} rendering={rend} skipped={skip}",
+    // Every element smithay saw, named or not: the promoted client buffer
+    // (a Wayland id) only shows up here.
+    let mut all: Vec<String> = states
+        .states
+        .iter()
+        .map(|(id, s)| format!("{:?}={:?}", id, s.presentation_state))
+        .collect();
+    all.sort();
+    format!(
+        "{summary}expose_active={expose_active} shadow_only={} elements: total={} zerocopy={zc} rendering={rend} skipped={skip} all=[{}]",
         surface.shadow_only_windows.len(),
         states.states.len(),
-    );
+        all.join(" | "),
+    )
 }
 
 /// Debug: dump every plane buffer to PNG when requested

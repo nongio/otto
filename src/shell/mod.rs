@@ -43,7 +43,7 @@ use crate::{
 
 mod element;
 mod grabs;
-mod layer;
+pub mod layer;
 pub(crate) mod ssd;
 #[cfg(feature = "xwayland")]
 mod x11;
@@ -333,6 +333,14 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                             .wl_surface()
                             .map(|root| root.id() == surface_id)
                             .unwrap_or(false);
+                        // A fullscreen window scans out directly too: its
+                        // commit is the frame, so it asks for a pass the same
+                        // way — the pass is not owed to every VBlank.
+                        if window.is_fullscreen() && is_root_commit {
+                            self.workspaces
+                                .scanout_commit_pending
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
                         if window.is_scanned_out() && is_root_commit {
                             self.workspaces
                                 .scanout_commit_pending

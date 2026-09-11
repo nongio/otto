@@ -1,5 +1,4 @@
 use std::collections::hash_map::HashMap;
-use std::sync::atomic::AtomicBool;
 #[cfg(feature = "metrics")]
 use std::sync::Arc;
 
@@ -86,8 +85,10 @@ pub struct UdevData {
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,
-    /// Flag set by `request_redraw` to trigger a render on next loop iteration.
-    pub(super) render_requested: AtomicBool,
+    /// Bumped by `request_redraw` (input, client commits). A surface whose
+    /// last pass predates the current value is owed a frame; compared, never
+    /// consumed, so every output sees every request.
+    pub(super) redraw_generation: std::sync::atomic::AtomicU64,
     /// Monotonic count of scene ticks that reported damage. The lay-rs
     /// damage flag is consumed by whichever output ticks first; surfaces
     /// compare `SurfaceData::rendered_damage_gen` against this to know a
@@ -147,10 +148,20 @@ pub struct SurfaceData {
     /// Exponential moving average of render time in microseconds.
     /// Used to schedule reschedule timers with proper headroom.
     pub(super) avg_render_time_us: f32,
-    /// Frames remaining before going idle. Reset on activity, counts down
-    /// each no-damage frame so animations that briefly report zero pending
-    /// transactions aren't cut short.
-    pub(super) idle_countdown: u32,
+    /// A draw pass is on its way: a deadline timer is inserted, or a frame
+    /// is queued and its VBlank decides the next one. While set, nothing
+    /// else schedules a pass for this surface — the pending one sees every
+    /// change that lands before it runs.
+    pub(super) frame_scheduled: bool,
+    /// The redraw-request generation the last pass started from. A newer
+    /// generation at VBlank means input or a commit arrived since, and the
+    /// next pass is owed.
+    pub(super) seen_redraw_gen: u64,
+    /// The last pass had a reason to draw every VBlank regardless of scene
+    /// damage: a fullscreen scanout window (its commits leave no scene
+    /// damage), a screencopy or screencast consumer, a drag icon, or an
+    /// animated cursor.
+    pub(super) continuous_frames: bool,
     /// Whether this surface has ever submitted a frame. An output must
     /// always draw its first frame: the global scene-damage flag may have
     /// been consumed by another output's render before this surface gets

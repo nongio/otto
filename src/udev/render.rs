@@ -220,6 +220,35 @@ impl Otto<UdevData> {
             }
             surface.prefetched_scene_damage = Some(scene_has_damage);
 
+            // The frame this VBlank acknowledges was the scheduled one. Only
+            // a reason schedules the next: scene damage, an animation, a
+            // redraw request the last pass predates (input, a commit), a
+            // promoted window's commit, or a consumer that needs every
+            // VBlank. Content at 30 fps then costs 30 passes a second, not
+            // one per refresh; an idle desktop costs none until an event.
+            surface.frame_scheduled = false;
+            let redraw_gen = self
+                .backend_data
+                .redraw_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+            let wants_frame =
+                super::schedule::wants_frame_after_vblank(&super::schedule::VblankInputs {
+                    scene_has_damage,
+                    continuous_frames: surface.continuous_frames,
+                    redraw_gen,
+                    seen_redraw_gen: surface.seen_redraw_gen,
+                    animations_pending: self.scene_element.has_pending_animations(),
+                    scanout_commit_pending: self
+                        .workspaces
+                        .scanout_commit_pending
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                });
+            if !wants_frame {
+                trace!("nothing to draw after VBlank on {:?}; idling", crtc);
+                return;
+            }
+            surface.frame_scheduled = true;
+
             // ── Frame-pipeline Phase 2: schedule the draw at the deadline ─────
             //
             // We want to submit the next page flip as close to the upcoming
@@ -321,7 +350,6 @@ impl Otto<UdevData> {
                 {
                     el.request_full_render();
                 }
-                surface.idle_countdown = 3;
             }
         }
         let nodes: Vec<_> = self.backend_data.backends.keys().copied().collect();
@@ -712,6 +740,12 @@ impl Otto<UdevData> {
         } else {
             return;
         };
+        // Everything requested up to now is seen by this pass; a request that
+        // lands later is owed another one (checked at VBlank and by the loop).
+        surface.seen_redraw_gen = self
+            .backend_data
+            .redraw_generation
+            .load(std::sync::atomic::Ordering::Acquire);
 
         // A demoted window's content was hidden/blanked in the windows plane
         // while it was promoted; on demotion force a full-buffer redraw so the
@@ -1192,33 +1226,54 @@ impl Otto<UdevData> {
                 if foreign_chrome {
                     None
                 } else {
-                    // ~3σ of the full-res blur (sigma 40): content further
-                    // away cannot visibly change what the blur samples.
-                    const BLUR_PAD: f32 = super::backdrop::BLUR_REACH;
+                    // The chrome's blur consumers are the shapes its surfaces
+                    // declared through otto-surface-style — root or
+                    // subsurface (an island's pills sit on a mostly
+                    // transparent canvas the size of its expanded state).
+                    // Positions are Otto's drawn geometry, output-local
+                    // physical px (see `shell::layer::drawn_geometry`). Chrome
+                    // without a declared blur draws over the plane below and
+                    // never samples the backdrop, so it adds nothing here; an
+                    // empty list is a real answer, not an unknown.
+                    use smithay::reexports::wayland_server::Resource as _;
+                    use smithay::wayland::compositor::{
+                        with_surface_tree_downward, SubsurfaceCachedState, TraversalAction,
+                    };
                     let out_scale = output.current_scale().fractional_scale() as f32;
                     let map = layer_map_for_output(&output);
-                    let rects: Vec<layers::skia::Rect> = map
-                        .layers()
-                        .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
-                        .filter_map(|l| map.layer_geometry(l))
-                        .map(|g| {
-                            let mut r = layers::skia::Rect::from_xywh(
-                                g.loc.x as f32 * out_scale,
-                                g.loc.y as f32 * out_scale,
-                                g.size.w as f32 * out_scale,
-                                g.size.h as f32 * out_scale,
+                    let effects = &self.background_effects;
+                    let mut rects: Vec<layers::skia::Rect> = Vec::new();
+                    if let Some(output_geo) = self.workspaces.output_geometry(&output) {
+                        for l in map
+                            .layers()
+                            .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
+                        {
+                            let g = crate::shell::layer::drawn_geometry(l.wl_surface(), output_geo);
+                            let root_loc: Point<i32, Logical> = g.loc - output_geo.loc;
+                            with_surface_tree_downward(
+                                l.wl_surface(),
+                                root_loc,
+                                |_, states, loc| {
+                                    let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+                                    TraversalAction::DoChildren(*loc + cs.current().location)
+                                },
+                                |surface, states, loc| {
+                                    let mut cs = states.cached_state.get::<SubsurfaceCachedState>();
+                                    let sloc = *loc + cs.current().location;
+                                    if let Some((bounds, _)) = effects.get(&surface.id()) {
+                                        rects.push(layers::skia::Rect::from_xywh(
+                                            (sloc.x + bounds.loc.x) as f32 * out_scale,
+                                            (sloc.y + bounds.loc.y) as f32 * out_scale,
+                                            bounds.size.w as f32 * out_scale,
+                                            bounds.size.h as f32 * out_scale,
+                                        ));
+                                    }
+                                },
+                                |_, _, _| true,
                             );
-                            r.outset((BLUR_PAD, BLUR_PAD));
-                            r
-                        })
-                        .collect();
-                    // No chrome rect at all while the plane is active is a
-                    // state this narrowing does not model — stay safe.
-                    if rects.is_empty() {
-                        None
-                    } else {
-                        Some(rects)
+                        }
                     }
+                    Some(rects)
                 }
             }
         };
@@ -1677,46 +1732,25 @@ impl Otto<UdevData> {
             self.update_dnd();
         }
 
-        // Update the running average of render time and idle countdown (EMA with α=0.1)
+        // Update the running average of render time (EMA with α=0.1)
         let render_time_us = start.elapsed().as_micros() as f32;
         let has_animations = self.scene_element.has_pending_animations();
         let was_rendered = result.as_ref().map(|o| o.rendered).unwrap_or(false);
+        let (frame_scheduled, reschedule) =
+            super::schedule::after_pass(was_rendered, reschedule, has_animations);
         if let Some(device) = self.backend_data.backends.get_mut(&node) {
             if let Some(surface) = device.surfaces.get_mut(&crtc) {
                 surface.avg_render_time_us =
                     surface.avg_render_time_us * 0.9 + render_time_us * 0.1;
-                // Reset countdown on any activity: animations, actual frame
-                // submitted, or a render triggered by input/client commit.
-                // Short tail — see commentary in init.rs dispatch loop.
-                if has_animations || was_rendered {
-                    surface.idle_countdown = 3;
-                }
                 if was_rendered {
                     surface.has_rendered_once = true;
                 }
                 if result.is_ok() {
                     surface.rendered_damage_gen = frame_gen;
                 }
+                surface.frame_scheduled = frame_scheduled;
             }
         }
-
-        // Apply idle countdown: if reschedule was requested (no-damage path)
-        // but no animations, count down before going idle.
-        let reschedule = if reschedule && !has_animations {
-            let remaining = self
-                .backend_data
-                .backends
-                .get_mut(&node)
-                .and_then(|d| d.surfaces.get_mut(&crtc))
-                .map(|s| {
-                    s.idle_countdown = s.idle_countdown.saturating_sub(1);
-                    s.idle_countdown
-                })
-                .unwrap_or(0);
-            remaining > 0
-        } else {
-            reschedule
-        };
 
         if reschedule {
             let output_refresh = match output.current_mode() {
@@ -1763,10 +1797,10 @@ impl Otto<UdevData> {
             for (c, s) in d.surfaces.iter_mut() {
                 if s.rendered_damage_gen < gen {
                     all_caught_up = false;
-                    if s.idle_countdown == 0 {
+                    if !s.frame_scheduled {
                         // Marks the surface as scheduled — the same invariant
                         // the input kick in init.rs relies on.
-                        s.idle_countdown = 3;
+                        s.frame_scheduled = true;
                         lagging.push((*n, *c));
                     }
                 }
@@ -2416,6 +2450,15 @@ pub(super) fn render_output_frame<'a>(
         workspace_render_elements.push(WorkspaceRenderElements::Fps(element.clone()));
     }
 
+    // Reasons to draw that no event announces, so the VBlank handler has
+    // to keep passes coming while any of them holds.
+    // A fullscreen scanout window is not a reason: its commits arrive as
+    // `scanout_commit` events, one pass per frame, like a promoted window.
+    surface.continuous_frames = screencopy_pending
+        || dnd_needs_draw
+        || (pointer_in_output
+            && cursor_manager.is_current_cursor_animated(output_scale.round() as i32));
+
     let (output_elements, clear_color, should_draw) = {
         let cursor_needs_draw = pointer_in_output || cursor_left_output;
         // Fullscreen scanout must always draw: the promoted buffer's
@@ -2691,8 +2734,9 @@ pub(super) fn render_output_frame<'a>(
                             let buf_x = pos.x as f64 - geo_loc.x;
                             let buf_y =
                                 pos.y as f64 + win.decoration_height() as f64 * scale.y - geo_loc.y;
-                            let elem =
-                                smithay::wayland::compositor::with_states(&wl_surface, |states| {
+                            let elem = smithay::wayland::compositor::with_states(
+                                &wl_surface,
+                                |states| {
                                     // Same location math as the tree walk in
                                     // render_elements_from_surface_tree: the
                                     // root element sits at origin + its view
@@ -2705,10 +2749,26 @@ pub(super) fn render_output_frame<'a>(
                                     {
                                         Some(view) => {
                                             location += view.offset.to_f64().to_physical(scale);
+                                            tracing::debug!(
+                                                target: "otto::planes",
+                                                "topwin view dst={:?} src={:?} offset={:?} loc={:?}",
+                                                view.dst,
+                                                view.src,
+                                                view.offset,
+                                                location,
+                                            );
                                         }
                                         // Unmapped — nothing to scan out.
                                         None => return Ok(None),
                                     }
+                                    // A plane is placed on whole pixels. A
+                                    // fractional origin makes smithay round
+                                    // the destination rect to a size one
+                                    // pixel off the buffer, and the kernel
+                                    // then attaches a hardware scaler to the
+                                    // plane — of which i915 has two per pipe.
+                                    let location: Point<f64, Physical> =
+                                        location.to_i32_round::<i32>().to_f64();
                                     WaylandSurfaceRenderElement::from_surface(
                                         renderer,
                                         &wl_surface,
@@ -2717,7 +2777,8 @@ pub(super) fn render_output_frame<'a>(
                                         1.0,
                                         Kind::ScanoutCandidate,
                                     )
-                                });
+                                },
+                            );
                             match elem {
                                 Ok(Some(e)) => {
                                     {

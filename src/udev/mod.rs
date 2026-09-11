@@ -12,6 +12,7 @@ pub mod init;
 pub mod input_config;
 pub mod planes;
 pub mod render;
+pub mod schedule;
 pub mod types;
 
 // Re-export public API
@@ -158,8 +159,8 @@ impl Backend for UdevData {
         // No-op: cursor rendering handled directly in render_surface
     }
     fn request_redraw(&mut self) {
-        self.render_requested
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.redraw_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
     fn reconfigure_input_devices(&mut self) {
         let config = crate::config::Config::current();
