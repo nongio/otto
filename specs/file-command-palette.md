@@ -280,7 +280,9 @@ the palette adds no new capability.
   run or brings it back, and a click on a line does the same; a line left
   out keeps its name, struck through behind a hollow mark, so it can be
   brought back. The dry run is made again without it — numbers close up,
-  conflicts clear — and Return runs on what is left in. Typing returns to
+  conflicts clear — and Return runs on what is left in. Leaving every file
+  out leaves nothing: the file under the cursor is not put back in its
+  place, and a command that needs files refuses to run. Typing returns to
   the field, where a space is a space, and what was toggled out stays out.
   The provider never learns of the toggle: it is asked about a smaller
   selection, and the host threads its lines back among the names left out.

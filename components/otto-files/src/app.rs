@@ -3613,20 +3613,12 @@ impl Browser {
     /// The situation a palette command is previewed and run against: the
     /// window's, less whatever the dry run's lines were toggled out of it.
     fn palette_situation(&self) -> command::Situation {
-        let mut situation = self.situation();
         let excluded = self
             .palette
             .as_ref()
             .map(|palette| palette.excluded())
             .unwrap_or_default();
-        if !excluded.is_empty() {
-            situation.selection.retain(|path| {
-                !path
-                    .file_name()
-                    .is_some_and(|name| excluded.contains(&*name.to_string_lossy()))
-            });
-        }
-        situation
+        self.situation().excluding(&excluded)
     }
 
     /// What a palette command would act on, by name and in order: the

@@ -813,6 +813,15 @@ impl CommandProvider for ScriptProvider {
         let command = self
             .find(&request.id)
             .ok_or_else(|| format!("{} is not a script here", request.id))?;
+        // Offered when the palette opened, but the dry run's lines can since
+        // have been toggled out down to nothing. A script that needs files
+        // must not be started without any: at best it fails with its own
+        // tool's complaint, and a script less careful than the samples could
+        // take "no targets" to mean something broader.
+        let needs_targets = matches!(command.described.when.targets, Targets::Some | Targets::One);
+        if needs_targets && targets_of(situation).is_empty() {
+            return Err(otto_kit::t_owned!("files-nothing-selected"));
+        }
         let input = self.input(&command, request, situation);
         let report = self.report.clone();
         let locale = self.locale.clone();
@@ -1004,6 +1013,31 @@ esac
             [Change::Created { path }] if path == &dir.0.join("made.out")
         ));
         assert!(dir.0.join("made.out").exists());
+    }
+
+    /// A dry run's lines toggled out down to nothing leave a command offered
+    /// when the palette opened but with no files left to act on. It is
+    /// refused rather than started: the script would otherwise run with
+    /// whatever "no targets" means to it.
+    #[test]
+    fn a_script_that_needs_files_is_not_run_without_any() {
+        let dir = Dir::new("toggled-out");
+        dir.script("touch", TOUCH);
+        std::fs::write(dir.0.join("notes.txt"), "x").unwrap();
+        let mut provider = ScriptProvider::discovered(&dir.0);
+
+        // Offered on the file, then that file toggled out of the run.
+        let excluded: std::collections::HashSet<String> =
+            ["notes.txt".to_string()].into_iter().collect();
+        let situation = situation(&dir.0, &["notes.txt"]).excluding(&excluded);
+
+        let request = Request::new("scripts:touch.touch", Some("made.out".into()));
+        assert_eq!(
+            provider.run(&request, &situation).err(),
+            Some(otto_kit::t_owned!("files-nothing-selected")),
+            "refused, for having nothing to act on"
+        );
+        assert!(!dir.0.join("made.out").exists(), "and the script never ran");
     }
 
     #[test]
