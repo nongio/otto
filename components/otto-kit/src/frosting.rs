@@ -47,15 +47,38 @@ pub const UNFROSTED_MIN_ALPHA: u8 = 0xEB;
 /// `colour` as a frosted surface should paint it: as given while frosting is
 /// on, taken up to at least [`UNFROSTED_MIN_ALPHA`] when it is off.
 pub fn material(colour: skia_safe::Color) -> skia_safe::Color {
+    material_at_least(colour, UNFROSTED_MIN_ALPHA)
+}
+
+/// The floor for menus without their frost. Higher than
+/// [`UNFROSTED_MIN_ALPHA`]: a menu opens over whatever is on screen, and its
+/// rows of small text are read against that with nothing blurring it.
+pub const POPUP_UNFROSTED_MIN_ALPHA: u8 = 0xF2;
+
+/// [`material`] for menus: taken up to at least
+/// [`POPUP_UNFROSTED_MIN_ALPHA`] when frosting is off.
+pub fn popup_material(colour: skia_safe::Color) -> skia_safe::Color {
+    material_at_least(colour, POPUP_UNFROSTED_MIN_ALPHA)
+}
+
+/// The floor for the dock and the top bar without their frost. Lower than
+/// [`UNFROSTED_MIN_ALPHA`]: they sit on the desktop and nothing but the
+/// wallpaper passes under them, so a see-through bar still reads as a bar.
+/// Menus, cards and the rest float over arbitrary content and keep the
+/// higher floor.
+pub const BAR_UNFROSTED_MIN_ALPHA: u8 = 0xCC;
+
+/// [`material`] for the dock and the top bar: taken up to at least
+/// [`BAR_UNFROSTED_MIN_ALPHA`] when frosting is off.
+pub fn bar_material(colour: skia_safe::Color) -> skia_safe::Color {
+    material_at_least(colour, BAR_UNFROSTED_MIN_ALPHA)
+}
+
+fn material_at_least(colour: skia_safe::Color, floor: u8) -> skia_safe::Color {
     if enabled() {
         colour
     } else {
-        skia_safe::Color::from_argb(
-            colour.a().max(UNFROSTED_MIN_ALPHA),
-            colour.r(),
-            colour.g(),
-            colour.b(),
-        )
+        skia_safe::Color::from_argb(colour.a().max(floor), colour.r(), colour.g(), colour.b())
     }
 }
 

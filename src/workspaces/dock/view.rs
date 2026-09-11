@@ -302,9 +302,7 @@ impl DockView {
                 height: taffy::Dimension::Length(initial_bar_height),
             })
             .blend_mode(crate::theme::chrome_blend_mode())
-            .background_color(crate::theme::chrome_material(
-                theme_colors().materials_medium,
-            ))
+            .background_color(crate::theme::bar_material(theme_colors().materials_medium))
             // The same hairline the menus and the labels carry.
             .border_width((otto_kit::theme::Theme::HAIRLINE_WIDTH * draw_scale, None))
             .border_color(theme_colors().hairline)
@@ -1219,7 +1217,7 @@ impl DockView {
         let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
 
         self.bar_layer.set_background_color(
-            crate::theme::chrome_material(theme_colors().materials_medium),
+            crate::theme::bar_material(theme_colors().materials_medium),
             None,
         );
         self.bar_layer

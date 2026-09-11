@@ -33,6 +33,7 @@ Context menus are hierarchical popup menus that display items for user selection
 6. Disabled items are rendered with reduced opacity and do not respond to user interaction.
 6a. The menu background uses the theme's popup material, which is more opaque than the chrome materials used for bars and sidebars: a menu floats over arbitrary window content and its labels must stay readable against it.
 6b. Under a compositor offering only a standard blur protocol (`ext_background_effect_v1`'s blur capability, e.g. KWin 6.7) rather than Otto's own surface style, a menu is still frosted: because it is an `xdg_popup` — its own surface, not a subsurface of a window — it can set a blur region of its own, shaped to the menu's own rounded rect. Under a compositor offering neither protocol, the popup material is drawn at full opacity in a shade a step off the content ground instead, per otto-kit's window-focus fallback, and stays that way regardless of focus.
+6c. With the desktop's frosting setting off, nothing is blurred behind a menu, so its popup material is taken up to at least 95% opacity (`otto_kit::frosting::POPUP_UNFROSTED_MIN_ALPHA`). Other unfrosted chrome floors at 92%, and the dock and the top bar at 80%, because only the wallpaper passes under them.
 
 ### Keyboard Navigation
 
