@@ -3402,7 +3402,7 @@ impl Workspaces {
             let h = (bounds.height() / scale).ceil() as i32;
             // Grow the rect 2pt towards the screen interior so windows keep a
             // sliver of clearance from the dock's inner edge.
-            match self.dock.position() {
+            let geometry = match self.dock.position() {
                 crate::config::DockPosition::Bottom => {
                     Rectangle::new((x, y - 2).into(), (w, h).into())
                 }
@@ -3412,7 +3412,8 @@ impl Workspaces {
                 crate::config::DockPosition::Right => {
                     Rectangle::new((x - 2, y).into(), (w + 2, h).into())
                 }
-            }
+            };
+            geometry
         } else {
             Rectangle::new((0, 0).into(), (0, 0).into())
         }
@@ -5267,6 +5268,18 @@ impl Workspaces {
 
     /// Both promotion tiers for `output`, computed in one top-to-bottom walk
     /// (they share every stability gate and the same occlusion state).
+
+    /// Debug: which global gate closed plane promotion, logged when it changes.
+    fn plane_gate_log(reason: &'static str) {
+        use std::sync::Mutex;
+        static LAST: Mutex<&'static str> = Mutex::new("");
+        let mut last = LAST.lock().unwrap();
+        if *last != reason {
+            *last = reason;
+            tracing::debug!(target: "otto::planes", "plane candidates gate: {reason}");
+        }
+    }
+
     pub fn get_plane_candidates(&self, output: &Output) -> PlaneCandidates {
         use smithay::utils::{Physical, Rectangle};
 
@@ -5277,30 +5290,51 @@ impl Workspaces {
         if crate::render_elements::scene_dmabuf_element::NO_SCANOUT
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("no-scanout-toggle");
+                return PlaneCandidates::none();
+            }
         }
         if self.get_show_all() || self.is_expose_transitioning() {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("show-all-or-expose-transition");
+                return PlaneCandidates::none();
+            }
         }
         if self.is_animating.load(std::sync::atomic::Ordering::Relaxed) {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("workspaces-animating");
+                return PlaneCandidates::none();
+            }
         }
         // Candidates are strictly PER OUTPUT: a window may only be promoted
         // onto the CRTC of the output whose space contains it — promoting the
         // primary's topmost window on every CRTC painted it on all screens.
         let Some(ows) = self.output_workspaces.get(&output.name()) else {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("no-output-workspaces");
+                return PlaneCandidates::none();
+            }
         };
         let Some(current_workspace) = ows.workspace_views.get(ows.current_workspace) else {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("no-current-workspace-for-output");
+                return PlaneCandidates::none();
+            }
         };
         // Fullscreen has its own dedicated direct-scanout path.
         if current_workspace.get_fullscreen_mode() || current_workspace.get_fullscreen_animating() {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("fullscreen-mode-or-animating");
+                return PlaneCandidates::none();
+            }
         }
         // The tiling drop-zone overlay composites above windows.
         if self.tiling_overlay.is_visible() {
-            return PlaneCandidates::none();
+            {
+                Self::plane_gate_log("tiling-overlay");
+                return PlaneCandidates::none();
+            }
         }
         let is_primary = self
             .primary_output
@@ -5322,40 +5356,32 @@ impl Workspaces {
                 (b.width() as i32, b.height() as i32).into(),
             ))
         }
-        let mut occluders: Vec<Rectangle<i32, Physical>> = Vec::new();
-        // Use the *visible* layers, not the wrap/positioning containers —
-        // those can span the whole output and would demote every window.
-        // Dock / OSD chrome is attached to the primary output only — it never
-        // occludes windows on a secondary output.
-        if is_primary {
-            if !self.dock.is_hidden() {
-                occluders.extend(layer_rect(&self.dock.bar_layer));
+        fn layer_box(layer: &layers::prelude::Layer) -> Option<Rectangle<i32, Physical>> {
+            let b = layer.render_bounds_transformed();
+            if b.width() <= 0.0 || b.height() <= 0.0 {
+                return None;
             }
-            if self.osd.is_visible() {
-                occluders.extend(layer_rect(&self.osd.view_layer));
-            }
+            Some(Rectangle::new(
+                (b.x() as i32, b.y() as i32).into(),
+                (b.width() as i32, b.height() as i32).into(),
+            ))
         }
-        // The switcher, unlike the dock, follows the pointer across outputs.
-        if self.app_switcher.is_visible() && self.is_app_switcher_output(output) {
-            if let Some(layer) = self.app_switcher.view.layer.read().unwrap().as_ref() {
-                occluders.extend(layer_rect(layer));
-            }
-        }
-        {
-            use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
-            let map = smithay::desktop::layer_map_for_output(output);
-            for l in map
-                .layers()
-                .filter(|l| matches!(l.layer(), WlrLayer::Top | WlrLayer::Overlay))
-            {
-                if let Some(geo) = map.layer_geometry(l) {
-                    occluders.push(Rectangle::new(
-                        geo.loc.to_f64().to_physical(scale).to_i32_round(),
-                        geo.size.to_f64().to_physical(scale).to_i32_round(),
-                    ));
-                }
-            }
-        }
+        // Compositor chrome is NOT an occluder. The dock, the OSD and the
+        // app switcher each scan out from a plane of their own above every
+        // client plane, and their backdrop blur sees a promoted buffer
+        // through the composite fold-in — so a window under any of them stays
+        // z-correct on its plane. Only content composited into the windows
+        // plane can hide a promoted buffer, and that is handled per window
+        // below (`overlaps_above`, popups, subsurfaces).
+        let occluders: Vec<Rectangle<i32, Physical>> = Vec::new();
+        let _ = (is_primary, layer_box, layer_rect);
+        // Layer-shell chrome (the bar, the islands) is NOT an occluder: it
+        // lives on the overlay plane above any window plane, so a promoted
+        // window under it stays z-correct, and its backdrop blur sees the
+        // promoted buffer through the composite fold-in. Its layer-shell
+        // geometry is also mostly transparent reservation (an island claims
+        // its expanded size at rest), and treating it as opaque kept every
+        // maximized window off its plane.
 
         // ---- per-window eligibility, top-to-bottom ----
         let Some(space) = ows.spaces.get(ows.current_workspace) else {
@@ -5440,11 +5466,17 @@ impl Workspaces {
                     })
                 })
                 .unwrap_or(false);
-            // Cap the promoted set: the hardware admits ~5 simultaneous
-            // planes and bg/windows/dock/cursor already take four — a second
-            // client plane evicts the windows plane (measured), which costs
-            // more than compositing the extra window. Windows past the cap
-            // still occlude the ones below.
+            // Cap the promoted set. The plane budget on i915 is memory
+            // bandwidth, not a plane count: the kernel sums every active
+            // plane's area x bpp x refresh and refuses the atomic test when no
+            // memory QGV point covers it ("No QGV points provide sufficient
+            // memory bandwidth"). Two full-screen planes (primary + chrome
+            // overlay) plus the dock strip leave room for one client plane on
+            // the Framework's LPDDR4x at 2880x1920@120; without the overlay
+            // plane two side-by-side windows both scan out. A refused
+            // candidate is composited by smithay (`ScanoutFailed`) at no
+            // per-frame cost while idle. Windows past the cap still occlude
+            // the ones below.
             //
             // Windows with subsurfaces (SSD decorations) are eligible too:
             // only their ROOT surface goes to the plane, the decoration
@@ -5463,7 +5495,7 @@ impl Workspaces {
             // clip in the composite path, so scanning the buffer out raw
             // squares off the corners. Those windows fall through to the
             // subtree tier below, which renders the whole thing.
-            const MAX_PROMOTED: usize = 1;
+            const MAX_PROMOTED: usize = 2;
             // Gates both tiers share: the window must be the unobstructed
             // topmost one, holding still, with nothing composited over it.
             let stable = !overlaps_above && !animating && !has_popups && !overlaps_occluder;
@@ -6174,6 +6206,19 @@ impl Workspaces {
         let animation = self
             .layers_engine
             .add_animation_from_transition(&transition, true);
+        // Clear on the ANIMATION, not only the transaction: a transaction
+        // replaced by a later change to the same property loses its
+        // on_finish, and the flag wedged `true` after leaving fullscreen —
+        // no window promoted again until the next workspace switch.
+        {
+            let is_animating = self.is_animating.clone();
+            animation.on_finish(
+                move |_: f32| {
+                    is_animating.store(false, std::sync::atomic::Ordering::Relaxed);
+                },
+                true,
+            );
+        }
         let tr = self
             .layers_engine
             .schedule_changes(&changes, animation)
@@ -6406,6 +6451,24 @@ impl Workspaces {
             return None;
         }
         if let Some(transition) = &transition {
+            // Only layers that actually move. A no-op scroll (leaving
+            // fullscreen re-applies offset 0 after the exit animation
+            // already targets it) replaced the running transaction with one
+            // lay-rs never finishes, and `is_animating` wedged `true`: no
+            // window was promoted again and the backdrop rebuilt every frame.
+            let mut changes = Vec::new();
+            for (name, ows) in self.output_workspaces.iter() {
+                if output_name.is_none() || output_name == Some(name.as_str()) {
+                    let at = ows.workspaces_layer.render_position().x;
+                    if (at - (-offset)).abs() > 0.5 {
+                        changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
+                    }
+                }
+            }
+            if changes.is_empty() {
+                tracing::debug!(target: "otto::popups", "apply-scroll offset={offset}: already there, no animation");
+                return None;
+            }
             // Mark as animating
             tracing::debug!(target: "otto::popups", "is_animating(true) site=apply-scroll offset={offset}");
             self.is_animating
@@ -6414,11 +6477,16 @@ impl Workspaces {
             let animation = self
                 .layers_engine
                 .add_animation_from_transition(transition, true);
-            let mut changes = Vec::new();
-            for (name, ows) in self.output_workspaces.iter() {
-                if output_name.is_none() || output_name == Some(name.as_str()) {
-                    changes.push(ows.workspaces_layer.change_position((-offset, 0.0)));
-                }
+            // See scroll variant above: the animation's finish survives a
+            // replaced transaction.
+            {
+                let is_animating = self.is_animating.clone();
+                animation.on_finish(
+                    move |_: f32| {
+                        is_animating.store(false, std::sync::atomic::Ordering::Relaxed);
+                    },
+                    true,
+                );
             }
             let tr = self
                 .layers_engine

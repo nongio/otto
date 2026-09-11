@@ -67,9 +67,14 @@ vibrancy even though the content behind it lives on other planes.
   blur-bearing plane. The consumer regions are: the frosted shapes the dock
   and the switcher actually draw (the bar, a hovered icon's label, the
   switcher card — not their whole strips), and — for the overlay plane —
-  the layer-shell chrome surfaces' rects (top bar, islands) plus the bounds
-  of any mapped popup, each outset by the blur's reach (the band past a
-  shape's edge whose content still affects the blurred result), in the
+  the blur shapes the layer-shell chrome surfaces declared through
+  otto-surface-style (root or subsurface, positioned by the compositor's own
+  drawn geometry, not smithay's layer map, which arranges non-exclusive
+  panels below their own spacer) plus the bounds of any mapped popup. Chrome
+  without a declared blur is not a consumer. Regions are exact: the backdrop
+  pre-blur is confined to each consumer's rect with mirrored edges (as lay-rs
+  confines an in-scene blur), so no reach band is needed, and a consumer
+  region that was not part of the previous pre-blur forces one rebuild. In the
   steady state; the interest widens to the full output only while something
   transient or unbounded is up (expose, OSD, tiling overlay, DnD, a selector
   animation). A steady-state window redrawing below the chrome band, beside
@@ -121,10 +126,13 @@ vibrancy even though the content behind it lives on other planes.
   without this the topmost window would be absent from every blur backdrop
   (dock bubbles/popups showing pre-window content), and promote/demote
   transitions would visibly flip the blur between with-window and
-  without-window composites. Occluder-based demotion (below) still keeps
-  windows under the primary chrome strips unpromoted, but overlay UI that
-  appears above a promoted window (tooltips, dock popups, islands) relies
-  on this fold-in.
+  without-window composites. No compositor chrome is an occluder: the dock,
+  the OSD, the switcher, the top bar and the islands each sit on a plane
+  above any window plane and their blur relies on this fold-in, so a window
+  under any of them stays on its plane (verified: a playing video under the
+  dock bar and under the held-open switcher keeps its plane as far as the
+  bandwidth budget allows). Layer-shell geometry is in any case mostly
+  transparent reservation.
 
 ## Non-Goals
 
@@ -143,11 +151,7 @@ vibrancy even though the content behind it lives on other planes.
   multi-output.md).
 - Direct-scanout promotion is evaluated independently per output: candidates
   are drawn only from that output's own current workspace, and the
-  promoted-window cap (see below) applies per output, not globally. Dock and
-  OSD occluder rects are only applied on the primary output — that chrome is
-  primary-only and never occludes a secondary output's candidates. The
-  app-switcher occluder rect is applied on whichever output currently hosts
-  the switcher panel, which need not be the primary (see multi-output.md).
+  promoted-window cap (see below) applies per output, not globally.
   The set of windows actually applied to plane state
   is the union of every output's per-output candidate set, so one output's
   promotion decision cannot demote a window promoted on another output.
@@ -287,19 +291,26 @@ vibrancy even though the content behind it lives on other planes.
 - The 3-finger workspace swipe (finger-drag, before any animation) gates
   all direct scanout: the drag moves content with no animation flag, and a
   fixed plane would not follow it.
-- The promoted-window set is capped (currently 1): the hardware admits ~5
-  simultaneous planes and bg/windows/dock/cursor take four — a second
-  client plane evicts the windows plane, which costs more than
-  compositing the extra window. The cap is shared across both tiers: at
-  most one window is promoted per output, by one tier or the other. Tier 2
+- The promoted-window set is capped (currently 2). The plane budget on
+  i915 is memory bandwidth, not a plane count: the kernel sums every
+  active plane's area x bytes-per-pixel x refresh and refuses the atomic
+  test when no memory QGV point covers it. Two full-screen planes
+  (primary + chrome overlay) plus the dock strip leave room for one
+  client plane on a 2880x1920@120 LPDDR4x laptop; the second is refused
+  and smithay composites it, which costs nothing while it is idle. With
+  the overlay plane free (no Top/Overlay layer surface mapped) two
+  side-by-side windows both scan out. Plane origins are snapped to whole
+  pixels: a fractional origin makes the destination rect a pixel off the
+  buffer, and i915 then attaches one of its two per-pipe scalers to the
+  plane. Tier 2 only runs when tier 1 promoted nothing, and takes at most
+  one window per output. Tier 2
   is the more exposed of the two here, because unlike tier 1 it does not
   also save the per-frame GPU pass — if its plane evicts the windows plane
   it is a straight loss, so it must be measured, not assumed.
-- Scanout candidate selection uses only STABLE geometry (dock bar bounds,
-  app-switcher/OSD view bounds, layer-shell Top/Overlay rects, window
-  rects) — never per-frame scene state such as bubbled blur regions, which
-  are rebuilt every engine update and oscillate promote/demote (content
-  flicker). A window overlapping any of those occluders, owning a MAPPED
+- Scanout candidate selection uses only STABLE geometry (window rects) —
+  never per-frame scene state such as bubbled blur regions, which are
+  rebuilt every engine update and oscillate promote/demote (content
+  flicker). A window owning a MAPPED
   popup (mapped, not merely alive — GTK keeps closed popovers' surfaces
   around for reuse), animating, or covered by a higher window is not
   promoted.
