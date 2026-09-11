@@ -382,7 +382,37 @@ impl<BackendData: Backend> Otto<BackendData> {
             })
             .collect();
         for output in dirty {
+            self.tiling_readmit_returning(&output);
             self.relayout_workspace(&output, true);
+        }
+    }
+
+    /// Insert the windows unminimize queued on `output`'s current workspace.
+    ///
+    /// Each one joins next to the focused leaf, like a window that was just
+    /// mapped; one that is no longer tileable — it went fullscreen or was
+    /// closed in the meantime — is dropped and stays floating.
+    fn tiling_readmit_returning(&mut self, output: &Output) {
+        let Some(workspace) = self.workspaces.current_tiling_workspace(output) else {
+            return;
+        };
+        let returning = match workspace.tiling.write() {
+            Ok(mut state) => std::mem::take(&mut state.returning),
+            Err(_) => return,
+        };
+        for id in returning {
+            let Some(window) = self.workspaces.windows_map.get(&id).cloned() else {
+                continue;
+            };
+            let known = workspace
+                .tiling
+                .read()
+                .map(|s| s.tree.contains(&id))
+                .unwrap_or(true);
+            if known || !self.is_tileable(&window) {
+                continue;
+            }
+            self.tiling_insert_leaf(output, &workspace, id);
         }
     }
 

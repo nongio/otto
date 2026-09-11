@@ -134,6 +134,61 @@ mod tiling_tree_tests {
 
     #[test]
     #[serial]
+    fn a_window_back_from_the_dock_rejoins_the_tree() {
+        let (handle, windows) = setup(&["tile-a", "tile-b"]);
+        handle.focus_window("tile-a");
+        handle.toggle_tiling();
+        handle.settle(600);
+        assert_eq!(cells(&handle).len(), 2);
+
+        // Minimizing leaves the tree to the other window.
+        handle.minimize_window("tile-b");
+        handle.settle(1200);
+        let remaining = cells(&handle);
+        assert_eq!(
+            remaining.len(),
+            1,
+            "a minimized window leaves the tree: {remaining:?}"
+        );
+        assert_eq!(remaining[0].0, "tile-a");
+        // Smart gaps: a lone tile fills the usable area with no gap at all.
+        assert_close(
+            remaining[0].1,
+            handle.usable_zone(),
+            "the survivor takes the whole area",
+        );
+
+        // Coming back, it is a tile again, next to the focused one, and the
+        // survivor gives up half of its cell.
+        handle.unminimize_window("tile-b");
+        handle.settle(1200);
+        let restored = cells(&handle);
+        assert_eq!(
+            restored.len(),
+            2,
+            "an unminimized window rejoins the tree: {restored:?}"
+        );
+        let a = cell(&handle, "tile-a");
+        let b = cell(&handle, "tile-b");
+        assert!(
+            (a.2 - b.2).abs() <= 8,
+            "the two tiles share the width: {a:?} {b:?}"
+        );
+        let geometry = handle
+            .window_logical_geometry("tile-b")
+            .expect("the returned window is mapped");
+        assert_eq!(
+            (geometry.0, geometry.1),
+            (b.0, b.1),
+            "the returned window sits at its cell origin"
+        );
+
+        drop(windows);
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
     fn a_third_window_splits_the_focused_cell() {
         let (handle, mut windows) = setup(&["tile-a", "tile-b"]);
         handle.focus_window("tile-b");

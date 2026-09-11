@@ -6841,6 +6841,16 @@ impl UnminimizeContext {
 
         window.set_is_minimised(false);
 
+        // Minimizing took the window out of its tiling tree; coming back it
+        // rejoins the layout rather than floating over it. The insertion
+        // needs the compositor, so it is queued for `flush_tiling_relayout`.
+        if let Ok(mut tiling) = workspace.tiling.write() {
+            if tiling.enabled {
+                tiling.returning.push(wid.clone());
+                tiling.dirty = true;
+            }
+        }
+
         if let Some(drawer) = dock.remove_window_element(&wid) {
             // If the window layer was cleaned up (stale handle), skip the
             // animation and just remap the window so it reappears.

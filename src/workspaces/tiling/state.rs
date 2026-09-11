@@ -63,6 +63,13 @@ pub struct TilingState {
     /// and only the compositor can run the relayout, so it rides on this flag
     /// and is picked up on the next event-loop iteration.
     pub dirty: bool,
+    /// Windows coming back from the dock that have not rejoined the tree
+    /// yet. Unminimize runs inside `Workspaces`, after the workspace-switch
+    /// animation when the window lives elsewhere, and only the compositor can
+    /// insert a leaf, so the id waits here and the relayout flush that reads
+    /// `dirty` adopts it next to the focused leaf (`specs/tiling.md`,
+    /// *Restoring*).
+    pub returning: Vec<ObjectId>,
     /// An armed split axis: the next insertion splits the focused cell this
     /// way rather than following the cell's shape. Cleared by the insertion.
     pub preselect: Option<Axis>,
@@ -122,6 +129,7 @@ impl TilingState {
         self.preselect = None;
         self.focused_container = None;
         self.dirty = false;
+        self.returning.clear();
         self.design = TilingDesignState::default();
     }
 

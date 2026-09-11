@@ -747,6 +747,39 @@ impl HeadlessHandle {
         });
     }
 
+    /// Send `title` to the dock, as its minimize button would.
+    pub fn minimize_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.workspaces.minimize_window(&window);
+        });
+    }
+
+    /// Bring `title` back from the dock, as clicking its dock icon would.
+    pub fn unminimize_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(id) = state
+                .workspaces
+                .windows_map
+                .iter()
+                .find(|(_, w)| w.xdg_title() == title)
+                .map(|(id, _)| id.clone())
+            else {
+                return;
+            };
+            state.workspaces.unminimize_window(&id);
+        });
+    }
+
     /// Title of the window that currently holds the seat's keyboard focus.
     pub fn focused_window_title(&self) -> Option<String> {
         self.query(|state| {
