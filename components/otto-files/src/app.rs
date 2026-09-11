@@ -6779,8 +6779,8 @@ impl App for FilesApp {
         // blur at all (see `otto_kit::backdrop`). The panels are filled in
         // rather than left translucent in both cases, so what that isolates is
         // the compositor's blur work and not the window's legibility.
-        let blur =
-            otto_kit::backdrop::blur_available() && std::env::var_os("OTTO_FILES_NO_BLUR").is_none();
+        let blur = otto_kit::backdrop::blur_available()
+            && std::env::var_os("OTTO_FILES_NO_BLUR").is_none();
         window.set_background_blur(blur);
         self.state.lock().unwrap().blur_available = blur;
 

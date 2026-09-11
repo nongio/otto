@@ -137,7 +137,11 @@ pub(crate) struct Binding {
 /// The manager is bound on a queue of its own so its capabilities can be read
 /// with a roundtrip before the application is ready, without dispatching
 /// anything of the application's early.
-pub(crate) fn init(conn: &Connection, globals: &GlobalList, surface_style: bool) -> Option<Binding> {
+pub(crate) fn init(
+    conn: &Connection,
+    globals: &GlobalList,
+    surface_style: bool,
+) -> Option<Binding> {
     let mut queue = conn.new_event_queue::<Probe>();
     let qh = queue.handle();
     let manager = globals
@@ -277,11 +281,17 @@ mod tests {
 
     #[test]
     fn the_override_only_steps_down() {
-        assert_eq!(resolve(true, true, Some("effect")), Backdrop::BackgroundEffect);
+        assert_eq!(
+            resolve(true, true, Some("effect")),
+            Backdrop::BackgroundEffect
+        );
         assert_eq!(resolve(true, false, Some("effect")), Backdrop::None);
         assert_eq!(resolve(false, true, Some("none")), Backdrop::None);
         assert_eq!(resolve(false, false, Some("effect")), Backdrop::None);
-        assert_eq!(resolve(false, true, Some("style")), Backdrop::BackgroundEffect);
+        assert_eq!(
+            resolve(false, true, Some("style")),
+            Backdrop::BackgroundEffect
+        );
     }
 
     #[test]

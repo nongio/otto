@@ -262,8 +262,12 @@ mod tests {
 
     #[test]
     fn reads_a_key_from_its_own_group_only() {
-        let kdeglobals = "[General]\nTheme=wrong\n\n[Icons]\nTheme=WhiteSur\n\n[KDE]\nTheme=also-wrong\n";
-        assert_eq!(ini_value(kdeglobals, "Icons", "Theme").as_deref(), Some("WhiteSur"));
+        let kdeglobals =
+            "[General]\nTheme=wrong\n\n[Icons]\nTheme=WhiteSur\n\n[KDE]\nTheme=also-wrong\n";
+        assert_eq!(
+            ini_value(kdeglobals, "Icons", "Theme").as_deref(),
+            Some("WhiteSur")
+        );
         let gtk = "[Settings]\ngtk-theme-name=Adwaita\ngtk-icon-theme-name = \"Newaita\"\n";
         assert_eq!(
             ini_value(gtk, "Settings", "gtk-icon-theme-name").as_deref(),

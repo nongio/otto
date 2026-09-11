@@ -303,7 +303,11 @@ mod tests {
     fn solid_materials_are_opaque_and_off_the_content_ground() {
         for (dark, mut theme, ground) in [
             (false, Theme::light_palette(), Color::WHITE),
-            (true, Theme::dark_palette(), Color::from_rgb(0x1C, 0x1C, 0x1E)),
+            (
+                true,
+                Theme::dark_palette(),
+                Color::from_rgb(0x1C, 0x1C, 0x1E),
+            ),
         ] {
             theme.with_solid_materials(dark);
             for material in [
