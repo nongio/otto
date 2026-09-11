@@ -20,6 +20,7 @@ use crate::portal::desktop_path;
 /// interface, from before the generic one existed.
 const OTTO_DESKTOP_KEYS: &[(&str, &str)] = &[
     ("rounded-corners", "rounded_corners"),
+    ("frosting", "frosting"),
     ("window-controls-side", "window_controls_side"),
     ("maximize-button", "show_maximize_button"),
 ];
@@ -287,6 +288,7 @@ fn portal_keys_for(id: &str) -> &'static [(&'static str, &'static str)] {
         "icon_theme" => &[("org.freedesktop.appearance", "icon-theme")],
         "audio.sound_theme" => &[("org.gnome.desktop.sound", "theme-name")],
         "rounded_corners" => &[("org.otto.desktop", "rounded-corners")],
+        "frosting" => &[("org.otto.desktop", "frosting")],
         "window_controls_side" => &[("org.otto.desktop", "window-controls-side")],
         "show_maximize_button" => &[("org.otto.desktop", "maximize-button")],
         _ => &[],

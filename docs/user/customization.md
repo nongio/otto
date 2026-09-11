@@ -110,6 +110,7 @@ so what a light tint has to work with is the source icon's luminance.
 | `font_family` | [Theming](theming.md#fonts) | Otto's own interface type. Needs a restart |
 | `icon_theme` | [Theming](theming.md#icon-theme) | The source icons, before any tint |
 | `rounded_corners` | [Theming](theming.md#rounded-corners) | Rounded or squared window corners |
+| `frosting` | [Theming](theming.md#frosting) | Blurred translucent chrome, or the same surfaces nearly opaque |
 | `window_controls_side` | [Window Management](window-management.md#decorations) | Close/minimize/maximize on the left or right |
 | `dock.position` | [Dock](dock.md#position) | Bottom, left or right |
 | `dock.size`, `dock.magnification` | [Dock](dock.md#size) | How big, and whether icons grow under the pointer |
@@ -118,7 +119,7 @@ so what a light tint has to work with is the source icon's luminance.
 | `workspaces.switch_duration`, `workspaces.switch_bounce` | [Workspaces](workspaces.md#configuring) | How fast, and how springy, the scroll between workspaces is |
 
 Almost everything here applies live: the wallpaper, the accent colour, the
-colour scheme, corners, the controls side, the icon and cursor themes and every
+colour scheme, corners, frosting, the controls side, the icon and cursor themes and every
 `dock.*` setting all change what is on screen as you save them. Only the
 interface font and the interface scale need a restart — the font is baked into
 caches shared with the client toolkits, and the scale reaches every output and

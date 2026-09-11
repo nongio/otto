@@ -309,7 +309,8 @@ impl Window {
         let Some(style) = self.surface_style() else {
             return;
         };
-        let frosted = frosted && self.blur_wanted.load(Ordering::Relaxed);
+        let frosted =
+            frosted && self.blur_wanted.load(Ordering::Relaxed) && crate::frosting::enabled();
         if self.frosted.swap(frosted, Ordering::Relaxed) == frosted {
             return;
         }
@@ -432,7 +433,11 @@ impl Window {
 
     /// Whether the compositor should be frosting the surface right now.
     fn wants_frost(&self) -> bool {
-        self.blur_wanted.load(Ordering::Relaxed) && self.is_activated()
+        // The desktop's `frosting` setting overrides what the application
+        // asked for: with it off every window wears its opaque material.
+        self.blur_wanted.load(Ordering::Relaxed)
+            && self.is_activated()
+            && crate::frosting::enabled()
     }
 
     fn set_blend_mode(&self, style: &otto_surface_style_v1::OttoSurfaceStyleV1, frost: bool) {

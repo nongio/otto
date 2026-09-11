@@ -704,6 +704,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.push("XDG_SESSION_CLASS=user".to_string());
                 assignments.extend(crate::locale_env::published().iter().cloned());
                 assignments.push(crate::export_rounded_corners());
+                assignments.push(crate::export_frosting());
                 assignments.push(crate::export_window_controls_side());
                 assignments.push(crate::export_maximize_button());
                 assignments.push(crate::export_color_scheme());

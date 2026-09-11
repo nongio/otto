@@ -136,9 +136,14 @@ impl TopBarApp {
         };
 
         let theme = AppContext::current_theme();
-        let c = skia_safe::Color4f::from(theme.material_medium);
+        // Frosted while the desktop frosts its chrome; filled in otherwise.
+        let c = skia_safe::Color4f::from(otto_kit::frosting::material(theme.material_medium));
         style.set_background_color(c.r as f64, c.g as f64, c.b as f64, c.a as f64);
-        style.set_blend_mode(BlendMode::BackgroundBlur);
+        style.set_blend_mode(if otto_kit::frosting::enabled() {
+            BlendMode::BackgroundBlur
+        } else {
+            BlendMode::Normal
+        });
         style.set_masks_to_bounds(ClipMode::Enabled);
         style.set_corner_radius(otto_kit::corners::radius(BAR_CORNER_RADIUS) as f64);
         style.set_shadow(0.25, 8.0, 0.0, 3.0, 0.0, 0.0, 0.0);

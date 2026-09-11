@@ -151,7 +151,7 @@ setting. Today these are reconciled with a changed configuration:
 - all of `dock.*` — size, position, autohide, magnification, magnification
   amount and spread, icon tint, tint colour and tint strength;
 - `appswitcher.colorize_icons` and `appswitcher.follow_cursor`;
-- the appearance settings: `theme_scheme`, `accent_color`, `rounded_corners`,
+- the appearance settings: `theme_scheme`, `accent_color`, `rounded_corners`, `frosting`,
   `window_controls_side`, `show_maximize_button`, `cursor_theme`,
   `cursor_size`, `icon_theme`, `background_image` and `background_color`;
 - all of `input.*` — the touchpad and pointer settings by reconfiguring the
@@ -217,7 +217,7 @@ one, and that is different work for each of them:
   own titlebar — learn from the Settings portal, which relays Otto's `Changed`
   signal. `theme_scheme`, `accent_color` and `icon_theme` have freedesktop
   keys (`color-scheme`, `accent-color`, `icon-theme`). `rounded_corners`,
-  `window_controls_side` and `show_maximize_button` have none, so they go out
+  `frosting`, `window_controls_side` and `show_maximize_button` have none, so they go out
   under Otto's own namespace, `org.otto.desktop`, beside `locales`.
 
   Otto's own applications do not depend on that relay for those three: the
@@ -357,7 +357,7 @@ caused it.
 The window presents a list of panes and the selected pane's contents. The panes
 are:
 
-- **General** — appearance (light/dark), accent colour, rounded corners, which
+- **General** — appearance (light/dark), accent colour, rounded corners, frosting, which
   end of a title bar the window controls sit at, font family, background
   colour and image, cursor theme and size, icon theme, and the display
   language, which is what every part of Otto localises itself against. That

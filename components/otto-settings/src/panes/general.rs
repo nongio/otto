@@ -28,6 +28,9 @@ pub fn build() -> Pane {
                         Control::Toggle(true),
                     )
                     .id("rounded_corners"),
+                    Row::new(otto_kit::t!("settings-frosting"), Control::Toggle(true))
+                        .detail(otto_kit::t!("settings-frosting-detail"))
+                        .id("frosting"),
                     Row::new(
                         otto_kit::t!("settings-window-controls"),
                         Control::Select("left".into()),

@@ -2,7 +2,7 @@ use layers::{
     engine::NodeRef,
     prelude::{taffy, Layer, LayerTree, LayerTreeBuilder, View},
     taffy::prelude::FromLength,
-    types::{BlendMode, BorderRadius, PaintColor, Size},
+    types::{BorderRadius, PaintColor, Size},
 };
 
 use crate::config::Config;
@@ -129,9 +129,9 @@ pub fn render_appswitcher_panel(
     let apps_tree = render_appswitcher(state, view);
 
     LayerTreeBuilder::with_key("appswitcher_panel")
-        .blend_mode(BlendMode::BackgroundBlur)
+        .blend_mode(crate::theme::chrome_blend_mode())
         .background_color(PaintColor::Solid {
-            color: crate::theme::theme_colors().materials_thin,
+            color: crate::theme::chrome_material(crate::theme::theme_colors().materials_thin),
         })
         .size((
             Size::points(w, h),

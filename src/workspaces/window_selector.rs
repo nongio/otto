@@ -851,11 +851,11 @@ pub fn view_window_selector(
                 None,
             ))
             .size((text_layer_size, None))
-            .blend_mode(layers::prelude::BlendMode::BackgroundBlur)
+            .blend_mode(crate::theme::chrome_blend_mode())
             .border_corner_radius((BorderRadius::new_single(8.0 * draw_scale), None))
             .background_color((
                 PaintColor::Solid {
-                    color: Color::new_rgba(1.0, 1.0, 1.0, 0.4),
+                    color: crate::theme::chrome_material(Color::new_rgba(1.0, 1.0, 1.0, 0.4)),
                 },
                 None,
             ))

@@ -738,7 +738,11 @@ impl PaneSurfaces {
         // shadow follow the corners instead of squaring them off.
         style.set_corner_radius(12.0 * scale);
         style.set_shadow(0.30, 28.0 * scale, 0.0, 10.0 * scale, 0.0, 0.0, 0.0);
-        style.set_blend_mode(otto_kit::protocols::otto_surface_style_v1::BlendMode::BackgroundBlur);
+        style.set_blend_mode(if otto_kit::frosting::enabled() {
+            otto_kit::protocols::otto_surface_style_v1::BlendMode::BackgroundBlur
+        } else {
+            otto_kit::protocols::otto_surface_style_v1::BlendMode::Normal
+        });
 
         // Nothing here asks where the display is: that is worked out once per
         // opening and once per closing, in `resting_for`, because the answer is

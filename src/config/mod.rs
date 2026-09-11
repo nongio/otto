@@ -61,6 +61,15 @@ pub struct Config {
     /// `otto_kit::corners`), so changing it takes a restart.
     #[serde(default = "default_rounded_corners")]
     pub rounded_corners: bool,
+    /// Frosting: the translucent, blurred material behind the desktop's own
+    /// chrome — the dock, the top bar, the launcher, the app switcher, the
+    /// exposé labels, the OSD and the selectors. `false` draws the same
+    /// surfaces nearly opaque instead, and the compositor stops blurring the
+    /// desktop for them.
+    ///
+    /// Applies live; published to the components like `rounded_corners`.
+    #[serde(default = "default_frosting")]
+    pub frosting: bool,
     /// Which end of a window's titlebar the close, minimize and zoom controls
     /// sit at: `"left"` or `"right"`. On the right the three swap order, so
     /// close stays the outermost one.
@@ -147,6 +156,7 @@ impl Default for Config {
             use_10bit_color: false,
             accent_color: default_accent_color(),
             rounded_corners: default_rounded_corners(),
+            frosting: default_frosting(),
             window_controls_side: default_window_controls_side(),
             show_maximize_button: false,
             keyboard_shortcuts: shortcuts::default_shortcut_map(),
@@ -1126,6 +1136,10 @@ fn default_accent_color() -> String {
 }
 
 fn default_rounded_corners() -> bool {
+    true
+}
+
+fn default_frosting() -> bool {
     true
 }
 

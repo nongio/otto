@@ -322,6 +322,14 @@ pub static SETTINGS: &[SettingSpec] = &[
          panels.",
         Live,
     ),
+    spec(
+        "frosting",
+        Bool,
+        "Frosting",
+        "The translucent, blurred material behind the dock, the top bar, the \
+         launcher and the desktop's own panels.",
+        Live,
+    ),
     labelled_choice(
         "window_controls_side",
         "Window controls",

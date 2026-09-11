@@ -574,7 +574,11 @@ pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
         ss.set_corner_radius(PANEL_RADIUS as f64);
         ss.set_masks_to_bounds(ClipMode::Enabled);
         ss.set_shadow(0.35, 24.0, 0.0, 8.0, 0.0, 0.0, 0.0);
-        ss.set_blend_mode(BlendMode::BackgroundBlur);
+        ss.set_blend_mode(if otto_kit::frosting::enabled() {
+            BlendMode::BackgroundBlur
+        } else {
+            BlendMode::Normal
+        });
         ss.set_contents_gravity(ContentsGravity::TopLeft);
         ss.set_anchor_point(0.5, 0.5);
     }

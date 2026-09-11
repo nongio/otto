@@ -1476,7 +1476,11 @@ impl ContextMenu {
                 shadow.g() as f64 / 255.0,
                 shadow.b() as f64 / 255.0,
             );
-            scene_surface.set_blend_mode(BlendMode::BackgroundBlur);
+            scene_surface.set_blend_mode(if crate::frosting::enabled() {
+                BlendMode::BackgroundBlur
+            } else {
+                BlendMode::Normal
+            });
         }
     }
 

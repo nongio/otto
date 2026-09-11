@@ -606,10 +606,11 @@ fn apply_card_colour(card: &SubsurfaceSurface) {
     // taken up to at least `CARD_MIN_ALPHA` on top of that: the card is large
     // and full of small text, and a busy desktop showing through it costs more
     // legibility than the frost gives back.
-    let colour = skia_safe::Color4f::from(at_least_opaque(
+    // Filled in entirely while the desktop's frosting is off.
+    let colour = skia_safe::Color4f::from(otto_kit::frosting::material(at_least_opaque(
         AppContext::current_theme().material_popup,
         CARD_MIN_ALPHA,
-    ));
+    )));
     style.set_background_color(
         colour.r as f64,
         colour.g as f64,
@@ -631,7 +632,11 @@ fn apply_card_material(card: &SubsurfaceSurface) {
     let Some(style) = card.base_surface().surface_style() else {
         return;
     };
-    style.set_blend_mode(BlendMode::BackgroundBlur);
+    style.set_blend_mode(if otto_kit::frosting::enabled() {
+        BlendMode::BackgroundBlur
+    } else {
+        BlendMode::Normal
+    });
     style.set_corner_radius(
         otto_kit::corners::radius(RADIUS) as f64 * AppContext::fractional_scale(),
     );

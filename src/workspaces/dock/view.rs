@@ -12,7 +12,7 @@ use layers::{
     prelude::{taffy, Layer, Point, Spring, TimingFunction},
     skia,
     taffy::{prelude::FromLength, style::Style},
-    types::{BlendMode, Size},
+    types::Size,
     view::{BuildLayerTree, LayerTreeBuilder},
 };
 use otto_kit::prelude::{ContextMenuStyle, MenuItem};
@@ -301,8 +301,10 @@ impl DockView {
                 width: taffy::percent(1.0_f32),
                 height: taffy::Dimension::Length(initial_bar_height),
             })
-            .blend_mode(BlendMode::BackgroundBlur)
-            .background_color(theme_colors().materials_medium)
+            .blend_mode(crate::theme::chrome_blend_mode())
+            .background_color(crate::theme::chrome_material(
+                theme_colors().materials_medium,
+            ))
             // The same hairline the menus and the labels carry.
             .border_width((otto_kit::theme::Theme::HAIRLINE_WIDTH * draw_scale, None))
             .border_color(theme_colors().hairline)
@@ -1216,8 +1218,12 @@ impl DockView {
         let draw_scale = Config::with(|config| config.screen_scale) as f32 * 0.8;
         let dock_size_multiplier = Config::with(|config| config.dock.size.clamp(0.5, 2.0)) as f32;
 
+        self.bar_layer.set_background_color(
+            crate::theme::chrome_material(theme_colors().materials_medium),
+            None,
+        );
         self.bar_layer
-            .set_background_color(theme_colors().materials_medium, None);
+            .set_blend_mode(crate::theme::chrome_blend_mode());
         self.bar_layer
             .set_border_color(theme_colors().hairline, None);
         self.bar_layer

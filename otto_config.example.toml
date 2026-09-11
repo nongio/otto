@@ -23,6 +23,12 @@ background_color = "#40C8E0"  # Fallback gradient color (bottom) when background
 # and handed to the components in the environment, so a change takes a restart.
 rounded_corners = true
 
+# Frosting: the translucent, blurred material behind Otto's own chrome — the
+# dock, the top bar, the launcher, the app switcher, the exposé labels, the
+# OSD and the selectors. false draws those surfaces nearly opaque instead and
+# stops blurring the desktop for them. Applies live.
+frosting = true
+
 # Which end of a window's titlebar the close, minimize and zoom controls sit
 # at: "left" or "right". On the right the three swap order, so close stays the
 # outermost one. Also read at startup.

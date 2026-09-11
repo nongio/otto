@@ -7,7 +7,7 @@ use layers::{
     engine::animation::{Spring, TimingFunction, Transition},
     prelude::{taffy, BorderRadius, Layer, LayerTree, LayerTreeBuilder, Point, View},
     taffy::style::Style,
-    types::{BlendMode, Size},
+    types::Size,
     view::RenderLayerTree,
 };
 use otto_kit::components::{
@@ -346,7 +346,7 @@ fn render_menu(state: &ContextMenuState, _view: &View<ContextMenuState>) -> Laye
                 }),
             ))
             .border_corner_radius(BorderRadius::new_single(style.corner_radius * draw_scale))
-            .blend_mode(BlendMode::BackgroundBlur)
+            .blend_mode(crate::theme::chrome_blend_mode())
             .shadow_color(shadow_color)
             .shadow_offset(((0.0, 4.0 * draw_scale).into(), None))
             .shadow_radius((16.0 * draw_scale, None))

@@ -79,6 +79,13 @@ pub fn export_rounded_corners() -> String {
     otto_kit::corners::export(config::Config::with(|c| c.rounded_corners))
 }
 
+/// Publish `frosting` the same way: the bar and the launcher ask the
+/// compositor for their frost through the surface-style protocol, and they
+/// only know whether to ask by reading this.
+pub fn export_frosting() -> String {
+    otto_kit::frosting::export(config::Config::with(|c| c.frosting))
+}
+
 /// Publish `window_controls_side` the same way, and for the same reason: an
 /// otto-kit client draws its own titlebar, and only the compositor reads the
 /// configuration file.
