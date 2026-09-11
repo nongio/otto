@@ -4392,17 +4392,22 @@ impl Workspaces {
             // including popups which sit above other overlay content.
             let _ = overlay_plane.add_sublayer(&self.layer_shell_top);
             let _ = overlay_plane.add_sublayer(&self.layer_shell_overlay);
+            // The dock shares the overlay plane. i915 charges every KMS plane
+            // the full pixel rate whatever its size, and at 2880x1920@120 that
+            // admits four planes: primary, one chrome plane, and two client
+            // planes — a dock plane of its own would take the second client's.
+            // Its container keeps the full-screen size its layout centers in.
+            // Below the OSD and the popups, above the layer-shell chrome.
+            let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
+            let _ = overlay_plane.add_sublayer(&dock_plane.clone());
             let _ = overlay_plane.add_sublayer(&self.overlay_layer);
             let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
-            // App switcher and dock get their own full-screen containers (so
-            // their existing centering layout keeps working) rendered through
-            // strip viewports onto dedicated KMS planes — their animations no
-            // longer redraw the shared overlay buffer.
+            // The app switcher keeps a full-screen container (so its centering
+            // layout keeps working) rendered through a viewport onto a KMS
+            // plane of its own while it is up.
             let _ = switcher_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
-            let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
-            let _ = output_layer.add_sublayer(&dock_plane.clone());
         } else {
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());

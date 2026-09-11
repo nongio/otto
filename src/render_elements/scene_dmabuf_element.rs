@@ -186,6 +186,8 @@ struct Inner {
     /// `unique_id()` of the backdrop the current buffer was rendered with —
     /// a backdrop swap forces a re-render even when the subtree is clean.
     last_backdrop_id: Option<u32>,
+    /// See `set_backdrop_regions`.
+    backdrop_regions: Vec<layers::skia::Rect>,
     /// Slot id behind `current_dmabuf` — what KMS is being handed.
     current_slot_id: Option<usize>,
     /// One-shot: the next `render()` runs unconditionally with full damage.
@@ -237,6 +239,7 @@ impl SceneDmabufElement {
                 viewport: (0, 0),
                 backdrop: None,
                 last_backdrop_id: None,
+                backdrop_regions: Vec::new(),
                 force_full: false,
                 full_clip_when_rendering: false,
                 scene_origin: (0, 0),
@@ -248,6 +251,13 @@ impl SceneDmabufElement {
             label,
             honor_ancestor_visibility: false,
         }
+    }
+
+    /// Which of this plane's blur shapes saw their backdrop change (global
+    /// scene px, any size): the next render with a changed backdrop repaints
+    /// only the shapes these touch. Empty means every shape.
+    pub fn set_backdrop_regions(&self, regions: Vec<layers::skia::Rect>) {
+        self.inner.lock().unwrap().backdrop_regions = regions;
     }
 
     /// Set the viewport origin (scene physical px). Callers must also set
@@ -276,7 +286,14 @@ impl SceneDmabufElement {
     /// Request that the next `render()` redraws the full buffer even if the
     /// subtree reports no damage. Call when the plane re-enters the frame
     /// after sitting out — see `Inner::force_full`.
+    #[track_caller]
     pub fn request_full_render(&self) {
+        tracing::debug!(
+            target: "otto::planes",
+            "full render requested: {} from {}",
+            self.label,
+            std::panic::Location::caller()
+        );
         self.inner.lock().unwrap().force_full = true;
     }
 
@@ -525,19 +542,39 @@ impl SceneDmabufElement {
         // not the whole plane. (The dock plane is a full-width strip; its
         // bar is a fraction of it, and the video above it swaps the backdrop
         // several times a second.) Until the shapes are known, full buffer.
-        let backdrop_damage = if backdrop_changed && !force_full && has_dmabuf {
-            inner
-                .node_ref
-                .map(|n| blur_rects_of(&inner.engine, n))
-                .unwrap_or_default()
-                .iter()
-                .map(|r| r.with_outset((1.0, 1.0)))
-                .filter_map(|r| to_buffer(&r))
-                .reduce(|a, b| a.merge(b))
-        } else {
-            None
-        };
-        let backdrop_partial = backdrop_damage.is_some();
+        // Kept as separate rects: the bar at the top and the dock at the
+        // bottom share this plane, and their union would be the whole buffer.
+        let backdrop_rects: Vec<Rectangle<i32, Physical>> =
+            if backdrop_changed && !force_full && has_dmabuf {
+                let shapes = inner
+                    .node_ref
+                    .map(|n| blur_rects_of(&inner.engine, n))
+                    .unwrap_or_default();
+                // Only the shapes whose band the damage reached (the caller
+                // says which); the bar does not repaint for a video under the
+                // dock. Every shape when the caller did not say.
+                let hit = |r: &layers::skia::Rect| {
+                    inner.backdrop_regions.is_empty()
+                        || inner
+                            .backdrop_regions
+                            .iter()
+                            .any(|h| layers::skia::Rect::intersects2(h, r))
+                };
+                let picked: Vec<_> = shapes.iter().filter(|r| hit(r)).collect();
+                let picked = if picked.is_empty() {
+                    shapes.iter().collect()
+                } else {
+                    picked
+                };
+                picked
+                    .into_iter()
+                    .map(|r| r.with_outset((1.0, 1.0)))
+                    .filter_map(|r| to_buffer(&r))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let backdrop_partial = !backdrop_rects.is_empty();
         // Debug (`/tmp/otto-bgdbg`): the inputs that decide whether this plane
         // repaints, and over what region. A background flash shows up here as a
         // frame whose clip/damage covers only part of the buffer.
@@ -554,6 +591,7 @@ impl SceneDmabufElement {
             has_dmabuf,
             damaged: visible_damage.is_some(),
             backdrop_changed,
+            backdrop_partial,
             force_full,
             full_clip,
         });
@@ -672,15 +710,25 @@ impl SceneDmabufElement {
         // Otherwise the subtree damage plus the blur shapes if the backdrop
         // changed.
         let full_redraw = (backdrop_changed && !backdrop_partial) || force_full;
-        let damage_rect = if full_redraw {
-            Rectangle::new((0, 0).into(), (w, h).into())
+        let damage_rects: Vec<Rectangle<i32, Physical>> = if full_redraw {
+            vec![Rectangle::new((0, 0).into(), (w, h).into())]
         } else {
-            match (visible_damage, backdrop_damage) {
-                (Some(a), Some(b)) => a.merge(b),
-                (Some(a), None) | (None, Some(a)) => a,
-                (None, None) => Rectangle::new((0, 0).into(), (w, h).into()),
+            let rects: Vec<_> = visible_damage
+                .into_iter()
+                .chain(backdrop_rects.iter().copied())
+                .collect();
+            if rects.is_empty() {
+                vec![Rectangle::new((0, 0).into(), (w, h).into())]
+            } else {
+                rects
             }
         };
+        // The union, for the logs.
+        let damage_rect = damage_rects
+            .iter()
+            .copied()
+            .reduce(|a, b| a.merge(b))
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (w, h).into()));
 
         // Render into the slot's Skia surface.
         {
@@ -721,19 +769,13 @@ impl SceneDmabufElement {
             // when the backdrop changed (blur can repaint anywhere), on a
             // slot's first use, or when the damage history no longer reaches
             // back to the slot's commit.
-            let clip: Option<Rectangle<i32, Physical>> = if full_redraw || !has_dmabuf {
+            let clip: Option<Vec<Rectangle<i32, Physical>>> = if full_redraw || !has_dmabuf {
                 None
             } else {
-                match inner.damage.damage_since(slot_surface.last_commit.get()) {
-                    Some(rects) => {
-                        let mut acc = damage_rect;
-                        for r in rects.iter() {
-                            acc = acc.merge(*r);
-                        }
-                        Some(acc)
-                    }
-                    None => None,
-                }
+                inner
+                    .damage
+                    .damage_since(slot_surface.last_commit.get())
+                    .map(|rects| damage_rects.iter().copied().chain(rects).collect())
             };
 
             if bgdbg {
@@ -788,17 +830,18 @@ impl SceneDmabufElement {
 
             let canvas = skia_surface.canvas();
             let save_point = canvas.save();
-            if let Some(clip) = clip {
-                canvas.clip_rect(
-                    layers::skia::Rect::from_xywh(
-                        clip.loc.x as f32,
-                        clip.loc.y as f32,
-                        clip.size.w as f32,
-                        clip.size.h as f32,
-                    ),
-                    layers::skia::ClipOp::Intersect,
-                    Some(false),
-                );
+            if let Some(clip) = &clip {
+                // Several rects at once (a path of rects, no anti-aliasing): the
+                // bar's strip and the dock's box repaint without the band of
+                // untouched plane between them.
+                let mut region = layers::skia::Region::new();
+                for r in clip {
+                    region.op_rect(
+                        layers::skia::IRect::from_xywh(r.loc.x, r.loc.y, r.size.w, r.size.h),
+                        layers::skia::region::RegionOp::Union,
+                    );
+                }
+                canvas.clip_region(&region, layers::skia::ClipOp::Intersect);
             }
             // Clear (within the clip) so stale swapchain slot content doesn't
             // accumulate under transparent regions.
@@ -895,7 +938,7 @@ impl SceneDmabufElement {
         // new commit on the slot so its next render clips to the delta.
         inner.last_backdrop_id = backdrop_id;
         inner.commit_counter.increment();
-        inner.damage.add(vec![damage_rect]);
+        inner.damage.add(damage_rects);
         if let Some(ss) = slot.userdata().get::<SlotSurface>() {
             ss.last_commit.set(Some(inner.commit_counter));
         }
@@ -909,7 +952,11 @@ impl SceneDmabufElement {
         // page flip completes; swapchain.acquire() skips it while refcount > 1.
         inner.current_slot = Some(Arc::new(slot));
 
-        tracing::debug!(target: "otto::planes", "plane redrawn: {}", self.label);
+        tracing::debug!(
+            target: "otto::planes",
+            "plane redrawn: {} damage={damage_rect:?} backdrop_changed={backdrop_changed} force_full={force_full}",
+            self.label
+        );
         true
     }
 
@@ -1011,8 +1058,11 @@ pub(crate) struct PlaneRenderInputs {
     pub has_dmabuf: bool,
     /// The subtree reported damage that lands on screen.
     pub damaged: bool,
-    /// A new backdrop image arrived — blur can repaint anywhere.
+    /// A new backdrop image arrived — the blur shapes have to repaint.
     pub backdrop_changed: bool,
+    /// The blur shapes are known, so a backdrop change repaints only them
+    /// (`backdrop_rects`); without them it repaints the whole buffer.
+    pub backdrop_partial: bool,
     /// One-shot: render unconditionally, in full (plane re-activation,
     /// teardown, composite→planes edge).
     pub force_full: bool,
@@ -1048,7 +1098,11 @@ pub(crate) fn decide_plane_render(i: PlaneRenderInputs) -> PlaneRenderDecision {
     let render = !i.has_dmabuf || i.damaged || i.backdrop_changed || i.force_full;
     PlaneRenderDecision {
         render,
-        full_buffer: render && (!i.has_dmabuf || i.backdrop_changed || i.force_full || i.full_clip),
+        full_buffer: render
+            && (!i.has_dmabuf
+                || (i.backdrop_changed && !i.backdrop_partial)
+                || i.force_full
+                || i.full_clip),
         consume_full_clip: render,
     }
 }
@@ -1250,6 +1304,7 @@ mod plane_render_tests {
             has_dmabuf: true,
             damaged: false,
             backdrop_changed: false,
+            backdrop_partial: false,
             force_full: false,
             full_clip: false,
         }
@@ -1351,7 +1406,19 @@ mod plane_render_tests {
             backdrop_changed: true,
             ..quiet()
         });
-        assert!(d.render && d.full_buffer, "blur can repaint anywhere");
+        assert!(
+            d.render && d.full_buffer,
+            "shapes unknown: blur can repaint anywhere"
+        );
+        let d = decide_plane_render(PlaneRenderInputs {
+            backdrop_changed: true,
+            backdrop_partial: true,
+            ..quiet()
+        });
+        assert!(
+            d.render && !d.full_buffer,
+            "shapes known: only they repaint"
+        );
         let d = decide_plane_render(PlaneRenderInputs {
             has_dmabuf: false,
             ..quiet()

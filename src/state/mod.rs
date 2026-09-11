@@ -1084,6 +1084,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// Whether `surface` (root or subsurface) belongs to a layer-shell surface
+    /// on any output.
+    pub(crate) fn is_layer_shell_surface(&self, surface: &WlSurface) -> bool {
+        use smithay::desktop::{layer_map_for_output, WindowSurfaceType};
+        self.workspaces.outputs().any(|output| {
+            layer_map_for_output(output)
+                .layer_for_surface(surface, WindowSurfaceType::ALL)
+                .is_some()
+        })
+    }
+
     /// Recalculate exclusive zones for an output from its layer shell surfaces
     pub fn recalculate_exclusive_zones(&mut self, output: &Output) {
         use smithay::desktop::layer_map_for_output;

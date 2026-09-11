@@ -169,19 +169,21 @@ vibrancy even though the content behind it lives on other planes.
 - Likewise, an app switcher shown on one output does not block fullscreen
   direct scanout on another: the fullscreen-stability check consults the
   switcher's host output, not its global visibility.
-- The dock strip plane follows the dock's configured screen edge: a bottom
-  band for `dock.position = "bottom"`, a left or right column otherwise. The
-  strip is allocated against that edge, so moving the dock at runtime drops
-  and re-allocates the plane.
-- The strip's thickness is at least a fixed fraction of the output (a quarter
-  of its height for a bottom dock, half its width for a side dock, each
-  capped), and grows to the dock's own reach: the configured icon size fully
-  magnified, lifted by a launch bounce, with its label balloon open past it,
-  plus bar padding. A big dock's bouncing icon must never leave the strip and
-  be cropped mid-air. The reach follows the dock configuration (size,
-  magnification) live: the plane is re-allocated in place, before the frame
-  renders, when it changes.
-- The dock and app-switcher strip planes themselves are pushed only to the
+- The dock has no plane of its own: it draws on the overlay plane, in the
+  scene between the layer-shell chrome and the OSD/popups. i915 charges
+  every unscaled KMS plane the full CRTC pixel rate whatever its size (see
+  the budget note below), and at 2880x1920@120 that admits four planes: the
+  primary, one chrome plane, and two client planes — a dock plane of its
+  own was the second client's. The dock's frosted shapes are consumers of
+  the overlay plane's backdrop like the bar's, and a refresh under the dock
+  repaints only the dock's shapes (see the consumer regions above).
+- The overlay and switcher planes follow their content: each grows the
+  moment its drawn content does (before the render, so nothing is cropped),
+  snaps outward to a coarse grid so animations do not churn the swapchain,
+  and shrinks back only after the content has stayed smaller for a while.
+  With the dock on the overlay plane that plane spans the output whenever
+  the dock is up; the size buys render work, not bandwidth.
+- The app-switcher plane itself is pushed only to the
   CRTC of the output that actually hosts that chrome — always the primary
   for the dock, the switcher's current host output for the switcher; every
   other output never submits a plane for that role. This is both a
@@ -303,14 +305,14 @@ vibrancy even though the content behind it lives on other planes.
   all direct scanout: the drag moves content with no animation flag, and a
   fixed plane would not follow it.
 - The promoted-window set is capped (currently 2). The plane budget on
-  i915 is memory bandwidth, not a plane count: the kernel sums every
-  active plane's area x bytes-per-pixel x refresh and refuses the atomic
-  test when no memory QGV point covers it. Two full-screen planes
-  (primary + chrome overlay) plus the dock strip leave room for one
-  client plane on a 2880x1920@120 LPDDR4x laptop; the second is refused
-  and smithay composites it, which costs nothing while it is idle. With
-  the overlay plane free (no Top/Overlay layer surface mapped) two
-  side-by-side windows both scan out. Plane origins are snapped to whole
+  i915 is memory bandwidth, and i915 charges every unscaled plane the
+  full CRTC pixel rate x bytes per pixel whatever its size (2.97 GB/s each
+  at 2880x1920@120), refusing the atomic test when no memory QGV point
+  covers the sum (13.17 GB/s on the reference laptop). That is a plane
+  COUNT in practice: four planes plus the cursor at that mode. Primary,
+  chrome overlay and two clients fill it, which is why the dock shares the
+  overlay plane; a third client is refused and smithay composites it, at
+  no cost while it is idle. Plane origins are snapped to whole
   pixels: a fractional origin makes the destination rect a pixel off the
   buffer, and i915 then attaches one of its two per-pipe scalers to the
   plane. Tier 2 only runs when tier 1 promoted nothing, and takes at most

@@ -108,7 +108,6 @@ fn realization_summary(
     log_state!(surface.expose_dmabuf_element, "expose");
     log_state!(surface.overlay_dmabuf_element, "overlay");
     log_state!(surface.switcher_dmabuf_element, "switcher");
-    log_state!(surface.dock_dmabuf_element, "dock");
     let (mut zc, mut rend, mut skip) = (0, 0, 0);
     for s in states.states.values() {
         use smithay::backend::renderer::element::RenderElementPresentationState as P;
@@ -160,7 +159,6 @@ pub(super) fn maybe_dump_planes(surface: &SurfaceData) {
     dump_plane!(surface.expose_dmabuf_element, "expose");
     dump_plane!(surface.overlay_dmabuf_element, "overlay");
     dump_plane!(surface.switcher_dmabuf_element, "switcher");
-    dump_plane!(surface.dock_dmabuf_element, "dock");
     // The precalculated cross-plane backdrop composite (downscaled) that is
     // handed to every blur-bearing consumer via `set_backdrop`. This is the
     // raw input to their blur shaders — NOT the final blurred result.
@@ -222,7 +220,6 @@ pub(super) fn dump_transition_frame(surface: &SurfaceData, idx: u8) {
     dump_plane!(surface.scene_dmabuf_element, "bg");
     dump_plane!(surface.windows_dmabuf_element, "windows");
     dump_plane!(surface.overlay_dmabuf_element, "overlay");
-    dump_plane!(surface.dock_dmabuf_element, "dock");
     tracing::info!(
         target: "otto::planes",
         "transition dump f{idx}: shadow_only={:?}",

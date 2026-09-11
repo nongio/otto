@@ -598,7 +598,6 @@ pub fn run_winit() {
                                 // be open on a locked session anyway.
                                 vec![
                                     state.scene_element.for_plane_subtree(&ows.lock_plane, origin),
-                                    state.scene_element.for_plane_subtree(&ows.dock_plane, origin),
                                     state
                                         .scene_element
                                         .for_plane_subtree(&ows.switcher_plane, origin),

@@ -369,7 +369,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // What the frost has to show is usually the window *below* in
             // the same plane, not just the wallpaper: read the raw backdrop
             // and blur it here, as the SSD titlebar and styled windows do.
-            layer.set_blur_include_content(true);
+            // Layer-shell chrome has nothing of its own plane behind it and
+            // seeds the pre-blurred backdrop instead (see the surface-style
+            // handler for the same rule).
+            layer.set_blur_include_content(!self.is_layer_shell_surface(surface));
             // The region is in surface-local logical coordinates and the layer
             // is in physical pixels, so it scales the same way the surface's
             // own geometry does in `configure_surface_layer`.

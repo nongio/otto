@@ -238,16 +238,8 @@ pub struct SurfaceData {
     /// overlay plane. Pushed only while the switcher is alive.
     pub(super) switcher_dmabuf_element:
         Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Strip-sized KMS plane for the dock (a band along the dock's own screen
-    /// edge). Topmost plane.
-    pub(super) dock_dmabuf_element:
-        Option<crate::render_elements::scene_dmabuf_element::SceneDmabufElement>,
-    /// Which screen edge `dock_dmabuf_element` was allocated for, so the strip
-    /// can be rebuilt when the dock moves.
-    pub(super) dock_plane_position: Option<crate::config::DockPosition>,
     /// Content-fitted size of the chrome planes — see `planes::fit_plane`.
     pub(super) overlay_fit: super::planes::PlaneFit,
-    pub(super) dock_fit: super::planes::PlaneFit,
     pub(super) switcher_fit: super::planes::PlaneFit,
     /// Downscaled composite of the planes below the overlay-UI plane
     /// (bg + windows/expose), seeding cross-plane backdrop blur (dock
@@ -309,15 +301,19 @@ pub struct SurfaceData {
     /// the fresh one when damage reached its own blur band (or the set of
     /// tracked regions changed). A video repainting above the dock refreshes
     /// the dock plane, not the bar's.
-    pub(super) backdrop_dock_image: Option<layers::skia::Image>,
     pub(super) backdrop_switcher_image: Option<layers::skia::Image>,
     /// The overlay's (pre-blurred, raw) pair — stacked popups need the raw one.
     pub(super) backdrop_overlay_handed: Option<(layers::skia::Image, Option<layers::skia::Image>)>,
     /// Damage reached this consumer's band since it was last handed an image;
     /// carried across rate-limited frames so a deferred hit is not lost.
-    pub(super) backdrop_dock_stale: bool,
     pub(super) backdrop_switcher_stale: bool,
     pub(super) backdrop_overlay_stale: bool,
+    /// The overlay consumer rects whose band the damage reached since the
+    /// plane was last handed an image (output-local px); handed to the
+    /// element so it repaints only those shapes. Empty with the stale flag
+    /// set means every shape (popup structure, unbounded interest).
+    pub(super) backdrop_overlay_hits: Vec<layers::skia::Rect>,
+    pub(super) backdrop_overlay_all: bool,
     /// When the composite was last rebuilt because of desktop (bg/middle/
     /// promoted-window) damage. Those rebuilds are rate-limited: a client
     /// committing at frame rate under a blur consumer (a maximized window's

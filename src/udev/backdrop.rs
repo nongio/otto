@@ -52,6 +52,32 @@ const BACKDROP_BLUR_SIGMA: f32 = 10.0;
 /// a true blur would, and a repaint within that band rebuilds the composite.
 const BLUR_REACH: f32 = BACKDROP_BLUR_SIGMA * 3.0 / BACKDROP_SCALE;
 
+/// Union overlapping or touching rects until none overlap: fewer, larger
+/// blur passes over the same consumers.
+fn coalesce(regions: &[layers::skia::Rect]) -> Vec<layers::skia::Rect> {
+    let mut out: Vec<layers::skia::Rect> = Vec::new();
+    for r in regions {
+        let mut r = *r;
+        loop {
+            let hit = out.iter().position(|o| {
+                r.left() <= o.right()
+                    && r.right() >= o.left()
+                    && r.top() <= o.bottom()
+                    && r.bottom() >= o.top()
+            });
+            match hit {
+                Some(i) => {
+                    let o = out.swap_remove(i);
+                    r.join(o);
+                }
+                None => break,
+            }
+        }
+        out.push(r);
+    }
+    out
+}
+
 /// `r` grown by the blur reach on every side.
 fn with_reach(r: layers::skia::Rect) -> layers::skia::Rect {
     r.with_outset((BLUR_REACH, BLUR_REACH))
@@ -125,7 +151,13 @@ fn blur_image(
                 canvas.draw_image(image, (0, 0), None);
                 let bounds =
                     layers::skia::Rect::from_wh(image.width() as f32, image.height() as f32);
-                for region in regions {
+                // Each region is a filter graph and a GPU pass of its own, and
+                // the consumers come in clusters — the bar's halves and the
+                // islands all sit in one band at the top. Blur touching
+                // regions as one; at a quarter of the screen the band is a
+                // few hundred pixels wide and the extra area costs nothing.
+                let regions = coalesce(regions);
+                for region in &regions {
                     let Some(region) =
                         layers::skia::Rect::intersects2(region, &bounds).then(|| {
                             let mut r = *region;
@@ -328,7 +360,7 @@ fn popup_interest_rects(
 
 /// Rebuild the backdrop composites when needed, render the middle plane
 /// (windows or expose), and hand the fresh composites to the blur-bearing
-/// upper planes (overlay, switcher, dock), rendering the active ones. The
+/// upper planes (overlay, switcher), rendering the active ones. The
 /// overlay composite also folds in the popup subtree (see `draw_popups`). The
 /// bg plane must already be rendered by the caller.
 #[allow(clippy::too_many_arguments)] // plane-state plumbing, all of it per-frame
@@ -339,7 +371,6 @@ pub(super) fn update_backdrop_and_upper_planes(
     expose_active: bool,
     overlay_active: bool,
     switcher_active: bool,
-    dock_visible: bool,
     engine: &Arc<Engine>,
     popup_root: Option<NodeRef>,
     // Direct-scanout windows are hidden in the windows plane, so their pixels
@@ -438,11 +469,6 @@ pub(super) fn update_backdrop_and_upper_planes(
         }
         rects.into_iter().map(with_reach).collect()
     };
-    let dock_rects = if dock_visible {
-        consumer_rects(&surface.dock_dmabuf_element)
-    } else {
-        Vec::new()
-    };
     let switcher_rects = if switcher_active {
         consumer_rects(&surface.switcher_dmabuf_element)
     } else {
@@ -453,14 +479,27 @@ pub(super) fn update_backdrop_and_upper_planes(
     } else {
         Vec::new()
     };
-    // Layer-shell chrome with declared blur shapes (the bar, the islands),
-    // grown by the reach like every other consumer.
-    let chrome_rects: Vec<layers::skia::Rect> = overlay_interest
-        .into_iter()
-        .flatten()
-        .copied()
-        .map(with_reach)
-        .collect();
+    // The overlay plane's consumers: the blur shapes the layer-shell chrome
+    // declared (the bar, the islands) plus the `BackgroundBlur` shapes in the
+    // plane's own subtree (the dock bar and its labels, the OSD), all grown
+    // by the reach like every other consumer.
+    let chrome_rects: Vec<layers::skia::Rect> = if overlay_active {
+        overlay_interest
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(
+                surface
+                    .overlay_dmabuf_element
+                    .as_ref()
+                    .map(|el| el.subtree_blur_rects())
+                    .unwrap_or_default(),
+            )
+            .map(with_reach)
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut interest: Vec<layers::skia::Rect> = Vec::new();
     let full_output_interest = expose_active || (overlay_active && overlay_interest.is_none());
     if full_output_interest {
@@ -484,7 +523,6 @@ pub(super) fn update_backdrop_and_upper_planes(
             // anywhere a rebuild trigger.
             interest.extend(popup_rects.iter().copied());
         }
-        interest.extend(dock_rects.iter().copied());
         interest.extend(switcher_rects.iter().copied());
     }
     let intersects = |r: &layers::skia::Rect| rect_hits_interest(&interest, r);
@@ -553,11 +591,21 @@ pub(super) fn update_backdrop_and_upper_planes(
                     )
                 }))
     };
-    surface.backdrop_dock_stale |= band_hit(&dock_rects);
     surface.backdrop_switcher_stale |= band_hit(&switcher_rects);
-    surface.backdrop_overlay_stale |= band_hit(&chrome_rects)
-        || band_hit(&popup_rects)
-        || (overlay_active && (popup_damage.is_some() || popup_structural));
+    // Per consumer rect, so the overlay plane can repaint only the shapes
+    // whose backdrop actually changed (the dock's, not the bar's, for a video
+    // under the dock).
+    for r in chrome_rects.iter().chain(popup_rects.iter()) {
+        if band_hit(std::slice::from_ref(r)) {
+            surface.backdrop_overlay_stale = true;
+            surface.backdrop_overlay_hits.push(*r);
+        }
+    }
+    if overlay_active && (popup_damage.is_some() || popup_structural) {
+        surface.backdrop_overlay_stale = true;
+        surface.backdrop_overlay_hits.clear();
+        surface.backdrop_overlay_all = true;
+    }
     // Everything is handed the new image when the tracked regions changed,
     // when the interest is unbounded, or when there is no composite yet.
     let refresh_all = full_output_interest || uncovered_damage || surface.backdrop_image.is_none();
@@ -836,9 +884,7 @@ pub(super) fn update_backdrop_and_upper_planes(
                         .collect()
                 };
                 let strip_regions: Option<Vec<layers::skia::Rect>> =
-                    (!full_output_interest).then(|| {
-                        to_backdrop(&[dock_rects.as_slice(), switcher_rects.as_slice()].concat())
-                    });
+                    (!full_output_interest).then(|| to_backdrop(&switcher_rects));
                 let desktop_blurred = blur_image(
                     &desktop,
                     &mut bs.context,
@@ -882,10 +928,6 @@ pub(super) fn update_backdrop_and_upper_planes(
                 );
                 surface.backdrop_overlay_image = Some(overlay_blurred.unwrap_or(overlay_src));
 
-                if refresh_all || surface.backdrop_dock_stale {
-                    surface.backdrop_dock_image = surface.backdrop_image.clone();
-                    surface.backdrop_dock_stale = false;
-                }
                 if refresh_all || surface.backdrop_switcher_stale {
                     surface.backdrop_switcher_image = surface.backdrop_image.clone();
                     surface.backdrop_switcher_stale = false;
@@ -896,6 +938,24 @@ pub(super) fn update_backdrop_and_upper_planes(
                         .clone()
                         .map(|img| (img, surface.backdrop_raw_image.clone()));
                     surface.backdrop_overlay_stale = false;
+                    // Hit rects are output-local; the element compares them
+                    // with global scene rects.
+                    let regions: Vec<layers::skia::Rect> = if refresh_all
+                        || surface.backdrop_overlay_all
+                    {
+                        Vec::new()
+                    } else {
+                        surface
+                            .backdrop_overlay_hits
+                            .iter()
+                            .map(|r| r.with_offset((scene_origin.0 as f32, scene_origin.1 as f32)))
+                            .collect()
+                    };
+                    if let Some(el) = &surface.overlay_dmabuf_element {
+                        el.set_backdrop_regions(regions);
+                    }
+                    surface.backdrop_overlay_hits.clear();
+                    surface.backdrop_overlay_all = false;
                 }
             }
         } else if let Some(el) = middle_el {
@@ -931,7 +991,7 @@ pub(super) fn update_backdrop_and_upper_planes(
     // submenu blurs the menu it overlaps instead of letting it show through
     // sharp. Everything else in the plane seeds the pre-blurred image.
     // Each consumer gets the image it was last refreshed with (see
-    // `backdrop_dock_image` & co.); the current one is only the fallback for
+    // `backdrop_switcher_image` & co.); the current one is only the fallback for
     // a consumer that has never been handed anything.
     let overlay_backdrop = surface
         .backdrop_overlay_handed
@@ -946,11 +1006,6 @@ pub(super) fn update_backdrop_and_upper_planes(
         .map(|(img, raw)| (img, BACKDROP_SCALE, preblurred, raw));
     let switcher_backdrop = surface
         .backdrop_switcher_image
-        .clone()
-        .or_else(|| surface.backdrop_image.clone())
-        .map(|img| (img, BACKDROP_SCALE, preblurred, None));
-    let dock_backdrop = surface
-        .backdrop_dock_image
         .clone()
         .or_else(|| surface.backdrop_image.clone())
         .map(|img| (img, BACKDROP_SCALE, preblurred, None));
@@ -972,12 +1027,6 @@ pub(super) fn update_backdrop_and_upper_planes(
     if let Some(el) = &surface.switcher_dmabuf_element {
         el.set_backdrop(switcher_backdrop);
         if switcher_active {
-            el.render(renderer.as_mut());
-        }
-    }
-    if let Some(el) = &surface.dock_dmabuf_element {
-        el.set_backdrop(dock_backdrop);
-        if dock_visible {
             el.render(renderer.as_mut());
         }
     }

@@ -9,7 +9,6 @@ use smithay::backend::allocator::{gbm::GbmDevice, Fourcc};
 use smithay::backend::drm::{DrmDeviceFd, DrmNode};
 use smithay::reexports::drm::control::crtc;
 
-use crate::config::DockPosition;
 use crate::render_elements::scene_dmabuf_element::SceneDmabufElement;
 use crate::render_elements::workspace_render_elements::WorkspaceRenderElements;
 use crate::workspaces::OutputWorkspaces;
@@ -55,19 +54,9 @@ pub(super) fn ensure_plane_elements(
     gbm: &GbmDevice<DrmDeviceFd>,
     crtc: crtc::Handle,
     mode_size: (i32, i32),
-    dock_position: DockPosition,
-    dock_reach: i32,
 ) {
     let (w, h) = mode_size;
     let render_node = surface.render_node;
-
-    // The dock plane is a strip along the edge the dock lives on, so moving the
-    // dock invalidates it: drop it and let it be rebuilt against the new edge.
-    if surface.dock_plane_position != Some(dock_position) {
-        surface.dock_dmabuf_element = None;
-        surface.dock_fit = PlaneFit::default();
-        surface.dock_plane_position = Some(dock_position);
-    }
 
     ensure_plane(
         &mut surface.scene_dmabuf_element,
@@ -147,49 +136,10 @@ pub(super) fn ensure_plane_elements(
         None,
     );
 
-    // Strip-sized planes: full output width, cropped bands of their
-    // full-screen containers via the element viewport. Small buffers
-    // mean dock/switcher animations no longer redraw a full-screen
-    // plane, and the KMS watermark cost scales with plane size.
+    // The switcher plane starts as a centred band and follows its content
+    // from there (`fit_plane`). The dock has no plane of its own: it draws
+    // on the overlay plane (see `Workspaces::new_output_workspaces`).
     let switcher_strip_h = (h / 2).min(960);
-    // The dock strip follows the dock: a bottom band, or a side column. It is
-    // at least a fixed fraction of the output, and grows to the dock's own
-    // reach — a big dock, fully magnified, at the top of a launch bounce with
-    // its label open, would otherwise hop straight out of the strip and be
-    // cropped mid-air.
-    let (dock_size, dock_origin) = match dock_position {
-        DockPosition::Bottom => {
-            let strip_h = (h / 4).min(480).max(dock_reach).min(h);
-            ((w, strip_h), (0, h - strip_h))
-        }
-        // Wider than the bottom band is tall: a side dock's tooltips and
-        // context menus open *across* the strip, and anything that reaches past
-        // its edge is cropped away.
-        DockPosition::Left => {
-            let strip_w = (w / 2).min(960).max(dock_reach).min(w);
-            ((strip_w, h), (0, 0))
-        }
-        DockPosition::Right => {
-            let strip_w = (w / 2).min(960).max(dock_reach).min(w);
-            ((strip_w, h), (w - strip_w, 0))
-        }
-    };
-    ensure_plane(
-        &mut surface.dock_dmabuf_element,
-        engine,
-        gbm,
-        render_node,
-        crtc,
-        dock_size,
-        Fourcc::Argb8888,
-        false,
-        "dock",
-        Some(dock_origin),
-    );
-    // From here on the dock plane follows its drawn content (`fit_plane`),
-    // so the strip is only its first allocation; the dock's reach no longer
-    // needs re-applying per frame — doing so here fought the fit every frame,
-    // re-allocating the swapchain twice per render.
     ensure_plane(
         &mut surface.switcher_dmabuf_element,
         engine,
@@ -229,10 +179,6 @@ pub(super) fn wire_plane_nodes(surface: &SurfaceData, ows: &OutputWorkspaces) {
     }
     if let Some(el) = &surface.switcher_dmabuf_element {
         el.set_node_ref(ows.switcher_plane.id);
-        el.set_scene_origin(origin);
-    }
-    if let Some(el) = &surface.dock_dmabuf_element {
-        el.set_node_ref(ows.dock_plane.id);
         el.set_scene_origin(origin);
     }
     if let Some(el) = &surface.window_dmabuf_element {

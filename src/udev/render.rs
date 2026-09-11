@@ -343,7 +343,6 @@ impl Otto<UdevData> {
                     &surface.expose_dmabuf_element,
                     &surface.overlay_dmabuf_element,
                     &surface.switcher_dmabuf_element,
-                    &surface.dock_dmabuf_element,
                 ]
                 .into_iter()
                 .flatten()
@@ -866,8 +865,6 @@ impl Otto<UdevData> {
                 &device_gbm,
                 crtc,
                 (mode.size.w, mode.size.h),
-                self.workspaces.dock.position(),
-                self.workspaces.dock.plane_strip_thickness_px(),
             );
         }
 
@@ -887,12 +884,6 @@ impl Otto<UdevData> {
                         &ows.overlay_plane,
                         &mut surface.overlay_fit,
                         "overlay",
-                    ),
-                    (
-                        &mut surface.dock_dmabuf_element,
-                        &ows.dock_plane,
-                        &mut surface.dock_fit,
-                        "dock",
                     ),
                     (
                         &mut surface.switcher_dmabuf_element,
@@ -1053,8 +1044,12 @@ impl Otto<UdevData> {
         // first frame of its fade-out.
         let switcher_active = self.workspaces.app_switcher.is_visible()
             && self.workspaces.is_app_switcher_output(&output);
-        let overlay_active =
-            self.workspaces.is_overlay_ui_active(&output) || self.dnd_icon.is_some();
+        // The dock lives on the overlay plane, so the plane is up whenever the
+        // dock is.
+        let dock_visible = chrome_output && !self.workspaces.dock.is_hidden_for_render();
+        let overlay_active = self.workspaces.is_overlay_ui_active(&output)
+            || self.dnd_icon.is_some()
+            || dock_visible;
         {
             use super::planes::maybe_release_plane;
             maybe_release_plane(
@@ -1083,6 +1078,7 @@ impl Otto<UdevData> {
         // can't flash ghost content.
         if overlay_active && !surface.overlay_was_active {
             if let Some(el) = &surface.overlay_dmabuf_element {
+                tracing::debug!(target: "otto::planes", "overlay full render: activation edge");
                 el.request_full_render();
             }
         }
@@ -1135,13 +1131,15 @@ impl Otto<UdevData> {
             surface.popup_teardown_seen = popup_teardown_gen;
             surface.backdrop_dirty = true;
             if let Some(el) = &surface.overlay_dmabuf_element {
+                tracing::debug!(target: "otto::planes", "overlay full render: popup teardown");
                 el.request_full_render();
             }
         }
         if surface.dock_menu_teardown_seen != dock_menu_teardown_gen {
             surface.dock_menu_teardown_seen = dock_menu_teardown_gen;
             surface.backdrop_dirty = true;
-            if let Some(el) = &surface.dock_dmabuf_element {
+            if let Some(el) = &surface.overlay_dmabuf_element {
+                tracing::debug!(target: "otto::planes", "overlay full render: dock menu teardown");
                 el.request_full_render();
             }
         }
@@ -1166,7 +1164,6 @@ impl Otto<UdevData> {
                     &surface.expose_dmabuf_element,
                     &surface.overlay_dmabuf_element,
                     &surface.switcher_dmabuf_element,
-                    &surface.dock_dmabuf_element,
                 ]
                 .into_iter()
                 .flatten()
@@ -1189,7 +1186,6 @@ impl Otto<UdevData> {
                 &surface.expose_dmabuf_element,
                 &surface.overlay_dmabuf_element,
                 &surface.switcher_dmabuf_element,
-                &surface.dock_dmabuf_element,
             ]
             .into_iter()
             .flatten()
@@ -1328,7 +1324,6 @@ impl Otto<UdevData> {
             expose_active,
             fullscreen_window.as_ref(),
             switcher_active,
-            chrome_output && !self.workspaces.dock.is_hidden_for_render(),
             overlay_active,
             {
                 // The windows plane must stay up while a workspace switch is
@@ -2046,7 +2041,6 @@ impl Otto<UdevData> {
                         return vec![scene_element.for_plane_subtree(&ows.lock_plane, origin)];
                     }
                     let mut stack = vec![
-                        scene_element.for_plane_subtree(&ows.dock_plane, origin),
                         scene_element.for_plane_subtree(&ows.switcher_plane, origin),
                         scene_element.for_plane_subtree(&ows.overlay_plane, origin),
                         scene_element.for_plane_subtree(&ows.expose_layer, origin),
@@ -2377,7 +2371,6 @@ pub(super) fn render_output_frame<'a>(
     expose_active: bool,
     fullscreen_window: Option<&WindowElement>,
     switcher_active: bool,
-    dock_visible: bool,
     overlay_active: bool,
     windows_plane_has_content: bool,
     screencopy_pending: bool,
@@ -2669,7 +2662,6 @@ pub(super) fn render_output_frame<'a>(
                 expose_active,
                 overlay_active,
                 switcher_active,
-                dock_visible,
                 engine,
                 popup_root,
                 &promoted_buffers,
@@ -2679,11 +2671,9 @@ pub(super) fn render_output_frame<'a>(
                 overlay_interest.as_deref(),
             );
 
-            // Push top→bottom: dock, switcher (only while alive — an empty
-            // transparent strip would waste a plane), then overlay chrome.
-            if dock_visible {
-                push_ready(&surface.dock_dmabuf_element, &mut workspace_render_elements);
-            }
+            // Push top→bottom: switcher (only while alive — an empty
+            // transparent strip would waste a plane), then overlay chrome
+            // (bar, islands, dock, OSD, popups).
             if switcher_active {
                 push_ready(
                     &surface.switcher_dmabuf_element,
@@ -2866,11 +2856,10 @@ pub(super) fn render_output_frame<'a>(
             if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
                 tracing::info!(
                     target: "otto::bgdbg",
-                    "FRAME elements={} expose={} win_content={} dock={} switcher={} overlay={} scanout={}",
+                    "FRAME elements={} expose={} win_content={} switcher={} overlay={} scanout={}",
                     workspace_render_elements.len(),
                     expose_active,
                     windows_plane_has_content,
-                    dock_visible,
                     switcher_active,
                     overlay_active,
                     surface.shadow_only_windows.len(),
