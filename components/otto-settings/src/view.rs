@@ -428,10 +428,20 @@ fn screen_caption(output: &model::Output) -> &'static str {
     }
 }
 
-/// Padding `Titlebar` is given, which is also where it places its leading
-/// group — so the traffic lights end up at `(TITLEBAR_PAD, TITLEBAR_PAD)`.
+/// Vertical padding `Titlebar` is given: what centres the dots in the bar.
 fn titlebar_pad() -> f32 {
-    (titlebar_h() - 12.0) / 2.0
+    (titlebar_h() - WindowDecoration::control_size_for(decoration_variant())) / 2.0
+}
+
+/// How far in from either end `Titlebar` places the traffic lights. The
+/// compact bar cannot use its vertical padding here — that puts the dot inside
+/// the rounded corner — so it takes the same inset the compositor's compact
+/// bar does, keeping the lights in line with a server-decorated tile's.
+fn titlebar_horizontal_pad() -> f32 {
+    match decoration_variant() {
+        DecorationVariant::Minimal => WindowDecoration::MINIMAL_CONTROL_INSET,
+        _ => titlebar_pad(),
+    }
 }
 
 /// The traffic lights as the desktop wants them: ordered close-outermost for
@@ -454,8 +464,8 @@ fn window_controls() -> WindowControls {
 fn window_controls_hit(width: f32) -> WindowControls {
     let controls = window_controls();
     let x = match otto_kit::controls_side::side() {
-        ControlsSide::Left => titlebar_pad(),
-        ControlsSide::Right => width - titlebar_pad() - controls.width(),
+        ControlsSide::Left => titlebar_horizontal_pad(),
+        ControlsSide::Right => width - titlebar_horizontal_pad() - controls.width(),
     };
     controls.at(x, titlebar_pad())
 }
@@ -1582,6 +1592,7 @@ impl Settings {
             .with_height(titlebar_h())
             .with_corner_radius(corner())
             .with_padding(titlebar_pad())
+            .with_horizontal_padding(titlebar_horizontal_pad())
             .with_background(Color::TRANSPARENT);
         match otto_kit::controls_side::side() {
             ControlsSide::Left => bar.with_leading(group),
