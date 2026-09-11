@@ -63,7 +63,7 @@ impl Label {
     /// correct when the style changes — unlike offsetting `centered_on` by a
     /// guessed per-character width.
     pub fn centered_at(self, cx: f32, cy: f32) -> Self {
-        let (text_width, _) = self.font.measure_str(&self.text, None);
+        let text_width = crate::typography::measure_runs(&self.font, &self.text);
         self.centered_on(cx - text_width / 2.0, cy)
     }
 
@@ -92,27 +92,17 @@ impl Label {
     }
 }
 
-impl Label {
-    /// The face this label will actually be drawn in.
-    ///
-    /// Every label goes through here, so a string in a script the interface
-    /// font has no glyphs for — a language named in its own, a file in
-    /// Japanese — is drawn in a face that has them rather than as a row of
-    /// empty boxes. ASCII, which is nearly everything, costs a byte scan. See
-    /// [`crate::typography::font_covering`].
-    fn font(&self) -> Font {
-        crate::typography::font_covering(&self.font, &self.text)
-    }
-}
-
 impl Renderable for Label {
     fn render(&self, canvas: &Canvas) {
         let mut paint = Paint::default();
         paint.set_color(self.color);
         paint.set_anti_alias(true);
 
-        let font = self.font();
-        let (text_width, _) = font.measure_str(&self.text, None);
+        // Drawn run by run, so only the characters the label's own face has
+        // no glyph for — a dingbat in a window title, a language named in its
+        // own script — are handed to another face, and the rest of the string
+        // stays in the interface font. See [`crate::typography::text_runs`].
+        let text_width = crate::typography::measure_runs(&self.font, &self.text);
         let width = self.width.unwrap_or(text_width);
 
         let x = match self.align {
@@ -121,13 +111,13 @@ impl Renderable for Label {
             TextAlign::Right => self.x + width - text_width,
         };
 
-        let y = self.y + font.size() * 0.8;
+        let y = self.y + self.font.size() * 0.8;
 
-        canvas.draw_str(&self.text, Point::new(x, y), &font, &paint);
+        crate::typography::draw_runs(canvas, &self.text, Point::new(x, y), &self.font, &paint);
     }
 
     fn intrinsic_size(&self) -> Option<(f32, f32)> {
-        let (text_width, _) = self.font().measure_str(&self.text, None);
+        let text_width = crate::typography::measure_runs(&self.font, &self.text);
         let width = self.width.unwrap_or(text_width);
         Some((width, self.font.size()))
     }

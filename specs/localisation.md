@@ -173,11 +173,21 @@ the regional family is asked for by name first — `Noto Sans CJK JP` for `ja`,
 `SC`/`TC`/`HK` for the Chinese variants, `KR` for `ko` — and the language-tagged
 search stays as the fallback for a machine that has none of them installed.
 
-It is the language that decides, not the string. Text in a script the interface
-is not in — a Chinese file name on an English desktop — is still drawn in the
-interface font and still comes out as boxes. Per-glyph fallback is what would
-fix that, and it belongs at the point text is drawn rather than at the point a
-font is chosen; see Open Questions.
+That choice is made once, from the language. A string in some *other* script —
+a Chinese file name on an English desktop, a dingbat in a window title — is
+handled where the text is drawn instead: a label is split into runs, and each
+run is drawn in a face that has glyphs for it. The face the caller asked for is
+kept wherever it has glyphs, so only the characters it lacks move. Splitting
+this way loses kerning across a run boundary, which is the price of drawing the
+text at all, and an all-ASCII string — nearly every string — is one run decided
+by a byte scan.
+
+The split has to be per run and not per string. A window titled `\u{2749} Notes`
+has one character Inter cannot draw; substituting a face for the whole label
+drew every letter of it in the monospace font that happens to own that dingbat,
+which is a worse answer than the boxes it was avoiding. Widths are measured the
+same way, run by run, or a row is sized for a string that is not what reaches
+the screen.
 
 ### Not hot-reloadable
 
@@ -464,12 +474,11 @@ which operation the undo stack recorded, which month `civil_from_days` landed on
 
 - The POSIX mapping knows `ja`, but no Japanese catalogue ships. Either one
   follows or the mapping is speculative.
-- Text in a script the interface is not set in — a Chinese file name on an
-  English desktop, a Greek window title — still draws as boxes. The fix is
-  per-glyph fallback at the point text is drawn, which means every `draw_str`
-  and every width measurement in the toolkit goes through a run-splitting
-  helper rather than straight at a `Font`. Worth doing; larger than choosing a
-  face by locale, and it changes measurement everywhere.
+- Run splitting covers the toolkit — labels, menu rows, dropdowns, and so the
+  window title bars drawn through them. The compositor still draws its dock
+  labels and its app-switcher names straight at a `Font`, so those remain boxes
+  for a script the interface font lacks; they centre on tight glyph bounds
+  rather than an advance, which is why they were not simply moved over.
 - Whether a region preference separate from the language is worth having — a
   user who wants an English interface with European dates has no way to say so
   short of an overlay catalogue.

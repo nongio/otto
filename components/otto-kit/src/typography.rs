@@ -63,52 +63,93 @@ impl FontCache {
         covering_typeface(&self.font_mgr, typeface, family, style)
     }
 
-    /// This cache's own [`font_covering`].
+    /// The face that draws `c` when [`Self`]'s own does not.
     ///
-    /// Keyed by the character that was missing rather than by the string, so
-    /// every language name in one script shares a lookup: asking the font
-    /// manager is a fontconfig query, far too slow to repeat per label per
-    /// frame.
-    fn font_covering(&self, font: &Font, text: &str) -> Font {
-        // Almost every string the interface draws is ASCII, and every face it
-        // draws with covers ASCII, so this runs on the way to drawing anything
-        // at all: settle the common case with a byte scan rather than a cmap
-        // lookup per character.
-        if text.is_ascii() {
-            return font.clone();
-        }
+    /// Keyed by the character rather than by the string, so every label in
+    /// one script shares a lookup: asking the font manager is a fontconfig
+    /// query, far too slow to repeat per label per frame.
+    fn fallback(&self, font: &Font, c: char) -> Option<Font> {
         let typeface = font.typeface();
-        let Some(missing) = text
-            .chars()
-            .find(|c| !c.is_whitespace() && typeface.unichar_to_glyph(*c as skia::Unichar) == 0)
-        else {
-            return font.clone();
-        };
-
         let style = typeface.font_style();
         let size = font.size();
         // Namespaced away from real family names, which never start with a
         // replacement character, so a fallback entry cannot collide with the
         // cached font for a family of that name.
-        let key = CacheKey::from_style(&format!("\u{FFFD}{missing}"), style, size);
+        let key = CacheKey::from_style(&format!("\u{FFFD}{c}"), style, size);
         if let Some(hit) = self.cache.borrow().get(&key) {
-            return hit.clone();
+            return Some(hit.clone());
         }
 
-        let replacement = self
-            .font_mgr
-            .match_family_style_character(
-                typeface.family_name(),
-                style,
-                &[],
-                missing as skia::Unichar,
-            )
-            .unwrap_or(typeface);
+        let replacement = self.font_mgr.match_family_style_character(
+            typeface.family_name(),
+            style,
+            &[],
+            c as skia::Unichar,
+        )?;
         let mut found = Font::from_typeface(replacement, size);
         found.set_subpixel(true);
         found.set_edging(skia::font::Edging::SubpixelAntiAlias);
         self.cache.borrow_mut().insert(key, found.clone());
-        found
+        Some(found)
+    }
+
+    /// This cache's own [`text_runs`].
+    fn text_runs<'a>(&self, font: &Font, text: &'a str) -> Vec<TextRun<'a>> {
+        // Almost every string the interface draws is ASCII, and every face it
+        // draws with covers ASCII, so this runs on the way to drawing anything
+        // at all: settle the common case with a byte scan rather than a cmap
+        // lookup per character.
+        if text.is_ascii() || text.is_empty() {
+            return vec![TextRun {
+                text,
+                font: font.clone(),
+            }];
+        }
+
+        let base = font.typeface();
+        let mut runs = Vec::new();
+        let mut start = 0;
+        let mut current: Option<Font> = None;
+        let mut open = false;
+
+        for (i, c) in text.char_indices() {
+            let covered = base.unichar_to_glyph(c as skia::Unichar) != 0;
+            // Whitespace is blank in every face, so it stays in the run it
+            // follows rather than cutting one in two.
+            let wanted = if c.is_whitespace() && open {
+                current.clone()
+            } else if covered {
+                None
+            } else {
+                self.fallback(font, c)
+            };
+
+            if open && !same_face(&current, &wanted) {
+                runs.push(TextRun {
+                    text: &text[start..i],
+                    font: current.clone().unwrap_or_else(|| font.clone()),
+                });
+                start = i;
+            }
+            current = wanted;
+            open = true;
+        }
+
+        runs.push(TextRun {
+            text: &text[start..],
+            font: current.unwrap_or_else(|| font.clone()),
+        });
+        runs
+    }
+}
+
+/// Whether two runs would be drawn by the same face — `None` being the face
+/// the caller asked for.
+fn same_face(a: &Option<Font>, b: &Option<Font>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.typeface().unique_id() == b.typeface().unique_id(),
+        _ => false,
     }
 }
 
@@ -257,22 +298,61 @@ pub fn get_font_with_fallback(family: &str, style: FontStyle, size: f32) -> Font
     FONT_CACHE.with(|cache| cache.get_font_with_fallback(family, style, size))
 }
 
-/// `font`, or the nearest face that can actually draw `text`.
+/// One stretch of a string and the face that draws it.
 ///
-/// [`covering_typeface`] substitutes one face for the whole interface, on the
-/// argument that the language is fixed for the life of the process and a
-/// desktop wants one face for its chrome. A language picker is where that
-/// argument runs out: it lists every language in its own script at once, so an
-/// English interface has to draw 中文 and Русский in faces it never otherwise
-/// needs, and drew both as empty boxes.
+/// Skia draws a string with exactly one typeface and does no per-glyph
+/// fallback of its own, so a label the interface font only partly covers has
+/// to be split before it is drawn: the parts Inter has stay in Inter, and only
+/// the characters it lacks — a dingbat in a window title, a language named in
+/// its own script — are handed to a face that has them.
+pub struct TextRun<'a> {
+    pub text: &'a str,
+    pub font: Font,
+}
+
+/// Split `text` into runs, each in the face that can draw it.
 ///
-/// Chosen per string rather than per glyph. Skia draws a string with exactly
-/// one typeface, and the strings this is for — a language's name, a theme's
-/// name — are each written in a single script, so one face per string covers
-/// them. A genuinely mixed string still falls back on its first uncovered
-/// character, which is no worse than the boxes it replaces.
-pub fn font_covering(font: &Font, text: &str) -> Font {
-    FONT_CACHE.with(|cache| cache.font_covering(font, text))
+/// The face asked for is kept wherever it has glyphs, so a single uncovered
+/// character can no longer move a whole label into whatever font happens to
+/// carry that character — a window titled `\u{2749} Notes` drew every letter in
+/// the monospace face that owns U+2749, because the substitution used to be
+/// per string.
+///
+/// Runs break kerning across the boundary, which is the price of drawing the
+/// text at all; an all-ASCII string, which is nearly every string, is returned
+/// as one run without a cmap lookup.
+pub fn text_runs<'a>(font: &Font, text: &'a str) -> Vec<TextRun<'a>> {
+    FONT_CACHE.with(|cache| cache.text_runs(font, text))
+}
+
+/// How wide `text` is once drawn as runs.
+///
+/// Measuring in the face asked for alone reports the width of missing-glyph
+/// boxes for anything it lacks, which is not the width that reaches the
+/// screen.
+pub fn measure_runs(font: &Font, text: &str) -> f32 {
+    text_runs(font, text)
+        .iter()
+        .map(|run| run.font.measure_str(run.text, None).0)
+        .sum()
+}
+
+/// Draw `text` with its baseline starting at `origin`, run by run, and return
+/// the total advance.
+pub fn draw_runs(
+    canvas: &skia::Canvas,
+    text: &str,
+    origin: impl Into<skia::Point>,
+    font: &Font,
+    paint: &skia::Paint,
+) -> f32 {
+    let origin = origin.into();
+    let mut x = origin.x;
+    for run in text_runs(font, text) {
+        canvas.draw_str(run.text, skia::Point::new(x, origin.y), &run.font, paint);
+        x += run.font.measure_str(run.text, None).0;
+    }
+    x - origin.x
 }
 
 /// Predefined text styles for a consistent design system
@@ -420,6 +500,15 @@ pub mod styles {
         size: 13.0,
     };
 
+    /// Titlebar title - Semibold, one step between body and title 3 (14pt).
+    /// The floating window bar's type: 13pt read small on a 34pt bar and
+    /// 15pt loud, so the bar sits between them.
+    pub const TITLEBAR: TextStyle = TextStyle {
+        family: "Inter",
+        weight: 600, // Semibold
+        size: 14.0,
+    };
+
     /// Body Emphasized - Semibold variant (13pt)
     pub const BODY_EMPHASIZED: TextStyle = TextStyle {
         family: "Inter",
@@ -522,11 +611,44 @@ mod tests {
     #[test]
     fn ascii_keeps_the_face_it_was_given() {
         let base = styles::BODY.font();
-        let covering = font_covering(&base, "English (United Kingdom)");
+        let runs = text_runs(&base, "English (United Kingdom)");
+        assert_eq!(runs.len(), 1, "an ASCII label must be drawn in one face");
         assert_eq!(
             base.typeface().unique_id(),
-            covering.typeface().unique_id(),
+            runs[0].font.typeface().unique_id(),
             "an ASCII label must not be moved off the interface font"
+        );
+    }
+
+    /// A window titled `\u{2749} Notes` used to be drawn entirely in whatever
+    /// face owns U+2749 — a monospace one, here — because the substitution was
+    /// per string. Only the character without a glyph may move.
+    #[test]
+    fn one_uncovered_character_does_not_take_the_whole_label_with_it() {
+        let base = styles::BODY.font();
+        let text = "\u{2749} Window decorations font";
+        if base.typeface().unichar_to_glyph(0x2749) != 0 {
+            // An interface font that has the dingbat has nothing to
+            // substitute, and the split is not what is under test.
+            return;
+        }
+        let runs = text_runs(&base, text);
+        let latin: String = runs
+            .iter()
+            .filter(|run| run.font.typeface().unique_id() == base.typeface().unique_id())
+            .map(|run| run.text)
+            .collect();
+        assert!(
+            latin.contains("Window decorations font"),
+            "the words must stay in the interface font, drawn instead in {:?}",
+            runs.iter()
+                .map(|r| r.font.typeface().family_name())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            runs.iter().map(|run| run.text).collect::<String>(),
+            text,
+            "the runs must reassemble into the string that was asked for"
         );
     }
 
@@ -554,14 +676,16 @@ mod tests {
             // the substitution, not the host's font set.
             return;
         }
-        let covering = font_covering(&base, text);
+        for run in text_runs(&base, text) {
+            assert!(
+                run.text
+                    .chars()
+                    .all(|c| run.font.typeface().unichar_to_glyph(c as skia::Unichar) != 0),
+                "every character must have a glyph, or the label still draws as boxes"
+            );
+        }
         assert!(
-            text.chars()
-                .all(|c| covering.typeface().unichar_to_glyph(c as skia::Unichar) != 0),
-            "every character must have a glyph, or the label still draws as boxes"
-        );
-        assert!(
-            covering.measure_str(text, None).0 > 0.0,
+            measure_runs(&base, text) > 0.0,
             "the substituted face must give the text a width"
         );
     }

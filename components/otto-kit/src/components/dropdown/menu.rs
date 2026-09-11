@@ -147,21 +147,19 @@ fn item_font() -> skia_safe::Font {
 
 /// How wide `text` is in a menu row.
 ///
-/// Measured in the face the row will be drawn in — see
-/// [`crate::typography::font_covering`]. Measuring a Chinese language name in
+/// Measured in the faces the row will be drawn in — see
+/// [`crate::typography::text_runs`]. Measuring a Chinese language name in
 /// Inter reports the width of a row of missing-glyph boxes, which is not the
 /// width of the text that ends up there.
 fn measure(text: &str) -> f32 {
-    crate::typography::font_covering(&item_font(), text)
-        .measure_str(text, None)
-        .0
+    crate::typography::measure_runs(&item_font(), text)
 }
 
 /// Trim `text` until it fits `width`, marking the cut with a trailing
 /// ellipsis. Returns it unchanged when it already fits.
 fn elide(text: &str, width: f32) -> String {
-    let font = crate::typography::font_covering(&item_font(), text);
-    if width <= 0.0 || font.measure_str(text, None).0 <= width {
+    let font = item_font();
+    if width <= 0.0 || crate::typography::measure_runs(&font, text) <= width {
         return text.to_string();
     }
     let mut end = text.len();
@@ -171,7 +169,7 @@ fn elide(text: &str, width: f32) -> String {
             end -= 1;
         }
         let candidate = format!("{}\u{2026}", &text[..end]);
-        if font.measure_str(&candidate, None).0 <= width {
+        if crate::typography::measure_runs(&font, &candidate) <= width {
             return candidate;
         }
     }

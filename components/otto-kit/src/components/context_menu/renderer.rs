@@ -125,11 +125,10 @@ impl ContextMenuRenderer {
                 MenuItemKind::Separator => continue,
             };
 
-            // Measured in the face the label will be drawn in: a font with no
-            // glyph for the script reports the width of its missing-glyph box,
-            // and the row would be sized for boxes rather than for the text.
-            let (label_w, _) =
-                crate::typography::font_covering(&font, label).measure_str(label, None);
+            // Measured in the faces the label will be drawn in: a font with
+            // no glyph for the script reports the width of its missing-glyph
+            // box, and the row would be sized for boxes rather than the text.
+            let label_w = crate::typography::measure_runs(&font, label);
             let mut row_w = item_style.horizontal_padding * 2.0 + label_w;
 
             if item.icon.is_some() {
