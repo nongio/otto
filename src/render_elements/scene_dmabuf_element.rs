@@ -30,7 +30,10 @@ use smithay::{
     utils::{Buffer as BufferCoord, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{skia_renderer::SkiaRenderer, udev::UdevRenderer};
+use crate::{
+    skia_renderer::{PlaneTextureRelease, SkiaRenderer},
+    udev::UdevRenderer,
+};
 
 // ── Slot-local SkiaSurface ─────────────────────────────────────────────────
 //
@@ -76,16 +79,20 @@ struct SlotSurface {
     /// Thread that created the surface. The GL/Skia state is thread-affine;
     /// all access AND the drop must happen on this thread.
     owner: std::thread::ThreadId,
+    /// Frees the texture and EGLImage behind `surface`. Declared after it,
+    /// so the Skia surface is gone before its texture is queued for deletion.
+    _gl: PlaneTextureRelease,
 }
 
 impl SlotSurface {
-    fn new(surface: SkiaSurface) -> Self {
+    fn new(surface: SkiaSurface, gl: PlaneTextureRelease) -> Self {
         static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         Self {
             id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             surface: UnsafeCell::new(surface),
             last_commit: std::cell::Cell::new(None),
             owner: std::thread::current().id(),
+            _gl: gl,
         }
     }
 }
@@ -693,9 +700,9 @@ impl SceneDmabufElement {
         // Create a SkiaSurface for this slot on first use.
         if slot.userdata().get::<SlotSurface>().is_none() {
             match renderer.create_surface_from_dmabuf(&dmabuf) {
-                Ok(surface) => {
+                Ok((surface, gl)) => {
                     slot.userdata()
-                        .insert_if_missing(|| SlotSurface::new(surface));
+                        .insert_if_missing(|| SlotSurface::new(surface, gl));
                 }
                 Err(e) => {
                     tracing::warn!(target: "otto::planes", "SceneDmabufElement: surface error: {e:?}");
