@@ -1245,10 +1245,17 @@ impl SettingsApp {
                 let Some(id) = focused.id else {
                     return false;
                 };
-                // A twentieth of the range per press: fine enough to land on a
-                // value, coarse enough to cross the track without holding the
-                // key down.
-                let moved = (value + step * (max - min) / 20.0).clamp(min, max);
+                // One schema step per press, so the keyboard lands on exactly
+                // the values a drag snaps to — a 0.05 s duration moves by
+                // 0.05 s. A setting served without a step falls back to a
+                // twentieth of the range: fine enough to land on a value,
+                // coarse enough to cross the track without holding the key.
+                let increment = settings_client::describe(id)
+                    .and_then(|desc| desc.step)
+                    .filter(|step| *step > 0.0)
+                    .map(|step| step as f32)
+                    .unwrap_or((max - min) / 20.0);
+                let moved = settings_client::snap(id, value + step * increment).clamp(min, max);
                 if moved == value {
                     return false;
                 }

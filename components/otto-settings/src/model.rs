@@ -228,15 +228,28 @@ impl Control {
 
 /// Rebuild a readout string around a new number, preserving whatever unit or
 /// formatting the pane chose ("24 px", "150%", "0.50").
+///
+/// The seed decides whether the number carries decimals, the schema's step
+/// decides how many — independently of whether a unit follows. A duration
+/// seeded as "0.30 s" used to fall into the unit branch and print `0 s` for
+/// every value under a second.
 fn reformat_readout(previous: &str, value: f32, step: Option<f64>) -> String {
     if previous.ends_with('%') {
-        format!("{:.0}%", value * 100.0)
-    } else if let Some(unit) = previous.split_once(char::is_whitespace).map(|(_, u)| u) {
-        format!("{value:.0} {unit}")
-    } else if previous.contains('.') {
-        format!("{value:.precision$}", precision = decimals(step))
+        return format!("{:.0}%", value * 100.0);
+    }
+    let (number, unit) = previous
+        .split_once(char::is_whitespace)
+        .unwrap_or((previous, ""));
+    let precision = if number.contains('.') {
+        decimals(step)
     } else {
-        format!("{value:.0}")
+        0
+    };
+    let text = format!("{value:.precision$}");
+    if unit.is_empty() {
+        text
+    } else {
+        format!("{text} {unit}")
     }
 }
 
@@ -851,4 +864,31 @@ pub fn virtual_output_count() -> usize {
         .iter()
         .filter(|o| o.is_virtual())
         .count()
+}
+
+#[cfg(test)]
+mod readout_tests {
+    use super::reformat_readout;
+
+    #[test]
+    fn a_unit_readout_keeps_the_decimals_its_seed_had() {
+        // The tiling durations: seeded "0.30 s", stepped by 0.05.
+        assert_eq!(reformat_readout("0.30 s", 0.15, Some(0.05)), "0.15 s");
+        assert_eq!(reformat_readout("0.30 s", 0.0, Some(0.05)), "0.00 s");
+        assert_eq!(reformat_readout("0.30 s", 1.5, Some(0.05)), "1.50 s");
+    }
+
+    #[test]
+    fn an_integer_unit_readout_stays_integer() {
+        assert_eq!(reformat_readout("24 px", 12.0, Some(1.0)), "12 px");
+        assert_eq!(reformat_readout("300 ms", 250.4, Some(10.0)), "250 ms");
+    }
+
+    #[test]
+    fn bare_and_percent_readouts_are_unchanged() {
+        assert_eq!(reformat_readout("0.50", 0.25, Some(0.05)), "0.25");
+        assert_eq!(reformat_readout("0.5", 0.3, Some(0.1)), "0.3");
+        assert_eq!(reformat_readout("3", 4.0, None), "4");
+        assert_eq!(reformat_readout("100%", 1.5, None), "150%");
+    }
 }
