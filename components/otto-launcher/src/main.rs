@@ -583,6 +583,11 @@ enum Curve {
 /// blur the compositor is doing anyway.
 const CARD_MIN_ALPHA: u8 = 0xD8;
 
+/// The card without its frost. Denser than the toolkit's general
+/// unfrosted floor: the card is large and full of small text, and with no
+/// blur behind it even a faint desktop showing through fights the text.
+const CARD_UNFROSTED_MIN_ALPHA: u8 = 0xF6;
+
 fn at_least_opaque(colour: skia_safe::Color, min_alpha: u8) -> skia_safe::Color {
     skia_safe::Color::from_argb(
         colour.a().max(min_alpha),
@@ -606,11 +611,16 @@ fn apply_card_colour(card: &SubsurfaceSurface) {
     // taken up to at least `CARD_MIN_ALPHA` on top of that: the card is large
     // and full of small text, and a busy desktop showing through it costs more
     // legibility than the frost gives back.
-    // Filled in entirely while the desktop's frosting is off.
-    let colour = skia_safe::Color4f::from(otto_kit::frosting::material(at_least_opaque(
+    // Nearly opaque while the desktop's frosting is off.
+    let min_alpha = if otto_kit::frosting::enabled() {
+        CARD_MIN_ALPHA
+    } else {
+        CARD_UNFROSTED_MIN_ALPHA
+    };
+    let colour = skia_safe::Color4f::from(at_least_opaque(
         AppContext::current_theme().material_popup,
-        CARD_MIN_ALPHA,
-    )));
+        min_alpha,
+    ));
     style.set_background_color(
         colour.r as f64,
         colour.g as f64,
