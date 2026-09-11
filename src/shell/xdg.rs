@@ -995,20 +995,21 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                         .layers_engine
                         .add_animation_from_transition(&transition, false);
 
-                    let current_width = current_element_geometry.size.w as f32;
-                    let current_height = current_element_geometry.size.h as f32;
-                    let target_width = view.unmaximised_rect.size.w as f32;
-                    let target_height = view.unmaximised_rect.size.h as f32;
-
+                    // Frame sizes in, client size out: `unmaximised_rect` is
+                    // the element geometry, titlebar included. Configuring
+                    // the client with it made a decorated window grow by the
+                    // titlebar on every fullscreen exit — a maximized one
+                    // ended up under the dock.
+                    let current_size = current_element_geometry.size;
+                    let target_size = view.unmaximised_rect.size;
                     let s = surface.clone();
+                    let w = we.clone();
                     self.layers_engine.on_animation_update(
                         animation,
                         move |p: f32| {
-                            let width = current_width.interpolate(&target_width, p) as i32;
-                            let height = current_height.interpolate(&target_height, p) as i32;
-                            let size = Rectangle::new((0, 0).into(), (width, height).into());
+                            let size = animated_client_size(&w, current_size, target_size, p);
                             s.with_pending_state(|state| {
-                                state.size = Some(size.size);
+                                state.size = Some(size);
                             });
                             s.send_configure();
                         },
@@ -1017,7 +1018,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                     self.layers_engine.start_animation(animation, 0.0);
 
                     let surface_clone = surface.clone();
-                    let restored_size = view.unmaximised_rect.size;
+                    let restored_size = we.client_size(view.unmaximised_rect.size);
                     let workspace_layer = next_workspace.windows_layer.clone();
 
                     // Park the window in its own output's overlay plane for
