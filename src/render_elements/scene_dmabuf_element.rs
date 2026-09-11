@@ -332,22 +332,9 @@ impl SceneDmabufElement {
     /// the subtree's first engine update.
     pub fn subtree_blur_rects(&self) -> Vec<layers::skia::Rect> {
         let inner = self.inner.lock().unwrap();
-        let Some(node) = inner.node_ref else {
-            return Vec::new();
-        };
-        let Some(render_layer) = inner.engine.render_layer(&node) else {
-            return Vec::new();
-        };
-        let to_global = render_layer.transform_33;
-        render_layer
-            .backdrop_blur_region
-            .as_ref()
-            .map(|rrects| {
-                rrects
-                    .iter()
-                    .map(|rrect| to_global.map_rect(rrect.rect()).0)
-                    .collect()
-            })
+        inner
+            .node_ref
+            .map(|node| blur_rects_of(&inner.engine, node))
             .unwrap_or_default()
     }
 
@@ -518,7 +505,7 @@ impl SceneDmabufElement {
         let (w, h) = inner.size;
         let (ox, oy) = inner.scene_origin;
         let (vx, vy) = inner.viewport;
-        let visible_damage = dirty_rect.and_then(|r| {
+        let to_buffer = |r: &layers::skia::Rect| {
             let x = (r.left().floor() as i32 - ox - vx).clamp(0, w);
             let y = (r.top().floor() as i32 - oy - vy).clamp(0, h);
             let x2 = (r.right().ceil() as i32 - ox - vx).clamp(0, w);
@@ -530,7 +517,27 @@ impl SceneDmabufElement {
                 (x, y).into(),
                 (x2 - x, y2 - y).into(),
             ))
-        });
+        };
+        let visible_damage = dirty_rect.as_ref().and_then(to_buffer);
+        // A backdrop swap only changes what the blur shapes show — the seed
+        // is painted inside each shape's clip and nowhere else — so when the
+        // subtree has reported its shapes, that union is the redraw region,
+        // not the whole plane. (The dock plane is a full-width strip; its
+        // bar is a fraction of it, and the video above it swaps the backdrop
+        // several times a second.) Until the shapes are known, full buffer.
+        let backdrop_damage = if backdrop_changed && !force_full && has_dmabuf {
+            inner
+                .node_ref
+                .map(|n| blur_rects_of(&inner.engine, n))
+                .unwrap_or_default()
+                .iter()
+                .map(|r| r.with_outset((1.0, 1.0)))
+                .filter_map(|r| to_buffer(&r))
+                .reduce(|a, b| a.merge(b))
+        } else {
+            None
+        };
+        let backdrop_partial = backdrop_damage.is_some();
         // Debug (`/tmp/otto-bgdbg`): the inputs that decide whether this plane
         // repaints, and over what region. A background flash shows up here as a
         // frame whose clip/damage covers only part of the buffer.
@@ -660,11 +667,20 @@ impl SceneDmabufElement {
             }
         }
 
-        // Full buffer when the backdrop changed (blur can repaint anywhere),
-        // on a forced redraw, or on this element's first render.
-        let damage_rect = visible_damage
-            .filter(|_| !backdrop_changed && !force_full)
-            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (w, h).into()));
+        // Full buffer when the backdrop changed and the blur shapes are not
+        // known, on a forced redraw, or on this element's first render.
+        // Otherwise the subtree damage plus the blur shapes if the backdrop
+        // changed.
+        let full_redraw = (backdrop_changed && !backdrop_partial) || force_full;
+        let damage_rect = if full_redraw {
+            Rectangle::new((0, 0).into(), (w, h).into())
+        } else {
+            match (visible_damage, backdrop_damage) {
+                (Some(a), Some(b)) => a.merge(b),
+                (Some(a), None) | (None, Some(a)) => a,
+                (None, None) => Rectangle::new((0, 0).into(), (w, h).into()),
+            }
+        };
 
         // Render into the slot's Skia surface.
         {
@@ -693,7 +709,7 @@ impl SceneDmabufElement {
                     inner.current_slot_id,
                     slot_surface.last_commit.get().is_none(),
                     force_full,
-                    backdrop_changed || !has_dmabuf || force_full,
+                    full_redraw || !has_dmabuf,
                 );
             }
             // SAFETY: single render thread; no concurrent access to this slot.
@@ -705,21 +721,20 @@ impl SceneDmabufElement {
             // when the backdrop changed (blur can repaint anywhere), on a
             // slot's first use, or when the damage history no longer reaches
             // back to the slot's commit.
-            let clip: Option<Rectangle<i32, Physical>> =
-                if backdrop_changed || !has_dmabuf || force_full {
-                    None
-                } else {
-                    match inner.damage.damage_since(slot_surface.last_commit.get()) {
-                        Some(rects) => {
-                            let mut acc = damage_rect;
-                            for r in rects.iter() {
-                                acc = acc.merge(*r);
-                            }
-                            Some(acc)
+            let clip: Option<Rectangle<i32, Physical>> = if full_redraw || !has_dmabuf {
+                None
+            } else {
+                match inner.damage.damage_since(slot_surface.last_commit.get()) {
+                    Some(rects) => {
+                        let mut acc = damage_rect;
+                        for r in rects.iter() {
+                            acc = acc.merge(*r);
                         }
-                        None => None,
+                        Some(acc)
                     }
-                };
+                    None => None,
+                }
+            };
 
             if bgdbg {
                 // Walk the subtree root and its children: a plane that renders
@@ -1343,4 +1358,23 @@ mod plane_render_tests {
         });
         assert!(d.render && d.full_buffer, "first render is never partial");
     }
+}
+
+/// The `BackgroundBlur` shapes under `node`'s subtree in global scene
+/// coordinates — see [`SceneDmabufElement::subtree_blur_rects`].
+fn blur_rects_of(engine: &Arc<Engine>, node: NodeRef) -> Vec<layers::skia::Rect> {
+    let Some(render_layer) = engine.render_layer(&node) else {
+        return Vec::new();
+    };
+    let to_global = render_layer.transform_33;
+    render_layer
+        .backdrop_blur_region
+        .as_ref()
+        .map(|rrects| {
+            rrects
+                .iter()
+                .map(|rrect| to_global.map_rect(rrect.rect()).0)
+                .collect()
+        })
+        .unwrap_or_default()
 }

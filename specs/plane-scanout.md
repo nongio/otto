@@ -71,15 +71,26 @@ vibrancy even though the content behind it lives on other planes.
   otto-surface-style (root or subsurface, positioned by the compositor's own
   drawn geometry, not smithay's layer map, which arranges non-exclusive
   panels below their own spacer) plus the bounds of any mapped popup. Chrome
-  without a declared blur is not a consumer. Regions are exact: the backdrop
-  pre-blur is confined to each consumer's rect with mirrored edges (as lay-rs
-  confines an in-scene blur), so no reach band is needed, and a consumer
-  region that was not part of the previous pre-blur forces one rebuild. In the
-  steady state; the interest widens to the full output only while something
-  transient or unbounded is up (expose, OSD, tiling overlay, DnD, a selector
-  animation). A steady-state window redrawing below the chrome band, beside
-  an open menu, or in the part of the dock strip the bar does not cover,
-  therefore rebuilds nothing. Until a dock or switcher plane has reported
+  without a declared blur is not a consumer. Every consumer rect is grown by
+  the blur's reach (three sigma of the full-resolution blur, 120 px at the
+  pre-blur's sigma) before it is used for anything: the pre-blur is confined
+  to each grown rect with mirrored edges at the grown boundary, so inside the
+  consumer's own shape every sample is real content and the edge is tinted
+  by what lies just outside it, the way a true blur would; and damage
+  landing in that band rebuilds the composite, because it changes what the
+  edge shows. A consumer region that was not part of the previous pre-blur
+  forces one rebuild. A rebuild does not refresh every consumer: each
+  chrome plane keeps the composite it was last handed and only receives the
+  new one when damage reached its own band since then (a deferred hit is
+  remembered), so a video repainting above the dock re-renders the dock
+  plane and leaves the bar's plane alone; and a plane whose backdrop changed
+  redraws only the union of its blur shapes, not its whole buffer. In the
+  steady state the interest widens to the full
+  output only while something transient or unbounded is up (expose, OSD,
+  tiling overlay, DnD, a selector animation). A steady-state window
+  redrawing more than the reach below the chrome band, beside an open menu,
+  or in the part of the dock strip the bar does not cover, therefore
+  rebuilds nothing. Until a dock or switcher plane has reported
   its shapes, its whole strip stands in as the region.
   Rebuilds caused by desktop damage (bg/middle planes, promoted commits) are
   additionally rate-limited (currently one per 100 ms): a client committing

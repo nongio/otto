@@ -299,6 +299,21 @@ pub struct SurfaceData {
     /// rebuild. If the regions change to cover any of it, the composite is
     /// stale there and rebuilds at once.
     pub(super) backdrop_missed_damage: Option<layers::skia::Rect>,
+    /// Per-consumer handoff. A rebuild produces a new composite, but a
+    /// consumer only re-renders its plane when the image it is handed
+    /// changes — so each keeps the image it was last given and only receives
+    /// the fresh one when damage reached its own blur band (or the set of
+    /// tracked regions changed). A video repainting above the dock refreshes
+    /// the dock plane, not the bar's.
+    pub(super) backdrop_dock_image: Option<layers::skia::Image>,
+    pub(super) backdrop_switcher_image: Option<layers::skia::Image>,
+    /// The overlay's (pre-blurred, raw) pair — stacked popups need the raw one.
+    pub(super) backdrop_overlay_handed: Option<(layers::skia::Image, Option<layers::skia::Image>)>,
+    /// Damage reached this consumer's band since it was last handed an image;
+    /// carried across rate-limited frames so a deferred hit is not lost.
+    pub(super) backdrop_dock_stale: bool,
+    pub(super) backdrop_switcher_stale: bool,
+    pub(super) backdrop_overlay_stale: bool,
     /// When the composite was last rebuilt because of desktop (bg/middle/
     /// promoted-window) damage. Those rebuilds are rate-limited: a client
     /// committing at frame rate under a blur consumer (a maximized window's
