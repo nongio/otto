@@ -158,13 +158,11 @@ fn blur_image(
                 // few hundred pixels wide and the extra area costs nothing.
                 let regions = coalesce(regions);
                 for region in &regions {
-                    let Some(region) =
-                        layers::skia::Rect::intersects2(region, &bounds).then(|| {
-                            let mut r = *region;
-                            r.intersect(bounds);
-                            r
-                        })
-                    else {
+                    let Some(region) = layers::skia::Rect::intersects2(region, bounds).then(|| {
+                        let mut r = *region;
+                        r.intersect(bounds);
+                        r
+                    }) else {
                         continue;
                     };
                     let crop = layers::skia::image_filters::crop(

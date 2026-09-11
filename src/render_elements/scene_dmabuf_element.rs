@@ -1294,6 +1294,25 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
     }
 }
 
+/// The `BackgroundBlur` shapes under `node`'s subtree in global scene
+/// coordinates — see [`SceneDmabufElement::subtree_blur_rects`].
+fn blur_rects_of(engine: &Arc<Engine>, node: NodeRef) -> Vec<layers::skia::Rect> {
+    let Some(render_layer) = engine.render_layer(&node) else {
+        return Vec::new();
+    };
+    let to_global = render_layer.transform_33;
+    render_layer
+        .backdrop_blur_region
+        .as_ref()
+        .map(|rrects| {
+            rrects
+                .iter()
+                .map(|rrect| to_global.map_rect(rrect.rect()).0)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod plane_render_tests {
     use super::*;
@@ -1425,23 +1444,4 @@ mod plane_render_tests {
         });
         assert!(d.render && d.full_buffer, "first render is never partial");
     }
-}
-
-/// The `BackgroundBlur` shapes under `node`'s subtree in global scene
-/// coordinates — see [`SceneDmabufElement::subtree_blur_rects`].
-fn blur_rects_of(engine: &Arc<Engine>, node: NodeRef) -> Vec<layers::skia::Rect> {
-    let Some(render_layer) = engine.render_layer(&node) else {
-        return Vec::new();
-    };
-    let to_global = render_layer.transform_33;
-    render_layer
-        .backdrop_blur_region
-        .as_ref()
-        .map(|rrects| {
-            rrects
-                .iter()
-                .map(|rrect| to_global.map_rect(rrect.rect()).0)
-                .collect()
-        })
-        .unwrap_or_default()
 }

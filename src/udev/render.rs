@@ -1270,6 +1270,7 @@ impl Otto<UdevData> {
                     };
                     let out_scale = output.current_scale().fractional_scale() as f32;
                     let map = layer_map_for_output(&output);
+                    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
                     let effects = &self.background_effects;
                     let mut rects: Vec<layers::skia::Rect> = Vec::new();
                     if let Some(output_geo) = self.workspaces.output_geometry(&output) {

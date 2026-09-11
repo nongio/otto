@@ -3402,7 +3402,7 @@ impl Workspaces {
             let h = (bounds.height() / scale).ceil() as i32;
             // Grow the rect 2pt towards the screen interior so windows keep a
             // sliver of clearance from the dock's inner edge.
-            let geometry = match self.dock.position() {
+            match self.dock.position() {
                 crate::config::DockPosition::Bottom => {
                     Rectangle::new((x, y - 2).into(), (w, h).into())
                 }
@@ -3412,8 +3412,7 @@ impl Workspaces {
                 crate::config::DockPosition::Right => {
                     Rectangle::new((x - 2, y).into(), (w + 2, h).into())
                 }
-            };
-            geometry
+            }
         } else {
             Rectangle::new((0, 0).into(), (0, 0).into())
         }
@@ -5271,9 +5270,6 @@ impl Workspaces {
         self.get_plane_candidates(output).raw
     }
 
-    /// Both promotion tiers for `output`, computed in one top-to-bottom walk
-    /// (they share every stability gate and the same occlusion state).
-
     /// Debug: which global gate closed plane promotion, logged when it changes.
     fn plane_gate_log(reason: &'static str) {
         use std::sync::Mutex;
@@ -5285,6 +5281,8 @@ impl Workspaces {
         }
     }
 
+    /// Both promotion tiers for `output`, computed in one top-to-bottom walk
+    /// (they share every stability gate and the same occlusion state).
     pub fn get_plane_candidates(&self, output: &Output) -> PlaneCandidates {
         use smithay::utils::{Physical, Rectangle};
 
