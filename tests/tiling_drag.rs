@@ -209,6 +209,63 @@ mod tiling_drag_tests {
         handle.stop();
     }
 
+    /// The same drop, but through the real pointer grab: a press on the
+    /// tile's titlebar, motion past the drag threshold, and a button
+    /// release. The grab's own release order is what this covers — the
+    /// helpers above call the drop directly and would never see a release
+    /// that cancels the detach before it can land the window.
+    #[test]
+    #[serial]
+    fn a_release_from_the_pointer_grab_lands_the_window_in_the_slot() {
+        let (handle, windows) = tiled(&["grab-a", "grab-b", "grab-c"]);
+        let start = order(&handle);
+        let (dragged, target) = (start[0].clone(), start[2].clone());
+        // `TestClient` does not speak xdg-decoration: give the tile the
+        // server-side bar a real client would have asked for.
+        handle.decorate_window(&dragged);
+        handle.settle(300);
+
+        // Press in the middle of the titlebar, clear of the controls.
+        let (x, y, w, _) = handle
+            .window_logical_geometry(&dragged)
+            .expect("the tile is mapped");
+        let bar = handle
+            .window_decoration_height(&dragged)
+            .expect("the tile has a view");
+        assert!(bar > 0, "a tile wears a titlebar to drag by");
+        let press = ((x + w / 2) as f64, (y + bar / 2) as f64);
+        handle.pointer_move(press.0, press.1);
+        handle.wait(Duration::from_millis(50));
+        handle.pointer_press();
+        // The move grab is installed from an idle callback after the press.
+        handle.settle(100);
+
+        // Past the threshold: the tile leaves its tree.
+        handle.pointer_move(press.0 + 40.0, press.1 + 40.0);
+        handle.settle(300);
+        assert!(handle.tiling_drag_active(), "the drag detached the tile");
+
+        // Onto the right half of the target as it stands now, and let go.
+        let (tx, ty) = at(cell(&handle, &target), 0.9, 0.5);
+        handle.pointer_move(tx, ty);
+        handle.settle(100);
+        assert!(
+            handle.tiling_drag_preview().is_some(),
+            "the slot pane shows"
+        );
+        handle.pointer_release();
+        handle.settle(600);
+
+        assert!(!handle.tiling_drag_active());
+        assert_eq!(
+            order(&handle),
+            vec![start[1].clone(), target.clone(), dragged.clone()],
+            "letting go puts the window in the slot the pane showed"
+        );
+        drop(windows);
+        handle.stop();
+    }
+
     // ── Dragging an edge ─────────────────────────────────────────────────
 
     #[test]

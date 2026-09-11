@@ -225,19 +225,22 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
     ) {
         handle.button(data, event);
         if handle.current_pressed().is_empty() {
-            // No more buttons are pressed, release the grab.
-            handle.unset_grab(self, data, event.serial, event.time, true);
-
             // A window dragged out of a tree goes back into one: the slot the
-            // overlay was showing, and no screen-edge zone applies.
-            if data.tiling_drag_is_active() {
+            // overlay was showing, and no screen-edge zone applies. The drop
+            // happens before the grab is unset: `unset` cancels a detach that
+            // is still open, which would undo the insert.
+            if self.tiling_detached && data.tiling_drag_is_active() {
                 let location = handle.current_location();
-                data.tiling_drag_drop(location.x, location.y);
                 self.tiling_detached = false;
+                data.tiling_drag_drop(location.x, location.y);
+                handle.unset_grab(self, data, event.serial, event.time, true);
                 #[cfg(feature = "xwayland")]
                 data.sync_x11_window_position(&self.window);
                 return;
             }
+
+            // No more buttons are pressed, release the grab.
+            handle.unset_grab(self, data, event.serial, event.time, true);
 
             // Snap the window into the previewed zone, if any.
             data.workspaces.tiling_overlay.hide();
