@@ -437,6 +437,15 @@ apply arm in `src/settings/apply.rs` that relays out every tiling workspace
 (gaps, decoration) or just stores the value (durations, step). Decoration
 already has both; the rest follow it.
 
+Two things make the difference between a key marked `Live` and one that is:
+the gap sliders are the session default, so they clear the per-workspace
+overrides `gaps <n>` leaves behind — otherwise the slider is dead on the one
+workspace the user is watching — and a value is checked against what the
+configuration *kept*, not against what was asked for, since the fractions
+here are stored as `f32` and 0.05 does not come back as 0.05.
+`tests/tiling_settings.rs` drives all of it through the real settings entry
+point.
+
 **Per-workspace settings, persisted with the name.** Today the config holds
 two parallel maps keyed `"<output>:<position>"`: `[workspaces] names` and
 `[workspaces.gaps]`. They become one record per workspace:

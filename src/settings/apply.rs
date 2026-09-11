@@ -222,7 +222,14 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // reconfigured. Forced, because a gap change can leave a lone tile's
         // cell exactly where it was while the smart-gap rule changes what is
         // inside it.
+        //
+        // These sliders are the session default, which is what `gaps <n> all`
+        // sets — so they do what that command does, overrides and all. A
+        // workspace given its own gaps by `gaps <n>` would otherwise go on
+        // ignoring the slider, and on that workspace the setting would be
+        // dead in the hand while it looked live in the pane.
         "tiling.inner_gap" | "tiling.outer_gap" => {
+            state.clear_workspace_gap_overrides();
             state.relayout_tiling_workspaces();
             Ok(())
         }

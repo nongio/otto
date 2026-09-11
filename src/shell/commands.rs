@@ -355,13 +355,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     GapScope::Inner => config.tiling.inner_gap = amount,
                     GapScope::Outer => config.tiling.outer_gap = amount,
                 });
-                for ows in self.workspaces.output_workspaces.values() {
-                    for view in ows.workspace_views.iter() {
-                        if let Ok(mut state) = view.tiling.write() {
-                            state.gaps = None;
-                        }
-                    }
-                }
+                self.clear_workspace_gap_overrides();
             }
             GapTarget::Current => {
                 let Some(output) = self.tiling_output() else {
@@ -388,10 +382,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 state.gaps = Some(gaps);
             }
         }
-        if touched_all {
-            self.workspaces.persist_all_workspace_entries();
-        } else if let Some((output, position)) = touched {
-            self.workspaces.persist_workspace_entry(&output, position);
+        // `all` has already persisted every entry, in the course of
+        // clearing them.
+        if !touched_all {
+            if let Some((output, position)) = touched {
+                self.workspaces.persist_workspace_entry(&output, position);
+            }
         }
         let outputs: Vec<Output> = self.workspaces.outputs().cloned().collect();
         for output in outputs {

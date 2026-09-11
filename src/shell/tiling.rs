@@ -625,6 +625,24 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     // ── Shortcut handlers ────────────────────────────────────────────────
 
+    /// Drop every workspace's own gaps, so they all follow `[tiling]` again.
+    ///
+    /// The Settings sliders and `gaps <n> all` are the same instrument — the
+    /// session default — and this is the half of that command which is not
+    /// the number itself. Without it a workspace that was once given its own
+    /// gaps keeps them for ever, and the slider does nothing at all on the
+    /// very workspace the user is looking at while they drag it.
+    pub fn clear_workspace_gap_overrides(&mut self) {
+        for ows in self.workspaces.output_workspaces.values() {
+            for view in ows.workspace_views.iter() {
+                if let Ok(mut state) = view.tiling.write() {
+                    state.gaps = None;
+                }
+            }
+        }
+        self.workspaces.persist_all_workspace_entries();
+    }
+
     /// Re-dress every tile after `[tiling] decoration` changed.
     ///
     /// The bar's height is part of what the client is configured with, so a

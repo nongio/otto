@@ -899,6 +899,34 @@ impl HeadlessHandle {
         })
     }
 
+    /// Set one setting exactly the way the Settings app does: through the
+    /// schema, the running configuration, `apply_live` and the persist step,
+    /// with the same refusals.
+    ///
+    /// Everything a test could reach for instead — writing `Config` and
+    /// calling the reconcile helper by hand — skips the very steps a live
+    /// setting can fail in, so a setting that is marked live and does nothing
+    /// still looks fine. Returns the error the app would have printed.
+    pub fn set_setting(
+        &self,
+        id: &str,
+        value: crate::settings::value::SettingValue,
+    ) -> Result<(), String> {
+        let id = id.to_string();
+        self.query(move |state| {
+            crate::settings::set(state, &id, value)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        })
+    }
+
+    /// What the running configuration holds for `id`, read back through the
+    /// schema exactly as the Settings app reads it.
+    pub fn setting_value(&self, id: &str) -> Option<crate::settings::value::SettingValue> {
+        let id = id.to_string();
+        self.query(move |_state| crate::settings::value_of(&id))
+    }
+
     /// Change `[tiling] decoration` the way the settings app does, and let it
     /// reach the windows already on screen.
     pub fn set_tiling_decoration(&self, decoration: &str) {

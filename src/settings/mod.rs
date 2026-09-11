@@ -239,12 +239,11 @@ pub fn set<B: Backend + 'static>(
     // resize changes the running configuration first and comes here to persist
     // it, so an effective-value comparison alone would drop the write.
     let stored = crate::config::stored_key(id);
-    if value_of(id).as_ref() == Some(&value)
+    if value_of(id).is_some_and(|running| value.kept_as(&running))
         && stored
             .as_ref()
             .and_then(|stored| SettingValue::from_toml(stored, spec.ty))
-            .as_ref()
-            == Some(&value)
+            .is_some_and(|stored| value.kept_as(&stored))
     {
         return Ok(status_for(spec));
     }
@@ -255,7 +254,7 @@ pub fn set<B: Backend + 'static>(
     if spec.apply == Apply::Restart {
         let next = config_with(&Config::current(), id, &value)
             .map_err(|reason| SetError::ApplyFailed(reason.to_string()))?;
-        if value_in(&config_toml(&next), spec) != value {
+        if !value.kept_as(&value_in(&config_toml(&next), spec)) {
             return Err(SetError::ApplyFailed(format!(
                 "`{id}` could not be stored in the configuration"
             )));
@@ -277,7 +276,7 @@ pub fn set<B: Backend + 'static>(
             *config = next;
         }
     });
-    if value_of(id).as_ref() != Some(&value) {
+    if !value_of(id).is_some_and(|running| value.kept_as(&running)) {
         Config::update(|config| *config = (*previous).clone());
         return Err(SetError::ApplyFailed(format!(
             "`{id}` could not be stored in the running configuration"
