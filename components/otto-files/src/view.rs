@@ -3273,7 +3273,7 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     // there the material would be a tint over the listing it is covering,
     // with no blur underneath to justify it.
     paint.set_color(if data.on_surface {
-        theme.material_popup
+        otto_kit::frosting::material(theme.material_popup)
     } else {
         content_ground()
     });
