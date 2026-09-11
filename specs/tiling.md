@@ -348,9 +348,13 @@ the window floats, and under *none* they draw no bar and are moved by design
 mode or the keyboard. An application whose chrome is not a bar — Files, whose
 controls sit at the top of a full-height sidebar beside a tall header — takes
 from the setting only what a bar would change. Under *minimal* its controls
-shrink and sit closer to the corner, as they do on the compact bar, and the
-header's rows and the sidebar's content move up by the same distance so the
-chrome stays one aligned block; the corner radius follows the bar's. Under
+shrink and take the compact bar's place — the same inset from the leading
+edge, centred in a strip as tall as that bar — so they line up with a
+server-decorated tile's beside it, and the header's rows and the sidebar's
+content move up by the same distance so the chrome stays one aligned block.
+The Trash window's title, which rides the controls' row when the window
+floats, stops at the row its Put Back and Empty Trash buttons can take without
+crowding the top edge. The corner radius follows the bar's. Under
 *none* it draws no controls and moves the sidebar's content up into the row
 they left.
 

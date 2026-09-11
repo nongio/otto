@@ -87,7 +87,7 @@ fn chrome_lift() -> f32 {
     match decoration_variant() {
         DecorationVariant::Minimal => {
             let floating = CONTROLS_INSET + WindowDecoration::CONTROL_SIZE / 2.0;
-            let minimal = MINIMAL_CONTROLS_INSET + WindowDecoration::MINIMAL_CONTROL_SIZE / 2.0;
+            let minimal = WindowDecoration::MINIMAL_HEIGHT / 2.0;
             floating - minimal
         }
         _ => 0.0,
@@ -108,12 +108,25 @@ fn sidebar_lift() -> f32 {
 /// the same clearance from the top edge that the lights had.
 const SIDEBAR_LIFT: f32 = 30.0;
 
-/// How far in from the window's corner the lights sit under the decoration
-/// the window wears: a minimal tile's smaller dots sit closer to the edge,
-/// the way the compositor's own compact bar places them.
+/// How far in from the window's leading edge the lights sit under the
+/// decoration the window wears: a minimal tile's smaller dots sit closer to
+/// the edge, the way the compositor's own compact bar places them.
 fn controls_inset() -> f32 {
     match decoration_variant() {
         DecorationVariant::Minimal => MINIMAL_CONTROLS_INSET,
+        _ => CONTROLS_INSET,
+    }
+}
+
+/// How far down from the window's top edge the leading lights sit. A minimal
+/// tile centres them in the strip the compositor's compact bar is — the
+/// horizontal inset would put them lower than a server-decorated tile's dots
+/// beside it.
+fn controls_top() -> f32 {
+    match decoration_variant() {
+        DecorationVariant::Minimal => {
+            (WindowDecoration::MINIMAL_HEIGHT - WindowDecoration::MINIMAL_CONTROL_SIZE) / 2.0
+        }
         _ => CONTROLS_INSET,
     }
 }
@@ -262,7 +275,9 @@ pub const ROW_H: f32 = 24.0;
 const CONTENT_PAD: f32 = 20.0;
 pub const ICON_SIZE: f32 = 18.0;
 const CONTROLS_INSET: f32 = 18.0;
-/// The same inset under a minimal tile, whose 11pt dots sit higher.
+/// The leading inset under a minimal tile, whose 11pt dots sit closer to the
+/// edge; vertically they are centred in the compact strip — see
+/// [`controls_top`].
 const MINIMAL_CONTROLS_INSET: f32 = 10.0;
 /// Optical centres of the header's two text lines, within `HEADER_H`.
 const TITLE_CY: f32 = 40.0;
@@ -275,9 +290,13 @@ const SUBTITLE_CY: f32 = 66.0;
 /// things side by side that don't share a centre line read as a mistake — so
 /// there the title rides the controls' row instead. With the controls over at
 /// the trailing edge nothing is beside the title, and it stays put.
+///
+/// A minimal tile's lights are centred in a strip too shallow for the title,
+/// so there it stops at the row the Trash's actions can take without crowding
+/// the top edge, and keeps sharing a line with them.
 fn title_cy() -> f32 {
     if shell() == Shell::Trash && otto_kit::controls_side::side() == ControlsSide::Left {
-        controls_inset() + controls_group().size / 2.0
+        (controls_top() + controls_group().size / 2.0).max(TRASH_BTN_TOP_MIN + SWITCHER_H / 2.0)
     } else {
         TITLE_CY - chrome_lift()
     }
@@ -1021,7 +1040,7 @@ pub fn window_controls(width: f32) -> WindowControls {
     let group_w = controls.width();
     let group_h = controls.size;
     match otto_kit::controls_side::side() {
-        ControlsSide::Left => controls.at(controls_inset(), controls_inset()),
+        ControlsSide::Left => controls.at(controls_inset(), controls_top()),
         // Sharing the trailing edge with the view switcher, the dots sit on
         // its centre line rather than at the window's own corner inset —
         // two things side by side that don't line up read as a mistake.
@@ -1055,16 +1074,22 @@ const TRASH_BTN_GAP: f32 = 8.0;
 /// content does: a filled button reads as wider than its box, and hard against
 /// the corner it crowds the window's own rounding.
 const TRASH_BTN_INSET: f32 = 12.0;
+/// The least room the pair keeps above it — the gap a minimal tile's lights
+/// keep from the same edge. The title row a minimal tile lifts to is centred
+/// on 11pt dots, and a 26pt button on that centre nearly touches the top.
+const TRASH_BTN_TOP_MIN: f32 = MINIMAL_CONTROLS_INSET;
 
 /// The row the Trash's actions sit on: the title's, so the header reads as
 /// one line of chrome — except when the controls are at the trailing edge,
 /// where the buttons share the corner with them and line up on the switcher's
-/// centre the way the switcher itself does.
+/// centre the way the switcher itself does. Never so high that the buttons
+/// crowd the window's top edge; see [`TRASH_BTN_TOP_MIN`].
 fn trash_actions_cy() -> f32 {
-    match otto_kit::controls_side::side() {
+    let cy = match otto_kit::controls_side::side() {
         ControlsSide::Left => title_cy(),
         ControlsSide::Right => control_cy(),
-    }
+    };
+    cy.max(TRASH_BTN_TOP_MIN + SWITCHER_H / 2.0)
 }
 
 /// Both buttons, right-aligned into the header's trailing edge and clearing
