@@ -288,6 +288,9 @@ pub struct AppContextData {
     pub data_device_manager:
         Option<smithay_client_toolkit::data_device_manager::DataDeviceManagerState>,
     pub data_device: Option<smithay_client_toolkit::data_device_manager::data_device::DataDevice>,
+    /// `ext_background_effect_manager_v1`, the blur a compositor without
+    /// Otto's surface style may still offer. See [`crate::backdrop`].
+    pub(crate) background_effect: Option<crate::backdrop::Binding>,
     pub display_ptr: *mut std::ffi::c_void,
 }
 
@@ -425,6 +428,16 @@ impl<'a> AppContext<'a> {
                 .fractional_scale_manager
                 .as_ref()
                 .map(|r| &*(r as *const WpFractionalScaleManagerV1))
+        })
+    }
+
+    pub fn background_effect_manager() -> Option<&'static wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>{
+        use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .background_effect
+                .as_ref()
+                .map(|binding| &*(&binding.manager as *const ExtBackgroundEffectManagerV1))
         })
     }
 

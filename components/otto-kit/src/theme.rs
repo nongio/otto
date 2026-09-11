@@ -93,12 +93,71 @@ impl Theme {
 
     /// Light theme, with the user's accent folded in.
     pub fn light() -> Self {
-        Self::light_palette().with_system_accent()
+        Self::light_palette()
+            .with_system_accent()
+            .with_system_backdrop(false)
     }
 
     /// Dark theme, with the user's accent folded in.
     pub fn dark() -> Self {
-        Self::dark_palette().with_system_accent()
+        Self::dark_palette()
+            .with_system_accent()
+            .with_system_backdrop(true)
+    }
+
+    /// Fill the materials in where nothing blurs behind them.
+    ///
+    /// A translucent material over bare pixels is not a lighter version of
+    /// itself: it is whatever sits behind the surface showing through, and the
+    /// text on top loses its contrast to it. See [`crate::backdrop`].
+    fn with_system_backdrop(mut self, dark: bool) -> Self {
+        if !crate::backdrop::blur_available() {
+            self.with_solid_materials(dark);
+        }
+        self
+    }
+
+    /// Replace the translucent materials with opaque ones.
+    ///
+    /// Not the same hues made opaque: the light materials are near-white, and
+    /// filled in they would be indistinguishable from the content they frame.
+    /// Each lands a shade off the content ground instead, so a sidebar still
+    /// reads as a sidebar and a menu still reads as lifted off the window.
+    /// Highlights and selections are tints laid over these, and stay as they
+    /// are.
+    pub fn with_solid_materials(&mut self, dark: bool) -> &mut Self {
+        if dark {
+            self.material_titlebar = Color::from_rgb(0x2A, 0x2A, 0x2C);
+            self.material_sidebar = Color::from_rgb(0x25, 0x25, 0x27);
+            self.material_medium = Color::from_rgb(0x2A, 0x2A, 0x2C);
+            self.material_popup = Color::from_rgb(0x2E, 0x2E, 0x30);
+        } else {
+            self.material_titlebar = Color::from_rgb(0xE8, 0xE8, 0xEB);
+            self.material_sidebar = Color::from_rgb(0xEC, 0xEC, 0xEF);
+            self.material_medium = Color::from_rgb(0xF0, 0xF0, 0xF3);
+            self.material_popup = Color::from_rgb(0xF8, 0xF8, 0xF9);
+        }
+        self
+    }
+
+    /// The material for a card on a subsurface of the window it floats over —
+    /// a command palette, a preview panel.
+    ///
+    /// `material_popup` where the compositor can frost what is under the card,
+    /// and its solid form everywhere else: see
+    /// [`crate::backdrop::blurs_behind_subsurfaces`].
+    pub fn card_material(&self) -> Color {
+        if crate::backdrop::blurs_behind_subsurfaces() {
+            return self.material_popup;
+        }
+        let popup = self.material_popup;
+        let dark = popup.r() < 0x80;
+        let mut theme = if dark {
+            Self::dark_palette()
+        } else {
+            Self::light_palette()
+        };
+        theme.with_solid_materials(dark).material_popup
     }
 
     /// The light palette exactly as designed, with Otto's own blue as the
@@ -233,5 +292,29 @@ fn mute(color: Color) -> Color {
 impl Default for Theme {
     fn default() -> Self {
         Self::light()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn solid_materials_are_opaque_and_off_the_content_ground() {
+        for (dark, mut theme, ground) in [
+            (false, Theme::light_palette(), Color::WHITE),
+            (true, Theme::dark_palette(), Color::from_rgb(0x1C, 0x1C, 0x1E)),
+        ] {
+            theme.with_solid_materials(dark);
+            for material in [
+                theme.material_titlebar,
+                theme.material_sidebar,
+                theme.material_medium,
+                theme.material_popup,
+            ] {
+                assert_eq!(material.a(), 0xFF);
+                assert_ne!(material, ground);
+            }
+        }
     }
 }

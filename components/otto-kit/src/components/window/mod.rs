@@ -306,15 +306,39 @@ impl Window {
     /// all: under a compositor that carries no surface style, or with the blur
     /// switched off, this does nothing.
     pub fn set_frost(&self, frosted: bool) {
+        let frosted = frosted && self.blur_wanted.load(Ordering::Relaxed);
         let Some(style) = self.surface_style() else {
+            if self.frosted.swap(frosted, Ordering::Relaxed) != frosted {
+                self.set_effect_blur(frosted);
+            }
             return;
         };
-        let frosted =
-            frosted && self.blur_wanted.load(Ordering::Relaxed) && crate::frosting::enabled();
+        let frosted = frosted && crate::frosting::enabled();
         if self.frosted.swap(frosted, Ordering::Relaxed) == frosted {
             return;
         }
         self.set_blend_mode(&style, frosted);
+    }
+
+    /// The frost on a compositor without Otto's surface style, through
+    /// `ext_background_effect_v1` where it is offered. There is no tint and no
+    /// fade on that side: the application's materials are painted into the
+    /// buffer, so the blur is all there is to switch.
+    ///
+    /// Committed here, because the region only lands with a commit and a
+    /// window whose blur changes need not have anything new to draw.
+    fn set_effect_blur(&self, frosted: bool) {
+        if crate::backdrop::current() != crate::backdrop::Backdrop::BackgroundEffect {
+            return;
+        }
+        let Some(surface) = self.wl_surface() else {
+            return;
+        };
+        crate::backdrop::set_blur(
+            &surface,
+            frosted.then_some(crate::backdrop::BlurShape::Whole),
+        );
+        surface.commit();
     }
 
     /// The colour the compositor tints the frost with.
@@ -357,6 +381,13 @@ impl Window {
     /// Either way the opaque tint is the cover the blur is switched under.
     fn update_material(&self, animate: bool) {
         let Some(style) = self.surface_style() else {
+            // The material is painted into the buffer here, so all that
+            // follows focus is the blur, and — for a window that fades its own
+            // materials — only its arrival: the application times the leaving.
+            let frost = self.wants_frost();
+            if frost || !self.fades_own_material.load(Ordering::Relaxed) {
+                self.set_frost(frost);
+            }
             return;
         };
         let Some(material) = self.material.read().ok().and_then(|m| *m) else {

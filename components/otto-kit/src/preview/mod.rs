@@ -873,7 +873,7 @@ pub fn human_size(bytes: u64) -> String {
 /// The material a preview sits on. Exposed so the compositor and an
 /// application can paint the same ground.
 pub fn background(theme: &Theme) -> Color {
-    theme.material_popup
+    theme.card_material()
 }
 
 #[cfg(test)]

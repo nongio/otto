@@ -348,6 +348,16 @@ the palette adds no new capability.
   already covering — which is why the card read as the same colour on the same
   colour, and why a hairline was needed to say where its edge was. The hairline
   stays, over the frost rather than in place of it.
+- **Under a compositor without Otto's surface style, the card is not
+  frosted, even where a standard blur protocol is available.** The card is a
+  subsurface of the palette's own window, and a standard blur protocol blurs
+  what is behind the *window*, not behind one of its subsurfaces — turning it
+  on here would let the window's own listing show sharp through a
+  translucent card. The card instead draws the theme's solid popup material,
+  which is the same opaque colour whether the compositor offers no blur
+  protocol at all or offers the standard one and simply cannot be asked to
+  blur behind a subsurface. Otto's own windows are unaffected: this is the
+  fallback path only.
 - **A click outside the card closes the palette and stops there.** It must not
   also select whatever file was underneath: the click that dismisses something
   is spent on dismissing it.

@@ -3271,9 +3271,11 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     // The translucent material when the compositor is blurring behind this
     // surface, and filled in when the card is inside the window's own buffer:
     // there the material would be a tint over the listing it is covering,
-    // with no blur underneath to justify it.
+    // with no blur underneath to justify it. On a surface of its own it is
+    // still filled in wherever the compositor cannot frost a subsurface — see
+    // `Theme::card_material`.
     paint.set_color(if data.on_surface {
-        otto_kit::frosting::material(theme.material_popup)
+        otto_kit::frosting::material(theme.card_material())
     } else {
         content_ground()
     });
@@ -5015,6 +5017,22 @@ pub fn panel_material() -> Color {
     } else {
         Color::from_argb(0xF2, 0xFF, 0xFF, 0xFF)
     }
+}
+
+/// The chrome's material on a compositor with no blur at all.
+///
+/// [`opaque`] of [`panel_material`] is the content's own white, which is right
+/// for a moment — an unfocused window whose frost comes back on the next
+/// click — and wrong for good: sidebar, header and listing merge into one
+/// sheet. This is the toolkit's solid sidebar shade instead.
+pub fn solid_panel_material() -> Color {
+    let dark = matches!(current_color_scheme(), ColorScheme::Dark);
+    let mut theme = if dark {
+        Theme::dark_palette()
+    } else {
+        Theme::light_palette()
+    };
+    theme.with_solid_materials(dark).material_sidebar
 }
 
 pub fn row_colors(theme: &Theme, selected: bool) -> (Color, Color) {

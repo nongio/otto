@@ -6775,12 +6775,12 @@ impl App for FilesApp {
         // for a window nobody is looking at.
         //
         // `OTTO_FILES_NO_BLUR=1` drops the frosted backdrop entirely, to test
-        // what it costs — as does running under a compositor that carries no
-        // surface style at all. The panels are filled in rather than left
-        // translucent in both cases, so what that isolates is the compositor's
-        // blur work and not the window's legibility.
+        // what it costs — as does running under a compositor that offers no
+        // blur at all (see `otto_kit::backdrop`). The panels are filled in
+        // rather than left translucent in both cases, so what that isolates is
+        // the compositor's blur work and not the window's legibility.
         let blur =
-            window.surface_style().is_some() && std::env::var_os("OTTO_FILES_NO_BLUR").is_none();
+            otto_kit::backdrop::blur_available() && std::env::var_os("OTTO_FILES_NO_BLUR").is_none();
         window.set_background_blur(blur);
         self.state.lock().unwrap().blur_available = blur;
 

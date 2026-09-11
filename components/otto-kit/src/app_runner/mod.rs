@@ -546,6 +546,11 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // Binding at 3 is what the hold hooks need, and a compositor offering
         // less simply leaves both unbound rather than half-working.
         let pointer_gestures: Option<ZwpPointerGesturesV1> = globals.bind(&qh, 3..=3, ()).ok();
+        // Which blur the materials can count on — Otto's surface style, the
+        // standard background effect, or none — settled before any surface
+        // or theme is made.
+        let background_effect =
+            crate::backdrop::init(&conn, &globals, surface_style_manager.is_some());
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;
@@ -584,6 +589,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             pointer_gestures,
             data_device_manager,
             data_device: None,
+            background_effect,
             display_ptr,
         });
 
@@ -1903,6 +1909,7 @@ wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_pr
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore ZwpPointerGesturesV1);
+wayland_client::delegate_noop!(@<A: App + 'static> AppData<A>: ignore wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1);
 
 impl<A: App + 'static> Dispatch<ZwpPointerGesturePinchV1, ()> for AppData<A> {
     fn event(

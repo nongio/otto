@@ -4,6 +4,7 @@ pub mod testing;
 pub mod accent;
 pub mod accessibility;
 pub mod app_runner;
+pub mod backdrop;
 pub mod clipboard;
 pub mod color_scheme;
 pub mod common;

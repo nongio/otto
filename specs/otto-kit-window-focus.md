@@ -129,6 +129,20 @@ close, and quitting a bar or an island on Cmd+W would be a surprise.
   carry Otto's surface style, the request is silently unavailable — the
   materials must be filled in for the whole run rather than only while the
   window is unfocused.
+- **A standard blur protocol is a second, weaker source of the same effect.**
+  Under a compositor offering `ext_background_effect_v1`'s blur capability
+  (KWin 6.7 verified) instead of Otto's surface style, a kit window still
+  requests and drops a blurred backdrop on focus exactly as it does under
+  Otto: a whole-surface region while focused, none while unfocused, materials
+  filled in whenever there is none. A window picks whichever of the two
+  protocols the compositor actually offers once, at connect time, and never
+  mixes them.
+- **Under neither protocol, the fill-in colour changes rather than the
+  behaviour.** With no blur available at all (GNOME/mutter verified), the
+  materials that would otherwise be translucent over a blur are opaque for
+  the whole run in a shade a step off the content ground, not the plain
+  opaque white the atomicity rule elsewhere assumes — the same rule, applied
+  with a different opaque colour underneath.
 - **Controls stay live while unfocused.** Gray is a colour, not a disabled
   state: a press on a background window's close control still closes it.
 - **A window with no traffic lights is unaffected by that part.** A dialog that
