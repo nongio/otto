@@ -535,8 +535,12 @@ mod tests {
         let line = (styles::BODY_EMPHASIZED.size * 1.5).ceil();
         assert_eq!(WindowDecoration::MINIMAL_HEIGHT, line);
         // "Roughly half the floating bar", and never taller than it.
-        assert!(WindowDecoration::MINIMAL_HEIGHT < WindowDecoration::DEFAULT_HEIGHT);
-        assert!(WindowDecoration::MINIMAL_HEIGHT > WindowDecoration::DEFAULT_HEIGHT / 2.0 - 4.0);
+        const {
+            assert!(WindowDecoration::MINIMAL_HEIGHT < WindowDecoration::DEFAULT_HEIGHT);
+            assert!(
+                WindowDecoration::MINIMAL_HEIGHT > WindowDecoration::DEFAULT_HEIGHT / 2.0 - 4.0
+            );
+        }
     }
 
     #[test]
