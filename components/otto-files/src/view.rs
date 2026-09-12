@@ -3284,7 +3284,12 @@ fn palette_row_h(kind: PaletteRowKind) -> f32 {
 /// and the rounded clip the compositor frosts and shadows it with when it is
 /// on a surface of its own. Kept in step by hand they drifted, and a hairline
 /// a fraction off the edge it outlines is exactly the flaw the eye goes to.
-pub const PALETTE_RADIUS: f32 = 14.0;
+///
+/// Square on a desktop configured without rounded corners, like every other
+/// piece of chrome.
+pub fn palette_radius() -> f32 {
+    otto_kit::corners::radius(14.0)
+}
 
 /// The card. Its height follows what is in it, so an empty query and a
 /// one-match query are not the same box.
@@ -3414,6 +3419,7 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     // only while the card is in the window's buffer — on its own surface the
     // compositor casts it, and outside the card's bounds, which is the one
     // place a shadow is worth having.
+    let radius = palette_radius();
     if !data.on_surface {
         paint.set_color(theme.shadow);
         paint.set_mask_filter(skia_safe::MaskFilter::blur(
@@ -3422,7 +3428,7 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
             false,
         ));
         canvas.draw_rrect(
-            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), PALETTE_RADIUS, PALETTE_RADIUS),
+            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), radius, radius),
             &paint,
         );
         paint.set_mask_filter(None);
@@ -3439,10 +3445,7 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     } else {
         content_ground()
     });
-    canvas.draw_rrect(
-        RRect::new_rect_xy(card, PALETTE_RADIUS, PALETTE_RADIUS),
-        &paint,
-    );
+    canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &paint);
 
     // The hairline is what says the card is above the listing rather than part
     // of it: the ground is the same colour on both sides of the edge, exactly
@@ -3458,13 +3461,10 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     // where the compositor's rounded clip meets it. Built from the card's
     // rect, the outer edge of the ring *is* the card's edge, at every radius.
     paint.set_color(theme.hairline());
-    let outer = RRect::new_rect_xy(card, PALETTE_RADIUS, PALETTE_RADIUS);
+    let outer = RRect::new_rect_xy(card, radius, radius);
     let inset = Theme::HAIRLINE_WIDTH;
-    let inner = RRect::new_rect_xy(
-        card.with_inset((inset, inset)),
-        PALETTE_RADIUS - inset,
-        PALETTE_RADIUS - inset,
-    );
+    let inner_radius = (radius - inset).max(0.0);
+    let inner = RRect::new_rect_xy(card.with_inset((inset, inset)), inner_radius, inner_radius);
     canvas.draw_drrect(outer, inner, &paint);
 
     let field = palette_field_rect(width);

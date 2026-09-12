@@ -548,6 +548,11 @@ impl PaneSurfaces {
         let mut painted = self.sync_palette_catcher(parent, width, height);
         let scale = self.scale;
         if let Some(pane) = self.palette.as_mut() {
+            // The card is pooled between opens, so a corner or frosting
+            // setting changed while it was closed is picked up here.
+            if pane.hidden {
+                Self::style_palette(pane, scale);
+            }
             painted |= pane.show();
             pane.place(rect, scale);
 
@@ -607,7 +612,7 @@ impl PaneSurfaces {
         // The radius the card paints itself with, so the blur and the shadow
         // follow the corners instead of squaring them off — and the hairline
         // meets the clip rather than sitting inside a rounder one.
-        style.set_corner_radius(crate::view::PALETTE_RADIUS as f64);
+        style.set_corner_radius(crate::view::palette_radius() as f64);
         style.set_shadow(0.28, 24.0 * scale, 0.0, 8.0 * scale, 0.0, 0.0, 0.0);
         style.set_blend_mode(if otto_kit::frosting::enabled() {
             otto_kit::protocols::otto_surface_style_v1::BlendMode::BackgroundBlur

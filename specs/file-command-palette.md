@@ -350,6 +350,11 @@ the palette adds no new capability.
   already covering — which is why the card read as the same colour on the same
   colour, and why a hairline was needed to say where its edge was. The hairline
   stays, over the frost rather than in place of it.
+- **The card's corners follow the desktop's rounded-corners setting.** Square
+  when the desktop squares its chrome, with the fill, the hairline, the painted
+  shadow and the compositor's clip all agreeing. The card is kept between
+  openings, so a change made while the palette is closed shows on the next
+  opening; one made while it is open waits for the next opening too.
 - **Under a compositor without Otto's surface style, the card is not
   frosted, even where a standard blur protocol is available.** The card is a
   subsurface of the palette's own window, and a standard blur protocol blurs
