@@ -1,8 +1,11 @@
 # Window Management
 
-Otto is a **stacking** window manager: windows float, overlap, and go where you
-put them. There is no automatic tiling layout — but there are tiling shortcuts,
-smart initial placement, and animated state changes.
+Otto is a **stacking** window manager by default: windows float, overlap, and go
+where you put them, with snap-to-half shortcuts, smart initial placement and
+animated state changes. Any workspace can be switched to a managed tiling
+layout, where windows share the screen in a tree of splits, and switched back
+to stacking again — one workspace at a time, so the others are unaffected. See
+[Tiling](tiling.md).
 
 ## Focus and raising
 

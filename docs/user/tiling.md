@@ -5,11 +5,15 @@ overlapping, no wasted space. You shape the layout by splitting cells, moving
 windows between them and dragging the boundaries. Otto rearranges the windows
 for you as they open and close.
 
-Tiling is a setting for **one workspace on one monitor**. Otto is a floating
-desktop by default, so a tiled workspace sits next to your ordinary floating
-ones and you switch between them the usual way. If you know i3 or sway, the
-model is the same: a tree of splits, the same keyboard actions, and the same
-command language for scripts.
+Tiling is a mode of **one workspace on one monitor**. Otto stacks windows by
+default, and you can switch any workspace between stacking and tiling whenever
+you like, as often as you like: every other workspace keeps the mode it is in.
+So a tiled workspace sits one swipe away from your stacking ones, and you move
+between them the usual way. Switching back to stacking puts each window on the
+size and position it had before it was tiled.
+
+If you know i3 or sway, the model is the same: a tree of splits, the same
+keyboard actions, and the same command language for scripts.
 
 > **Early version.** You can already use tiling day to day with the keyboard,
 > the pointer or a script. A few things are still missing; they are listed at
