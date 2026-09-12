@@ -46,6 +46,15 @@ itself are not reused elsewhere.
 Back and forward are also the two arrows in the header, and each half dims
 when there is nowhere for it to go.
 
+### The command palette
+
+`Ctrl+P` opens a panel where you type a few letters to find and run any
+command in the window, without needing its menu or shortcut. It also has
+commands the menus don't: selecting by pattern, renaming many files from one
+pattern, and commands added by your own scripts. See
+[Command Palette](files-command-palette.md) and
+[Custom Commands in Files](files-custom-commands.md).
+
 ### Typing a path
 
 `Ctrl+L` turns the title into a text field holding the folder you are in.

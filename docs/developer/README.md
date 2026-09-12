@@ -36,6 +36,8 @@ and hands the whole tree to the renderer as a single render element. Most of
 | [Foreign Toplevel](foreign-toplevel.md) | Exposing the window list to taskbars and launchers |
 | [Surface Style Protocol](surface-style-protocol.md) | `otto-surface-style-unstable-v1`: letting a client style and animate its own surface |
 | [Screen Sharing](screenshare.md) | Portal, PipeWire, wlr-screencopy, window capture |
+| [File Previews](file-previews.md) | Thumbnails, the preview column, Quick View, the sandboxed decode worker, video |
+| [otto-media-kit](otto-media-kit.md) | Video playback: the embeddable player and its GStreamer worker |
 | [Accessibility](accessibility.md) | Key grabs for screen readers, and the shell and kit apps on AT-SPI |
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |

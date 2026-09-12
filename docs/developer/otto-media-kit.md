@@ -40,34 +40,50 @@ host copies the slot out on its event thread before the worker is back to it
 two frames later. `ready` carries the size and duration and may repeat — the
 duration is often only known after preroll.
 
-The pipeline is `playbin3` with `video-sink` set to
-`videoconvert ! videoscale ! capsfilter ! appsink`. The caps filter asks for
+The pipeline is `playbin3` (or `playbin` where `playbin3` is missing) with
+`video-sink` set to `videoconvert ! videoscale ! capsfilter ! appsink`, the
+sink running `sync=true max-buffers=2 drop=true`. The caps filter asks for
 RGBx within the host's limits as *ranges*, so `videoscale` keeps the aspect
 ratio and never scales up. The file is opened as
 `file:///proc/self/fd/3`: the worker never learns a path.
 
 ## Containment
 
-Same shape as the decode worker in `otto-quickview`, minus what a media
-stack cannot live under: no `RLIMIT_FSIZE` (the plugin registry cache) and
-an 8 GiB address-space ceiling (hardware decoders map device memory freely).
-The environment is a whitelist — `PATH`, `HOME`, `XDG_RUNTIME_DIR`, the
-`GST_*` and `LIBVA_*` variables, the locale — because the audio server's
-socket and the registry cache live there. No Wayland or bus address.
+The worker contains itself after exec (`contain()` in the worker binary):
+`chdir("/")`, `PR_SET_NO_NEW_PRIVS`, `RLIMIT_AS` 8 GiB (hardware decoders map
+device memory freely), `RLIMIT_NOFILE` 512, `RLIMIT_CORE` 0, then a
+best-effort `unshare(CLONE_NEWUSER | CLONE_NEWNET)`. Compared with the decode
+worker in `otto-quickview` it has no `RLIMIT_FSIZE` (the plugin registry
+cache), no `RLIMIT_CPU`, a higher descriptor ceiling, and no pre-exec half.
+
+The host clears the environment and passes a whitelist: `PATH`, `HOME`,
+`XDG_RUNTIME_DIR`, `XDG_CACHE_HOME`, `RUST_LOG`, `LANG`, `LANGUAGE`,
+`PULSE_SERVER`, `PIPEWIRE_REMOTE`, `LD_LIBRARY_PATH`, `OTTO_MEDIA_TRACE`, and
+the `GST_*` and `LIBVA_*` variables, because the audio server's socket and
+the registry cache live there. Wayland and bus *addresses* are not passed,
+but this is not a filesystem jail: with `XDG_RUNTIME_DIR` known, those
+sockets are still reachable by path.
+
+There is no `PR_SET_PDEATHSIG`. A worker whose host dies exits when stdin
+reaches EOF or a write to stdout fails. Dropping a `Player` sends `quit` and
+then kills the worker at once, so the worker's own teardown rarely runs.
 
 ## Debugging
 
 - `OTTO_MEDIA_TRACE=1` lets the worker's stderr through and adds GStreamer's
   debug string to error events.
 - `cargo run -p otto-media-kit --example probe -- FILE` plays four seconds
-  with no display, seeks once, and writes the last frame as a PNG
-  (`PROBE_PNG` names it). Point `OTTO_MEDIA_WORKER` at the worker if it is
-  not next to the example binary.
+  with no display, makes an accurate seek to 1 s around the two-second mark,
+  and writes the last frame as a PNG (`PROBE_PNG` names it; the default is
+  `/tmp/otto-media-probe.png`). Cargo puts examples in
+  `target/<profile>/examples/`, away from the worker, so build the worker
+  (`cargo build -p otto-media-kit --bin otto-media-worker`) and point
+  `OTTO_MEDIA_WORKER` at it.
 - `GST_DEBUG=3` works as usual since `GST_*` is passed through.
 
 ## Embedding in a preview surface
 
-`otto-media-kit::view::draw_frame` draws from a `Frame` + `State` snapshot
+`otto_media_kit::view::draw_frame` draws from a `Frame` + `State` snapshot
 rather than the live `Player`, so a host that records its drawing into a
 picture on another thread (as otto-files' preview column does) can paint the
 player without holding the player. `otto-files` uses it in two places behind
