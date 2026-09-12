@@ -262,8 +262,6 @@ mod tiling_settings_tests {
             ("tiling.layout_bounce", 0.45),
             ("tiling.mode_duration", 0.4),
             ("tiling.mode_bounce", 0.1),
-            ("tiling.design_duration", 0.35),
-            ("tiling.design_bounce", 0.7),
         ] {
             handle
                 .set_setting(id, SettingValue::Double(wanted))

@@ -75,10 +75,6 @@ pub enum KeyAction {
     TilingFloatingToggle,
     /// Move keyboard focus between the floating layer and the tiled one.
     TilingFocusModeToggle,
-    /// Enter or leave design mode on the focused output's workspace.
-    TilingDesignToggle,
-    /// Undo the last design-mode edit.
-    TilingUndo,
     /// Escape during a titlebar drag out of a tree: put the window back in the
     /// slot it came from. Not bindable — it exists only while a drag is up.
     TilingDragCancel,
@@ -717,8 +713,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingFocusModeToggle => {
                 let _ = self.handle_tiling_focus_mode(None);
             }
-            KeyAction::TilingDesignToggle => self.handle_tiling_design_toggle(),
-            KeyAction::TilingUndo => self.handle_tiling_undo(),
             KeyAction::TilingDragCancel => self.handle_tiling_drag_cancel(),
             other => self.process_common_key_action(other),
         }
@@ -819,8 +813,6 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::EqualizeContainer => Some(KeyAction::TilingEqualize),
             BuiltinAction::FloatingToggle => Some(KeyAction::TilingFloatingToggle),
             BuiltinAction::FocusModeToggle => Some(KeyAction::TilingFocusModeToggle),
-            BuiltinAction::TilingDesignToggle => Some(KeyAction::TilingDesignToggle),
-            BuiltinAction::TilingUndo => Some(KeyAction::TilingUndo),
         },
         ShortcutAction::RunCommand(run) => {
             Some(KeyAction::Run((run.cmd.clone(), run.args.clone())))

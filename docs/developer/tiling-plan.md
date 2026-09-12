@@ -196,7 +196,7 @@ or config key. Animation timing is therefore a **general setting outside
 [animations]
 scale = 1.0             # multiplies every duration; 0.5 = twice as fast, 0 = snap everywhere
 layout = { duration = 0.3, bounce = 0.0 }    # windows moving into place: maximize, snap, tiling relayouts, tiling mode in/out
-interactive = { duration = 0.35, bounce = 0.25 }  # anything chasing the pointer: design handles, edge and tile drags
+interactive = { duration = 0.35, bounce = 0.25 }  # anything chasing the pointer: edge and tile drags
 switch = { duration = 0.6, bounce = 0.1 }    # workspace scrolling (replaces [workspaces] switch_duration/bounce, still read)
 ```
 
@@ -209,9 +209,9 @@ Rules:
 - `[accessibility] reduce_motion = true` forces `scale` to 0 and goes out
   over the portal's reduced-motion key so clients see it too.
 - `[tiling]` has no duration or bounce keys: relayouts, keyboard resizes and
-  mode changes use `layout`; design-mode handles, edge drags and tile drags
-  use `interactive`. The old `tiling.layout_*`, `mode_*`, `design_*` keys are
-  read as legacy overrides of the families and no longer written.
+  mode changes use `layout`; edge drags and tile drags use `interactive`.
+  The old `tiling.layout_*` and `mode_*` keys are read as legacy overrides of
+  the families and no longer written.
 - The hard-coded `ease_out(0.3)` in maximize, half-snap and restore move onto
   `layout`. Dock magnification and exposé keep their own tuned springs for
   now and only honour `scale`.
@@ -234,7 +234,7 @@ MoveContainerLeft/Right/Up/Down, MoveToWorkspace { index }
 SplitHorizontal, SplitVertical, SplitToggle
 LayoutSplitH, LayoutSplitV, LayoutTabbed, LayoutStacking, LayoutToggle
 ResizeGrowWidth/ShrinkWidth/GrowHeight/ShrinkHeight { step }
-TilingDesignToggle, EqualizeContainer
+EqualizeContainer
 FloatingToggle, ToggleFullscreen, CloseWindow
 TilingToggle                       # workspace mode
 ```
@@ -263,112 +263,32 @@ block into your config"; there is no `preset =` key and no include mechanism
 (the config loader layers fixed paths only). The example config gains the
 same block commented out.
 
-## Design mode
+## Resizing with the pointer
 
-Design mode is the friendly way to shape a tiled workspace. It is for the
-person who has never used a tiler and would not learn `split v` or
-`resize grow width 10 ppt`: enter it, and the layout's rows and columns
-become visible things you can grab, split, drag around and resize, with the
-windows running inside their cells the whole time. The keyboard actions and
-the command grammar are the power-user path to the same tree; design mode is
-the one Otto shows first, and the reason a tiling workspace does not need a
-manual.
+Gaps are not drag handles. A tile is resized by dragging the window's own
+resize edge, exactly as a floating window is: the drag moves every split that
+edge lies on, changing the shares of the two children either side of each and
+nothing else, stopping at each window's minimum size. The boundary snaps to
+halves, thirds and quarters of the pair it divides, and `Shift` bypasses the
+snap. An edge that is the outside of the tree does not resize and keeps the
+ordinary arrow cursor. A window's titlebar drag still detaches it and the slot
+overlay still shows where it would land. This keeps pointer handling on a
+tiling workspace identical to a floating one, and avoids a hidden hit area
+competing with window edges.
 
-**Friendly means:**
+**Adjusting cells is animated.** When an edge is dragged the shares update
+under the pointer but the windows chase it on a spring rather than tracking it
+rigidly, so a fast drag lags a touch and overshoots a little before settling.
+Clients are reconfigured as they ack during the drag and once more with the
+final size when the spring settles, so a slow client never holds the drag
+back.
 
-- *Nothing hidden.* Every handle is drawn, large enough to hit without
-  aiming, and lights up on hover with a cursor that says what a drag will do.
-  Nothing depends on knowing that a gap is secretly a handle.
-- *Always see the result before committing.* Drags show the shares as
-  percentages, drops show the slot before release, and a change animates so
-  the eye can follow what moved.
-- *No wrong states.* A drag stops at a window's minimum size; a split of a
-  cell that cannot be split is greyed out; a container never ends up with one
-  child. There is no way to make a layout the user then has to repair.
-- *Undo.* Every structural edit in design mode goes on the session undo
-  stack, `Ctrl+Z` reverts it, the same mechanism Otto Settings uses.
-- *Starting points.* An empty workspace in design mode offers a row of
-  layout presets — two columns, three columns, main and stack, grid — one
-  click applies one as empty slots to drop windows into.
-- *Leaves you where you were.* Leaving design mode changes nothing; the
-  windows are where the layout put them, focused as before.
-
-**Entering and leaving.** A named action (`TilingDesignToggle`, bound to
-`Logo+d` in the preset, since i3's `Logo+d` is a launcher Otto binds
-elsewhere), an item in the workspace context menu, or a long press on a gap.
-Escape, the action again, or a click on a window's content leaves it. Design
-mode is per workspace and ends when the workspace scrolls away.
-
-**What is shown.** The same overlay the edge snap already shows when a
-window is dragged to a screen edge — a translucent white pane with a white
-border and rounded corners, fading and sliding in with short ease-out
-transitions (`TilingOverlayView`) — but one per cell, so the whole workspace
-turns into a grid of those panes drawn over the windows. A cell's pane is its
-window's rectangle including the gap; the panes together tile the usable
-area exactly, so the layout's rows and columns read off the grid at a glance
-with no outlines or dimming needed. The gaps between panes are the handles.
-The focused cell's pane carries the accent-coloured border. Nested containers
-are not drawn separately: the grid *is* the tree, and dragging a bar that
-spans several panes makes the nesting visible when they move together.
-Each pane shows a small centred toolbar on hover: split horizontal, split
-vertical, layout kind (split / tabbed / stacked), close-cell. An empty slot
-is the same pane with a dashed border and a `+`.
-
-**Handles.**
-
-- *Bar handle*: drag along the container's axis to move that split; the two
-  neighbouring shares change and nothing else. The bar shows the two shares
-  as percentages while dragging. Snaps to halves, thirds and quarters within
-  a few pixels; hold `Shift` to bypass snapping. Double-click equalises the
-  container.
-- *Corner handle*: drags both splits at once.
-- *Cell drag*: drag a cell by its body to swap it with the cell it is dropped
-  on, or onto a bar handle to insert it at that split. The same slot overlay
-  as drag-to-detach shows the result before release.
-- *Container drag*: dragging the bar that borders a whole container moves the subtree,
-  same rules.
-- *Empty cells*: a split made on an empty workspace, or a cell whose window
-  closes while in design mode, leaves an empty slot outlined in dashes. The
-  next window to map fills the focused empty slot before splitting anything.
-  This is how a user lays out a workspace first and populates it after, and
-  the base for named layouts later.
-
-**Keyboard in design mode.** Every named action still works, so a keyboard
-user gets the visual feedback without giving up their bindings: arrows move
-focus between cells, the resize steps apply to the focused cell, `Enter` on
-a bar handle equalises. The two paths edit the same tree and can be mixed
-mid-session.
-
-**Adjusting cells is animated, a bit bouncy.** Design mode does not follow
-the spec's "the pointer is the animation" rule for interactive resize. When a
-bar is dragged, the shares update under the pointer but the panes and the
-windows beneath them chase it on a spring — the same
-`Transition::spring(duration, bounce)` the dock uses for magnification — so
-a fast drag lags a touch and overshoots a little before settling on release.
-A split, a swap, a preset or an equalise animates on the same spring. It is
-what makes the grid feel like a physical thing being pushed around rather
-than a wireframe. The spring is `[tiling] design_duration` /
-`design_bounce`, defaulting bouncier than the layout spring; `0` snaps like
-every other duration. Clients are reconfigured as they ack during the drag
-and once more with the final size when the spring settles, so a slow client
-never holds the panes back.
-
-**Outside design mode.** Gaps are not drag handles. A window's titlebar drag
-still detaches it and the slot overlay still works. This keeps pointer
-handling on a tiling workspace identical to a floating one until the user
-asks for the editor, and avoids a hidden hit-area competing with window
-edges.
-
-**Implementation.** A `TilingDesignView` in `src/workspaces/tiling/design.rs`
-that generalises `TilingOverlayView` from one preview pane to a set: the
-same layer recipe (30 % white fill, 3 px accent border, 12 pt radius,
-0.15 s ease-out move, 0.2 s fade) per cell, plus bar and corner handle layers
-in the gaps, parented above the containers and driven from the same shares as
-`apply.rs` so the panes animate in step with the windows beneath them. The
-pointer path hit-tests the handles before windows (the same hook the dock's resize
-handle uses). Drags are a `PointerGrab` that writes shares into the tree and
-calls `relayout_workspace` with no transition. The toolbar reuses otto-kit
-buttons drawn by the compositor, as the titlebar controls are.
+**Implementation.** The split arithmetic — where a boundary is, and what a
+pointer offset does to the two shares either side of it — is pure and lives in
+`src/workspaces/tiling/splits.rs`; the compositor half, which turns a resize
+edge into a set of splits and writes the shares into the tree, is in
+`src/shell/tiling_drag.rs`. The titlebar drag reuses `TilingOverlayView` to
+show the slot before release.
 
 ## Decorations on tiles
 
@@ -391,8 +311,8 @@ setting, `[tiling] decoration = "normal" | "minimal" | "none"`, default
   is the one answer for every frame: the compositor's bar, otto-kit's window
   frames and Settings' painted body all read it.
 - **none** — no bar; the focused tile gets a hairline border in the accent
-  colour, the rest a neutral hairline. Moving a tile is then design mode or
-  the keyboard. This is sway's `pixel` border.
+  colour, the rest a neutral hairline. Moving a tile is then the keyboard's
+  job. This is sway's `pixel` border.
 
 Tabbed and stacked containers draw their strip under all three, since it
 is the only way to see the hidden windows. Client-side-decorated windows are
@@ -415,8 +335,8 @@ from the client side:
   window's frame is re-rounded to match on the same configure;
 - the `minimal` / `none` choice goes out over `org.otto.Settings` like the
   theme and the controls side already do, so the app applies it live;
-- with `none` the app draws no bar and is moved by design mode or the
-  keyboard, like any client-decorated window.
+- with `none` the app draws no bar and is moved by the keyboard, like any
+  client-decorated window.
 
 One component change in otto-kit covers every app that already implements
 the settings callback; islands, quick view and lock still need that hook.
@@ -543,9 +463,8 @@ the compact bar), resize step, float toggle, monocle, fullscreen slot holding;
 drive everything through `run_command` and assert on `tree_json` and
 geometries, the way `tests/tiling.rs` does for half-snap.
 
-**Phase 2 — pointer and chrome.** Design mode: the pane grid, bar and corner
-handles with `ew-resize`/`ns-resize`/`nwse-resize` cursor shapes, live
-reconfigure on ack, cell toolbar, empty slots, cell and container drag;
+**Phase 2 — pointer and chrome.** Edge-drag resize with the
+`ew-resize`/`ns-resize` cursor shapes and live reconfigure on ack;
 drag-to-detach with the reused `TilingOverlayView` showing
 the slot; dropping a floating window into a tree; the minimal and none decoration variants;
 accent focus border; no shadow on tiles; usable-area re-fit on dock/layer-shell/
@@ -593,9 +512,9 @@ Update `specs/tiling.md` when Phase 1 starts:
   actions, the shipped i3 preset file, and the command grammar as goals.
 - Promote tabbed/stacked from open question to behaviour.
 - Add `focus parent` / `focus child` and container focus.
-- Replace the "Resizing / Pointer" paragraph with design mode: gaps are not
-  handles outside it; add empty slots; interactive resize animates on a
-  spring rather than tracking the pointer rigidly.
+- Replace the "Resizing / Pointer" paragraph: gaps are not handles; resizing
+  is an edge drag on the window itself, and it animates on a spring rather
+  than tracking the pointer rigidly.
 - Add the command language and IPC sections.
 - Add workspace create-on-demand (touches `workspaces-multi-output.md`).
 - Animation: replace "fluid by default" (scaled last frame) with per-frame

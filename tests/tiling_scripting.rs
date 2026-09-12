@@ -11,7 +11,7 @@
 
 #[cfg(feature = "headless")]
 mod tiling_scripting_tests {
-    use otto::headless::{Axis, HeadlessConfig, HeadlessHandle};
+    use otto::headless::{HeadlessConfig, HeadlessHandle};
     use otto_kit::testing::TestClient;
     use serde_json::Value;
     use serial_test::serial;
@@ -283,43 +283,6 @@ mod tiling_scripting_tests {
             "cmd-b is on workspace 2: {titles:?}"
         );
 
-        drop(windows);
-        handle.stop();
-    }
-
-    /// Design mode's empty slots take up space, so `GetTree` has to describe
-    /// them — as a `con` that answers to `empty` and carries no `app_id`.
-    #[test]
-    #[serial]
-    fn an_empty_slot_is_a_con_with_no_app_id() {
-        let (handle, windows) = setup(&["slot-a"]);
-        handle.focus_window("slot-a");
-        run(&handle, "tiling toggle");
-
-        handle.toggle_tiling_design();
-        handle.settle(600);
-        handle.tiling_design_split_pane(0, Axis::Row);
-        handle.settle(600);
-        assert_eq!(handle.tiling_empty_slots(), 1, "the split left a slot");
-
-        let tree = handle.tree_json();
-        let empty: Vec<Value> = nodes(&tree)
-            .into_iter()
-            .filter(|node| node["empty"] == Value::Bool(true))
-            .collect();
-        assert_eq!(empty.len(), 1, "one empty slot in the tree: {tree:#}");
-        let slot = &empty[0];
-        assert_eq!(slot["type"], "con");
-        assert!(slot["app_id"].is_null(), "an empty slot holds no window");
-        assert!(
-            slot["rect"]["width"].as_i64().unwrap_or(0) > 0,
-            "an empty slot has the extent the layout gave it: {slot:#}"
-        );
-        // The window beside it is still described in full.
-        let window = node_named(&tree, "slot-a").expect("the window is in the tree");
-        assert_eq!(window["app_id"], Value::String(String::new()).clone());
-
-        handle.toggle_tiling_design();
         drop(windows);
         handle.stop();
     }

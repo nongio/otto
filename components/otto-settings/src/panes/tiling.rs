@@ -110,26 +110,6 @@ pub fn build() -> Pane {
                         },
                     )
                     .id("tiling.mode_bounce"),
-                    Row::new(
-                        otto_kit::t!("settings-tiling-design-duration"),
-                        Control::Slider {
-                            value: 0.35,
-                            min: 0.0,
-                            max: 2.0,
-                            readout: "0.35 s".into(),
-                        },
-                    )
-                    .id("tiling.design_duration"),
-                    Row::new(
-                        otto_kit::t!("settings-tiling-design-bounce"),
-                        Control::Slider {
-                            value: 0.25,
-                            min: 0.0,
-                            max: 1.0,
-                            readout: "0.25".into(),
-                        },
-                    )
-                    .id("tiling.design_bounce"),
                 ],
             ),
         ],
@@ -165,8 +145,6 @@ mod tests {
                 "tiling.layout_bounce",
                 "tiling.mode_duration",
                 "tiling.mode_bounce",
-                "tiling.design_duration",
-                "tiling.design_bounce",
             ]
         );
 

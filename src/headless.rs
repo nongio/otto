@@ -1063,144 +1063,6 @@ impl HeadlessHandle {
         });
     }
 
-    // ── Design mode ──────────────────────────────────────────────────────
-
-    /// Toggle design mode — the `TilingDesignToggle` shortcut's entry point.
-    pub fn toggle_tiling_design(&self) {
-        self.with_state(|state| {
-            state.handle_tiling_design_toggle();
-        });
-    }
-
-    /// Is design mode up on the headless output's current workspace?
-    pub fn tiling_design_active(&self) -> bool {
-        self.query(|state| {
-            headless_output(state)
-                .map(|output| state.tiling_design_active(&output))
-                .unwrap_or(false)
-        })
-    }
-
-    /// The bar handles design mode is offering, as
-    /// `(container, index, (x, y, width, height))` in logical pixels, in tree
-    /// order. Empty when design mode is not up.
-    pub fn tiling_design_bars(&self) -> Vec<(usize, usize, (i32, i32, i32, i32))> {
-        self.query(|state| {
-            state
-                .workspaces
-                .tiling_design
-                .geometry()
-                .bars
-                .into_iter()
-                .map(|bar| {
-                    (
-                        bar.container,
-                        bar.index,
-                        (bar.rect.x, bar.rect.y, bar.rect.w, bar.rect.h),
-                    )
-                })
-                .collect()
-        })
-    }
-
-    /// The panes design mode is drawing, as `(is_empty_slot, is_focused,
-    /// (x, y, width, height))` in layout order.
-    pub fn tiling_design_panes(&self) -> Vec<(bool, bool, (i32, i32, i32, i32))> {
-        self.query(|state| {
-            state
-                .workspaces
-                .tiling_design
-                .geometry()
-                .cells
-                .into_iter()
-                .map(|cell| {
-                    (
-                        cell.empty,
-                        cell.focused,
-                        (cell.rect.x, cell.rect.y, cell.rect.w, cell.rect.h),
-                    )
-                })
-                .collect()
-        })
-    }
-
-    /// How many empty slots the current workspace's tree holds.
-    pub fn tiling_empty_slots(&self) -> usize {
-        self.query(|state| {
-            let Some(output) = headless_output(state) else {
-                return 0;
-            };
-            state
-                .workspaces
-                .current_tiling_workspace(&output)
-                .and_then(|view| view.tiling.read().ok().map(|s| s.tree.empty_slots().len()))
-                .unwrap_or(0)
-        })
-    }
-
-    /// Drag the bar at `index` (in [`Self::tiling_design_bars`] order) to the
-    /// logical point `(x, y)`: press, move, release.
-    ///
-    /// The drag entry point rather than synthesised input, so a test does not
-    /// have to reason about pointer focus to exercise the maths.
-    pub fn tiling_design_drag_bar(&self, index: usize, x: f64, y: f64) {
-        self.with_state(move |state| {
-            let bars = state.workspaces.tiling_design.geometry().bars;
-            let Some(bar) = bars.get(index).copied() else {
-                return;
-            };
-            state.tiling_design_drag_begin(bar, None);
-            state.tiling_design_drag_to(x, y);
-            state.tiling_design_drag_end();
-        });
-    }
-
-    /// Double-click the bar at `index`, which equalises its container.
-    pub fn tiling_design_equalize_bar(&self, index: usize) {
-        self.with_state(move |state| {
-            let bars = state.workspaces.tiling_design.geometry().bars;
-            let Some(bar) = bars.get(index).copied() else {
-                return;
-            };
-            state.tiling_design_equalize(bar.container);
-        });
-    }
-
-    /// Split the pane at `index` (in [`Self::tiling_design_panes`] order),
-    /// the way its toolbar button does.
-    pub fn tiling_design_split_pane(&self, index: usize, axis: Axis) {
-        self.with_state(move |state| {
-            let cells = state.workspaces.tiling_design.geometry().cells;
-            let Some(cell) = cells.get(index).copied() else {
-                return;
-            };
-            state.tiling_design_split(cell.node, axis);
-        });
-    }
-
-    /// Close the pane at `index`, the way its toolbar button does.
-    pub fn tiling_design_close_pane(&self, index: usize) {
-        self.with_state(move |state| {
-            let cells = state.workspaces.tiling_design.geometry().cells;
-            let Some(cell) = cells.get(index).copied() else {
-                return;
-            };
-            state.tiling_design_close(cell.node);
-        });
-    }
-
-    /// Click the preset named `name` — "two-columns", "three-columns",
-    /// "main-and-stack" or "grid".
-    pub fn tiling_design_apply_preset(&self, name: &str) {
-        let name = name.to_string();
-        self.with_state(move |state| {
-            let Some(preset) = crate::workspaces::tiling::Preset::parse(&name) else {
-                return;
-            };
-            state.tiling_design_apply_preset(preset);
-        });
-    }
-
     // ── Pointer drags on a tile ──────────────────────────────────────────
     //
     // The grab entry points, called with logical pointer positions, rather
@@ -1313,13 +1175,6 @@ impl HeadlessHandle {
         });
         self.settle(400);
         true
-    }
-
-    /// Undo the last design-mode edit — the `TilingUndo` shortcut.
-    pub fn tiling_undo(&self) {
-        self.with_state(|state| {
-            state.handle_tiling_undo();
-        });
     }
 
     // ── The command language ─────────────────────────────────────────────
@@ -2181,7 +2036,6 @@ fn run_headless_loop(
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
-            state.flush_tiling_design();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();

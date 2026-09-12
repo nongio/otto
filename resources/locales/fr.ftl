@@ -178,8 +178,6 @@ settings-tiling-layout-duration = Changement de disposition
 settings-tiling-layout-bounce = Rebond de la disposition
 settings-tiling-mode-duration = Passage en mosaïque
 settings-tiling-mode-bounce = Rebond du mode mosaïque
-settings-tiling-design-duration = Mode conception
-settings-tiling-design-bounce = Rebond du mode conception
 
 
 ## Settings — Keyboard
@@ -753,10 +751,6 @@ schema-tiling-mode-duration-label = Animation du mode mosaïque
 schema-tiling-mode-duration-description = Secondes que met le bureau à se réorganiser quand la mosaïque est activée ou désactivée et que chaque fenêtre rejoint sa cellule. Zéro passe d’un coup.
 schema-tiling-mode-bounce-label = Rebond du mode mosaïque
 schema-tiling-mode-bounce-description = De combien cette réorganisation dépasse avant de se stabiliser.
-schema-tiling-design-duration-label = Animation du mode conception
-schema-tiling-design-duration-description = Secondes que mettent les cellules à suivre une poignée déplacée, une division ou un modèle en mode conception. Zéro passe d’un coup.
-schema-tiling-design-bounce-label = Rebond du mode conception
-schema-tiling-design-bounce-description = De combien les cellules dépassent après une modification en mode conception avant de se stabiliser. Par défaut plus rebondissant que la disposition : la grille doit se sentir comme un objet physique que l’on pousse.
 
 # --- dock ---
 schema-dock-size-label = Taille

@@ -178,8 +178,6 @@ settings-tiling-layout-duration = Cambio de disposición
 settings-tiling-layout-bounce = Rebote de la disposición
 settings-tiling-mode-duration = Entrar en modo mosaico
 settings-tiling-mode-bounce = Rebote del modo mosaico
-settings-tiling-design-duration = Modo diseño
-settings-tiling-design-bounce = Rebote del modo diseño
 
 
 ## Settings — Keyboard
@@ -742,10 +740,6 @@ schema-tiling-mode-duration-label = Animación del modo mosaico
 schema-tiling-mode-duration-description = Segundos que tarda el escritorio en reorganizarse al activar o desactivar el mosaico, cuando cada ventana vuela a su celda. Cero lo hace al instante.
 schema-tiling-mode-bounce-label = Rebote del modo mosaico
 schema-tiling-mode-bounce-description = Cuánto se pasa esa reorganización antes de asentarse.
-schema-tiling-design-duration-label = Animación del modo diseño
-schema-tiling-design-duration-description = Segundos que tardan las celdas en seguir un tirador arrastrado, una división o un ajuste predefinido en el modo diseño. Cero lo hace al instante.
-schema-tiling-design-bounce-label = Rebote del modo diseño
-schema-tiling-design-bounce-description = Cuánto se pasan las celdas tras una edición en modo diseño antes de asentarse. De forma predeterminada rebota más que la disposición: la cuadrícula debe notarse como algo físico a lo que se empuja.
 
 # --- dock ---
 schema-dock-size-label = Tamaño

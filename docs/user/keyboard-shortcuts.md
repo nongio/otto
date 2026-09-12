@@ -149,18 +149,14 @@ expect. [Tiling](tiling.md) covers the mode itself.
 | `EqualizeContainer` | Give every cell in the focused container the same share |
 | `FloatingToggle` | Float the focused tile — it returns to the rectangle it had before it was tiled — or put a floating window back into the tree beside the focused cell |
 | `FocusModeToggle` | Move keyboard focus between the floating layer and the tiled one, landing on whichever window was last focused there |
-| `TilingDesignToggle` | Show *design mode*: the layout's cells become panes you can grab, split and resize with the pointer. The action again, or `Escape`, leaves it |
-| `TilingUndo` | Undo the last edit made in design mode. Also bound to `Ctrl+Z` while design mode is up, without any configuration |
 
 With `xkb_options = ["altwin:ctrl_win"]` (or `mac_style_modifiers`) set under
 `[input]`, the Cmd key reports as Control and a `Logo+…` binding can never
 match; bind these as `Ctrl+Alt+h` and so on instead — Cmd+Alt on the keyboard.
 
-While design mode is up the compositor keeps `Escape` and `Ctrl+Z` for itself
-— the client running inside the cell you are editing never sees them. Every
-other tiling action still works, so the keyboard and the pointer edit the same
-tree and can be mixed. Design mode's own animation is configured with
-`[tiling] design_duration` and `design_bounce`.
+A tile is resized with the pointer by dragging the window's own edge, so the
+keyboard and the pointer edit the same tree and can be mixed. `Escape` during
+a titlebar drag out of a tree puts the window back where it came from.
 
 In a tiling workspace `TileWindowLeft` and `TileWindowRight` do not half-snap:
 they move focus left and right, since every position is already a slot. Gaps,

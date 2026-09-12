@@ -1760,7 +1760,6 @@ impl Otto<UdevData> {
             // Pick up any tiling tree a close, minimize or workspace move left
             // dirty; a no-op flag read when nothing changed.
             self.flush_tiling_relayout();
-            self.flush_tiling_design();
             self.popups.cleanup();
             self.update_dnd();
         }

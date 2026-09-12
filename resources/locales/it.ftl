@@ -178,8 +178,6 @@ settings-tiling-layout-duration = Cambio di disposizione
 settings-tiling-layout-bounce = Rimbalzo della disposizione
 settings-tiling-mode-duration = Ingresso in affiancamento
 settings-tiling-mode-bounce = Rimbalzo dell'affiancamento
-settings-tiling-design-duration = Modalità progettazione
-settings-tiling-design-bounce = Rimbalzo della progettazione
 
 
 ## Settings — Keyboard
@@ -748,10 +746,6 @@ schema-tiling-mode-duration-label = Animazione dell'affiancamento
 schema-tiling-mode-duration-description = Secondi che impiega la scrivania a riorganizzarsi quando l'affiancamento viene attivato o disattivato e ogni finestra vola alla propria cella. Zero passa di scatto.
 schema-tiling-mode-bounce-label = Rimbalzo dell'affiancamento
 schema-tiling-mode-bounce-description = Di quanto quella riorganizzazione supera il bersaglio prima di assestarsi.
-schema-tiling-design-duration-label = Animazione della modalità progettazione
-schema-tiling-design-duration-description = Secondi che impiegano le celle a seguire una maniglia trascinata, una divisione o uno schema predefinito in modalità progettazione. Zero passa di scatto.
-schema-tiling-design-bounce-label = Rimbalzo della progettazione
-schema-tiling-design-bounce-description = Di quanto le celle superano il bersaglio dopo una modifica in modalità progettazione, prima di assestarsi. Per impostazione predefinita rimbalza più della disposizione: la griglia deve sembrare una cosa fisica che viene spinta.
 
 # --- dock ---
 schema-dock-size-label = Dimensione

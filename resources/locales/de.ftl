@@ -177,8 +177,6 @@ settings-tiling-layout-duration = Layoutwechsel
 settings-tiling-layout-bounce = Layout-Überschwingen
 settings-tiling-mode-duration = Wechsel in den Kachelmodus
 settings-tiling-mode-bounce = Überschwingen im Kachelmodus
-settings-tiling-design-duration = Entwurfsmodus
-settings-tiling-design-bounce = Überschwingen im Entwurfsmodus
 
 
 ## Settings — Keyboard
@@ -731,10 +729,6 @@ schema-tiling-mode-duration-label = Animation des Kachelmodus
 schema-tiling-mode-duration-description = Sekunden, die der Schreibtisch zum Umordnen braucht, wenn das Kacheln ein- oder ausgeschaltet wird und jedes Fenster an seinen Platz fliegt. Null schaltet sofort um.
 schema-tiling-mode-bounce-label = Überschwingen im Kachelmodus
 schema-tiling-mode-bounce-description = Wie weit dieses Umordnen überschwingt, bevor es sich beruhigt.
-schema-tiling-design-duration-label = Animation des Entwurfsmodus
-schema-tiling-design-duration-description = Sekunden, die die Zellen brauchen, um im Entwurfsmodus einem gezogenen Griff, einer Teilung oder einer Vorlage zu folgen. Null schaltet sofort um.
-schema-tiling-design-bounce-label = Überschwingen im Entwurfsmodus
-schema-tiling-design-bounce-description = Wie weit die Zellen nach einer Änderung im Entwurfsmodus überschwingen, bevor sie sich beruhigen. Standardmäßig federnder als das Layout: Das Raster soll sich wie ein physisches Ding anfühlen, das herumgeschoben wird.
 
 # --- dock ---
 schema-dock-size-label = Größe

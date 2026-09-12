@@ -7,7 +7,7 @@
 tiling mode, split containers, insertion and removal, directional focus and
 move, pre-selection, the keyboard resize step and equalise, the floating layer
 with its toggle and its focus cycle, and the layout animation. Not in it yet:
-the pointer paths (drag-to-detach and design mode), tabbed and stacked
+the pointer paths beyond drag-to-detach and the edge drag, tabbed and stacked
 containers, the compact decoration variants — a tile still keeps the full
 titlebar — and the command grammar with the interface that runs it.
 
@@ -187,24 +187,17 @@ closing anything.
 
 ### Resizing
 
-**Design mode.** Outside design mode the gaps between tiles are not drag
-handles: pointer handling on a tiled workspace is the same as on a floating
-one, so no hidden hit area competes with a window's edges. A command, an item
-in the workspace's context menu, or a long press on a gap enters *design
-mode*, where the layout's cells are drawn as panes over the windows and the
-gaps between them become visible handles that light up on hover with a cursor
-saying what a drag will do. Dragging a bar handle changes the shares of the
-two children either side of that split and nothing else; where four cells meet
-at a corner, the corner handle drags both splits at once; a drag that would
-push a window below its minimum size stops there. A cell can be dragged onto
-another to swap with it, or onto a bar handle to be inserted at that split,
-and each pane offers splitting the cell and choosing its container's layout.
-A split made with nothing to fill it, or a cell whose window closes while
-design mode is open, leaves an *empty slot* drawn as a dashed pane: the next
-window to open fills the focused empty slot before it splits anything, so a
-workspace can be laid out before it is populated. Every named action keeps
-working in design mode, and leaving it changes nothing about where the windows
-are.
+**Pointer.** The gaps between tiles are not drag handles of their own: pointer
+handling on a tiled workspace is the same as on a floating one, so no hidden
+hit area competes with a window's edges. A tile is resized by dragging the
+window's own resize edge, exactly as a floating window is. The drag moves every
+split that edge lies on — the boundary with the neighbour on that side, and the
+outer container's boundary when the edge is the outer one too — changing the
+shares of the two children either side of each and nothing else; a drag that
+would push a window below its minimum size stops there. The boundary snaps to
+halves, thirds and quarters of the pair it divides, and `Shift` bypasses the
+snap. An edge that is the outside of the tree does not resize and keeps the
+ordinary arrow cursor.
 
 **Keyboard.** A resize command grows or shrinks the focused window along a given
 axis by a configurable step, taking from — or giving to — the sibling in that
@@ -287,7 +280,7 @@ client has committed its final size, or a short deadline has passed, so a slow
 client never leaves a half-applied layout on screen.
 
 **Configurable.** Each family of layout animation — a layout change, entering
-and leaving tiling mode, monocle, a design-mode drag — has a configurable
+and leaving tiling mode, monocle — has a configurable
 duration and bounce. A duration of zero means *snap*: the windows are placed
 at their new cells in one frame with no motion and each client is configured
 once. Snap is a case of its own, not a very short animation. A single key
@@ -297,10 +290,9 @@ pointer or from a script still animates. An accessibility *reduce motion*
 setting forces every one of these durations, and the workspace switch's, to
 zero regardless of the tiling configuration.
 
-**Interactive resize animates too.** Dragging a handle in design mode updates
-the shares under the pointer, but the panes and the windows beneath them chase
-it on a spring rather than tracking it rigidly, so a fast drag lags a little
-and overshoots before settling. Clients are reconfigured as they acknowledge
+**Interactive resize animates too.** Dragging a tile's edge updates the shares
+under the pointer, but the windows chase it on a spring rather than tracking it
+rigidly, so a fast drag lags a little and overshoots before settling. Clients are reconfigured as they acknowledge
 the previous size during the drag, and once more with the final size when the
 spring settles, so a slow client never holds the drag back. That spring has
 its own duration, bouncier than the layout one by default; a duration of zero
@@ -326,8 +318,7 @@ titlebar it wears while it floats — the full height, the title at its usual
 size, all three controls — for a desktop that tiles occasionally and wants its
 windows to look the same either way; it still squares its corners and drops
 its shadow, since a tile abuts its neighbours whatever it wears on top. With
-*none* a tile gets no bar at all, and moving it is design mode or the
-keyboard. Tabbed and stacked containers draw their title strip under all
+*none* a tile gets no bar at all, and moving it is the keyboard's job. Tabbed and stacked containers draw their title strip under all
 three, since it is the only way to see the windows they hide. The frame's
 corners follow the bar under every decoration, whether the window is decorated
 by the compositor or draws its own chrome, so a row of tiles rounds — or
@@ -345,8 +336,8 @@ which of its edges are tiled, it can square the corresponding corners and
 compact its own titlebar. Otto's own applications, which draw their titlebars
 themselves, follow the same setting from the client side: under *minimal* the
 titlebar takes its compact form, under *normal* it stays exactly as it is when
-the window floats, and under *none* they draw no bar and are moved by design
-mode or the keyboard. An application whose chrome is not a bar — Files, whose
+the window floats, and under *none* they draw no bar and are moved by the
+keyboard. An application whose chrome is not a bar — Files, whose
 controls sit at the top of a full-height sidebar beside a tall header — takes
 from the setting only what a bar would change. Under *minimal* its controls
 shrink and take the compact bar's place — the same inset from the leading

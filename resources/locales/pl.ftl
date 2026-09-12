@@ -178,8 +178,6 @@ settings-tiling-layout-duration = Zmiana układu
 settings-tiling-layout-bounce = Odbicie układu
 settings-tiling-mode-duration = Włączanie kafelkowania
 settings-tiling-mode-bounce = Odbicie kafelkowania
-settings-tiling-design-duration = Tryb projektowania
-settings-tiling-design-bounce = Odbicie trybu projektowania
 
 
 ## Settings — Keyboard
@@ -772,10 +770,6 @@ schema-tiling-mode-duration-label = Animacja kafelkowania
 schema-tiling-mode-duration-description = Sekundy, jakich potrzebuje biurko na przebudowę, gdy kafelkowanie zostaje włączone lub wyłączone i każde okno leci na swoje miejsce. Zero przełącza natychmiast.
 schema-tiling-mode-bounce-label = Odbicie kafelkowania
 schema-tiling-mode-bounce-description = Jak daleko ta przebudowa wychodzi poza cel, zanim się ustali.
-schema-tiling-design-duration-label = Animacja trybu projektowania
-schema-tiling-design-duration-description = Sekundy, jakich potrzebują komórki, aby podążyć za przeciąganym uchwytem, podziałem lub gotowym układem w trybie projektowania. Zero przełącza natychmiast.
-schema-tiling-design-bounce-label = Odbicie trybu projektowania
-schema-tiling-design-bounce-description = Jak daleko komórki wychodzą poza cel po zmianie w trybie projektowania, zanim się ustalą. Domyślnie bardziej sprężyste niż układ: siatka ma sprawiać wrażenie fizycznego przedmiotu, który się przesuwa.
 
 # --- dock ---
 schema-dock-size-label = Rozmiar

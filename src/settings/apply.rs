@@ -60,8 +60,6 @@ pub fn is_applied_live(id: &str) -> bool {
             | "tiling.layout_bounce"
             | "tiling.mode_duration"
             | "tiling.mode_bounce"
-            | "tiling.design_duration"
-            | "tiling.design_bounce"
             | "cursor_theme"
             | "cursor_size"
             | "icon_theme"
@@ -248,9 +246,7 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         | "tiling.layout_duration"
         | "tiling.layout_bounce"
         | "tiling.mode_duration"
-        | "tiling.mode_bounce"
-        | "tiling.design_duration"
-        | "tiling.design_bounce" => Ok(()),
+        | "tiling.mode_bounce" => Ok(()),
         "show_maximize_button" => {
             crate::export_maximize_button();
             state.refresh_window_decorations();

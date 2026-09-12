@@ -177,8 +177,6 @@ settings-tiling-layout-duration = Layout change
 settings-tiling-layout-bounce = Layout bounce
 settings-tiling-mode-duration = Entering tiling mode
 settings-tiling-mode-bounce = Tiling mode bounce
-settings-tiling-design-duration = Design mode
-settings-tiling-design-bounce = Design mode bounce
 
 
 ## Settings — Keyboard
@@ -721,10 +719,6 @@ schema-tiling-mode-duration-label = Tiling mode animation
 schema-tiling-mode-duration-description = Seconds the workspace takes to rearrange when tiling is switched on or off and every window flies to its cell. Zero snaps.
 schema-tiling-mode-bounce-label = Tiling mode bounce
 schema-tiling-mode-bounce-description = How far that rearrangement overshoots before it settles.
-schema-tiling-design-duration-label = Design mode animation
-schema-tiling-design-duration-description = Seconds the cells take to follow a dragged handle, a split or a preset in design mode. Zero snaps.
-schema-tiling-design-bounce-label = Design mode bounce
-schema-tiling-design-bounce-description = How far the cells overshoot a design-mode edit before they settle. Bouncier than the layout spring by default: the grid is meant to feel like a physical thing being pushed around.
 
 # --- dock ---
 schema-dock-size-label = Size

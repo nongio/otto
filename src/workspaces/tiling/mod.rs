@@ -11,15 +11,14 @@
 //! `docs/developer/tiling-plan.md` for how the phases fit together.
 
 pub mod command;
-pub mod design;
 pub mod drag;
 pub mod floating;
 pub mod layout;
+pub mod splits;
 pub mod state;
 pub mod tree;
 
-pub use design::Preset;
 pub use floating::Layer;
 pub use layout::{Gaps, Rect};
 pub use state::TilingState;
-pub use tree::{Axis, Cell, Direction};
+pub use tree::{Axis, Direction};

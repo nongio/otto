@@ -319,15 +319,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
 
-        // Design mode owns Escape and the undo shortcut while it is up, the
-        // way the app switcher owns its modifier: they must not reach the
-        // client running inside the cell being edited. Read before
-        // `keyboard.input` borrows the state for the filter.
-        let design_active = self
-            .workspaces
-            .outputs()
-            .any(|output| self.tiling_design_active(output));
-        // And a drag out of a tree owns Escape, which cancels it.
+        // A drag out of a tree owns Escape, which cancels it.
         let tiling_drag_active = self.tiling_drag_is_active();
 
         // Assistive technologies are offered the key before anything else in
@@ -404,30 +396,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                     }
 
                     // Escape puts a window being dragged out of a tree back
-                    // in the slot it came from, ahead of design mode's own
-                    // Escape: the drag is the thing in flight.
+                    // in the slot it came from.
                     if tiling_drag_active
                         && matches!(state, KeyState::Pressed)
                         && keysym == Keysym::Escape
                     {
                         suppressed_keys.push(keysym);
                         return FilterResult::Intercept(KeyAction::TilingDragCancel);
-                    }
-
-                    // Escape leaves design mode; Ctrl+Z (which is what this
-                    // machine's Cmd+Z produces) undoes the last edit.
-                    if design_active && matches!(state, KeyState::Pressed) {
-                        let action = match keysym {
-                            Keysym::Escape => Some(KeyAction::TilingDesignToggle),
-                            Keysym::z | Keysym::Z if modifiers.ctrl || modifiers.logo => {
-                                Some(KeyAction::TilingUndo)
-                            }
-                            _ => None,
-                        };
-                        if let Some(action) = action {
-                            suppressed_keys.push(keysym);
-                            return FilterResult::Intercept(action);
-                        }
                     }
 
                     let shortcut_action = Config::with(|config| {

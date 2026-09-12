@@ -172,7 +172,6 @@ pub fn min_extent<L: Clone + Eq + Hash + Debug>(
 ) -> i32 {
     match tree.node(node) {
         Some(Node::Leaf(leaf)) => leaf_min(leaf),
-        Some(Node::Empty(_)) => 0,
         Some(Node::Container {
             axis: container_axis,
             children,

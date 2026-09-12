@@ -6,47 +6,9 @@
 
 use smithay::reexports::wayland_server::backend::ObjectId;
 
-use super::design::UndoStack;
 use super::layout::Gaps;
-use super::tree::{Axis, EmptyId, NodeId, Tree};
+use super::tree::{Axis, NodeId, Tree};
 use crate::config::TilingConfig;
-
-/// A bar or corner drag design mode is in the middle of.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DesignDrag {
-    /// The split the pointer is moving, as `(container, index)` — stable
-    /// across the relayouts the drag itself causes.
-    pub bar: (NodeId, usize),
-    /// The second split, when a corner is being dragged.
-    pub corner: Option<(NodeId, usize)>,
-}
-
-/// Everything design mode adds to a workspace's tiling state.
-///
-/// Kept beside the tree rather than inside it so the tree stays pure: design
-/// mode is a way of editing a tree, not a property of one.
-#[derive(Debug, Default)]
-pub struct TilingDesignState {
-    /// Is the pane grid up on this workspace?
-    pub active: bool,
-    /// The empty slot the next window fills, and whose pane carries the
-    /// accent border while nothing is focused.
-    pub focused_empty: Option<EmptyId>,
-    /// The drag in flight, if any.
-    pub drag: Option<DesignDrag>,
-    /// Tree snapshots, one per edit.
-    pub undo: UndoStack<ObjectId>,
-}
-
-impl TilingDesignState {
-    /// Leave design mode, forgetting the drag but keeping the undo stack —
-    /// the session's undo history outlives one visit to the editor.
-    pub fn leave(&mut self) {
-        self.active = false;
-        self.drag = None;
-        self.focused_empty = None;
-    }
-}
 
 /// Everything one workspace knows about its tiling.
 #[derive(Debug, Default)]
@@ -78,8 +40,6 @@ pub struct TilingState {
     /// An armed split axis: the next insertion splits the focused cell this
     /// way rather than following the cell's shape. Cleared by the insertion.
     pub preselect: Option<Axis>,
-    /// The pane grid, its drag and its undo stack.
-    pub design: TilingDesignState,
     /// This workspace's own gaps, when `gaps inner|outer <n> current` set
     /// them. `None` means the `[tiling]` defaults apply.
     ///
@@ -126,8 +86,7 @@ impl TilingState {
         self.preselect.take()
     }
 
-    /// Forget everything: leaving tiling mode empties the tree, and with no
-    /// tree there is nothing for design mode to edit.
+    /// Forget everything: leaving tiling mode empties the tree.
     pub fn clear(&mut self) {
         self.tree = Tree::default();
         self.focused = None;
@@ -136,7 +95,6 @@ impl TilingState {
         self.focused_container = None;
         self.dirty = false;
         self.returning.clear();
-        self.design = TilingDesignState::default();
     }
 
     // ── Container focus ──────────────────────────────────────────────────

@@ -183,12 +183,6 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::TilingEqualize => {
                     self.handle_tiling_equalize();
                 }
-                KeyAction::TilingDesignToggle => {
-                    self.handle_tiling_design_toggle();
-                }
-                KeyAction::TilingUndo => {
-                    self.handle_tiling_undo();
-                }
                 KeyAction::TilingFloatingToggle => {
                     let _ = self.handle_tiling_floating(None);
                 }
@@ -463,12 +457,6 @@ impl Otto<UdevData> {
                 }
                 KeyAction::TilingEqualize => {
                     self.handle_tiling_equalize();
-                }
-                KeyAction::TilingDesignToggle => {
-                    self.handle_tiling_design_toggle();
-                }
-                KeyAction::TilingUndo => {
-                    self.handle_tiling_undo();
                 }
                 KeyAction::TilingFloatingToggle => {
                     let _ = self.handle_tiling_floating(None);

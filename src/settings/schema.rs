@@ -512,29 +512,6 @@ pub static SETTINGS: &[SettingSpec] = &[
         1.0,
         0.05,
     ),
-    ranged(
-        "tiling.design_duration",
-        Double,
-        "Design mode animation",
-        "Seconds the cells take to follow a dragged handle, a split or a \
-         preset in design mode. Zero snaps.",
-        Live,
-        0.0,
-        2.0,
-        0.05,
-    ),
-    ranged(
-        "tiling.design_bounce",
-        Double,
-        "Design mode bounce",
-        "How far the cells overshoot a design-mode edit before they settle. \
-         Bouncier than the layout spring by default: the grid is meant to \
-         feel like a physical thing being pushed around.",
-        Live,
-        0.0,
-        1.0,
-        0.05,
-    ),
     // ---- Dock ------------------------------------------------------------
     ranged(
         "dock.size",

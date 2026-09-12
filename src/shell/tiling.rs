@@ -201,7 +201,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     /// [`Self::relayout_workspace_forced`] with the transition chosen by the
-    /// caller, so a design-mode edit can use its own, bouncier spring while
+    /// caller, so an interactive edge drag can use its own spring while
     /// everything else keeps the layout one.
     pub fn relayout_workspace_with(
         &mut self,
@@ -232,12 +232,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
             (gaps, layout::resolve(&state.tree, area, gaps))
         };
-
-        // The pane grid is driven from the very rects that are about to be
-        // applied, so it moves in step with the windows underneath it — and
-        // it is refreshed even when the tree holds nothing but empty slots,
-        // which is exactly when there are no windows to move.
-        self.refresh_tiling_design(output, transition.clone());
 
         if rects.is_empty() {
             return;
@@ -569,19 +563,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .unwrap_or(true),
             None => true,
         };
-        // An empty slot laid out in design mode is filled before any other
-        // insertion rule applies: that is the whole point of laying a
-        // workspace out before populating it (`specs/tiling.md`, *Design
-        // mode*). The focused slot goes first, then the first in layout order.
-        let slot = state.tree.next_empty(state.design.focused_empty);
-        if let Some(slot) = slot {
-            if state.tree.fill_empty(slot, id.clone()) {
-                state.design.focused_empty = state.tree.empty_slots().first().copied();
-                state.focused = Some(id);
-                return;
-            }
-        }
-
         let preselect = state.take_preselect();
         state
             .tree
@@ -904,7 +885,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 state.focused = state.tree.leaves().first().cloned();
             }
             state.floating_focused = Some(id.clone());
-            state.design.focused_empty = state.tree.empty_slots().first().copied();
         }
 
         // A window opened straight into the tree has no floating rect to go

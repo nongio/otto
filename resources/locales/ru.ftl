@@ -178,8 +178,6 @@ settings-tiling-layout-duration = Смена расположения
 settings-tiling-layout-bounce = Отскок расположения
 settings-tiling-mode-duration = Переход в мозаику
 settings-tiling-mode-bounce = Отскок мозаики
-settings-tiling-design-duration = Режим конструктора
-settings-tiling-design-bounce = Отскок конструктора
 
 
 ## Settings — Keyboard
@@ -765,10 +763,6 @@ schema-tiling-mode-duration-label = Анимация мозаики
 schema-tiling-mode-duration-description = Секунды, за которые рабочий стол перестраивается при включении или выключении мозаики, когда каждое окно летит на своё место. Ноль переключает сразу.
 schema-tiling-mode-bounce-label = Отскок мозаики
 schema-tiling-mode-bounce-description = Насколько эта перестройка проскакивает цель, прежде чем остановиться.
-schema-tiling-design-duration-label = Анимация режима конструктора
-schema-tiling-design-duration-description = Секунды, за которые ячейки следуют за перетянутым манипулятором, разделением или заготовкой в режиме конструктора. Ноль переключает сразу.
-schema-tiling-design-bounce-label = Отскок конструктора
-schema-tiling-design-bounce-description = Насколько ячейки проскакивают цель после правки в режиме конструктора, прежде чем остановиться. По умолчанию упруже, чем расположение: сетка должна ощущаться как физический предмет, который толкают.
 
 # --- dock ---
 schema-dock-size-label = Размер

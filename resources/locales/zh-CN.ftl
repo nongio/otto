@@ -175,8 +175,6 @@ settings-tiling-layout-duration = 布局变化
 settings-tiling-layout-bounce = 布局回弹
 settings-tiling-mode-duration = 进入平铺模式
 settings-tiling-mode-bounce = 平铺模式回弹
-settings-tiling-design-duration = 设计模式
-settings-tiling-design-bounce = 设计模式回弹
 
 
 ## Settings — Keyboard
@@ -718,10 +716,6 @@ schema-tiling-mode-duration-label = 平铺模式动画
 schema-tiling-mode-duration-description = 开启或关闭平铺、每个窗口飞向各自格子时，桌面重新排布所需的秒数。为零则直接就位。
 schema-tiling-mode-bounce-label = 平铺模式回弹
 schema-tiling-mode-bounce-description = 这次重新排布在停稳前越过目标的幅度。
-schema-tiling-design-duration-label = 设计模式动画
-schema-tiling-design-duration-description = 在设计模式中，格子跟随拖动的手柄、分割或预设所需的秒数。为零则直接就位。
-schema-tiling-design-bounce-label = 设计模式回弹
-schema-tiling-design-bounce-description = 在设计模式中编辑后，格子在停稳前越过目标的幅度。默认比布局更有弹性：网格应当像一件被推动的实物。
 
 # --- dock ---
 schema-dock-size-label = 大小

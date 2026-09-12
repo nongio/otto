@@ -178,8 +178,6 @@ settings-tiling-layout-duration = Mudança de disposição
 settings-tiling-layout-bounce = Rebote da disposição
 settings-tiling-mode-duration = Entrar no modo lado a lado
 settings-tiling-mode-bounce = Rebote do modo lado a lado
-settings-tiling-design-duration = Modo de desenho
-settings-tiling-design-bounce = Rebote do modo de desenho
 
 
 ## Settings — Keyboard
@@ -743,10 +741,6 @@ schema-tiling-mode-duration-label = Animação do modo lado a lado
 schema-tiling-mode-duration-description = Segundos que a área de trabalho leva para se reorganizar quando o modo lado a lado é ligado ou desligado e cada janela voa até sua célula. Zero muda de imediato.
 schema-tiling-mode-bounce-label = Rebote do modo lado a lado
 schema-tiling-mode-bounce-description = Quanto essa reorganização passa do alvo antes de se acomodar.
-schema-tiling-design-duration-label = Animação do modo de desenho
-schema-tiling-design-duration-description = Segundos que as células levam para seguir uma alça arrastada, uma divisão ou uma predefinição no modo de desenho. Zero muda de imediato.
-schema-tiling-design-bounce-label = Rebote do modo de desenho
-schema-tiling-design-bounce-description = Quanto as células passam do alvo após uma edição no modo de desenho, antes de se acomodarem. Por padrão, mais elástico que a disposição: a grade deve parecer uma coisa física sendo empurrada.
 
 # --- dock ---
 schema-dock-size-label = Tamanho

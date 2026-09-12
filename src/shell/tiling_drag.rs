@@ -215,26 +215,8 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
             let id = drag.window.clone();
             match drag.target {
-                // An empty slot takes the window whole, whichever part of it
-                // the pointer was over.
-                Some((node, _))
-                    if matches!(
-                        state.tree.cell(node),
-                        Some(crate::workspaces::tiling::Cell::Empty(_))
-                    ) =>
-                {
-                    if let Some(crate::workspaces::tiling::Cell::Empty(slot)) =
-                        state.tree.cell(node)
-                    {
-                        state.tree.fill_empty(slot, id.clone());
-                    }
-                }
                 Some((node, DropSide::Centre)) => {
-                    match state
-                        .tree
-                        .cell(node)
-                        .and_then(|cell| cell.window().cloned())
-                    {
+                    match state.tree.leaf(node).cloned() {
                         // A swap puts the layout back the way it was and
                         // exchanges the two windows in it: the dragged one
                         // takes this tile, and this tile's window takes the
@@ -320,7 +302,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
         let cells = layout::resolve_nodes(&state.tree, area, gaps)
             .into_iter()
-            .filter(|(node, _)| state.tree.cell(*node).is_some())
+            .filter(|(node, _)| state.tree.leaf(*node).is_some())
             .collect();
         Some((area, cells))
     }
@@ -423,14 +405,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         };
         let zone = self.tiling_area(&output);
         let area = Rect::new(zone.loc.x, zone.loc.y, zone.size.w, zone.size.h);
-        // `Shift` bypasses the snap, as it does on a design-mode bar.
+        // `Shift` bypasses the snap.
         let snap = !self.current_modifiers.shift;
         let minimums = self.tiling_minimums();
 
         let mut changed = false;
         if let Ok(mut state) = workspace.tiling.write() {
             let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
-            let bars = crate::workspaces::tiling::design::bar_handles(&state.tree, area, gaps);
+            let bars = crate::workspaces::tiling::splits::bar_handles(&state.tree, area, gaps);
             for (container, index) in splits {
                 let Some(bar) = bars
                     .iter()
@@ -464,7 +446,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
         drop(workspace);
         if changed {
-            let transition = Config::with(|c| c.tiling.design_transition());
+            let transition = Config::with(|c| c.tiling.layout_transition());
             self.relayout_workspace_with(&output, transition, false);
         }
     }
@@ -475,7 +457,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(resize) = self.tiling_resize.take() else {
             return;
         };
-        let transition = Config::with(|c| c.tiling.design_transition());
+        let transition = Config::with(|c| c.tiling.layout_transition());
         self.relayout_workspace_with(&resize.output, transition, false);
     }
 
