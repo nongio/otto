@@ -80,6 +80,8 @@ async fn main() {
         unsafe { std::env::set_var("OTTO_SYSTEMD_NOTIFY", "1") };
     }
 
+    install_panic_log();
+
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt()
             .compact()
@@ -198,4 +200,49 @@ async fn main() {
             }
         }
     }
+}
+
+/// Keep a copy of every panic in `$XDG_STATE_HOME/otto/panic.log`.
+///
+/// A session started by the login manager has no terminal and nothing
+/// collects its stderr, so a panic there leaves no trace at all: the session
+/// just ends. The default hook still runs, so a terminal session prints the
+/// panic as before.
+fn install_panic_log() {
+    let Some(state_dir) = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".local/state"))
+        })
+    else {
+        return;
+    };
+    let dir = state_dir.join("otto");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("panic.log");
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        use std::io::Write as _;
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let thread = std::thread::current();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(
+                file,
+                "=== otto {} panic at unix time {stamp}, thread {:?}\n{info}\n{backtrace}\n",
+                env!("CARGO_PKG_VERSION"),
+                thread.name().unwrap_or("?")
+            );
+        }
+    }));
 }
