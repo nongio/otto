@@ -69,6 +69,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Command::Split(arg) => self.command_split(arg),
             Command::Layout(arg) => self.command_layout(arg),
             Command::Resize { axis, grow, amount } => self.command_resize(axis, grow, amount),
+            Command::Floating(toggle) => self.handle_tiling_floating(match toggle {
+                Toggle::Toggle => None,
+                Toggle::Enable => Some(true),
+                Toggle::Disable => Some(false),
+            }),
+            Command::FocusMode(layer) => self.handle_tiling_focus_mode(layer),
             Command::Fullscreen => self.command_fullscreen(),
             Command::Kill => {
                 self.close_focused_window();

@@ -12,6 +12,7 @@
 //! Commands are separated by `;`. Errors carry the byte offset of the
 //! offending token so `otto-msg` can point at it the way `swaymsg` does.
 
+use super::floating::Layer;
 use super::tree::{Axis, Direction};
 
 /// Which workspace `workspace …` asks for.
@@ -93,6 +94,11 @@ pub enum Command {
         grow: bool,
         amount: Amount,
     },
+    /// `floating toggle|enable|disable`
+    Floating(Toggle),
+    /// `focus mode_toggle|floating|tiling` — `None` is `mode_toggle`, which
+    /// flips to whichever layer focus is not on.
+    FocusMode(Option<Layer>),
     /// `fullscreen [toggle]`
     Fullscreen,
     /// `kill`
@@ -255,12 +261,7 @@ fn parse_one(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         "split" => Command::Split(parse_split_arg(cursor)?),
         "layout" => parse_layout(cursor)?,
         "resize" => parse_resize(cursor)?,
-        "floating" => {
-            // The floating layer is a later branch; say so rather than
-            // pretending the window moved.
-            let arg = cursor.peek().unwrap_or("");
-            return Err(unsupported(offset, &join("floating", arg)));
-        }
+        "floating" => Command::Floating(parse_toggle(cursor, "floating")?),
         "fullscreen" => parse_fullscreen(cursor, offset)?,
         "kill" => Command::Kill,
         "tiling" => Command::Tiling(parse_toggle(cursor, "tiling")?),
@@ -295,7 +296,11 @@ fn direction(word: &str) -> Option<Direction> {
 fn parse_focus(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
     let offset = cursor.offset();
     let Some((_, word)) = cursor.next() else {
-        return Err(invalid(offset, "focus", "left|right|up|down|parent|child"));
+        return Err(invalid(
+            offset,
+            "focus",
+            "left|right|up|down|parent|child|mode_toggle",
+        ));
     };
     if let Some(dir) = direction(word) {
         return Ok(Command::Focus(dir));
@@ -303,10 +308,15 @@ fn parse_focus(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
     match word {
         "parent" => Ok(Command::FocusParent),
         "child" => Ok(Command::FocusChild),
-        // i3's second focus axis — the floating layer, which Otto has not
-        // built yet.
-        "mode_toggle" | "floating" | "tiling" => Err(unsupported(offset, &join("focus", word))),
-        _ => Err(invalid(offset, "focus", "left|right|up|down|parent|child")),
+        // i3's second focus axis: the floating layer.
+        "mode_toggle" => Ok(Command::FocusMode(None)),
+        "floating" => Ok(Command::FocusMode(Some(Layer::Floating))),
+        "tiling" => Ok(Command::FocusMode(Some(Layer::Tiled))),
+        _ => Err(invalid(
+            offset,
+            "focus",
+            "left|right|up|down|parent|child|mode_toggle",
+        )),
     }
 }
 
@@ -785,7 +795,7 @@ mod tests {
         assert_eq!(error.offset, 6);
         assert_eq!(
             error.message,
-            "Invalid focus command (expected left|right|up|down|parent|child)"
+            "Invalid focus command (expected left|right|up|down|parent|child|mode_toggle)"
         );
     }
 
@@ -805,10 +815,8 @@ mod tests {
     #[test]
     fn the_unsupported_commands_say_so() {
         for (text, offset) in [
-            ("floating toggle", 0),
             ("layout tabbed", 7),
             ("layout stacking", 7),
-            ("focus mode_toggle", 6),
             ("resize set width 30 ppt", 7),
         ] {
             let error = error(text);
@@ -819,6 +827,29 @@ mod tests {
                 error.message
             );
         }
+    }
+
+    #[test]
+    fn floating_takes_the_three_state_argument() {
+        assert_eq!(one("floating toggle"), Command::Floating(Toggle::Toggle));
+        assert_eq!(one("floating"), Command::Floating(Toggle::Toggle));
+        assert_eq!(one("floating enable"), Command::Floating(Toggle::Enable));
+        assert_eq!(one("floating disable"), Command::Floating(Toggle::Disable));
+        assert_eq!(one("floating on"), Command::Floating(Toggle::Enable));
+        assert_eq!(one("floating off"), Command::Floating(Toggle::Disable));
+        let error = error("floating sideways");
+        assert_eq!(error.offset, 9);
+        assert!(error.message.contains("toggle|enable|disable"));
+    }
+
+    #[test]
+    fn focus_crosses_between_the_layers() {
+        assert_eq!(one("focus mode_toggle"), Command::FocusMode(None));
+        assert_eq!(
+            one("focus floating"),
+            Command::FocusMode(Some(Layer::Floating))
+        );
+        assert_eq!(one("focus tiling"), Command::FocusMode(Some(Layer::Tiled)));
     }
 
     #[test]

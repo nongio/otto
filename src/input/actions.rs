@@ -70,6 +70,11 @@ pub enum KeyAction {
     /// one `[tiling] resize_step`.
     TilingResize(crate::workspaces::tiling::Axis, bool),
     TilingEqualize,
+    /// Float the focused tile, or tile the focused floating window
+    /// (`specs/tiling.md`, *By hand*).
+    TilingFloatingToggle,
+    /// Move keyboard focus between the floating layer and the tiled one.
+    TilingFocusModeToggle,
     /// Enter or leave design mode on the focused output's workspace.
     TilingDesignToggle,
     /// Undo the last design-mode edit.
@@ -706,6 +711,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             KeyAction::TilingSplit(axis) => self.handle_tiling_split(axis),
             KeyAction::TilingResize(axis, grow) => self.handle_tiling_resize(axis, grow),
             KeyAction::TilingEqualize => self.handle_tiling_equalize(),
+            KeyAction::TilingFloatingToggle => {
+                let _ = self.handle_tiling_floating(None);
+            }
+            KeyAction::TilingFocusModeToggle => {
+                let _ = self.handle_tiling_focus_mode(None);
+            }
             KeyAction::TilingDesignToggle => self.handle_tiling_design_toggle(),
             KeyAction::TilingUndo => self.handle_tiling_undo(),
             KeyAction::TilingDragCancel => self.handle_tiling_drag_cancel(),
@@ -806,6 +817,8 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::ResizeGrowHeight => Some(KeyAction::TilingResize(Axis::Column, true)),
             BuiltinAction::ResizeShrinkHeight => Some(KeyAction::TilingResize(Axis::Column, false)),
             BuiltinAction::EqualizeContainer => Some(KeyAction::TilingEqualize),
+            BuiltinAction::FloatingToggle => Some(KeyAction::TilingFloatingToggle),
+            BuiltinAction::FocusModeToggle => Some(KeyAction::TilingFocusModeToggle),
             BuiltinAction::TilingDesignToggle => Some(KeyAction::TilingDesignToggle),
             BuiltinAction::TilingUndo => Some(KeyAction::TilingUndo),
         },

@@ -68,14 +68,16 @@ and Otto has not built it. Commands that parse and are refused at run time
 | `split h\|v\|toggle` | arms the axis the next window splits along |
 | `layout splith\|splitv\|toggle split` | turns the focused cell's container |
 | `resize grow\|shrink width\|height <n> [px\|ppt] [or <n> ppt]` | a bare figure is `ppt`; the `or` fallback is accepted and dropped |
+| `floating toggle\|enable\|disable` | move the focused window between the tree and the floating layer |
+| `focus mode_toggle\|floating\|tiling` | move focus between the two layers |
 | `fullscreen [toggle]` | the same path a client's own request takes |
 | `kill` | closes the focused window |
 | `tiling toggle\|enable\|disable` | Otto's own: the workspace's mode |
 | `gaps inner\|outer <n> [current\|all]` | see below |
 
 **Not implemented yet**, and refused by name rather than ignored:
-`floating toggle|enable|disable`, `focus mode_toggle`, `layout tabbed`,
-`layout stacking`, `layout toggle all`, `resize set`, `split none`,
+`layout tabbed`, `layout stacking`, `layout toggle all`, `resize set`,
+`split none`,
 `fullscreen global`, `move … to output`, per-edge `gaps`, workspaces by name,
 `workspace back_and_forth`. Criteria (`[app_id="…"] …`), marks, binding modes,
 `scratchpad`, `assign` and `for_window` are not parsed at all.

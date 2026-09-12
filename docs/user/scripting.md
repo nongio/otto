@@ -24,12 +24,14 @@ string, separated by `;`.
 |---------|--------------|
 | `focus left\|right\|up\|down` | move focus to the neighbouring tile; never wraps |
 | `focus parent` / `focus child` | move focus up to the surrounding container, and back down |
+| `focus mode_toggle\|floating\|tiling` | move focus between the floating windows and the tiled ones |
 | `move left\|right\|up\|down` | move the focused tile through the tree |
 | `move container to workspace <n>` | send the focused window to workspace `<n>`, creating it if needed |
 | `workspace <n\|next\|prev>` | switch workspace; `<n>` is created if it does not exist |
 | `split h\|v\|toggle` | decide which way the *next* window splits the focused cell |
 | `layout splith\|splitv\|toggle split` | turn the container the focused cell sits in |
 | `resize grow\|shrink width\|height <n> [px\|ppt]` | resize the focused tile; a bare number means percent |
+| `floating toggle\|enable\|disable` | float the focused tile, or put a floating window back into the layout |
 | `fullscreen [toggle]` | fullscreen the focused window |
 | `kill` | close the focused window |
 | `tiling toggle\|enable\|disable` | turn the current workspace's tiling on or off |
@@ -50,8 +52,8 @@ session; `otto-msg gaps inner 8 all` sets the default for the session and
 forgets every per-workspace tweak.
 
 Some i3 commands are understood but not built yet, and say so instead of
-quietly doing nothing: `floating toggle`, `layout tabbed`, `layout stacking`,
-`resize set`, `focus mode_toggle`, and moving a window to another output.
+quietly doing nothing: `layout tabbed`, `layout stacking`, `resize set`, and
+moving a window to another output.
 Criteria (`[app_id="…"]`), marks, binding modes and `for_window` rules are not
 parsed at all.
 

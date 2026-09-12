@@ -70,6 +70,11 @@ pub struct TilingState {
     /// `dirty` adopts it next to the focused leaf (`specs/tiling.md`,
     /// *Restoring*).
     pub returning: Vec<ObjectId>,
+    /// The window on this workspace's *floating* layer that held keyboard
+    /// focus last — where `focus mode_toggle` lands when it comes up out of
+    /// the tree (`specs/tiling.md`, *Stacking*). `focused` is the tiled
+    /// layer's half of the same memory.
+    pub floating_focused: Option<ObjectId>,
     /// An armed split axis: the next insertion splits the focused cell this
     /// way rather than following the cell's shape. Cleared by the insertion.
     pub preselect: Option<Axis>,
@@ -126,6 +131,7 @@ impl TilingState {
     pub fn clear(&mut self) {
         self.tree = Tree::default();
         self.focused = None;
+        self.floating_focused = None;
         self.preselect = None;
         self.focused_container = None;
         self.dirty = false;

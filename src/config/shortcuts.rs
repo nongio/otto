@@ -165,6 +165,10 @@ pub enum BuiltinAction {
     ResizeShrinkHeight,
     /// Give every child of the focused container the same share.
     EqualizeContainer,
+    /// Float the focused tile, or tile the focused floating window.
+    FloatingToggle,
+    /// Move focus between the floating layer and the tiled one.
+    FocusModeToggle,
 }
 
 #[derive(Debug, Error)]
@@ -301,6 +305,8 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "ResizeGrowHeight" => BuiltinAction::ResizeGrowHeight,
         "ResizeShrinkHeight" => BuiltinAction::ResizeShrinkHeight,
         "EqualizeContainer" => BuiltinAction::EqualizeContainer,
+        "FloatingToggle" => BuiltinAction::FloatingToggle,
+        "FocusModeToggle" => BuiltinAction::FocusModeToggle,
         "Screen" => {
             let index = index.ok_or_else(|| ShortcutError::MissingIndex(name.to_string()))?;
             BuiltinAction::Screen { index }

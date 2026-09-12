@@ -17,6 +17,10 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::backend::ObjectId,
     },
     utils::{Logical, Rectangle, Size},
+    wayland::{
+        compositor::with_states,
+        shell::xdg::{dialog::ToplevelDialogHint, XdgToplevelSurfaceData},
+    },
 };
 
 use otto_kit::components::titlebar::DecorationVariant;
@@ -26,7 +30,7 @@ use crate::{
     shell::WindowElement,
     state::{Backend, Otto},
     workspaces::{
-        tiling::{layout, Axis, Direction, Gaps, Rect},
+        tiling::{floating, layout, Axis, Direction, Gaps, Layer, Rect},
         workspace::WorkspaceView,
         Workspaces,
     },
@@ -138,6 +142,15 @@ impl<BackendData: Backend> Otto<BackendData> {
             return false;
         };
         if toplevel.parent().is_some() {
+            return false;
+        }
+        // `xdg-dialog-v1`: only a *modal* hint floats a parentless window.
+        // GTK 4 gives every toplevel a dialog object, so the plain hint says
+        // nothing about the window — a terminal carries it too. A file
+        // chooser served by a separate process has no parent surface of its
+        // own unless the application exported one, and asks for modal when it
+        // could not import one (`specs/tiling.md`, *Automatic*).
+        if dialog_hint(window) == ToplevelDialogHint::Modal {
             return false;
         }
         if !window.is_resizable() {
@@ -255,6 +268,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                 transition.clone(),
             );
         }
+
+        // `map_window_on_output` restacked the workspace as it placed each
+        // tile; the floating layer goes back on top of them all.
+        self.restack_floating_above_tiles(output);
     }
 
     /// Animate one window into `target` and tell the client about it.
@@ -613,11 +630,23 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub fn tiling_note_focus(&mut self, id: &ObjectId) {
         for ows in self.workspaces.output_workspaces.values() {
             for view in ows.workspace_views.iter() {
+                let here = view
+                    .windows_list
+                    .read()
+                    .map(|list| list.iter().any(|w| w == id))
+                    .unwrap_or(false);
                 let Ok(mut state) = view.tiling.write() else {
                     continue;
                 };
-                if state.enabled && state.tree.contains(id) {
+                if !state.enabled {
+                    continue;
+                }
+                if state.tree.contains(id) {
                     state.focused = Some(id.clone());
+                } else if here {
+                    // The other half of the same memory: `focus mode_toggle`
+                    // comes back to whichever floating window was last on.
+                    state.floating_focused = Some(id.clone());
                 }
             }
         }
@@ -685,6 +714,357 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
     }
 
+    // ── The floating layer ───────────────────────────────────────────────
+
+    /// The windows on `workspace` that are not in its tree, bottom to top.
+    ///
+    /// Everything on a tiling workspace is either a leaf or a floating
+    /// window; there is no third thing (`specs/tiling.md`, *Stacking*).
+    fn tiling_floating_ids(&self, workspace: &Arc<WorkspaceView>) -> Vec<ObjectId> {
+        let Ok(state) = workspace.tiling.read() else {
+            return Vec::new();
+        };
+        if !state.enabled {
+            return Vec::new();
+        }
+        workspace
+            .windows_list
+            .read()
+            .map(|list| {
+                list.iter()
+                    .filter(|id| !state.tree.contains(id))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Put the floating layer back on top of the tiles.
+    ///
+    /// A tile that takes focus, or a relayout that restacks the workspace,
+    /// would otherwise leave a floating window underneath one — and a tile
+    /// must never overlap it. Raising in `windows_list` order keeps the
+    /// floating windows' own stacking, so only their relation to the tiles
+    /// changes.
+    pub fn restack_floating_above_tiles(&mut self, output: &Output) {
+        let Some(workspace) = self.workspaces.current_tiling_workspace(output) else {
+            return;
+        };
+        let floating: Vec<ObjectId> = self
+            .tiling_floating_ids(&workspace)
+            .into_iter()
+            .filter(|id| {
+                self.workspaces
+                    .windows_map
+                    .get(id)
+                    .map(|window| !window.is_minimised())
+                    .unwrap_or(false)
+            })
+            .collect();
+        if floating.is_empty() {
+            return;
+        }
+        // Nearly every relayout finds the floating layer already on top;
+        // checking costs a walk of the stack and saves a workspace-model
+        // rebuild. Both orders have to be looked at: the *space* is what
+        // decides which window is topmost, and the workspace's own
+        // `windows_list` is what decides the order the layers draw in, and a
+        // relayout can move one without the other.
+        let in_space = self
+            .workspaces
+            .output_workspaces
+            .get(&output.name())
+            .and_then(|ows| ows.spaces.get(ows.current_workspace))
+            .map(|space| {
+                space
+                    .elements()
+                    .rev()
+                    .filter(|window| !window.is_minimised())
+                    .take(floating.len())
+                    .all(|window| floating.contains(&window.id()))
+            })
+            .unwrap_or(false);
+        let in_list = workspace
+            .windows_list
+            .read()
+            .map(|list| {
+                list.iter()
+                    .rev()
+                    .filter(|id| {
+                        self.workspaces
+                            .windows_map
+                            .get(*id)
+                            .map(|window| !window.is_minimised())
+                            .unwrap_or(false)
+                    })
+                    .take(floating.len())
+                    .all(|id| floating.contains(id))
+            })
+            .unwrap_or(false);
+        if in_space && in_list {
+            return;
+        }
+        for id in floating {
+            // `activate` false: this is a restack, not a focus change.
+            self.workspaces.raise_element(&id, false, false);
+        }
+        self.workspaces.update_workspace_model();
+    }
+
+    /// Which layer `id` is on, on `workspace`.
+    fn tiling_layer_of(&self, workspace: &Arc<WorkspaceView>, id: &ObjectId) -> Option<Layer> {
+        let on_workspace = workspace
+            .windows_list
+            .read()
+            .map(|list| list.iter().any(|w| w == id))
+            .unwrap_or(false);
+        if !on_workspace {
+            return None;
+        }
+        let tiled = workspace
+            .tiling
+            .read()
+            .map(|state| state.tree.contains(id))
+            .unwrap_or(false);
+        Some(if tiled { Layer::Tiled } else { Layer::Floating })
+    }
+
+    /// `floating toggle|enable|disable`, and the `FloatingToggle` action.
+    ///
+    /// `want` is what the window should end up as; `None` flips it. A window
+    /// taken out of the tree goes back to the rectangle it had before it was
+    /// tiled, or — having never had one — to a fraction of the workspace
+    /// centred on the cell it is leaving. One put back in joins at the
+    /// focused position, not the one it left (`specs/tiling.md`, *By hand*
+    /// and *Restoring*).
+    pub(crate) fn handle_tiling_floating(&mut self, want: Option<bool>) -> Result<(), String> {
+        let Some(output) = self.tiling_output() else {
+            return Err("no output has focus".to_string());
+        };
+        let Some(workspace) = self.workspaces.current_tiling_workspace(&output) else {
+            return Err("no workspace has focus".to_string());
+        };
+        if !workspace
+            .tiling
+            .read()
+            .map(|state| state.enabled)
+            .unwrap_or(false)
+        {
+            return Err("this workspace does not tile".to_string());
+        }
+        let Some(window) = self.focused_window() else {
+            return Err("no window has focus".to_string());
+        };
+        let id = window.id();
+        let Some(layer) = self.tiling_layer_of(&workspace, &id) else {
+            return Err("that window is not on this workspace".to_string());
+        };
+        let float = want.unwrap_or(layer == Layer::Tiled);
+        match (layer, float) {
+            (Layer::Tiled, true) => self.tiling_float_leaf(&output, &workspace, &window),
+            (Layer::Floating, false) => self.tiling_tile_floating(&output, &workspace, &window),
+            (Layer::Floating, true) => Err("that window already floats".to_string()),
+            (Layer::Tiled, false) => Err("that window is already tiled".to_string()),
+        }
+    }
+
+    /// Take `window` out of the tree and restore it to its floating rect.
+    fn tiling_float_leaf(
+        &mut self,
+        output: &Output,
+        workspace: &Arc<WorkspaceView>,
+        window: &WindowElement,
+    ) -> Result<(), String> {
+        let id = window.id();
+        let zone = self.tiling_area(output);
+        let area = Rect::new(zone.loc.x, zone.loc.y, zone.size.w, zone.size.h);
+
+        // The cell it is leaving, read before the removal: it is what a
+        // window with no remembered rect is centred on.
+        let cell = {
+            let Ok(state) = workspace.tiling.read() else {
+                return Err("the tiling state is busy".to_string());
+            };
+            let gaps = Config::with(|c| state.effective_gaps(&c.tiling));
+            layout::resolve(&state.tree, area, gaps)
+                .into_iter()
+                .find(|(leaf, _)| *leaf == id)
+                .map(|(_, rect)| rect)
+                .unwrap_or(area)
+        };
+
+        {
+            let Ok(mut state) = workspace.tiling.write() else {
+                return Err("the tiling state is busy".to_string());
+            };
+            if !state.tree.remove(&id) {
+                return Err("that window is not a tile".to_string());
+            }
+            if state.focused.as_ref() == Some(&id) {
+                state.focused = state.tree.leaves().first().cloned();
+            }
+            state.floating_focused = Some(id.clone());
+            state.design.focused_empty = state.tree.empty_slots().first().copied();
+        }
+
+        // A window opened straight into the tree has no floating rect to go
+        // back to, so it is given one here rather than in `restore_to_floating`
+        // — which would centre it on the output and lose the place on screen
+        // the user is looking at.
+        if let Some(mut view) = self.workspaces.get_window_view(&id) {
+            if view.unmaximised_rect.size.is_empty() {
+                let rect = floating::default_float_rect(area, cell);
+                view.unmaximised_rect = Rectangle::<i32, Logical>::new(
+                    (rect.x, rect.y).into(),
+                    (rect.w, rect.h).into(),
+                );
+            }
+            view.tiled_zone = None;
+            self.workspaces.set_window_view(&id, view);
+        }
+
+        window.set_is_maximized(false);
+        // Before the restore, for the same reason `apply_tiled_rect` sets the
+        // tile's variant before its first configure: the rect the client is
+        // configured with is this one minus the *floating* bar.
+        window.set_decoration_variant(DecorationVariant::Floating);
+        self.restore_to_floating(window);
+        self.relayout_workspace(output, true);
+        self.restack_floating_above_tiles(output);
+        Ok(())
+    }
+
+    /// Put a floating `window` back into the tree, at the focused position.
+    fn tiling_tile_floating(
+        &mut self,
+        output: &Output,
+        workspace: &Arc<WorkspaceView>,
+        window: &WindowElement,
+    ) -> Result<(), String> {
+        if !self.is_tileable(window) {
+            return Err("that window cannot be tiled".to_string());
+        }
+        let id = window.id();
+        // What it looks like now is what floating it again restores.
+        if let Some(geometry) = self.workspaces.element_geometry(window) {
+            if let Some(mut view) = self.workspaces.get_window_view(&id) {
+                view.unmaximised_rect = geometry;
+                view.tiled_zone = None;
+                self.workspaces.set_window_view(&id, view);
+            }
+        }
+        if let Ok(mut state) = workspace.tiling.write() {
+            if state.floating_focused.as_ref() == Some(&id) {
+                state.floating_focused = None;
+            }
+        }
+        self.tiling_insert_leaf(output, workspace, id);
+        // Forced: the window may already be sitting on its new cell, and it
+        // still has to be dressed as a tile and told it is one.
+        self.relayout_workspace_forced(output, true, true);
+        self.restack_floating_above_tiles(output);
+        Ok(())
+    }
+
+    /// `focus mode_toggle|floating|tiling`, and the `FocusModeToggle` action:
+    /// move keyboard focus to the other layer's most recently focused window
+    /// (`specs/tiling.md`, *Stacking*).
+    pub(crate) fn handle_tiling_focus_mode(&mut self, target: Option<Layer>) -> Result<(), String> {
+        let Some(output) = self.tiling_output() else {
+            return Err("no output has focus".to_string());
+        };
+        let Some(workspace) = self.workspaces.current_tiling_workspace(&output) else {
+            return Err("no workspace has focus".to_string());
+        };
+        if !workspace
+            .tiling
+            .read()
+            .map(|state| state.enabled)
+            .unwrap_or(false)
+        {
+            return Err("this workspace does not tile".to_string());
+        }
+        let here = self
+            .focused_window()
+            .and_then(|window| self.tiling_layer_of(&workspace, &window.id()));
+        let target = match target {
+            Some(target) => target,
+            // With focus nowhere on this workspace, "the other layer" is the
+            // tiled one: that is where a tiling workspace's windows are.
+            None => here.unwrap_or(Layer::Floating).other(),
+        };
+        let Some(next) = self.tiling_layer_focus_candidate(&workspace, target) else {
+            return Err(match target {
+                Layer::Floating => "nothing floats on this workspace".to_string(),
+                Layer::Tiled => "nothing is tiled on this workspace".to_string(),
+            });
+        };
+        let Some(window) = self.workspaces.windows_map.get(&next).cloned() else {
+            return Err("that window has gone".to_string());
+        };
+        self.workspaces.raise_element(&next, true, true);
+        self.set_keyboard_focus_on_window(&window);
+        if let Ok(mut state) = workspace.tiling.write() {
+            match target {
+                Layer::Tiled => state.focus_leaf(next),
+                Layer::Floating => state.floating_focused = Some(next),
+            }
+        }
+        // Raising a tile just put it over the floating layer.
+        if target == Layer::Tiled {
+            self.restack_floating_above_tiles(&output);
+        }
+        Ok(())
+    }
+
+    /// The window `focus mode_toggle` lands on in `layer`: the one that held
+    /// focus there last, else the topmost window on it.
+    fn tiling_layer_focus_candidate(
+        &self,
+        workspace: &Arc<WorkspaceView>,
+        layer: Layer,
+    ) -> Option<ObjectId> {
+        let remembered = {
+            let state = workspace.tiling.read().ok()?;
+            match layer {
+                Layer::Tiled => state.focused.clone().filter(|id| state.tree.contains(id)),
+                Layer::Floating => state
+                    .floating_focused
+                    .clone()
+                    .filter(|id| !state.tree.contains(id)),
+            }
+        };
+        let usable = |id: &ObjectId| {
+            self.workspaces
+                .windows_map
+                .get(id)
+                .map(|window| !window.is_minimised())
+                .unwrap_or(false)
+        };
+        if let Some(id) = remembered.filter(|id| usable(id)) {
+            return Some(id);
+        }
+        let candidates: Vec<ObjectId> = match layer {
+            Layer::Floating => self.tiling_floating_ids(workspace),
+            Layer::Tiled => {
+                let state = workspace.tiling.read().ok()?;
+                workspace
+                    .windows_list
+                    .read()
+                    .map(|list| {
+                        list.iter()
+                            .filter(|id| state.tree.contains(id))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+        };
+        // `windows_list` is bottom to top, so the topmost usable window is
+        // the last one that is not in the dock.
+        candidates.into_iter().rfind(|id| usable(id))
+    }
+
     pub(crate) fn handle_tiling_toggle(&mut self) {
         let Some(output) = self.tiling_output() else {
             return;
@@ -729,6 +1109,8 @@ impl<BackendData: Backend> Otto<BackendData> {
             state.focused = Some(next);
         }
         drop(workspace);
+        // The raise just put a tile over the floating layer.
+        self.restack_floating_above_tiles(&output);
     }
 
     pub(crate) fn handle_tiling_move(&mut self, direction: Direction) {
@@ -796,6 +1178,22 @@ impl<BackendData: Backend> Otto<BackendData> {
         let leaf = self.tiling_focused_leaf(&workspace)?;
         Some((output, workspace, leaf))
     }
+}
+
+/// What `xdg-dialog-v1` says about this window, or `Unknown` when the client
+/// never said anything.
+fn dialog_hint(window: &WindowElement) -> ToplevelDialogHint {
+    let Some(toplevel) = window.toplevel() else {
+        return ToplevelDialogHint::Unknown;
+    };
+    with_states(toplevel.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|data| data.lock().ok())
+            .map(|attributes| attributes.dialog_hint)
+            .unwrap_or_default()
+    })
 }
 
 /// Replace whatever maximized/tiled flags a client was told with this cell's.

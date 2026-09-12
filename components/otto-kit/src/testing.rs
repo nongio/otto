@@ -458,7 +458,25 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, None, width, height, false)
+        self.create_toplevel_inner(title, None, width, height, false, None)
+    }
+
+    /// Create a toplevel that is a child of `parent` — a dialog, in
+    /// xdg-shell's terms. A compositor floats one rather than tiling it.
+    pub fn create_child_toplevel(
+        &mut self,
+        title: &str,
+        parent: &Arc<Mutex<TestToplevel>>,
+        width: u32,
+        height: u32,
+    ) -> Arc<Mutex<TestToplevel>> {
+        let parent_toplevel = parent
+            .lock()
+            .unwrap()
+            .toplevel
+            .clone()
+            .expect("the parent has an xdg_toplevel");
+        self.create_toplevel_inner(title, None, width, height, false, Some(&parent_toplevel))
     }
 
     /// Create a toplevel that also announces an `app_id`, the way a real
@@ -472,7 +490,7 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, Some(app_id), width, height, false)
+        self.create_toplevel_inner(title, Some(app_id), width, height, false, None)
     }
 
     /// Create a toplevel that asks to be maximized before its first commit,
@@ -484,7 +502,7 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, None, width, height, true)
+        self.create_toplevel_inner(title, None, width, height, true, None)
     }
 
     fn create_toplevel_inner(
@@ -494,6 +512,7 @@ impl TestClient {
         width: u32,
         height: u32,
         maximized: bool,
+        parent: Option<&xdg_toplevel::XdgToplevel>,
     ) -> Arc<Mutex<TestToplevel>> {
         let surface = self.create_surface();
 
@@ -513,12 +532,19 @@ impl TestClient {
             surface: surface.clone(),
             buffer: None,
             xdg_surface: None,
+            toplevel: None,
         }));
 
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, toplevel_state.clone());
         toplevel_state.lock().unwrap().xdg_surface = Some(xdg_surface.clone());
         let toplevel = xdg_surface.get_toplevel(&self.qh, toplevel_state.clone());
+        toplevel_state.lock().unwrap().toplevel = Some(toplevel.clone());
         toplevel.set_title(title.to_string());
+        // Before the first commit, so the window is already a dialog when the
+        // compositor maps it and decides where it goes.
+        if let Some(parent) = parent {
+            toplevel.set_parent(Some(parent));
+        }
         if let Some(app_id) = app_id {
             toplevel.set_app_id(app_id.to_string());
         }
@@ -694,6 +720,9 @@ pub struct TestToplevel {
     pub buffer: Option<wl_buffer::WlBuffer>,
     /// The toplevel's xdg_surface, so tests can hang popups off it.
     pub xdg_surface: Option<xdg_surface::XdgSurface>,
+    /// The `xdg_toplevel` itself, so a test can make another window its
+    /// child — a dialog, which a tiling workspace floats rather than tiles.
+    pub toplevel: Option<xdg_toplevel::XdgToplevel>,
 }
 
 impl TestToplevel {

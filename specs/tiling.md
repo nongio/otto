@@ -5,11 +5,11 @@
 
 **Implementation status.** The first cut is keyboard-only: a per-workspace
 tiling mode, split containers, insertion and removal, directional focus and
-move, pre-selection, the keyboard resize step and equalise, and the layout
-animation. Not in it yet: the pointer paths (drag-to-detach and design mode),
-the floating layer and its toggle, tabbed and stacked containers, the compact
-decoration variants — a tile still keeps the full titlebar — and the command
-grammar with the interface that runs it.
+move, pre-selection, the keyboard resize step and equalise, the floating layer
+with its toggle and its focus cycle, and the layout animation. Not in it yet:
+the pointer paths (drag-to-detach and design mode), tabbed and stacked
+containers, the compact decoration variants — a tile still keeps the full
+titlebar — and the command grammar with the interface that runs it.
 
 ## Summary
 
@@ -238,9 +238,10 @@ ones, where every position is already a slot.
 
 ### Floating within a tiling workspace
 
-**Automatic.** A window floats rather than tiles when it is a dialog or has a
-parent, when it declares a fixed size — its minimum and maximum sizes are equal
-— when it is a utility or splash surface, or when it is the kind of window Otto
+**Automatic.** A window floats rather than tiles when it has a parent, when it
+says it is a modal dialog — a bare dialog hint means nothing, since some
+toolkits attach one to every window — when it declares a fixed size (its
+minimum and maximum sizes are equal), when it is a utility or splash surface, or when it is the kind of window Otto
 already refuses to maximize. Configuration may name applications, by app id or
 title, that always float.
 

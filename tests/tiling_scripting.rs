@@ -654,4 +654,210 @@ mod tiling_scripting_tests {
         drop(windows);
         handle.stop();
     }
+
+    // ── The floating layer ───────────────────────────────────────────────
+
+    #[test]
+    #[serial]
+    fn a_child_toplevel_floats_instead_of_joining_the_tree() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut client =
+            TestClient::connect(&handle.socket_name).expect("Failed to connect to compositor");
+        let parent = client.create_toplevel("cmd-parent", 640, 480);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        handle.settle(300);
+        handle.focus_window("cmd-parent");
+        run(&handle, "tiling toggle");
+        assert_eq!(handle.tiling_tree_leaves(), vec!["cmd-parent".to_string()]);
+
+        // A dialog: it has a parent, so it floats above the tiles and the
+        // layout carries on as if it were not there.
+        let _dialog = client.create_child_toplevel("cmd-dialog", &parent, 400, 300);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        handle.settle(400);
+
+        assert_eq!(
+            handle.tiling_tree_leaves(),
+            vec!["cmd-parent".to_string()],
+            "the dialog is not a tile"
+        );
+        let tree = handle.tree_json();
+        let workspace = tree["nodes"][0]["nodes"][0].clone();
+        let floating: Vec<String> = workspace["floating_nodes"]
+            .as_array()
+            .expect("floating_nodes is a list")
+            .iter()
+            .map(|node| node["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(floating.contains(&"cmd-dialog".to_string()), "{floating:?}");
+        assert!(node_named(&workspace, "cmd-dialog").is_some());
+
+        drop(client);
+        handle.stop();
+    }
+
+    /// The live crash: a workspace that tiles from the start, a window
+    /// opened straight into it (no floating rect to go back to), floated
+    /// while it is the only tile.
+    #[test]
+    #[serial]
+    fn floating_a_lone_tile_opened_into_the_tree_does_not_crash() {
+        let (handle, _none) = setup(&[]);
+        run(&handle, "tiling enable");
+        handle.set_tiling_decoration("minimal");
+        handle.settle(200);
+        let a = spawn(&handle, "lone-a");
+        handle.settle(300);
+        handle.focus_window("lone-a");
+        handle.settle(100);
+        assert_eq!(handle.tiling_tree_leaves(), vec!["lone-a".to_string()]);
+        run(&handle, "floating toggle");
+        assert!(handle.tiling_tree_leaves().is_empty());
+        assert!(handle.window_floating_rect("lone-a").is_some());
+        run(&handle, "floating toggle");
+        assert_eq!(handle.tiling_tree_leaves(), vec!["lone-a".to_string()]);
+
+        // Two windows opened into the tree, float the second, then the first.
+        let b = spawn(&handle, "lone-b");
+        handle.settle(300);
+        handle.focus_window("lone-b");
+        handle.settle(100);
+        run(&handle, "floating toggle");
+        handle.focus_window("lone-a");
+        handle.settle(100);
+        run(&handle, "floating toggle");
+        assert!(handle.tiling_tree_leaves().is_empty());
+        // Nothing tiled: the layer switch says so instead of doing nothing.
+        assert!(handle.run_command("focus mode_toggle")[0].is_err());
+        drop((a, b));
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn floating_toggle_takes_a_tile_out_of_the_tree_and_puts_it_back() {
+        let (handle, windows) = setup(&["cmd-a", "cmd-b"]);
+        handle.focus_window("cmd-a");
+        run(&handle, "tiling toggle");
+        assert_eq!(handle.tiling_tree_leaves().len(), 2);
+
+        let (zx, zy, zw, zh) = handle.usable_zone();
+        handle.focus_window("cmd-b");
+        handle.settle(100);
+        run(&handle, "floating toggle");
+
+        assert_eq!(
+            handle.tiling_tree_leaves(),
+            vec!["cmd-a".to_string()],
+            "the floated window left the tree"
+        );
+        // The survivor fills the area the pair shared.
+        let (x, y, w, h) = cell(&handle, "cmd-a");
+        assert!(x >= zx && y >= zy, "({x},{y}) is inside ({zx},{zy})");
+        assert!(
+            w >= zw - 40 && h >= zh - 40,
+            "a lone tile fills the usable area: {w}x{h} of {zw}x{zh}"
+        );
+
+        // And back in, at the focused position.
+        handle.focus_window("cmd-b");
+        handle.settle(100);
+        run(&handle, "floating toggle");
+        let leaves = handle.tiling_tree_leaves();
+        assert_eq!(leaves.len(), 2, "{leaves:?}");
+        assert!(leaves.contains(&"cmd-b".to_string()), "{leaves:?}");
+        let (_, _, w, _) = cell(&handle, "cmd-a");
+        assert!(w < zw - 40, "two tiles share the width again: {w} of {zw}");
+
+        drop(windows);
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn floating_enable_and_disable_are_not_toggles() {
+        let (handle, windows) = setup(&["cmd-a", "cmd-b"]);
+        handle.focus_window("cmd-a");
+        run(&handle, "tiling toggle");
+        handle.focus_window("cmd-b");
+        handle.settle(100);
+
+        run(&handle, "floating enable");
+        assert_eq!(handle.tiling_tree_leaves(), vec!["cmd-a".to_string()]);
+        // Already floating: `enable` says so rather than tiling it again.
+        assert!(handle.run_command("floating enable")[0].is_err());
+        assert_eq!(handle.tiling_tree_leaves(), vec!["cmd-a".to_string()]);
+
+        run(&handle, "floating disable");
+        assert_eq!(handle.tiling_tree_leaves().len(), 2);
+
+        drop(windows);
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn a_floating_window_stays_above_the_tiles() {
+        let (handle, windows) = setup(&["cmd-a", "cmd-b", "cmd-c"]);
+        handle.focus_window("cmd-a");
+        run(&handle, "tiling toggle");
+
+        handle.focus_window("cmd-c");
+        handle.settle(100);
+        run(&handle, "floating toggle");
+        assert_eq!(handle.top_window_title(), Some("cmd-c".to_string()));
+
+        // Focusing a tile must not lift it over the floating window.
+        handle.focus_window("cmd-a");
+        handle.settle(300);
+        assert_eq!(
+            handle.window_stack_titles().last().cloned(),
+            Some("cmd-c".to_string()),
+            "stack: {:?}",
+            handle.window_stack_titles()
+        );
+
+        // Nor must a directional focus, which raises as it goes.
+        run(&handle, "focus right");
+        assert_eq!(
+            handle.window_stack_titles().last().cloned(),
+            Some("cmd-c".to_string()),
+            "stack: {:?}",
+            handle.window_stack_titles()
+        );
+
+        drop(windows);
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn focus_mode_toggle_crosses_between_the_layers() {
+        let (handle, windows) = setup(&["cmd-a", "cmd-b"]);
+        handle.focus_window("cmd-a");
+        run(&handle, "tiling toggle");
+
+        handle.focus_window("cmd-b");
+        handle.settle(100);
+        run(&handle, "floating toggle");
+        assert_eq!(handle.focused_window_title(), Some("cmd-b".to_string()));
+
+        // Down into the tree…
+        run(&handle, "focus mode_toggle");
+        assert_eq!(handle.focused_window_title(), Some("cmd-a".to_string()));
+        // …and back up to the floating layer.
+        run(&handle, "focus mode_toggle");
+        assert_eq!(handle.focused_window_title(), Some("cmd-b".to_string()));
+
+        // The named halves reach the same two windows.
+        run(&handle, "focus tiling");
+        assert_eq!(handle.focused_window_title(), Some("cmd-a".to_string()));
+        run(&handle, "focus floating");
+        assert_eq!(handle.focused_window_title(), Some("cmd-b".to_string()));
+
+        drop(windows);
+        handle.stop();
+    }
 }

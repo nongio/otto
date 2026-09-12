@@ -23,7 +23,8 @@ use smithay::{
     delegate_compositor, delegate_cursor_shape, delegate_keyboard_shortcuts_inhibit,
     delegate_layer_shell, delegate_output, delegate_pointer_gestures, delegate_presentation,
     delegate_relative_pointer, delegate_shm, delegate_text_input_manager, delegate_viewporter,
-    delegate_virtual_keyboard_manager, delegate_xdg_foreign, delegate_xdg_shell,
+    delegate_virtual_keyboard_manager, delegate_xdg_dialog, delegate_xdg_foreign,
+    delegate_xdg_shell,
     desktop::{
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
@@ -77,6 +78,7 @@ use smithay::{
             ext_data_control::DataControlState as ExtDataControlState,
             primary_selection::PrimarySelectionState, wlr_data_control::DataControlState,
         },
+        shell::xdg::dialog::{XdgDialogHandler, XdgDialogState},
         shell::{
             kde::decoration::KdeDecorationState,
             wlr_layer::WlrLayerShellState,
@@ -255,6 +257,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
     pub xdg_foreign_state: XdgForeignState,
+    /// `xdg-dialog-v1`: the hint a client uses to say a toplevel is a dialog,
+    /// and modal. Otto keeps no state of its own for it — the hint lands on
+    /// the toplevel's role attributes, where `Otto::is_tileable` reads it —
+    /// but the global has to be alive for a client to be able to say so.
+    pub xdg_dialog_state: XdgDialogState,
     pub foreign_toplevel_list_state: ForeignToplevelListState,
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
@@ -535,6 +542,8 @@ impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Otto<BackendData>
     }
 }
 
+impl<BackendData: Backend> XdgDialogHandler for Otto<BackendData> {}
+
 impl<BackendData: Backend> XdgForeignHandler for Otto<BackendData> {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
         &mut self.xdg_foreign_state
@@ -588,6 +597,7 @@ impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibit
 }
 delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
+delegate_xdg_dialog!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 // Gamma control protocol delegation
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
@@ -850,6 +860,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .is_none_or(|client_state| client_state.security_context.is_none())
         });
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
+        let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
         let foreign_toplevel_list_state = ForeignToplevelListState::new::<Self>(&dh);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
@@ -1007,6 +1018,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             presentation_state,
             fractional_scale_manager_state,
             xdg_foreign_state,
+            xdg_dialog_state,
             foreign_toplevel_list_state,
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,

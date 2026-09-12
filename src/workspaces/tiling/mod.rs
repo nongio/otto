@@ -13,11 +13,13 @@
 pub mod command;
 pub mod design;
 pub mod drag;
+pub mod floating;
 pub mod layout;
 pub mod state;
 pub mod tree;
 
 pub use design::Preset;
+pub use floating::Layer;
 pub use layout::{Gaps, Rect};
 pub use state::TilingState;
 pub use tree::{Axis, Cell, Direction};

@@ -319,6 +319,8 @@ sound_enabled = true
 # "Logo+Ctrl+r" = "ResizeGrowHeight"
 # "Logo+Ctrl+Shift+r" = "ResizeShrinkHeight"
 # "Logo+e" = "EqualizeContainer"            # even out the focused container
+# "Logo+Shift+space" = "FloatingToggle"     # float this tile, or tile this window
+# "Logo+space" = "FocusModeToggle"          # focus the other layer
 
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)
