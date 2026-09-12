@@ -40,6 +40,7 @@ package() {
     install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
     install -Dm755 target/release/otto-quickview "$pkgdir/usr/bin/otto-quickview"
+    install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
     # Quick View's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
