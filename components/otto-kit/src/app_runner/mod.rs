@@ -536,6 +536,15 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let text_input_manager: Option<
             wayland_protocols::wp::text_input::zv3::client::zwp_text_input_manager_v3::ZwpTextInputManagerV3,
         > = globals.bind(&qh, 1..=1, ()).ok();
+        // xdg-foreign, so a dialog served by another process can name the
+        // window it belongs to as its parent, and xdg-dialog, so a window can
+        // say it is one. Both are optional; see [`crate::foreign`].
+        let xdg_importer: Option<
+            wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
+        > = globals.bind(&qh, 1..=1, ()).ok();
+        let xdg_wm_dialog: Option<
+            wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1,
+        > = globals.bind(&qh, 1..=1, ()).ok();
         let session_lock_manager = globals.bind(&qh, 1..=1, ()).ok();
         let subcompositor = globals.bind(&qh, 1..=1, ()).ok();
         let cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1> =
@@ -581,6 +590,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             text_input_manager,
             text_input: None,
             wlr_layer_shell,
+            xdg_importer,
+            xdg_wm_dialog,
             subcompositor,
             otto_dock_manager,
             session_lock_manager,
@@ -1686,6 +1697,73 @@ impl<A: App + 'static> smithay_client_toolkit::data_device_manager::data_offer::
 // ============================================================================
 // Otto Protocol Handlers (merged from wayland_handlers.rs)
 // ============================================================================
+
+// xdg-foreign and xdg-dialog. Neither the importer nor the dialog manager
+// sends events; an imported handle sends `destroyed` when the exporting
+// window goes away, which is the compositor dropping the parent link for us.
+impl<A: App + 'static>
+    Dispatch<wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
+        _event: wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl<A: App + 'static>
+    Dispatch<wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::ZxdgImportedV2, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        proxy: &wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::ZxdgImportedV2,
+        event: wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::Event;
+        if matches!(event, Event::Destroyed) {
+            crate::foreign::forget_imported(proxy);
+        }
+    }
+}
+
+impl<A: App + 'static>
+    Dispatch<wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1,
+        _event: wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl<A: App + 'static>
+    Dispatch<wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
+        _event: wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
 
 // SC Layer protocol handlers - must be generic over A: App to match AppData<A>
 impl<A: App + 'static> Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>

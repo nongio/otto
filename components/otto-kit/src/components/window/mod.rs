@@ -13,6 +13,7 @@ use crate::app_runner::AppContext;
 pub use crate::protocols::otto_surface_style_v1;
 use crate::surfaces::{SurfaceError, ToplevelSurface};
 use wayland_client::Proxy;
+use wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1;
 
 pub use application_window::{ApplicationWindow, WindowLayout};
 
@@ -107,6 +108,10 @@ pub struct Window {
     /// wears follows the decoration variant; see
     /// [`Window::frame_corner_radius`].
     frame_radius: Arc<RwLock<f32>>,
+    /// The `xdg_dialog_v1` object, while the window has said it is a dialog.
+    /// Held because destroying it takes the hint away again — see
+    /// [`Window::set_modal`].
+    dialog: Arc<RwLock<Option<xdg_dialog_v1::XdgDialogV1>>>,
 }
 
 impl Window {
@@ -148,6 +153,7 @@ impl Window {
                 crate::components::titlebar::DecorationVariant::Floating,
             ))),
             frame_radius: Arc::new(RwLock::new(FRAME_CORNER_RADIUS)),
+            dialog: Arc::new(RwLock::new(None)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -941,6 +947,62 @@ impl Window {
                 surface.xdg_window().set_min_size(Some((width, height)));
             }
         }
+    }
+
+    /// Make this window a child of the window a portal handle was exported
+    /// from — `wayland:<handle>`, as `parent_window` carries it.
+    ///
+    /// A window with a parent is a dialog: the compositor stacks it above
+    /// that window and, on a tiling workspace, floats it rather than tiling
+    /// it. Returns false when the handle is empty, is not a Wayland one, or
+    /// the compositor offers no xdg-foreign — [`Window::set_modal`] is the
+    /// fallback that needs no handle.
+    pub fn set_parent_handle(&self, handle: &str) -> bool {
+        let Ok(surface_guard) = self.surface.read() else {
+            return false;
+        };
+        let Some(ref surface) = *surface_guard else {
+            return false;
+        };
+        crate::foreign::set_parent_from_handle(handle, surface.wl_surface())
+    }
+
+    /// Say this window is a dialog, and whether it is modal
+    /// (`xdg-dialog-v1`).
+    ///
+    /// Independent of [`Window::set_parent_handle`]: a dialog whose parent
+    /// could not be imported still says what it is, and Otto floats a *modal*
+    /// one on a tiling workspace on the strength of the hint alone. Returns false on a
+    /// compositor without the protocol.
+    pub fn set_modal(&self, modal: bool) -> bool {
+        use wayland_client::Proxy as _;
+
+        let Some(manager) = AppContext::xdg_wm_dialog() else {
+            return false;
+        };
+        let Ok(surface_guard) = self.surface.read() else {
+            return false;
+        };
+        let Some(ref surface) = *surface_guard else {
+            return false;
+        };
+        let toplevel = surface.xdg_window().xdg_toplevel();
+        if !toplevel.is_alive() {
+            return false;
+        }
+        let dialog = manager.get_xdg_dialog(toplevel, AppContext::queue_handle(), ());
+        if modal {
+            dialog.set_modal();
+        } else {
+            dialog.unset_modal();
+        }
+        // Kept alive for the window's lifetime: destroying the object clears
+        // the hint again. The window owns it, and both go when the surface
+        // does.
+        if let Ok(mut held) = self.dialog.write() {
+            *held = Some(dialog);
+        }
+        true
     }
 
     /// The largest size the compositor should allow, in logical points.

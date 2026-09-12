@@ -16,6 +16,7 @@ pub mod desktop_entry;
 pub mod dnd;
 pub mod filetype;
 pub mod focus;
+pub mod foreign;
 pub mod frosting;
 pub mod i18n;
 pub mod icon_theme;
