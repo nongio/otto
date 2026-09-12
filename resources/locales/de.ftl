@@ -536,6 +536,13 @@ files-new-folder-with-count =
         [one] Neuer Ordner mit { $count } Objekt
        *[other] Neuer Ordner mit { $count } Objekten
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+        [one] Verschiebt { $count } Objekt nach „{ $name }“
+       *[other] Verschiebt { $count } Objekte nach „{ $name }“
+    }
 
 
 ## Files — command palette

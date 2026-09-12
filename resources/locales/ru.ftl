@@ -551,6 +551,15 @@ files-new-folder-with-count =
         [many] Новая папка с { $count } элементами
        *[other] Новая папка с { $count } элементами
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+        [one] Переместит { $count } элемент в «{ $name }»
+        [few] Переместит { $count } элемента в «{ $name }»
+        [many] Переместит { $count } элементов в «{ $name }»
+       *[other] Переместит { $count } элемента в «{ $name }»
+    }
 
 
 ## Files — command palette

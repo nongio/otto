@@ -544,6 +544,14 @@ files-new-folder-with-count =
         [many] Nouveau dossier avec { $count } éléments
        *[other] Nouveau dossier avec { $count } éléments
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+        [one] Déplace { $count } élément dans « { $name } »
+        [many] Déplace { $count } éléments dans « { $name } »
+       *[other] Déplace { $count } éléments dans « { $name } »
+    }
 
 
 ## Files — command palette

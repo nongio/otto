@@ -544,6 +544,14 @@ files-new-folder-with-count =
         [many] Nova pasta com { $count } itens
        *[other] Nova pasta com { $count } itens
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+        [one] Move { $count } item para “{ $name }”
+        [many] Move { $count } itens para “{ $name }”
+       *[other] Move { $count } itens para “{ $name }”
+    }
 
 
 ## Files — command palette

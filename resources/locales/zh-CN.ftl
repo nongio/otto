@@ -525,6 +525,12 @@ files-new-folder-with-count =
     { $count ->
        *[other] 用 { $count } 个项目新建文件夹
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+       *[other] 将 { $count } 个项目移入“{ $name }”
+    }
 
 
 ## Files — command palette

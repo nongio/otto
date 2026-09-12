@@ -803,7 +803,10 @@ impl CommandProvider for Builtin {
                                 otto_kit::t_owned!("files-command-arg-name"),
                                 ArgKind::Text,
                             )
-                            .with_placeholder("untitled folder"),
+                            .with_placeholder("untitled folder")
+                            // Lists what goes in, so a file picked up by
+                            // mistake can be toggled out before Return.
+                            .previewed(),
                         ),
                 );
                 out.push(
