@@ -135,7 +135,7 @@ where every window is laid out edge to edge in a tree of splits. The mode
 belongs to one workspace on one output, so a tiled workspace and a floating one
 live a swipe apart. None of these actions is bound by default; the example
 config carries a commented block that binds them the way i3 and sway users
-expect.
+expect. [Tiling](tiling.md) covers the mode itself.
 
 | Action | Effect |
 |--------|--------|
@@ -147,6 +147,8 @@ expect.
 | `ResizeGrowWidth` / `ResizeShrinkWidth` | Widen or narrow the focused cell by one `[tiling] resize_step`, taking from its neighbour |
 | `ResizeGrowHeight` / `ResizeShrinkHeight` | The same vertically |
 | `EqualizeContainer` | Give every cell in the focused container the same share |
+| `FloatingToggle` | Float the focused tile — it returns to the rectangle it had before it was tiled — or put a floating window back into the tree beside the focused cell |
+| `FocusModeToggle` | Move keyboard focus between the floating layer and the tiled one, landing on whichever window was last focused there |
 | `TilingDesignToggle` | Show *design mode*: the layout's cells become panes you can grab, split and resize with the pointer. The action again, or `Escape`, leaves it |
 | `TilingUndo` | Undo the last edit made in design mode. Also bound to `Ctrl+Z` while design mode is up, without any configuration |
 

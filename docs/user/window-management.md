@@ -113,83 +113,9 @@ The same three targets are reachable with the pointer — see
 [Drag to tile](#drag-to-tile).
 
 A workspace can also be put into a managed **tiling mode**, where every window
-gets a cell in a tree and nothing overlaps. Its commands — `focus left`,
-`split v`, `resize grow width 10 ppt` and the rest — can be bound to keys or
-driven from a script with `otto-msg`, the way `i3-msg` and `swaymsg` are used;
-see [Scripting Otto](scripting.md).
-
-## Moving and resizing a tile with the pointer
-
-On a tiling workspace the pointer edits the layout rather than a window's own
-geometry, and it does so without entering design mode.
-
-**Drag a tile by its titlebar** and it leaves the tree: it shrinks to follow
-the pointer, and the tiles behind it close up as though it had been closed. A
-translucent pane shows where it would land as you move:
-
-- over the **left or right half** of a wide tile, or the **top or bottom half**
-  of a tall one, the pane covers that half — the window is inserted there,
-  splitting that tile;
-- over the **middle** of a tile, the pane covers the whole of it — the two
-  windows swap places, and nothing else moves;
-- over an **empty slot**, the pane covers the slot and the window fills it;
-- over nothing — an empty workspace, or the space beside the tree — the window
-  goes against the nearest outside edge of the layout.
-
-Let go to drop it. `Escape` while you are still dragging puts it back in the
-cell it came from, at the size it had. The screen-edge snap zones are not
-offered on a tiling workspace: every position there is already a slot.
-
-**Drag a tile's edge** and you are dragging the split it sits on, not the
-window. The two tiles either side of that split change how they share the
-space and nothing else moves; a corner drags both splits at once. As on a
-design-mode bar, the split snaps to halves, thirds and quarters, and `Shift`
-slides past the snapping. Neither neighbour is ever pushed below the size its
-application says it needs.
-
-An edge with nothing beyond it — the outside of the layout, against the edge of
-the screen — drags nothing, and the pointer keeps its ordinary arrow there.
-Tiles have no free size at all: an application asking to resize itself is
-simply sent its cell again.
-
-## Design mode
-
-A tiling workspace can be shaped with the pointer instead of with keyboard
-commands. The `TilingDesignToggle` action turns the layout into a grid of
-translucent panes — one per cell, drawn over the windows, which keep running
-underneath — and the gaps between them become handles.
-
-- **Drag a bar** between two panes to change how the space is split between
-  them, and nothing else. It snaps to halves, thirds and quarters as it passes
-  them; hold `Shift` to slide past. The two shares are shown as percentages on
-  the bar while you drag.
-- **Drag a corner**, where cells meet at a point, to move both splits at once.
-- **Double-click a bar** to give every cell in that row or column the same
-  share.
-- **Hover a pane** for a small toolbar: split the cell left/right, split it
-  top/bottom, or close it.
-
-Splitting a cell leaves an **empty slot**, drawn as a dashed pane with a `+`.
-The next window you open fills it before it splits anything else — so a
-workspace can be laid out first and populated after. Closing an empty slot
-gives its space back to its neighbours.
-
-On an **empty** tiling workspace design mode offers a row of starting points
-instead — two columns, three columns, main and stack, and a 2×2 grid. Clicking
-one builds it out of empty slots.
-
-`Ctrl+Z` undoes the last edit. `Escape`, the action again, or a click on a
-window's content leaves design mode; nothing about where the windows are
-changes when you do. Design mode also ends by itself when the workspace scrolls
-away or stops tiling.
-
-Cells chase the pointer on a slightly bouncy spring, configured with
-`[tiling] design_duration` and `design_bounce` — `0` makes every change snap.
-
-Outside design mode the gaps are *not* drag handles: what the pointer offers
-on a tiled workspace is the titlebar drag and the edge drag above, so no hidden
-hit area competes with a window's edges. Both of those keep working while
-design mode is up, and the pane grid follows them.
+gets a cell of its own, nothing overlaps, and Otto keeps the layout together as
+windows open and close. Windows can be moved and resized there from the
+keyboard or with the pointer. See [Tiling](tiling.md).
 
 ## Fullscreen
 
