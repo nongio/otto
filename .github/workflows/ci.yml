@@ -132,6 +132,16 @@ jobs:
           key: ${{ runner.os }}-cargo-rust_stable-${{ hashFiles('**/Cargo.toml') }}
       - name: Format
         run: cargo fmt --all -- --check
+
+  # Cheap and early: a locale missing keys otherwise only surfaces in the
+  # otto-kit unit tests, after the compositor has been built and linted.
+  locales:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Catalogues carry every en-GB key
+        run: python3 scripts/check-locales.py
   
   # One job rather than several: every step shares a single target directory,
   # so splitting them apart would pay for the compositor's dependency graph
