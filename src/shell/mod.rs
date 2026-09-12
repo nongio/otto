@@ -631,26 +631,35 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// the focus change. Granting it here, on the first mapped commit, closes
     /// that gap.
     ///
-    /// One-time, so it cannot steal focus back on a later paint from a window
-    /// the panel handed off to. Skipped while the session is locked, where the
-    /// lock surface owns the keyboard and nothing else may take it.
+    /// Granted once per switch into `Exclusive`, so a later paint with it
+    /// still set cannot steal focus back from a window the panel handed off
+    /// to, while a panel that releases and re-takes it (otto-bar, around each
+    /// menu) gets the keyboard again. Skipped while the session is locked,
+    /// where the lock surface owns the keyboard and nothing else may take it.
     fn maybe_grant_initial_layer_focus(
         &mut self,
         surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
     ) {
-        if self.is_session_locked() {
-            return;
-        }
         let Some(layer) = self.layer_surfaces.get(surface_id) else {
             return;
         };
-        let exclusive = matches!(
-            layer.keyboard_interactivity(),
-            KeyboardInteractivity::Exclusive
-        ) && matches!(layer.wlr_layer(), Layer::Top | Layer::Overlay);
+        let interactivity = layer.keyboard_interactivity();
+        let exclusive = matches!(interactivity, KeyboardInteractivity::Exclusive)
+            && matches!(layer.wlr_layer(), Layer::Top | Layer::Overlay);
+        // Recorded even while locked, so a grab released under the lock
+        // screen still re-arms the grant for after the unlock.
+        if !exclusive {
+            layer.note_keyboard_interactivity(interactivity);
+            return;
+        }
+        if self.is_session_locked() {
+            return;
+        }
         // Only once the surface is actually mapped can it hold focus; an
         // unmapped surface with no buffer would take the keyboard into a void.
-        if !exclusive || !layer.can_receive_keyboard_focus() || !layer.take_initial_focus_grant() {
+        // Not recording the exclusive commit here keeps the grant owed until
+        // the surface maps.
+        if !layer.can_receive_keyboard_focus() || !layer.take_exclusive_focus_grant() {
             return;
         }
         // Move the focus on the next loop turn, not here: `set_focus` runs the

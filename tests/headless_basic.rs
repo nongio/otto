@@ -251,6 +251,86 @@ mod headless_tests {
         handle.stop();
     }
 
+    /// otto-bar takes the keyboard while one of its menus is open and gives
+    /// it back when the menu closes. The grant therefore has to fire on every
+    /// switch into `Exclusive`, not once per surface — otherwise the second
+    /// menu never receives a key. And a press away from the bar has to take
+    /// the keyboard off it: that `wl_keyboard.leave` is what closes the menu.
+    #[test]
+    #[serial]
+    fn a_top_panel_is_given_the_keyboard_every_time_it_asks() {
+        use otto_kit::testing::{KeyboardInteractivity, Layer};
+
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let panel = client.create_layer_surface(
+            "test-bar",
+            Layer::Top,
+            200,
+            30,
+            KeyboardInteractivity::Exclusive,
+        );
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        assert!(
+            panel.lock().unwrap().configured,
+            "the panel was never configured"
+        );
+        assert_eq!(
+            handle.focused_layer_namespace().as_deref(),
+            Some("test-bar"),
+            "an exclusive top panel takes the keyboard as it maps"
+        );
+
+        // The menu closes: the bar releases the keyboard, and a window takes
+        // it, as it would when the user clicks back into their work.
+        panel
+            .lock()
+            .unwrap()
+            .set_keyboard_interactivity(KeyboardInteractivity::None);
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(200));
+
+        let _window = client.create_toplevel("some-window", 300, 200);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        handle.focus_window("some-window");
+        handle.wait(Duration::from_millis(100));
+        assert_eq!(
+            handle.focused_layer_namespace(),
+            None,
+            "the window holds the keyboard once the menu has closed"
+        );
+
+        // A second menu opens: the bar asks for the keyboard again and must
+        // be given it again.
+        panel
+            .lock()
+            .unwrap()
+            .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(200));
+        assert_eq!(
+            handle.focused_layer_namespace().as_deref(),
+            Some("test-bar"),
+            "the grant must fire on every switch into Exclusive, not once per surface"
+        );
+
+        // Clicking away from the bar hands the keyboard back to the
+        // workspace, so the bar learns the user has moved on.
+        handle.pointer_move(900.0, 700.0);
+        handle.pointer_click();
+        handle.wait(Duration::from_millis(200));
+        assert_eq!(
+            handle.focused_layer_namespace(),
+            None,
+            "a press away from the panel must take the keyboard off it"
+        );
+
+        handle.stop();
+    }
+
     // ── Layer visibility ─────────────────────────────────────────────────
 
     #[test]

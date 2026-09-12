@@ -101,6 +101,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - **App has no dbusmenu:** Show only app name, no menu entries. Do not show an empty menu bar.
 - **SNI watcher absent:** Tray section is hidden. The bar must not crash — re-probe every 30 seconds.
 - **Menu root changes while open:** Close the current open menu and re-fetch before re-opening.
+- **User clicks away while a menu is open:** Whether the click lands on a window, the desktop, or the dock, the compositor takes the keyboard from the bar and the bar closes every open menu on `wl_keyboard.leave`, releasing its keyboard grab. A click on the open menu itself does not count as clicking away, even where the menu overlaps a window.
 - **HiDPI / fractional scaling:** The bar must render at the output's native scale. All sizes are in logical points; the bar converts to physical pixels using the output's *fractional* scale (`wp_fractional_scale_v1`), not the integer buffer scale — on a 1.5x output the integer scale is 2, and sizing by it pushes the panels past their exclusive zone and over the window below.
 - **Theme change:** Re-apply colors within one second without restarting. Use the color-scheme D-Bus portal (`org.freedesktop.portal.Settings`) to track system theme.
 - **Language change:** Unlike the colour scheme, the language is fixed for the life of the process and takes effect at the next start of the bar (see localisation.md).

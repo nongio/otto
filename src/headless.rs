@@ -791,6 +791,24 @@ impl HeadlessHandle {
         })
     }
 
+    /// Namespace of the layer-shell surface that currently holds the seat's
+    /// keyboard focus, if a layer surface holds it at all.
+    pub fn focused_layer_namespace(&self) -> Option<String> {
+        self.query(|state| {
+            let keyboard = state.seat.get_keyboard()?;
+            match keyboard.current_focus()? {
+                crate::focus::KeyboardFocusTarget::LayerSurface(layer) => {
+                    use smithay::reexports::wayland_server::Resource;
+                    state
+                        .layer_surfaces
+                        .get(&layer.wl_surface().id())
+                        .map(|s| s.namespace().to_string())
+                }
+                _ => None,
+            }
+        })
+    }
+
     /// Fullscreen the window with this title through the same xdg-shell entry
     /// point a client's `set_fullscreen` request lands on.
     pub fn fullscreen_window(&self, title: &str) {

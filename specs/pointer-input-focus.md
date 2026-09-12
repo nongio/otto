@@ -26,6 +26,9 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 - On press over an application window (when not in a mode that suppresses it, such as show-all/expose), the window under the cursor is raised and given keyboard focus. Clicking a subsurface or popup gives keyboard focus to the owning top-level surface.
 - On press over a focusable Top or Overlay layer-shell surface, that surface receives keyboard focus instead, hit-tested against its live on-screen position and honoring its input region.
 - When the cursor is over empty space (no surface), the press resolves to no focus and is not delivered to any surface.
+- A press on a popup owned by a Top or Overlay layer-shell surface (a bar menu) leaves keyboard focus where it is: it must not move to a window that happens to lie under the popup.
+- A press that lands on nothing focusable (empty desktop, the dock) while a Top layer-shell surface holds keyboard focus hands the keyboard back to the top window of the current workspace, or clears it when the workspace is empty. The panel then receives `wl_keyboard.leave`, which is how a bar learns the user clicked away from its menu. Overlay surfaces are modal and keep the keyboard.
+- A Top or Overlay layer-shell surface that commits `exclusive` keyboard interactivity is given the keyboard on that commit, each time it switches into `exclusive` from another mode. A repeated commit while it stays `exclusive` does not take the keyboard back from a window it was handed to.
 - Focus changes that are not pointer-driven — closing the focused window, the app switcher, cycling an application's windows — are specified in window-focus-navigation.
 
 ## Constraints & Edge Cases
