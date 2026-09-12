@@ -68,6 +68,7 @@ versions: useful day to day, still filling in.
 | [Screen Sharing](screen-sharing.md) | Portal setup, browsers, OBS, AirPlay, screenshots |
 | [Accessibility](accessibility.md) | Screen readers and keyboard-only use: setup, what is announced, driving Otto's applications from the keyboard |
 | [Remote Desktop](remote-desktop.md) | `otto-rdp`, virtual outputs, connecting from RDP clients |
+| [Scripting](scripting.md) | `otto-msg`: driving windows and tiling from a script, in i3's command language |
 
 ## Getting help
 
