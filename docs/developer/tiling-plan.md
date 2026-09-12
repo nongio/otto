@@ -361,7 +361,7 @@ edges.
 
 **Implementation.** A `TilingDesignView` in `src/workspaces/tiling/design.rs`
 that generalises `TilingOverlayView` from one preview pane to a set: the
-same layer recipe (30 % white fill, 80 % white 2 px border, 12 pt radius,
+same layer recipe (30 % white fill, 3 px accent border, 12 pt radius,
 0.15 s ease-out move, 0.2 s fade) per cell, plus bar and corner handle layers
 in the gaps, parented above the containers and driven from the same shares as
 `apply.rs` so the panes animate in step with the windows beneath them. The
