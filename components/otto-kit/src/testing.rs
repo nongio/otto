@@ -78,6 +78,11 @@ pub struct TestClientState {
     /// text field that reports where its caret is.
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
+    /// Whether the compositor has told the text input it has focus
+    /// (`zwp_text_input_v3.enter` without a later `leave`).
+    pub text_input_entered: bool,
+    /// Every `zwp_text_input_v3.done` serial received, in order.
+    pub text_input_done_serials: Vec<u32>,
     /// Keys delivered to this client, as `(evdev code, pressed)` in arrival
     /// order — what a remote input injector's key presses look like from the
     /// application's side.
@@ -125,6 +130,8 @@ impl TestClientState {
             wl_keyboard: None,
             text_input_manager: None,
             text_input: None,
+            text_input_entered: false,
+            text_input_done_serials: Vec::new(),
             keys: Vec::new(),
             keymaps: Vec::new(),
             keyboard_focused: false,
@@ -993,13 +1000,19 @@ impl Dispatch<zwp_text_input_manager_v3::ZwpTextInputManagerV3, ()> for TestClie
 
 impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for TestClientState {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &zwp_text_input_v3::ZwpTextInputV3,
-        _event: zwp_text_input_v3::Event,
+        event: zwp_text_input_v3::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        match event {
+            zwp_text_input_v3::Event::Enter { .. } => state.text_input_entered = true,
+            zwp_text_input_v3::Event::Leave { .. } => state.text_input_entered = false,
+            zwp_text_input_v3::Event::Done { serial } => state.text_input_done_serials.push(serial),
+            _ => {}
+        }
     }
 }
 

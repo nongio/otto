@@ -172,4 +172,39 @@ mod headless_tests {
 
         handle.stop();
     }
+
+    /// Chromium, GTK and every other client that follows the protocol to the
+    /// letter say nothing about their caret until the compositor has sent
+    /// `enter`, and hold every later request until the `done` for their last
+    /// commit arrives. Both used to depend on an input method being present;
+    /// with none, Chromium reported one placeholder rectangle and then went
+    /// quiet for good.
+    #[test]
+    #[serial]
+    fn a_strict_client_is_told_enter_and_done_without_an_ime() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        std::env::set_var("WAYLAND_DISPLAY", &handle.socket_name);
+
+        let mut app = TestClient::connect(&handle.socket_name).expect("connect");
+        let _window = app.create_toplevel("strict-caret-owner", 640, 480);
+        handle.wait(Duration::from_millis(150));
+        app.roundtrip().expect("roundtrip");
+
+        // Enables (one commit) and reports a caret (a second commit).
+        assert!(app.set_text_cursor(40, 60, 2, 18));
+        handle.wait(Duration::from_millis(150));
+        app.roundtrip().expect("roundtrip");
+
+        assert!(
+            app.state.text_input_entered,
+            "the focused text input should be sent enter even with no input method running"
+        );
+        assert_eq!(
+            app.state.text_input_done_serials,
+            vec![1, 2],
+            "every commit should be answered with done carrying the commit count"
+        );
+
+        handle.stop();
+    }
 }

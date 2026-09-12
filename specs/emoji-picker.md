@@ -158,6 +158,12 @@ English; translating them is the missing data source above.
   when the next key is pressed loses everything typed before it. The focus has
   to follow the surface mapping, and be granted once, so a later frame cannot
   take it back from a window the picker handed off to.
+- A client that follows `text-input` to the letter reports no caret at all
+  until the compositor has told it that its text input has focus, and holds
+  every later report until the compositor has acknowledged the previous one.
+  Chromium is one, so the compositor must send those whether or not an input
+  method is running — a desktop with no input method is the ordinary case, and
+  a caret that never arrives centres the card for a browser that had one.
 - Emoji whose first codepoint the emoji font has no glyph for are dropped at
   start, so a font older than the data leaves gaps rather than boxes.
 - Sequences are shaped as one run in one font. Split by script or font, a

@@ -175,8 +175,9 @@ listing both `zh_CN` and `zh` catches entries that localize either form.
 This affects names shown in the dock, app switcher and menus, and it is also
 **Otto's own UI language**: the bar, settings, Files and the other bundled apps
 read the same list and pick a translation from it. Otto ships catalogues for
-German, English (GB and US), Spanish, French, Italian, Polish, Portuguese
-(Brazil), Russian and Ukrainian; anything else falls back to English.
+German, English (GB and US), Spanish, French, Italian, Japanese, Polish,
+Portuguese (Brazil), Russian, Ukrainian and Simplified Chinese; anything else
+falls back to English.
 
 ## A worked example
 
