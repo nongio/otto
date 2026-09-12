@@ -112,6 +112,11 @@ works normally. Tiling a maximized window unmaximizes it first.
 The same three targets are reachable with the pointer — see
 [Drag to tile](#drag-to-tile).
 
+A workspace can also be put into a managed **tiling mode**, where every window
+gets a cell of its own, nothing overlaps, and Otto keeps the layout together as
+windows open and close. Windows can be moved and resized there from the
+keyboard or with the pointer. See [Tiling](tiling.md).
+
 ## Fullscreen
 
 Fullscreen is driven by the application (a video player's fullscreen button, a
@@ -185,6 +190,8 @@ Two things get special handling:
 ## What is not there yet
 
 - Quarter tiles, and tiling without holding `Ctrl`
+- A floating layer inside a tiling workspace: dropping a tile outside the
+  layout puts it back in the tree at the nearest edge rather than floating it
 - A modifier-drag to move or resize from anywhere in a window
 - Window rules (per-app placement, size, workspace assignment)
 - Always-on-top / sticky windows

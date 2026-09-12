@@ -65,6 +65,7 @@ dock-quit = Salir
 settings-pane-general = General
 settings-pane-displays = Pantallas
 settings-pane-dock = Dock
+settings-pane-tiling = Mosaico
 settings-pane-keyboard = Teclado
 settings-pane-pointing = Trackpad y ratón
 settings-pane-sound = Sonido
@@ -160,6 +161,23 @@ settings-dock-tint-icons = Teñir iconos
 settings-switcher-colorize-icons = Teñir el selector
 settings-dock-icon-tint = Tinte de los iconos
 settings-dock-icon-tint-strength = Intensidad del tinte
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Un escritorio en mosaico llena la pantalla con sus ventanas, una junto a otra. Estos son los valores predeterminados; cada escritorio puede cambiar su espaciado.
+settings-tiling-decoration = Decoración en mosaico
+settings-group-tiling-gaps = Espaciado
+settings-tiling-inner-gap = Entre ventanas
+settings-tiling-outer-gap = Alrededor de las ventanas
+settings-tiling-smart-gaps = Sin espaciado con una sola ventana
+settings-group-tiling-keyboard = Teclado
+settings-tiling-resize-step = Paso de redimensionado
+settings-group-tiling-animation = Animación
+settings-tiling-layout-duration = Cambio de disposición
+settings-tiling-layout-bounce = Rebote de la disposición
+settings-tiling-mode-duration = Entrar en modo mosaico
+settings-tiling-mode-bounce = Rebote del modo mosaico
 
 
 ## Settings — Keyboard
@@ -702,6 +720,26 @@ schema-gtk-theme-label = Tema GTK
 schema-gtk-theme-description = Nombre del tema GTK proporcionado a los clientes. Vacío para detección automática.
 schema-locales-label = Idiomas
 schema-locales-description = Idiomas preferidos, en orden de preferencia.
+
+# --- tiling ---
+schema-tiling-decoration-label = Decoración en mosaico
+schema-tiling-decoration-description = Cuánta decoración conserva una ventana mientras está en mosaico: una barra de la altura de una línea de texto, con su título y un botón de cerrar, o ninguna barra, con la ventana activa marcada por un borde muy fino.
+schema-tiling-inner-gap-label = Espacio entre ventanas
+schema-tiling-inner-gap-description = Píxeles lógicos que quedan entre dos ventanas contiguas.
+schema-tiling-outer-gap-label = Espacio alrededor de las ventanas
+schema-tiling-outer-gap-description = Píxeles lógicos que quedan entre las ventanas y el borde de la pantalla.
+schema-tiling-smart-gaps-label = Sin espaciado con una sola ventana
+schema-tiling-smart-gaps-description = Un escritorio con una sola ventana no deja ningún espacio, para que una ventana sola no aparezca recuadrada sin motivo.
+schema-tiling-resize-step-label = Paso de redimensionado
+schema-tiling-resize-step-description = Cuánto cambia un contenedor en cada paso de redimensionado con el teclado, como fracción de su anchura o de su altura.
+schema-tiling-layout-duration-label = Animación de la disposición
+schema-tiling-layout-duration-description = Segundos que tarda un cambio de disposición: una ventana que entra en el árbol o sale de él, un movimiento, un intercambio, un reparto por igual. Cero lo hace al instante.
+schema-tiling-layout-bounce-label = Rebote de la disposición
+schema-tiling-layout-bounce-description = Cuánto se pasa un cambio de disposición antes de asentarse. Cero se asienta sin rebasar.
+schema-tiling-mode-duration-label = Animación del modo mosaico
+schema-tiling-mode-duration-description = Segundos que tarda el escritorio en reorganizarse al activar o desactivar el mosaico, cuando cada ventana vuela a su celda. Cero lo hace al instante.
+schema-tiling-mode-bounce-label = Rebote del modo mosaico
+schema-tiling-mode-bounce-description = Cuánto se pasa esa reorganización antes de asentarse.
 
 # --- dock ---
 schema-dock-size-label = Tamaño

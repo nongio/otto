@@ -1,5 +1,5 @@
 use layers::{prelude::*, types::Size};
-use otto_kit::components::titlebar::{WindowControl, WindowDecoration};
+use otto_kit::components::titlebar::{DecorationVariant, WindowControl, WindowDecoration};
 
 use crate::config::Config;
 
@@ -23,6 +23,15 @@ pub fn decoration_for(state: &WindowDecorationModel) -> WindowDecoration {
         title: state.title.clone(),
         width: state.width,
         titlebar_height: state.height,
+        // A tile's bar is the same component, one text line high and with the
+        // close control alone. The height rides in the model — the client is
+        // configured against it — so the variant only has to say which
+        // controls and which corners.
+        variant: if state.minimal {
+            DecorationVariant::Minimal
+        } else {
+            DecorationVariant::Floating
+        },
         corner_radius: state.corner_radius,
         active: state.active,
         dark: state.dark,

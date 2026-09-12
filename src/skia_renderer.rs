@@ -59,7 +59,38 @@ pub struct SkiaRenderer {
     /// Companion resources for `SkiaTarget::Dmabuf` entries in `buffers`,
     /// released together with them on eviction.
     dmabuf_target_aux: HashMap<WeakDmabuf, DmabufTargetAux>,
+    /// GL textures and EGLImages of plane slot surfaces that have been
+    /// dropped, waiting for a frame with the context current to delete them
+    /// (see [`PlaneTextureRelease`]).
+    plane_texture_releases: PlaneTextureQueue,
     smithay_context_id: ContextId<SkiaTexture>,
+}
+
+type PlaneTextureQueue = std::sync::Arc<std::sync::Mutex<Vec<(GLuint, usize)>>>;
+
+/// The GL texture and EGLImage a plane slot's [`SkiaSurface`] renders into.
+///
+/// Skia only borrows the texture, so nothing else ever deletes it, and the
+/// EGLImage holds a reference to the dmabuf's GEM object for as long as it
+/// lives: a slot dropped without this leaks the whole buffer. A plane that
+/// follows a resizing window rebuilds its swapchain every frame of the
+/// animation, so the leak ran to gigabytes within minutes of tiling.
+///
+/// The drop can happen where no GL context is current (Smithay releases the
+/// slot after the page flip), so it only queues the handles; the renderer
+/// deletes them on its next frame.
+pub struct PlaneTextureRelease {
+    tex_id: GLuint,
+    image: usize,
+    queue: PlaneTextureQueue,
+}
+
+impl Drop for PlaneTextureRelease {
+    fn drop(&mut self) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.push((self.tex_id, self.image));
+        }
+    }
 }
 
 impl From<GlesRenderer> for SkiaRenderer {
@@ -92,6 +123,7 @@ impl From<GlesRenderer> for SkiaRenderer {
             context,
             dmabuf_cache: std::collections::HashMap::new(),
             dmabuf_target_aux: HashMap::new(),
+            plane_texture_releases: Default::default(),
             smithay_context_id: ContextId::new(),
         }
     }
@@ -231,6 +263,7 @@ impl SkiaRenderer {
             context,
             dmabuf_cache: std::collections::HashMap::new(),
             dmabuf_target_aux: HashMap::new(),
+            plane_texture_releases: Default::default(),
             smithay_context_id: ContextId::new(),
         })
     }
@@ -262,6 +295,86 @@ impl SkiaRenderer {
         if let Some(context) = self.context.as_mut() {
             context.flush_submit_and_sync_cpu();
         }
+        self.release_plane_textures();
+        // Textures dropped with their last `GlesTexture` (evicted client
+        // imports among them) wait on the GLES renderer's cleanup queue, which
+        // nothing else drains: this renderer never renders through it.
+        if let Err(err) = self.gl_renderer.cleanup_texture_cache() {
+            tracing::warn!("GLES texture cleanup failed: {err:?}");
+        }
+        // Skia caches texture bindings; a deleted name can come back for a new
+        // texture, so don't let it trust what it thinks is bound.
+        if let Some(context) = self.context.as_mut() {
+            context.reset(None);
+        }
+        self.debug_gpu_memory();
+    }
+
+    /// `echo > /tmp/otto-purge-skia` drops everything Skia's resource cache
+    /// holds but is not using; `touch /tmp/otto-gpumem` logs the cache's
+    /// size once a second. Together they say whether GPU memory that stays
+    /// after a window closes is Skia's budgeted cache or something lost.
+    fn debug_gpu_memory(&mut self) {
+        if !crate::debug_hooks::ENABLED {
+            return;
+        }
+        let Some(context) = self.context.as_mut() else {
+            return;
+        };
+        if crate::debug_hooks::take_file("/tmp/otto-purge-skia").is_some() {
+            context.purge_unlocked_resources(skia::gpu::PurgeResourceOptions::AllResources);
+            tracing::info!(target: "otto::gpumem", "purged Skia's unlocked resources");
+        }
+        if crate::debug_hooks::toggle("/tmp/otto-gpumem") {
+            thread_local! {
+                static LAST: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+            }
+            let due = LAST.with(|last| {
+                let due = last
+                    .get()
+                    .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+                if due {
+                    last.set(Some(std::time::Instant::now()));
+                }
+                due
+            });
+            if due {
+                let usage = context.resource_cache_usage();
+                let (node_surfaces, node_surface_bytes) = layers::drawing::node_surfaces_stats();
+                let (stored, stored_bytes) = crate::textures_storage::stats();
+                tracing::info!(
+                    target: "otto::gpumem",
+                    "skia cache: {} resources, {} MiB used, {} MiB purgeable, {} MiB limit; \
+                     lay-rs node surfaces: {node_surfaces}, {} MiB; \
+                     surface textures: {stored}, {} MiB; client imports: {}; \
+                     unmapped windows still referenced: {}",
+                    usage.resource_count,
+                    usage.resource_bytes >> 20,
+                    context.resource_cache_purgeable_bytes() >> 20,
+                    context.resource_cache_limit() >> 20,
+                    node_surface_bytes >> 20,
+                    stored_bytes >> 20,
+                    self.dmabuf_cache.len(),
+                    crate::workspaces::zombie_windows(),
+                );
+            }
+        }
+    }
+
+    /// Delete the textures and EGLImages of plane slots dropped since the
+    /// last call. Needs the context current.
+    fn release_plane_textures(&mut self) {
+        let released = std::mem::take(&mut *self.plane_texture_releases.lock().unwrap());
+        if released.is_empty() {
+            return;
+        }
+        let display = **self.egl_context().display().get_display_handle();
+        for (tex_id, image) in released {
+            unsafe {
+                self.gl.DeleteTextures(1, &tex_id);
+                smithay::backend::egl::ffi::egl::DestroyImageKHR(display, image as _);
+            }
+        }
     }
 
     /// Create a Skia surface backed by the GL texture we import from
@@ -274,11 +387,13 @@ impl SkiaRenderer {
     /// `new_with_texture`), so resources and shader caches are shared.
     ///
     /// Caller is responsible for keeping the dmabuf alive while the
-    /// returned surface is in use.
+    /// returned surface is in use, and for dropping the returned
+    /// [`PlaneTextureRelease`] after the surface: it frees the GL texture
+    /// and EGLImage the surface renders into.
     pub fn create_surface_from_dmabuf(
         &mut self,
         dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
-    ) -> Result<SkiaSurface, GlesError> {
+    ) -> Result<(SkiaSurface, PlaneTextureRelease), GlesError> {
         use smithay::backend::allocator::Buffer;
 
         let is_external = !self
@@ -292,15 +407,6 @@ impl SkiaRenderer {
             return Err(GlesError::MappingError);
         }
 
-        let egl_image = self
-            .egl_context()
-            .display()
-            .create_image_from_dmabuf(dmabuf)
-            .map_err(GlesError::BindBufferEGLError)?;
-
-        let tex_id = self.import_egl_image(egl_image, false, None)?;
-
-        let size = dmabuf.size();
         let color_type = match dmabuf.format().code {
             Fourcc::Argb8888 | Fourcc::Abgr8888 => skia::ColorType::RGBA8888,
             Fourcc::Xrgb8888 | Fourcc::Xbgr8888 => skia::ColorType::RGB888x,
@@ -310,8 +416,33 @@ impl SkiaRenderer {
             code => return Err(GlesError::UnsupportedPixelFormat(code)),
         };
 
+        let egl_image = self
+            .egl_context()
+            .display()
+            .create_image_from_dmabuf(dmabuf)
+            .map_err(GlesError::BindBufferEGLError)?;
+
+        let tex_id = match self.import_egl_image(egl_image, false, None) {
+            Ok(tex_id) => tex_id,
+            Err(err) => {
+                unsafe {
+                    smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                        **self.egl_context().display().get_display_handle(),
+                        egl_image,
+                    );
+                }
+                return Err(err);
+            }
+        };
+        let release = PlaneTextureRelease {
+            tex_id,
+            image: egl_image as usize,
+            queue: self.plane_texture_releases.clone(),
+        };
+
+        let size = dmabuf.size();
         let context = self.context.as_ref();
-        Ok(SkiaSurface::new_with_texture(
+        let surface = SkiaSurface::new_with_texture(
             size.w,
             size.h,
             0_usize,
@@ -319,7 +450,8 @@ impl SkiaRenderer {
             color_type,
             context,
             skia::gpu::SurfaceOrigin::TopLeft,
-        ))
+        );
+        Ok((surface, release))
     }
 
     pub fn current_skia_renderer(&mut self) -> Option<&SkiaSurface> {
@@ -429,6 +561,7 @@ impl SkiaRenderer {
 
         // self.make_current()?;
 
+        self.evict_dead_dmabuf_imports();
         let texture = self
             .existing_dmabuf_texture(dmabuf)?
             .map(Ok)
@@ -500,6 +633,32 @@ impl SkiaRenderer {
             tex
         })
     }
+    /// Forget the imports of client dmabufs that no longer exist.
+    ///
+    /// Every buffer a client attaches is imported once and kept here, keyed
+    /// weakly. A client that resizes allocates new buffers and drops the old
+    /// ones, so without eviction each resize pinned its dead buffers — the
+    /// EGLImage holds the GEM object — for the life of the compositor.
+    ///
+    /// The EGLImage is destroyed right away: a texture still bound to it keeps
+    /// the contents alive for anything drawing a clone of this entry. The
+    /// texture itself is deleted when its last clone drops, through the GLES
+    /// cleanup queue drained in [`Self::flush_planes_for_scanout`].
+    fn evict_dead_dmabuf_imports(&mut self) {
+        let display = **self.egl_context().display().get_display_handle();
+        self.dmabuf_cache.retain(|weak, texture| {
+            if !weak.is_gone() {
+                return true;
+            }
+            for image in texture.egl_images.take().into_iter().flatten() {
+                unsafe {
+                    smithay::backend::egl::ffi::egl::DestroyImageKHR(display, image);
+                }
+            }
+            false
+        });
+    }
+
     #[profiling::function]
     fn existing_dmabuf_texture(&self, buffer: &Dmabuf) -> Result<Option<SkiaTexture>, GlesError> {
         let existing_texture = self

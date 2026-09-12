@@ -283,6 +283,36 @@ impl Situation {
     fn has_target(&self) -> bool {
         self.target_count() > 0
     }
+
+    /// This situation with the names toggled out of a dry run left out of
+    /// what a command would act on.
+    ///
+    /// The cursor goes too, and not only when its own name was toggled out.
+    /// An empty selection means "the cursor's entry" — see
+    /// [`Self::target_count`] — so a selection narrowed to nothing would
+    /// otherwise hand the command a file anyway: the one just toggled out,
+    /// when the cursor sits on it, or one that was never on offer at all,
+    /// when it sits elsewhere. Toggled out is a decision about what the
+    /// command touches, and it has to be able to leave nothing.
+    pub fn excluding(mut self, excluded: &std::collections::HashSet<String>) -> Self {
+        if excluded.is_empty() {
+            return self;
+        }
+        let cursor_excluded = self
+            .cursor_name
+            .as_ref()
+            .is_some_and(|name| excluded.contains(name));
+        if !self.selection.is_empty() || cursor_excluded {
+            self.cursor_name = None;
+            self.cursor_is_dir = false;
+        }
+        self.selection.retain(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| excluded.contains(&*name.to_string_lossy()))
+        });
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -998,6 +1028,62 @@ impl CommandProvider for Builtin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn names(names: &[&str]) -> std::collections::HashSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    /// Toggling out the last selected file must leave nothing to act on. An
+    /// empty selection otherwise falls back to the cursor's entry — the very
+    /// file that was just toggled out — so the dry run showed it twice, once
+    /// struck and once not, and Return ran the command on it.
+    #[test]
+    fn toggling_out_the_last_target_leaves_nothing_to_act_on() {
+        let dir = PathBuf::from("/home/someone");
+
+        // One file selected, the cursor on it.
+        let one = Situation {
+            selection: vec![dir.join("notes.txt")],
+            ..browsing()
+        };
+        assert_eq!(
+            one.clone().excluding(&names(&["notes.txt"])).target_count(),
+            0
+        );
+
+        // Nothing selected: the cursor's entry is the target, and it can be
+        // toggled out too.
+        assert_eq!(
+            browsing().excluding(&names(&["notes.txt"])).target_count(),
+            0
+        );
+
+        // Two selected with the cursor elsewhere: toggling both out must not
+        // hand the command a file that was never on offer.
+        let elsewhere = Situation {
+            selection: vec![dir.join("a.txt"), dir.join("b.txt")],
+            ..browsing()
+        };
+        assert_eq!(
+            elsewhere
+                .excluding(&names(&["a.txt", "b.txt"]))
+                .target_count(),
+            0
+        );
+    }
+
+    /// Toggling out one of several leaves the others, and only them.
+    #[test]
+    fn toggling_out_one_target_keeps_the_rest() {
+        let dir = PathBuf::from("/home/someone");
+        let two = Situation {
+            selection: vec![dir.join("a.txt"), dir.join("notes.txt")],
+            ..browsing()
+        };
+        let narrowed = two.excluding(&names(&["notes.txt"]));
+        assert_eq!(narrowed.selection, vec![dir.join("a.txt")]);
+        assert_eq!(narrowed.target_count(), 1);
+    }
 
     fn browsing() -> Situation {
         Situation {

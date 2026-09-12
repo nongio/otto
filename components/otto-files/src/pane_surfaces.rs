@@ -103,10 +103,6 @@ pub fn enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("OTTO_FILES_PANE_SUBS").is_some())
 }
 
-/// A hairline of slack around the card, so an anti-aliased edge is not clipped
-/// by the surface it is drawn into.
-const PALETTE_MARGIN: f32 = 1.0;
-
 /// What the palette's surface needs in order to paint and place itself.
 ///
 /// The card is measured in window points on both sides of this seam — the
@@ -530,7 +526,11 @@ impl PaneSurfaces {
                 .unwrap_or(false)
                 | had_catcher;
         };
-        let rect = palette.card.with_outset((PALETTE_MARGIN, PALETTE_MARGIN));
+        // Exactly the card, not the card plus slack: the compositor rounds and
+        // frosts the *surface's* rect, and a surface even a point larger is
+        // rounded along a different curve from the one the card paints — the
+        // frost and the hairline part company at every corner.
+        let rect = palette.card;
 
         if self.palette.is_none() {
             self.palette = Self::create(parent, rect);
@@ -548,6 +548,11 @@ impl PaneSurfaces {
         let mut painted = self.sync_palette_catcher(parent, width, height);
         let scale = self.scale;
         if let Some(pane) = self.palette.as_mut() {
+            // The card is pooled between opens, so a corner or frosting
+            // setting changed while it was closed is picked up here.
+            if pane.hidden {
+                Self::style_palette(pane, scale);
+            }
             painted |= pane.show();
             pane.place(rect, scale);
 
@@ -564,10 +569,7 @@ impl PaneSurfaces {
                 // the drag is carried entirely by the surface's position.
                 // Drawing the dragged rect into a surface that had already
                 // been moved would apply the offset twice.
-                let shift = (
-                    PALETTE_MARGIN - palette.resting.left,
-                    PALETTE_MARGIN - palette.resting.top,
-                );
+                let shift = (-palette.resting.left, -palette.resting.top);
                 let data = palette.data();
                 pane.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
@@ -603,11 +605,14 @@ impl PaneSurfaces {
         let Some(style) = pane.surface.layer() else {
             return;
         };
-        // Physical pixels, like every other measurement this protocol takes.
+        // Physical pixels for the shadow; the radius alone is in points — the
+        // compositor scales it itself, and pre-scaling it here rounded the clip
+        // at twice the card's radius on a 2x display.
         let scale = scale as f64;
-        // Matches the radius the card paints itself with, so the blur and the
-        // shadow follow the corners instead of squaring them off.
-        style.set_corner_radius(14.0 * scale);
+        // The radius the card paints itself with, so the blur and the shadow
+        // follow the corners instead of squaring them off — and the hairline
+        // meets the clip rather than sitting inside a rounder one.
+        style.set_corner_radius(crate::view::palette_radius() as f64);
         style.set_shadow(0.28, 24.0 * scale, 0.0, 8.0 * scale, 0.0, 0.0, 0.0);
         style.set_blend_mode(if otto_kit::frosting::enabled() {
             otto_kit::protocols::otto_surface_style_v1::BlendMode::BackgroundBlur
@@ -1044,11 +1049,12 @@ impl PaneSurfaces {
         let Some(style) = pane.surface.layer() else {
             return;
         };
-        // Physical pixels, like every other measurement this protocol takes.
+        // Physical pixels for the shadow; the radius is in points, because the
+        // compositor scales it itself.
         let scale = scale as f64;
         // Matches the radius the card paints itself with, so the blur and the
         // shadow follow the corners instead of squaring them off.
-        style.set_corner_radius(12.0 * scale);
+        style.set_corner_radius(12.0);
         style.set_shadow(0.30, 28.0 * scale, 0.0, 10.0 * scale, 0.0, 0.0, 0.0);
         style.set_blend_mode(if otto_kit::frosting::enabled() {
             otto_kit::protocols::otto_surface_style_v1::BlendMode::BackgroundBlur

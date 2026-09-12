@@ -2,6 +2,19 @@
 
 This directory contains helper scripts for working with Otto compositor.
 
+## Localisation
+
+### `check-locales.py` - Catalogue completeness
+
+Lists every key a translated `resources/locales/*.ftl` catalogue lacks
+compared to `en-GB.ftl`, the same check as otto-kit's
+`translated_locales_are_complete` test but without a Rust build. CI runs it
+as the `locales` job before anything compiles.
+
+```bash
+python3 scripts/check-locales.py
+```
+
 ## Keyboard Configuration Scripts
 
 ### `show-keys.sh` - Real-time Keyboard Event Viewer

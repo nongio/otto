@@ -3613,20 +3613,12 @@ impl Browser {
     /// The situation a palette command is previewed and run against: the
     /// window's, less whatever the dry run's lines were toggled out of it.
     fn palette_situation(&self) -> command::Situation {
-        let mut situation = self.situation();
         let excluded = self
             .palette
             .as_ref()
             .map(|palette| palette.excluded())
             .unwrap_or_default();
-        if !excluded.is_empty() {
-            situation.selection.retain(|path| {
-                !path
-                    .file_name()
-                    .is_some_and(|name| excluded.contains(&*name.to_string_lossy()))
-            });
-        }
-        situation
+        self.situation().excluding(&excluded)
     }
 
     /// What a palette command would act on, by name and in order: the
@@ -6761,9 +6753,13 @@ impl App for FilesApp {
             surface.xdg_window().set_app_id(app_id().to_string());
         }
 
-        if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::corner() as f64);
-        }
+        // The window keeps the radius and re-sends it when the appearance or
+        // the tile decoration changes.
+        window.set_frame_corner_radius(view::CORNER);
+
+        // Serving a portal request, this window is that application's file
+        // dialog rather than a document window of ours.
+        Self::adopt_picker_parent(&window, &self.state.lock().unwrap());
 
         // otto-kit's materials are translucent by design — they expect a
         // blurred backdrop behind them. Without one the desktop shows through
@@ -7433,6 +7429,16 @@ impl App for FilesApp {
     }
 
     fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
+        // Whether the window is tiled arrives on the configure — otto-kit has
+        // already read it by the time this runs — and the chrome follows the
+        // decoration a tile wears: the lights' size and row, the header and
+        // sidebar under them, and the frame's corners, which the window
+        // itself re-sends.
+        if let Some(window) = self.window.as_ref() {
+            if view::set_decoration_variant(window.decoration_variant()) {
+                self.state.lock().unwrap().dirty = true;
+            }
+        }
         let mut browser = self.state.lock().unwrap();
         if let (Some(w), Some(h)) = (configure.new_size.0, configure.new_size.1) {
             browser.size = (w.get() as f32, h.get() as f32);
@@ -8176,11 +8182,46 @@ impl FilesApp {
                 *browser = Browser::for_picker(session, start);
                 browser.size = size;
                 browser.dirty = true;
+                // The next request comes from a different application, so the
+                // window belongs to a different parent now.
+                if let Some(window) = self.window.as_ref() {
+                    Self::adopt_picker_parent(window, &browser);
+                }
                 drop(browser);
                 self.render();
             }
             None => AppContext::request_exit(),
         }
+    }
+
+    /// Tell the compositor whose dialog this window is.
+    ///
+    /// The portal request carries `parent_window` — a handle the requesting
+    /// application exported with xdg-foreign — and importing it makes this
+    /// window a child of that one. A window with a parent is a dialog: it
+    /// stacks with its parent, and on a tiling workspace Otto floats it
+    /// instead of laying it out as a tile.
+    ///
+    /// The handle may be empty (the application never exported one) or the
+    /// compositor may not offer xdg-foreign, so the dialog hint goes out in
+    /// either case: it says the same thing without naming a parent, and it is
+    /// what keeps the picker out of the tree when the import fails.
+    ///
+    /// A no-op in the browser and the Trash, which are windows in their own
+    /// right.
+    fn adopt_picker_parent(window: &Window, browser: &Browser) {
+        let Some(session) = browser.picker.as_ref() else {
+            return;
+        };
+        // Without a parent the compositor has nothing to attach the picker
+        // to, and only a *modal* hint keeps it out of a tiling layout (a bare
+        // dialog hint is what GTK gives every window). A picker is modal to
+        // its requester in practice anyway, so ask for it.
+        let parented = window.set_parent_handle(&session.request.parent_window);
+        if !parented {
+            tracing::debug!("no foreign parent for this pick; asking for modal instead");
+        }
+        window.set_modal(session.request.modal || !parented);
     }
 
     /// Repaint whichever column subsurfaces are out of date. Returns whether

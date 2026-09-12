@@ -36,8 +36,8 @@ use crate::{
 
 use super::{
     fullscreen_output_geometry, FullscreenSurface, PointerMoveSurfaceGrab,
-    PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData,
-    TouchMoveSurfaceGrab, WindowElement,
+    PointerResizeSurfaceGrab, PointerTilingResizeGrab, ResizeData, ResizeEdge, ResizeState,
+    SurfaceData, TilingResizeStart, TouchMoveSurfaceGrab, WindowElement,
 };
 
 impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
@@ -509,6 +509,27 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let loc = self.workspaces.element_location(window).unwrap();
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
+        let window = window.clone();
+
+        // A tile has no free size: the edge is a split, and the drag moves it
+        // (`docs/developer/tiling-plan.md`: resize refused on a tiled window).
+        // Ahead of the resize state below, which belongs to a grab that is
+        // about to size the window's own rectangle — a tile never has one.
+        match self.tiling_resize_begin(&window, edges.into()) {
+            TilingResizeStart::Started => {
+                self.is_resizing = true;
+                let grab = PointerTilingResizeGrab {
+                    start_data,
+                    window: window.clone(),
+                };
+                pointer.set_grab(self, grab, serial, Focus::Clear);
+                return;
+            }
+            // The outside of the tree: nothing beyond this edge to give way.
+            TilingResizeStart::NoSplit => return,
+            TilingResizeStart::NotTiled => {}
+        }
+
         with_states(top_level.wl_surface(), move |states| {
             states
                 .data_map
@@ -522,7 +543,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             });
         });
 
-        let window = window.clone();
         self.clear_tiled_marker(&window);
 
         let grab = PointerResizeSurfaceGrab {
@@ -1467,10 +1487,15 @@ impl<BackendData: Backend> Otto<BackendData> {
                     }
                 }
 
+                let in_tree = self.window_is_tiled(window);
+                let start_location = start_data.location;
                 let grab = TouchMoveSurfaceGrab {
                     start_data,
                     window: window.clone(),
                     initial_window_location,
+                    pending_tiling_detach: in_tree,
+                    tiling_detached: false,
+                    last_location: start_location,
                 };
 
                 touch.set_grab(self, grab, serial);
@@ -1567,6 +1592,21 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
+        // A tile's border drags the split under it, not the window.
+        match self.tiling_resize_begin(window, edges) {
+            TilingResizeStart::Started => {
+                self.is_resizing = true;
+                let grab = PointerTilingResizeGrab {
+                    start_data,
+                    window: window.clone(),
+                };
+                pointer.set_grab(self, grab, serial, Focus::Clear);
+                return;
+            }
+            TilingResizeStart::NoSplit => return,
+            TilingResizeStart::NotTiled => {}
+        }
+
         // A maximized or fullscreen window has no free size to drag.
         if window.is_maximized() || window.is_fullscreen() {
             return;
@@ -1629,13 +1669,20 @@ impl<BackendData: Backend> Otto<BackendData> {
             .map(|v| v.tiled_zone.is_some())
             .unwrap_or(false);
 
+        // A leaf of a tiling tree leaves it into the drag rather than being
+        // restored to a floating rect (`specs/tiling.md`, *Dragging a
+        // window*); the two are mutually exclusive.
+        let in_tree = self.window_is_tiled(window);
+
         let grab = PointerMoveSurfaceGrab {
             start_data,
             window: window.clone(),
             initial_window_location,
             active_zone: None,
-            pending_restore: is_maximized || is_tiled,
+            pending_restore: !in_tree && (is_maximized || is_tiled),
             drag_origin: pointer.current_location(),
+            pending_tiling_detach: in_tree,
+            tiling_detached: false,
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);

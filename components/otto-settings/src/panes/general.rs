@@ -9,6 +9,7 @@ pub fn build() -> Pane {
     Pane {
         name: otto_kit::t!("settings-pane-general"),
         icon: "settings",
+        intro: None,
         groups: vec![
             group(
                 otto_kit::t!("settings-group-appearance"),

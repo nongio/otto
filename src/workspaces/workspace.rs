@@ -57,6 +57,11 @@ pub struct WorkspaceView {
     /// Stacking order (bottom→top ObjectIds) saved when expose opens,
     /// so it can be restored verbatim when expose closes without selection.
     pre_expose_order: Arc<RwLock<Vec<ObjectId>>>,
+    /// Whether this workspace tiles, and the tree it tiles by. Tiling is a
+    /// property of one workspace on one output (`specs/tiling.md`), so it
+    /// lives here rather than on the compositor. Disabled by default: Otto is
+    /// a floating desktop, and a workspace tiles because the user asked.
+    pub tiling: Arc<RwLock<crate::workspaces::tiling::TilingState>>,
 }
 
 impl fmt::Debug for WorkspaceView {
@@ -228,6 +233,7 @@ impl WorkspaceView {
             display_number: Arc::new(RwLock::new(index)),
             window_base_layers: Arc::new(RwLock::new(HashMap::new())),
             pre_expose_order: Arc::new(RwLock::new(Vec::new())),
+            tiling: Arc::new(RwLock::new(Default::default())),
         }
     }
 

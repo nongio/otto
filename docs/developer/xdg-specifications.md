@@ -174,6 +174,14 @@ Otto's light/dark state. Keys with no portal-standard home go out under
 namespace rather than being invented inside the freedesktop one. See
 [Color Scheme](color-scheme-setting.md).
 
+The window controls' side and the zoom button also go out as
+`org.gnome.desktop.wm.preferences button-layout` (`close,minimize:` on the
+left, `:minimize,close` on the right, with `maximize` when the zoom button is
+shown), so toolkits that draw their own titlebar put their buttons where
+Otto's are. GTK4 reads the Settings portal by default and follows it live.
+GTK3 outside a sandbox — Chrome's default toolkit among them — reads dconf
+directly and only consults the portal under `GTK_USE_PORTAL=1`.
+
 ## Adjacent standards (not freedesktop-hosted)
 
 | Standard | Role | Implementation |

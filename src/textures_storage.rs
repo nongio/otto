@@ -45,6 +45,20 @@ pub fn get(id: &ObjectId) -> Option<SkiaTextureImage> {
     store().try_lock().ok().and_then(|map| map.get(id).cloned())
 }
 
+/// How many surfaces have a stored texture, and the sum of their sizes in
+/// bytes (RGBA8).
+pub fn stats() -> (usize, usize) {
+    match store().try_lock() {
+        Ok(map) => (
+            map.len(),
+            map.values()
+                .map(|t| t.image.width() as usize * t.image.height() as usize * 4)
+                .sum(),
+        ),
+        Err(_) => (0, 0),
+    }
+}
+
 /// Best-effort remove. Returns false if lock could not be acquired.
 pub fn remove(id: &ObjectId) -> bool {
     if let Ok(mut map) = store().try_lock() {

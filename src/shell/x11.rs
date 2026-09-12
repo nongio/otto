@@ -900,10 +900,14 @@ impl<BackendData: Backend> Otto<BackendData> {
                         }
                     }
 
+                    let last_location = start_data.location;
                     let grab = TouchMoveSurfaceGrab {
                         start_data,
                         window: element.clone(),
                         initial_window_location,
+                        pending_tiling_detach: false,
+                        tiling_detached: false,
+                        last_location,
                     };
 
                     touch.set_grab(self, grab, SERIAL_COUNTER.next_serial());
@@ -991,6 +995,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             // X11 windows are restored above, before the grab is installed.
             pending_restore: false,
             drag_origin: self.pointer.current_location(),
+            // XWayland windows do not join a tree yet (`is_tileable`).
+            pending_tiling_detach: false,
+            tiling_detached: false,
         };
 
         let pointer = self.pointer.clone();

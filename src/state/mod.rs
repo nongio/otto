@@ -23,7 +23,8 @@ use smithay::{
     delegate_compositor, delegate_cursor_shape, delegate_keyboard_shortcuts_inhibit,
     delegate_layer_shell, delegate_output, delegate_pointer_gestures, delegate_presentation,
     delegate_relative_pointer, delegate_shm, delegate_text_input_manager, delegate_viewporter,
-    delegate_virtual_keyboard_manager, delegate_xdg_foreign, delegate_xdg_shell,
+    delegate_virtual_keyboard_manager, delegate_xdg_dialog, delegate_xdg_foreign,
+    delegate_xdg_shell,
     desktop::{
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
@@ -77,6 +78,7 @@ use smithay::{
             ext_data_control::DataControlState as ExtDataControlState,
             primary_selection::PrimarySelectionState, wlr_data_control::DataControlState,
         },
+        shell::xdg::dialog::{XdgDialogHandler, XdgDialogState},
         shell::{
             kde::decoration::KdeDecorationState,
             wlr_layer::WlrLayerShellState,
@@ -255,6 +257,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
     pub xdg_foreign_state: XdgForeignState,
+    /// `xdg-dialog-v1`: the hint a client uses to say a toplevel is a dialog,
+    /// and modal. Otto keeps no state of its own for it — the hint lands on
+    /// the toplevel's role attributes, where `Otto::is_tileable` reads it —
+    /// but the global has to be alive for a client to be able to say so.
+    pub xdg_dialog_state: XdgDialogState,
     pub foreign_toplevel_list_state: ForeignToplevelListState,
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
@@ -361,6 +368,13 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub is_pinching: bool,
     pub pinch_last_scale: f64,
     pub is_resizing: bool,
+
+    /// A titlebar drag that took a window out of a tiling tree, in flight.
+    /// See [`crate::shell::TilingDrag`].
+    pub tiling_drag: Option<crate::shell::TilingDrag>,
+    /// An edge drag moving the split between two tiles.
+    /// See [`crate::shell::TilingResize`].
+    pub tiling_resize: Option<crate::shell::TilingResize>,
 
     // power management
     pub is_lid_closed: bool,
@@ -528,6 +542,8 @@ impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Otto<BackendData>
     }
 }
 
+impl<BackendData: Backend> XdgDialogHandler for Otto<BackendData> {}
+
 impl<BackendData: Backend> XdgForeignHandler for Otto<BackendData> {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
         &mut self.xdg_foreign_state
@@ -581,6 +597,7 @@ impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibit
 }
 delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
 delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
+delegate_xdg_dialog!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 // Gamma control protocol delegation
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
@@ -706,6 +723,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 assignments.push(crate::export_rounded_corners());
                 assignments.push(crate::export_frosting());
                 assignments.push(crate::export_window_controls_side());
+                assignments.push(crate::export_tiling_decoration());
                 assignments.push(crate::export_maximize_button());
                 assignments.push(crate::export_color_scheme());
                 let args: Vec<&str> = assignments.iter().map(String::as_str).collect();
@@ -842,6 +860,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .is_none_or(|client_state| client_state.security_context.is_none())
         });
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
+        let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
         let foreign_toplevel_list_state = ForeignToplevelListState::new::<Self>(&dh);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
@@ -999,6 +1018,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             presentation_state,
             fractional_scale_manager_state,
             xdg_foreign_state,
+            xdg_dialog_state,
             foreign_toplevel_list_state,
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,
@@ -1050,6 +1070,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             is_pinching: false,
             pinch_last_scale: 1.0,
             is_resizing: false,
+            tiling_drag: None,
+            tiling_resize: None,
 
             // power management
             is_lid_closed: false,
@@ -2124,7 +2146,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 let decoration_height = window.decoration_height();
                 window_view.set_decorated(window.is_decorated());
                 // A fullscreen window covers the output: no bar, no shadow.
-                window_view.set_shadow_hidden(fullscreen);
+                // Neither does a tile — nothing overlaps it, so there is
+                // nothing for it to cast onto.
+                window_view.set_shadow_hidden(fullscreen || window.is_tiled());
+                // Under `decoration = "none"` the tile's only chrome is a
+                // hairline, in the accent colour while it holds focus.
+                window_view.set_tile_border(
+                    window.decoration_variant()
+                        == otto_kit::components::titlebar::DecorationVariant::Hidden,
+                    is_focused,
+                    model.w,
+                    model.h,
+                );
                 if window.is_decorated() {
                     let model = self.decoration_model_for(
                         window,
@@ -2210,11 +2243,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             active: is_focused,
             dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
             // Maximized and fullscreen windows sit flush against the screen
-            // edges, so their frame — and with it the bar — squares off.
+            // edges, so their frame — and with it the bar — squares off. A
+            // tile's corners follow the decoration it wears: square under
+            // normal and none, a smaller radius under minimal, the same one
+            // otto-kit gives its own frames.
             corner_radius: if window.is_maximized() || fullscreen {
                 0.0
             } else {
-                otto_kit::corners::radius(12.0)
+                otto_kit::components::titlebar::WindowDecoration::corner_radius_for(
+                    window.decoration_variant(),
+                    12.0,
+                )
             },
             controls_hovered: window_view.decoration_state().controls_hovered,
             pressed: window_view.decoration_state().pressed,
@@ -2225,6 +2264,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 &window.id(),
             ),
             fixed_size: !window.is_resizable(),
+            minimal: window.decoration_variant()
+                == otto_kit::components::titlebar::DecorationVariant::Minimal,
             scale: scale_factor as f32,
         }
     }
@@ -2340,7 +2381,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // The bar is sized from the same geometry, and it is drawn in the
             // scene even while the client's content scans out.
             window_view.set_decorated(window.is_decorated());
-            window_view.set_shadow_hidden(current.fullscreen);
+            window_view.set_shadow_hidden(current.fullscreen || window.is_tiled());
+            window_view.set_tile_border(
+                window.decoration_variant()
+                    == otto_kit::components::titlebar::DecorationVariant::Hidden,
+                current.active,
+                w,
+                h,
+            );
             if window.is_decorated() {
                 let decoration = self.decoration_model_for(
                     window,

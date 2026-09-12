@@ -65,6 +65,7 @@ dock-quit = 終了
 settings-pane-general = 一般
 settings-pane-displays = ディスプレイ
 settings-pane-dock = Dock
+settings-pane-tiling = タイル表示
 settings-pane-keyboard = キーボード
 settings-pane-pointing = トラックパッドとマウス
 settings-pane-sound = サウンド
@@ -157,6 +158,23 @@ settings-dock-tint-icons = アイコンに色を付ける
 settings-switcher-colorize-icons = スイッチャーのアイコンに色を付ける
 settings-dock-icon-tint = アイコンの色
 settings-dock-icon-tint-strength = 色の強さ
+
+
+## Settings — Tiling
+
+settings-tiling-intro = タイル表示のワークスペースは、ウインドウを並べて画面いっぱいに敷き詰めます。ここに示すのは初期値で、間隔はワークスペースごとに上書きできます。
+settings-tiling-decoration = タイル表示中のウインドウの装飾
+settings-group-tiling-gaps = 間隔
+settings-tiling-inner-gap = タイルの間
+settings-tiling-outer-gap = タイルの周囲
+settings-tiling-smart-gaps = タイルが1つのときは間隔をなくす
+settings-group-tiling-keyboard = キーボード
+settings-tiling-resize-step = サイズ変更の刻み
+settings-group-tiling-animation = アニメーション
+settings-tiling-layout-duration = レイアウトの変化
+settings-tiling-layout-bounce = レイアウトのバウンス
+settings-tiling-mode-duration = タイル表示への切り替え
+settings-tiling-mode-bounce = タイル表示のバウンス
 
 
 ## Settings — Keyboard
@@ -675,6 +693,26 @@ schema-gtk-theme-label = GTKテーマ
 schema-gtk-theme-description = クライアントに渡すGTKテーマの名前。空なら自動検出します。
 schema-locales-label = ロケール
 schema-locales-description = 優先するロケール。優先度の高い順に並べます。
+
+# --- tiling ---
+schema-tiling-decoration-label = タイル表示中のウインドウの装飾
+schema-tiling-decoration-description = タイル表示中のウインドウが保つ装飾の量。フロート時と同じタイトルバー、タイトルと閉じるボタンだけの文字1行分の高さのバー、あるいはバーをなくし、選択中のタイルを細い枠線で示すかを選べます。
+schema-tiling-inner-gap-label = タイルの間の間隔
+schema-tiling-inner-gap-description = 隣り合うタイルの間に空ける論理ピクセル。
+schema-tiling-outer-gap-label = タイルの周囲の間隔
+schema-tiling-outer-gap-description = タイルと画面の端の間に空ける論理ピクセル。
+schema-tiling-smart-gaps-label = タイルが1つのときは間隔をなくす
+schema-tiling-smart-gaps-description = タイルが1つだけのワークスペースでは間隔をまったく空けず、ウインドウが理由もなく内側に寄って見えないようにします。
+schema-tiling-resize-step-label = サイズ変更の刻み
+schema-tiling-resize-step-description = キーボードでの1回のサイズ変更でコンテナがどれだけ動くか。幅または高さに対する割合です。
+schema-tiling-layout-duration-label = レイアウトのアニメーション
+schema-tiling-layout-duration-description = レイアウトの変化にかかる秒数。ウインドウのツリーへの追加や離脱、移動、入れ替え、均等化が対象です。0なら瞬時に切り替わります。
+schema-tiling-layout-bounce-label = レイアウトのバウンス
+schema-tiling-layout-bounce-description = レイアウトの変化が落ち着くまでにどれだけ行き過ぎるか。0なら行き過ぎずに落ち着きます。
+schema-tiling-mode-duration-label = タイル表示のアニメーション
+schema-tiling-mode-duration-description = タイル表示を切り替えて各ウインドウがそれぞれのセルへ飛ぶとき、ワークスペースの並べ直しにかかる秒数。0なら瞬時に切り替わります。
+schema-tiling-mode-bounce-label = タイル表示のバウンス
+schema-tiling-mode-bounce-description = その並べ直しが落ち着くまでにどれだけ行き過ぎるか。
 
 # --- dock ---
 schema-dock-size-label = サイズ

@@ -4,7 +4,7 @@ pub mod resize;
 
 use smithay_client_toolkit::seat::pointer::PointerEvent;
 use smithay_client_toolkit::shell::xdg::window::WindowConfigure;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use wayland_client::protocol::wl_seat;
@@ -13,14 +13,30 @@ use crate::app_runner::AppContext;
 pub use crate::protocols::otto_surface_style_v1;
 use crate::surfaces::{SurfaceError, ToplevelSurface};
 use wayland_client::Proxy;
+use wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1;
 
 pub use application_window::{ApplicationWindow, WindowLayout};
 
+/// Corner radius of a floating window's frame, in logical points.
+const FRAME_CORNER_RADIUS: f32 = 16.0;
+
 /// Default layer augmentation - rounded corners and the palette's hairline
-fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1) {
-    layer.set_corner_radius(crate::corners::radius(16.0) as f64);
+fn default_layer_augmentation(layer: &otto_surface_style_v1::OttoSurfaceStyleV1, radius: f32) {
+    layer.set_corner_radius(radius as f64);
     layer.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
     crate::surfaces::apply_hairline_border(layer);
+}
+
+/// `DecorationVariant` as a `u8`, so a window can remember the one its frame
+/// was last shaped for in an atomic.
+fn variant_code(variant: crate::components::titlebar::DecorationVariant) -> u8 {
+    use crate::components::titlebar::DecorationVariant;
+    match variant {
+        DecorationVariant::Floating => 0,
+        DecorationVariant::Minimal => 1,
+        DecorationVariant::Hidden => 2,
+        DecorationVariant::Normal => 3,
+    }
 }
 
 type CanvasDrawFn = Arc<Mutex<Option<Box<dyn FnMut(&skia_safe::Canvas) + Send>>>>;
@@ -84,6 +100,18 @@ pub struct Window {
     /// When and where the last press on the titlebar landed, for the double
     /// click that zooms the window — see [`Window::titlebar_press`].
     last_titlebar_press: PressMark,
+    /// The decoration variant the frame's corners were last shaped for, as
+    /// `DecorationVariant` maps to a `u8` — see [`Window::sync_frame_corners`].
+    frame_variant: Arc<AtomicU8>,
+    /// The frame's corner radius while the window floats, in logical points —
+    /// see [`Window::set_frame_corner_radius`]. What the window actually
+    /// wears follows the decoration variant; see
+    /// [`Window::frame_corner_radius`].
+    frame_radius: Arc<RwLock<f32>>,
+    /// The `xdg_dialog_v1` object, while the window has said it is a dialog.
+    /// Held because destroying it takes the hint away again — see
+    /// [`Window::set_modal`].
+    dialog: Arc<RwLock<Option<xdg_dialog_v1::XdgDialogV1>>>,
 }
 
 impl Window {
@@ -100,7 +128,7 @@ impl Window {
         // Apply default layer styling immediately
         if let Some(surface_style) = surface.surface_style() {
             eprintln!("Applying corner radius to window surface style");
-            default_layer_augmentation(surface_style);
+            default_layer_augmentation(surface_style, crate::corners::radius(FRAME_CORNER_RADIUS));
         } else {
             eprintln!("Warning: No surface style available - window will not have rounded corners");
         }
@@ -121,6 +149,11 @@ impl Window {
             frosted: Arc::new(AtomicBool::new(false)),
             fades_own_material: Arc::new(AtomicBool::new(false)),
             last_titlebar_press: Arc::new(Mutex::new(None)),
+            frame_variant: Arc::new(AtomicU8::new(variant_code(
+                crate::components::titlebar::DecorationVariant::Floating,
+            ))),
+            frame_radius: Arc::new(RwLock::new(FRAME_CORNER_RADIUS)),
+            dialog: Arc::new(RwLock::new(None)),
         };
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
@@ -262,8 +295,37 @@ impl Window {
     /// this on every window when a watcher reports the appearance changed.
     pub fn refresh_style(&self) {
         if let Some(style) = self.surface_style() {
-            default_layer_augmentation(&style);
+            default_layer_augmentation(&style, self.frame_corner_radius());
         }
+    }
+
+    /// Round the frame's corners to `radius` while the window floats, instead
+    /// of the toolkit's default. Kept by the window rather than pushed once at
+    /// the style, so the radius survives an appearance change — which
+    /// re-sends every style — and follows the decoration a tile wears: the
+    /// window pushes [`Self::frame_corner_radius`] whenever either changes.
+    pub fn set_frame_corner_radius(&self, radius: f32) {
+        if let Ok(mut frame) = self.frame_radius.write() {
+            *frame = radius;
+        }
+        if let Some(style) = self.surface_style() {
+            style.set_corner_radius(self.frame_corner_radius() as f64);
+        }
+    }
+
+    /// The corner radius the frame wears right now: the floating one — see
+    /// [`Self::set_frame_corner_radius`] — shaped for the decoration variant,
+    /// and square on a desktop without rounded corners.
+    pub fn frame_corner_radius(&self) -> f32 {
+        let floating = self
+            .frame_radius
+            .read()
+            .map(|r| *r)
+            .unwrap_or(FRAME_CORNER_RADIUS);
+        crate::components::titlebar::WindowDecoration::corner_radius_for(
+            self.decoration_variant(),
+            floating,
+        )
     }
 
     /// Ask the compositor to blur what is behind this window.
@@ -500,6 +562,9 @@ impl Window {
         // and fades, since this is the one place it changes for a reason the
         // user can see.
         self.update_material(true);
+        // Whether the window is tiled arrives here too, and the frame's
+        // corners follow the decoration a tile wears.
+        self.sync_frame_corners();
         // Marked for repaint rather than repainted here. An interactive resize
         // sends a configure per pointer motion, and painting inline meant a
         // draw and an `eglSwapBuffers` on a buffer chain the driver had just
@@ -794,6 +859,46 @@ impl Window {
             .unwrap_or(false)
     }
 
+    /// Whether the compositor's last configure said the window is tiled on at
+    /// least one edge. See [`ToplevelSurface::is_tiled`].
+    pub fn is_tiled(&self) -> bool {
+        self.surface
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|s| s.is_tiled()))
+            .unwrap_or(false)
+    }
+
+    /// The decoration this window should draw: the full bar while it floats,
+    /// and whatever `[tiling] decoration` reduces a tile to while it is tiled.
+    pub fn decoration_variant(&self) -> crate::components::titlebar::DecorationVariant {
+        use crate::components::titlebar::DecorationVariant;
+        if self.is_tiled() {
+            DecorationVariant::tiled(crate::tile_decoration::decoration())
+        } else {
+            DecorationVariant::Floating
+        }
+    }
+
+    /// Shape the frame's corners for the decoration the window is drawing:
+    /// the full radius while it floats, the smaller one a minimal tile keeps,
+    /// and square for the other tiled variants — the same answer the bar
+    /// itself gives, so the two never disagree at the top corners.
+    ///
+    /// Pushed only when the variant changes. Called from every configure; an
+    /// appearance change re-sends the style through [`Self::refresh_style`],
+    /// so a `[tiling] decoration` change reaches the frame either way.
+    pub fn sync_frame_corners(&self) {
+        let variant = self.decoration_variant();
+        let code = variant_code(variant);
+        if self.frame_variant.swap(code, Ordering::Relaxed) == code {
+            return;
+        }
+        if let Some(style) = self.surface_style() {
+            style.set_corner_radius(self.frame_corner_radius() as f64);
+        }
+    }
+
     /// Ask the compositor to minimize the window — what the yellow traffic
     /// light does.
     pub fn minimize(&self) {
@@ -842,6 +947,62 @@ impl Window {
                 surface.xdg_window().set_min_size(Some((width, height)));
             }
         }
+    }
+
+    /// Make this window a child of the window a portal handle was exported
+    /// from — `wayland:<handle>`, as `parent_window` carries it.
+    ///
+    /// A window with a parent is a dialog: the compositor stacks it above
+    /// that window and, on a tiling workspace, floats it rather than tiling
+    /// it. Returns false when the handle is empty, is not a Wayland one, or
+    /// the compositor offers no xdg-foreign — [`Window::set_modal`] is the
+    /// fallback that needs no handle.
+    pub fn set_parent_handle(&self, handle: &str) -> bool {
+        let Ok(surface_guard) = self.surface.read() else {
+            return false;
+        };
+        let Some(ref surface) = *surface_guard else {
+            return false;
+        };
+        crate::foreign::set_parent_from_handle(handle, surface.wl_surface())
+    }
+
+    /// Say this window is a dialog, and whether it is modal
+    /// (`xdg-dialog-v1`).
+    ///
+    /// Independent of [`Window::set_parent_handle`]: a dialog whose parent
+    /// could not be imported still says what it is, and Otto floats a *modal*
+    /// one on a tiling workspace on the strength of the hint alone. Returns false on a
+    /// compositor without the protocol.
+    pub fn set_modal(&self, modal: bool) -> bool {
+        use wayland_client::Proxy as _;
+
+        let Some(manager) = AppContext::xdg_wm_dialog() else {
+            return false;
+        };
+        let Ok(surface_guard) = self.surface.read() else {
+            return false;
+        };
+        let Some(ref surface) = *surface_guard else {
+            return false;
+        };
+        let toplevel = surface.xdg_window().xdg_toplevel();
+        if !toplevel.is_alive() {
+            return false;
+        }
+        let dialog = manager.get_xdg_dialog(toplevel, AppContext::queue_handle(), ());
+        if modal {
+            dialog.set_modal();
+        } else {
+            dialog.unset_modal();
+        }
+        // Kept alive for the window's lifetime: destroying the object clears
+        // the hint again. The window owns it, and both go when the surface
+        // does.
+        if let Ok(mut held) = self.dialog.write() {
+            *held = Some(dialog);
+        }
+        true
     }
 
     /// The largest size the compositor should allow, in logical points.

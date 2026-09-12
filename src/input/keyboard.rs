@@ -319,6 +319,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
 
+        // A drag out of a tree owns Escape, which cancels it.
+        let tiling_drag_active = self.tiling_drag_is_active();
+
         // Assistive technologies are offered the key before anything else in
         // the session sees it. Cloned out of `self` because `keyboard.input`
         // borrows the state for the duration of the filter.
@@ -390,6 +393,16 @@ impl<BackendData: Backend> Otto<BackendData> {
                             suppressed_keys.push(keysym);
                             return FilterResult::Intercept(KeyAction::None);
                         }
+                    }
+
+                    // Escape puts a window being dragged out of a tree back
+                    // in the slot it came from.
+                    if tiling_drag_active
+                        && matches!(state, KeyState::Pressed)
+                        && keysym == Keysym::Escape
+                    {
+                        suppressed_keys.push(keysym);
+                        return FilterResult::Intercept(KeyAction::TilingDragCancel);
                     }
 
                     let shortcut_action = Config::with(|config| {

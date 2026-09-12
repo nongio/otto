@@ -199,6 +199,7 @@ pub fn build() -> Pane {
         return Pane {
             name: otto_kit::t!("settings-pane-displays"),
             icon: "monitor",
+            intro: None,
             groups: vec![model::untitled(vec![Row::new(
                 otto_kit::t!("settings-display-none"),
                 Control::Value(String::new()),
@@ -210,6 +211,7 @@ pub fn build() -> Pane {
     Pane {
         name: otto_kit::t!("settings-pane-displays"),
         icon: "monitor",
+        intro: None,
         // The arrangement canvas is drawn by the pane itself, not as a row.
         // Below it sit the settings for whichever display is selected there.
         groups: vec![

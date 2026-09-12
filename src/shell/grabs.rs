@@ -50,6 +50,14 @@ pub struct PointerMoveSurfaceGrab<B: Backend + 'static> {
     /// the pointer's position at the moment a pending restore fires — after
     /// which the window has a new origin under the cursor.
     pub drag_origin: Point<f64, Logical>,
+    /// The window is a leaf of its workspace's tiling tree, and is taken out
+    /// of it once the drag has travelled — the same threshold a maximized
+    /// window is restored on, and for the same reason: a click on the
+    /// titlebar of a tile must not re-slot it.
+    pub pending_tiling_detach: bool,
+    /// Set once the detach has happened, so the tiling branch owns the rest
+    /// of the drag.
+    pub tiling_detached: bool,
 }
 
 /// How far the pointer travels before a press counts as a drag, and a
@@ -117,8 +125,31 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
             self.drag_origin = event.location;
         }
 
-        let delta = event.location - self.drag_origin;
-        let new_location = self.initial_window_location.to_f64() + delta;
+        // A tile leaves its tree on the same threshold: the tree closes up
+        // behind it and it shrinks to follow the pointer.
+        if self.pending_tiling_detach {
+            let travel = event.location - self.start_data.location;
+            if travel.x.abs() < DRAG_THRESHOLD && travel.y.abs() < DRAG_THRESHOLD {
+                return;
+            }
+            self.pending_tiling_detach = false;
+            self.tiling_detached = state.tiling_drag_begin(&self.window);
+        }
+
+        let new_location = if self.tiling_detached {
+            // The layer is scaled about its origin, so the point the user
+            // grabbed has moved in: measure the drag from the shrunk offset
+            // or the window slides out from under the pointer.
+            let grab_offset = self.start_data.location - self.initial_window_location.to_f64();
+            crate::shell::scaled_drag_origin(
+                event.location,
+                grab_offset,
+                crate::shell::DRAG_SCALE as f64,
+            )
+        } else {
+            let delta = event.location - self.drag_origin;
+            self.initial_window_location.to_f64() + delta
+        };
 
         state
             .workspaces
@@ -131,6 +162,15 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
                 crate::workspaces::utils::snap_position_px(location.x, location.y),
                 None,
             );
+        }
+
+        // A drag out of a tree shows the slot it would land in instead of the
+        // screen-edge zones: on a tiled workspace every position is a slot
+        // already (`specs/tiling.md`, *Dragging a window*).
+        if state.tiling_drag_is_active() {
+            self.active_zone = None;
+            state.tiling_drag_motion(event.location.x, event.location.y);
+            return;
         }
 
         // While Ctrl is held, preview the snap zone the pointer is over;
@@ -185,6 +225,20 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
     ) {
         handle.button(data, event);
         if handle.current_pressed().is_empty() {
+            // A window dragged out of a tree goes back into one: the slot the
+            // overlay was showing, and no screen-edge zone applies. The drop
+            // happens before the grab is unset: `unset` cancels a detach that
+            // is still open, which would undo the insert.
+            if self.tiling_detached && data.tiling_drag_is_active() {
+                let location = handle.current_location();
+                self.tiling_detached = false;
+                data.tiling_drag_drop(location.x, location.y);
+                handle.unset_grab(self, data, event.serial, event.time, true);
+                #[cfg(feature = "xwayland")]
+                data.sync_x11_window_position(&self.window);
+                return;
+            }
+
             // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
 
@@ -303,13 +357,30 @@ impl<B: Backend> PointerGrab<Otto<B>> for PointerMoveSurfaceGrab<B> {
     fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
         &self.start_data
     }
-    fn unset(&mut self, _data: &mut Otto<B>) {}
+
+    /// The grab going away with a detach still open — a client dying, a
+    /// forced unset — puts the leaf back where it was rather than leaving the
+    /// window stranded outside the tree.
+    fn unset(&mut self, data: &mut Otto<B>) {
+        if self.tiling_detached {
+            self.tiling_detached = false;
+            data.tiling_drag_cancel();
+        }
+    }
 }
 
 pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: TouchGrabStartData<Otto<BackendData>>,
     pub window: WindowElement,
     pub initial_window_location: Point<i32, Logical>,
+    /// As on the pointer grab: a tile is taken out of its tree once the touch
+    /// has travelled, not on the first contact.
+    pub pending_tiling_detach: bool,
+    /// Set once that has happened.
+    pub tiling_detached: bool,
+    /// The last point the touch reached: a touch-up carries no location, and
+    /// the drop needs one.
+    pub last_location: Point<f64, Logical>,
 }
 
 impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab<BackendData> {
@@ -338,6 +409,12 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         }
 
         handle.up(data, event, seq);
+        // The drop happens before the grab is unset: `unset` cancels a detach
+        // that is still open, which would undo the insert.
+        if self.tiling_detached {
+            self.tiling_detached = false;
+            data.tiling_drag_drop(self.last_location.x, self.last_location.y);
+        }
         handle.unset_grab(self, data);
         // Tell an X11 client where the drag left its window — see
         // `Otto::sync_x11_window_position`.
@@ -360,10 +437,32 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
             return;
         }
 
-        let delta = event.location - self.start_data.location;
-        let new_location = self.initial_window_location.to_f64() + delta;
+        self.last_location = event.location;
+        if self.pending_tiling_detach {
+            let travel = event.location - self.start_data.location;
+            if travel.x.abs() < DRAG_THRESHOLD && travel.y.abs() < DRAG_THRESHOLD {
+                return;
+            }
+            self.pending_tiling_detach = false;
+            self.tiling_detached = data.tiling_drag_begin(&self.window);
+        }
+
+        let new_location = if self.tiling_detached {
+            let grab_offset = self.start_data.location - self.initial_window_location.to_f64();
+            crate::shell::scaled_drag_origin(
+                event.location,
+                grab_offset,
+                crate::shell::DRAG_SCALE as f64,
+            )
+        } else {
+            let delta = event.location - self.start_data.location;
+            self.initial_window_location.to_f64() + delta
+        };
         data.workspaces
             .map_window(&self.window, new_location.to_i32_round(), true, None);
+        if self.tiling_detached {
+            data.tiling_drag_motion(event.location.x, event.location.y);
+        }
     }
 
     fn frame(
@@ -408,7 +507,158 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Otto<BackendData>) {}
+    /// A cancelled touch drag puts the leaf back where it was.
+    fn unset(&mut self, data: &mut Otto<BackendData>) {
+        if self.tiling_detached {
+            self.tiling_detached = false;
+            data.tiling_drag_cancel();
+        }
+    }
+}
+
+/// A resize of the split between two tiles, rather than of a window.
+///
+/// The dragged edge is a bar in the tree: motion writes the two shares either
+/// side of it and lays the workspace out again, so the client is configured
+/// with its new cell and never with a free size. See
+/// [`Otto::tiling_resize_begin`].
+pub struct PointerTilingResizeGrab<B: Backend + 'static> {
+    pub start_data: PointerGrabStartData<Otto<B>>,
+    pub window: WindowElement,
+}
+
+impl<B: Backend> PointerGrab<Otto<B>> for PointerTilingResizeGrab<B> {
+    fn motion(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        _focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
+        event: &MotionEvent,
+    ) {
+        handle.motion(data, None, event);
+        data.pointer_interaction = Some((self.window.id(), std::time::Instant::now()));
+        data.tiling_resize_to(event.location.x, event.location.y);
+    }
+
+    fn relative_motion(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        focus: Option<(PointerFocusTarget<B>, Point<f64, Logical>)>,
+        event: &RelativeMotionEvent,
+    ) {
+        handle.relative_motion(data, focus, event);
+    }
+
+    fn button(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &ButtonEvent,
+    ) {
+        handle.button(data, event);
+        if handle.current_pressed().is_empty() {
+            data.is_resizing = false;
+            handle.unset_grab(self, data, event.serial, event.time, true);
+            data.tiling_resize_end();
+        }
+    }
+
+    fn axis(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        details: AxisFrame,
+    ) {
+        handle.axis(data, details)
+    }
+
+    fn frame(&mut self, data: &mut Otto<B>, handle: &mut PointerInnerHandle<'_, Otto<B>>) {
+        handle.frame(data);
+    }
+
+    fn gesture_swipe_begin(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GestureSwipeBeginEvent,
+    ) {
+        handle.gesture_swipe_begin(data, event);
+    }
+
+    fn gesture_swipe_update(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GestureSwipeUpdateEvent,
+    ) {
+        handle.gesture_swipe_update(data, event);
+    }
+
+    fn gesture_swipe_end(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GestureSwipeEndEvent,
+    ) {
+        handle.gesture_swipe_end(data, event);
+    }
+
+    fn gesture_pinch_begin(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GesturePinchBeginEvent,
+    ) {
+        handle.gesture_pinch_begin(data, event);
+    }
+
+    fn gesture_pinch_update(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GesturePinchUpdateEvent,
+    ) {
+        handle.gesture_pinch_update(data, event);
+    }
+
+    fn gesture_pinch_end(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GesturePinchEndEvent,
+    ) {
+        handle.gesture_pinch_end(data, event);
+    }
+
+    fn gesture_hold_begin(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GestureHoldBeginEvent,
+    ) {
+        handle.gesture_hold_begin(data, event);
+    }
+
+    fn gesture_hold_end(
+        &mut self,
+        data: &mut Otto<B>,
+        handle: &mut PointerInnerHandle<'_, Otto<B>>,
+        event: &GestureHoldEndEvent,
+    ) {
+        handle.gesture_hold_end(data, event);
+    }
+
+    fn start_data(&self) -> &PointerGrabStartData<Otto<B>> {
+        &self.start_data
+    }
+
+    /// A grab taken away mid-drag leaves the shares where the pointer left
+    /// them; the tree is always in a valid state, so there is nothing to undo.
+    fn unset(&mut self, data: &mut Otto<B>) {
+        data.is_resizing = false;
+        data.tiling_resize_end();
+    }
 }
 
 bitflags::bitflags! {

@@ -137,6 +137,13 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowResizeV
         data: &mut crate::Otto<Backend>,
         _event: &smithay::input::pointer::MotionEvent,
     ) {
+        // A tile's edge that is the outside of the tree drags nothing, so it
+        // says nothing: the arrow stays as it is
+        // (`specs/tiling.md`, *Dragging a window*).
+        if !data.tiling_edge_is_draggable(&self.window, self.edges) {
+            data.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
+            return;
+        }
         data.set_cursor(&CursorImageStatus::Named(cursor_for(self.edges)));
     }
 

@@ -65,6 +65,7 @@ dock-quit = Beenden
 settings-pane-general = Allgemein
 settings-pane-displays = Monitore
 settings-pane-dock = Dock
+settings-pane-tiling = Kacheln
 settings-pane-keyboard = Tastatur
 settings-pane-pointing = Trackpad & Maus
 settings-pane-sound = Ton
@@ -159,6 +160,23 @@ settings-dock-tint-icons = Symbole einfärben
 settings-switcher-colorize-icons = Umschalter einfärben
 settings-dock-icon-tint = Farbton
 settings-dock-icon-tint-strength = Farbtonstärke
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Ein gekachelter Schreibtisch füllt den Bildschirm mit seinen Fenstern, nebeneinander. Dies sind die Vorgaben; ein Schreibtisch kann seine Abstände überschreiben.
+settings-tiling-decoration = Dekoration gekachelter Fenster
+settings-group-tiling-gaps = Abstände
+settings-tiling-inner-gap = Zwischen den Kacheln
+settings-tiling-outer-gap = Um die Kacheln herum
+settings-tiling-smart-gaps = Abstände bei einer einzelnen Kachel weglassen
+settings-group-tiling-keyboard = Tastatur
+settings-tiling-resize-step = Schrittweite
+settings-group-tiling-animation = Animation
+settings-tiling-layout-duration = Layoutwechsel
+settings-tiling-layout-bounce = Layout-Überschwingen
+settings-tiling-mode-duration = Wechsel in den Kachelmodus
+settings-tiling-mode-bounce = Überschwingen im Kachelmodus
 
 
 ## Settings — Keyboard
@@ -691,6 +709,26 @@ schema-gtk-theme-label = GTK-Thema
 schema-gtk-theme-description = GTK-Themenname, der an Clients weitergegeben wird. Leer erkennt automatisch.
 schema-locales-label = Gebietsschemas
 schema-locales-description = Bevorzugte Gebietsschemas, in Reihenfolge der Präferenz.
+
+# --- tiling ---
+schema-tiling-decoration-label = Dekoration gekachelter Fenster
+schema-tiling-decoration-description = Wie viel Dekoration ein Fenster behält, während es gekachelt ist: eine Leiste in Höhe einer Textzeile mit Titel und Schließen-Knopf oder gar keine Leiste, wobei die aktive Kachel durch eine haarfeine Linie markiert wird.
+schema-tiling-inner-gap-label = Abstand zwischen den Kacheln
+schema-tiling-inner-gap-description = Logische Pixel zwischen zwei benachbarten Kacheln.
+schema-tiling-outer-gap-label = Abstand um die Kacheln
+schema-tiling-outer-gap-description = Logische Pixel zwischen den Kacheln und dem Bildschirmrand.
+schema-tiling-smart-gaps-label = Abstände bei einer einzelnen Kachel weglassen
+schema-tiling-smart-gaps-description = Ein Schreibtisch mit einer einzigen Kachel lässt gar keine Abstände, damit ein einzelnes Fenster nicht ohne Grund eingerückt wirkt.
+schema-tiling-resize-step-label = Schrittweite
+schema-tiling-resize-step-description = Um wie viel sich ein Container pro Tastaturschritt ändert, als Anteil seiner Breite oder Höhe.
+schema-tiling-layout-duration-label = Layout-Animation
+schema-tiling-layout-duration-description = Sekunden, die ein Layoutwechsel dauert: ein Fenster kommt zum Baum hinzu oder verlässt ihn, ein Verschieben, ein Tausch, ein Ausgleichen. Null schaltet sofort um.
+schema-tiling-layout-bounce-label = Layout-Überschwingen
+schema-tiling-layout-bounce-description = Wie weit ein Layoutwechsel überschwingt, bevor er sich beruhigt. Null schwingt gar nicht über.
+schema-tiling-mode-duration-label = Animation des Kachelmodus
+schema-tiling-mode-duration-description = Sekunden, die der Schreibtisch zum Umordnen braucht, wenn das Kacheln ein- oder ausgeschaltet wird und jedes Fenster an seinen Platz fliegt. Null schaltet sofort um.
+schema-tiling-mode-bounce-label = Überschwingen im Kachelmodus
+schema-tiling-mode-bounce-description = Wie weit dieses Umordnen überschwingt, bevor es sich beruhigt.
 
 # --- dock ---
 schema-dock-size-label = Größe

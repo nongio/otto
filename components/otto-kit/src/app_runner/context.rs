@@ -276,6 +276,17 @@ pub struct AppContextData {
     /// until a seat with a keyboard turns up.
     pub text_input:
         Option<wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::ZwpTextInputV3>,
+    /// `zxdg_importer_v2`: turns a handle another process exported into a
+    /// surface this one can name as its toplevel's parent. `None` on a
+    /// compositor without xdg-foreign — see [`crate::foreign`].
+    pub xdg_importer: Option<
+        wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
+    >,
+    /// `xdg_wm_dialog_v1`: how a window says it is a dialog, and modal. The
+    /// compositor uses the hint to float it rather than tile it.
+    pub xdg_wm_dialog: Option<
+        wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1,
+    >,
     pub session_lock_manager: Option<wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     pub cursor_shape_manager: Option<wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub fractional_scale_manager: Option<wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
@@ -418,6 +429,32 @@ impl<'a> AppContext<'a> {
         Self::with_global(|ctx| unsafe {
             ctx.surface_style_manager_ref()
                 .map(|r| &*(r as *const otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1))
+        })
+    }
+
+    /// The xdg-foreign importer, when the compositor offers one.
+    pub fn xdg_importer() -> Option<
+        &'static wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2,
+    > {
+        use wayland_protocols::xdg::foreign::zv2::client::zxdg_importer_v2::ZxdgImporterV2;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .xdg_importer
+                .as_ref()
+                .map(|r| &*(r as *const ZxdgImporterV2))
+        })
+    }
+
+    /// The xdg-dialog manager, when the compositor offers one.
+    pub fn xdg_wm_dialog(
+    ) -> Option<&'static wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1>
+    {
+        use wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1;
+        Self::with_global(|ctx| unsafe {
+            ctx.data
+                .xdg_wm_dialog
+                .as_ref()
+                .map(|r| &*(r as *const XdgWmDialogV1))
         })
     }
 

@@ -259,11 +259,26 @@ pub const UNFROSTED_MIN_ALPHA: f32 = 0.92;
 /// on, the same hue taken up to at least [`UNFROSTED_MIN_ALPHA`] when it is
 /// off.
 pub fn chrome_material(color: Color) -> Color {
+    material_at_least(color, UNFROSTED_MIN_ALPHA)
+}
+
+/// [`chrome_material`] for the dock bar: its floor is otto-kit's
+/// [`otto_kit::frosting::BAR_UNFROSTED_MIN_ALPHA`], the one the top bar uses,
+/// lower than the rest of the chrome's because only the wallpaper passes
+/// under a bar.
+pub fn bar_material(color: Color) -> Color {
+    material_at_least(
+        color,
+        otto_kit::frosting::BAR_UNFROSTED_MIN_ALPHA as f32 / 255.0,
+    )
+}
+
+fn material_at_least(color: Color, floor: f32) -> Color {
     if frosting() {
         color
     } else {
         Color {
-            alpha: color.alpha.max(UNFROSTED_MIN_ALPHA),
+            alpha: color.alpha.max(floor),
             ..color
         }
     }

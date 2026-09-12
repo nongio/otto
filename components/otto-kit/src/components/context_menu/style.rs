@@ -219,7 +219,7 @@ impl ContextMenuStyle {
     /// Get the background color from theme — nearly opaque while the
     /// desktop's frosting is off, since nothing is blurred behind the menu.
     pub fn background_color(&self) -> skia_safe::Color {
-        crate::frosting::material(self.theme.material_popup)
+        crate::frosting::popup_material(self.theme.material_popup)
     }
 
     /// Get the border color from theme.

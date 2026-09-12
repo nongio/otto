@@ -182,6 +182,24 @@ pub enum CompositorCommand {
         name: String,
         response_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    /// Run an i3-syntax command string, one result per `;`-separated command.
+    /// See `docs/developer/shell-dbus-api.md`.
+    RunShellCommand {
+        command: String,
+        response_tx: tokio::sync::oneshot::Sender<Vec<Result<(), String>>>,
+    },
+    /// The whole tree as JSON, in i3's node shape.
+    GetShellTree {
+        response_tx: tokio::sync::oneshot::Sender<String>,
+    },
+    /// Every workspace on every output, in i3's shape.
+    GetShellWorkspaces {
+        response_tx: tokio::sync::oneshot::Sender<String>,
+    },
+    /// Every output, in i3's shape.
+    GetShellOutputs {
+        response_tx: tokio::sync::oneshot::Sender<String>,
+    },
 }
 
 /// Information about an available output.
@@ -767,6 +785,21 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         }
         CompositorCommand::RemoveVirtualOutput { name, response_tx } => {
             let _ = response_tx.send(remove_virtual_output(state, &name));
+        }
+        CompositorCommand::RunShellCommand {
+            command,
+            response_tx,
+        } => {
+            let _ = response_tx.send(state.run_command(&command));
+        }
+        CompositorCommand::GetShellTree { response_tx } => {
+            let _ = response_tx.send(state.tree_json().to_string());
+        }
+        CompositorCommand::GetShellWorkspaces { response_tx } => {
+            let _ = response_tx.send(state.workspaces_json().to_string());
+        }
+        CompositorCommand::GetShellOutputs { response_tx } => {
+            let _ = response_tx.send(state.outputs_json().to_string());
         }
     }
 }

@@ -51,6 +51,15 @@ pub fn is_applied_live(id: &str) -> bool {
             | "frosting"
             | "window_controls_side"
             | "show_maximize_button"
+            | "tiling.decoration"
+            | "tiling.inner_gap"
+            | "tiling.outer_gap"
+            | "tiling.smart_gaps"
+            | "tiling.resize_step"
+            | "tiling.layout_duration"
+            | "tiling.layout_bounce"
+            | "tiling.mode_duration"
+            | "tiling.mode_bounce"
             | "cursor_theme"
             | "cursor_size"
             | "icon_theme"
@@ -196,6 +205,48 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.refresh_window_decorations();
             Ok(())
         }
+        // A tile's bar height is part of what its client is configured with,
+        // so this is a geometry change as much as an appearance one: every
+        // tiling workspace is laid out again, and the value goes out to the
+        // apps that draw their own bars the way the controls side does.
+        "tiling.decoration" => {
+            crate::export_tiling_decoration();
+            state.refresh_tiling_decorations();
+            state.refresh_window_decorations();
+            Ok(())
+        }
+        // The gaps are geometry: every tile's rectangle is resolved from them,
+        // so each tiling workspace is laid out again and its clients are
+        // reconfigured. Forced, because a gap change can leave a lone tile's
+        // cell exactly where it was while the smart-gap rule changes what is
+        // inside it.
+        //
+        // These sliders are the session default, which is what `gaps <n> all`
+        // sets — so they do what that command does, overrides and all. A
+        // workspace given its own gaps by `gaps <n>` would otherwise go on
+        // ignoring the slider, and on that workspace the setting would be
+        // dead in the hand while it looked live in the pane.
+        "tiling.inner_gap" | "tiling.outer_gap" => {
+            state.clear_workspace_gap_overrides();
+            state.relayout_tiling_workspaces();
+            Ok(())
+        }
+        // `smart_gaps` is read through `TilingConfig::gaps` every time a
+        // workspace resolves its tree, but the workspaces already on screen
+        // were resolved with the old value, so they are laid out again too.
+        "tiling.smart_gaps" => {
+            state.relayout_tiling_workspaces();
+            Ok(())
+        }
+        // Read from the live configuration at the moment they are used: the
+        // step when a resize command runs (`TilingConfig::step`), each spring
+        // when `relayout_workspace` picks its transition. The next keystroke
+        // already uses the new value, so there is nothing to reconcile.
+        "tiling.resize_step"
+        | "tiling.layout_duration"
+        | "tiling.layout_bounce"
+        | "tiling.mode_duration"
+        | "tiling.mode_bounce" => Ok(()),
         "show_maximize_button" => {
             crate::export_maximize_button();
             state.refresh_window_decorations();
@@ -348,6 +399,9 @@ mod tests {
             "frosting",
             "window_controls_side",
             "show_maximize_button",
+            "tiling.decoration",
+            "tiling.inner_gap",
+            "tiling.outer_gap",
             "cursor_theme",
             "cursor_size",
             "icon_theme",

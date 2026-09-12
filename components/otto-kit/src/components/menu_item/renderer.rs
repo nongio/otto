@@ -155,19 +155,17 @@ impl MenuItemRenderer {
         paint.set_color(color);
         paint.set_anti_alias(true);
 
-        // A menu is where the interface most often has to draw a script its
-        // own font has none of — a language picker names every language in its
-        // own — so the face is chosen against the label rather than assumed.
-        // Before the metrics, which have to come from the face that will
-        // actually draw or the line sits off its centre.
-        let font = &crate::typography::font_covering(font, label);
-
         // Center text vertically using font metrics
         let (_line_spacing, metrics) = font.metrics();
         let font_height = metrics.descent - metrics.ascent;
         let baseline_y = y + (height - font_height) / 2.0 - metrics.ascent;
 
-        canvas.draw_str(
+        // A menu is where the interface most often has to draw a script its
+        // own font has none of — a language picker names every language in its
+        // own — so the label is drawn run by run, each in a face that has its
+        // characters. See [`crate::typography::text_runs`].
+        crate::typography::draw_runs(
+            canvas,
             label,
             Point::new(x + style.horizontal_padding + extra_x_offset, baseline_y),
             font,

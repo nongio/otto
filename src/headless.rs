@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{
         atomic::Ordering,
         mpsc::{self, Receiver, Sender},
@@ -29,6 +30,9 @@ use crate::{
     state::{Backend, Otto},
 };
 
+/// The tiling tree's axis and direction types, re-exported so a test can
+/// drive the tiling actions without reaching into the compositor's modules.
+pub use crate::workspaces::tiling::{Axis, Direction};
 /// The tiling zones a window can be snapped to, re-exported for tests and
 /// external callers driving the headless compositor.
 pub use crate::workspaces::TileZone;
@@ -104,6 +108,10 @@ type Query = Box<dyn FnOnce(&mut Otto<HeadlessData>) + Send>;
 /// Wayland socket name, run queries against compositor state, and stop it.
 pub struct HeadlessHandle {
     pub socket_name: String,
+    /// The throwaway `XDG_CONFIG_HOME` this session persists settings under.
+    /// Nothing outside it is written, so a test that changes a persisted
+    /// setting cannot touch the developer's own configuration.
+    pub config_root: PathBuf,
     compositor_thread: Option<JoinHandle<()>>,
     running: Arc<std::sync::atomic::AtomicBool>,
     query_tx: Sender<Query>,
@@ -117,6 +125,28 @@ pub struct HeadlessHandle {
 /// How long [`HeadlessHandle::start`] waits for the compositor to come up.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A fresh, empty directory to stand in for `$XDG_CONFIG_HOME`.
+///
+/// Rolled by hand rather than pulled from `tempfile`: that is a
+/// dev-dependency, and this runs in the library, on the `--headless` path as
+/// well as under `cargo test`.
+fn isolated_config_root() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+        "otto-headless-config-{}-{nanos}-{serial}",
+        std::process::id()
+    ));
+    if let Err(err) = std::fs::create_dir_all(root.join("otto")) {
+        tracing::warn!("Could not create the headless config directory: {err}");
+    }
+    root
+}
+
 /// How long [`HeadlessHandle::with_state`] waits for the dispatch loop to run
 /// a closure.
 const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -129,6 +159,11 @@ impl HeadlessHandle {
     ///
     /// Returns a handle once the compositor is ready to accept Wayland clients.
     pub fn start(config: HeadlessConfig) -> Self {
+        // Before anything reads or writes configuration: a headless session
+        // is a test session, and must not persist into `~/.config/otto`.
+        let config_root = isolated_config_root();
+        crate::config::use_isolated_config_root(config_root.clone());
+
         let (ready_tx, ready_rx) = mpsc::channel::<String>();
         let (query_tx, query_rx) = mpsc::channel::<Query>();
         let (result_tx, result_rx) = mpsc::channel::<()>();
@@ -161,6 +196,7 @@ impl HeadlessHandle {
 
         Self {
             socket_name,
+            config_root,
             compositor_thread: Some(compositor_thread),
             running,
             query_tx,
@@ -202,6 +238,9 @@ impl HeadlessHandle {
             }
             let _ = thread.join();
         }
+        // The throwaway config directory goes with it. Anything a test wants
+        // to read out of it must be read before `stop`.
+        let _ = std::fs::remove_dir_all(&self.config_root);
     }
 
     /// Wait for the compositor to process events for the given duration.
@@ -708,12 +747,63 @@ impl HeadlessHandle {
         });
     }
 
+    /// Send `title` to the dock, as its minimize button would.
+    pub fn minimize_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.workspaces.minimize_window(&window);
+        });
+    }
+
+    /// Bring `title` back from the dock, as clicking its dock icon would.
+    pub fn unminimize_window(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(id) = state
+                .workspaces
+                .windows_map
+                .iter()
+                .find(|(_, w)| w.xdg_title() == title)
+                .map(|(id, _)| id.clone())
+            else {
+                return;
+            };
+            state.workspaces.unminimize_window(&id);
+        });
+    }
+
     /// Title of the window that currently holds the seat's keyboard focus.
     pub fn focused_window_title(&self) -> Option<String> {
         self.query(|state| {
             let keyboard = state.seat.get_keyboard()?;
             match keyboard.current_focus()? {
                 crate::focus::KeyboardFocusTarget::Window(w) => Some(w.xdg_title()),
+                _ => None,
+            }
+        })
+    }
+
+    /// Namespace of the layer-shell surface that currently holds the seat's
+    /// keyboard focus, if a layer surface holds it at all.
+    pub fn focused_layer_namespace(&self) -> Option<String> {
+        self.query(|state| {
+            let keyboard = state.seat.get_keyboard()?;
+            match keyboard.current_focus()? {
+                crate::focus::KeyboardFocusTarget::LayerSurface(layer) => {
+                    use smithay::reexports::wayland_server::Resource;
+                    state
+                        .layer_surfaces
+                        .get(&layer.wl_surface().id())
+                        .map(|s| s.namespace().to_string())
+                }
                 _ => None,
             }
         })
@@ -795,6 +885,331 @@ impl HeadlessHandle {
                 .get_window_view(&window.id())?
                 .unmaximised_rect;
             Some((rect.loc.x, rect.loc.y, rect.size.w, rect.size.h))
+        })
+    }
+
+    /// The size the client of `title` was last configured with, in logical
+    /// pixels — the cell minus whatever its titlebar takes.
+    pub fn window_client_size(&self, title: &str) -> Option<(i32, i32)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            let toplevel = window.toplevel()?.clone();
+            let size = toplevel.with_pending_state(|state| state.size)?;
+            Some((size.w, size.h))
+        })
+    }
+
+    /// Height of the server-side titlebar `title` is wearing, in logical
+    /// pixels: the floating bar, a tile's minimal one, or none.
+    pub fn window_decoration_height(&self, title: &str) -> Option<i32> {
+        let title = title.to_string();
+        self.query(move |state| {
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .map(|w| w.decoration_height())
+        })
+    }
+
+    /// Set one setting exactly the way the Settings app does: through the
+    /// schema, the running configuration, `apply_live` and the persist step,
+    /// with the same refusals.
+    ///
+    /// Everything a test could reach for instead — writing `Config` and
+    /// calling the reconcile helper by hand — skips the very steps a live
+    /// setting can fail in, so a setting that is marked live and does nothing
+    /// still looks fine. Returns the error the app would have printed.
+    pub fn set_setting(
+        &self,
+        id: &str,
+        value: crate::settings::value::SettingValue,
+    ) -> Result<(), String> {
+        let id = id.to_string();
+        self.query(move |state| {
+            crate::settings::set(state, &id, value)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        })
+    }
+
+    /// What the running configuration holds for `id`, read back through the
+    /// schema exactly as the Settings app reads it.
+    pub fn setting_value(&self, id: &str) -> Option<crate::settings::value::SettingValue> {
+        let id = id.to_string();
+        self.query(move |_state| crate::settings::value_of(&id))
+    }
+
+    /// Change `[tiling] decoration` the way the settings app does, and let it
+    /// reach the windows already on screen.
+    pub fn set_tiling_decoration(&self, decoration: &str) {
+        let decoration = decoration.to_string();
+        self.with_state(move |state| {
+            crate::config::Config::update(|config| {
+                config.tiling.decoration = decoration.clone();
+            });
+            state.refresh_tiling_decorations();
+        });
+    }
+
+    // ── The tiling tree ──────────────────────────────────────────────────
+
+    /// Toggle the current workspace between floating and tiling — the
+    /// `TilingToggle` shortcut's entry point.
+    pub fn toggle_tiling(&self) {
+        self.with_state(|state| {
+            state.handle_tiling_toggle();
+        });
+    }
+
+    /// Does the current workspace on the headless output tile?
+    pub fn workspace_tiling_enabled(&self) -> bool {
+        self.query(|state| {
+            let Some(output) = headless_output(state) else {
+                return false;
+            };
+            state.workspaces.output_tiles(&output)
+        })
+    }
+
+    /// Titles of the windows in the current workspace's tree, in layout order
+    /// (left to right, top to bottom).
+    pub fn tiling_tree_leaves(&self) -> Vec<String> {
+        self.query(|state| {
+            let Some(output) = headless_output(state) else {
+                return Vec::new();
+            };
+            let Some(workspace) = state.workspaces.current_tiling_workspace(&output) else {
+                return Vec::new();
+            };
+            let leaves = workspace.tiling.read().unwrap().tree.leaves();
+            leaves
+                .iter()
+                .filter_map(|id| state.workspaces.windows_map.get(id))
+                .map(|w| w.xdg_title())
+                .collect()
+        })
+    }
+
+    /// The cells the current workspace's tree resolves to, in layout order:
+    /// `(title, (x, y, width, height))` in logical pixels. This is the layout
+    /// truth — what the clients are configured with — rather than what the
+    /// windows have drawn so far.
+    pub fn tiling_cell_rects(&self) -> Vec<(String, (i32, i32, i32, i32))> {
+        self.query(|state| {
+            let Some(output) = headless_output(state) else {
+                return Vec::new();
+            };
+            let Some(workspace) = state.workspaces.current_tiling_workspace(&output) else {
+                return Vec::new();
+            };
+            state.recalculate_exclusive_zones(&output);
+            let zone = state.usable_zone(&output);
+            let area = crate::workspaces::tiling::Rect::new(
+                zone.loc.x,
+                zone.loc.y,
+                zone.size.w,
+                zone.size.h,
+            );
+            let tree = workspace.tiling.read().unwrap();
+            let gaps = crate::config::Config::with(|c| tree.effective_gaps(&c.tiling));
+            crate::workspaces::tiling::layout::resolve(&tree.tree, area, gaps)
+                .into_iter()
+                .filter_map(|(id, rect)| {
+                    let title = state.workspaces.windows_map.get(&id)?.xdg_title();
+                    Some((title, (rect.x, rect.y, rect.w, rect.h)))
+                })
+                .collect()
+        })
+    }
+
+    /// Move focus to the neighbouring tile in `direction`.
+    pub fn tiling_focus(&self, direction: Direction) {
+        self.with_state(move |state| {
+            state.handle_tiling_focus(direction);
+        });
+    }
+
+    /// Move the focused tile through the tree in `direction`.
+    pub fn tiling_move(&self, direction: Direction) {
+        self.with_state(move |state| {
+            state.handle_tiling_move(direction);
+        });
+    }
+
+    /// Arm the next insertion to split the focused cell along `axis`.
+    pub fn tiling_split(&self, axis: Axis) {
+        self.with_state(move |state| {
+            state.handle_tiling_split(axis);
+        });
+    }
+
+    /// Grow or shrink the focused cell along `axis` by one resize step.
+    pub fn tiling_resize(&self, axis: Axis, grow: bool) {
+        self.with_state(move |state| {
+            state.handle_tiling_resize(axis, grow);
+        });
+    }
+
+    /// Even out the shares of the focused container.
+    pub fn tiling_equalize(&self) {
+        self.with_state(|state| {
+            state.handle_tiling_equalize();
+        });
+    }
+
+    // ── Pointer drags on a tile ──────────────────────────────────────────
+    //
+    // The grab entry points, called with logical pointer positions, rather
+    // than synthesised input: a test then does not have to reason about
+    // pointer focus or the drag threshold to exercise the tree edits.
+
+    /// Detach this window from its tree, the way a titlebar drag past the
+    /// threshold does.
+    pub fn tiling_drag_begin(&self, title: &str) {
+        let title = title.to_string();
+        self.with_state(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return;
+            };
+            state.tiling_drag_begin(&window);
+        });
+    }
+
+    /// Move a detached window's drag to a logical point, arming the slot it
+    /// would land in.
+    pub fn tiling_drag_motion(&self, x: f64, y: f64) {
+        self.with_state(move |state| {
+            state.tiling_drag_motion(x, y);
+        });
+    }
+
+    /// Let go at a logical point.
+    pub fn tiling_drag_drop(&self, x: f64, y: f64) {
+        self.with_state(move |state| {
+            state.tiling_drag_drop(x, y);
+        });
+    }
+
+    /// Escape mid-drag.
+    pub fn tiling_drag_cancel(&self) {
+        self.with_state(|state| {
+            state.tiling_drag_cancel();
+        });
+    }
+
+    /// Press on `title`'s titlebar, drag to `(x, y)` and let go — the whole
+    /// gesture in one call.
+    pub fn tiling_drag_window(&self, title: &str, x: f64, y: f64) {
+        self.tiling_drag_begin(title);
+        self.settle(200);
+        self.tiling_drag_motion(x, y);
+        self.tiling_drag_drop(x, y);
+        self.settle(400);
+    }
+
+    /// Is a drag out of a tree in flight?
+    pub fn tiling_drag_active(&self) -> bool {
+        self.query(|state| state.tiling_drag_is_active())
+    }
+
+    /// The slot overlay's rectangle in logical pixels, or `None` while it is
+    /// hidden.
+    pub fn tiling_drag_preview(&self) -> Option<(i32, i32, i32, i32)> {
+        self.query(|state| {
+            if !state.workspaces.tiling_overlay.is_visible() {
+                return None;
+            }
+            let output = headless_output(state)?;
+            let scale = output.current_scale().fractional_scale() as f32;
+            let layer = &state.workspaces.tiling_overlay.preview_layer;
+            let position = layer.render_position();
+            let size = layer.render_size();
+            Some((
+                (position.x / scale).round() as i32,
+                (position.y / scale).round() as i32,
+                (size.x / scale).round() as i32,
+                (size.y / scale).round() as i32,
+            ))
+        })
+    }
+
+    /// Drag `title`'s `edge` — "left", "right", "top", "bottom" or a corner
+    /// like "bottom-right" — to the logical point `(x, y)`.
+    ///
+    /// Returns false when the edge has no split under it, which is what an
+    /// outer edge of the tree does.
+    pub fn tiling_resize_drag(&self, title: &str, edge: &str, x: f64, y: f64) -> bool {
+        let title = title.to_string();
+        let edge = edge.to_string();
+        let started = self.query(move |state| {
+            let Some(window) = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()
+            else {
+                return false;
+            };
+            let Some(edges) = resize_edges_from_name(&edge) else {
+                return false;
+            };
+            state.tiling_resize_begin(&window, edges) == crate::shell::TilingResizeStart::Started
+        });
+        if !started {
+            return false;
+        }
+        self.with_state(move |state| {
+            state.tiling_resize_to(x, y);
+            state.tiling_resize_end();
+        });
+        self.settle(400);
+        true
+    }
+
+    // ── The command language ─────────────────────────────────────────────
+
+    /// Run an i3-syntax command string, exactly as the D-Bus `RunCommand`
+    /// method and `otto-msg` do. One result per `;`-separated command:
+    /// `Ok(())`, or the message a caller would be shown.
+    pub fn run_command(&self, text: &str) -> Vec<Result<(), String>> {
+        let text = text.to_string();
+        self.query(move |state| state.run_command(&text))
+    }
+
+    /// `GetTree`: the whole tree in i3's node shape.
+    pub fn tree_json(&self) -> serde_json::Value {
+        self.query(|state| state.tree_json())
+    }
+
+    /// `GetWorkspaces`, in i3's shape.
+    pub fn workspaces_json(&self) -> serde_json::Value {
+        self.query(|state| state.workspaces_json())
+    }
+
+    /// `GetOutputs`, in i3's shape.
+    pub fn outputs_json(&self) -> serde_json::Value {
+        self.query(|state| state.outputs_json())
+    }
+
+    /// The gap override on the current workspace, if it has one:
+    /// `(inner, outer)`.
+    pub fn workspace_gap_override(&self) -> Option<(i32, i32)> {
+        self.query(|state| {
+            let output = headless_output(state)?;
+            let workspace = state.workspaces.current_tiling_workspace(&output)?;
+            let gaps = workspace.tiling.read().ok()?.gaps?;
+            Some((gaps.inner, gaps.outer))
         })
     }
 
@@ -1031,6 +1446,24 @@ impl HeadlessHandle {
                 .workspaces
                 .get_window_view(&window.id())
                 .map(|view| view.decoration_state().width)
+        })
+    }
+
+    /// Whether the server-side titlebar is drawn in its focused look — the
+    /// state the bar's view was last given, which is what it is painted and
+    /// its material faded from. `None` when the window has no view.
+    pub fn window_decoration_active(&self, title: &str) -> Option<bool> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            state
+                .workspaces
+                .get_window_view(&window.id())
+                .map(|view| view.decoration_state().active)
         })
     }
 
@@ -1600,6 +2033,9 @@ fn run_headless_loop(
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
+            // Pick up any tiling tree a close, minimize or workspace move
+            // left dirty; a no-op flag read when nothing changed.
+            state.flush_tiling_relayout();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();
@@ -1669,4 +2105,29 @@ fn find_node_by_key(
         }
     }
     None
+}
+
+/// The headless output, or `None` before it has been created.
+/// The resize edges a test names in words.
+fn resize_edges_from_name(name: &str) -> Option<crate::shell::ResizeEdge> {
+    use crate::shell::ResizeEdge;
+    Some(match name {
+        "left" => ResizeEdge::LEFT,
+        "right" => ResizeEdge::RIGHT,
+        "top" => ResizeEdge::TOP,
+        "bottom" => ResizeEdge::BOTTOM,
+        "top-left" => ResizeEdge::TOP_LEFT,
+        "top-right" => ResizeEdge::TOP_RIGHT,
+        "bottom-left" => ResizeEdge::BOTTOM_LEFT,
+        "bottom-right" => ResizeEdge::BOTTOM_RIGHT,
+        _ => return None,
+    })
+}
+
+fn headless_output<B: Backend>(state: &Otto<B>) -> Option<Output> {
+    state
+        .workspaces
+        .outputs()
+        .find(|o| o.name() == OUTPUT_NAME)
+        .cloned()
 }

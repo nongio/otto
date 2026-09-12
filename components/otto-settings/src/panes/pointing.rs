@@ -9,6 +9,7 @@ pub fn build() -> Pane {
     Pane {
         name: otto_kit::t!("settings-pane-pointing"),
         icon: "pointer",
+        intro: None,
         groups: vec![
             group(
                 otto_kit::t!("settings-group-trackpad"),

@@ -1245,10 +1245,17 @@ impl SettingsApp {
                 let Some(id) = focused.id else {
                     return false;
                 };
-                // A twentieth of the range per press: fine enough to land on a
-                // value, coarse enough to cross the track without holding the
-                // key down.
-                let moved = (value + step * (max - min) / 20.0).clamp(min, max);
+                // One schema step per press, so the keyboard lands on exactly
+                // the values a drag snaps to — a 0.05 s duration moves by
+                // 0.05 s. A setting served without a step falls back to a
+                // twentieth of the range: fine enough to land on a value,
+                // coarse enough to cross the track without holding the key.
+                let increment = settings_client::describe(id)
+                    .and_then(|desc| desc.step)
+                    .filter(|step| *step > 0.0)
+                    .map(|step| step as f32)
+                    .unwrap_or((max - min) / 20.0);
+                let moved = settings_client::snap(id, value + step * increment).clamp(min, max);
                 if moved == value {
                     return false;
                 }
@@ -1365,8 +1372,11 @@ impl App for SettingsApp {
         if window.surface_style().is_none() {
             eprintln!("settings: no surface style — sidebar cannot be a material");
         }
+        // The window keeps the radius and re-sends it when the appearance or
+        // the tile decoration changes — a push straight at the style would be
+        // overwritten by the toolkit's default on the next such change.
+        window.set_frame_corner_radius(view::CORNER);
         if let Some(style) = window.surface_style() {
-            style.set_corner_radius(view::corner() as f64);
             style.set_masks_to_bounds(otto_surface_style_v1::ClipMode::Enabled);
             // The pane scrolls in subsurfaces that sit over the window's own
             // buffer, so the window's rounded outline does not contain them:
@@ -1988,6 +1998,14 @@ impl App for SettingsApp {
         // is a frost behind its materials. A configure that changes nothing
         // else still has to repaint the sidebar, which is why this runs before
         // the size early-out below.
+        // Whether the window is tiled arrives on a configure too, and the bar
+        // it draws follows it: a tile wears the compact bar, or none at all.
+        // Its height is what every rectangle in `view` is measured from, so a
+        // change here relays out the whole window.
+        if view::set_decoration_variant(window.decoration_variant()) {
+            mark_pane_dirty(&self.pane_dirty);
+            window.request_frame();
+        }
         let activated = window.is_activated();
         let frosted = window.background_blur() && activated;
         let mut repaint = self
@@ -2428,6 +2446,9 @@ impl App for SettingsApp {
     fn on_theme_changed(&mut self, _ctx: &AppContext) {
         mark_pane_dirty(&self.pane_dirty);
         if let Some(window) = self.window.as_ref() {
+            // `[tiling] decoration` travels on this channel, and while the
+            // window is tiled it decides how tall the bar is.
+            view::set_decoration_variant(window.decoration_variant());
             // The frost's tint is on the compositor's layer, which keeps the
             // colour it was last given — hand it the new scheme's material.
             apply_material(window);

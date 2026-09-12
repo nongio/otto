@@ -1,4 +1,9 @@
-use crate::{focus::PointerFocusTarget, shell::FullscreenSurface, state::Backend, Otto};
+use crate::{
+    focus::{KeyboardFocusTarget, PointerFocusTarget},
+    shell::FullscreenSurface,
+    state::Backend,
+    Otto,
+};
 use layers::skia::Contains;
 use smithay::{
     backend::input::{
@@ -132,8 +137,23 @@ impl<BackendData: Backend> Otto<BackendData> {
         let keyboard = self.seat.get_keyboard().unwrap();
         let input_method = self.seat.input_method();
 
-        // Get current focus to deactivate it
-        let _old_focus = keyboard.current_focus();
+        // A press on a popup of a top/overlay panel (a bar menu item) must not
+        // hand the keyboard to whatever window sits under the popup: the panel
+        // would get wl_keyboard.leave, close its menu, and the click would
+        // land on a menu already going away.
+        let layer_under_pointer = self.layer_surface_under_pointer();
+        if matches!(layer_under_pointer, Some((_, true))) {
+            return;
+        }
+
+        // The panel that holds the keyboard at this press, if any. A press
+        // that lands on nothing focusable (the desktop, the dock) leaves it
+        // there otherwise, and a bar with a menu open never learns the user
+        // moved on — see the end of this function.
+        let layer_focused_at_press = match keyboard.current_focus() {
+            Some(KeyboardFocusTarget::LayerSurface(layer)) => Some(layer),
+            _ => None,
+        };
 
         // change the keyboard focus unless the pointer or keyboard is grabbed
         // We test for any matching surface type here but always use the root
@@ -308,7 +328,65 @@ impl<BackendData: Backend> Otto<BackendData> {
                     }
                 }
             }
+
+            // Nothing above took the keyboard. If a top-layer panel still holds
+            // it from before the press, the user has clicked away from it:
+            // give the keyboard back to the workspace so the panel receives
+            // wl_keyboard.leave (otto-bar closes its menus on that). Overlay
+            // surfaces are modal dialogs and keep it.
+            if let Some(layer) = layer_focused_at_press {
+                let layer_id = layer.wl_surface().id();
+                let still_held = matches!(
+                    keyboard.current_focus(),
+                    Some(KeyboardFocusTarget::LayerSurface(ref held)) if *held == layer
+                );
+                let on_top_layer = self
+                    .layer_surfaces
+                    .get(&layer_id)
+                    .is_some_and(|s| s.wlr_layer() == WlrLayer::Top);
+                // A press on the panel itself is not a click away, even if it
+                // has meanwhile dropped its grab (otto-bar does, between
+                // menus) and so could not re-take the keyboard above.
+                let on_itself = matches!(layer_under_pointer, Some((ref id, _)) if *id == layer_id);
+                if still_held && on_top_layer && !on_itself {
+                    let index = self
+                        .workspaces
+                        .focused_output_workspaces()
+                        .map(|ows| ows.current_workspace)
+                        .unwrap_or_else(|| self.workspaces.get_current_workspace_index());
+                    self.focus_top_window_or_clear(index);
+                }
+            }
         }
+    }
+
+    /// The top/overlay layer surface the pointer is over, if any, as its
+    /// wl_surface id plus whether the hit is on one of its popups rather than
+    /// the surface itself.
+    fn layer_surface_under_pointer(
+        &self,
+    ) -> Option<(smithay::reexports::wayland_server::backend::ObjectId, bool)> {
+        use smithay::desktop::find_popup_root_surface;
+        use smithay::wayland::compositor::get_parent;
+
+        let (PointerFocusTarget::WlSurface(surface), _) =
+            self.surface_under(self.pointer.current_location())?
+        else {
+            return None;
+        };
+        let mut root = surface;
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        let (root, is_popup) = match self.popups.find_popup(&root) {
+            Some(popup) => (find_popup_root_surface(&popup).ok()?, true),
+            None => (root, false),
+        };
+        let id = root.id();
+        self.layer_surfaces
+            .get(&id)
+            .filter(|s| matches!(s.wlr_layer(), WlrLayer::Top | WlrLayer::Overlay))
+            .map(|_| (id, is_popup))
     }
 
     pub fn surface_under(

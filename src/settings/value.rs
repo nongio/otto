@@ -81,6 +81,25 @@ impl SettingValue {
         }
     }
 
+    /// Whether `stored` is this value as the configuration was able to keep
+    /// it.
+    ///
+    /// Every type but one keeps a value exactly, and for those this is
+    /// equality. A double does not: the fields behind them are `f32` — an
+    /// animation duration, a resize step, a magnification — so 0.02 comes
+    /// back as 0.019999999552965164, and asking for equality would call every
+    /// slider a write that did not take. The question worth asking is whether
+    /// the value survived the storage it was given, so the comparison is made
+    /// at the precision that storage has.
+    pub fn kept_as(&self, stored: &SettingValue) -> bool {
+        match (self, stored) {
+            (SettingValue::Double(wanted), SettingValue::Double(stored)) => {
+                *wanted as f32 == *stored as f32
+            }
+            (wanted, stored) => wanted == stored,
+        }
+    }
+
     pub fn to_toml(&self) -> toml::Value {
         match self {
             SettingValue::Bool(flag) => toml::Value::Boolean(*flag),

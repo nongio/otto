@@ -64,6 +64,7 @@ dock-quit = Zakończ
 settings-pane-general = Ogólne
 settings-pane-displays = Ekrany
 settings-pane-dock = Dock
+settings-pane-tiling = Kafelki
 settings-pane-keyboard = Klawiatura
 settings-pane-pointing = Gładzik i mysz
 settings-pane-sound = Dźwięk
@@ -160,6 +161,23 @@ settings-dock-tint-icons = Zabarwiaj ikony
 settings-switcher-colorize-icons = Zabarwiaj przełącznik
 settings-dock-icon-tint = Zabarwienie ikon
 settings-dock-icon-tint-strength = Siła zabarwienia ikon
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Kafelkowe biurko wypełnia ekran swoimi oknami, jedno obok drugiego. To są wartości domyślne; każde biurko może zmienić własne odstępy.
+settings-tiling-decoration = Dekoracja okien kafelkowych
+settings-group-tiling-gaps = Odstępy
+settings-tiling-inner-gap = Między oknami
+settings-tiling-outer-gap = Wokół okien
+settings-tiling-smart-gaps = Bez odstępów przy jednym oknie
+settings-group-tiling-keyboard = Klawiatura
+settings-tiling-resize-step = Krok zmiany rozmiaru
+settings-group-tiling-animation = Animacja
+settings-tiling-layout-duration = Zmiana układu
+settings-tiling-layout-bounce = Odbicie układu
+settings-tiling-mode-duration = Włączanie kafelkowania
+settings-tiling-mode-bounce = Odbicie kafelkowania
 
 
 ## Settings — Keyboard
@@ -732,6 +750,26 @@ schema-gtk-theme-label = Motyw GTK
 schema-gtk-theme-description = Nazwa motywu GTK przekazywana klientom. Puste wykrywa automatycznie.
 schema-locales-label = Ustawienia regionalne
 schema-locales-description = Preferowane ustawienia regionalne, w kolejności preferencji.
+
+# --- tiling ---
+schema-tiling-decoration-label = Dekoracja okien kafelkowych
+schema-tiling-decoration-description = Ile dekoracji zachowuje okno w układzie kafelkowym: pasek o wysokości jednego wiersza tekstu, z tytułem i przyciskiem zamykania, albo żaden pasek, a aktywne okno oznaczone cienką ramką.
+schema-tiling-inner-gap-label = Odstęp między oknami
+schema-tiling-inner-gap-description = Piksele logiczne pozostawione między dwoma sąsiednimi oknami.
+schema-tiling-outer-gap-label = Odstęp wokół okien
+schema-tiling-outer-gap-description = Piksele logiczne pozostawione między oknami a krawędzią ekranu.
+schema-tiling-smart-gaps-label = Bez odstępów przy jednym oknie
+schema-tiling-smart-gaps-description = Biurko z jednym oknem nie zostawia żadnych odstępów, aby pojedyncze okno nie wyglądało na bez powodu wsunięte.
+schema-tiling-resize-step-label = Krok zmiany rozmiaru
+schema-tiling-resize-step-description = O ile zmienia się kontener przy jednym kroku zmiany rozmiaru z klawiatury, jako ułamek jego szerokości lub wysokości.
+schema-tiling-layout-duration-label = Animacja układu
+schema-tiling-layout-duration-description = Sekundy trwania zmiany układu: okno dołącza do drzewa lub je opuszcza, przeniesienie, zamiana, wyrównanie. Zero przełącza natychmiast.
+schema-tiling-layout-bounce-label = Odbicie układu
+schema-tiling-layout-bounce-description = Jak daleko zmiana układu wychodzi poza cel, zanim się ustali. Zero ustala się bez wychylenia.
+schema-tiling-mode-duration-label = Animacja kafelkowania
+schema-tiling-mode-duration-description = Sekundy, jakich potrzebuje biurko na przebudowę, gdy kafelkowanie zostaje włączone lub wyłączone i każde okno leci na swoje miejsce. Zero przełącza natychmiast.
+schema-tiling-mode-bounce-label = Odbicie kafelkowania
+schema-tiling-mode-bounce-description = Jak daleko ta przebudowa wychodzi poza cel, zanim się ustali.
 
 # --- dock ---
 schema-dock-size-label = Rozmiar

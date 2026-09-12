@@ -165,6 +165,30 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                 KeyAction::MediaStop => {
                     self.handle_media_stop();
                 }
+                KeyAction::TilingToggle => {
+                    self.handle_tiling_toggle();
+                }
+                KeyAction::TilingFocus(dir) => {
+                    self.handle_tiling_focus(dir);
+                }
+                KeyAction::TilingMove(dir) => {
+                    self.handle_tiling_move(dir);
+                }
+                KeyAction::TilingSplit(axis) => {
+                    self.handle_tiling_split(axis);
+                }
+                KeyAction::TilingResize(axis, grow) => {
+                    self.handle_tiling_resize(axis, grow);
+                }
+                KeyAction::TilingEqualize => {
+                    self.handle_tiling_equalize();
+                }
+                KeyAction::TilingFloatingToggle => {
+                    let _ = self.handle_tiling_floating(None);
+                }
+                KeyAction::TilingFocusModeToggle => {
+                    let _ = self.handle_tiling_focus_mode(None);
+                }
 
                 action => match action {
                     KeyAction::None
@@ -416,6 +440,30 @@ impl Otto<UdevData> {
                 KeyAction::MediaStop => {
                     self.handle_media_stop();
                 }
+                KeyAction::TilingToggle => {
+                    self.handle_tiling_toggle();
+                }
+                KeyAction::TilingFocus(dir) => {
+                    self.handle_tiling_focus(dir);
+                }
+                KeyAction::TilingMove(dir) => {
+                    self.handle_tiling_move(dir);
+                }
+                KeyAction::TilingSplit(axis) => {
+                    self.handle_tiling_split(axis);
+                }
+                KeyAction::TilingResize(axis, grow) => {
+                    self.handle_tiling_resize(axis, grow);
+                }
+                KeyAction::TilingEqualize => {
+                    self.handle_tiling_equalize();
+                }
+                KeyAction::TilingFloatingToggle => {
+                    let _ = self.handle_tiling_floating(None);
+                }
+                KeyAction::TilingFocusModeToggle => {
+                    let _ = self.handle_tiling_focus_mode(None);
+                }
                 action => match action {
                     KeyAction::None
                     | KeyAction::Quit
@@ -426,7 +474,10 @@ impl Otto<UdevData> {
                     | KeyAction::LockSession
                     | KeyAction::PowerButton => self.process_common_key_action(action),
 
-                    _ => unreachable!(),
+                    // A bound action this dispatcher has no arm for must not
+                    // take the session down with it: every builtin lands
+                    // here first on the udev backend.
+                    _ => tracing::warn!(?action, "Key action unsupported on this backend."),
                 },
             },
             InputEvent::PointerMotion { event, .. } => self.on_pointer_move::<B>(dh, event),

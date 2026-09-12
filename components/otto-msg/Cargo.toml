@@ -1,0 +1,19 @@
+[package]
+name = "otto-msg"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Drive the Otto compositor from a script, the way i3-msg and swaymsg do."
+
+[[bin]]
+name = "otto-msg"
+path = "src/main.rs"
+
+[dependencies]
+zbus = "4"
+serde_json = "1"
+
+[lints]
+workspace = true

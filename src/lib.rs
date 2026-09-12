@@ -38,6 +38,7 @@ pub mod screenshare;
 pub mod settings;
 pub mod settings_service;
 pub mod shell;
+pub mod shell_service;
 pub mod skia_renderer;
 pub mod state;
 pub mod surface_config_cache;
@@ -97,6 +98,13 @@ pub fn export_window_controls_side() -> String {
         otto_kit::controls_side::ControlsSide::parse(&c.window_controls_side).unwrap_or_default()
     });
     otto_kit::controls_side::export(side)
+}
+
+/// Publish `[tiling] decoration` the same way: an otto-kit application that
+/// is tiled draws its own compact bar, or none at all, and only the compositor
+/// reads the configuration file.
+pub fn export_tiling_decoration() -> String {
+    otto_kit::tile_decoration::export(config::Config::with(|c| c.tiling.decoration()))
 }
 
 /// Publish `show_maximize_button` the same way: the zoom dot is drawn by every

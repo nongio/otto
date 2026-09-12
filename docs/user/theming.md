@@ -79,7 +79,9 @@ The translucent, blurred material behind the dock, the top bar, the launcher,
 the app switcher, the exposé labels, the OSD and the selectors. Set it to
 `false` and the same surfaces are drawn nearly opaque instead, and Otto
 stops blurring the desktop for them — which also saves the work of
-keeping those blurs fresh under a playing video. It takes effect immediately,
+keeping those blurs fresh under a playing video. Menus are the most solid,
+since they open over whatever is on screen. The dock and the top bar let a
+little more of the wallpaper through, since nothing else passes under them. It takes effect immediately,
 by the same route as the corners: Otto repaints its own chrome, and the bar
 and the launcher are told through the portal's `org.otto.desktop frosting`.
 

@@ -86,6 +86,28 @@ fires.
 Clearing the name puts the default `Workspace N` back. Names are saved to your
 config file and come back on the next start, per monitor.
 
+The name is written into that workspace's own record, keyed by monitor and
+position, alongside anything else you have set on it — whether it tiles, and
+its gap override if you gave it one:
+
+```toml
+[workspaces.entries."eDP-1:0"]
+name = "Mail"
+tiling = true
+inner_gap = 0
+outer_gap = 0
+```
+
+Every field is optional; a workspace you have not touched has no record at
+all. Positions count from 0, and they shift when you add, remove or drag a
+workspace — Otto rewrites the records to match, so a name follows its
+workspace along the strip.
+
+Configs written by an older Otto kept names in a `names` table and gaps in a
+`[workspaces.gaps]` table instead. Both are still read and folded into the
+records above; Otto drops them from the file the next time it writes this
+section.
+
 ## Moving windows between workspaces
 
 Open exposé, then **drag a window preview onto a workspace thumbnail** in the

@@ -251,6 +251,86 @@ mod headless_tests {
         handle.stop();
     }
 
+    /// otto-bar takes the keyboard while one of its menus is open and gives
+    /// it back when the menu closes. The grant therefore has to fire on every
+    /// switch into `Exclusive`, not once per surface — otherwise the second
+    /// menu never receives a key. And a press away from the bar has to take
+    /// the keyboard off it: that `wl_keyboard.leave` is what closes the menu.
+    #[test]
+    #[serial]
+    fn a_top_panel_is_given_the_keyboard_every_time_it_asks() {
+        use otto_kit::testing::{KeyboardInteractivity, Layer};
+
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let panel = client.create_layer_surface(
+            "test-bar",
+            Layer::Top,
+            200,
+            30,
+            KeyboardInteractivity::Exclusive,
+        );
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        assert!(
+            panel.lock().unwrap().configured,
+            "the panel was never configured"
+        );
+        assert_eq!(
+            handle.focused_layer_namespace().as_deref(),
+            Some("test-bar"),
+            "an exclusive top panel takes the keyboard as it maps"
+        );
+
+        // The menu closes: the bar releases the keyboard, and a window takes
+        // it, as it would when the user clicks back into their work.
+        panel
+            .lock()
+            .unwrap()
+            .set_keyboard_interactivity(KeyboardInteractivity::None);
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(200));
+
+        let _window = client.create_toplevel("some-window", 300, 200);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        handle.focus_window("some-window");
+        handle.wait(Duration::from_millis(100));
+        assert_eq!(
+            handle.focused_layer_namespace(),
+            None,
+            "the window holds the keyboard once the menu has closed"
+        );
+
+        // A second menu opens: the bar asks for the keyboard again and must
+        // be given it again.
+        panel
+            .lock()
+            .unwrap()
+            .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(200));
+        assert_eq!(
+            handle.focused_layer_namespace().as_deref(),
+            Some("test-bar"),
+            "the grant must fire on every switch into Exclusive, not once per surface"
+        );
+
+        // Clicking away from the bar hands the keyboard back to the
+        // workspace, so the bar learns the user has moved on.
+        handle.pointer_move(900.0, 700.0);
+        handle.pointer_click();
+        handle.wait(Duration::from_millis(200));
+        assert_eq!(
+            handle.focused_layer_namespace(),
+            None,
+            "a press away from the panel must take the keyboard off it"
+        );
+
+        handle.stop();
+    }
+
     // ── Layer visibility ─────────────────────────────────────────────────
 
     #[test]
@@ -951,6 +1031,61 @@ mod headless_tests {
             top_after.first().map(String::as_str),
             Some("bottom-window"),
             "After raising bottom-window, it should be the scanout candidate"
+        );
+
+        handle.stop();
+    }
+
+    /// A subsurface drawn past its window — Files' Quick View, centred on the
+    /// display — is composited into the windows plane, so the window it hangs
+    /// over must not be promoted: its plane would cover the panel.
+    #[test]
+    #[serial]
+    fn subsurface_past_its_window_keeps_the_window_below_off_a_plane() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _below = client.create_toplevel("below-window", 300, 200);
+        let top = client.create_toplevel("overhang-window", 300, 200);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        // Side by side, like two tiles.
+        handle.move_window("below-window", 400, 100);
+        handle.move_window("overhang-window", 50, 100);
+        settle_animations(&handle);
+
+        assert_eq!(
+            scanout_candidate_titles(&handle),
+            vec!["overhang-window".to_string(), "below-window".to_string()],
+            "two windows that do not overlap both go to planes"
+        );
+
+        // Entirely outside its own window, so the top window stays eligible,
+        // and reaching across the gap into the window below.
+        // The window declares its geometry, as Files does — without it the
+        // geometry would be the whole surface tree, subsurface included.
+        let (parent, xdg_surface) = {
+            let top = top.lock().unwrap();
+            (top.surface.clone(), top.xdg_surface.clone().unwrap())
+        };
+        xdg_surface.set_window_geometry(0, 0, 300, 200);
+        let _panel = client.create_subsurface(&parent, 320, 40, 200, 120);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        // The geometry change re-places the window; put both back.
+        handle.move_window("below-window", 400, 100);
+        handle.move_window("overhang-window", 50, 100);
+        settle_animations(&handle);
+        assert_eq!(
+            handle.window_logical_geometry("overhang-window"),
+            Some((50, 100, 300, 200)),
+            "the windows must still sit side by side, not overlapping"
+        );
+
+        assert_eq!(
+            scanout_candidate_titles(&handle),
+            vec!["overhang-window".to_string()],
+            "the window under the overhanging subsurface must stay composited"
         );
 
         handle.stop();

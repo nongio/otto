@@ -29,7 +29,7 @@ use wayland_client::{
     protocol::{
         wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager,
         wl_data_offer, wl_data_source, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat,
-        wl_shm, wl_shm_pool, wl_surface,
+        wl_shm, wl_shm_pool, wl_subcompositor, wl_subsurface, wl_surface,
     },
     Connection, Dispatch, EventQueue, QueueHandle,
 };
@@ -48,11 +48,19 @@ use crate::protocols::{otto_surface_style_manager_v1, otto_surface_style_v1};
 use wayland_protocols::ext::background_effect::v1::client::{
     ext_background_effect_manager_v1, ext_background_effect_surface_v1,
 };
+pub use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
+pub use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity;
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 /// Shared state for the test client's Wayland event dispatching.
 #[derive(Debug)]
 pub struct TestClientState {
     pub wl_compositor: Option<wl_compositor::WlCompositor>,
+    pub wl_subcompositor: Option<wl_subcompositor::WlSubcompositor>,
+    pub zwlr_layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    /// Every layer surface this client has created, so a configure can be
+    /// routed back to the one it belongs to.
+    pub layer_surfaces: Vec<Arc<Mutex<TestLayerSurface>>>,
     pub wl_shm: Option<wl_shm::WlShm>,
     pub wl_seat: Option<wl_seat::WlSeat>,
     pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
@@ -104,6 +112,9 @@ impl TestClientState {
     fn new() -> Self {
         Self {
             wl_compositor: None,
+            wl_subcompositor: None,
+            zwlr_layer_shell: None,
+            layer_surfaces: Vec::new(),
             wl_shm: None,
             wl_seat: None,
             xdg_wm_base: None,
@@ -458,7 +469,25 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, None, width, height, false)
+        self.create_toplevel_inner(title, None, width, height, false, None)
+    }
+
+    /// Create a toplevel that is a child of `parent` — a dialog, in
+    /// xdg-shell's terms. A compositor floats one rather than tiling it.
+    pub fn create_child_toplevel(
+        &mut self,
+        title: &str,
+        parent: &Arc<Mutex<TestToplevel>>,
+        width: u32,
+        height: u32,
+    ) -> Arc<Mutex<TestToplevel>> {
+        let parent_toplevel = parent
+            .lock()
+            .unwrap()
+            .toplevel
+            .clone()
+            .expect("the parent has an xdg_toplevel");
+        self.create_toplevel_inner(title, None, width, height, false, Some(&parent_toplevel))
     }
 
     /// Create a toplevel that also announces an `app_id`, the way a real
@@ -472,7 +501,7 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, Some(app_id), width, height, false)
+        self.create_toplevel_inner(title, Some(app_id), width, height, false, None)
     }
 
     /// Create a toplevel that asks to be maximized before its first commit,
@@ -484,7 +513,7 @@ impl TestClient {
         width: u32,
         height: u32,
     ) -> Arc<Mutex<TestToplevel>> {
-        self.create_toplevel_inner(title, None, width, height, true)
+        self.create_toplevel_inner(title, None, width, height, true, None)
     }
 
     fn create_toplevel_inner(
@@ -494,6 +523,7 @@ impl TestClient {
         width: u32,
         height: u32,
         maximized: bool,
+        parent: Option<&xdg_toplevel::XdgToplevel>,
     ) -> Arc<Mutex<TestToplevel>> {
         let surface = self.create_surface();
 
@@ -513,12 +543,19 @@ impl TestClient {
             surface: surface.clone(),
             buffer: None,
             xdg_surface: None,
+            toplevel: None,
         }));
 
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, toplevel_state.clone());
         toplevel_state.lock().unwrap().xdg_surface = Some(xdg_surface.clone());
         let toplevel = xdg_surface.get_toplevel(&self.qh, toplevel_state.clone());
+        toplevel_state.lock().unwrap().toplevel = Some(toplevel.clone());
         toplevel.set_title(title.to_string());
+        // Before the first commit, so the window is already a dialog when the
+        // compositor maps it and decides where it goes.
+        if let Some(parent) = parent {
+            toplevel.set_parent(Some(parent));
+        }
         if let Some(app_id) = app_id {
             toplevel.set_app_id(app_id.to_string());
         }
@@ -546,6 +583,104 @@ impl TestClient {
         surface.commit();
 
         toplevel_state
+    }
+
+    /// Hang a subsurface with a `width`x`height` SHM buffer off `parent`, at
+    /// `x`/`y` in the parent's surface-local coordinates — which may lie
+    /// outside the parent, the way Files' Quick View panel does.
+    ///
+    /// Commits the parent too, since that is what applies a subsurface's
+    /// position and first buffer. Returns the objects for the caller to keep
+    /// alive.
+    pub fn create_subsurface(
+        &mut self,
+        parent: &wl_surface::WlSurface,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> (
+        wl_surface::WlSurface,
+        wl_subsurface::WlSubsurface,
+        ShmBuffer,
+    ) {
+        let subcompositor = self
+            .state
+            .wl_subcompositor
+            .clone()
+            .expect("wl_subcompositor not bound");
+        let shm = self.state.wl_shm.clone().expect("wl_shm not bound");
+
+        let surface = self.create_surface();
+        let subsurface = subcompositor.get_subsurface(&surface, parent, &self.qh, ());
+        subsurface.set_position(x, y);
+
+        let buffer = ShmBuffer::new(&shm, &self.qh, width, height);
+        surface.attach(Some(buffer.buffer()), 0, 0);
+        surface.damage(0, 0, width as i32, height as i32);
+        surface.commit();
+        parent.commit();
+        let _ = self.roundtrip();
+
+        (surface, subsurface, buffer)
+    }
+
+    /// Bring up a layer-shell surface — a panel, the way otto-bar does — with
+    /// a `width`x`height` SHM buffer, anchored to the top-left of the output
+    /// the compositor picks for it.
+    ///
+    /// Returns once the surface is mapped: configured, acked and committed
+    /// with a buffer.
+    pub fn create_layer_surface(
+        &mut self,
+        namespace: &str,
+        layer: Layer,
+        width: u32,
+        height: u32,
+        interactivity: KeyboardInteractivity,
+    ) -> Arc<Mutex<TestLayerSurface>> {
+        let shell = self
+            .state
+            .zwlr_layer_shell
+            .clone()
+            .expect("zwlr_layer_shell_v1 not bound");
+        let surface = self.create_surface();
+        let layer_surface =
+            shell.get_layer_surface(&surface, None, layer, namespace.to_string(), &self.qh, ());
+        layer_surface.set_size(width, height);
+        layer_surface
+            .set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
+        layer_surface.set_exclusive_zone(0);
+        layer_surface.set_keyboard_interactivity(interactivity);
+
+        let state = Arc::new(Mutex::new(TestLayerSurface {
+            configured: false,
+            width: width as i32,
+            height: height as i32,
+            closed: false,
+            surface: surface.clone(),
+            layer_surface: layer_surface.clone(),
+            buffer: None,
+        }));
+        self.state.layer_surfaces.push(state.clone());
+
+        // Commit to trigger the initial configure, ack it on the roundtrip,
+        // then attach a buffer and commit again to map the surface.
+        surface.commit();
+        let _ = self.roundtrip();
+
+        let buffer = ShmBuffer::new(
+            self.state.wl_shm.as_ref().expect("wl_shm not bound"),
+            &self.qh,
+            width,
+            height,
+        );
+        surface.attach(Some(buffer.buffer()), 0, 0);
+        state.lock().unwrap().buffer = Some(buffer.buffer().clone());
+        surface.commit();
+        let _ = self.roundtrip();
+
+        state
     }
 
     /// Create an XDG popup anchored to `parent`, the way a client puts up a
@@ -654,6 +789,35 @@ impl TestClient {
     }
 }
 
+/// Tracks the state of a test layer-shell surface.
+#[derive(Debug)]
+pub struct TestLayerSurface {
+    pub configured: bool,
+    pub width: i32,
+    pub height: i32,
+    /// The compositor closed the surface.
+    pub closed: bool,
+    pub surface: wl_surface::WlSurface,
+    pub layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    pub buffer: Option<wl_buffer::WlBuffer>,
+}
+
+impl TestLayerSurface {
+    /// Ask for a different keyboard interactivity and commit, the way a panel
+    /// takes the keyboard while a menu is open and releases it afterwards.
+    pub fn set_keyboard_interactivity(&self, interactivity: KeyboardInteractivity) {
+        self.layer_surface.set_keyboard_interactivity(interactivity);
+        self.commit_frame();
+    }
+
+    /// Re-attach the buffer, damage the whole surface and commit.
+    pub fn commit_frame(&self) {
+        self.surface.attach(self.buffer.as_ref(), 0, 0);
+        self.surface.damage(0, 0, self.width, self.height);
+        self.surface.commit();
+    }
+}
+
 /// Tracks the state of a test XDG popup.
 #[derive(Debug)]
 pub struct TestPopup {
@@ -694,6 +858,9 @@ pub struct TestToplevel {
     pub buffer: Option<wl_buffer::WlBuffer>,
     /// The toplevel's xdg_surface, so tests can hang popups off it.
     pub xdg_surface: Option<xdg_surface::XdgSurface>,
+    /// The `xdg_toplevel` itself, so a test can make another window its
+    /// child — a dialog, which a tiling workspace floats rather than tiles.
+    pub toplevel: Option<xdg_toplevel::XdgToplevel>,
 }
 
 impl TestToplevel {
@@ -771,6 +938,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.wl_compositor = Some(registry.bind(name, version.min(6), qh, ()));
+                }
+                "wl_subcompositor" => {
+                    state.wl_subcompositor = Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "zwlr_layer_shell_v1" => {
+                    state.zwlr_layer_shell = Some(registry.bind(name, version.min(4), qh, ()));
                 }
                 "wl_shm" => {
                     state.wl_shm = Some(registry.bind(name, version.min(1), qh, ()));
@@ -1064,6 +1237,83 @@ impl Dispatch<wl_surface::WlSurface, ()> for TestClientState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl Dispatch<wl_subcompositor::WlSubcompositor, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_subcompositor::WlSubcompositor,
+        _event: wl_subcompositor::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_subsurface::WlSubsurface, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_subsurface::WlSubsurface,
+        _event: wl_subsurface::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _event: zwlr_layer_shell_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for TestClientState {
+    fn event(
+        state: &mut Self,
+        proxy: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let Some(entry) = state
+            .layer_surfaces
+            .iter()
+            .find(|s| s.lock().unwrap().layer_surface == *proxy)
+            .cloned()
+        else {
+            return;
+        };
+        match event {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                proxy.ack_configure(serial);
+                let mut entry = entry.lock().unwrap();
+                entry.configured = true;
+                if width > 0 {
+                    entry.width = width as i32;
+                }
+                if height > 0 {
+                    entry.height = height as i32;
+                }
+            }
+            zwlr_layer_surface_v1::Event::Closed => {
+                entry.lock().unwrap().closed = true;
+            }
+            _ => {}
+        }
     }
 }
 

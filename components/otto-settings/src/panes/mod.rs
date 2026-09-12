@@ -11,3 +11,4 @@ pub mod lock_and_login;
 pub mod pointing;
 pub mod power;
 pub mod sound;
+pub mod tiling;

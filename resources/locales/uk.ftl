@@ -65,6 +65,7 @@ dock-quit = Завершити
 settings-pane-general = Загальні
 settings-pane-displays = Дисплеї
 settings-pane-dock = Dock
+settings-pane-tiling = Мозаїка
 settings-pane-keyboard = Клавіатура
 settings-pane-pointing = Трекпад і миша
 settings-pane-sound = Звук
@@ -161,6 +162,23 @@ settings-dock-tint-icons = Тонувати піктограми
 settings-switcher-colorize-icons = Тонувати перемикач
 settings-dock-icon-tint = Колір тонування піктограм
 settings-dock-icon-tint-strength = Сила тонування піктограм
+
+
+## Settings — Tiling
+
+settings-tiling-intro = Мозаїчний робочий простір заповнює екран своїми вікнами, поруч одне з одним. Це типові значення; окремий робочий простір може задати власні відступи.
+settings-tiling-decoration = Оформлення мозаїчних вікон
+settings-group-tiling-gaps = Відступи
+settings-tiling-inner-gap = Між вікнами
+settings-tiling-outer-gap = Навколо вікон
+settings-tiling-smart-gaps = Без відступів для одного вікна
+settings-group-tiling-keyboard = Клавіатура
+settings-tiling-resize-step = Крок зміни розміру
+settings-group-tiling-animation = Анімація
+settings-tiling-layout-duration = Зміна розташування
+settings-tiling-layout-bounce = Відскок розташування
+settings-tiling-mode-duration = Перехід у мозаїку
+settings-tiling-mode-bounce = Відскок мозаїки
 
 
 ## Settings — Keyboard
@@ -720,6 +738,26 @@ schema-gtk-theme-label = Тема GTK
 schema-gtk-theme-description = Назва теми GTK, яку передають клієнтам. Порожньо — визначається автоматично.
 schema-locales-label = Локалі
 schema-locales-description = Бажані локалі, у порядку спадання пріоритету.
+
+# --- tiling ---
+schema-tiling-decoration-label = Оформлення мозаїчних вікон
+schema-tiling-decoration-description = Скільки оформлення зберігає вікно при мозаїчному розміщенні: смуга заввишки в один рядок тексту, із заголовком і кнопкою закриття, або жодної смуги, а активне вікно позначене тонкою рамкою.
+schema-tiling-inner-gap-label = Відступ між вікнами
+schema-tiling-inner-gap-description = Логічні пікселі між двома сусідніми вікнами.
+schema-tiling-outer-gap-label = Відступ навколо вікон
+schema-tiling-outer-gap-description = Логічні пікселі між вікнами та краєм екрана.
+schema-tiling-smart-gaps-label = Без відступів для одного вікна
+schema-tiling-smart-gaps-description = Робочий простір з єдиним вікном не залишає відступів, щоб одне вікно не виглядало без причини вдавленим.
+schema-tiling-resize-step-label = Крок зміни розміру
+schema-tiling-resize-step-description = Наскільки змінюється контейнер за один крок з клавіатури — часткою його ширини або висоти.
+schema-tiling-layout-duration-label = Анімація розташування
+schema-tiling-layout-duration-description = Секунди, які триває зміна розташування: вікно входить у дерево або залишає його, переміщення, обмін, вирівнювання. Нуль перемикає одразу.
+schema-tiling-layout-bounce-label = Відскок розташування
+schema-tiling-layout-bounce-description = Наскільки зміна розташування проскакує ціль, перш ніж зупинитися. Нуль зупиняється без відскоку.
+schema-tiling-mode-duration-label = Анімація мозаїки
+schema-tiling-mode-duration-description = Секунди, за які робочий простір перебудовується при вмиканні або вимиканні мозаїки, коли кожне вікно летить на своє місце. Нуль перемикає одразу.
+schema-tiling-mode-bounce-label = Відскок мозаїки
+schema-tiling-mode-bounce-description = Наскільки ця перебудова проскакує ціль, перш ніж зупинитися.
 
 # --- dock ---
 schema-dock-size-label = Розмір

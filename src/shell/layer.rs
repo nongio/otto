@@ -34,13 +34,13 @@ pub struct LayerShellSurface {
     last_configure_serial: AtomicU32,
     /// Computed geometry after layout (position + size in output coordinates)
     geometry: Rectangle<i32, Logical>,
-    /// Whether an exclusive-keyboard surface has already been given focus once
-    /// on map. A modal panel — the launcher, the emoji picker — asks for
+    /// The keyboard interactivity as last seen on a commit. A panel — the
+    /// launcher, the emoji picker, otto-bar with a menu open — asks for
     /// exclusive interactivity because it wants the keyboard the moment it
-    /// appears, not on the next keystroke; this makes that a one-time grant so
-    /// a later commit cannot steal focus back from a window the panel handed
-    /// off to.
-    initial_focus_granted: std::cell::Cell<bool>,
+    /// appears, not on the next keystroke. The grant fires on
+    /// the transition *into* `Exclusive`, so a panel that toggles it on and
+    /// off (otto-bar, around each menu) is handed the keyboard every time.
+    observed_interactivity: std::cell::Cell<KeyboardInteractivity>,
 }
 
 impl LayerShellSurface {
@@ -60,14 +60,25 @@ impl LayerShellSurface {
             namespace,
             last_configure_serial: AtomicU32::new(0),
             geometry: Rectangle::default(),
-            initial_focus_granted: std::cell::Cell::new(false),
+            observed_interactivity: std::cell::Cell::new(KeyboardInteractivity::None),
         }
     }
 
-    /// Take the one-time "give me the keyboard on map" grant, returning whether
-    /// it is still owed. `false` on every call after the first.
-    pub fn take_initial_focus_grant(&self) -> bool {
-        !self.initial_focus_granted.replace(true)
+    /// Record a committed interactivity that is not `Exclusive`, re-arming
+    /// the grant for the next switch back.
+    pub fn note_keyboard_interactivity(&self, interactivity: KeyboardInteractivity) {
+        self.observed_interactivity.set(interactivity);
+    }
+
+    /// Take the "give me the keyboard" grant for a surface committed as
+    /// `Exclusive`, returning whether it is owed: `true` on the first
+    /// exclusive commit after a non-exclusive one, `false` while it stays
+    /// exclusive — a repaint must not steal focus back from a window the
+    /// panel handed off to.
+    pub fn take_exclusive_focus_grant(&self) -> bool {
+        self.observed_interactivity
+            .replace(KeyboardInteractivity::Exclusive)
+            != KeyboardInteractivity::Exclusive
     }
 
     /// Get the underlying Smithay LayerSurface

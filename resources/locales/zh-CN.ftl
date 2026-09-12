@@ -64,6 +64,7 @@ dock-quit = 退出
 settings-pane-general = 通用
 settings-pane-displays = 显示器
 settings-pane-dock = Dock
+settings-pane-tiling = 平铺
 settings-pane-keyboard = 键盘
 settings-pane-pointing = 触控板与鼠标
 settings-pane-sound = 声音
@@ -157,6 +158,23 @@ settings-dock-tint-icons = 图标着色
 settings-switcher-colorize-icons = 切换器图标着色
 settings-dock-icon-tint = 图标色调
 settings-dock-icon-tint-strength = 图标色调强度
+
+
+## Settings — Tiling
+
+settings-tiling-intro = 平铺的桌面让窗口并排铺满屏幕。以下是默认值；每个桌面都可以覆盖自己的间距。
+settings-tiling-decoration = 平铺窗口装饰
+settings-group-tiling-gaps = 间距
+settings-tiling-inner-gap = 窗口之间
+settings-tiling-outer-gap = 窗口四周
+settings-tiling-smart-gaps = 只有一个窗口时不留间距
+settings-group-tiling-keyboard = 键盘
+settings-tiling-resize-step = 调整步长
+settings-group-tiling-animation = 动画
+settings-tiling-layout-duration = 布局变化
+settings-tiling-layout-bounce = 布局回弹
+settings-tiling-mode-duration = 进入平铺模式
+settings-tiling-mode-bounce = 平铺模式回弹
 
 
 ## Settings — Keyboard
@@ -678,6 +696,26 @@ schema-gtk-theme-label = GTK 主题
 schema-gtk-theme-description = 交给客户端的 GTK 主题名称。留空则自动检测。
 schema-locales-label = 语言环境
 schema-locales-description = 首选的语言环境，最优先的在前。
+
+# --- tiling ---
+schema-tiling-decoration-label = 平铺窗口装饰
+schema-tiling-decoration-description = 窗口平铺时保留多少装饰：一条与文字行等高、带标题和关闭按钮的横栏，或完全不带横栏，此时以细线边框标记当前活动的平铺窗口。
+schema-tiling-inner-gap-label = 窗口之间的间距
+schema-tiling-inner-gap-description = 两个相邻窗口之间留出的逻辑像素。
+schema-tiling-outer-gap-label = 窗口四周的间距
+schema-tiling-outer-gap-description = 窗口与屏幕边缘之间留出的逻辑像素。
+schema-tiling-smart-gaps-label = 只有一个窗口时不留间距
+schema-tiling-smart-gaps-description = 桌面上只有一个窗口时完全不留间距，以免单个窗口无端显得内缩。
+schema-tiling-resize-step-label = 调整步长
+schema-tiling-resize-step-description = 键盘每调整一步，容器改变多少，以其宽度或高度的比例计。
+schema-tiling-layout-duration-label = 布局动画
+schema-tiling-layout-duration-description = 一次布局变化所需的秒数：窗口加入或离开树、移动、交换、均分。为零则直接就位。
+schema-tiling-layout-bounce-label = 布局回弹
+schema-tiling-layout-bounce-description = 布局变化在停稳前越过目标的幅度。为零则不越过直接停稳。
+schema-tiling-mode-duration-label = 平铺模式动画
+schema-tiling-mode-duration-description = 开启或关闭平铺、每个窗口飞向各自格子时，桌面重新排布所需的秒数。为零则直接就位。
+schema-tiling-mode-bounce-label = 平铺模式回弹
+schema-tiling-mode-bounce-description = 这次重新排布在停稳前越过目标的幅度。
 
 # --- dock ---
 schema-dock-size-label = 大小

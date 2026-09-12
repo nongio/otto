@@ -36,6 +36,7 @@ mod dnd_view;
 mod dock;
 mod osd;
 mod popup_overlay;
+pub mod tiling;
 mod tiling_overlay;
 pub mod trash;
 pub mod workspace;
@@ -189,6 +190,19 @@ pub struct SuspendedOutput {
     /// The output's `wl_output`. Dropping this is what withdraws the global,
     /// so it is held here for as long as the output may come back.
     pub global: Option<GlobalId>,
+}
+
+/// Every window unmapped so far, weakly — see [`zombie_windows`].
+static UNMAPPED_WINDOWS: std::sync::Mutex<Vec<std::sync::Weak<crate::shell::WindowElementInner>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// How many unmapped windows something still holds on to. A closed window
+/// that stays referenced keeps its surface, and with it every buffer the
+/// client ever attached; `debug-hooks` only.
+pub fn zombie_windows() -> usize {
+    let mut list = UNMAPPED_WINDOWS.lock().unwrap();
+    list.retain(|w| w.strong_count() > 0);
+    list.len()
 }
 
 pub struct Workspaces {
@@ -349,20 +363,53 @@ pub type RemoveWorkspaceChannel =
 pub type RenameWorkspaceChannel =
     smithay::reexports::calloop::channel::Channel<(String, usize, String)>;
 
-/// The user-chosen name saved for workspace `position` on `output`, if any.
+/// What was persisted for workspace `position` on `output`, if anything.
 ///
-/// Names are keyed by position rather than by workspace identity: indices are
-/// handed out by a counter that never repeats across restarts, so position is
-/// the only thing that survives. Adding or removing a workspace shifts the
-/// positions after it, and the names shift with them — the same trade-off every
-/// position-keyed workspace name has.
-fn persisted_workspace_name(output: &str, position: usize) -> Option<String> {
+/// Records are keyed by position rather than by workspace identity: indices
+/// are handed out by a counter that never repeats across restarts, so position
+/// is the only thing that survives. Adding or removing a workspace shifts the
+/// positions after it, and the records shift with them — the same trade-off
+/// every position-keyed workspace name has.
+fn persisted_workspace_entry(
+    output: &str,
+    position: usize,
+) -> Option<crate::config::WorkspaceEntry> {
     Config::with(|c| {
         c.workspaces
-            .names
+            .entries
             .get(&crate::config::workspace_name_key(output, position))
             .cloned()
     })
+}
+
+/// Restore what was saved for the workspace now sitting at `position` on
+/// `output`: the name the user typed, whether it tiles, and its gap override.
+///
+/// Called from the three workspace-creation sites, before any window is
+/// mapped, so turning tiling on here is the whole of it: there is nothing in
+/// the tree to lay out yet, and the windows that arrive afterwards take the
+/// ordinary insertion path.
+fn restore_workspace_settings(workspace: &WorkspaceView, output: &str, position: usize) {
+    let Some(entry) = persisted_workspace_entry(output, position) else {
+        return;
+    };
+    if let Some(name) = entry.name {
+        workspace.set_custom_name(Some(name));
+    }
+    let gaps = match (entry.inner_gap, entry.outer_gap) {
+        (None, None) => None,
+        (inner, outer) => Config::with(|c| {
+            Some(tiling::Gaps {
+                inner: inner.unwrap_or(c.tiling.inner_gap).max(0),
+                outer: outer.unwrap_or(c.tiling.outer_gap).max(0),
+                smart: c.tiling.smart_gaps,
+            })
+        }),
+    };
+    if let Ok(mut state) = workspace.tiling.write() {
+        state.gaps = gaps;
+        state.enabled = entry.tiling;
+    }
 }
 
 /// Where the item at old position `i` ends up once the item at `from` is moved
@@ -804,23 +851,59 @@ impl Workspaces {
             return;
         };
         workspace.set_custom_name(name);
-        self.save_workspace_names();
+        self.persist_workspace_entries(output);
         self.refresh_output_selectors();
     }
 
-    /// Write every output's custom workspace names to the config, keyed by
-    /// position. Called after a rename; positions that hold no custom name are
-    /// simply absent.
-    fn save_workspace_names(&self) {
-        let mut names = std::collections::BTreeMap::new();
-        for (output, ows) in self.output_workspaces.iter() {
-            for (position, workspace) in ows.workspace_views.iter().enumerate() {
-                if let Some(name) = workspace.get_custom_name() {
-                    names.insert(crate::config::workspace_name_key(output, position), name);
-                }
-            }
+    /// Write the persisted record for the workspace at `position` on `output`
+    /// — its name, its mode and its gap override — from what the workspace
+    /// holds now. A workspace with none of the three loses its record rather
+    /// than keeping an empty one.
+    pub(crate) fn persist_workspace_entry(&self, output: &str, position: usize) {
+        let Some(ows) = self.output_workspaces.get(output) else {
+            return;
+        };
+        let Some(workspace) = ows.workspace_views.get(position) else {
+            return;
+        };
+        let name = workspace.get_custom_name();
+        let (tiling, gaps) = workspace
+            .tiling
+            .read()
+            .map(|state| (state.enabled, state.gaps))
+            .unwrap_or((false, None));
+        crate::config::save_workspace_entry(
+            &crate::config::workspace_name_key(output, position),
+            |entry| {
+                entry.name = name;
+                entry.tiling = tiling;
+                entry.inner_gap = gaps.map(|gaps| gaps.inner);
+                entry.outer_gap = gaps.map(|gaps| gaps.outer);
+            },
+        );
+    }
+
+    /// Write every record on `output`. Records are keyed by position, so a
+    /// reorder moves all of them at once — the name, the mode and the gaps
+    /// travel with the workspace they belong to.
+    pub(crate) fn persist_workspace_entries(&self, output: &str) {
+        let count = self
+            .output_workspaces
+            .get(output)
+            .map(|ows| ows.workspace_views.len())
+            .unwrap_or(0);
+        for position in 0..count {
+            self.persist_workspace_entry(output, position);
         }
-        crate::config::save_workspace_names(&names);
+    }
+
+    /// Write every record on every output — what `gaps … all`, which clears
+    /// an override wherever there is one, has to do.
+    pub(crate) fn persist_all_workspace_entries(&self) {
+        let outputs: Vec<String> = self.output_workspaces.keys().cloned().collect();
+        for output in outputs {
+            self.persist_workspace_entries(&output);
+        }
     }
 
     /// The workspace selector belonging to a given output.
@@ -2773,6 +2856,9 @@ impl Workspaces {
             return None;
         }
 
+        // A minimized window is out of the tree, exactly as a closed one is.
+        self.tiling_forget_window(&id);
+
         if let Some(window) = self.windows_map.get_mut(&id) {
             window.set_is_minimised(true);
         }
@@ -3327,6 +3413,11 @@ impl Workspaces {
     pub fn unmap_window(&mut self, window_id: &ObjectId) -> Vec<ObjectId> {
         tracing::info!("workspaces::unmap_window: {:?}", window_id);
 
+        // A window that goes away leaves its tiling tree; the surviving tiles
+        // take its share and the workspace is relaid out on the next
+        // event-loop iteration (see `Otto::flush_tiling_relayout`).
+        self.tiling_forget_window(window_id);
+
         let mut workspace_index = None;
 
         if let Some(element) = self.get_window_for_surface(window_id).cloned() {
@@ -3352,7 +3443,14 @@ impl Workspaces {
                 workspace_view.unmap_window(window_id);
             }
         });
-        self.windows_map.remove(window_id);
+        if let Some(window) = self.windows_map.remove(window_id) {
+            if crate::debug_hooks::ENABLED {
+                UNMAPPED_WINDOWS
+                    .lock()
+                    .unwrap()
+                    .push(std::sync::Arc::downgrade(&window.0));
+            }
+        }
         self.forget_window_focus(window_id);
         // Remove debug texture snapshot for this surface
         crate::textures_storage::remove(window_id);
@@ -4447,9 +4545,7 @@ impl Workspaces {
             // so all workspace backgrounds live under one node for the KMS plane.
             let _ = background_plane.add_sublayer(&workspace.workspace_background);
             let _ = windows_plane.add_sublayer(&workspace.windows_layer);
-            if let Some(name) = persisted_workspace_name(&output.name(), i) {
-                workspace.set_custom_name(Some(name));
-            }
+            restore_workspace_settings(&workspace, &output.name(), i);
             workspace.set_display_number(next_display_number(display_numbers(&workspace_views)));
             workspace_views.push(workspace);
         }
@@ -4622,9 +4718,7 @@ impl Workspaces {
                     .add_sublayer(&workspace.window_selector_view.window_selector_root);
 
                 let index = ows.workspace_views.len();
-                if let Some(custom) = persisted_workspace_name(name, index) {
-                    workspace.set_custom_name(Some(custom));
-                }
+                restore_workspace_settings(&workspace, name, index);
                 workspace
                     .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
                 ows.workspace_views.push(workspace.clone());
@@ -4703,9 +4797,7 @@ impl Workspaces {
             let _ = ows.windows_plane.add_sublayer(&workspace.windows_layer);
 
             let index = ows.workspace_views.len();
-            if let Some(name) = persisted_workspace_name(output_name, index) {
-                workspace.set_custom_name(Some(name));
-            }
+            restore_workspace_settings(&workspace, output_name, index);
             workspace
                 .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
             ows.workspace_views.push(workspace.clone());
@@ -4925,9 +5017,9 @@ impl Workspaces {
 
         self.sync_model_from_primary();
         self.update_workspaces_layout();
-        // Names are stored by position, so the strip comes back in the order it
-        // was dragged into rather than the order it was created in.
-        self.save_workspace_names();
+        // Records are stored by position, so the strip comes back in the order
+        // it was dragged into rather than the order it was created in.
+        self.persist_workspace_entries(output_name);
         self.refresh_output_selectors();
 
         // Put the scroll back on the workspace the user is on — it is at a new
@@ -5034,6 +5126,10 @@ impl Workspaces {
     ) {
         let location = location.into();
         let id = we.id();
+
+        // Leaving a workspace means leaving its tree. The destination's tree
+        // adopts the window when it maps there.
+        self.tiling_forget_window(&id);
 
         // Unmap from every space (and view) that currently holds the window.
         let mut source_indices: Vec<(String, usize)> = Vec::new();
@@ -5332,7 +5428,8 @@ impl Workspaces {
                 return PlaneCandidates::none();
             }
         }
-        // The tiling drop-zone overlay composites above windows.
+        // The tiling drop-zone overlay composites above windows, so nothing
+        // may be promoted out from under it.
         if self.tiling_overlay.is_visible() {
             {
                 Self::plane_gate_log("tiling-overlay");
@@ -5421,8 +5518,18 @@ impl Workspaces {
                     .to_i32_round(),
             );
             let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
-            // Occupies space for everything below it, promoted or not.
+            // Occupies space for everything below it, promoted or not —
+            // including any subsurface drawn past its geometry. Those are
+            // composited into the windows plane, so a window below them that
+            // went to a plane would be scanned out on top of them.
             covered.push(rect);
+            if let Some(view) = view.as_ref() {
+                covered.extend(subsurface_overhangs(
+                    &view.content_layer,
+                    window.base_layer(),
+                    rect,
+                ));
+            }
 
             // A minimizing window is still visible (animating to the dock) so
             // it occludes, but cannot be promoted (it has a live transform).
@@ -6748,6 +6855,16 @@ impl UnminimizeContext {
 
         window.set_is_minimised(false);
 
+        // Minimizing took the window out of its tiling tree; coming back it
+        // rejoins the layout rather than floating over it. The insertion
+        // needs the compositor, so it is queued for `flush_tiling_relayout`.
+        if let Ok(mut tiling) = workspace.tiling.write() {
+            if tiling.enabled {
+                tiling.returning.push(wid.clone());
+                tiling.dirty = true;
+            }
+        }
+
         if let Some(drawer) = dock.remove_window_element(&wid) {
             // If the window layer was cleaned up (stale handle), skip the
             // animation and just remap the window so it reappears.
@@ -6935,6 +7052,56 @@ fn window_has_overlapping_subsurface(window: &WindowElement) -> bool {
         |_, _, _| !overlaps.get(),
     );
     overlaps.get()
+}
+
+/// The subsurface layers under a window's `content` layer that reach outside
+/// `rect`, the window's own output-local physical rect, in that same space.
+///
+/// A subsurface is not held to its parent's geometry: Files' Quick View is one
+/// centred on the display, hanging over whichever tile sits next to the
+/// window. The root surface's own layer is left out — its buffer can carry a
+/// client-drawn shadow past the geometry, and counting that would keep every
+/// neighbour of such a window off its plane. A hidden or fully transparent
+/// layer (a panel put away without being unmapped) draws nothing, so neither
+/// it nor anything under it counts.
+fn subsurface_overhangs(
+    content: &layers::prelude::Layer,
+    base: &layers::prelude::Layer,
+    rect: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+) -> Vec<smithay::utils::Rectangle<i32, smithay::utils::Physical>> {
+    use smithay::utils::Rectangle;
+
+    // Scene bounds are measured from the window's base layer, which sits at
+    // `rect`'s origin, so the result does not depend on where the scene puts
+    // this output.
+    let origin = base.render_position();
+    let mut overhangs = Vec::new();
+    let mut stack: Vec<_> = content
+        .children()
+        .iter()
+        .flat_map(|root| root.children())
+        .collect();
+    while let Some(layer) = stack.pop() {
+        if layer.hidden() || layer.opacity() <= 0.0 {
+            continue;
+        }
+        let b = layer.render_bounds_transformed();
+        if b.width() > 0.0 && b.height() > 0.0 {
+            let r = Rectangle::new(
+                (
+                    rect.loc.x + (b.left() - origin.x).floor() as i32,
+                    rect.loc.y + (b.top() - origin.y).floor() as i32,
+                )
+                    .into(),
+                (b.width().ceil() as i32, b.height().ceil() as i32).into(),
+            );
+            if !rect.contains_rect(r) {
+                overhangs.push(r);
+            }
+        }
+        stack.extend(layer.children());
+    }
+    overhangs
 }
 
 /// The largest share of a zone's cross-axis extent the dock is ever allowed to

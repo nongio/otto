@@ -326,7 +326,13 @@ vibrancy even though the content behind it lives on other planes.
   flicker). A window owning a MAPPED
   popup (mapped, not merely alive — GTK keeps closed popovers' surfaces
   around for reuse), animating, or covered by a higher window is not
-  promoted.
+  promoted. "Covered" counts a higher window's visible subsurfaces as
+  well as its geometry: a subsurface may be drawn past its window (Files'
+  Quick View is centred on the display and hangs over the neighbouring
+  tile), it is composited into the windows plane, and a window promoted
+  beneath it would scan out on top of it. The root surface's own buffer
+  past the geometry (a client-drawn shadow) does not count, and neither
+  does a hidden or fully transparent subsurface.
 - Only windows whose current buffer is a dmabuf are promoted. An SHM
   client (e.g. a CPU-rendered terminal) can never scan out: its element
   would GPU-composite anyway and, being in front, demote every plane

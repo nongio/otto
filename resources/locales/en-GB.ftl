@@ -65,6 +65,7 @@ dock-quit = Quit
 settings-pane-general = General
 settings-pane-displays = Displays
 settings-pane-dock = Dock
+settings-pane-tiling = Tiling
 settings-pane-keyboard = Keyboard
 settings-pane-pointing = Trackpad & Mouse
 settings-pane-sound = Sound
@@ -159,6 +160,23 @@ settings-dock-tint-icons = Tint icons
 settings-switcher-colorize-icons = Tint switcher icons
 settings-dock-icon-tint = Icon tint
 settings-dock-icon-tint-strength = Icon tint strength
+
+
+## Settings — Tiling
+
+settings-tiling-intro = A tiled workspace fills the screen with its windows, side by side. These are the defaults; a workspace can override its gaps.
+settings-tiling-decoration = Tiled window decoration
+settings-group-tiling-gaps = Gaps
+settings-tiling-inner-gap = Between tiles
+settings-tiling-outer-gap = Around the tiles
+settings-tiling-smart-gaps = Drop the gaps for a lone tile
+settings-group-tiling-keyboard = Keyboard
+settings-tiling-resize-step = Resize step
+settings-group-tiling-animation = Animation
+settings-tiling-layout-duration = Layout change
+settings-tiling-layout-bounce = Layout bounce
+settings-tiling-mode-duration = Entering tiling mode
+settings-tiling-mode-bounce = Tiling mode bounce
 
 
 ## Settings — Keyboard
@@ -681,6 +699,26 @@ schema-gtk-theme-label = GTK theme
 schema-gtk-theme-description = GTK theme name handed to clients. Empty auto-detects.
 schema-locales-label = Locales
 schema-locales-description = Preferred locales, most preferred first.
+
+# --- tiling ---
+schema-tiling-decoration-label = Tiled window decoration
+schema-tiling-decoration-description = How much chrome a window keeps while it is tiled: the same titlebar it wears while it floats, a bar one text line high with its title and a close button, or no bar at all, with the focused tile marked by a hairline border.
+schema-tiling-inner-gap-label = Gap between tiles
+schema-tiling-inner-gap-description = Logical pixels left between two neighbouring tiles.
+schema-tiling-outer-gap-label = Gap around the tiles
+schema-tiling-outer-gap-description = Logical pixels left between the tiles and the edge of the screen.
+schema-tiling-smart-gaps-label = Drop the gaps for a lone tile
+schema-tiling-smart-gaps-description = A workspace holding a single tile leaves no gaps at all, so one window does not look inset for no reason.
+schema-tiling-resize-step-label = Resize step
+schema-tiling-resize-step-description = How much of a container one keyboard resize step moves, as a fraction of its width or height.
+schema-tiling-layout-duration-label = Layout animation
+schema-tiling-layout-duration-description = Seconds a layout change takes: a window joining or leaving the tree, a move, a swap, an equalise. Zero snaps.
+schema-tiling-layout-bounce-label = Layout bounce
+schema-tiling-layout-bounce-description = How far a layout change overshoots before it settles. Zero settles without overshoot.
+schema-tiling-mode-duration-label = Tiling mode animation
+schema-tiling-mode-duration-description = Seconds the workspace takes to rearrange when tiling is switched on or off and every window flies to its cell. Zero snaps.
+schema-tiling-mode-bounce-label = Tiling mode bounce
+schema-tiling-mode-bounce-description = How far that rearrangement overshoots before it settles.
 
 # --- dock ---
 schema-dock-size-label = Size

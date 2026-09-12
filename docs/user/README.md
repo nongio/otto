@@ -18,6 +18,7 @@ If you are installing Otto for the first time, start with
 | [Getting Started](getting-started.md) | Installing, launching, backends, first-run checklist |
 | [Desktop Tour](desktop-tour.md) | Every element on screen and what it does |
 | [Window Management](window-management.md) | Move, resize, maximize, minimize, tile, fullscreen, placement |
+| [Tiling](tiling.md) | Tiled workspaces: keyboard, pointer, gaps, tile decorations, settings |
 | [Workspaces](workspaces.md) | Multiple workspaces, per-monitor workspaces, moving windows |
 | [Exposé & App Switcher](expose-and-switcher.md) | Overview of all windows, switching between apps |
 | [Dock](dock.md) | Running apps, minimized windows, bookmarks, autohide, magnification |

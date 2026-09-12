@@ -129,7 +129,16 @@ impl TilingOverlayView {
         let first_show = self.wrap_layer.hidden();
         self.wrap_layer.set_hidden(false);
 
-        self.preview_layer.set_border_width(2.0 * scale, None);
+        self.preview_layer.set_border_width(3.0 * scale, None);
+        // Read on every show rather than once at construction: the accent is
+        // a live setting. Over the light windows most of the desktop is, a
+        // white border was where the slot went missing.
+        self.preview_layer.set_border_color(
+            PaintColor::Solid {
+                color: crate::theme::accent_color(),
+            },
+            None,
+        );
         self.preview_layer
             .set_border_corner_radius(BorderRadius::new_single(12.0 * scale), None);
 
