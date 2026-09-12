@@ -5534,8 +5534,18 @@ impl Workspaces {
                     .to_i32_round(),
             );
             let overlaps_above = covered.iter().any(|c| c.overlaps(rect));
-            // Occupies space for everything below it, promoted or not.
+            // Occupies space for everything below it, promoted or not —
+            // including any subsurface drawn past its geometry. Those are
+            // composited into the windows plane, so a window below them that
+            // went to a plane would be scanned out on top of them.
             covered.push(rect);
+            if let Some(view) = view.as_ref() {
+                covered.extend(subsurface_overhangs(
+                    &view.content_layer,
+                    window.base_layer(),
+                    rect,
+                ));
+            }
 
             // A minimizing window is still visible (animating to the dock) so
             // it occludes, but cannot be promoted (it has a live transform).
@@ -7058,6 +7068,56 @@ fn window_has_overlapping_subsurface(window: &WindowElement) -> bool {
         |_, _, _| !overlaps.get(),
     );
     overlaps.get()
+}
+
+/// The subsurface layers under a window's `content` layer that reach outside
+/// `rect`, the window's own output-local physical rect, in that same space.
+///
+/// A subsurface is not held to its parent's geometry: Files' Quick View is one
+/// centred on the display, hanging over whichever tile sits next to the
+/// window. The root surface's own layer is left out — its buffer can carry a
+/// client-drawn shadow past the geometry, and counting that would keep every
+/// neighbour of such a window off its plane. A hidden or fully transparent
+/// layer (a panel put away without being unmapped) draws nothing, so neither
+/// it nor anything under it counts.
+fn subsurface_overhangs(
+    content: &layers::prelude::Layer,
+    base: &layers::prelude::Layer,
+    rect: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+) -> Vec<smithay::utils::Rectangle<i32, smithay::utils::Physical>> {
+    use smithay::utils::Rectangle;
+
+    // Scene bounds are measured from the window's base layer, which sits at
+    // `rect`'s origin, so the result does not depend on where the scene puts
+    // this output.
+    let origin = base.render_position();
+    let mut overhangs = Vec::new();
+    let mut stack: Vec<_> = content
+        .children()
+        .iter()
+        .flat_map(|root| root.children())
+        .collect();
+    while let Some(layer) = stack.pop() {
+        if layer.hidden() || layer.opacity() <= 0.0 {
+            continue;
+        }
+        let b = layer.render_bounds_transformed();
+        if b.width() > 0.0 && b.height() > 0.0 {
+            let r = Rectangle::new(
+                (
+                    rect.loc.x + (b.left() - origin.x).floor() as i32,
+                    rect.loc.y + (b.top() - origin.y).floor() as i32,
+                )
+                    .into(),
+                (b.width().ceil() as i32, b.height().ceil() as i32).into(),
+            );
+            if !rect.contains_rect(r) {
+                overhangs.push(r);
+            }
+        }
+        stack.extend(layer.children());
+    }
+    overhangs
 }
 
 /// The largest share of a zone's cross-axis extent the dock is ever allowed to

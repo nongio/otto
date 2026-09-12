@@ -1036,6 +1036,61 @@ mod headless_tests {
         handle.stop();
     }
 
+    /// A subsurface drawn past its window — Files' Quick View, centred on the
+    /// display — is composited into the windows plane, so the window it hangs
+    /// over must not be promoted: its plane would cover the panel.
+    #[test]
+    #[serial]
+    fn subsurface_past_its_window_keeps_the_window_below_off_a_plane() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+
+        let _below = client.create_toplevel("below-window", 300, 200);
+        let top = client.create_toplevel("overhang-window", 300, 200);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        // Side by side, like two tiles.
+        handle.move_window("below-window", 400, 100);
+        handle.move_window("overhang-window", 50, 100);
+        settle_animations(&handle);
+
+        assert_eq!(
+            scanout_candidate_titles(&handle),
+            vec!["overhang-window".to_string(), "below-window".to_string()],
+            "two windows that do not overlap both go to planes"
+        );
+
+        // Entirely outside its own window, so the top window stays eligible,
+        // and reaching across the gap into the window below.
+        // The window declares its geometry, as Files does — without it the
+        // geometry would be the whole surface tree, subsurface included.
+        let (parent, xdg_surface) = {
+            let top = top.lock().unwrap();
+            (top.surface.clone(), top.xdg_surface.clone().unwrap())
+        };
+        xdg_surface.set_window_geometry(0, 0, 300, 200);
+        let _panel = client.create_subsurface(&parent, 320, 40, 200, 120);
+        handle.wait(Duration::from_millis(200));
+        let _ = client.roundtrip();
+        // The geometry change re-places the window; put both back.
+        handle.move_window("below-window", 400, 100);
+        handle.move_window("overhang-window", 50, 100);
+        settle_animations(&handle);
+        assert_eq!(
+            handle.window_logical_geometry("overhang-window"),
+            Some((50, 100, 300, 200)),
+            "the windows must still sit side by side, not overlapping"
+        );
+
+        assert_eq!(
+            scanout_candidate_titles(&handle),
+            vec!["overhang-window".to_string()],
+            "the window under the overhanging subsurface must stay composited"
+        );
+
+        handle.stop();
+    }
+
     #[test]
     #[serial]
     fn expose_blocks_scanout_eligibility() {
