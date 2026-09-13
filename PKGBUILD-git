@@ -16,6 +16,16 @@ source=()
 sha256sums=()
 backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
 
+# X11 applications run through XWayland. Build without it with
+# `OTTO_XWAYLAND=0 makepkg -p PKGBUILD-git -si`.
+: "${OTTO_XWAYLAND:=1}"
+if [[ $OTTO_XWAYLAND == 1 ]]; then
+    depends+=("xorg-xwayland")
+    _otto_features=()
+else
+    _otto_features=(--no-default-features --features "egl,winit,udev,renderer_sync")
+fi
+
 pkgver() {
     cd "$startdir"
     local described hash commits version
@@ -37,7 +47,7 @@ pkgver() {
 build() {
     cd "$startdir"
     unset CFLAGS CXXFLAGS LDFLAGS CPPFLAGS
-    cargo build --release
+    cargo build --release -p otto "${_otto_features[@]}"
     cargo build --release -p otto-bar
     cargo build --release -p otto-islands
     cargo build --release -p otto-lock

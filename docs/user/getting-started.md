@@ -43,7 +43,9 @@ You need `libwayland`, `libxkbcommon`, `libudev`, `libinput`, `libgbm` and
 [`libseat`](https://git.sr.ht/~kennylevinsen/seatd). Add `xwayland` if you want
 to run X11 applications. Otto runs without it: build with
 `--no-default-features --features "egl,winit,udev,renderer_sync"` to leave
-XWayland support out, and X11-only applications will not start. Minimum supported Rust version is 1.87.0 for the
+XWayland support out, and X11-only applications will not start. On Arch,
+`OTTO_XWAYLAND=0 makepkg -p PKGBUILD-git -si` does the same for the package.
+Minimum supported Rust version is 1.87.0 for the
 compositor itself; building the whole workspace (`otto-rdp` pulls in GStreamer)
 needs 1.96.0.
 
