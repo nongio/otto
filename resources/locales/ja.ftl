@@ -524,6 +524,12 @@ files-new-folder-with-count =
     { $count ->
        *[other] { $count } 項目から新規フォルダ
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+       *[other] { $count } 項目を「{ $name }」に移動
+    }
 
 
 ## Files — command palette

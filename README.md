@@ -150,6 +150,19 @@ curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
 makepkg -si
 ```
 
+#### NixOS
+
+The repository is a flake with a NixOS module:
+
+```nix
+{
+  inputs.otto.url = "github:nongio/otto";
+  # then, in a NixOS module:  imports = [ otto.nixosModules.otto ];  programs.otto.enable = true;
+}
+```
+
+See [docs/user/nixos.md](./docs/user/nixos.md) for the module's options.
+
 ### After installation
 
 Otto appears in your login manager (GDM, SDDM, LightDM, …) as "Otto" in the session menu. Select it and log in.

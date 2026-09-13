@@ -2415,13 +2415,16 @@ mod paste_tests {
         assert!(contents.contains("DeletionDate="));
     }
 
+    // Every trash test shares one can, and `first_free_name` checks before it
+    // moves, so two of them trashing the same name at once can land on one
+    // path. Each file is named after its test, as in app.rs's `trashed`.
     /// A round trip through the trash: the sidecar says where it came from,
     /// and Put Back reads it and lands the file exactly there.
     #[test]
     fn put_back_returns_the_file_to_where_it_came_from() {
         let _home = test_data_home();
         let t = Tmp::new("restore");
-        let victim = t.file("paper.txt", "body");
+        let victim = t.file("restore.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         assert_eq!(trashed.trashed, 1, "{:?}", trashed.errors);
@@ -2446,7 +2449,7 @@ mod paste_tests {
         let _home = test_data_home();
         let t = Tmp::new("restore-gone");
         let nested = t.dir("holder");
-        let victim = nested.join("paper.txt");
+        let victim = nested.join("restore-gone.txt");
         std::fs::write(&victim, "body").unwrap();
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
@@ -2467,7 +2470,7 @@ mod paste_tests {
     fn put_back_refuses_to_overwrite_what_took_the_name() {
         let _home = test_data_home();
         let t = Tmp::new("restore-clash");
-        let victim = t.file("paper.txt", "old");
+        let victim = t.file("restore-clash.txt", "old");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, .. }) = trashed.changes.first() else {
@@ -2488,7 +2491,7 @@ mod paste_tests {
     fn delete_forever_takes_the_sidecar_with_it() {
         let _home = test_data_home();
         let t = Tmp::new("forever");
-        let victim = t.file("paper.txt", "body");
+        let victim = t.file("forever.txt", "body");
 
         let trashed = move_to_trash(std::slice::from_ref(&victim));
         let Some(Change::Trashed { to, info, .. }) = trashed.changes.first() else {

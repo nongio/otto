@@ -3717,6 +3717,13 @@ impl Browser {
             return;
         };
         self.restore_palette_selection();
+        // An empty name is an answer here — the default one — so its dry
+        // run shows from the moment the field opens.
+        if id == command::id::NEW_FOLDER_WITH_SELECTION {
+            self.preview_new_folder_with_selection(&typed);
+            self.dirty = true;
+            return;
+        }
         if typed.trim().is_empty() {
             if let Some(palette) = self.palette.as_mut() {
                 palette.set_preview(Vec::new());
@@ -3762,6 +3769,66 @@ impl Browser {
             }
         }
         self.dirty = true;
+    }
+
+    /// The dry run for New Folder with Selection: one line per item going
+    /// in, each one able to be toggled out, and a note saying where they go.
+    fn preview_new_folder_with_selection(&mut self, typed: &str) {
+        let targets = self.palette_targets();
+        let name = typed.trim();
+        let taken = !name.is_empty() && self.current_directory().join(name).exists();
+        let Some(palette) = self.palette.as_mut() else {
+            return;
+        };
+        let excluded = palette.excluded();
+        let rows: Vec<command::PreviewRow> = targets
+            .iter()
+            .filter(|target| !excluded.contains(*target))
+            .map(|target| command::PreviewRow {
+                from: target.clone(),
+                to: String::new(),
+                conflict: false,
+            })
+            .collect();
+        let count = rows.len();
+        palette.set_preview(palette::PreviewLine::merge(&targets, &excluded, rows));
+        let note = if count == 0 {
+            otto_kit::t_owned!("files-nothing-selected")
+        } else if taken {
+            otto_kit::t_owned!("files-name-taken", name = name)
+        } else {
+            let folder = if name.is_empty() {
+                "untitled folder"
+            } else {
+                name
+            };
+            otto_kit::t_owned!(
+                "files-new-folder-with-preview",
+                count = count as i64,
+                name = folder
+            )
+        };
+        palette.set_note(Some(note));
+    }
+
+    /// What a palette command acts on, as paths: the selection less what the
+    /// dry run toggled out, or the cursor's entry when nothing was selected.
+    fn palette_target_paths(&self) -> Vec<PathBuf> {
+        let situation = self.palette_situation();
+        if !situation.selection.is_empty() {
+            return situation.selection;
+        }
+        let depth = self.active.min(self.columns.len().saturating_sub(1));
+        situation
+            .cursor_name
+            .and_then(|name| {
+                self.visible(depth)
+                    .into_iter()
+                    .find(|entry| entry.name == name)
+                    .map(|entry| entry.path.clone())
+            })
+            .into_iter()
+            .collect()
     }
 
     /// Fill in what a half-typed path could be completed to.
@@ -4393,7 +4460,10 @@ impl Browser {
             id::SELECT_ALL => self.select_all(),
             id::SELECT_MATCHING => self.select_matching(arg)?,
             id::MOVE_TO => self.move_selection_to(arg)?,
-            id::NEW_FOLDER_WITH_SELECTION => self.new_folder_with_selection(arg)?,
+            id::NEW_FOLDER_WITH_SELECTION => {
+                let paths = self.palette_target_paths();
+                self.new_folder_with(paths, arg)?
+            }
             id::UNDO => self.undo_last(),
             // The three views by name share their ids with the values Change
             // View takes, so one arm answers for both.
@@ -4504,17 +4574,23 @@ impl Browser {
     /// Given no name the folder takes the default one and lands in rename, the
     /// way New Folder does; given one it is created with it.
     fn new_folder_with_selection(&mut self, name: &str) -> Result<(), String> {
+        let paths = self
+            .selected_entries()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        self.new_folder_with(paths, name)
+    }
+
+    /// Create a folder named `name` (the default when empty) and move
+    /// `paths` into it, as one undo step.
+    fn new_folder_with(&mut self, paths: Vec<PathBuf>, name: &str) -> Result<(), String> {
         if self.trash {
             return Err(otto_kit::t_owned!("files-trash-cant-rename"));
         }
         if self.is_synthetic() {
             return Err(otto_kit::t_owned!("files-recent-not-a-folder"));
         }
-        let paths: Vec<PathBuf> = self
-            .selected_entries()
-            .into_iter()
-            .map(|entry| entry.path)
-            .collect();
         if paths.is_empty() {
             return Err(otto_kit::t_owned!("files-nothing-selected"));
         }
@@ -11145,6 +11221,65 @@ mod palette_tests {
         browser.clear_selection();
         assert!(browser.new_folder_with_selection("reports").is_err());
         assert!(!dir.0.join("reports").exists());
+    }
+
+    /// From the palette, New Folder with Selection lists what goes in as
+    /// soon as its field opens, and a line toggled out stays where it is.
+    #[test]
+    fn new_folder_with_selection_leaves_out_what_was_toggled() {
+        let (mut browser, dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
+        browser.clear_selection();
+        browser.select_matching("*.txt").unwrap();
+        browser.open_palette();
+        let mods = KeyMods {
+            shift: false,
+            ctrl: false,
+        };
+        let press = |browser: &mut Browser, key: palette::Key| {
+            let outcome = browser.palette.as_mut().unwrap().on_key(key, mods);
+            browser.settle_palette(outcome, 0);
+        };
+        let type_in = |browser: &mut Browser, text: &str| {
+            for ch in text.chars() {
+                press(browser, palette::Key::Edit(TextInputKey::Char(ch)));
+            }
+        };
+        type_in(&mut browser, "folder with");
+        press(&mut browser, palette::Key::Tab);
+        assert_eq!(
+            browser
+                .palette
+                .as_ref()
+                .unwrap()
+                .arg_command()
+                .map(|command| command.id.as_str()),
+            Some(command::id::NEW_FOLDER_WITH_SELECTION)
+        );
+        assert_eq!(
+            browser.palette_rows().len(),
+            3,
+            "the items show before a name is typed"
+        );
+
+        type_in(&mut browser, "reports");
+        press(&mut browser, palette::Key::Down);
+        press(&mut browser, palette::Key::Down);
+        press(&mut browser, palette::Key::Edit(TextInputKey::Char(' ')));
+        assert_eq!(
+            browser.palette_message().as_deref(),
+            Some(
+                otto_kit::t_owned!("files-new-folder-with-preview", count = 2, name = "reports")
+                    .as_str()
+            )
+        );
+
+        press(&mut browser, palette::Key::Enter);
+        assert!(browser.palette.is_none());
+        assert!(dir.0.join("reports/a.txt").is_file());
+        assert!(dir.0.join("reports/c.txt").is_file());
+        assert!(dir.0.join("b.txt").is_file(), "b was toggled out");
+        assert!(!dir.0.join("reports/b.txt").exists());
+        assert_eq!(browser.undo.len(), 1);
     }
 
     /// The top band takes hold of the card; a row is picked, not grabbed.

@@ -299,6 +299,13 @@ files-new-folder-with-count =
         [one] New Folder with { $count } Item
        *[other] New Folder with { $count } Items
     }
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+        [one] Moves 1 item into “{ $name }”
+       *[other] Moves { $count } items into “{ $name }”
+    }
 files-move-to-trash = Move to Trash
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

@@ -545,6 +545,15 @@ files-new-folder-with-selection = Нова папка з вибраним
 # $count завжди два або більше; для одного елемента використовується
 # files-new-folder-with-selection.
 files-new-folder-with-count = Нова папка з { $count } елементами
+# The note under New Folder with Selection's list of items; $name is the
+# folder they would go into.
+files-new-folder-with-preview =
+    { $count ->
+        [one] Перемістить { $count } елемент до «{ $name }»
+        [few] Перемістить { $count } елементи до «{ $name }»
+        [many] Перемістить { $count } елементів до «{ $name }»
+       *[other] Перемістить { $count } елемента до «{ $name }»
+    }
 
 
 ## Files — command palette

@@ -163,7 +163,7 @@ the palette adds no new capability.
 | Edit | Cut, Copy, Paste, Select All, Undo | — |
 | Edit | Select Matching | glob pattern, shown as it is typed |
 | File | Move to Folder | path (folders only) |
-| File | New Folder with Selection | name, optional; empty means the default |
+| File | New Folder with Selection | name, optional; empty means the default. The items going in are listed as a dry run from the moment the field opens, and can be toggled out |
 | File | Rename N Items | pattern, shown as a dry run while it is typed; two or more selected |
 | View | List View, Grid View, Column View | — (the one already on is not offered) |
 | View | Change View | choice of the three |
