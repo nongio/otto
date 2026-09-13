@@ -31,6 +31,19 @@ makepkg -si
 If you already downloaded the release tarball, drop the `PKGBUILD` next to it
 and `makepkg` will use it without re-downloading.
 
+### NixOS
+
+```nix
+{
+  inputs.otto.url = "github:nongio/otto";
+  # in your NixOS modules:
+  # otto.nixosModules.otto
+  # programs.otto.enable = true;
+}
+```
+
+See [NixOS](nixos.md) for the module's options.
+
 ### Building from source
 
 ```sh
