@@ -173,6 +173,11 @@ jobs:
       - name: Clippy (compositor)
         if: needs.changes.outputs.compositor == 'true'
         run: cargo clippy --locked -p otto --all-targets --features "default,headless" -- -D warnings
+      - name: Clippy (compositor without XWayland)
+        # `xwayland` is a default feature that packagers can drop; nothing else
+        # compiles that configuration, so it breaks silently without this.
+        if: needs.changes.outputs.compositor == 'true'
+        run: cargo clippy --locked -p otto --no-default-features --features "egl,winit,udev,renderer_sync" -- -D warnings
       - name: Clippy (components)
         # Everything with no filter of its own, sample clients included.
         # submenu-gtk is the one exception: it needs GTK development libraries

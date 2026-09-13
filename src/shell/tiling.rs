@@ -302,8 +302,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             WindowSurface::Wayland(_) => {}
             #[cfg(feature = "xwayland")]
             WindowSurface::X11(_) => return,
-            #[cfg(not(feature = "xwayland"))]
-            _ => return,
         }
         let Some(toplevel) = window.toplevel().cloned() else {
             return;

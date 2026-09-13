@@ -186,7 +186,7 @@ sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev \
   libgstreamer-plugins-base1.0-dev libpam0g-dev
 ```
 
-Add `xwayland` if you want to run X11 applications inside Otto. Minimum supported Rust is **1.87.0** for the compositor; building the whole workspace needs **1.96.0** (`otto-rdp` pins it through GStreamer).
+Add `xwayland` if you want to run X11 applications inside Otto. Otto itself does not need it: build with `--no-default-features --features "egl,winit,udev,renderer_sync"` to leave XWayland support out, and X11-only applications will not start. Minimum supported Rust is **1.87.0** for the compositor; building the whole workspace needs **1.96.0** (`otto-rdp` pins it through GStreamer).
 
 ### Build and run
 
