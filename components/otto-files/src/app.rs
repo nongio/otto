@@ -338,11 +338,6 @@ struct Browser {
     /// slow PDF must not land on top of a file the user moved off three keys
     /// ago.
     quickview_generation: u64,
-    /// The last video frame painted into the window; see
-    /// [`Browser::quickview_video_frame_pending`].
-    quickview_video_painted: u64,
-    /// The last preview-column video frame painted; same purpose.
-    preview_video_painted: u64,
     /// The cursor moved on its own — a delete landing its selection on the
     /// survivor — rather than through an arrow key. Quick View follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
@@ -506,6 +501,10 @@ struct Browser {
     forward: Vec<Location>,
     /// Set when something changed and the window needs repainting.
     dirty: bool,
+    /// Set when a scroll view moved under the wheel or the touchpad. Kept
+    /// apart from `dirty` because a frame that only scrolled repaints — and
+    /// reports — the file area alone.
+    scroll_moved: bool,
     /// The portal request this window is serving, when it is a picker rather
     /// than the browser. `None` is the browser, and every difference between
     /// the two shells reads off this one field.
@@ -950,8 +949,6 @@ impl Browser {
             quickview_auto: std::env::var_os("OTTO_FILES_QV_AUTO").is_some(),
             palette_auto: std::env::var("OTTO_FILES_PALETTE_AUTO").ok(),
             quickview_generation: 0,
-            quickview_video_painted: 0,
-            preview_video_painted: 0,
             quickview_follow: false,
             trash: false,
             recent: false,
@@ -972,6 +969,7 @@ impl Browser {
             focused: true,
             blur_available: false,
             dirty: true,
+            scroll_moved: false,
             picker: None,
             save_name: None,
             confirm: None,
@@ -1449,6 +1447,29 @@ impl Browser {
     /// it has to know either one exists.
     fn content_h(&self) -> f32 {
         self.size.1 - self.footer_h() - self.path_bar_h()
+    }
+
+    /// What a scroll repaints in the window, when that is less than all of
+    /// it: the file area of a list or a grid, with nothing laid over it. A
+    /// column stack's pan moves the dividers the window draws between its
+    /// columns, and an overlay scrolls — or covers — on its own terms, so
+    /// either repaints the whole window.
+    fn scroll_damage(&self) -> Option<Rect> {
+        let plain = self.mode != ViewMode::Columns
+            && self.quickview.is_none()
+            && self.palette.is_none()
+            && self.rename.is_none();
+        plain.then(|| view::content_viewport(self.size.0, self.content_h(), self.mode))
+    }
+
+    /// Whether a scroll is presented by the columns' own surfaces, leaving the
+    /// window nothing to repaint for it. The scroll still has to be stepped —
+    /// that is the update loop's job — but not by repainting the window.
+    fn scroll_on_surfaces(&self) -> bool {
+        self.mode == ViewMode::Columns
+            && self.quickview.is_none()
+            && self.palette.is_none()
+            && self.rename.is_none()
     }
 
     /// What the path bar spells out: the one thing selected in the active
@@ -5882,6 +5903,7 @@ impl Browser {
             entries,
             scroll: column.scroll.offset(),
             bar: None,
+            velocity: 0.0,
             loading: column.awaiting_first_listing(),
             error: None,
         };
@@ -6012,42 +6034,6 @@ impl Browser {
     fn quickview_fallback_panel(&self) -> Rect {
         let expanded = self.quickview.as_ref().is_some_and(|s| s.expanded);
         quickview::resting_in(Rect::from_wh(self.size.0, self.size.1), expanded)
-    }
-
-    /// Whether a video has a frame the window has not painted: the preview
-    /// column's, or the open panel's where the window paints the panel
-    /// itself. On its own surface the panel's content key sees each frame
-    /// for itself, and the window is left alone.
-    fn video_frame_pending(&mut self) -> bool {
-        let mut pending = false;
-        if !pane_surfaces::quickview_on_surface() {
-            let seq = self
-                .quickview
-                .as_ref()
-                .map(quickview::Session::video_frame_seq)
-                .unwrap_or(0);
-            if seq != self.quickview_video_painted {
-                self.quickview_video_painted = seq;
-                pending = true;
-            }
-        }
-        // On its own subsurface the preview column's video is repainted by
-        // `sync_pane_surfaces`, which runs every pass regardless of this — so
-        // a landing frame there is not a window repaint. Only when there is no
-        // subsurface manager does the window draw it.
-        if !pane_surfaces::quickview_on_surface() {
-            let seq = self
-                .preview
-                .as_ref()
-                .and_then(|p| p.video.as_ref())
-                .map(quickview::Video::frame_seq)
-                .unwrap_or(0);
-            if seq != self.preview_video_painted {
-                self.preview_video_painted = seq;
-                pending = true;
-            }
-        }
-        pending
     }
 
     /// Remember where the pointer is over the Quick View panel, and which
@@ -6511,6 +6497,7 @@ impl Browser {
                     entries,
                     scroll: column.scroll.offset(),
                     bar: Some(&column.scroll.state),
+                    velocity: column.scroll.velocity(),
                     loading: column.awaiting_first_listing(),
                     error: column.snapshot.error.as_deref(),
                 }
@@ -6531,9 +6518,8 @@ impl Browser {
             icon_chain: entry.icon_chain(),
             decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
             video: self.preview.as_ref().and_then(|p| p.video.as_ref()),
-            // The player is on its own subsurface whenever this window is
-            // running the subsurface manager, which it does by default.
-            video_on_surface: pane_surfaces::quickview_on_surface(),
+            // The player is on its own subsurface, over the column.
+            video_on_surface: true,
             first_row: 0,
             info: preview_info(entry),
         });
@@ -6676,6 +6662,9 @@ struct FilesApp {
     /// blur it wants switched, and whether it is still running. Held here
     /// because the window is — see `scene::FrostState`.
     frost: Option<Arc<scene::FrostState>>,
+    /// The window's opaque region as last declared, so it is only sent again
+    /// when the file area actually moves.
+    opaque_region: Option<Rect>,
     /// The modifier state, as the compositor reports it in
     /// `wl_keyboard.modifiers` — not inferred from the text a chord produces
     /// (Ctrl+I is historically a TAB character and Ctrl+H a backspace, so
@@ -6704,8 +6693,9 @@ struct FilesApp {
     /// The picker's request queue, when this process is serving
     /// `org.otto.FilePicker1`. `None` in the browser.
     picker_queue: Option<crate::dbus::SharedQueue>,
-    /// Per-column subsurfaces, when `OTTO_FILES_PANE_SUBS=1`. A scroll then
-    /// repaints one column's own buffer instead of the whole window.
+    /// The surfaces the window hangs over itself: each column's scroll pane,
+    /// the stack's bar, Quick View, the palette and the preview's player.
+    /// `None` until the window exists.
     pane_surfaces: Option<pane_surfaces::PaneSurfaces>,
     /// The Get Info panel's window, while one is open.
     ///
@@ -6830,17 +6820,6 @@ impl App for FilesApp {
             view::draw(canvas, &frame);
             perf::mark(perf::Stage::Chrome, t2);
             perf::mark(perf::Stage::Total, t_total);
-            // Unless it has a surface of its own over the columns — drawn
-            // here it would be under them. See [`crate::pane_surfaces`].
-            if !pane_surfaces::quickview_on_surface() {
-                if let Some(session) = browser.quickview_visible() {
-                    // Centred on the *window*, not the file area: Quick View
-                    // is a card floating over the whole picker, and the
-                    // action row is behind it rather than beside it.
-                    let resting = quickview::panel_rect(frame.width, frame.window_h());
-                    view::draw_quickview(canvas, &frame, session, resting);
-                }
-            }
             drop(frame);
 
             // Where each field's caret ended up this frame, filled in as the
@@ -7040,13 +7019,9 @@ impl App for FilesApp {
             }
         });
 
-        // Also when only Quick View wants a surface: the columns stay in the
-        // scene, and this carries the preview alone.
-        if pane_surfaces::quickview_on_surface() {
-            self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new(
-                AppContext::scale_factor() as f32
-            ));
-        }
+        self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new(
+            AppContext::scale_factor() as f32
+        ));
 
         self.install_dnd(&window);
         self.install_quickview_pointer();
@@ -7124,38 +7099,42 @@ impl App for FilesApp {
         // walks — the cost of a tree must not grow with the directory any more
         // than the cost of a frame does. Each row carries its place in the
         // whole listing, so a screen reader still reads "12 of 5000".
-        let (placement, shown): (Box<dyn Fn(usize) -> Rect>, std::ops::Range<usize>) =
-            match browser.mode {
-                ViewMode::List => {
-                    let strip = view::RowStrip::list(browser.size.0, count, scroll);
-                    let band =
-                        view::content_viewport(browser.size.0, browser.content_h(), ViewMode::List);
-                    (Box::new(move |index| strip.rect(index)), strip.visible(band))
-                }
-                ViewMode::Columns => {
-                    let pane = view::miller_pane_rect(
-                        depth,
-                        browser.content_h(),
-                        browser.pan.offset(),
-                        browser.miller_w,
-                    );
-                    let strip = view::RowStrip::miller(pane, count, scroll);
-                    (Box::new(move |index| strip.rect(index)), strip.visible(pane))
-                }
-                ViewMode::Grid => {
-                    let cells =
-                        view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
-                    let sections = browser.recent_sections.clone();
-                    let shown =
-                        view::grid_visible_range_in(cells, &sections, count, scroll, cells);
-                    (
-                        Box::new(move |index| {
-                            view::grid_cell_rect_in(cells, &sections, index, scroll)
-                        }),
-                        shown,
-                    )
-                }
-            };
+        let (placement, shown): (Box<dyn Fn(usize) -> Rect>, std::ops::Range<usize>) = match browser
+            .mode
+        {
+            ViewMode::List => {
+                let strip = view::RowStrip::list(browser.size.0, count, scroll);
+                let band =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::List);
+                (
+                    Box::new(move |index| strip.rect(index)),
+                    strip.visible(band),
+                )
+            }
+            ViewMode::Columns => {
+                let pane = view::miller_pane_rect(
+                    depth,
+                    browser.content_h(),
+                    browser.pan.offset(),
+                    browser.miller_w,
+                );
+                let strip = view::RowStrip::miller(pane, count, scroll);
+                (
+                    Box::new(move |index| strip.rect(index)),
+                    strip.visible(pane),
+                )
+            }
+            ViewMode::Grid => {
+                let cells =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                let sections = browser.recent_sections.clone();
+                let shown = view::grid_visible_range_in(cells, &sections, count, scroll, cells);
+                (
+                    Box::new(move |index| view::grid_cell_rect_in(cells, &sections, index, scroll)),
+                    shown,
+                )
+            }
+        };
         // The keyboard's row is described wherever it is: it is what the focus
         // names, and a focus pointing at an undescribed node reads as nothing.
         let off_screen_cursor = cursor.filter(|c| *c < count && !shown.contains(c));
@@ -7269,22 +7248,37 @@ impl App for FilesApp {
             }
         }
 
-        let (repaint, preview_target, scrolled_only, thumb_jobs) = {
+        // The file area's paper is opaque whether or not the window is frosted
+        // — see `scene::Scene::sync_materials` — so the compositor need not
+        // blur anything behind it. Down to the path bar, which sits on the
+        // same paper, less the window's rounded corner at the bottom, where the
+        // edge is antialiased and the frost shows through it.
+        if let Some(window) = self.window.as_ref() {
+            let area = {
+                let browser = self.state.lock().unwrap();
+                let top = view::header_h();
+                let bottom = (browser.content_h() + browser.path_bar_h() - view::corner()).max(top);
+                Rect::from_ltrb(view::sidebar_w(), top, browser.size.0, bottom)
+            };
+            if self.opaque_region != Some(area) {
+                self.opaque_region = Some(area);
+                window.set_opaque_region(&[area]);
+            }
+        }
+
+        let (repaint, preview_target, scrolled_only, scroll_area, thumb_jobs) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
             // advance here rather than on input, since they keep running after
             // the gesture ends.
-            let scrolled = browser.tick_scroll();
+            let scrolled = browser.tick_scroll() | std::mem::take(&mut browser.scroll_moved);
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
                 | browser.quickview_animating()
                 | browser.tick_quickview_exit()
-                | browser.tick_open_pulse()
-                // A video frame landing in the preview column, or in a
-                // panel the window paints itself.
-                | browser.video_frame_pending();
+                | browser.tick_open_pulse();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -7310,12 +7304,21 @@ impl App for FilesApp {
                 && !animating
                 && preview_target.is_none()
                 && !pan_bar_visible;
+            // A frame that only moves the file area says so, and the rest of
+            // the window is not recomposited behind it.
+            let scroll_area = scrolled_only.then(|| browser.scroll_damage()).flatten();
             let repaint = changed
                 || scrolled
                 || std::mem::take(&mut browser.dirty)
                 || animating
                 || preview_target.is_some();
-            (repaint, preview_target, scrolled_only, thumb_jobs)
+            (
+                repaint,
+                preview_target,
+                scrolled_only,
+                scroll_area,
+                thumb_jobs,
+            )
         };
         if let Some((path, generation)) = preview_target {
             self.start_preview(path, generation);
@@ -7366,7 +7369,10 @@ impl App for FilesApp {
         }
 
         if repaint {
-            self.render();
+            match scroll_area {
+                Some(area) => self.render_damaged(area),
+                None => self.render(),
+            }
         }
 
         self.sync_info_window();
@@ -8306,11 +8312,30 @@ impl FilesApp {
     fn render(&self) {
         if let Some(window) = &self.window {
             window.request_frame();
-            // The runner renders dirty windows at the *top* of a loop
-            // iteration, before `on_update`, so a frame requested from
-            // `on_update` would sit unrendered until some other event happened
-            // to wake the loop. Asking for one more turn is what makes a
-            // repaint requested off the input path actually appear.
+            Self::wake_for_frame(window);
+        }
+    }
+
+    /// [`Self::render`] for a frame known to change `area` (in points) and
+    /// nothing else.
+    fn render_damaged(&self, area: Rect) {
+        if let Some(window) = &self.window {
+            window.request_frame_damaged(&[area]);
+            Self::wake_for_frame(window);
+        }
+    }
+
+    fn wake_for_frame(window: &Window) {
+        // The runner renders dirty windows at the *top* of a loop iteration,
+        // before `on_update`, so a frame requested from `on_update` would sit
+        // unrendered until some other event happened to wake the loop. Asking
+        // for one more turn is what makes a repaint requested off the input
+        // path actually appear — unless a frame is already on its way to the
+        // screen: the window cannot paint until the compositor answers, that
+        // answer wakes the loop itself, and waking it sooner only spins the
+        // loop rebuilding a frame nobody will paint.
+        let in_flight = window.surface().is_some_and(|s| s.frame_in_flight());
+        if !in_flight {
             AppContext::request_wakeup();
         }
     }
@@ -8412,8 +8437,10 @@ impl FilesApp {
             // A picture landing changes what the panes draw; a miss changes
             // only what will be asked for next, and repainting for it would
             // render the same pixels again. The store's epoch is what tells
-            // the two apart.
-            browser.dirty |= browser.thumbs.epoch() != before;
+            // the two apart. In column view the rows are the columns' own
+            // surfaces, which see the epoch move for themselves: the window
+            // has nothing to repaint.
+            browser.dirty |= browser.thumbs.epoch() != before && browser.mode != ViewMode::Columns;
             drop(browser);
             // Same reason the preview decodes wake the loop: a window that has
             // stopped committing frames has no frame callback to notice a
@@ -9882,14 +9909,33 @@ impl FilesApp {
                             // next delta picks afresh.
                             browser.gesture_axis = None;
                         }
-                        browser.dirty |= moved;
+                        browser.scroll_moved |= moved;
                     }
                     _ => {}
                 }
 
                 drop(browser);
             }
-            window_for_events.request_frame();
+
+            // A batch of nothing but scroll events changes the content area
+            // and nothing else — no hover, no press, no chrome — so only that
+            // is reported, and where the columns scroll on surfaces of their
+            // own the window is not repainted at all: the update loop steps
+            // the scroll and moves them. Anything else in the batch, or an
+            // overlay that takes the wheel for itself, repaints as a whole.
+            let scroll_only = !events.is_empty()
+                && events
+                    .iter()
+                    .all(|e| matches!(e.kind, PointerEventKind::Axis { .. }));
+            let scroll = scroll_only.then(|| {
+                let browser = state.lock().unwrap();
+                (browser.scroll_on_surfaces(), browser.scroll_damage())
+            });
+            match scroll {
+                Some((true, _)) => AppContext::request_wakeup(),
+                Some((false, Some(area))) => window_for_events.request_frame_damaged(&[area]),
+                _ => window_for_events.request_frame(),
+            }
         });
     }
 }
@@ -10061,6 +10107,7 @@ fn run_app(
         info_window: Rc::new(RefCell::new(None)),
         state: Arc::clone(&state),
         frost: None,
+        opaque_region: None,
         modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
         quickview_target: Arc::new(Mutex::new(None)),

@@ -32,7 +32,6 @@ use skia_safe::{Canvas, Color, Image, Paint, Point, Rect};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::model::Entry;
 use crate::view::{self, Frame, PaneData, RunEnds, ViewMode};
 
 /// Colours that reach the engine as a style rather than a paint.
@@ -123,13 +122,12 @@ impl FrostState {
 /// different speeds.
 const MATERIAL_FADE: f32 = 0.3;
 
-/// One Miller column: the pane itself, and the strip of rows inside it that
-/// the scroll offset moves.
+/// One Miller column's ground in the window: the pane, which carries the
+/// active column's tint, and the line a column shows when it has no rows. The
+/// rows themselves are painted into the column's own surfaces.
 struct PaneLayer {
     pane: Layer,
-    /// Separated from `pane` so that scrolling is a *position* change. Within
-    /// one row's pitch that is all a scroll is, and the engine replays the
-    /// cached picture at the new offset without this client recording a thing.
+    /// The loading, empty or error line, centred on the pane.
     rows: Layer,
     key: Option<PaneKey>,
 }
@@ -148,31 +146,12 @@ struct LayoutKey {
     path_bar: u32,
 }
 
-/// Everything one column's rows are drawn from, reduced to something cheap to
-/// compare. The entries themselves are hashed rather than cloned: a listing
-/// that has not changed hashes the same, and hashing thirty visible rows costs
-/// far less than the re-record it avoids.
+/// Everything a column's ground in the window is drawn from.
 #[derive(PartialEq)]
 struct PaneKey {
-    /// Which rows are on screen. Scrolling past a row boundary changes this
-    /// and costs one column a re-record; scrolling within a row does not.
-    range: (usize, usize),
-    entries: u64,
-    /// The thumbnail store's epoch, which moves when a picture lands. See
-    /// where this is filled in for why it belongs in the key.
-    thumbs: u64,
-    /// Selection, cursor, cut marks and an in-place rename, over the visible
-    /// rows only.
-    marks: u64,
-    active: bool,
     status: Status,
     size: (u32, u32),
     dark: bool,
-    /// Whether the window has focus. The rows are drawn with the frame's
-    /// theme, and a background window's theme has a muted accent — so losing
-    /// focus repaints the selection, and without this the columns would keep
-    /// the front window's colour.
-    focused: bool,
 }
 
 #[derive(PartialEq, Clone)]
@@ -466,10 +445,15 @@ impl Scene {
     /// Only Miller view has columns; the list and grid draw into the content
     /// area directly, so their panes are simply all hidden.
     fn sync_panes(&mut self, f: &Frame) {
-        // With the columns in their own subsurfaces they are painted there and
-        // composited over this scene; drawing them here too would double them.
-        let miller = f.mode == ViewMode::Columns && !crate::pane_surfaces::enabled();
-        let wanted = if miller { f.panes.len() } else { 0 };
+        // The rows are painted into each column's own surfaces, which sit over
+        // this scene. What stays here is what does not move when a column
+        // scrolls: its ground, the active column's tint, and the one line a
+        // column shows in place of rows.
+        let wanted = if f.mode == ViewMode::Columns {
+            f.panes.len()
+        } else {
+            0
+        };
 
         while self.panes.len() < wanted {
             let pane = self.engine.new_layer();
@@ -491,30 +475,6 @@ impl Scene {
                 ..Default::default()
             });
             rows.set_picture_cached(true);
-            // The strip is the one layer here that is stable in content and
-            // moves constantly, which is exactly what an offscreen cache is
-            // for: a frame of scrolling becomes a blit of the recorded band
-            // instead of a replay of every row's display list.
-            //
-            // **Off by default, because lay-rs rasterises it at the wrong
-            // resolution.** `create_surface_for_node` sizes the offscreen
-            // from `surface_size_for_render_layer`, which is the layer's
-            // bounds in *points*, with no device scale applied — and the
-            // image is then drawn back onto a render canvas that already
-            // carries the HiDPI transform. On a 2x display every cached row
-            // is therefore a 2x upscale, and the column text is visibly
-            // soft next to the sidebar and the list view, which draw
-            // straight to the canvas. It is invisible at 1x, which is why it
-            // survived.
-            //
-            // `picture_cached` above is unaffected — a display list is
-            // replayed at the canvas's own resolution, not resampled — so
-            // what is lost here is blit-instead-of-replay, not the far
-            // larger win of not re-recording the rows at all.
-            //
-            // `OTTO_FILES_ROWCACHE=1` turns it back on, for testing a lay-rs
-            // that has been fixed.
-            rows.set_image_cached(std::env::var_os("OTTO_FILES_ROWCACHE").is_some());
 
             let _ = pane.add_sublayer(&rows);
             // Before the preview, which is the trailing member of the stack.
@@ -613,131 +573,84 @@ impl PaneLayer {
             Status::Rows
         };
 
-        // Record a few rows past each edge of the viewport. The strip's own
-        // key is what triggers a re-record, and the key holds `range` — so
-        // without any margin the band is left, and re-recorded, on every row
-        // boundary the scroll crosses. A margin turns that into once every
-        // `OVERSCAN_ROWS`, at the cost of carrying that many extra rows in
-        // the cached image.
-        const OVERSCAN_ROWS: usize = 8;
-        let visible = view::miller_visible_range(f, depth);
-        let range = (
-            visible.0.saturating_sub(OVERSCAN_ROWS),
-            (visible.1 + OVERSCAN_ROWS).min(pane.entries.len()),
-        );
-        let inset = view::MILLER_ROW_INSET;
-
-        // The strip covers the *visible band*, not the whole listing.
-        //
-        // Sizing it to the listing is the obvious thing and it is wrong: a
-        // directory of five hundred entries makes a twelve-thousand-pixel
-        // layer, and moving that layer once per scroll frame damages its whole
-        // bounds however little of it the pane shows. The picture stays cheap
-        // — Skia replays only what was recorded — but the compositor is handed
-        // a full-screen damage rect every frame, which is what spins the fans.
-        //
-        // So the strip holds only the rows in `range` and is positioned so
-        // that row `range.0` lands where it belongs. Scrolling within a row's
-        // pitch moves the strip and nothing more; crossing a row boundary
-        // changes `range`, which moves the key below and re-records the band.
-        //
-        // A column with no rows to show — loading, empty, or failed — has no
-        // band at all, so the strip takes the pane's own box instead and its
-        // one line of text is centred in that.
-        let rows_shown = status == Status::Rows;
-        let (strip_h, strip_y) = if rows_shown {
-            (
-                range.1.saturating_sub(range.0) as f32 * view::ROW_H,
-                inset + range.0 as f32 * view::ROW_H - pane.scroll,
-            )
-        } else {
-            (full.height(), 0.0)
-        };
-        self.rows
-            .set_size(LayerSize::points(full.width(), strip_h), None);
-        self.rows.set_position(LayerPoint::new(0.0, strip_y), None);
-
         let key = PaneKey {
-            range,
-            entries: hash_entries(&pane.entries, range),
-            // A thumbnail landing changes what this pane draws without
-            // changing anything else the key is made of, so the store's epoch
-            // rides along: it moves exactly when a picture arrives, and a pane
-            // that would show it rebuilds while the rest replay.
-            thumbs: f.thumbs.map(|store| store.epoch()).unwrap_or(0),
-            marks: hash_marks(pane, range, f, depth),
-            active,
             status: status.clone(),
-            size: (full.width().to_bits(), strip_h.to_bits()),
+            size: (full.width().to_bits(), full.height().to_bits()),
             dark: view::is_dark(),
-            focused: f.focused,
         };
         if self.key.as_ref() == Some(&key) {
             return;
         }
         self.key = Some(key);
 
-        let theme = f.theme.clone();
-        match status {
+        // A column with rows has nothing more here: they are its surfaces'.
+        let theme = f.theme;
+        let (text, color) = match &status {
             Status::Rows => {
-                let rows = build_rows(pane, range, f, depth);
-                self.rows
-                    .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
-                        for row in &rows {
-                            row.draw(canvas, &theme, w);
-                        }
-                        Rect::from_wh(w, h)
-                    });
+                self.rows.set_hidden(true);
+                return;
             }
-            Status::Loading | Status::Empty | Status::Error(_) => {
-                let (text, color) = match &status {
-                    Status::Error(error) => (error.clone(), theme.text_secondary),
-                    Status::Loading => (otto_kit::t_owned!("files-loading"), theme.text_tertiary),
-                    _ => (otto_kit::t_owned!("files-empty"), theme.text_tertiary),
-                };
-                // The strip is the pane's own box in this state, so centring on
-                // it is centring on the column.
-                self.rows
-                    .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
-                        Label::new(&text)
-                            .with_style(styles::BODY)
-                            .with_color(color)
-                            .centered_at(w / 2.0, h / 2.0)
-                            .render(canvas);
-                        Rect::from_wh(w, h)
-                    });
-            }
-        }
+            Status::Error(error) => (error.clone(), theme.text_secondary),
+            Status::Loading => (otto_kit::t_owned!("files-loading"), theme.text_tertiary),
+            Status::Empty => (otto_kit::t_owned!("files-empty"), theme.text_tertiary),
+        };
+        self.rows.set_hidden(false);
+        self.rows
+            .set_size(LayerSize::points(full.width(), full.height()), None);
+        self.rows.set_position(LayerPoint::new(0.0, 0.0), None);
+        self.rows
+            .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
+                Label::new(&text)
+                    .with_style(styles::BODY)
+                    .with_color(color)
+                    .centered_at(w / 2.0, h / 2.0)
+                    .render(canvas);
+                Rect::from_wh(w, h)
+            });
     }
 }
 
-/// Paint one Miller column's rows into a canvas whose origin is the column's
-/// own top-left corner, with the scroll offset already applied.
+/// Paint the rows of one Miller column that fall inside `band`, a slice of the
+/// column's content in content coordinates — `0` is the top of the column's
+/// content, before any scroll.
 ///
-/// The same drawing [`PaneLayer::sync`] records into the rows strip, but aimed
-/// at whatever canvas the caller has — used by [`crate::pane_surfaces`] to
-/// paint a column into its own subsurface instead of into the window.
-pub(crate) fn paint_column(canvas: &Canvas, f: &Frame, depth: usize, width: f32) {
+/// For a column's own surfaces, where the compositor moves the painted band to
+/// scroll it: nothing here knows the scroll offset, so a glide never repaints.
+/// `dx` is how far the column's left edge is cropped off by the sidebar, which
+/// shifts the rows rather than squeezing them.
+///
+/// Rows only, on a transparent ground: the column's paper, its tint and its
+/// status line are the window's, underneath — see [`PaneLayer`].
+pub(crate) fn paint_column_band(
+    canvas: &Canvas,
+    f: &Frame,
+    depth: usize,
+    width: f32,
+    band: Rect,
+    dx: f32,
+) {
     let pane = &f.panes[depth];
-    canvas.clear(paint_to_color(view::content_ground()));
     if pane.error.is_some() || pane.loading || pane.entries.is_empty() {
         return;
     }
-    let range = view::miller_visible_range(f, depth);
-    let rows = build_rows(pane, range, f, depth);
+    let count = pane.entries.len();
+    let first = ((band.top - view::MILLER_ROW_INSET) / view::ROW_H)
+        .floor()
+        .max(0.0) as usize;
+    let last = (((band.bottom - view::MILLER_ROW_INSET) / view::ROW_H)
+        .ceil()
+        .max(0.0) as usize)
+        .min(count);
+    if first >= last {
+        return;
+    }
+    let rows = build_rows(pane, (first, last), f, depth);
     canvas.save();
-    canvas.translate((
-        0.0,
-        view::MILLER_ROW_INSET + range.0 as f32 * view::ROW_H - pane.scroll,
-    ));
+    canvas.translate((dx, view::MILLER_ROW_INSET + first as f32 * view::ROW_H));
     for row in &rows {
         row.draw(canvas, f.theme, width);
     }
     canvas.restore();
-}
-
-fn paint_to_color(color: Color) -> Color {
-    color
 }
 
 /// One row, with everything it draws already resolved — the icon decoded, the
@@ -890,34 +803,6 @@ fn hash_of<T: Hash>(value: &T) -> u64 {
     hasher.finish()
 }
 
-/// Identity of the visible rows. Names and kinds are what is drawn, so they
-/// are what has to be watched; a listing reordered or refreshed under the same
-/// names draws the same picture.
-fn hash_entries(entries: &[&Entry], range: (usize, usize)) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    for entry in &entries[range.0.min(entries.len())..range.1.min(entries.len())] {
-        entry.name.hash(&mut hasher);
-        entry.is_dir.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-fn hash_marks(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usize) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    // One past the range at each end: a selection run's rounding depends on
-    // whether its neighbour is selected, so a row just off screen changes what
-    // the first visible one draws.
-    let lo = range.0.saturating_sub(1);
-    let hi = (range.1 + 1).min(pane.entries.len());
-    for index in lo..hi {
-        pane.is_selected(index).hash(&mut hasher);
-        f.cut.contains(&pane.entries[index].path).hash(&mut hasher);
-    }
-    pane.cursor.hash(&mut hasher);
-    f.renaming.map(|(d, i)| (d == depth, i)).hash(&mut hasher);
-    hasher.finish()
-}
-
 // ---------------------------------------------------------------------------
 // Placement
 // ---------------------------------------------------------------------------
@@ -1011,6 +896,7 @@ mod tests {
             cursor: None,
             scroll: 0.0,
             bar: None,
+            velocity: 0.0,
             loading: false,
             error: None,
         };

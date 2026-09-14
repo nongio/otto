@@ -1461,11 +1461,9 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
 /// Outline what the drop would land in.
 ///
 /// Drawn on the window canvas after the panes, which puts it over the rows in
-/// every view — including Miller, whose rows are the scene's own layers,
-/// composited under this canvas. The exception is `OTTO_FILES_PANE_SUBS=1`,
-/// where the columns are subsurfaces *over* this canvas and the outline is
-/// hidden behind them; that mode is opt-in and its own drop feedback is a
-/// separate piece of work.
+/// the list and the grid. In column view the rows are the columns' own
+/// surfaces, over this canvas; their bands are transparent between rows, so
+/// the outline shows through everywhere a row does not cover it.
 fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
     let Some(target) = f.drop_target else {
         return;
@@ -1905,28 +1903,6 @@ pub fn pane_viewport(
             pane
         }
     }
-}
-
-/// Which of a Miller column's rows are on screen — the half-open range the
-/// scene records a picture for.
-///
-/// The same band [`draw_miller`] used to walk, lifted out so the scene can key
-/// its cached picture on it: cross a row boundary and the column re-records,
-/// scroll within one and it does not.
-pub fn miller_visible_range(f: &Frame, depth: usize) -> (usize, usize) {
-    let pane = &f.panes[depth];
-    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
-    let strip = RowStrip::miller(full, pane.entries.len(), pane.scroll);
-    let band = pane.band(pane_viewport(
-        f.width,
-        f.height,
-        ViewMode::Columns,
-        depth,
-        f.pan,
-        f.miller_w,
-    ));
-    let range = strip.visible(band);
-    (range.start, range.end)
 }
 
 // ---------------------------------------------------------------------------
@@ -2661,6 +2637,9 @@ pub struct PaneData<'a> {
     /// is no live view to read — the anchor tests, which care only about row
     /// geometry.
     pub bar: Option<&'a ScrollState>,
+    /// Points per second the pane is gliding at, positive scrolling down. A
+    /// column on its own surfaces paints ahead of the glide with it.
+    pub velocity: f32,
     pub loading: bool,
     pub error: Option<&'a str>,
 }
@@ -4957,11 +4936,10 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
 
 /// Miller columns: the chrome over the stack.
 ///
-/// The columns themselves — their ground, and every row in them — are layers
-/// the engine composites under this canvas; see [`crate::scene`]. What is left
-/// here is what sits *over* them and is cheap enough not to be worth a layer
-/// of its own: each column's scrollbar, the hairline down its trailing edge,
-/// and the stack's own horizontal bar.
+/// A column's ground is a layer the engine composites under this canvas (see
+/// [`crate::scene`]), and its rows and scrollbar are its own surfaces over it
+/// (see [`crate::pane_surfaces`]), as is the stack's horizontal bar. What is
+/// left here is the hairline down each column's trailing edge.
 fn draw_miller(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let viewport = content_viewport(f.width, f.height, ViewMode::Columns);
@@ -4981,38 +4959,15 @@ fn draw_miller(canvas: &Canvas, f: &Frame) {
                 .then(|| preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w)),
         );
 
-    for (depth, full) in trailing_edges.enumerate() {
+    for full in trailing_edges {
         if full.right < viewport.left || full.left > viewport.right {
             continue;
-        }
-        // The bar belongs to the column, but it is drawn from here so it lies
-        // over the column's content rather than being recorded into it — a
-        // scroll then moves the bar without the column re-recording anything.
-        // Unless the columns are in their own surfaces, in which case each
-        // draws its own bar into its own buffer: those surfaces sit over this
-        // canvas, so a bar drawn here would be hidden under them anyway, and
-        // would be stale besides.
-        if !crate::pane_surfaces::enabled() {
-            if let Some(pane) = f.panes.get(depth) {
-                pane.draw_scrollbar(canvas, theme);
-            }
         }
         canvas.draw_line(
             Point::new(full.right, viewport.top),
             Point::new(full.right, viewport.bottom),
             &divider,
         );
-    }
-
-    // The stack's own bar, along the bottom of every pane: the panes scroll
-    // vertically on their own bars, the stack scrolls sideways on this one.
-    // Drawn last so it lies over the pane dividers rather than under them.
-    // Unless it has a surface of its own over the columns — drawn here it
-    // would be covered by them. See [`crate::pane_surfaces`].
-    if !crate::pane_surfaces::enabled() {
-        if let Some(state) = f.pan_bar {
-            ScrollRenderer::draw(canvas, state, theme, |_, _| {});
-        }
     }
 
     canvas.restore();
@@ -7291,6 +7246,7 @@ mod geometry_tests {
             cursor,
             scroll,
             bar: None,
+            velocity: 0.0,
             loading: false,
             error: None,
         }

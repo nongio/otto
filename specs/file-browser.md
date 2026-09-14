@@ -297,32 +297,50 @@ underneath it resizes the window.
 ### Column surfaces
 
 Painting every column into the window's one buffer makes a scroll in a single
-column a repaint of the whole window, and — because the toolkit damages the
-whole buffer on commit — tells the compositor that everything changed. Under
-`OTTO_FILES_PANE_SUBS=1` each column instead gets its own Wayland subsurface,
-sized and positioned by `otto_surface_style_v1`. The client still does all the
-drawing, translating and clipping itself; what changes is the *scope*, so a
-scroll damages one column and leaves the toplevel alone.
+column a repaint of the whole window, and tells the compositor that
+everything changed. So each column is a scroll pane of its own (otto-kit's
+`ScrollSurfaces`): a clip surface at the column's visible slice, and inside it
+a *band* of rows taller than the column, on a transparent ground. The column's
+paper, the active column's tint and the line an empty, loading or failed
+column shows stay in the window's scene underneath.
+A vertical scroll moves the band with `otto_surface_style_v1` and paints
+nothing. The rows are painted again only when a glide nears the edge of the
+band, or when what the column shows changes (a selection, the cursor, a
+listing or a thumbnail landing, the focus or the theme). The window is not
+repainted for a vertical scroll at all, and the compositor recomposites only
+the column.
 
-This is opt-in while it settles. The default path is unchanged.
+Four things follow from the columns no longer being in the window's buffer:
 
-Three things follow from the columns no longer being in the window's buffer:
-
-- **Input still belongs to the toplevel.** Every column surface carries an
-  empty input region, so pointer events fall through and hit-testing stays in
-  window coordinates exactly as it was.
+- **Input still belongs to the toplevel.** Every column's surfaces pass the
+  pointer through, so events fall through and hit-testing stays in window
+  coordinates exactly as it was. A scroll over a column wakes the update loop,
+  which steps the scroll and moves the band; it does not ask the window for a
+  frame.
 - **Nothing above clips the columns.** In the window they were cut off by the
   content area's clip; a subsurface is a child of the toplevel and has no such
-  parent, so a column panned past the sidebar would draw over it. Each column
-  surface is cropped to its intersection with the content area instead, and
-  its drawing shifted by whatever was cropped off the left.
+  parent, so a column panned past the sidebar would draw over it. Each column's
+  clip is its intersection with the content area instead, and its rows are
+  shifted by whatever was cropped off the left. A column that only moves keeps
+  its band; one whose crop changes paints a new one.
 - **Scrolling chrome has to move with the content it describes.** A column's
-  vertical bar is drawn into that column's own surface, since the window is no
-  longer repainted for a scroll and a bar left there would fade in and freeze.
-  The stack's horizontal bar belongs to no column, so it gets a surface of its
-  own — a strip along the bottom of the content area, stacked above every
-  column, and restacked whenever the stack grows, because a subsurface created
-  later starts out on top of it.
+  vertical bar is a small surface of its own above the band, moved and faded by
+  the compositor. While an overscroll squashes it, its painted buffer is
+  stretched rather than repainted. The stack's horizontal bar belongs to no
+  column, so it gets a surface of its own — a strip along the bottom of the
+  content area, stacked above every column, and restacked whenever the stack
+  grows, because a subsurface created later starts out on top of it.
+- **A column steps once per presented frame.** Each band move asks to hear
+  when it reaches the screen, and the next step waits for that answer, so a
+  glide advances at the display's rate however often the loop happens to wake.
+- **A thumbnail landing repaints its column's band, not the window.** The
+  thumbnail store's epoch is part of what a band is painted from.
+
+The file area's paper is opaque whether or not the window is frosted, and the
+window says so: it declares that area — from the sidebar's edge to the right,
+from the header down to the path bar, less the rounded corner at the bottom —
+as its opaque region, so the compositor does not blur behind it. The sidebar,
+the header and the picker's action row stay translucent and frosted.
 
 The hairlines between columns are still drawn in the window, so a sideways pan
 — unlike a vertical scroll — does still repaint it, or they would be left
@@ -1007,9 +1025,10 @@ flight that never lands and for an icon whose client exited mid-air.
 **A drop does not move the view.** The reload a drop causes keeps every pane
 scrolled exactly where it was, and the entry that landed is not scrolled to.
 
-With `OTTO_FILES_PANE_SUBS=1` the Miller columns are subsurfaces over the
-window's own canvas, so the drop outline is hidden behind them; that mode is
-opt-in and needs its own drop feedback.
+In column view the rows are the columns' own surfaces, over the window's
+canvas, while the drop outline is drawn on that canvas. Their bands are
+transparent between rows, so the outline shows everywhere a row's own pixels
+do not cover it.
 
 ### Get Info
 
