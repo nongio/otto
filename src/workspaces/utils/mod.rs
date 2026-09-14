@@ -512,20 +512,37 @@ impl SurfaceFilter {
 /// without it, a 1:1 texture on a fractionally positioned layer would be point
 /// sampled half a pixel off and come out with doubled and dropped pixel rows.
 /// Both cheap branches therefore require it.
+/// `client_placed` is a surface whose position the client sets through the
+/// style protocol — a scroll pane's band moves on every step of a scroll. Its
+/// place on the pixel grid is unknown when its picture is recorded, so it can
+/// never be point sampled; but drawn 1:1 it is not being resampled either,
+/// only shifted, and a bilinear read is exact wherever the client keeps it on
+/// whole pixels (otto-kit does) and at worst a fraction soft where it does
+/// not. The bicubic an unplaced surface gets off the grid reads sixteen texels
+/// for every pixel of a pane, on every frame the pane moves.
 fn surface_filter(
     is_normal_transform: bool,
     scale: (f32, f32),
     translation: (f32, f32),
     pixel_grid_aligned: bool,
+    client_placed: bool,
 ) -> SurfaceFilter {
     let (scale_x, scale_y) = scale;
     let (tx, ty) = translation;
 
-    if !is_normal_transform || !pixel_grid_aligned {
+    if !is_normal_transform {
         return SurfaceFilter::Cubic;
     }
 
     let is_identity_scale = (scale_x - 1.0).abs() < 1e-4 && (scale_y - 1.0).abs() < 1e-4;
+    if !pixel_grid_aligned {
+        return if client_placed && is_identity_scale {
+            SurfaceFilter::Linear
+        } else {
+            SurfaceFilter::Cubic
+        };
+    }
+
     let is_pixel_aligned = (tx - tx.round()).abs() < 1e-4 && (ty - ty.round()).abs() < 1e-4;
 
     if is_identity_scale && is_pixel_aligned {
@@ -780,7 +797,13 @@ pub fn configure_surface_layer(
         // `content_downscaled` short-circuits the gate for exposé: the scale
         // lives on an ancestor layer, so nothing `surface_filter` looks at
         // knows the texture is about to be minified onto the framebuffer.
-        let sampling = if adaptive_sampling_enabled() && !content_downscaled() {
+        //
+        // A one-pixel buffer is a solid fill however far it is stretched — a
+        // scroll pane's clip, a container band — and every filter reads the
+        // same pixel from it, so it takes the one that reads it once.
+        let sampling = if src_w <= 1.0 && src_h <= 1.0 {
+            SurfaceFilter::Nearest
+        } else if adaptive_sampling_enabled() && !content_downscaled() {
             surface_filter(
                 matches!(draw_wvs.transform, Transform::Normal),
                 (scale_x, scale_y),
@@ -789,6 +812,7 @@ pub fn configure_surface_layer(
                     -draw_wvs.phy_src_y + ty / scale_y,
                 ),
                 pixel_grid_aligned,
+                client_owns_size,
             )
         } else {
             SurfaceFilter::Cubic
@@ -872,7 +896,7 @@ mod tests {
     #[test]
     fn an_exact_buffer_on_the_pixel_grid_is_point_sampled() {
         assert_eq!(
-            surface_filter(true, (1.0, 1.0), (0.0, 0.0), true),
+            surface_filter(true, (1.0, 1.0), (0.0, 0.0), true, false),
             SurfaceFilter::Nearest
         );
     }
@@ -884,7 +908,23 @@ mod tests {
     #[test]
     fn an_exact_buffer_off_the_pixel_grid_is_not_point_sampled() {
         assert_eq!(
-            surface_filter(true, (1.0, 1.0), (0.0, 0.0), false),
+            surface_filter(true, (1.0, 1.0), (0.0, 0.0), false, false),
+            SurfaceFilter::Cubic
+        );
+    }
+
+    /// A scroll pane's band: placed by its client, drawn 1:1. Never point
+    /// sampled — its place on the grid is not known when it is recorded — but
+    /// not paid for sixteen texels a pixel on every step of a scroll either.
+    #[test]
+    fn an_exact_buffer_its_client_places_is_filtered_linearly() {
+        assert_eq!(
+            surface_filter(true, (1.0, 1.0), (0.0, 0.0), false, true),
+            SurfaceFilter::Linear
+        );
+        // A client-placed buffer that is really rescaled still wants bicubic.
+        assert_eq!(
+            surface_filter(true, (0.825, 0.825), (0.0, 0.0), false, true),
             SurfaceFilter::Cubic
         );
     }
@@ -892,7 +932,7 @@ mod tests {
     #[test]
     fn a_shifted_buffer_is_not_point_sampled() {
         assert_eq!(
-            surface_filter(true, (1.0, 1.0), (0.5, 0.0), true),
+            surface_filter(true, (1.0, 1.0), (0.5, 0.0), true, false),
             SurfaceFilter::Linear
         );
     }
@@ -900,12 +940,12 @@ mod tests {
     #[test]
     fn a_nearly_unscaled_buffer_is_filtered_linearly() {
         assert_eq!(
-            surface_filter(true, (1.02, 1.02), (0.0, 0.0), true),
+            surface_filter(true, (1.02, 1.02), (0.0, 0.0), true, false),
             SurfaceFilter::Linear
         );
         // ...but only on the grid.
         assert_eq!(
-            surface_filter(true, (1.02, 1.02), (0.0, 0.0), false),
+            surface_filter(true, (1.02, 1.02), (0.0, 0.0), false, false),
             SurfaceFilter::Cubic
         );
     }
@@ -915,7 +955,7 @@ mod tests {
     #[test]
     fn a_rescaled_buffer_is_filtered_bicubically() {
         assert_eq!(
-            surface_filter(true, (0.825, 0.825), (0.0, 0.0), true),
+            surface_filter(true, (0.825, 0.825), (0.0, 0.0), true, false),
             SurfaceFilter::Cubic
         );
     }
@@ -923,7 +963,7 @@ mod tests {
     #[test]
     fn a_flipped_buffer_is_filtered_bicubically() {
         assert_eq!(
-            surface_filter(false, (1.0, 1.0), (0.0, 0.0), true),
+            surface_filter(false, (1.0, 1.0), (0.0, 0.0), true, false),
             SurfaceFilter::Cubic
         );
     }
