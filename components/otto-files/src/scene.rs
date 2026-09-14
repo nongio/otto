@@ -10,9 +10,7 @@
 //! Here the panels are *layers* instead. Their backgrounds are a style the
 //! engine composites (`set_background_color`), not a rect this client paints,
 //! and their content is a picture the engine caches until something that
-//! actually feeds it changes. What "actually feeds it" means is [`PaneKey`]:
-//! rebuild the closure when the key moves, replay the cached picture when it
-//! does not.
+//! actually feeds it changes.
 //!
 //! The window's own background is a style too, but one the *compositor* holds
 //! — see `FilesApp::on_app_ready`. It has to be, because a client cannot blur
@@ -20,7 +18,8 @@
 //!
 //! What is still immediate-mode, drawn over this scene by [`crate::view::draw`]:
 //! the sidebar's places, the header's title and buttons, and the list and grid
-//! views. Those are bounded and cheap; the Miller stack was neither.
+//! views. Those are bounded and cheap. The Miller stack is neither, and is not
+//! drawn in the window at all — see [`crate::pane_surfaces`].
 
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
@@ -29,8 +28,6 @@ use otto_kit::prelude::*;
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 use skia_safe::{Canvas, Color, Image, Paint, Point, Rect};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 use crate::view::{self, Frame, PaneData, RunEnds, ViewMode};
 
@@ -41,7 +38,7 @@ fn paint_color(color: Color) -> PaintColor {
     }
 }
 
-/// The scene's structural panels, plus one layer per Miller column.
+/// The scene's structural panels.
 pub struct Scene {
     engine: std::sync::Arc<Engine>,
     /// The surface's own root node, handed over by otto-kit. Everything here
@@ -54,15 +51,8 @@ pub struct Scene {
     /// The breadcrumb strip along the bottom. Hidden in the picker, whose
     /// bottom edge belongs to the action row.
     path_bar: Layer,
-    /// The paper the file area sits on. Clips, so a column panned past the
-    /// window edge is cut off by the engine rather than by a `clip_rect` this
-    /// client has to remember to balance.
+    /// The paper the file area sits on.
     content: Layer,
-    /// Pooled: a column that goes away is hidden, not destroyed, because the
-    /// next navigation almost always wants it straight back.
-    panes: Vec<PaneLayer>,
-    preview: Layer,
-    preview_key: Option<u64>,
 
     /// What the panels were last laid out against, so a frame that changed
     /// nothing geometric does not touch the engine at all.
@@ -122,44 +112,14 @@ impl FrostState {
 /// different speeds.
 const MATERIAL_FADE: f32 = 0.3;
 
-/// One Miller column's ground in the window: the pane, which carries the
-/// active column's tint, and the line a column shows when it has no rows. The
-/// rows themselves are painted into the column's own surfaces.
-struct PaneLayer {
-    pane: Layer,
-    /// The loading, empty or error line, centred on the pane.
-    rows: Layer,
-    key: Option<PaneKey>,
-}
-
 #[derive(PartialEq)]
 struct LayoutKey {
     width: u32,
     height: u32,
     mode: ViewMode,
-    pan: i32,
-    miller_w: u32,
-    panes: usize,
-    preview: bool,
     footer: u32,
     band: u32,
     path_bar: u32,
-}
-
-/// Everything a column's ground in the window is drawn from.
-#[derive(PartialEq)]
-struct PaneKey {
-    status: Status,
-    size: (u32, u32),
-    dark: bool,
-}
-
-#[derive(PartialEq, Clone)]
-enum Status {
-    Rows,
-    Loading,
-    Empty,
-    Error(String),
 }
 
 impl Scene {
@@ -184,7 +144,6 @@ impl Scene {
         let footer = new_layer("files-footer");
         let path_bar = new_layer("files-path-bar");
         let content = new_layer("files-content");
-        let preview = new_layer("files-preview");
 
         // Header last: it overlaps nothing, but it is the panel drawn over the
         // top of the content area's ground and the order records that.
@@ -193,15 +152,6 @@ impl Scene {
         let _ = root.add_sublayer(&header);
         let _ = root.add_sublayer(&footer);
         let _ = root.add_sublayer(&path_bar);
-        let _ = content.add_sublayer(&preview);
-
-        // `clip_children`, not just `clip_content`: what has to be cut off at
-        // the content area's edge is the *columns*, which are children of it.
-        // A column panned half past the sidebar is then clipped by the engine
-        // rather than by a `clip_rect` this client has to balance by hand.
-        content.set_clip_content(true, None);
-        content.set_clip_children(true, None);
-        preview.set_picture_cached(true);
 
         Self {
             engine,
@@ -211,9 +161,6 @@ impl Scene {
             footer,
             path_bar,
             content,
-            panes: Vec::new(),
-            preview,
-            preview_key: None,
             layout: None,
             materials: None,
             frost: Default::default(),
@@ -239,7 +186,6 @@ impl Scene {
     pub fn update(&mut self, f: &Frame) {
         self.sync_materials(f);
         self.sync_layout(f);
-        self.sync_panes(f);
         // One tick, so the changes above are folded into the scene before the
         // host renders it. The delta is zero unless the panel materials are
         // mid-fade — that is the only thing here that animates, and everything
@@ -314,8 +260,6 @@ impl Scene {
         // the file area to be translucent over — so it never fades.
         self.content
             .set_background_color(paint_color(view::content_ground()), None);
-        self.preview
-            .set_background_color(paint_color(view::content_ground()), None);
 
         if !fades {
             // Nothing to wait for: the panels are already where they belong.
@@ -362,10 +306,6 @@ impl Scene {
             width: f.width.to_bits(),
             height: f.height.to_bits(),
             mode: f.mode,
-            pan: f.pan.to_bits() as i32,
-            miller_w: f.miller_w.to_bits(),
-            panes: f.panes.len(),
-            preview: f.preview.is_some(),
             footer: f.footer.to_bits(),
             // The filter strip grows the header panel and shortens the
             // content one, so opening it has to relayout.
@@ -439,175 +379,6 @@ impl Scene {
             self.path_bar.set_hidden(true);
         }
     }
-
-    /// Create, place and hide column layers to match the current stack.
-    ///
-    /// Only Miller view has columns; the list and grid draw into the content
-    /// area directly, so their panes are simply all hidden.
-    fn sync_panes(&mut self, f: &Frame) {
-        // The rows are painted into each column's own surfaces, which sit over
-        // this scene. What stays here is what does not move when a column
-        // scrolls: its ground, the active column's tint, and the one line a
-        // column shows in place of rows.
-        let wanted = if f.mode == ViewMode::Columns {
-            f.panes.len()
-        } else {
-            0
-        };
-
-        while self.panes.len() < wanted {
-            let pane = self.engine.new_layer();
-            pane.set_key("files-pane");
-            pane.set_layout_style(taffy::Style {
-                position: taffy::style::Position::Absolute,
-                ..Default::default()
-            });
-            // Likewise the rows strip, which is a child the scroll offset
-            // moves: without this a scrolled column would paint over the one
-            // below the header.
-            pane.set_clip_content(true, None);
-            pane.set_clip_children(true, None);
-
-            let rows = self.engine.new_layer();
-            rows.set_key("files-pane-rows");
-            rows.set_layout_style(taffy::Style {
-                position: taffy::style::Position::Absolute,
-                ..Default::default()
-            });
-            rows.set_picture_cached(true);
-
-            let _ = pane.add_sublayer(&rows);
-            // Before the preview, which is the trailing member of the stack.
-            let _ = self.content.add_sublayer(&pane);
-            self.panes.push(PaneLayer {
-                pane,
-                rows,
-                key: None,
-            });
-        }
-
-        for (depth, slot) in self.panes.iter_mut().enumerate() {
-            if depth >= wanted {
-                slot.pane.set_hidden(true);
-                continue;
-            }
-            slot.pane.set_hidden(false);
-            slot.sync(depth, f);
-        }
-
-        self.sync_preview(f);
-    }
-
-    fn sync_preview(&mut self, f: &Frame) {
-        let Some(data) = f.preview.as_ref() else {
-            self.preview.set_hidden(true);
-            self.preview_key = None;
-            return;
-        };
-        if f.mode != ViewMode::Columns {
-            self.preview.set_hidden(true);
-            return;
-        }
-        self.preview.set_hidden(false);
-
-        // The preview's rect comes from the same stack geometry the columns
-        // use, translated into the content area's own coordinates.
-        let full = view::preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w);
-        place_in_content(&self.preview, full, f.height);
-
-        let key = hash_of(&(
-            data.name,
-            data.first_row,
-            data.decoded.is_some(),
-            // A video re-records on every frame and every tick of its clock
-            // — but only when it is drawn in this layer. On its own subsurface
-            // the layer draws none of it, so its key must not churn per frame.
-            if data.video_on_surface {
-                0
-            } else {
-                data.video.map(crate::quickview::Video::key).unwrap_or(0)
-            },
-            view::is_dark(),
-            full.width().to_bits(),
-            full.height().to_bits(),
-        ));
-        if self.preview_key == Some(key) {
-            return;
-        }
-        self.preview_key = Some(key);
-
-        let content = view::preview_content(data, f.theme.clone());
-        self.preview
-            .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
-                content(canvas, w, h);
-                Rect::from_wh(w, h)
-            });
-    }
-}
-
-impl PaneLayer {
-    fn sync(&mut self, depth: usize, f: &Frame) {
-        let pane = &f.panes[depth];
-        let full = view::miller_pane_rect(depth, f.height, f.pan, f.miller_w);
-        place_in_content(&self.pane, full, f.height);
-
-        // The active column is a shade off the ground — as a style, so which
-        // column has the keyboard costs a colour change and not a repaint.
-        let active = depth == f.active;
-        self.pane.set_background_color(
-            paint_color(if active {
-                f.theme.fill_quaternary
-            } else {
-                Color::TRANSPARENT
-            }),
-            None,
-        );
-
-        let status = if let Some(error) = pane.error {
-            Status::Error(error.to_string())
-        } else if pane.loading {
-            Status::Loading
-        } else if pane.entries.is_empty() {
-            Status::Empty
-        } else {
-            Status::Rows
-        };
-
-        let key = PaneKey {
-            status: status.clone(),
-            size: (full.width().to_bits(), full.height().to_bits()),
-            dark: view::is_dark(),
-        };
-        if self.key.as_ref() == Some(&key) {
-            return;
-        }
-        self.key = Some(key);
-
-        // A column with rows has nothing more here: they are its surfaces'.
-        let theme = f.theme;
-        let (text, color) = match &status {
-            Status::Rows => {
-                self.rows.set_hidden(true);
-                return;
-            }
-            Status::Error(error) => (error.clone(), theme.text_secondary),
-            Status::Loading => (otto_kit::t_owned!("files-loading"), theme.text_tertiary),
-            Status::Empty => (otto_kit::t_owned!("files-empty"), theme.text_tertiary),
-        };
-        self.rows.set_hidden(false);
-        self.rows
-            .set_size(LayerSize::points(full.width(), full.height()), None);
-        self.rows.set_position(LayerPoint::new(0.0, 0.0), None);
-        self.rows
-            .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
-                Label::new(&text)
-                    .with_style(styles::BODY)
-                    .with_color(color)
-                    .centered_at(w / 2.0, h / 2.0)
-                    .render(canvas);
-                Rect::from_wh(w, h)
-            });
-    }
 }
 
 /// Paint the rows of one Miller column that fall inside `band`, a slice of the
@@ -617,8 +388,9 @@ impl PaneLayer {
 /// For a column's own surfaces, where the compositor moves the painted band to
 /// scroll it: nothing here knows the scroll offset, so a glide never repaints.
 ///
-/// Rows only, on a transparent ground: the column's paper, its tint and its
-/// status line are the window's, underneath — see [`PaneLayer`].
+/// Rows only, on a transparent ground: the file area's paper is the window's,
+/// underneath, and the column's tint and status line are its own surfaces —
+/// see [`crate::pane_surfaces`].
 pub(crate) fn paint_column_band(canvas: &Canvas, f: &Frame, depth: usize, width: f32, band: Rect) {
     let pane = &f.panes[depth];
     if pane.error.is_some() || pane.loading || pane.entries.is_empty() {
@@ -785,34 +557,12 @@ fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usiz
 }
 
 // ---------------------------------------------------------------------------
-// Keys
-// ---------------------------------------------------------------------------
-
-fn hash_of<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-// ---------------------------------------------------------------------------
 // Placement
 // ---------------------------------------------------------------------------
 
 fn place(layer: &Layer, x: f32, y: f32, width: f32, height: f32) {
     layer.set_position(LayerPoint::new(x, y), None);
     layer.set_size(LayerSize::points(width, height), None);
-}
-
-/// Place a column, whose geometry [`crate::view`] computes in *window*
-/// coordinates, inside the content layer.
-fn place_in_content(layer: &Layer, full: Rect, window_h: f32) {
-    place(
-        layer,
-        full.left - view::sidebar_w(),
-        0.0,
-        full.width(),
-        (window_h - view::header_h()).max(0.0),
-    );
 }
 
 #[cfg(test)]

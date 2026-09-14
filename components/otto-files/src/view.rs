@@ -3009,7 +3009,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
             draw_column_strip(canvas, f);
             draw_list(canvas, f);
         }
-        ViewMode::Columns => draw_miller(canvas, f),
+        // The column stack is on surfaces of its own; see
+        // [`crate::pane_surfaces`].
+        ViewMode::Columns => {}
         ViewMode::Grid => draw_grid(canvas, f),
     }
 
@@ -3668,15 +3670,15 @@ fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteD
 /// The preview pane's content, as a closure the scene records into its own
 /// layer's cached picture.
 ///
-/// The panel is the layer's own box, so this draws from `(0, 0)` rather than
-/// in window coordinates: the column's position on screen is the layer's, and
-/// panning the Miller stack moves it without touching what was recorded.
+/// The panel is the surface's own box, so this draws from `(0, 0)` rather than
+/// in window coordinates: the column's position on screen is the surface's,
+/// and panning the Miller stack moves it without touching what was painted.
 ///
 /// Nothing here paints the pane's ground. That is `content_ground` — and *not*
 /// `otto_kit::preview::background`, which is the translucent material Quick
 /// View floats over a dimmed window with. This pane is not a card laid over
 /// the browser; it reads as one more column on the same opaque paper the
-/// listing sits on. The scene carries it as the layer's background style.
+/// listing sits on. The surface is cleared to it first.
 ///
 /// The decode is cloned in, because the picture outlives the frame that
 /// recorded it. That only happens when the selection changes or a decode
@@ -4932,45 +4934,6 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
 
     canvas.restore();
     pane.draw_scrollbar(canvas, theme);
-}
-
-/// Miller columns: the chrome over the stack.
-///
-/// A column's ground is a layer the engine composites under this canvas (see
-/// [`crate::scene`]), and its rows and scrollbar are its own surfaces over it
-/// (see [`crate::pane_surfaces`]), as is the stack's horizontal bar. What is
-/// left here is the hairline down each column's trailing edge.
-fn draw_miller(canvas: &Canvas, f: &Frame) {
-    let theme = f.theme;
-    let viewport = content_viewport(f.width, f.height, ViewMode::Columns);
-
-    canvas.save();
-    canvas.clip_rect(viewport, ClipOp::Intersect, true);
-
-    let mut divider = Paint::default();
-    divider.set_color(theme.fill_tertiary);
-    divider.set_stroke_width(1.0);
-
-    let trailing_edges = (0..f.panes.len())
-        .map(|depth| miller_pane_rect(depth, f.height, f.pan, f.miller_w))
-        .chain(
-            f.preview
-                .is_some()
-                .then(|| preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w)),
-        );
-
-    for full in trailing_edges {
-        if full.right < viewport.left || full.left > viewport.right {
-            continue;
-        }
-        canvas.draw_line(
-            Point::new(full.right, viewport.top),
-            Point::new(full.right, viewport.bottom),
-            &divider,
-        );
-    }
-
-    canvas.restore();
 }
 
 /// Where a selected row sits within its run of selected rows. Rows abut, so a

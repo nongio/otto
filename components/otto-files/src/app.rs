@@ -1450,10 +1450,10 @@ impl Browser {
     }
 
     /// What a scroll repaints in the window, when that is less than all of
-    /// it: the file area of a list or a grid, with nothing laid over it. A
-    /// column stack's pan moves the dividers the window draws between its
-    /// columns, and an overlay scrolls — or covers — on its own terms, so
-    /// either repaints the whole window.
+    /// it: the file area of a list or a grid, with nothing laid over it. The
+    /// column stack scrolls and pans on surfaces of its own and has nothing
+    /// here to repaint, and an overlay scrolls — or covers — on its own terms,
+    /// so neither has an area to name.
     fn scroll_damage(&self) -> Option<Rect> {
         let plain = self.mode != ViewMode::Columns
             && self.quickview.is_none()
@@ -7291,19 +7291,8 @@ impl App for FilesApp {
             // switch of view mode — has already happened by the time this
             // runs.
             let thumb_jobs = browser.sync_thumbnails();
-            // A sideways pan moves the columns, and the hairlines between them
-            // are drawn in the window, not in the column surfaces — so while
-            // the stack is panning the window has to keep up or the dividers
-            // are left behind. The bar's fade is a good enough stand-in for
-            // "the stack is moving": it is up for exactly that long.
-            let pan_bar_visible =
-                browser.mode == ViewMode::Columns && browser.pan.state.scrollbar_opacity() > 0.0;
-            let scrolled_only = scrolled
-                && !changed
-                && !browser.dirty
-                && !animating
-                && preview_target.is_none()
-                && !pan_bar_visible;
+            let scrolled_only =
+                scrolled && !changed && !browser.dirty && !animating && preview_target.is_none();
             // A frame that only moves the file area says so, and the rest of
             // the window is not recomposited behind it.
             let scroll_area = scrolled_only.then(|| browser.scroll_damage()).flatten();

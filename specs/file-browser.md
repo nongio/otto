@@ -302,9 +302,11 @@ everything changed. So the stack is a horizontal scroll container (otto-kit's
 `ScrollSurfaces::container`) clipped to the file area, and each column is a
 vertical scroll pane inside it: a clip surface the column's size, placed once
 in the stack's own coordinates, and inside it a *band* of rows taller than the
-column, on a transparent ground. The column's paper, the active column's tint
-and the line an empty, loading or failed column shows stay in the window's
-scene underneath.
+column, on a transparent ground. The file area's paper is the window's and does
+not move. Everything that moves with the stack is in it: the active column's
+tint is the colour of that column's clip, and the hairline down each column's
+edge, the line an empty, loading or failed column shows and the docked preview
+are surfaces of their own beside the columns.
 A vertical scroll moves the band with `otto_surface_style_v1` and paints
 nothing. The rows are painted again only when a glide nears the edge of the
 band, or when what the column shows changes (a selection, the cursor, a
@@ -344,9 +346,11 @@ from the header down to the path bar, less the rounded corner at the bottom —
 as its opaque region, so the compositor does not blur behind it. The sidebar,
 the header and the picker's action row stay translucent and frosted.
 
-The hairlines between columns are still drawn in the window, so a sideways pan
-— unlike a vertical scroll — does still repaint it, or they would be left
-behind while the columns slide.
+Neither a vertical scroll nor a sideways pan repaints the window: nothing the
+window draws moves with either. A hairline and a tint are a single pixel each,
+stretched by the compositor. Only transient overlays that point at a row — a
+drop target's outline, the open pulse, a rename field — are the window's, and
+the window repaints for as long as one is up.
 
 ### The preview column
 
