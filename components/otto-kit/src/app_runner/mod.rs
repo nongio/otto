@@ -836,7 +836,7 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
         // A frame loop runs every frame whether or not the surface painted;
         // any other callback runs once for each frame the surface commits.
         if AppContext::has_frame_loop(&surface.id()) {
-            AppContext::request_throttled_frame(surface);
+            AppContext::request_loop_frame(surface);
         }
 
         AppContext::dispatch_frame_callback(&surface.id());

@@ -37,10 +37,16 @@
 //! carries an empty input region, so presses fall through to the band beneath
 //! it and a host hit-tests the scrollbar the way it always did, against
 //! [`ScrollRenderer::thumb_rect`] in pane coordinates.
+//!
+//! A host that hit-tests everything in its window's own coordinates can opt
+//! out of pointer input on the pane altogether with
+//! [`ScrollSurfaces::set_input_passthrough`]: every event over the pane then
+//! reaches the window as though the pane were painted into it.
 
 use skia_safe::{Canvas, Color, Rect};
 use wayland_client::protocol::wl_surface::WlSurface;
 
+use crate::app_runner::AppContext;
 use crate::protocols::otto_surface_style_v1::ClipMode;
 use crate::surfaces::{SubsurfaceSurface, SurfaceError};
 use crate::theme::Theme;
@@ -48,11 +54,15 @@ use crate::theme::Theme;
 use super::band::{Band, BandView};
 use super::renderer::ScrollRenderer;
 use super::scroll::ScrollView;
-use super::state::Axis;
+use super::state::{Axis, ScrollState};
 
 /// Width of the strip the scrollbar surface occupies, in points. Wide enough
 /// for the thumb at its expanded width plus its margin.
 const THUMB_STRIP_W: f32 = 16.0;
+
+/// How far the thumb's height may be stretched from the height its buffer was
+/// painted at, as a fraction, before it is painted again.
+const THUMB_STRETCH: f32 = 0.25;
 
 /// The surfaces behind a [`ScrollView`], and the band currently painted into
 /// them.
@@ -81,6 +91,15 @@ pub struct ScrollSurfaces {
     last_input_top: Option<i32>,
     last_thumb_top: Option<f32>,
     last_opacity: Option<f32>,
+    /// The pane takes no pointer input; see [`Self::set_input_passthrough`].
+    passthrough: bool,
+    hidden: bool,
+    /// The last move or paint has not reached the screen yet, so this sync
+    /// was held back; see [`Self::waiting`].
+    waiting: bool,
+    /// The thumb height last claimed through the style, which may differ from
+    /// the height its buffer was painted at while an overscroll squashes it.
+    last_thumb_height: Option<f32>,
 }
 
 impl ScrollSurfaces {
@@ -91,7 +110,7 @@ impl ScrollSurfaces {
     /// event arrives — a value snapshotted in the constructor is the integer
     /// fallback, and stays wrong for the life of the pane.
     fn scale(&self) -> f32 {
-        crate::app_runner::AppContext::fractional_scale() as f32
+        AppContext::fractional_scale() as f32
     }
 
     /// Build the surfaces under `parent`, with the pane occupying `viewport`
@@ -127,11 +146,7 @@ impl ScrollSurfaces {
         // press through to the band, which keeps scrollbar hit-testing a
         // question about pane coordinates rather than about which surface the
         // pointer happened to land on.
-        thumb.wl_surface().set_input_region(Some(
-            &crate::app_runner::AppContext::compositor_state()
-                .wl_compositor()
-                .create_region(crate::app_runner::AppContext::queue_handle(), ()),
-        ));
+        set_empty_input_region(thumb.wl_surface());
         thumb.commit();
 
         let mut surfaces = Self {
@@ -147,9 +162,45 @@ impl ScrollSurfaces {
             last_input_top: None,
             last_thumb_top: None,
             last_opacity: None,
+            passthrough: false,
+            hidden: false,
+            waiting: false,
+            last_thumb_height: None,
         };
         surfaces.configure_clip();
         Ok(surfaces)
+    }
+
+    /// Let every pointer event over the pane fall through to the parent.
+    ///
+    /// For a host that already hit-tests its content in its window's own
+    /// coordinates: the pane then changes how the content is presented and
+    /// nothing about how it is pointed at. Without it, events over the pane
+    /// arrive on the clip and band surfaces instead, in their local
+    /// coordinates, and a window-level pointer handler never sees them.
+    pub fn set_input_passthrough(&mut self) {
+        if self.passthrough {
+            return;
+        }
+        self.passthrough = true;
+        set_empty_input_region(self.clip.wl_surface());
+        set_empty_input_region(self.band_surface.wl_surface());
+        self.clip.commit();
+        self.band_surface.commit();
+    }
+
+    /// Whether the last [`Self::sync`] was held back because the previous step
+    /// had not reached the screen. The compositor's answer wakes the host, and
+    /// the next sync takes the step; a host deciding whether the scroll was
+    /// dealt with should count this as dealt with.
+    pub fn waiting(&self) -> bool {
+        self.waiting
+    }
+
+    /// Stack the pane directly above `sibling`, another child of the same
+    /// parent. Parent state: it lands with the parent's next commit.
+    pub fn place_above(&self, sibling: &WlSurface) {
+        self.clip.place_above(sibling);
     }
 
     /// The content-space y of the top of the painted band. A host translating
@@ -202,22 +253,53 @@ impl ScrollSurfaces {
         self.configure_clip();
     }
 
-    /// Move or resize the pane. Forces a repaint of the background and, on the
-    /// next [`Self::sync`], of the band.
+    /// Move or resize the pane.
+    ///
+    /// A move alone keeps everything painted: the band and the scrollbar ride
+    /// inside the clip, so moving the clip moves them too. A resize repaints
+    /// the background and, on the next [`Self::sync`], the band.
     pub fn set_viewport(&mut self, viewport: Rect) {
         if viewport == self.viewport {
             return;
         }
+        let resized = viewport.width() != self.viewport.width()
+            || viewport.height() != self.viewport.height();
         self.viewport = viewport;
         self.clip
-            .resize(viewport.width() as i32, viewport.height() as i32);
-        self.clip
             .set_position(viewport.left as i32, viewport.top as i32);
+        if !resized {
+            if let Some(style) = self.clip.layer() {
+                style.set_position(
+                    (viewport.left * self.scale()) as f64,
+                    (viewport.top * self.scale()) as f64,
+                );
+            }
+            self.clip.commit();
+            return;
+        }
+        self.clip
+            .resize(viewport.width() as i32, viewport.height() as i32);
         self.band = Band::empty();
         self.last_top = None;
         self.last_input_top = None;
         self.last_thumb_top = None;
         self.configure_clip();
+    }
+
+    /// Take the pane out of sight, or bring it back. The band and the
+    /// scrollbar are children of the clip, so they go with it.
+    ///
+    /// Returns whether anything changed.
+    pub fn set_hidden(&mut self, hidden: bool) -> bool {
+        if self.hidden == hidden {
+            return false;
+        }
+        self.hidden = hidden;
+        if let Some(style) = self.clip.layer() {
+            style.set_opacity(if hidden { 0.0 } else { 1.0 });
+        }
+        self.clip.commit();
+        true
     }
 
     /// Bring the surfaces in line with the view: repaint the band if the scroll
@@ -227,10 +309,40 @@ impl ScrollSurfaces {
     /// `content` paints in content coordinates and is given the band's rect —
     /// the same contract as [`ScrollRenderer::draw`]'s closure, except it is
     /// called only on the rare frame that needs a new band.
-    pub fn sync<F>(&mut self, view: &ScrollView, theme: &Theme, content: F)
+    ///
+    /// Returns whether anything was sent to the compositor: a band painted, or
+    /// the band or the scrollbar moved.
+    pub fn sync<F>(&mut self, view: &ScrollView, theme: &Theme, content: F) -> bool
     where
         F: FnOnce(&Canvas, Rect),
     {
+        self.sync_state(&view.state, view.velocity(), theme, content)
+    }
+
+    /// [`Self::sync`] for a host that holds the scroll's state and speed
+    /// rather than the [`ScrollView`] itself — a frame snapshot, say.
+    pub fn sync_state<F>(
+        &mut self,
+        state: &ScrollState,
+        velocity: f32,
+        theme: &Theme,
+        content: F,
+    ) -> bool
+    where
+        F: FnOnce(&Canvas, Rect),
+    {
+        // One step per presented frame. A move asks to hear when it reaches
+        // the screen; until it has, a further step would only be a position
+        // the compositor never shows, and a host loop woken by anything else
+        // would spin through them.
+        {
+            use wayland_client::Proxy;
+            self.waiting = AppContext::frame_in_flight(&self.band_surface.wl_surface().id());
+            if self.waiting {
+                return false;
+            }
+        }
+
         // `wp_fractional_scale_v1` reports the output's scale asynchronously,
         // so the geometry pushed when the pane was built used the integer
         // fallback. Re-push everything that scaled by it — otherwise the pane
@@ -243,7 +355,6 @@ impl ScrollSurfaces {
             self.last_thumb_top = None;
         }
 
-        let state = &view.state;
         debug_assert_eq!(
             state.axis(),
             Axis::Vertical,
@@ -253,16 +364,19 @@ impl ScrollSurfaces {
             offset: state.offset(),
             viewport_height: self.viewport.height(),
             content_height: state.content_length(),
-            velocity: view.velocity(),
+            velocity,
         };
 
+        let mut changed = false;
         if let Some(next) = self.band.refill(&band_view) {
             self.band = next;
             self.paint_band(content);
+            changed = true;
         }
 
-        self.position_band(state.offset());
-        self.position_thumb(view, theme);
+        changed |= self.position_band(state.offset());
+        changed |= self.position_thumb(state, theme);
+        changed
     }
 
     /// The clip box: claims its bounds so the compositor stops re-deriving
@@ -308,12 +422,6 @@ impl ScrollSurfaces {
 
         let rect = self.band.rect(0.0, width);
         let origin = self.band.origin();
-        if std::env::var_os("OTTO_PANE_DEBUG").is_some() {
-            eprintln!(
-                "[banddbg] paint band origin={origin:.0} h={height:.0} w={width:.0} scale={} viewport={:?}",
-                self.scale(), self.viewport
-            );
-        }
         self.band_surface.draw(|canvas| {
             canvas.clear(Color::TRANSPARENT);
             canvas.save();
@@ -327,19 +435,13 @@ impl ScrollSurfaces {
     }
 
     /// Move the band to where this offset puts it. This is the whole cost of a
-    /// frame of scrolling.
-    fn position_band(&mut self, offset: f32) {
+    /// frame of scrolling. Returns whether it moved.
+    fn position_band(&mut self, offset: f32) -> bool {
         let top = self.band.surface_top(offset);
         if self.last_top == Some(top) {
-            return;
+            return false;
         }
         self.last_top = Some(top);
-        if std::env::var_os("OTTO_PANE_DEBUG").is_some() {
-            eprintln!(
-                "[banddbg] position top={top:.1} (offset {offset:.1}, origin {:.1})",
-                self.band.origin()
-            );
-        }
 
         if let Some(style) = self.band_surface.layer() {
             style.set_position(0.0, (top * self.scale()) as f64);
@@ -350,7 +452,13 @@ impl ScrollSurfaces {
         let top = top.round() as i32;
         self.band_surface.set_position(0, top);
         self.clip_band_input(top);
+        // A move is not a paint, so nothing else asks to hear when it reaches
+        // the screen — and that answer is what paces the next step of a
+        // glide. Without it a host whose window has stopped repainting has
+        // nothing to wake it at the display's rate.
+        AppContext::request_throttled_frame(self.band_surface.wl_surface());
         self.band_surface.commit();
+        true
     }
 
     /// Cut the band's input region down to the slice of it the viewport shows.
@@ -365,13 +473,13 @@ impl ScrollSurfaces {
     /// with it: without this the window swallows clicks below its own edge, and
     /// the content above the pane gets events meant for the chrome.
     fn clip_band_input(&mut self, top: i32) {
-        if self.last_input_top == Some(top) {
+        if self.passthrough || self.last_input_top == Some(top) {
             return;
         }
         self.last_input_top = Some(top);
 
-        let compositor = crate::app_runner::AppContext::compositor_state();
-        let qh = crate::app_runner::AppContext::queue_handle();
+        let compositor = AppContext::compositor_state();
+        let qh = AppContext::queue_handle();
         let region = compositor.wl_compositor().create_region(qh, ());
         // Band-local: the viewport's top edge sits at `-top` in the band's own
         // coordinates. Rounded outwards so no row along either edge is dead.
@@ -390,32 +498,32 @@ impl ScrollSurfaces {
     /// The scrollbar moves and fades entirely through its style node; it is
     /// only repainted when the thumb changes shape, which happens when the
     /// content's length changes or the pointer expands it — not while
-    /// scrolling.
-    fn position_thumb(&mut self, view: &ScrollView, theme: &Theme) {
-        let Some(rect) = ScrollRenderer::thumb_rect(&view.state) else {
-            self.hide_thumb();
-            return;
+    /// scrolling. Returns whether anything was sent.
+    fn position_thumb(&mut self, state: &ScrollState, theme: &Theme) -> bool {
+        let Some(rect) = ScrollRenderer::thumb_rect(state) else {
+            return self.hide_thumb();
         };
-        let opacity = view.state.scrollbar_opacity();
+        let opacity = state.scrollbar_opacity();
         if opacity <= 0.0 {
-            self.hide_thumb();
-            return;
+            return self.hide_thumb();
         }
 
-        let size = (rect.width(), rect.height());
-        if size != self.thumb_size {
+        let mut changed = false;
+        // The thumb squashes continuously while an overscroll bounces. Its
+        // buffer is stretched to follow — the style size scales what is
+        // already there — and only painted again when the width changes or the
+        // height has drifted far enough that the stretch would show in the
+        // rounded ends.
+        let size = (rect.width().round(), rect.height().round().max(1.0));
+        let (painted_width, painted_height) = self.thumb_size;
+        let repaint = size.0 != painted_width
+            || painted_height <= 0.0
+            || (size.1 / painted_height - 1.0).abs() > THUMB_STRETCH;
+        if repaint {
             self.thumb_size = size;
-            self.thumb
-                .resize(THUMB_STRIP_W as i32, rect.height().max(1.0) as i32);
-            if let Some(style) = self.thumb.layer() {
-                style.set_size(
-                    (THUMB_STRIP_W * self.scale()) as f64,
-                    (rect.height() * self.scale()) as f64,
-                );
-            }
+            let (width, height) = size;
+            self.thumb.resize(THUMB_STRIP_W as i32, height as i32);
             let color = theme.fill_secondary;
-            let width = rect.width();
-            let height = rect.height();
             self.thumb.draw(|canvas| {
                 canvas.clear(Color::TRANSPARENT);
                 let mut paint = skia_safe::Paint::default();
@@ -432,32 +540,65 @@ impl ScrollSurfaces {
                 );
             });
             self.last_thumb_top = None;
+            self.last_thumb_height = None;
+            changed = true;
+        }
+        if self.last_thumb_height != Some(size.1) {
+            self.last_thumb_height = Some(size.1);
+            if let Some(style) = self.thumb.layer() {
+                style.set_size(
+                    (THUMB_STRIP_W * self.scale()) as f64,
+                    (size.1 * self.scale()) as f64,
+                );
+            }
+            changed = true;
         }
 
+        // The thumb is placed in the view's own coordinates; the clip is the
+        // viewport, so the thumb's place inside it is measured from the
+        // viewport's top rather than from wherever the view happens to sit.
+        let top = rect.top - state.viewport().top;
         if let Some(style) = self.thumb.layer() {
-            if self.last_thumb_top != Some(rect.top) {
-                self.last_thumb_top = Some(rect.top);
+            if self.last_thumb_top != Some(top) {
+                self.last_thumb_top = Some(top);
                 style.set_position(
                     ((self.viewport.width() - THUMB_STRIP_W) * self.scale()) as f64,
-                    (rect.top * self.scale()) as f64,
+                    (top * self.scale()) as f64,
                 );
+                changed = true;
             }
             if self.last_opacity != Some(opacity) {
                 self.last_opacity = Some(opacity);
                 style.set_opacity(opacity as f64);
+                changed = true;
             }
         }
-        self.thumb.commit();
+        if changed {
+            self.thumb.commit();
+        }
+        changed
     }
 
-    fn hide_thumb(&mut self) {
+    fn hide_thumb(&mut self) -> bool {
         if self.last_opacity == Some(0.0) {
-            return;
+            return false;
         }
         self.last_opacity = Some(0.0);
         if let Some(style) = self.thumb.layer() {
             style.set_opacity(0.0);
         }
         self.thumb.commit();
+        true
     }
+}
+
+/// Give `surface` an empty input region, so the pointer passes through it.
+/// The compositor copies the region on `set_input_region`, so it is destroyed
+/// straight away.
+fn set_empty_input_region(surface: &WlSurface) {
+    let region = AppContext::compositor_state()
+        .wl_compositor()
+        .create_region(AppContext::queue_handle(), ());
+    surface.set_input_region(Some(&region));
+    region.destroy();
 }

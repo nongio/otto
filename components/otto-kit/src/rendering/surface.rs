@@ -189,6 +189,56 @@ impl SkiaSurface {
         });
     }
 
+    /// Swap buffers, telling the compositor only `rects` changed.
+    ///
+    /// `rects` are in buffer pixels with a top-left origin; EGL wants a
+    /// bottom-left one, so they are flipped here. Every pixel of the buffer must
+    /// still be correct — this narrows what the compositor recomposites, not
+    /// what the client paints. Falls back to a whole-buffer swap on a driver
+    /// without `EGL_KHR_swap_buffers_with_damage`, or with nothing to report.
+    pub fn swap_buffers_with_damage(
+        &self,
+        ctx: &mut super::SkiaContext,
+        rects: &[skia_safe::IRect],
+    ) {
+        type SwapWithDamage = unsafe extern "C" fn(
+            *mut std::ffi::c_void,
+            *mut std::ffi::c_void,
+            *const i32,
+            i32,
+        ) -> i32;
+
+        let swapped = AppContext::with_egl_resources(&self.surface_id, |res| unsafe {
+            if rects.is_empty() {
+                return false;
+            }
+            let egl = khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required().unwrap();
+            let Some(function) = egl.get_proc_address("eglSwapBuffersWithDamageKHR") else {
+                return false;
+            };
+            let function: SwapWithDamage = std::mem::transmute(function);
+
+            let height = res.height;
+            let flat: Vec<i32> = rects
+                .iter()
+                .flat_map(|r| [r.left, height - r.bottom, r.width(), r.height()])
+                .collect();
+
+            ctx.skia_context().flush_and_submit();
+            function(
+                ctx.egl_display().as_ptr() as *mut _,
+                res.egl_surface.as_ptr() as *mut _,
+                flat.as_ptr(),
+                rects.len() as i32,
+            ) != 0
+        })
+        .unwrap_or(false);
+
+        if !swapped {
+            self.swap_buffers(ctx);
+        }
+    }
+
     /// Commit the surface and mark damage
     pub fn commit(&self) {
         AppContext::with_egl_resources(&self.surface_id, |res| {

@@ -144,7 +144,12 @@ thread_local! {
     /// frame the surface paints. See [`AppContext::register_frame_loop`].
     static FRAME_LOOPS: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
     /// Surfaces with a `wl_surface.frame` request the compositor has not yet
-    /// answered. See [`AppContext::frame_in_flight`].
+    /// answered, so a second request is not sent for the same frame. A request
+    /// only takes effect with the next commit: this says nothing about whether
+    /// one has been made.
+    static FRAMES_REQUESTED: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// Surfaces that have committed a painted frame the compositor has not yet
+    /// said it presented. See [`AppContext::frame_in_flight`].
     static FRAMES_IN_FLIGHT: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
@@ -1243,12 +1248,31 @@ impl<'a> AppContext<'a> {
     /// Painting again before that callback arrives only queues work the
     /// compositor has not asked for, so a client with continuous content
     /// should hold off while [`AppContext::frame_in_flight`] is true.
+    /// Ask for a frame callback for a paint that is about to be committed, and
+    /// hold the next paint until the compositor answers.
+    ///
+    /// Called just before the commit that carries it. One outstanding request
+    /// per surface: a second would only deliver a second callback for the same
+    /// frame, running a frame loop twice.
     pub fn request_throttled_frame(surface: &wl_surface::WlSurface) {
         use wayland_client::Proxy;
 
-        // One outstanding request per surface. A second would only deliver a
-        // second callback for the same frame, running a frame loop twice.
-        let first = FRAMES_IN_FLIGHT.with(|surfaces| surfaces.borrow_mut().insert(surface.id()));
+        Self::request_loop_frame(surface);
+        FRAMES_IN_FLIGHT.with(|surfaces| {
+            surfaces.borrow_mut().insert(surface.id());
+        });
+    }
+
+    /// Ask for a frame callback without claiming a paint is on its way.
+    ///
+    /// The request takes effect with whatever the surface commits next, so it
+    /// must not hold that commit back: a surface that has not painted yet, or
+    /// that paints only because this callback asked it to, would otherwise
+    /// wait for an answer to a request it never sent.
+    pub(crate) fn request_loop_frame(surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+
+        let first = FRAMES_REQUESTED.with(|surfaces| surfaces.borrow_mut().insert(surface.id()));
         if first {
             Self::request_frame(surface);
         }
@@ -1266,19 +1290,24 @@ impl<'a> AppContext<'a> {
         FRAME_LOOPS.with(|loops| {
             loops.borrow_mut().insert(surface.id());
         });
-        Self::request_throttled_frame(surface);
+        Self::request_loop_frame(surface);
     }
 
     pub(crate) fn has_frame_loop(surface_id: &ObjectId) -> bool {
         FRAME_LOOPS.with(|loops| loops.borrow().contains(surface_id))
     }
 
-    /// Whether a frame committed on this surface has yet to be presented.
+    /// Whether a painted frame committed on this surface has yet to be
+    /// presented.
     pub fn frame_in_flight(surface_id: &ObjectId) -> bool {
         FRAMES_IN_FLIGHT.with(|surfaces| surfaces.borrow().contains(surface_id))
     }
 
+    /// The compositor answered the surface's frame request.
     pub(crate) fn clear_frame_in_flight(surface_id: &ObjectId) {
+        FRAMES_REQUESTED.with(|surfaces| {
+            surfaces.borrow_mut().remove(surface_id);
+        });
         FRAMES_IN_FLIGHT.with(|surfaces| {
             surfaces.borrow_mut().remove(surface_id);
         });
