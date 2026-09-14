@@ -298,11 +298,13 @@ underneath it resizes the window.
 
 Painting every column into the window's one buffer makes a scroll in a single
 column a repaint of the whole window, and tells the compositor that
-everything changed. So each column is a scroll pane of its own (otto-kit's
-`ScrollSurfaces`): a clip surface at the column's visible slice, and inside it
-a *band* of rows taller than the column, on a transparent ground. The column's
-paper, the active column's tint and the line an empty, loading or failed
-column shows stay in the window's scene underneath.
+everything changed. So the stack is a horizontal scroll container (otto-kit's
+`ScrollSurfaces::container`) clipped to the file area, and each column is a
+vertical scroll pane inside it: a clip surface the column's size, placed once
+in the stack's own coordinates, and inside it a *band* of rows taller than the
+column, on a transparent ground. The column's paper, the active column's tint
+and the line an empty, loading or failed column shows stay in the window's
+scene underneath.
 A vertical scroll moves the band with `otto_surface_style_v1` and paints
 nothing. The rows are painted again only when a glide nears the edge of the
 band, or when what the column shows changes (a selection, the cursor, a
@@ -317,19 +319,19 @@ Four things follow from the columns no longer being in the window's buffer:
   coordinates exactly as it was. A scroll over a column wakes the update loop,
   which steps the scroll and moves the band; it does not ask the window for a
   frame.
-- **Nothing above clips the columns.** In the window they were cut off by the
-  content area's clip; a subsurface is a child of the toplevel and has no such
-  parent, so a column panned past the sidebar would draw over it. Each column's
-  clip is its intersection with the content area instead, and its rows are
-  shifted by whatever was cropped off the left. A column that only moves keeps
-  its band; one whose crop changes paints a new one.
+- **The stack clips the columns, and a pan moves only the stack.** The
+  container's clip is the file area, so a column panned past the sidebar is cut
+  off there, whole, with no crop of its own to repaint. Panning moves the
+  container's band — one surface, whose buffer is a single transparent pixel
+  stretched to the stack's width — and every column and the preview's player
+  ride along inside it. A column panned wholly out of the file area is hidden.
 - **Scrolling chrome has to move with the content it describes.** A column's
   vertical bar is a small surface of its own above the band, moved and faded by
   the compositor. While an overscroll squashes it, its painted buffer is
-  stretched rather than repainted. The stack's horizontal bar belongs to no
-  column, so it gets a surface of its own — a strip along the bottom of the
-  content area, stacked above every column, and restacked whenever the stack
-  grows, because a subsurface created later starts out on top of it.
+  stretched rather than repainted. The stack's horizontal bar is the
+  container's own, above everything in the stack. A column created later starts
+  out on top of its siblings, so the stack restacks its children whenever it
+  grows.
 - **A column steps once per presented frame.** Each band move asks to hear
   when it reaches the screen, and the next step waits for that answer, so a
   glide advances at the display's rate however often the loop happens to wake.

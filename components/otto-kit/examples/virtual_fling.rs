@@ -19,6 +19,7 @@
 //! - `--speed PT`   points per second at the finger's peak (default 2400)
 //! - `--coast S`    seconds to let each fling's momentum run (default 1.2)
 //! - `--drag S`     seconds of steady finger drag, down then up (default 0)
+//! - `--axis A`     `vertical` (default) or `horizontal`
 //!
 //! Prints one line per phase with its wall-clock start, so a log sampled
 //! alongside can be cut into the same phases.
@@ -59,6 +60,7 @@ struct Args {
     speed: f64,
     coast: f64,
     drag: f64,
+    axis: wl_pointer::Axis,
 }
 
 fn args() -> Args {
@@ -68,6 +70,7 @@ fn args() -> Args {
         speed: 2400.0,
         coast: 1.2,
         drag: 0.0,
+        axis: wl_pointer::Axis::VerticalScroll,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -81,6 +84,13 @@ fn args() -> Args {
             "--speed" => args.speed = value.parse().unwrap(),
             "--coast" => args.coast = value.parse().unwrap(),
             "--drag" => args.drag = value.parse().unwrap(),
+            "--axis" => {
+                args.axis = match value.as_str() {
+                    "vertical" => wl_pointer::Axis::VerticalScroll,
+                    "horizontal" => wl_pointer::Axis::HorizontalScroll,
+                    other => panic!("--axis vertical|horizontal, not {other}"),
+                }
+            }
             other => panic!("unknown flag {other}"),
         }
     }
@@ -91,6 +101,7 @@ struct Driver {
     conn: Connection,
     pointer: ZwlrVirtualPointerV1,
     epoch: Instant,
+    axis: wl_pointer::Axis,
 }
 
 impl Driver {
@@ -111,13 +122,12 @@ impl Driver {
         self.conn.flush().unwrap();
     }
 
-    /// One touchpad report: `delta` points of finger travel on the vertical
-    /// axis. Positive scrolls the content down, as a touchpad does.
+    /// One touchpad report: `delta` points of finger travel on the driven
+    /// axis. Positive scrolls the content down (or right), as a touchpad does.
     fn report(&self, delta: f64) {
         let t = self.millis();
         self.pointer.axis_source(wl_pointer::AxisSource::Finger);
-        self.pointer
-            .axis(t, wl_pointer::Axis::VerticalScroll, delta);
+        self.pointer.axis(t, self.axis, delta);
         self.pointer.frame();
         self.conn.flush().unwrap();
     }
@@ -125,7 +135,7 @@ impl Driver {
     fn lift(&self) {
         let t = self.millis();
         self.pointer.axis_source(wl_pointer::AxisSource::Finger);
-        self.pointer.axis_stop(t, wl_pointer::Axis::VerticalScroll);
+        self.pointer.axis_stop(t, self.axis);
         self.pointer.frame();
         self.conn.flush().unwrap();
     }
@@ -188,6 +198,7 @@ fn main() {
         conn,
         pointer,
         epoch: Instant::now(),
+        axis: args.axis,
     };
 
     driver.park(args.at);

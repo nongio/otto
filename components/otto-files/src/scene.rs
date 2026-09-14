@@ -616,19 +616,10 @@ impl PaneLayer {
 ///
 /// For a column's own surfaces, where the compositor moves the painted band to
 /// scroll it: nothing here knows the scroll offset, so a glide never repaints.
-/// `dx` is how far the column's left edge is cropped off by the sidebar, which
-/// shifts the rows rather than squeezing them.
 ///
 /// Rows only, on a transparent ground: the column's paper, its tint and its
 /// status line are the window's, underneath — see [`PaneLayer`].
-pub(crate) fn paint_column_band(
-    canvas: &Canvas,
-    f: &Frame,
-    depth: usize,
-    width: f32,
-    band: Rect,
-    dx: f32,
-) {
+pub(crate) fn paint_column_band(canvas: &Canvas, f: &Frame, depth: usize, width: f32, band: Rect) {
     let pane = &f.panes[depth];
     if pane.error.is_some() || pane.loading || pane.entries.is_empty() {
         return;
@@ -646,7 +637,7 @@ pub(crate) fn paint_column_band(
     }
     let rows = build_rows(pane, (first, last), f, depth);
     canvas.save();
-    canvas.translate((dx, view::MILLER_ROW_INSET + first as f32 * view::ROW_H));
+    canvas.translate((0.0, view::MILLER_ROW_INSET + first as f32 * view::ROW_H));
     for row in &rows {
         row.draw(canvas, f.theme, width);
     }

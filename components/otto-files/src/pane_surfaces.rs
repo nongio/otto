@@ -6,12 +6,16 @@
 //! everything changed. Measured on the `scroll_ab` example, that is 82 full
 //! window repaints across one fling.
 //!
-//! Here each column is an [`otto_kit::components::scroll::ScrollSurfaces`]: a
-//! clip surface at the column's visible slice, and inside it a band of rows
-//! taller than the column. A frame of scrolling moves the band with
-//! `otto_surface_style_v1` and paints nothing; the rows are painted again only
-//! when the glide nears the edge of the band, or when what the column shows
-//! changes. The toplevel is left alone throughout.
+//! Here the stack is a horizontal container
+//! ([`otto_kit::components::scroll::ScrollSurfaces::container`]) clipped to the
+//! file area, and each column is a vertical pane inside it, placed once in the
+//! stack's content coordinates: a clip surface the column's size, and inside it
+//! a band of rows taller than the column. A frame of scrolling moves a band
+//! with `otto_surface_style_v1` and paints nothing; panning the stack moves the
+//! container's band, and every column rides along untouched. Rows are painted
+//! again only when a glide nears the edge of a band, or when what a column
+//! shows changes. The docked preview's player sits in the stack too, beside the
+//! last column. The stack's bar is the container's own.
 //!
 //! **Input is not routed here.** Every column's surfaces pass the pointer
 //! through, so events fall straight to the toplevel and the browser keeps
@@ -24,7 +28,7 @@
 //! in the window's scene underneath, since none of them moves with a scroll.
 
 use otto_kit::app_runner::AppContext;
-use otto_kit::components::scroll::{ScrollRenderer, ScrollSurfaces};
+use otto_kit::components::scroll::{Axis, ScrollSurfaces};
 use otto_kit::surfaces::SubsurfaceSurface;
 use skia_safe::Rect;
 use wayland_client::backend::ObjectId;
@@ -167,16 +171,14 @@ struct ColumnPane {
     surfaces: ScrollSurfaces,
     /// Identity of everything other than the scroll that the rows draw.
     key: u64,
-    /// How far the sidebar crops the column's left edge, in points. The rows
-    /// are painted shifted by it, so a change repaints the band.
-    dx: f32,
 }
 
 /// The per-column subsurfaces, pooled the way the scene pools its pane layers.
 pub struct PaneSurfaces {
+    /// The column stack: a container clipped to the file area, panned
+    /// sideways, holding the columns and the preview's player.
+    stack: Option<ScrollSurfaces>,
     columns: Vec<ColumnPane>,
-    /// The stack's horizontal bar, in a surface of its own over the columns.
-    pan: Option<PaneSurface>,
     /// The Quick View panel, in a surface of its own over everything.
     quickview: Option<PaneSurface>,
     /// The command palette, in a surface of its own so it can be dragged clear
@@ -199,9 +201,13 @@ pub struct PaneSurfaces {
     /// for why the card cannot take its own pointer.
     catcher: Option<PaneSurface>,
     /// The docked preview column's video player, in a surface of its own so
-    /// its per-frame repaints never touch the toplevel. Sized to the video's
-    /// shape, placed over the column's stage; see [`Self::sync_preview_video`].
+    /// its per-frame repaints never touch the toplevel. A child of the stack,
+    /// sized to the video's shape and placed over the column's stage; see
+    /// [`Self::sync_preview_video`].
     preview_video: Option<PaneSurface>,
+    /// A column or the player was created in the stack, which puts it on top
+    /// of its siblings there.
+    stack_children_dirty: bool,
     /// Which panel, and which direction, [`Self::quickview_resting`] was
     /// worked out for: the session's generation and whether it is closing.
     /// `Some(closing)` once the output has been asked about for the panel
@@ -241,15 +247,12 @@ pub struct PaneSurfaces {
     scale: f32,
 }
 
-/// How tall a slice of the viewport the horizontal bar can touch: the gutter
-/// it sits in, plus room for the widening it does on hover.
-const PAN_BAR_STRIP: f32 = 16.0;
-
 impl PaneSurfaces {
     pub fn new(scale: f32) -> Self {
         Self {
+            stack: None,
             columns: Vec::new(),
-            pan: None,
+            stack_children_dirty: false,
             quickview: None,
             palette: None,
             palette_display: None,
@@ -279,10 +282,10 @@ impl PaneSurfaces {
     ) -> bool {
         self.pending = false;
         // Outside column view there are no columns: what is left here is Quick
-        // View's surface and the preview's player.
+        // View's surface. The preview's player is in the stack, and goes with
+        // it.
         if f.mode != ViewMode::Columns {
             let mut changed = self.hide_all();
-            changed |= self.sync_preview_video(parent, f, quickview.is_some());
             changed |= self.sync_quickview(parent, f, quickview);
             self.restack(parent);
             return changed;
@@ -290,82 +293,94 @@ impl PaneSurfaces {
         let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
         let mut painted = false;
 
-        for depth in 0..f.panes.len() {
-            let full = view::miller_pane_rect(depth, f.height, f.pan, f.miller_w);
-            // Crop the pane to the content area rather than letting it spill.
-            // The scene clipped columns with `content.set_clip_children` — a
-            // subsurface has no such parent, it is a child of the toplevel, so
-            // a column panned past the sidebar would simply draw over it.
-            // Shrinking the clip to the visible slice *is* the clip, and the
-            // rows are then shifted by however much was cropped off the left.
-            // A column panned entirely off the content area has nothing to
-            // show; leaving it mapped would put it under the sidebar.
-            let mut clipped = full;
-            let visible = clipped.intersect(viewport);
+        if self.stack.is_none() {
+            match ScrollSurfaces::container(parent, viewport, Axis::Horizontal) {
+                Ok(mut stack) => {
+                    stack.set_input_passthrough();
+                    self.stack = Some(stack);
+                    self.stack_dirty = true;
+                }
+                Err(_) => return false,
+            }
+        }
+        let Some(stack) = self.stack.as_mut() else {
+            return false;
+        };
+        painted |= stack.set_hidden(false);
+        stack.set_viewport(viewport);
+        if let Some(pan) = f.pan_bar {
+            // A container has no content to paint and nothing to paint ahead
+            // of, so the pan's speed is no use to it.
+            painted |= stack.sync_state(pan, 0.0, f.theme, |_, _| {}) || stack.waiting();
+        }
+        let band = stack.band_surface().clone();
 
+        // What of the stack the file area shows, along it.
+        let (shown_from, shown_to) = (f.pan, f.pan + viewport.width());
+        for depth in 0..f.panes.len() {
+            // Placed once, in the stack's own coordinates: the pan moves the
+            // stack, never a column.
+            let rect = Rect::from_xywh(
+                depth as f32 * f.miller_w,
+                0.0,
+                f.miller_w,
+                viewport.height(),
+            );
             if depth >= self.columns.len() {
-                let rect = if visible { clipped } else { full };
-                match ScrollSurfaces::new(parent, rect, skia_safe::Color::TRANSPARENT) {
+                match ScrollSurfaces::new(&band, rect, skia_safe::Color::TRANSPARENT) {
                     Ok(mut surfaces) => {
                         surfaces.set_input_passthrough();
-                        self.columns.push(ColumnPane {
-                            surfaces,
-                            key: 0,
-                            dx: f32::NAN,
-                        });
-                        self.stack_dirty = true;
+                        self.columns.push(ColumnPane { surfaces, key: 0 });
+                        self.stack_children_dirty = true;
                     }
                     Err(_) => break,
                 }
             }
 
+            // A column panned out of the file area is taken out of sight, so
+            // nothing about it is composited or kept painted.
             let column = &mut self.columns[depth];
-            if !visible {
+            if rect.right <= shown_from || rect.left >= shown_to {
                 painted |= column.surfaces.set_hidden(true);
                 continue;
             }
             painted |= column.surfaces.set_hidden(false);
-            column.surfaces.set_viewport(clipped);
+            column.surfaces.set_viewport(rect);
 
             // Anything the rows show other than where they are scrolled to
             // repaints the band; the scroll itself only moves it.
-            let dx = full.left - clipped.left;
             let key = column_key(f, depth);
-            if column.key != key || column.dx != dx {
+            if column.key != key {
                 column.key = key;
-                column.dx = dx;
                 column.surfaces.invalidate();
             }
             let Some(state) = f.panes[depth].bar else {
                 continue;
             };
-            // The rows are laid out against the column's full width, then
-            // slid by the cropped-off amount, so a half-visible column shows
-            // the correct half rather than a squeezed whole.
-            let width = full.width();
             // A step held back until the last one is on screen still counts:
             // the column has the scroll in hand, and the window has nothing
             // to repaint for it.
+            let width = rect.width();
             painted |= column.surfaces.sync_state(
                 state,
                 f.panes[depth].velocity,
                 f.theme,
-                |canvas, band| scene::paint_column_band(canvas, f, depth, width, band, dx),
+                |canvas, band| scene::paint_column_band(canvas, f, depth, width, band),
             ) || column.surfaces.waiting();
         }
 
         for column in self.columns.iter_mut().skip(f.panes.len()) {
             painted |= column.surfaces.set_hidden(true);
         }
-        painted |= self.sync_pan_bar(parent, f, viewport);
-        painted |= self.sync_preview_video(parent, f, quickview.is_some());
+        painted |= self.sync_preview_video(&band, f, viewport, quickview.is_some());
         painted |= self.sync_quickview(parent, f, quickview);
         self.restack(parent);
         painted
     }
 
-    /// Put the sibling surfaces back into a known order, bottom to top:
-    /// columns in depth order, then the stack's bar, then Quick View.
+    /// Put the sibling surfaces back into a known order, bottom to top: in the
+    /// window the stack, then the palette and Quick View; in the stack the
+    /// columns in depth order, then the preview's player.
     ///
     /// Stacking each surface against the one below it states the whole order
     /// rather than assuming one. Placing an overlay above "the last column"
@@ -384,19 +399,30 @@ impl PaneSurfaces {
         // reaches into the sibling order: a pooled column is hidden by going
         // transparent, never destroyed, so it keeps its place in the stack
         // and coming back does not disturb anyone.
+        if std::mem::take(&mut self.stack_children_dirty) {
+            if let Some(stack) = self.stack.as_ref() {
+                let mut below: Option<WlSurface> = None;
+                for column in &self.columns {
+                    if let Some(below) = &below {
+                        column.surfaces.place_above(below);
+                    }
+                    below = Some(column.surfaces.clip_surface().clone());
+                }
+                if let (Some(player), Some(below)) = (self.preview_video.as_ref(), &below) {
+                    player.surface.place_above(below);
+                }
+                // The order is the stack band's pending state.
+                stack.band_surface().commit();
+            }
+        }
         if !std::mem::take(&mut self.stack_dirty) {
             return;
         }
-        let mut below: Option<WlSurface> = None;
-        for column in &self.columns {
-            if let Some(below) = &below {
-                column.surfaces.place_above(below);
-            }
-            below = Some(column.surfaces.clip_surface().clone());
-        }
+        let mut below: Option<WlSurface> = self
+            .stack
+            .as_ref()
+            .map(|stack| stack.clip_surface().clone());
         let overlays = [
-            self.preview_video.as_ref(),
-            self.pan.as_ref(),
             self.palette.as_ref(),
             self.catcher.as_ref(),
             self.quickview.as_ref(),
@@ -777,10 +803,18 @@ impl PaneSurfaces {
     ///
     /// Sized to the video's shape and placed over the column's stage, so the
     /// picture updates without the toplevel — or the scene's cached preview
-    /// picture — being touched. Input stays with the toplevel, exactly like
-    /// the columns: the browser's pointer routing already hit-tests the box
-    /// in window coordinates (see `Browser::preview_video_pointer`).
-    fn sync_preview_video(&mut self, parent: &WlSurface, f: &Frame, quickview_up: bool) -> bool {
+    /// picture — being touched. A child of the stack's band, placed in the
+    /// stack's coordinates, so it pans and is clipped with the columns. Input
+    /// stays with the toplevel, exactly like the columns: the browser's
+    /// pointer routing already hit-tests the box in window coordinates (see
+    /// `Browser::preview_video_pointer`).
+    fn sync_preview_video(
+        &mut self,
+        stack: &WlSurface,
+        f: &Frame,
+        viewport: Rect,
+        quickview_up: bool,
+    ) -> bool {
         // Shown only for a video in the column view, and never behind the
         // Quick View panel — which is its own, larger player.
         let video = (f.mode == ViewMode::Columns && !quickview_up)
@@ -813,14 +847,12 @@ impl PaneSurfaces {
                 .unwrap_or(false);
         };
 
-        let full = view::preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w);
-        let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
+        // Unpanned, then moved from the window's coordinates into the stack's.
+        let full = view::preview_pane_rect(f.panes.len(), f.height, 0.0, f.miller_w);
         let stage = view::preview_stage_rect(full, info_lines);
-        let rect = view::preview_video_box(stage, Some(aspect));
-        // A column panned so its player would spill over the sidebar is not
-        // shown on a surface — the surface has no parent clip. The scene's
-        // in-layer draw, which is clipped, covers that transient.
-        if rect.left < viewport.left || rect.right > viewport.right || rect.width() <= 1.0 {
+        let rect = view::preview_video_box(stage, Some(aspect))
+            .with_offset((-viewport.left, -viewport.top));
+        if rect.width() <= 1.0 {
             return self
                 .preview_video
                 .as_mut()
@@ -829,8 +861,8 @@ impl PaneSurfaces {
         }
 
         if self.preview_video.is_none() {
-            self.preview_video = Self::create(parent, rect);
-            self.stack_dirty = true;
+            self.preview_video = Self::create(stack, rect);
+            self.stack_children_dirty = true;
         }
         let scale = self.scale;
         let Some(pane) = self.preview_video.as_mut() else {
@@ -878,67 +910,6 @@ impl PaneSurfaces {
         painted
     }
 
-    /// The stack's horizontal bar.
-    ///
-    /// It spans the whole stack, so unlike the vertical bars it belongs to no
-    /// column and cannot ride in one. Drawn into the window it would be buried:
-    /// subsurfaces sit over the toplevel, so the columns would cover it. It
-    /// gets a surface of its own instead, a strip along the bottom of the
-    /// content area, stacked above every column.
-    fn sync_pan_bar(&mut self, parent: &WlSurface, f: &Frame, viewport: Rect) -> bool {
-        let Some(state) = f.pan_bar.filter(|s| s.scrollbar_opacity() > 0.0) else {
-            return self.pan.as_mut().map(PaneSurface::hide).unwrap_or(false);
-        };
-        let bar_viewport = state.viewport();
-        let mut strip = Rect::from_ltrb(
-            bar_viewport.left,
-            bar_viewport.bottom - PAN_BAR_STRIP,
-            bar_viewport.right,
-            bar_viewport.bottom,
-        );
-        if !strip.intersect(viewport) {
-            return self.pan.as_mut().map(PaneSurface::hide).unwrap_or(false);
-        }
-
-        if self.pan.is_none() {
-            self.pan = Self::create(parent, strip);
-            self.stack_dirty = true;
-        }
-        let scale = self.scale;
-        let Some(pane) = self.pan.as_mut() else {
-            return false;
-        };
-        let mut painted = pane.show();
-        pane.place(strip, scale);
-
-        // The thumb slides as the stack pans and widens on hover, and neither
-        // shows up in the opacity, so the geometry is what decides a repaint.
-        let thumb = ScrollRenderer::thumb_rect(state).unwrap_or(Rect::new_empty());
-        let key = hash_rect(thumb);
-        let bar = state.scrollbar_opacity();
-        if pane.key == key && pane.bar == bar {
-            return painted;
-        }
-        use wayland_client::Proxy;
-        if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
-            self.pending = true;
-            return painted;
-        }
-        pane.key = key;
-        pane.bar = bar;
-        let origin = (strip.left, strip.top);
-        let theme = f.theme;
-        pane.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
-            canvas.save();
-            canvas.translate((-origin.0, -origin.1));
-            ScrollRenderer::draw(canvas, state, theme, |_, _| {});
-            canvas.restore();
-        });
-        painted = true;
-        painted
-    }
-
     /// Whether a paint is still owed, because the throttle turned one away.
     /// The caller has to keep the frame loop turning until this clears.
     pub fn pending(&self) -> bool {
@@ -946,17 +917,10 @@ impl PaneSurfaces {
     }
 
     fn hide_all(&mut self) -> bool {
-        let mut changed = false;
-        for column in &mut self.columns {
-            changed |= column.surfaces.set_hidden(true);
-        }
-        if let Some(pan) = self.pan.as_mut() {
-            changed |= pan.hide();
-        }
-        if let Some(preview_video) = self.preview_video.as_mut() {
-            changed |= preview_video.hide();
-        }
-        changed
+        // The columns and the player are the stack's children, and go with it.
+        self.stack
+            .as_mut()
+            .is_some_and(|stack| stack.set_hidden(true))
     }
 
     /// Quick View's surface and where its card sits *within* that surface,
