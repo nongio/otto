@@ -2649,9 +2649,10 @@ pub fn control_at(x: f32, y: f32, width: f32) -> Option<WindowControl> {
 /// One pane's worth of already-filtered, already-sorted entries.
 pub struct PaneData<'a> {
     pub entries: Vec<&'a Entry>,
-    /// One flag per entry, parallel to `entries`. A multi-selection has no
-    /// single index, so this is a mask rather than a position.
-    pub selected: Vec<bool>,
+    /// The column's selection, by [`Entry::selection_key`]. Looked up per row
+    /// as rows are drawn rather than expanded into a mask over every entry,
+    /// which on a large directory was most of what building a frame cost.
+    pub selection: Option<&'a std::collections::BTreeSet<String>>,
     /// Where the keyboard is. Drawn as a ring when it is not itself selected,
     /// so extending a selection with Ctrl+Arrow stays legible.
     pub cursor: Option<usize>,
@@ -2708,7 +2709,12 @@ impl PaneData<'_> {
 
 impl PaneData<'_> {
     pub fn is_selected(&self, index: usize) -> bool {
-        self.selected.get(index).copied().unwrap_or(false)
+        let (Some(selection), Some(entry)) = (self.selection, self.entries.get(index)) else {
+            return false;
+        };
+        // The common case while scrolling is an empty selection, which answers
+        // without touching the path at all.
+        !selection.is_empty() && selection.contains(entry.path.to_string_lossy().as_ref())
     }
 }
 
@@ -7281,7 +7287,7 @@ mod geometry_tests {
     fn pane<'a>(owned: &'a [Entry], cursor: Option<usize>, scroll: f32) -> PaneData<'a> {
         PaneData {
             entries: owned.iter().collect(),
-            selected: vec![false; owned.len()],
+            selection: None,
             cursor,
             scroll,
             bar: None,

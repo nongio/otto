@@ -5877,10 +5877,7 @@ impl Browser {
         let entries = self.visible(depth);
         let column = &self.columns[depth];
         let pane = view::PaneData {
-            selected: entries
-                .iter()
-                .map(|e| column.selection.contains(&e.selection_key()))
-                .collect(),
+            selection: Some(&column.selection),
             cursor: column.cursor,
             entries,
             scroll: column.scroll.offset(),
@@ -6509,10 +6506,7 @@ impl Browser {
                 let entries = self.visible(depth);
                 let column = &self.columns[depth];
                 view::PaneData {
-                    selected: entries
-                        .iter()
-                        .map(|e| column.selection.contains(&e.selection_key()))
-                        .collect(),
+                    selection: Some(&column.selection),
                     cursor: column.cursor,
                     entries,
                     scroll: column.scroll.offset(),

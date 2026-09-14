@@ -1007,7 +1007,7 @@ mod tests {
         let entries: Vec<&Entry> = owned.iter().collect();
         let pane = PaneData {
             entries,
-            selected: vec![false],
+            selection: None,
             cursor: None,
             scroll: 0.0,
             bar: None,
