@@ -11,12 +11,16 @@
 
 mod backing;
 mod band;
+mod layout;
+mod pane;
 mod renderer;
 mod scroll;
 mod state;
 
 pub use backing::ScrollSurfaces;
 pub use band::{Band, BandView};
+pub use layout::{GridLayout, GridSection, RowLayout};
+pub use pane::{AxisEvent, ScrollContent, ScrollGroup, ScrollPane};
 pub use renderer::ScrollRenderer;
 pub use scroll::{wheel_scale, ScrollView};
 pub use state::{Axis, ScrollState};

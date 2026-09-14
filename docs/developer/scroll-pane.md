@@ -1,203 +1,192 @@
 # Scroll panes
 
-How an otto-kit application scrolls a long piece of content — a file listing,
-a settings pane, a palette's results — without repainting its window on every
-frame of the scroll. There is one way to do it, `ScrollPane`; this page is its
-design and the measurements it answers to.
+How an otto-kit application scrolls long content — a file listing, a grid of
+icons, a settings pane, a palette's results, a stack of columns — at the
+display's rate without repainting its window. This page is what building that
+for otto-files taught, and the components otto-kit should offer so no
+application has to learn it again.
 
-> Status: design, being proven on otto-files' list view. Sections marked
-> *planned* describe work not yet in the tree.
+> Status: the rules below are proven (otto-files' column view scrolls at 120 Hz
+> on them, frosted). The components in *The kit* are the design; *Plan* says
+> what exists and what is next.
 
-## What it has to fix
+## What a scroll must not cost
 
-Measured on otto-files at `20c005b8`, scrolling a 5000-entry directory in a
-nested Otto (60 Hz, scale 2, frosted window) with a scripted touchpad session —
-two seconds of drag each way and eight flings. See *Measuring* below for the
-harness.
+Measured on a 2880×1920, 120 Hz panel, a column view scrolling a directory,
+frost on. Otto's render pass has 8.3 ms.
 
-| view | client CPU | presents | gap p50 / p90 | damage per present |
+| | Otto pass p50 | GPU wait p50 | passes in budget | client CPU |
 |---|---|---|---|---|
-| list | 175% | 446 in 16 s | 24.6 / 33.7 ms | whole window |
-| grid | 172% | — | — | whole window |
-| columns | 79% | — | — | whole window |
-| list, no AT-SPI | 33% | 834 in 16 s | 8.4 / 30.9 ms | whole window |
+| rows painted into the window, whole-window damage | 8.0 ms | 6.7 ms | 1% | 11% |
+| rows painted into the window, file-area damage | 5.7 ms | 4.4 ms | 82% | 13% |
+| one subsurface per column, repainted per step | 8.5 ms | 7.3 ms | 4% | 12% |
+| **a band per column, moved by the compositor** | **3.3–4.0 ms** | **2.6–2.8 ms** | **82–87%** | **1–3%** |
 
-Four separate costs sit in those numbers:
+Everything slower than the last row was one of the mistakes below.
 
-1. **The accessible tree is rebuilt for every entry on every pass of the run
-   loop.** An Otto session always runs AT-SPI, so every kit app is described.
-   otto-files names, formats and diffs 5000 rows per pass, and a second thread
-   serialises the resulting AT-SPI traffic. That is ~140% of a core, and it
-   grows with the directory, not with what is on screen.
-2. **Presents are not paced to the display.** No `wl_surface.frame` is ever
-   requested, so the window both paints frames that are never shown (p50 8 ms
-   against a 16.7 ms refresh) and stalls (p90 31 ms). The cause is in the
-   kit: a surface with a registered frame callback is assumed to be running a
-   frame loop, so `draw` stops asking for frames — and a callback registered
-   without an initial request never runs, so no frame is ever asked for.
-3. **Every frame of a scroll is the whole window.** One toplevel buffer, damaged
-   from `(0, 0)` to `INT_MAX`, re-uploaded and recomposited — sidebar, header,
-   path bar and the frosted backdrop behind all of them — to move the rows.
-4. **A frame is built over every entry, not every visible row.** otto-files'
-   frame snapshot expanded each column's selection into a mask over all of
-   its entries — a path-to-string allocation per entry, per column, per frame.
-   In columns view, where several directories are on screen, that was most of
-   the client's CPU once accessibility was fixed.
-5. **Painting is cheap.** The list's paint is ~2.5 ms. The win is in not doing
-   it, and not describing it, rather than in doing it faster.
+## Rules
 
-## The shape
+Each of these cost a measurable frame budget before it was found.
 
-```text
-window (xdg_toplevel)          chrome: sidebar, header, path bar, footer.
-│                              Painted when the chrome changes. Never by a scroll.
-└── clip   (subsurface)        fixed at the viewport; clips its children (style)
-    ├── band  (subsurface)     the content, taller than the viewport; moved by
-    │                          otto_surface_style_v1 to scroll
-    └── thumb (subsurface)     the scrollbar; moved and faded by the compositor
-```
+1. **Scroll by moving, not painting.** Content lives in a *band* — a subsurface
+   taller (or wider) than the viewport, inside a *clip* subsurface that crops
+   it. A step of the scroll is `otto_surface_style_v1.set_position` on the
+   band: no paint, no buffer, no upload. The client paints a new band only
+   when the scroll nears its edge or the content changes.
+2. **One step per presented frame.** A band move asks for a frame callback on
+   the band and the next step waits for it. Stepping whenever the loop wakes
+   produced ~360 commits a second of sub-pixel moves nobody saw.
+3. **The window does not commit for a scroll.** Pointer and wheel input only
+   wake the loop; the pane moves itself. A single `request_frame()` from an
+   input handler turns every scroll step back into a whole-window repaint.
+4. **Nothing on screen may change continuously by reallocating.** The
+   scrollbar thumb squashes during a bounce; it is stretched through its style
+   size, and painted again only when the stretch would show.
+5. **Paint only what moves; let the window keep what does not.** The band is
+   transparent: rows only. The ground under it, an active tint, an empty or
+   loading message stay in the window, which does not repaint while scrolling.
+6. **Say what changed, and what is opaque.** When the window does paint, it
+   reports damage (`Window::request_frame_damaged`), not the whole buffer. It
+   declares its opaque area (`Window::set_opaque_region`), so a frosted window's
+   blur is not drawn under content that covers it — that draw was ~1–2 ms of GPU
+   per frame on its own.
+7. **Describe only what is on screen.** Accessibility for a scrolling list is
+   bounded by the band, like painting.
+8. **Measure on the wire.** Every A/B here was checked against the client's
+   `WAYLAND_DEBUG` (`attach`, `damage_buffer`) and Otto's per-plane damage
+   before its numbers were believed. Twice an A/B measured nothing because the
+   change never reached the wire.
 
-A frame of scrolling is a style `set_position` on the band and the thumb: no
-paint, no buffer, no damage on the window. The client paints the band only
-when the scroll nears its edge (`Band::refill`), when the content changes, or
-when the viewport's width, scale or theme changes. This is `ScrollSurfaces`
-today; `ScrollPane` keeps its surfaces and band policy and adds the parts every
-consumer has had to write itself.
+The compositor half of these is in Otto and lay-rs and needs nothing from
+applications: a subsurface that only moved is repositioned without repainting
+its layer; a window update no longer re-attaches (and repaints) the root
+surface; damage from a child moving inside a clip is cut to the clip; a kept
+blur is replayed rather than redone, and not under the opaque region.
 
-## `ScrollPane`
+## The kit
 
-One value owns everything a scroll view is:
+Four pieces. An application implements one trait and owns one value per
+scrolling thing.
 
-- **Physics** — the `ScrollView`: wheel, finger, momentum, rubber band.
-- **Surfaces** — clip, band, thumb, and the band policy.
-- **Pacing** — while the view is moving, the pane asks for a frame callback on
-  its clip surface and advances the physics by the presented interval. At rest
-  it asks for nothing.
-- **Input** — pointer events on the clip or band arrive with the pane's surface
-  ids; `ScrollPane::pointer` turns them into content coordinates, feeds axis
-  events to the physics itself, and hands presses and motion back to the host
-  already in content space.
-- **Accessibility** — the pane describes only what the band covers, and only
-  when the band or the content revision moves.
-
-The host supplies the content:
+### `ScrollContent` — what the application provides
 
 ```rust
 pub trait ScrollContent {
-    /// Total length along the scroll axis, in points, at this width.
-    fn length(&self, width: f32) -> f32;
-
-    /// Bumped whenever what `paint` would draw changes: a selection, a
-    /// rename, a thumbnail landing. The pane repaints the band when it moves.
+    /// Extent along the scroll axis, in points, for this cross-axis extent.
+    fn length(&self, cross: f32) -> f32;
+    /// Changes whenever `paint` would draw something different: a selection,
+    /// a rename, a thumbnail landing. The pane repaints its band when it moves.
     fn revision(&self) -> u64;
-
-    /// Paint `band` (content coordinates) — called on refill and revision
-    /// change only, never per frame of a scroll.
+    /// Paint `band` — a rect in content coordinates — on a transparent canvas.
+    /// Called when the band is refilled or the revision moves, never per step.
     fn paint(&self, canvas: &Canvas, band: Rect);
-
-    /// Describe the items intersecting `band` into the pane's group.
-    fn describe(&self, band: Rect, tree: &mut A11yTree);
+    /// Describe what intersects `visible`, in content coordinates.
+    fn describe(&self, _visible: Rect, _tree: &mut A11yTree) {}
 }
 ```
 
-Fixed-pitch content — every list otto-kit apps show — does not implement the
-geometry itself. `RowLayout` (pitch, count, insets) and `GridLayout` (cell size,
-spacing, sections) are closed-form: `rect(index)`, `index_at(point)` and
-`range(band)` in content coordinates. The same layout answers the paint walk,
-the hit test, the accessible bounds and the keyboard's scroll-into-view, so
-what is drawn and what is clickable cannot drift apart. They replace
-otto-files' `RowStrip` and `grid_visible_range_in`,
-and the per-view `*_rect` / `*_at` helpers built on them.
+### `ScrollPane` — one scrolling viewport
 
-Usage, the whole of it:
+Owns everything a scroll view is: the physics (`ScrollView`: wheel, finger,
+momentum, rubber band, thumb), the surfaces (clip, band, thumb) and their band
+policy, pacing (rule 2), and revision tracking. **Either axis**: the band, the
+input region, the thumb strip and the refill policy are all axis-generic.
 
 ```rust
-let pane = ScrollPane::new(window.wl_surface(), viewport, Axis::Vertical)?;
+let mut pane = ScrollPane::new(parent_surface, viewport, Axis::Vertical)?;
 
-// every pass of the run loop
-pane.set_viewport(viewport);              // no-op unless it moved
-pane.sync(&content, &theme);              // moves, refills, describes
+// every pass of the update loop — returns whether the pane is still moving
+pane.set_viewport(viewport);        // a move keeps the band; a resize refills
+pane.update(&content, &theme);      // steps, refills on revision, moves
 
-// in the pointer handler
-if let Some(event) = pane.pointer(&event) {
-    // event.position is in content coordinates
-}
+// geometry for the host, all in the parent's coordinates
+pane.content_to_parent(point);      // a rename field, a drop ring
+pane.parent_to_content(point);      // hit-testing a press
+pane.visible();                     // content rect on screen: a11y, thumbnails
+pane.reveal(span);                  // keyboard cursor into view
 ```
 
-## Rules the design keeps
+Input stays with the host's window handler (the pane's surfaces pass the
+pointer through), so an application keeps hit-testing in one coordinate space
+and converts with `parent_to_content`.
 
-- **The window never paints for a scroll.** Anything that moves with the
-  content lives in the band; anything that stays still lives in the chrome.
-  The scrollbar lives in the thumb.
-- **One owner per property.** The pane owns the band's position; the host never
-  moves content inside the band to scroll it.
-- **Describe what is on screen.** Accessibility cost is bounded by the band, as
-  paint cost is.
-- **Paint on the frame callback, not the wakeup pipe.** A scroll advances once
-  per presented frame, by the presented interval.
+### `ScrollGroup` — which pane a gesture belongs to
 
-## Frosted windows
+Wheel and touchpad gestures are routed to the pane under the pointer, with the
+axis chosen by the first delta and locked until the gesture ends; wheel end
+and discrete notches are handled once, here. A touchpad hold stops every pane.
+Replaces the per-application `gesture_axis`, `pane_under` and wheel branching.
 
-The frost is the toplevel's style, so the compositor blurs what is behind the
-window and tints it; the pane's clip surface carries no ground of its own and
-the band is drawn with alpha. Moving the band damages only the pane in the
-compositor — the band is blended over the window at its new position — and
-the chrome around it is neither repainted by the client nor recomposited.
+```rust
+group.axis(&event, pointer, &mut [&mut pan, &mut columns[..]]);
+```
 
-The blurred backdrop itself is kept between frames (lay-rs replays it unless
-something *beneath* the window changed), so a scroll never blurs again. What a
-scroll did still pay for was replaying that kept blur under content that covers
-it: a listing's paper is opaque. A window says where it is opaque with
-`Window::set_opaque_region` (`wl_surface.set_opaque_region`); Otto carries the
-region onto the surface's layer and lay-rs leaves it out of the backdrop. With
-it, a frosted list scrolls at the cost of an unfrosted one.
+**Nesting.** A pane can be the parent of other panes: `ScrollPane::band_surface()`
+is a valid parent. A horizontal pane whose band holds vertical panes is a
+column stack — panning moves one band, and the columns ride inside it with no
+per-column work.
+
+### `RowLayout` and `GridLayout` — closed-form geometry
+
+Fixed-pitch rows and uniform cells (with optional section headers), in content
+coordinates only: `rect(index)`, `index_at(point)`, `range(rect)`, `length()`.
+The same layout answers the paint walk, the hit test, the accessible bounds,
+`reveal` and which thumbnails to fetch, so what is drawn and what is clickable
+cannot drift apart. Replaces otto-files' `RowStrip`, the `*_in(… scroll)` grid
+helpers and every `scroll` parameter threaded through them.
+
+## What stays in the application
+
+Row and cell appearance, selection runs, the cursor ring, thumbnails (as part
+of `revision`), a rename field, the drop ring and the marquee — drawn in the
+window over the pane using `content_to_parent`, or into the band — and chrome
+that does not move: dividers, tints, headers.
+
+## Plan
+
+1. **Axis-generic bands.** `Band` and `ScrollSurfaces` on either axis, with an
+   example that scrolls both and a nested horizontal-of-vertical probe, measured
+   at 120 Hz. *Proves the open question below before anything is built on it.*
+2. **`ScrollPane`, `ScrollContent`, `ScrollGroup`, `RowLayout`, `GridLayout`**
+   in otto-kit, with `examples/scroll_pane.rs` as the reference. otto-settings
+   moves onto it first: it is the smallest existing user.
+3. **otto-files on panes.** List and grid become panes; columns become vertical
+   panes inside a horizontal one; the palette list a pane. Deleted with it: the
+   scroll parameters on the geometry helpers, `sync_scroll_metrics`,
+   `tick_scroll`, the axis routing, `scroll_damage` / `scrolled_only` /
+   `render_damaged`, `PaneSurfaces`' column and pan-bar code, the window walks
+   in `draw_list` / `draw_grid`, and the per-mode visible-range and reveal code.
+4. **Everyone else.** otto-emoji's panes and page strip, the launcher's hand
+   rolled offset; Quick View's pan as a two-axis pane.
+
+Exit, for each step that moves an application: zero window commits during a
+fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
+5% of a core.
+
+## Decisions
+
+- **Input stays with the window.** Pane surfaces pass the pointer through; the
+  host hit-tests in its window's coordinates and converts with
+  `parent_to_content`. One coordinate space for every application.
+- **Pinned section headers are a surface of their own**, stacked over the
+  pane's band and moved by the compositor like it: repainted only when the
+  pinned section changes, never per step.
+- **A pane that only holds panes has no painted band.** Its band spans the
+  whole content with a transparent 1×1 buffer stretched through its style
+  size; panning it moves one surface and the panes inside keep fixed positions.
+
+## Open questions
+
+- **Nested bands.** Whether Otto composes a style position on a band inside a
+  band that is itself moving, without re-deriving either — step 1 proves it.
+- **Band memory** on a very wide horizontal band at 2x: the overdraw floor may
+  need to be axis-specific.
 
 ## Measuring
 
 `components/otto-kit/examples/virtual_fling.rs` plays touchpad scroll gestures
-through `zwlr_virtual_pointer_v1`. Pointed at a nested Otto it scrolls whatever
-is under its pointer there and nothing in the session it runs inside. The
-measurement scripts that drive it (nested compositor, per-thread CPU, a
-`WAYLAND_DEBUG` summary of commits, attaches, damage and present intervals, and
-`perf` sampling) are kept outside the tree while the design is proven.
-
-## Plan
-
-1. **Kit fixes that stand alone.** *Done.* One outstanding frame request per
-   surface, so a window with a frame callback is paced like any other; the
-   accessible tree rebuilt only after a paint, and otto-files describing only
-   the rows on screen; the frame snapshot looking selection up per drawn row.
-   List view with AT-SPI active went from 175% to 40% of a core, grid from
-   172% to ~50%, columns from 79% to 69%. What is left is building the frame
-   snapshot and repainting the window at all — which is what the pane removes.
-2. **`ScrollPane`, `ScrollContent`, `RowLayout`, `GridLayout`** in otto-kit,
-   with `examples/scroll_pane.rs` as the reference for writing a scroll view.
-3. **otto-files list view** on a pane. Exit: zero window commits during a
-   fling, client CPU under 10% of a core, present gap p90 within one refresh.
-4. **Grid** on a pane with `GridLayout`.
-5. **Columns**: one pane per column inside the horizontal pan. *Done*, on
-   `ScrollSurfaces` (clip, band, thumb), with the pointer passed through to the
-   window and the rows on a transparent band over the column's ground. A vertical scroll moves the band and
-   paints nothing; the window is not repainted and the compositor
-   recomposites only the column. Getting there needed three compositor fixes
-   — the root surface layer was re-appended (and so repainted, whole-window)
-   on every window update; a move-only surface commit re-installed its draw
-   content; and damage from a child moving inside a clip was not clipped —
-   plus pacing band moves to presented frames and stretching the thumb
-   instead of repainting it during an overscroll.
-6. **Settings, palette, launcher** move from `ScrollSurfaces` / hand-rolled
-   lists to `ScrollPane`; `ScrollSurfaces` and otto-files' `PaneSurfaces`, its
-   environment flags and the per-view geometry helpers are deleted.
-
-## Open questions
-
-- **Selection colours.** A selected row changes text colour, so selecting
-  repaints the band. At ~2× a viewport's paint that is a few milliseconds on a
-  click — acceptable — but a hover highlight that repaints per motion is not;
-  hover may need an overlay surface.
-- **Overlays that follow the content** — the rename field, the drag marquee,
-  a drop highlight — either paint into the band (and revise it) or sit in a
-  small overlay subsurface positioned from content coordinates.
-- **Nested panes.** Columns pan horizontally and scroll vertically. Whether the
-  compositor composes a style position on a band inside a moving parent band
-  correctly is to be proven before step 5.
+through `zwlr_virtual_pointer_v1`; `examples/damage_probe.rs` repaints a window
+every frame with a chosen damage, to isolate what the compositor pays per
+damaged megapixel. The takeover scripts that drive them against a traced Otto
+on bare metal, and the analysis of the frame trace and per-plane damage, are
+kept outside the tree.
