@@ -144,18 +144,24 @@ that does not move: dividers, tints, headers.
 
 ## Plan
 
-1. **Axis-generic bands.** `Band` and `ScrollSurfaces` on either axis, with an
-   example that scrolls both and a nested horizontal-of-vertical probe, measured
-   at 120 Hz. *Proves the open question below before anything is built on it.*
+1. **Axis-generic bands.** *Done.* `Band` and `ScrollSurfaces` on either axis,
+   with `examples/scroll_nested_probe.rs` scrolling a vertical pane, a
+   horizontal one, and vertical panes nested in a horizontal container.
 2. **`ScrollPane`, `ScrollContent`, `ScrollGroup`, `RowLayout`, `GridLayout`**
-   in otto-kit, with `examples/scroll_pane.rs` as the reference. otto-settings
-   moves onto it first: it is the smallest existing user.
-3. **otto-files on panes.** List and grid become panes; columns become vertical
-   panes inside a horizontal one; the palette list a pane. Deleted with it: the
-   scroll parameters on the geometry helpers, `sync_scroll_metrics`,
-   `tick_scroll`, the axis routing, `scroll_damage` / `scrolled_only` /
-   `render_damaged`, `PaneSurfaces`' column and pan-bar code, the window walks
-   in `draw_list` / `draw_grid`, and the per-mode visible-range and reveal code.
+   in otto-kit. *Done.* otto-settings is on `ScrollPane`: a transparent pane
+   over the ground its window paints, input through the window.
+3. **otto-files.** *Columns done.* The stack is a horizontal container clipped
+   to the file area and each column a vertical pane placed once inside it;
+   everything that moves with the stack — the active tint (the clip's colour),
+   the dividers (stretched pixels), status lines and the docked preview — is in
+   the stack, so neither a column scroll nor a pan commits the window, and the
+   pan bar is the container's own. otto-files drives `ScrollSurfaces` directly
+   rather than `ScrollPane`: its scroll views live in the browser state, behind
+   its lock and in its headless tests, where no surface can.
+   List and grid stay painted into the window with partial damage and the
+   opaque region — one large band costs more to composite than the window's
+   damaged strip — and their geometry is `RowLayout` / `GridLayout`, mapped
+   into the file area. Left: the palette list as a pane.
 4. **Everyone else.** otto-emoji's panes and page strip, the launcher's hand
    rolled offset; Quick View's pan as a two-axis pane.
 
@@ -177,8 +183,8 @@ fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
 
 ## Open questions
 
-- **Nested bands.** Whether Otto composes a style position on a band inside a
-  band that is itself moving, without re-deriving either — step 1 proves it.
+- **Nested bands** — answered: Otto composes a band's style position inside a
+  container band that is itself moving, in the probe and in otto-files' stack.
 - **Band memory** on a very wide horizontal band at 2x: the overdraw floor may
   need to be axis-specific.
 

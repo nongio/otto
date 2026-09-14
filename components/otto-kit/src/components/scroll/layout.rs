@@ -200,6 +200,18 @@ impl GridLayout {
     /// rect is a less surprising answer than a panic.
     pub fn cell_rect(&self, index: usize, width: f32) -> Rect {
         let cols = self.columns(width);
+        if self.sections.is_empty() {
+            // One plain lattice, which is most grids: no sections to walk.
+            if index >= self.count {
+                return Rect::new_empty();
+            }
+            return Rect::from_xywh(
+                self.pad + (index % cols) as f32 * self.cell.width,
+                self.pad + (index / cols) as f32 * self.cell.height,
+                self.cell.width,
+                self.cell.height,
+            );
+        }
         for (section, top) in self.walk(cols) {
             if index < section.first || index >= section.first + section.count {
                 continue;
@@ -274,14 +286,27 @@ impl GridLayout {
     }
 
     /// The cells `rect` touches at all — a marquee's hit test.
+    ///
+    /// A rect with no extent is a click, and catches nothing. One flat in a
+    /// single axis is a sweep — a pointer dragged straight across a row rarely
+    /// moves a whole pixel down — and catches what it crosses.
     pub fn cells_in(&self, rect: Rect, width: f32) -> Vec<usize> {
         if self.count == 0 || (rect.width() <= 0.0 && rect.height() <= 0.0) {
             return Vec::new();
         }
-        self.range(rect.top, rect.bottom.max(rect.top + f32::EPSILON), width)
+        // A sliver of extent, big enough to survive being added to a large
+        // coordinate, so a flat sweep still intersects what it crosses.
+        const SLIVER: f32 = 0.01;
+        let probe = Rect::from_ltrb(
+            rect.left,
+            rect.top,
+            rect.right.max(rect.left + SLIVER),
+            rect.bottom.max(rect.top + SLIVER),
+        );
+        self.range(probe.top, probe.bottom, width)
             .filter(|&index| {
                 let cell = self.cell_rect(index, width);
-                !cell.is_empty() && cell.intersects(rect)
+                !cell.is_empty() && cell.intersects(probe)
             })
             .collect()
     }
@@ -469,5 +494,20 @@ mod tests {
         assert!(grid
             .cells_in(Rect::from_ltrb(50.0, 50.0, 50.0, 50.0), 420.0)
             .is_empty());
+    }
+
+    #[test]
+    fn a_marquee_flat_in_one_axis_still_catches_what_it_crosses() {
+        let grid = grid();
+        // A sweep straight across the second row, not a pixel of height: it
+        // crosses the first three cells of that row.
+        let caught = grid.cells_in(Rect::from_ltrb(20.0, 130.0, 250.0, 130.0), 420.0);
+        assert_eq!(caught, vec![4, 5, 6]);
+        // And straight down the second column, far enough down that a tiny
+        // epsilon would vanish into the coordinate.
+        let tall = GridLayout::new(Size::new(100.0, 80.0), 4_000).with_pad(10.0);
+        let y = 80.0 * 900.0;
+        let caught = tall.cells_in(Rect::from_ltrb(150.0, y + 20.0, 150.0, y + 100.0), 420.0);
+        assert_eq!(caught, vec![3601, 3605]);
     }
 }

@@ -23,6 +23,7 @@
 
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
+use otto_kit::components::scroll::RowLayout;
 use otto_kit::icons;
 use otto_kit::prelude::*;
 use otto_kit::theme::Theme;
@@ -396,20 +397,15 @@ pub(crate) fn paint_column_band(canvas: &Canvas, f: &Frame, depth: usize, width:
     if pane.error.is_some() || pane.loading || pane.entries.is_empty() {
         return;
     }
-    let count = pane.entries.len();
-    let first = ((band.top - view::MILLER_ROW_INSET) / view::ROW_H)
-        .floor()
-        .max(0.0) as usize;
-    let last = (((band.bottom - view::MILLER_ROW_INSET) / view::ROW_H)
-        .ceil()
-        .max(0.0) as usize)
-        .min(count);
-    if first >= last {
+    let layout =
+        RowLayout::new(view::ROW_H, pane.entries.len()).with_insets(view::MILLER_ROW_INSET, 0.0);
+    let visible = layout.visible(band);
+    if visible.is_empty() {
         return;
     }
-    let rows = build_rows(pane, (first, last), f, depth);
+    let rows = build_rows(pane, (visible.start, visible.end), f, depth);
     canvas.save();
-    canvas.translate((0.0, view::MILLER_ROW_INSET + first as f32 * view::ROW_H));
+    canvas.translate((0.0, layout.rect(visible.start, width).top));
     for row in &rows {
         row.draw(canvas, f.theme, width);
     }
