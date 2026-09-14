@@ -7126,28 +7126,45 @@ impl App for FilesApp {
         let area = Rect::from_wh(browser.size.0, browser.size.1);
         let scroll = column.scroll.state.offset();
         let count = entries.len();
-        let placement: Box<dyn Fn(usize) -> Rect> = match browser.mode {
-            ViewMode::List => {
-                let strip = view::RowStrip::list(browser.size.0, count, scroll);
-                Box::new(move |index| strip.rect(index))
-            }
-            ViewMode::Columns => {
-                let pane = view::miller_pane_rect(
-                    depth,
-                    browser.content_h(),
-                    browser.pan.offset(),
-                    browser.miller_w,
-                );
-                let strip = view::RowStrip::miller(pane, count, scroll);
-                Box::new(move |index| strip.rect(index))
-            }
-            ViewMode::Grid => {
-                let cells =
-                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
-                let sections = browser.recent_sections.clone();
-                Box::new(move |index| view::grid_cell_rect_in(cells, &sections, index, scroll))
-            }
-        };
+        // Only the rows the view shows are described, the same rows the paint
+        // walks — the cost of a tree must not grow with the directory any more
+        // than the cost of a frame does. Each row carries its place in the
+        // whole listing, so a screen reader still reads "12 of 5000".
+        let (placement, shown): (Box<dyn Fn(usize) -> Rect>, std::ops::Range<usize>) =
+            match browser.mode {
+                ViewMode::List => {
+                    let strip = view::RowStrip::list(browser.size.0, count, scroll);
+                    let band =
+                        view::content_viewport(browser.size.0, browser.content_h(), ViewMode::List);
+                    (Box::new(move |index| strip.rect(index)), strip.visible(band))
+                }
+                ViewMode::Columns => {
+                    let pane = view::miller_pane_rect(
+                        depth,
+                        browser.content_h(),
+                        browser.pan.offset(),
+                        browser.miller_w,
+                    );
+                    let strip = view::RowStrip::miller(pane, count, scroll);
+                    (Box::new(move |index| strip.rect(index)), strip.visible(pane))
+                }
+                ViewMode::Grid => {
+                    let cells =
+                        view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                    let sections = browser.recent_sections.clone();
+                    let shown =
+                        view::grid_visible_range_in(cells, &sections, count, scroll, cells);
+                    (
+                        Box::new(move |index| {
+                            view::grid_cell_rect_in(cells, &sections, index, scroll)
+                        }),
+                        shown,
+                    )
+                }
+            };
+        // The keyboard's row is described wherever it is: it is what the focus
+        // names, and a focus pointing at an undescribed node reads as nothing.
+        let off_screen_cursor = cursor.filter(|c| *c < count && !shown.contains(c));
 
         tree.region(
             FILES_LIST,
@@ -7155,9 +7172,12 @@ impl App for FilesApp {
             Role::List,
             otto_kit::t!("files-window-title"),
             |tree| {
-                for (index, entry) in entries.iter().enumerate() {
+                for index in off_screen_cursor.into_iter().chain(shown.clone()) {
+                    let entry = entries[index];
                     let bounds = placement(index);
                     tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
+                        node.set_size_of_set(count);
+                        node.set_position_in_set(index + 1);
                         node.set_label(entry.name.clone());
                         // What the Kind column says, plus the size for a file: the
                         // two things that tell one listing row from another when
