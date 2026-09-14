@@ -352,6 +352,90 @@ pub fn surface_is_fully_opaque(states: &smithay::wayland::compositor::SurfaceDat
         .unwrap_or(false)
 }
 
+/// Carry a client's opaque region onto its surface layer.
+///
+/// A frosted window blurs what is behind it under its whole shape and then
+/// draws its buffer over the blur; wherever that buffer is opaque the blur is
+/// covered, and drawing it is wasted work. Smithay tracks the client's
+/// `wl_surface.set_opaque_region` (and the buffer's alpha) in
+/// `RendererSurfaceState::opaque_regions`, in the surface's logical space;
+/// this scales it into the layer's physical pixels and hands it to lay-rs,
+/// which leaves it out of the backdrop.
+///
+/// Only when it changed: setting it repaints the layer, and a surface layer
+/// answers a repaint with the damage of the last buffer it received.
+pub fn sync_surface_opaque_region(
+    layer: &Layer,
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    wvs: &WindowViewSurface,
+) {
+    use smithay::reexports::wayland_server::Resource;
+
+    let rects: Vec<layers::skia::Rect> =
+        smithay::wayland::compositor::with_states(surface, |states| {
+            let Some(data) = states
+                .data_map
+                .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
+            ) else {
+                return Vec::new();
+            };
+            let data = data.lock().unwrap();
+            let Some(view) = data.view() else {
+                return Vec::new();
+            };
+            let scale_x = wvs.phy_dst_w / view.dst.w.max(1) as f32;
+            let scale_y = wvs.phy_dst_h / view.dst.h.max(1) as f32;
+            data.opaque_regions()
+                .map(|regions| {
+                    regions
+                        .iter()
+                        .map(|r| {
+                            layers::skia::Rect::from_xywh(
+                                r.loc.x as f32 * scale_x,
+                                r.loc.y as f32 * scale_y,
+                                r.size.w as f32 * scale_x,
+                                r.size.h as f32 * scale_y,
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+
+    /// The region last handed to each surface's layer, with the layer it went
+    /// to: a surface whose layer was recreated needs it again.
+    type Applied =
+        HashMap<smithay::reexports::wayland_server::backend::ObjectId, (usize, Vec<[u32; 4]>)>;
+    thread_local! {
+        static APPLIED: RefCell<Applied> = RefCell::new(HashMap::new());
+    }
+    let key = (
+        usize::from(layer.id()),
+        rects
+            .iter()
+            .map(|r| {
+                [
+                    r.left.to_bits(),
+                    r.top.to_bits(),
+                    r.right.to_bits(),
+                    r.bottom.to_bits(),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
+    let changed = APPLIED.with(|applied| {
+        let mut applied = applied.borrow_mut();
+        if applied.get(&surface.id()) == Some(&key) {
+            return false;
+        }
+        applied.insert(surface.id(), key);
+        true
+    });
+    if changed {
+        layer.set_opaque_region(rects);
+    }
+}
+
 /// Round a physical-pixel position onto the whole-pixel grid.
 ///
 /// A window's position is chosen in logical integers and multiplied by the
@@ -453,39 +537,13 @@ fn surface_filter(
     }
 }
 
-pub fn configure_surface_layer(
+/// Put a surface's layer where the surface tree says it sits, and size it,
+/// unless the client has claimed its bounds. Returns the snapped origin.
+fn place_surface_layer(
     layer: &Layer,
     wvs: &WindowViewSurface,
-    gravity: crate::surface_style::ContentsGravity,
     client_owns_size: bool,
-    shared_gravity: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
-) {
-    use crate::surface_style::ContentsGravity;
-
-    // Every setter below schedules a lay-rs change unconditionally — lay-rs
-    // does not compare the incoming value, and `set_draw_content` always
-    // raises NEEDS_PAINT. Re-running this for a surface that did not change
-    // therefore invents damage, and the sync above calls it for every surface
-    // of a window (plus its popups) on every commit of any one of them. Reduce
-    // the whole configuration to one key and skip the body when it matches
-    // what the layer already holds. `WindowViewSurface`'s `Hash` covers the
-    // commit counter and texture id, so real content changes still fall
-    // through; the node id is in the key too, since a surface whose layer was
-    // recreated needs configuring even with identical geometry.
-    // See `crate::surface_config_cache`.
-    {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        wvs.hash(&mut hasher);
-        (gravity as u8).hash(&mut hasher);
-        client_owns_size.hash(&mut hasher);
-        shared_gravity.is_some().hash(&mut hasher);
-        usize::from(layer.id()).hash(&mut hasher);
-        if !crate::surface_config_cache::record_if_changed(&wvs.id, hasher.finish()) {
-            return;
-        }
-    }
-
+) -> (f32, f32) {
     // Position calculation: phy_dst is the buffer viewport offset, log_offset is from tree traversal
     //
     // Rounded to whole physical pixels. Both terms come from logical values
@@ -498,11 +556,6 @@ pub fn configure_surface_layer(
     // result and the cheap one (see the sampling gate in the draw closure).
     let pos_x = (wvs.phy_dst_x + wvs.log_offset_x).round();
     let pos_y = (wvs.phy_dst_y + wvs.log_offset_y).round();
-
-    layer.set_layout_style(taffy::Style {
-        position: taffy::Position::Absolute,
-        ..Default::default()
-    });
 
     // Skip size/position override when client owns the bounds.
     // The compositor initializes from buffer on first commit (before client_owns_size is set).
@@ -527,6 +580,73 @@ pub fn configure_surface_layer(
         };
         layer.set_position(adjusted_pos, None);
     }
+    (pos_x, pos_y)
+}
+
+pub fn configure_surface_layer(
+    layer: &Layer,
+    wvs: &WindowViewSurface,
+    gravity: crate::surface_style::ContentsGravity,
+    client_owns_size: bool,
+    shared_gravity: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
+) {
+    use crate::surface_style::ContentsGravity;
+
+    // Every setter below schedules a lay-rs change unconditionally — lay-rs
+    // does not compare the incoming value, and `set_draw_content` always
+    // raises NEEDS_PAINT. Re-running this for a surface that did not change
+    // therefore invents damage, and the sync above calls it for every surface
+    // of a window (plus its popups) on every commit of any one of them. Reduce
+    // the whole configuration to one key and skip the body when it matches
+    // what the layer already holds. `WindowViewSurface`'s `Hash` covers the
+    // commit counter and texture id, so real content changes still fall
+    // through; the node id is in the key too, since a surface whose layer was
+    // recreated needs configuring even with identical geometry.
+    // See `crate::surface_config_cache`.
+    //
+    // Where the surface sits is keyed apart from what it shows: a surface that
+    // only moved is repositioned and nothing else, so its layer keeps its
+    // picture and reports no content damage. Re-installing the draw content
+    // for a move would repaint the layer and return the damage of the buffer
+    // it last received, as though that buffer had just arrived.
+    let (content_key, placement_key) = {
+        use std::hash::{Hash, Hasher};
+        let unplaced = WindowViewSurface {
+            phy_dst_x: 0.0,
+            phy_dst_y: 0.0,
+            log_offset_x: 0.0,
+            log_offset_y: 0.0,
+            ..wvs.clone()
+        };
+        let mut content = std::collections::hash_map::DefaultHasher::new();
+        unplaced.hash(&mut content);
+        (gravity as u8).hash(&mut content);
+        client_owns_size.hash(&mut content);
+        shared_gravity.is_some().hash(&mut content);
+        usize::from(layer.id()).hash(&mut content);
+
+        let mut placement = std::collections::hash_map::DefaultHasher::new();
+        wvs.phy_dst_x.to_bits().hash(&mut placement);
+        wvs.phy_dst_y.to_bits().hash(&mut placement);
+        wvs.log_offset_x.to_bits().hash(&mut placement);
+        wvs.log_offset_y.to_bits().hash(&mut placement);
+        (content.finish(), placement.finish())
+    };
+    match crate::surface_config_cache::record(&wvs.id, content_key, placement_key) {
+        crate::surface_config_cache::Reconfigure::Nothing => return,
+        crate::surface_config_cache::Reconfigure::Placement => {
+            place_surface_layer(layer, wvs, client_owns_size);
+            return;
+        }
+        crate::surface_config_cache::Reconfigure::Full => {}
+    }
+
+    let (pos_x, pos_y) = place_surface_layer(layer, wvs, client_owns_size);
+
+    layer.set_layout_style(taffy::Style {
+        position: taffy::Position::Absolute,
+        ..Default::default()
+    });
 
     layer.set_pointer_events(false);
     // Picture caching keeps opacity/transform animations cheap — the cached
