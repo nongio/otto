@@ -551,7 +551,7 @@ impl App for Ab {
             if let Some(surface) = driver_surface {
                 use wayland_client::Proxy;
                 AppContext::register_frame_callback(surface.id(), move || driver.step());
-                AppContext::request_initial_frame(&surface);
+                AppContext::register_frame_loop(&surface);
             }
         }
 

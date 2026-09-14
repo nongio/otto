@@ -140,8 +140,11 @@ thread_local! {
     /// for a batch. See [`AppContext::register_pointer_batch_end_callback`].
     static POINTER_BATCH_END_CALLBACKS: RefCell<Vec<Box<dyn FnMut()>>> = const { RefCell::new(Vec::new()) };
     static FRAME_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
-    /// Surfaces that have committed a frame the compositor has not yet said it
-    /// presented. See [`AppContext::frame_in_flight`].
+    /// Surfaces whose frame callback runs every frame rather than once per
+    /// frame the surface paints. See [`AppContext::register_frame_loop`].
+    static FRAME_LOOPS: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// Surfaces with a `wl_surface.frame` request the compositor has not yet
+    /// answered. See [`AppContext::frame_in_flight`].
     static FRAMES_IN_FLIGHT: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
@@ -1243,10 +1246,31 @@ impl<'a> AppContext<'a> {
     pub fn request_throttled_frame(surface: &wl_surface::WlSurface) {
         use wayland_client::Proxy;
 
-        Self::request_frame(surface);
-        FRAMES_IN_FLIGHT.with(|surfaces| {
-            surfaces.borrow_mut().insert(surface.id());
+        // One outstanding request per surface. A second would only deliver a
+        // second callback for the same frame, running a frame loop twice.
+        let first = FRAMES_IN_FLIGHT.with(|surfaces| surfaces.borrow_mut().insert(surface.id()));
+        if first {
+            Self::request_frame(surface);
+        }
+    }
+
+    /// Make `surface`'s frame callback run on every frame the compositor
+    /// presents, not only on frames the surface itself commits.
+    ///
+    /// For content that animates on its own clock. A callback registered
+    /// without this runs once per frame the surface paints, which is what a
+    /// window that repaints on demand wants: nothing wakes it while it is idle.
+    pub fn register_frame_loop(surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+
+        FRAME_LOOPS.with(|loops| {
+            loops.borrow_mut().insert(surface.id());
         });
+        Self::request_throttled_frame(surface);
+    }
+
+    pub(crate) fn has_frame_loop(surface_id: &ObjectId) -> bool {
+        FRAME_LOOPS.with(|loops| loops.borrow().contains(surface_id))
     }
 
     /// Whether a frame committed on this surface has yet to be presented.
@@ -1310,10 +1334,6 @@ impl<'a> AppContext<'a> {
     // ========================================================================
     // Event dispatch (called by handlers in mod.rs)
     // ========================================================================
-
-    pub(crate) fn has_frame_callback(surface_id: &ObjectId) -> bool {
-        FRAME_CALLBACKS.with(|callbacks| callbacks.borrow().contains_key(surface_id))
-    }
 
     pub(crate) fn dispatch_frame_callback(surface_id: &ObjectId) {
         FRAME_CALLBACKS.with(|callbacks| {
@@ -1642,12 +1662,33 @@ impl<'a> AppContext<'a> {
         surface_id: &ObjectId,
     ) -> (bool, Vec<crate::accessibility::ActionRequest>) {
         A11Y_ADAPTERS.with(|adapters| {
-            let adapters = adapters.borrow();
-            let Some(adapter) = adapters.get(surface_id) else {
+            let mut adapters = adapters.borrow_mut();
+            let Some(adapter) = adapters.get_mut(surface_id) else {
                 return (false, Vec::new());
             };
-            (adapter.mailbox.is_wanted(), adapter.mailbox.take_actions())
+            let wanted = adapter.mailbox.is_wanted();
+            // Rebuilt when the window has painted since the last tree, or when
+            // an assistive technology has just attached — not on every pass of
+            // the run loop, which turns many times per frame while input and
+            // wakeups arrive.
+            let rebuild = wanted && (adapter.stale || !adapter.was_wanted);
+            adapter.was_wanted = wanted;
+            (rebuild, adapter.mailbox.take_actions())
         })
+    }
+
+    /// Something was painted, so every accessible surface's tree may be out
+    /// of date.
+    ///
+    /// All of them rather than the one that painted: a window's content often
+    /// lives in subsurfaces — a scroll pane's band — whose paints change what
+    /// the window describes without the window's own surface drawing at all.
+    pub(crate) fn mark_accessibility_stale() {
+        A11Y_ADAPTERS.with(|adapters| {
+            for adapter in adapters.borrow_mut().values_mut() {
+                adapter.stale = true;
+            }
+        });
     }
 
     /// Hands a freshly built tree to the adapter.

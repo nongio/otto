@@ -259,13 +259,11 @@ impl BaseWaylandSurface {
             // Ask to be told when this frame reaches the screen. `wl_surface
             // .frame` is double-buffered state, so the request has to be made
             // before the commit that carries it — and that commit is the one
-            // eglSwapBuffers makes below, not one of ours. Surfaces already
-            // driving their own frame loop through `on_frame` are left alone:
-            // the runner re-requests for those, and a second callback would
-            // run their loop twice per frame.
-            if !AppContext::has_frame_callback(&self.wl_surface.id()) {
-                AppContext::request_throttled_frame(&self.wl_surface);
-            }
+            // eglSwapBuffers makes below, not one of ours. A surface that
+            // already has a request outstanding — a frame loop's — is not
+            // asked twice, so its callback still runs once per frame.
+            AppContext::request_throttled_frame(&self.wl_surface);
+            AppContext::mark_accessibility_stale();
 
             // Present the frame. eglSwapBuffers attaches the buffer, damages it
             // and commits, so committing again here would only ask the
@@ -323,9 +321,7 @@ impl BaseWaylandSurface {
 
         let surface_id = self.wl_surface.id();
         AppContext::register_frame_callback(surface_id, callback);
-
-        // Request the initial frame callback to start the loop
-        AppContext::request_initial_frame(&self.wl_surface);
+        AppContext::register_frame_loop(&self.wl_surface);
     }
 
     /// Check if surface style protocol is available for this surface
