@@ -679,6 +679,18 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
         let wake_fd = AppContext::wakeup_read_fd();
         let mut theme_generation_seen = self.theme_generation_seen;
 
+        // Shut down however the loop ends — an error from the connection or a
+        // panic in the app included. Left to thread-local destructors at exit,
+        // the EGL surfaces are destroyed over a connection already gone, which
+        // crashes and hides the error that ended the loop.
+        struct Shutdown;
+        impl Drop for Shutdown {
+            fn drop(&mut self) {
+                AppContext::clear();
+            }
+        }
+        let _shutdown = Shutdown;
+
         while !self.app_data.exit {
             // 1. Drain any events already queued (no I/O).
             self.event_queue.dispatch_pending(&mut self.app_data)?;
@@ -788,7 +800,6 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             // Otherwise (timeout or only wakeup), guard drops and cancels the read.
         }
 
-        AppContext::clear();
         Ok(())
     }
 }
