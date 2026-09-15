@@ -7047,9 +7047,7 @@ impl App for FilesApp {
             }
         });
 
-        self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new(
-            AppContext::scale_factor() as f32
-        ));
+        self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new());
 
         self.install_dnd(&window);
         self.install_quickview_pointer();
