@@ -36,9 +36,11 @@ use otto_kit::components::scroll::RowLayout;
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::icons::named_icon_sized;
 use otto_kit::theme::Theme;
-use otto_kit::typography::{get_font_with_fallback, styles};
+use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styles};
+use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
+use crate::log::{Line, Style};
 use crate::source::Item;
 
 /// Width of the card. Wide enough for a window title and its application, and
@@ -59,13 +61,45 @@ pub const LIST_TOP: f32 = FIELD_H + 1.0 + LIST_PAD;
 /// Corner radius of the card, applied by the compositor to the subsurface.
 pub const RADIUS: f32 = 10.0;
 const ICON: f32 = 28.0;
+/// The icon on a compact row, such as a file attached to an ask request.
+const SMALL_ICON: f32 = 18.0;
 const ROW_INSET: f32 = 8.0;
 /// Corner radius of the selection's highlight.
 pub const HIGHLIGHT_RADIUS: f32 = 9.0;
 /// The card at its tallest, which is how big its buffer is allocated: a
 /// shorter card is the same buffer with the compositor clipping it, so the
 /// height can change without reallocating anything.
-pub const MAX_CARD_H: f32 = FIELD_H + 1.0 + LIST_PAD * 2.0 + MAX_ROWS as f32 * ROW_H;
+pub const MAX_CARD_H: f32 = MAX_LOG_BLOCK + FIELD_H + 1.0 + LIST_PAD * 2.0 + MAX_LIST_H;
+/// The most of the list — rows, or the ask log — on screen at once.
+const MAX_LIST_H: f32 = MAX_ROWS as f32 * ROW_H;
+/// The ask log above the field at its tallest, with its padding and divider.
+const MAX_LOG_BLOCK: f32 = log_block(MAX_LIST_H);
+
+/// How much of the card an ask log `log` points tall takes above the field.
+const fn log_block(log: f32) -> f32 {
+    if log <= 0.0 {
+        0.0
+    } else {
+        LOG_TOP_PAD + log + LIST_PAD + 1.0
+    }
+}
+
+/// Space above the ask log, between the card's top edge and its first line.
+const LOG_TOP_PAD: f32 = 20.0;
+
+/// Height of one line of the ask log.
+pub const LOG_LINE_H: f32 = 21.0;
+/// Size of the ask log's text.
+const LOG_TEXT: f32 = 14.0;
+/// Space either side of the ask log's text.
+const LOG_INSET: f32 = 20.0;
+/// How wide a line of the ask log may run.
+pub const LOG_W: f32 = CARD_W - LOG_INSET * 2.0;
+
+/// How tall the ask log is with `lines` lines in it.
+pub fn log_length(lines: usize) -> f32 {
+    lines as f32 * LOG_LINE_H
+}
 
 /// Where the top of the card sits, as a fraction of the output's height.
 /// Above centre: the eye starts there, and the list grows downwards into
@@ -79,12 +113,17 @@ const TOP_FRACTION: f32 = 0.16;
 /// work it out from a row count alone — the buffer it is drawn into says
 /// nothing about it.
 pub fn card_height(rows: usize) -> f32 {
-    if rows == 0 {
+    card_height_for(rows as f32 * ROW_H)
+}
+
+/// How tall the card is with `list` points of list under the field.
+fn card_height_for(list: f32) -> f32 {
+    if list <= 0.0 {
         // No list, so no divider and no padding around it either: the card is
         // the field.
         return FIELD_H;
     }
-    FIELD_H + 1.0 + LIST_PAD * 2.0 + rows as f32 * ROW_H
+    FIELD_H + 1.0 + LIST_PAD * 2.0 + list
 }
 
 /// Where the card's top-left corner sits inside a parent surface `surface`
@@ -111,13 +150,22 @@ pub fn card_origin(surface: (f32, f32)) -> (f32, f32) {
 /// its bottom row of them would have a one-pixel dead strip along the edge the
 /// pointer arrives at.
 pub fn input_rect(surface: (f32, f32), rows: usize) -> (i32, i32, i32, i32) {
+    input_rect_for(surface, rows as f32 * ROW_H)
+}
+
+fn input_rect_for(surface: (f32, f32), list: f32) -> (i32, i32, i32, i32) {
     let (x, y) = card_origin(surface);
+    outward(x, y, CARD_W, card_height_for(list))
+}
+
+/// A rectangle in points as whole pixels, rounded outwards.
+fn outward(x: f32, y: f32, width: f32, height: f32) -> (i32, i32, i32, i32) {
     let (left, top) = (x.floor(), y.floor());
     (
         left as i32,
         top as i32,
-        ((x + CARD_W).ceil() - left) as i32,
-        ((y + card_height(rows)).ceil() - top) as i32,
+        ((x + width).ceil() - left) as i32,
+        ((y + height).ceil() - top) as i32,
     )
 }
 
@@ -130,13 +178,21 @@ pub struct Palette {
     divider: Layer,
     /// The line that stands in for the list when nothing matched.
     message: Layer,
+    /// The line between the ask log and the field.
+    log_divider: Layer,
 
     size: (f32, f32),
-    /// Number of lines currently shown, which sets the card's height.
-    visible: usize,
-    /// Number of result rows on screen: `visible`, unless that one line is
-    /// the message.
-    rows_shown: usize,
+    /// How much of the list is under the field, in points: the rows on
+    /// screen, or the message's line.
+    list_h: f32,
+    /// How tall the rows' pane is: `list_h`, unless that is the message.
+    pane_h: f32,
+    /// How much of the ask log is on screen above the field, in points.
+    log_h: f32,
+    /// Whether the field sits low enough to leave the ask log room above it.
+    log_room: bool,
+    /// How far the card has been dragged from where it rests, in points.
+    moved: (f32, f32),
     /// Icons live as long as the launcher does. It is open for seconds, and
     /// decoding the same icon on every keystroke is the one thing that would
     /// make typing feel slow. Behind a cell because painting a band only
@@ -172,10 +228,12 @@ impl Palette {
         let field = new_layer("launcher-field");
         let divider = new_layer("launcher-divider");
         let message = new_layer("launcher-message");
+        let log_divider = new_layer("launcher-log-divider");
 
         let _ = card.add_sublayer(&field);
         let _ = card.add_sublayer(&divider);
         let _ = card.add_sublayer(&message);
+        let _ = card.add_sublayer(&log_divider);
 
         let mut palette = Self {
             engine,
@@ -183,9 +241,13 @@ impl Palette {
             field,
             divider,
             message,
+            log_divider,
             size: (0.0, 0.0),
-            visible: 0,
-            rows_shown: 0,
+            list_h: 0.0,
+            pane_h: 0.0,
+            log_h: 0.0,
+            log_room: false,
+            moved: (0.0, 0.0),
             icons: RefCell::new(HashMap::new()),
             dark,
         };
@@ -219,16 +281,19 @@ impl Palette {
         self.card
             .set_size(LayerSize::points(CARD_W, MAX_CARD_H), None);
 
-        self.divider.set_background_color(
-            PaintColor::Solid {
-                color: lay_color(if self.dark {
-                    Color::from_argb(36, 255, 255, 255)
-                } else {
-                    Color::from_argb(24, 0, 0, 0)
-                }),
-            },
-            None,
-        );
+        let line = if self.dark {
+            Color::from_argb(36, 255, 255, 255)
+        } else {
+            Color::from_argb(24, 0, 0, 0)
+        };
+        for divider in [&self.divider, &self.log_divider] {
+            divider.set_background_color(
+                PaintColor::Solid {
+                    color: lay_color(line),
+                },
+                None,
+            );
+        }
     }
 
     /// The selection's wash, which the list pane draws under the rows.
@@ -282,40 +347,105 @@ impl Palette {
         // the subsurface.
         self.field
             .set_size(LayerSize::points(CARD_W, FIELD_H), None);
-        self.divider
-            .set_position(LayerPoint { x: 0.0, y: FIELD_H }, None);
         self.divider.set_size(LayerSize::points(CARD_W, 1.0), None);
-        self.message.set_position(
-            LayerPoint {
-                x: 0.0,
-                y: LIST_TOP,
-            },
-            None,
-        );
+        self.log_divider
+            .set_size(LayerSize::points(CARD_W, 1.0), None);
 
-        self.apply_card_height(self.visible, None);
+        self.apply_card_height(None);
+    }
+
+    /// Leave room above the field for the ask log, so the field being typed
+    /// into stays where it is as the log appears and grows.
+    pub fn reserve_log_room(&mut self) {
+        self.set_log_room(true);
+    }
+
+    /// Whether to leave that room. A list of sessions has no log, and without
+    /// the room it sits where the launcher's other lists do, higher up.
+    pub fn set_log_room(&mut self, room: bool) {
+        self.log_room = room;
     }
 
     /// Where the card subsurface belongs, in the parent surface's coordinates.
+    ///
+    /// With room for the ask log, the field sits where the tallest log would
+    /// put it, and the card grows upwards over the space above as the log
+    /// grows.
+    ///
+    /// A card that has been dragged sits that far from there, kept on the
+    /// output.
     pub fn card_origin(&self) -> (f32, f32) {
-        card_origin(self.size)
+        let (x, y) = self.resting_origin();
+        let (width, height) = self.card_size();
+        let (dx, dy) = self.moved;
+        (
+            (x + dx).clamp(0.0, (self.size.0 - width).max(0.0)),
+            (y + dy).clamp(0.0, (self.size.1 - height).max(0.0)),
+        )
+    }
+
+    /// Drag the card's top-left corner to `(x, y)` on the output, or as near
+    /// as the output's edges allow. Absolute, as Files' palette is dragged:
+    /// the pointer's position arrives relative to where the card was last
+    /// placed, so adding up steps would count a step again for every event
+    /// that arrives before the card has moved.
+    pub fn move_card_to(&mut self, x: f32, y: f32) {
+        let (rest_x, rest_y) = self.resting_origin();
+        self.moved = (x - rest_x, y - rest_y);
+        // What is kept is where the card ended up, so dragging past an edge
+        // and back moves it straight away.
+        let (x, y) = self.card_origin();
+        self.moved = (x - rest_x, y - rest_y);
+    }
+
+    /// Whether a press at `y`, in the card's coordinates, lands on what the
+    /// card is dragged by: the field, or the ask log above it.
+    pub fn drags_at(&self, y: f32) -> bool {
+        let field = self.field_top();
+        let on_field = (field..field + FIELD_H).contains(&y);
+        let log = self.log_rect();
+        on_field || (self.log_h > 0.0 && (log.top..log.bottom).contains(&y))
+    }
+
+    /// Where the card sits before it is dragged anywhere.
+    fn resting_origin(&self) -> (f32, f32) {
+        let (x, y) = card_origin(self.size);
+        if !self.log_room {
+            return (x, y);
+        }
+        let under_field = MAX_CARD_H - MAX_LOG_BLOCK;
+        let field = (y + MAX_LOG_BLOCK).min(self.size.1 - under_field).max(0.0);
+        (x, (field - self.field_top()).max(0.0))
+    }
+
+    /// Where the field starts, down the card: under the ask log, if there is
+    /// one.
+    pub fn field_top(&self) -> f32 {
+        log_block(self.log_h)
     }
 
     /// How much of the card is currently in use. The buffer stays
     /// [`MAX_CARD_H`] tall; this is what the compositor should show of it.
     pub fn card_size(&self) -> (f32, f32) {
-        (CARD_W, card_height(self.visible))
+        (CARD_W, self.field_top() + card_height_for(self.list_h))
     }
 
     /// The card as the compositor should hit-test it — see [`input_rect`].
     pub fn input_rect(&self) -> (i32, i32, i32, i32) {
-        input_rect(self.size, self.visible)
+        let (x, y) = self.card_origin();
+        let (width, height) = self.card_size();
+        outward(x, y, width, height)
     }
 
-    /// The list pane's viewport, in the card's own coordinates: as many rows
-    /// as are on screen, and empty when the card shows none.
+    /// The rows' pane, in the card's own coordinates: under the field, and
+    /// empty when the card shows no rows.
     pub fn list_rect(&self) -> Rect {
-        Rect::from_xywh(0.0, LIST_TOP, CARD_W, self.rows_shown as f32 * ROW_H)
+        Rect::from_xywh(0.0, self.field_top() + LIST_TOP, CARD_W, self.pane_h)
+    }
+
+    /// The ask log's pane, above the field, and empty when there is no log.
+    pub fn log_rect(&self) -> Rect {
+        Rect::from_xywh(0.0, LOG_TOP_PAD, CARD_W, self.log_h)
     }
 
     /// Push the current query into the scene, and size the card for `count`
@@ -337,7 +467,7 @@ impl Palette {
             // card keeps a shape instead of collapsing under the answer. An
             // empty query has nothing to report — a launcher just opened has
             // not failed to find anything — and the card is the field alone.
-            let lines = match empty_message {
+            let list = match empty_message {
                 Some(message) => {
                     self.message.set_opacity(1.0_f32, None);
                     self.message.set_draw_content(draw_message(
@@ -345,50 +475,115 @@ impl Palette {
                         self.font(15.0, FontStyle::normal()),
                         self.subtitle_color(),
                     ));
-                    1
+                    ROW_H
                 }
                 None => {
                     self.message.set_opacity(0.0_f32, None);
                     self.message.set_draw_content(draw_nothing());
-                    0
+                    0.0
                 }
             };
-            self.visible = lines;
-            self.rows_shown = 0;
-            self.apply_card_height(lines, transition);
+            self.list_h = list;
+            self.pane_h = 0.0;
+            self.apply_card_height(transition);
             return;
         }
 
         self.message.set_opacity(0.0_f32, None);
         self.message.set_draw_content(draw_nothing());
-        self.visible = count.min(MAX_ROWS);
-        self.rows_shown = self.visible;
-        self.apply_card_height(self.visible, transition);
+        self.list_h = count.min(MAX_ROWS) as f32 * ROW_H;
+        self.pane_h = self.list_h;
+        self.apply_card_height(transition);
+    }
+
+    /// Make room above the field for an ask log `length` points long: all of
+    /// it, up to the list's tallest, past which the log scrolls. Zero for no
+    /// log. Takes effect with the next [`Palette::update`].
+    pub fn set_log(&mut self, length: f32) {
+        self.log_h = if length <= 0.0 {
+            0.0
+        } else {
+            length.clamp(LOG_LINE_H, MAX_LIST_H)
+        };
+    }
+
+    /// How wide `text` is in the ask log, drawn in `style`.
+    pub fn measure_log(&self, text: &str, style: Style) -> f32 {
+        measure_runs(&self.log_font(style), text)
+    }
+
+    fn log_font(&self, style: Style) -> Font {
+        let weight = match style {
+            Style::Prompt => Weight::SEMI_BOLD,
+            Style::Answer | Style::Note => Weight::NORMAL,
+        };
+        self.font(
+            LOG_TEXT,
+            FontStyle::new(weight, Width::NORMAL, Slant::Upright),
+        )
+    }
+
+    /// Paint the lines of the ask log that fall inside `band`, in the list's
+    /// content coordinates.
+    pub fn paint_log(&self, canvas: &Canvas, band: Rect, lines: &[Line]) {
+        let prompt_font = self.log_font(Style::Prompt);
+        let font = self.log_font(Style::Answer);
+        let mut text = Paint::new(Color4f::from(self.title_color()), None);
+        text.set_anti_alias(true);
+        let mut dim = Paint::new(Color4f::from(self.subtitle_color()), None);
+        dim.set_anti_alias(true);
+
+        let first = (band.top / LOG_LINE_H).floor().max(0.0) as usize;
+        let last = ((band.bottom / LOG_LINE_H).ceil().max(0.0) as usize).min(lines.len());
+        for (index, line) in lines.iter().enumerate().take(last).skip(first) {
+            if line.text.is_empty() {
+                continue;
+            }
+            let baseline = index as f32 * LOG_LINE_H + LOG_LINE_H * 0.72;
+            let (font, paint) = match line.style {
+                Style::Prompt => (&prompt_font, &text),
+                Style::Answer => (&font, &text),
+                Style::Note => (&font, &dim),
+            };
+            draw_runs(canvas, &line.text, (LOG_INSET, baseline), font, paint);
+        }
     }
 
     /// Paint the rows of `items` that fall inside `band`, in the list's
     /// content coordinates — row 0 at the top — for the list pane's band.
-    /// `labels` name each item's source.
+    /// `labels` name each item's source. Items from `compact_source` are drawn
+    /// with smaller text and a smaller icon: they are there to be read, not
+    /// picked.
     pub fn paint_rows(
         &self,
         canvas: &Canvas,
         band: Rect,
         items: &[&Item],
         labels: &[&'static str],
+        compact_source: Option<usize>,
     ) {
         let title_font = self.font(15.0, FontStyle::normal());
         let subtitle_font = self.font(11.5, FontStyle::normal());
+        let small_title_font = self.font(12.5, FontStyle::normal());
+        let small_subtitle_font = self.font(10.0, FontStyle::normal());
         let badge_font = self.font(10.5, FontStyle::normal());
         let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
         let layout = RowLayout::new(ROW_H, items.len());
         for index in layout.visible(band) {
             let item = items[index];
+            let compact = compact_source == Some(item.origin.source);
+            let (icon_size, title_font, subtitle_font) = if compact {
+                (SMALL_ICON, &small_title_font, &small_subtitle_font)
+            } else {
+                (ICON, &title_font, &subtitle_font)
+            };
             let icon = item
                 .icon
                 .as_deref()
                 .and_then(|name| resolve_icon(&mut self.icons.borrow_mut(), name));
             let draw = draw_row(
                 icon,
+                icon_size,
                 item.title.clone(),
                 item.subtitle.clone(),
                 labels.get(item.origin.source).copied().unwrap_or(""),
@@ -406,14 +601,43 @@ impl Palette {
         }
     }
 
-    fn apply_card_height(&self, rows: usize, transition: Option<Transition>) {
+    /// Size the card for what is on it, and place what sits under the log.
+    ///
+    /// Positions change at once, in step with the card's origin, which moves
+    /// up as the log grows: together they keep the field still on screen.
+    fn apply_card_height(&self, transition: Option<Transition>) {
+        let top = self.field_top();
+        let log_shown = if self.log_h > 0.0 { 1.0_f32 } else { 0.0_f32 };
+        self.log_divider.set_opacity(log_shown, None);
+        self.log_divider.set_position(
+            LayerPoint {
+                x: 0.0,
+                y: (top - 1.0).max(0.0),
+            },
+            None,
+        );
+        self.field.set_position(LayerPoint { x: 0.0, y: top }, None);
+        self.divider.set_position(
+            LayerPoint {
+                x: 0.0,
+                y: top + FIELD_H,
+            },
+            None,
+        );
         self.divider
-            .set_opacity(if rows == 0 { 0.0_f32 } else { 1.0_f32 }, None);
-        let height = card_height(rows);
+            .set_opacity(if self.list_h <= 0.0 { 0.0_f32 } else { 1.0_f32 }, None);
+        self.message.set_position(
+            LayerPoint {
+                x: 0.0,
+                y: top + LIST_TOP,
+            },
+            None,
+        );
+        self.message
+            .set_size(LayerSize::points(CARD_W, self.list_h), None);
+        let (_, height) = self.card_size();
         self.card
             .set_size(LayerSize::points(CARD_W, height), transition);
-        self.message
-            .set_size(LayerSize::points(CARD_W, rows as f32 * ROW_H), None);
     }
 
     fn font(&self, size: f32, style: FontStyle) -> Font {
@@ -432,6 +656,7 @@ impl Palette {
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     icon: Option<Image>,
+    icon_size: f32,
     title: String,
     subtitle: Option<String>,
     badge: &'static str,
@@ -446,11 +671,14 @@ fn draw_row(
         paint.set_anti_alias(true);
 
         if let Some(image) = &icon {
-            let top = (height - ICON) / 2.0;
+            let top = (height - icon_size) / 2.0;
+            // Centred in the space a full-size icon takes, so the text lines
+            // up with the rows around it.
+            let left = ROW_INSET + 8.0 + (ICON - icon_size) / 2.0;
             canvas.draw_image_rect_with_sampling_options(
                 image,
                 None,
-                Rect::from_xywh(ROW_INSET + 8.0, top, ICON, ICON),
+                Rect::from_xywh(left, top, icon_size, icon_size),
                 SamplingOptions::default(),
                 &paint,
             );
@@ -594,6 +822,75 @@ mod tests {
     /// the launcher ends. A card showing nothing but the field must claim the
     /// field and no more, or the eight rows' worth of transparent buffer under
     /// it goes on swallowing the presses and hovers meant for the dock.
+    /// In ask mode the log grows above the field. The card's top edge moves
+    /// up to make room, and the field being typed into must not move at all.
+    #[test]
+    fn the_field_stays_put_as_the_ask_log_grows_above_it() {
+        let mut palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
+        palette.reserve_log_room();
+        palette.set_size(1920.0, 1080.0);
+        let input = TextInput::editing("", field_style(true));
+        let field_on_screen = |palette: &Palette| palette.card_origin().1 + palette.field_top();
+
+        palette.update(&input, 0, None);
+        let resting = field_on_screen(&palette);
+        assert_eq!(
+            palette.field_top(),
+            0.0,
+            "no log, so the field tops the card"
+        );
+
+        // A question's two answers under the field don't move it either.
+        palette.set_log(LOG_LINE_H * 3.0);
+        palette.update(&input, 2, None);
+        assert_eq!(field_on_screen(&palette), resting);
+        let log = palette.log_rect();
+        assert!(log.height() > 0.0 && log.bottom <= palette.field_top());
+        assert!(palette.list_rect().top >= palette.field_top() + FIELD_H);
+
+        palette.set_log(10_000.0);
+        palette.update(&input, 0, None);
+        assert_eq!(
+            field_on_screen(&palette),
+            resting,
+            "even at the tallest log"
+        );
+        let (_, y, _, height) = palette.input_rect();
+        assert!(y >= 0 && y + height <= 1080, "the card stays on the output");
+    }
+
+    /// The card is dragged by its field or its log, and never off the output.
+    #[test]
+    fn a_dragged_card_moves_and_stays_on_the_output() {
+        let mut palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
+        palette.reserve_log_room();
+        palette.set_size(1920.0, 1080.0);
+        let input = TextInput::editing("", field_style(true));
+        palette.set_log(LOG_LINE_H * 3.0);
+        palette.update(&input, 2, None);
+
+        let log = palette.log_rect();
+        assert!(palette.drags_at(log.top + 1.0), "the log is a handle");
+        assert!(palette.drags_at(palette.field_top() + 1.0), "so is the field");
+        assert!(
+            !palette.drags_at(palette.list_rect().top + 1.0),
+            "the rows are not"
+        );
+
+        let (x, y) = palette.card_origin();
+        palette.move_card_to(x - 100.0, y + 40.0);
+        assert_eq!(palette.card_origin(), (x - 100.0, y + 40.0));
+
+        palette.move_card_to(-10_000.0, -10_000.0);
+        assert_eq!(palette.card_origin(), (0.0, 0.0), "held at the corner");
+        palette.move_card_to(5.0, 5.0);
+        assert_eq!(
+            palette.card_origin(),
+            (5.0, 5.0),
+            "and back off the edge at once"
+        );
+    }
+
     #[test]
     fn the_input_rect_is_the_card_that_is_drawn() {
         let surface = (1920.0, 1080.0);
@@ -611,7 +908,7 @@ mod tests {
         let (_, _, _, one_row) = input_rect(surface, 1);
         let (_, _, _, eight_rows) = input_rect(surface, MAX_ROWS);
         assert!(one_row > field_only);
-        assert_eq!(eight_rows, MAX_CARD_H as i32);
+        assert_eq!(eight_rows, card_height(MAX_ROWS) as i32);
         assert_eq!(
             input_rect(surface, 0).3,
             field_only,
