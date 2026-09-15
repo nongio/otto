@@ -113,9 +113,52 @@ pub struct PaletteFrame {
     pub rows: Vec<crate::app::PaletteRowData>,
     /// Where the list has scrolled to, and the state of its bar.
     pub scroll: otto_kit::components::scroll::ScrollState,
+    /// How fast the list is gliding, so its band is painted ahead of it.
+    pub velocity: f32,
+    /// Changes whenever the field would paint differently: its text, caret,
+    /// selection, focus or blink. The field paints itself, so this side
+    /// cannot tell by looking.
+    pub field_key: u64,
 }
 
 impl PaletteFrame {
+    /// Everything the card paints, less the rows and the scroll: what decides
+    /// whether the card has to be painted again.
+    fn card_key(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        self.prompt.hash(&mut hasher);
+        self.message.hash(&mut hasher);
+        self.rows.is_empty().hash(&mut hasher);
+        hash_rect(self.resting).hash(&mut hasher);
+        self.field_key.hash(&mut hasher);
+        view::is_dark().hash(&mut hasher);
+        otto_kit::frosting::enabled().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Everything the rows paint, less the scroll.
+    fn list_key(&self, width: f32) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        for row in &self.rows {
+            std::mem::discriminant(&row.kind).hash(&mut hasher);
+            if let view::PaletteRowKind::Preview { conflict, excluded } = row.kind {
+                (conflict, excluded).hash(&mut hasher);
+            }
+            row.title.hash(&mut hasher);
+            row.badge.hash(&mut hasher);
+            row.subtitle.hash(&mut hasher);
+            row.shortcut.hash(&mut hasher);
+            row.highlighted.hash(&mut hasher);
+        }
+        width.to_bits().hash(&mut hasher);
+        view::is_dark().hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Borrow the owned text as the view wants it.
     fn data(&self) -> view::PaletteData<'_> {
         view::PaletteData {
@@ -211,6 +254,10 @@ pub struct PaneSurfaces {
     /// The command palette, in a surface of its own so it can be dragged clear
     /// of the window. See [`palette_on_surface`].
     palette: Option<PaneSurface>,
+    /// The palette's rows, a scroll pane inside its card, and what they were
+    /// last painted from.
+    palette_list: Option<ScrollSurfaces>,
+    palette_list_key: u64,
     /// The display the palette may be dragged around, in window points, and
     /// whether an answer has been asked for and not yet arrived.
     ///
@@ -288,6 +335,8 @@ impl PaneSurfaces {
             preview_divider: None,
             quickview: None,
             palette: None,
+            palette_list: None,
+            palette_list_key: 0,
             palette_display: None,
             palette_asked: false,
             catcher: None,
@@ -621,17 +670,22 @@ impl PaneSurfaces {
                 Self::style_palette(pane, scale);
             }
             painted |= pane.show();
-            pane.place(rect, scale);
+            if pane.place(rect, scale) {
+                // A new size is only claimed with a buffer that fits it.
+                pane.key = 0;
+            }
 
-            // No content key here, unlike every other surface in this module:
-            // the field paints itself through the callback, so this side
-            // cannot tell whether the text changed. The frame-callback
-            // throttle is what keeps that from costing anything — a repaint
-            // only happens when the compositor has asked for a frame.
+            // Painted only when the card itself changed: the rows and their
+            // scroll are the list pane's, below, and a drag is the surface's
+            // position. The field paints itself, so the frame carries a key
+            // for it.
+            let key = palette.card_key();
             use wayland_client::Proxy;
-            if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
+            if pane.key == key {
+            } else if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
                 self.pending = true;
             } else {
+                pane.key = key;
                 // The card is drawn where it *rests*, in window points, and
                 // the drag is carried entirely by the surface's position.
                 // Drawing the dragged rect into a surface that had already
@@ -654,10 +708,54 @@ impl PaneSurfaces {
                 painted = true;
             }
         }
+        painted |= self.sync_palette_list(palette, theme, width);
         // On every path, not only the painting one: the catcher may have just
         // been created, and it has to land above the card before the first
         // press or that press goes to the card's empty region instead.
         self.restack(parent);
+        painted
+    }
+
+    /// The palette's rows: a vertical scroll pane inside the card, over the
+    /// list's viewport. A scroll moves its band; the rows are painted again
+    /// only when what they show changes — the highlight among them, since a
+    /// highlighted row's text changes colour with it.
+    fn sync_palette_list(&mut self, palette: &PaletteFrame, theme: &Theme, width: f32) -> bool {
+        let Some(card) = self.palette.as_ref() else {
+            return false;
+        };
+        let data = palette.data();
+        // In window points where the card rests, which is what the rows are
+        // measured in; the pane itself is placed in the card's coordinates.
+        let viewport = view::palette_list_rect(width, &data.rows, data.message.is_some());
+        let local = viewport.with_offset((-palette.resting.left, -palette.resting.top));
+        if self.palette_list.is_none() {
+            match ScrollSurfaces::new(card.surface.wl_surface(), local, Color::TRANSPARENT) {
+                Ok(mut list) => {
+                    list.set_input_passthrough();
+                    self.palette_list = Some(list);
+                }
+                Err(_) => return false,
+            }
+        }
+        let Some(list) = self.palette_list.as_mut() else {
+            return false;
+        };
+        if data.rows.is_empty() || local.height() <= 0.0 {
+            return list.set_hidden(true);
+        }
+        let mut painted = list.set_hidden(false);
+        list.set_viewport(local);
+        let key = palette.list_key(width);
+        if self.palette_list_key != key {
+            self.palette_list_key = key;
+            list.invalidate();
+        }
+        painted |= list.sync_state(&palette.scroll, palette.velocity, theme, |canvas, _band| {
+            // The band's canvas starts at the list's first row.
+            canvas.translate((-viewport.left, -viewport.top));
+            view::draw_palette_rows(canvas, theme, width, &data);
+        }) || list.waiting();
         painted
     }
 

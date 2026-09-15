@@ -3983,7 +3983,27 @@ impl Browser {
             message,
             rows,
             scroll: self.palette_scroll.state,
+            velocity: self.palette_scroll.velocity(),
+            field_key: self.palette_field_key(),
         })
+    }
+
+    /// What the palette's field would paint, as a key: its text, caret,
+    /// selection, focus, placeholder and whether the caret is in its blink.
+    fn palette_field_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let Some(palette) = self.palette.as_ref() else {
+            return 0;
+        };
+        let input = palette.input();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        input.value().hash(&mut hasher);
+        input.state.caret().hash(&mut hasher);
+        input.state.selection().hash(&mut hasher);
+        input.state.focused().hash(&mut hasher);
+        input.caret_visible().hash(&mut hasher);
+        palette.placeholder().hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Paint the palette's text field, in window points.

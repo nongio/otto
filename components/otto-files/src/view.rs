@@ -3335,6 +3335,13 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
         }
     }
 
+    // On its own surface the rows are not the card's: they are a scroll pane
+    // of their own inside it, so scrolling the list moves that and repaints
+    // nothing here. See `PaneSurfaces::sync_palette`.
+    if data.on_surface {
+        return;
+    }
+
     match data.scroll {
         // The rows scroll under the field: drawn where they lie in the list,
         // shifted and clipped by the view — which also paints the bar and
@@ -3361,7 +3368,13 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     }
 }
 
-fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteData<'_>) {
+/// The palette's rows, in window points where the card rests.
+pub(crate) fn draw_palette_rows(
+    canvas: &Canvas,
+    theme: &Theme,
+    width: f32,
+    data: &PaletteData<'_>,
+) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     for (index, row) in data.rows.iter().enumerate() {
