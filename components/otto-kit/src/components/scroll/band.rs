@@ -59,9 +59,10 @@ const REFILL_MARGIN_RATIO: f32 = 0.25;
 /// Floor on the refill margin, in points, so small panes still get a margin
 /// measured against real scroll speed rather than against their own size.
 ///
-/// The scroll view coasts at up to ~5000 pt/s. A repaint-and-commit round
-/// trip is realistically about four frames at 60 Hz, or ~67 ms, during which
-/// content at that speed travels ~335 points. 340 covers that, and covers it
+/// The scroll view caps a fling at 2200 pt/s unless `OTTO_SCROLL_MAX_VELOCITY`
+/// raises it; the margin is sized for 5000. A repaint-and-commit round trip is
+/// realistically about four frames at 60 Hz, or ~67 ms, during which content
+/// at that speed travels ~335 points. 340 covers that, and covers it
 /// with room to spare on any real fling, since a fling is at its peak only at
 /// the instant the finger leaves and decays from there.
 const MIN_REFILL_MARGIN: f32 = 340.0;
@@ -94,8 +95,8 @@ const MAX_LEAD_SHARE: f32 = 0.9;
 /// The speed at which the directional bias reaches [`MAX_LEAD_SHARE`], in
 /// points per second. Below it the bias ramps linearly from an even split.
 ///
-/// Chosen well under the scroll view's 5000 pt/s ceiling so that any gesture
-/// which reads as a fling rather than a drag is already fully biased.
+/// Chosen under the scroll view's fling cap (2200 pt/s by default) so that any
+/// gesture which reads as a fling rather than a drag is already fully biased.
 const BIAS_FULL_SPEED: f32 = 2000.0;
 
 /// Above this speed, in points per second, the scroll counts as travelling

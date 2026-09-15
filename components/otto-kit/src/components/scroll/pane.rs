@@ -292,9 +292,6 @@ impl ScrollPane {
         sent || self.surfaces.waiting() || animating || self.surfaces.highlight_animating()
     }
 
-    /// A wheel or touchpad delta along the pane's axis, in points. `discrete`
-    /// for a notched wheel, `stop` when the fingers lift. Returns whether the
-    /// offset changed.
     /// [`Self::wheel`] with the pointer at `point`, in the parent's
     /// coordinates, which [`Self::hovered`] then answers from.
     pub fn wheel_at(&mut self, point: Point, delta: f32, discrete: bool, stop: bool) -> bool {
@@ -302,6 +299,9 @@ impl ScrollPane {
         self.wheel(delta, discrete, stop)
     }
 
+    /// A wheel or touchpad delta along the pane's axis, in points. `discrete`
+    /// for a notched wheel, `stop` when the fingers lift. Returns whether the
+    /// offset changed.
     pub fn wheel(&mut self, delta: f32, discrete: bool, stop: bool) -> bool {
         if stop {
             self.view.on_wheel_end();

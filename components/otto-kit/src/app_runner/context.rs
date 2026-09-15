@@ -1935,7 +1935,9 @@ mod frame_in_flight_tests {
     #[test]
     fn an_unanswered_frame_stops_holding_the_next_one_back() {
         assert!(still_in_flight(Duration::ZERO));
-        assert!(still_in_flight(FRAME_ANSWER_TIMEOUT - Duration::from_millis(1)));
+        assert!(still_in_flight(
+            FRAME_ANSWER_TIMEOUT - Duration::from_millis(1)
+        ));
         assert!(!still_in_flight(FRAME_ANSWER_TIMEOUT));
     }
 }

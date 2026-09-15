@@ -7,8 +7,9 @@ for otto-files taught, and the components otto-kit should offer so no
 application has to learn it again.
 
 > Status: the rules below are proven (otto-files' column view scrolls at 120 Hz
-> on them, frosted). The components in *The kit* are the design; *Plan* says
-> what exists and what is next.
+> on them, frosted), and the components in *The kit* are in otto-kit, used by
+> otto-files, otto-settings, the launcher and the emoji picker. *Plan* says
+> what is left.
 
 ## What a scroll must not cost
 
@@ -65,8 +66,8 @@ blur is replayed rather than redone, and not under the opaque region.
 
 ## The kit
 
-Four pieces. An application implements one trait and owns one value per
-scrolling thing.
+An application implements one trait and owns one value per scrolling thing;
+what sits beside a pane is a `Fill` or a `PlacedSurface`.
 
 ### `ScrollContent` — what the application provides
 
@@ -80,10 +81,10 @@ pub trait ScrollContent {
     /// Paint `band` — a rect in content coordinates — on a transparent canvas.
     /// Called when the band is refilled or the revision moves, never per step.
     fn paint(&self, canvas: &Canvas, band: Rect);
-    /// Describe what intersects `visible`, in content coordinates.
-    fn describe(&self, _visible: Rect, _tree: &mut A11yTree) {}
 }
 ```
+
+Accessibility stays with the host, bounded by `ScrollPane::visible()`.
 
 ### `ScrollPane` — one scrolling viewport
 
@@ -103,7 +104,7 @@ pane.update(&content, &theme);      // steps, refills on revision, moves
 pane.content_to_parent(point);      // a rename field, a drop ring
 pane.parent_to_content(point);      // hit-testing a press
 pane.visible();                     // content rect on screen: a11y, thumbnails
-pane.reveal(span);                  // keyboard cursor into view
+pane.reveal(lo, hi);                // keyboard cursor into view
 
 // the selection, under the content, sliding between items
 pane.set_highlight(Some(rect), color, radius);
@@ -128,6 +129,17 @@ The highlight is a surface of its own between the pane's ground and its band:
 moving the selection repaints nothing, and while the content scrolls the
 highlight goes straight to its item rather than trailing behind it.
 
+Dropping a pane destroys its surfaces. A band move waits for its frame to be
+presented, but no longer than `FRAME_ANSWER_TIMEOUT` (500 ms, the rate Otto
+keeps for windows out of sight): a surface the compositor never shows cannot
+hold a pane still for good.
+
+A host that owns its scroll state somewhere a surface cannot live — behind a
+lock, in headless tests — drives `ScrollSurfaces::sync_state` with that state
+and its speed instead, and does `ScrollPane`'s bookkeeping itself: invalidate
+when what the band shows changes, count `waiting()` as the scroll dealt with.
+otto-files' columns and palette list work this way.
+
 ### `Fill` — a flat rect that moves with a pane
 
 One pixel of colour, stretched and rounded by the compositor: what the
@@ -135,16 +147,48 @@ highlight is made of, and what a host uses for anything flat that has to ride
 in a pane rather than be painted into one — the divider down a column's edge.
 Recolouring, moving or resizing it is a request, never a paint.
 
+```rust
+let mut divider = Fill::new(stack.band_surface())?;
+divider.set_style(theme.fill_tertiary, 0.0);
+divider.set_rect(Rect::from_xywh(column.right - 0.5, 0.0, 1.0, column.height()));
+```
+
+### `PlacedSurface` — a painted panel beside a pane
+
+A child surface the client places and sizes itself, painted only when what it
+shows changes: a status line over an empty column, a preview card, a palette
+dragged clear of its window. It keeps three rules so its host does not have
+to: a new size is claimed right behind the buffer that fits it (the style
+applies a size on arrival, so claiming ahead stretches the old pixels);
+geometry uses the output's fractional scale, snapped to whole pixels; and a
+hidden surface withdraws its input region, since an invisible surface still
+answers for the pointer over it.
+
+```rust
+let mut card = PlacedSurface::new(parent, rect)?;
+card.set_rect(rect);                             // a resize waits for the paint
+match card.paint(key, |canvas| draw(canvas)) {   // in the surface's own points
+    Paint::Unchanged | Paint::Painted => {}
+    Paint::Held => keep_the_loop_turning(),      // last frame not shown yet
+}
+card.set_takes_input(true);                      // for one outside its window
+card.ask_output_frame();                         // where its display is,
+card.output_frame();                             // a round trip later
+```
+
 ### `ScrollGroup` — which pane a gesture belongs to
 
 Wheel and touchpad gestures are routed to the pane under the pointer, with the
 axis chosen by the first delta and locked until the gesture ends; wheel end
 and discrete notches are handled once, here. A touchpad hold stops every pane.
-Replaces the per-application `gesture_axis`, `pane_under` and wheel branching.
 
 ```rust
-group.axis(&event, pointer, &mut [&mut pan, &mut columns[..]]);
+group.axis(event, &mut [&mut column, &mut stack]); // innermost first
+group.hold(&mut [&mut column, &mut stack]);
 ```
+
+No application uses it yet: otto-files routes its own gestures, because its
+scroll views are not panes (see above).
 
 **Nesting.** A pane can be the parent of other panes: `ScrollPane::band_surface()`
 is a valid parent. A horizontal pane whose band holds vertical panes is a
@@ -194,6 +238,8 @@ that does not move: dividers, tints, headers.
    categories are vertical panes in a horizontal container driven by its own
    paging physics, with the highlight on the selected cell. Left: Quick View's
    pan as a two-axis pane.
+5. **Beside the panes.** *Done.* `PlacedSurface` carries otto-files' status
+   lines, docked preview and its video, the palette card and Quick View.
 
 Exit, for each step that moves an application: zero window commits during a
 fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
@@ -204,9 +250,6 @@ fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
 - **Input stays with the window.** Pane surfaces pass the pointer through; the
   host hit-tests in its window's coordinates and converts with
   `parent_to_content`. One coordinate space for every application.
-- **Pinned section headers are a surface of their own**, stacked over the
-  pane's band and moved by the compositor like it: repainted only when the
-  pinned section changes, never per step.
 - **A pane that only holds panes has no painted band.** Its band spans the
   whole content with a transparent 1×1 buffer stretched through its style
   size; panning it moves one surface and the panes inside keep fixed positions.
@@ -217,6 +260,12 @@ fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
   container band that is itself moving, in the probe and in otto-files' stack.
 - **Band memory** on a very wide horizontal band at 2x: the overdraw floor may
   need to be axis-specific.
+- **Pinned section headers.** `GridLayout::pinned_header` knows which header
+  is pinned; drawing it as a surface of its own over the band, repainted only
+  when the pinned section changes, is not built yet.
+- **A pane over state it does not own.** otto-files keeps its scroll views in
+  its browser state, so it cannot use `ScrollPane` and repeats its
+  bookkeeping. A pane that borrows a `ScrollView` per update would let it.
 
 ## Measuring
 

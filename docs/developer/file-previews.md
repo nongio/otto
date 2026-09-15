@@ -317,8 +317,8 @@ The panel is a **subsurface** of the browser toplevel, created and synced by
 - **Repaints.** The panel is repainted only when `quickview_key` changes (rect,
   generation, `first_row`, zoom, scrollbars, loading, the video's frame
   sequence), and not while a frame is in flight. A resize is claimed only once
-  the matching buffer has been painted (`PaneSurface::place` holds it as a
-  pending claim for `draw`), because the style protocol applies a size
+  the matching buffer has been painted (otto-kit's `PlacedSurface::set_rect`
+  holds it for the next `paint`), because the style protocol applies a size
   immediately and would stretch the old buffer. A hidden panel drops its input
   region.
 
@@ -462,7 +462,6 @@ needs to know:
 | `otto-quickview --render OUT.png FILE [--dark --page N --zoom Z --width W --height H]` | Draws the card through the same `otto_kit::preview::draw` |
 | `otto-quickview --filmstrip OUT.png FILE` | Samples the entrance animation over a mock desktop |
 | `otto-quickview --sandbox-selftest` | Reports which parts of the sandbox are in force |
-| `OTTO_FILES_QV_TRACE=1` | Logs decode generations, restack order, and a line per painted panel frame (rect, resize, paint time, gap) |
 | `OTTO_FILES_QV_AUTO=1` | Opens Quick View on the first entry, with no keypress |
 | `OTTO_FILES_QV_CENTER=0` | Centres the panel on the window rather than the display |
 | `OTTO_QUICKVIEW_OPEN_MS`, `OTTO_QUICKVIEW_CLOSE_MS`, `OTTO_QUICKVIEW_BOUNCE` | Tunes the entrance and exit |
