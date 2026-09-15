@@ -4,6 +4,8 @@ Cargo.lock
 # library, and an unpinned CI resolves fresh dependencies on every run — a
 # patch release upstream then changes the build with no commit behind it.
 !/Cargo.lock
+# otto-ahp is its own workspace for now, with its own lock.
+!/components/otto-ahp/Cargo.lock
 *.bk
 *.log
 .vscode

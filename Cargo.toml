@@ -186,6 +186,8 @@ members = [
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
     "sample-clients/deadlock-test",]
+# otto-ahp, the agents service, is its own workspace for now.
+exclude = ["components/otto-ahp"]
 
 # One version for the whole repo: otto and every component crate inherit these
 # via `version.workspace = true` (see docs/developer/versioning.md).
