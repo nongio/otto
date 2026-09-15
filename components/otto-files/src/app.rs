@@ -1323,6 +1323,8 @@ impl Browser {
     /// An empty query puts the listing the search started from back.
     fn run_search(&mut self) {
         let Some(query) = self.query() else {
+            // The field was emptied, which is itself something to show.
+            self.dirty = true;
             if self.searching {
                 let origin = self
                     .search_origin
@@ -2262,6 +2264,7 @@ impl Browser {
             cursor: (x, y + scroll),
             base,
         });
+        self.dirty = true;
     }
 
     /// Follow the pointer, and reselect everything the band now covers.
@@ -2281,6 +2284,9 @@ impl Browser {
             marquee.cursor = (x, y + scroll);
             (marquee.rect(), marquee.base.clone())
         };
+        // The band is drawn from its cursor, so it repaints as the pointer
+        // moves whether or not what it covers changes.
+        self.dirty = true;
 
         // The band is in content coordinates, so the hit test is asked about
         // the unscrolled grid: `grid_cell_rect(area, i, 0.0)` is where cell `i`
@@ -5428,6 +5434,8 @@ impl Browser {
             }
             None => self.active = self.pane_under(x, y),
         }
+        // The pane with the keyboard may have changed, and it is drawn so.
+        self.dirty = true;
 
         let entries = self.selected_entries();
         let mut items = Vec::new();
@@ -7488,7 +7496,6 @@ impl App for FilesApp {
                     _ => {}
                 }
                 drop(browser);
-                self.render();
                 return;
             }
 
@@ -7501,7 +7508,6 @@ impl App for FilesApp {
                 if event.keysym == Keysym::p && ctrl {
                     browser.close_palette();
                     drop(browser);
-                    self.render();
                     return;
                 }
                 let key = match event.keysym {
@@ -7539,7 +7545,6 @@ impl App for FilesApp {
                     }
                 }
                 drop(browser);
-                self.render();
                 return;
             }
 
@@ -7585,7 +7590,6 @@ impl App for FilesApp {
                     }
                 }
                 drop(browser);
-                self.render();
                 return;
             }
 
@@ -7597,19 +7601,16 @@ impl App for FilesApp {
                     Keysym::Return | Keysym::KP_Enter => {
                         browser.commit_path_entry();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     Keysym::Escape => {
                         browser.cancel_path_entry();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     Keysym::Tab | Keysym::ISO_Left_Tab => {
                         browser.complete_path_entry();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     // A second Ctrl+L closes it, the way the chord that opens
@@ -7617,7 +7618,6 @@ impl App for FilesApp {
                     Keysym::l if ctrl => {
                         browser.cancel_path_entry();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     Keysym::Left => Some(TextInputKey::Left),
@@ -7652,7 +7652,6 @@ impl App for FilesApp {
                     }
                 }
                 drop(browser);
-                self.render();
                 return;
             }
 
@@ -7677,13 +7676,11 @@ impl App for FilesApp {
                     Keysym::Escape => {
                         browser.clear_search();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     Keysym::f if ctrl => {
                         browser.clear_search();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     // Vertical motion is how you leave the query for the
@@ -7714,7 +7711,6 @@ impl App for FilesApp {
                     Keysym::Return | Keysym::KP_Enter if browser.query().is_some() => {
                         browser.run_search();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     // With nothing typed there is no query to run, so Return
@@ -7762,7 +7758,6 @@ impl App for FilesApp {
                         None => {}
                     }
                     drop(browser);
-                    self.render();
                     return;
                 }
             }
@@ -7781,13 +7776,11 @@ impl App for FilesApp {
                     Keysym::Return | Keysym::KP_Enter => {
                         browser.picker_accept();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     Keysym::Escape => {
                         browser.picker_cancel();
                         drop(browser);
-                        self.render();
                         return;
                     }
                     Keysym::Up
@@ -7825,7 +7818,6 @@ impl App for FilesApp {
                     }
                     browser.dirty = true;
                     drop(browser);
-                    self.render();
                     return;
                 }
             }
@@ -8034,7 +8026,6 @@ impl App for FilesApp {
                 self.start_quickview(&mut browser);
             }
         }
-        self.render();
     }
 }
 
@@ -8871,7 +8862,6 @@ impl FilesApp {
                         }
                     }
                     drop(browser);
-                    window_for_events.request_frame();
                     continue;
                 }
 
@@ -9010,7 +9000,6 @@ impl FilesApp {
                         _ => {}
                     }
                     drop(browser);
-                    window_for_events.request_frame();
                     continue;
                 }
 
@@ -9039,7 +9028,6 @@ impl FilesApp {
                         }
                         browser.dirty = true;
                         drop(browser);
-                        window_for_events.request_frame();
                         continue;
                     }
                     let pills = view::search_scope_rects(width).into_iter().zip([
@@ -9049,7 +9037,6 @@ impl FilesApp {
                     if let Some((_, scope)) = pills.into_iter().find(|(r, _)| r.contains(point)) {
                         browser.set_search_scope(scope);
                         drop(browser);
-                        window_for_events.request_frame();
                         continue;
                     }
                     if view::search_band_rect(width).contains(point) {
@@ -9080,7 +9067,6 @@ impl FilesApp {
                         }
                         browser.dirty = true;
                         drop(browser);
-                        window_for_events.request_frame();
                         continue;
                     }
                     browser.cancel_path_entry();
@@ -9099,7 +9085,6 @@ impl FilesApp {
                         }
                         browser.dirty = true;
                         drop(browser);
-                        window_for_events.request_frame();
                         continue;
                     }
                 }
@@ -9150,13 +9135,11 @@ impl FilesApp {
                                 }
                                 browser.dirty = true;
                                 drop(browser);
-                                window_for_events.request_frame();
                                 continue;
                             }
                             if let Some(button) = hit {
                                 browser.footer_press(button);
                                 drop(browser);
-                                window_for_events.request_frame();
                                 continue;
                             }
                         }
@@ -9165,7 +9148,6 @@ impl FilesApp {
                         {
                             browser.footer_release(hit);
                             drop(browser);
-                            window_for_events.request_frame();
                             continue;
                         }
                         _ => {}
@@ -9223,7 +9205,6 @@ impl FilesApp {
                                 browser.leave_synthetic_to(&path);
                             }
                             drop(browser);
-                            window_for_events.request_frame();
                             continue;
                         }
                         _ => {}
@@ -9238,7 +9219,6 @@ impl FilesApp {
                             browser.drag_palette_to(x, y);
                             AppContext::set_cursor_shape(CursorShape::Grabbing);
                             drop(browser);
-                            window_for_events.request_frame();
                             continue;
                         }
                         // A column divider being dragged owns the pointer
@@ -9357,7 +9337,6 @@ impl FilesApp {
                         if browser.palette_drag.take().is_some() {
                             browser.palette_dropped();
                             drop(browser);
-                            window_for_events.request_frame();
                             continue;
                         }
                         // A press that came up without travelling was a click —
@@ -9466,7 +9445,6 @@ impl FilesApp {
                         );
 
                         let click_state = Arc::clone(&state);
-                        let click_window = window_for_events.clone();
                         context_menu.clone().on_item_click(move |action_id| {
                             let mut browser = click_state.lock().unwrap();
                             match action_id {
@@ -9494,8 +9472,6 @@ impl FilesApp {
                                 id if id.contains(':') => browser.run_menu_command(id, serial),
                                 _ => {}
                             }
-                            drop(browser);
-                            click_window.request_frame();
                         });
 
                         context_menu.show(&parent_xdg, &positioner, serial);
@@ -9601,6 +9577,7 @@ impl FilesApp {
                             // window still calling itself a search while
                             // showing a folder refuses half its own menu.
                             browser.active_place = Some(index);
+                            browser.dirty = true;
                             if browser.places[index].recent {
                                 browser.enter_recent();
                             } else {
@@ -9833,26 +9810,10 @@ impl FilesApp {
 
                 drop(browser);
             }
-
-            // A batch of nothing but scroll events changes the content area
-            // and nothing else — no hover, no press, no chrome — so only that
-            // is reported, and where the columns scroll on surfaces of their
-            // own the window is not repainted at all: the update loop steps
-            // the scroll and moves them. Anything else in the batch, or an
-            // overlay that takes the wheel for itself, repaints as a whole.
-            let scroll_only = !events.is_empty()
-                && events
-                    .iter()
-                    .all(|e| matches!(e.kind, PointerEventKind::Axis { .. }));
-            let scroll = scroll_only.then(|| {
-                let browser = state.lock().unwrap();
-                (browser.scroll_on_surfaces(), browser.scroll_damage())
-            });
-            match scroll {
-                Some((true, _)) => AppContext::request_wakeup(),
-                Some((false, Some(area))) => window_for_events.request_frame_damaged(&[area]),
-                _ => window_for_events.request_frame(),
-            }
+            // Nothing is presented from here. What the batch changed is on
+            // the browser — `dirty`, a scroll moved — and the update loop,
+            // which runs straight after, decides what that repaints: the
+            // whole window, the file area alone, or only surfaces.
         });
     }
 }

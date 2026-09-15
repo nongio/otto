@@ -472,10 +472,10 @@ impl Palette {
     // === Keys ===
 
     pub fn on_key(&mut self, key: Key, mods: KeyMods) -> Outcome {
-        // Any key at all clears the last complaint: it was about text that is
-        // now being changed.
-        let had_error = self.error.take().is_some();
-        self.note = None;
+        // Any key at all clears the last complaint and the last note: they
+        // were about text that is now being changed, and taking either off
+        // the card is a change to show.
+        let had_error = self.error.take().is_some() | self.note.take().is_some();
         let outcome = if self.arg.is_some() {
             self.arg_key(key, mods)
         } else {
