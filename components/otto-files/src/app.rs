@@ -505,6 +505,10 @@ struct Browser {
     /// apart from `dirty` because a frame that only scrolled repaints — and
     /// reports — the file area alone.
     scroll_moved: bool,
+    /// Something changed inside the file area and nowhere else — a thumbnail
+    /// landing in the list or the grid — so a repaint for it reports that
+    /// area alone, like a scroll.
+    listing_dirty: bool,
     /// The palette's list moved under the wheel. Kept apart from
     /// `scroll_moved`: on its own surface the list scrolls on a pane, and
     /// the window has nothing to repaint for it.
@@ -974,6 +978,7 @@ impl Browser {
             blur_available: false,
             dirty: true,
             scroll_moved: false,
+            listing_dirty: false,
             palette_scrolled: false,
             picker: None,
             save_name: None,
@@ -7292,7 +7297,7 @@ impl App for FilesApp {
             }
         }
 
-        let (repaint, preview_target, scrolled_only, scroll_area, thumb_jobs) = {
+        let (repaint, preview_target, scrolled_only, scroll_on_surfaces, scroll_area, thumb_jobs) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
@@ -7322,13 +7327,23 @@ impl App for FilesApp {
             // switch of view mode — has already happened by the time this
             // runs.
             let thumb_jobs = browser.sync_thumbnails();
-            let scrolled_only =
-                scrolled && !changed && !browser.dirty && !animating && preview_target.is_none();
-            // A frame that only moves the file area says so, and the rest of
-            // the window is not recomposited behind it.
-            let scroll_area = scrolled_only.then(|| browser.scroll_damage()).flatten();
+            let listing = std::mem::take(&mut browser.listing_dirty);
+            let quiet = !changed
+                && !browser.dirty
+                && !animating
+                && !palette_scrolled
+                && preview_target.is_none();
+            let scrolled_only = scrolled && quiet;
+            // A frame that only changes the file area — a scroll, a thumbnail
+            // landing — says so, and the rest of the window is not
+            // recomposited behind it.
+            let scroll_area = ((scrolled || listing) && quiet)
+                .then(|| browser.scroll_damage())
+                .flatten();
+            let scroll_on_surfaces = browser.scroll_on_surfaces();
             let repaint = changed
                 || scrolled
+                || listing
                 || palette_scrolled
                 || std::mem::take(&mut browser.dirty)
                 || animating
@@ -7337,6 +7352,7 @@ impl App for FilesApp {
                 repaint,
                 preview_target,
                 scrolled_only,
+                scroll_on_surfaces,
                 scroll_area,
                 thumb_jobs,
             )
@@ -7373,19 +7389,14 @@ impl App for FilesApp {
         // scroll must not also count towards a window repaint.
         let mut repaint = repaint;
         if self.pane_surfaces.is_some() {
-            let painted = self.sync_pane_surfaces();
-            if scrolled_only && painted {
+            self.sync_pane_surfaces();
+            // A scroll the columns present on their own surfaces is theirs to
+            // show — a step held back until the last one is on screen too: the
+            // compositor's answer wakes this loop, and the next pass takes it.
+            // A paint the throttle turned away is retried the same way, with
+            // `idle_timeout` keeping the loop turning should no answer come.
+            if scrolled_only && scroll_on_surfaces {
                 repaint = false;
-            }
-            // A paint the throttle turned away is only ever retried by another
-            // pass, and passes stop when the content stops changing. Keeping
-            // the window repainting is what keeps them coming.
-            if self
-                .pane_surfaces
-                .as_ref()
-                .is_some_and(pane_surfaces::PaneSurfaces::pending)
-            {
-                repaint = true;
             }
         }
 
@@ -7465,7 +7476,12 @@ impl App for FilesApp {
             || self.frost.as_ref().is_some_and(|frost| frost.is_fading())
             // A blinking caret needs the same steady clock, and for the same
             // reason: nothing else is going to ask for the next frame.
-            || browser.has_focused_input();
+            || browser.has_focused_input()
+            // A surface paint held back for a frame that has not been answered.
+            || self
+                .pane_surfaces
+                .as_ref()
+                .is_some_and(pane_surfaces::PaneSurfaces::pending);
         animating.then_some(IDLE_TICK)
     }
 
@@ -8265,14 +8281,14 @@ impl FilesApp {
         window.set_modal(session.request.modal || !parented);
     }
 
-    /// Repaint whichever column subsurfaces are out of date. Returns whether
-    /// any of them actually painted.
-    fn sync_pane_surfaces(&mut self) -> bool {
+    /// Bring every surface beside the window up to date: the columns, the
+    /// preview, Quick View and the palette.
+    fn sync_pane_surfaces(&mut self) {
         let Some(window) = self.window.as_ref() else {
-            return false;
+            return;
         };
         let Some(surface) = window.surface() else {
-            return false;
+            return;
         };
         let parent = surface.wl_surface().clone();
         let mut browser = self.state.lock().unwrap();
@@ -8283,10 +8299,9 @@ impl FilesApp {
         let quickview = browser
             .quickview_visible()
             .map(|session| (session, browser.quickview_generation));
-        let mut painted = match self.pane_surfaces.as_mut() {
-            Some(panes) => panes.sync(&parent, &frame, quickview),
-            None => false,
-        };
+        if let Some(panes) = self.pane_surfaces.as_mut() {
+            panes.sync(&parent, &frame, quickview);
+        }
 
         // Hand the pointer handler the rect the panel was actually placed at.
         // Doing it here, after the sync, is what keeps the hit test and the
@@ -8318,7 +8333,7 @@ impl FilesApp {
                 .filter(|_| palette.is_some())
                 .and_then(pane_surfaces::PaneSurfaces::palette_display);
             if let Some(panes) = self.pane_surfaces.as_mut() {
-                painted |= panes.sync_palette(&parent, &theme, size, palette.as_ref(), |canvas| {
+                panes.sync_palette(&parent, &theme, size, palette.as_ref(), |canvas| {
                     browser.paint_palette_field(canvas)
                 });
             }
@@ -8327,7 +8342,6 @@ impl FilesApp {
                 .as_ref()
                 .and_then(pane_surfaces::PaneSurfaces::palette_target);
         }
-        painted
     }
 
     fn render(&self) {
@@ -8460,8 +8474,10 @@ impl FilesApp {
             // render the same pixels again. The store's epoch is what tells
             // the two apart. In column view the rows are the columns' own
             // surfaces, which see the epoch move for themselves: the window
-            // has nothing to repaint.
-            browser.dirty |= browser.thumbs.epoch() != before && browser.mode != ViewMode::Columns;
+            // has nothing to repaint. In the list and the grid only the file
+            // area has.
+            browser.listing_dirty |=
+                browser.thumbs.epoch() != before && browser.mode != ViewMode::Columns;
             drop(browser);
             // Same reason the preview decodes wake the loop: a window that has
             // stopped committing frames has no frame callback to notice a
