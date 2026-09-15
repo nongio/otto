@@ -509,10 +509,6 @@ struct Browser {
     /// landing in the list or the grid — so a repaint for it reports that
     /// area alone, like a scroll.
     listing_dirty: bool,
-    /// The palette's list moved under the wheel. Kept apart from
-    /// `scroll_moved`: on its own surface the list scrolls on a pane, and
-    /// the window has nothing to repaint for it.
-    palette_scrolled: bool,
     /// The portal request this window is serving, when it is a picker rather
     /// than the browser. `None` is the browser, and every difference between
     /// the two shells reads off this one field.
@@ -979,7 +975,6 @@ impl Browser {
             dirty: true,
             scroll_moved: false,
             listing_dirty: false,
-            palette_scrolled: false,
             picker: None,
             save_name: None,
             confirm: None,
@@ -1818,7 +1813,7 @@ impl Browser {
     /// would slide out from under the column being read: the preview is a thing
     /// offered at the edge of the view, not a place the browser goes. Kept for
     /// a caller that means to go there deliberately.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn reveal_preview(&mut self) {
         if !self.preview_visible() {
             return;
@@ -3960,15 +3955,13 @@ impl Browser {
         }
         let _ = self.palette_layout();
         let scroll = &mut self.palette_scroll;
-        let moved = if stop {
+        if stop {
             scroll.on_wheel_end();
-            true
         } else if discrete {
-            scroll.on_wheel_discrete(dy)
+            scroll.on_wheel_discrete(dy);
         } else {
-            scroll.on_wheel(dy)
-        };
-        self.palette_scrolled |= moved;
+            scroll.on_wheel(dy);
+        }
     }
 
     /// Advance the palette list's glide by one tick. Returns whether it moved.
@@ -4154,7 +4147,6 @@ impl Browser {
     /// the compositor has said where it is, and the window until then.
     fn palette_bounds(&self) -> Rect {
         self.palette_display
-            .filter(|_| pane_surfaces::palette_on_surface())
             .unwrap_or_else(|| Rect::from_wh(self.size.0, self.size.1))
     }
 
@@ -5981,11 +5973,7 @@ impl Browser {
         // anchored to survives the next batch landing under it. Previewing is
         // most of what those two panes are *for*: finding a file you cannot
         // quite name is how you got there.
-        let entry = self.selected_entry();
-        if std::env::var_os("OTTO_FILES_QV_TRACE").is_some() {
-            eprintln!("qv begin: selected={:?}", entry.as_ref().map(|e| &e.name));
-        }
-        let entry = entry?;
+        let entry = self.selected_entry()?;
         // A directory previews as a listing, which the decoder handles, so
         // nothing is excluded here.
         let anchor = self.quickview_anchor();
@@ -6023,12 +6011,6 @@ impl Browser {
         preview: otto_kit::preview::Preview,
         video: Option<(PathBuf, otto_media_kit::Options)>,
     ) {
-        if std::env::var_os("OTTO_FILES_QV_TRACE").is_some() {
-            eprintln!(
-                "qv finish: generation={generation} current={} anchor={anchor:?}",
-                self.quickview_generation
-            );
-        }
         if generation != self.quickview_generation {
             return; // Stale: the user arrow-keyed past this file mid-decode.
         }
@@ -6787,13 +6769,10 @@ impl App for FilesApp {
         // activate, so the compositor is not running a full-window gaussian
         // for a window nobody is looking at.
         //
-        // `OTTO_FILES_NO_BLUR=1` drops the frosted backdrop entirely, to test
-        // what it costs — as does running under a compositor that offers no
-        // blur at all (see `otto_kit::backdrop`). The panels are filled in
-        // rather than left translucent in both cases, so what that isolates is
-        // the compositor's blur work and not the window's legibility.
-        let blur = otto_kit::backdrop::blur_available()
-            && std::env::var_os("OTTO_FILES_NO_BLUR").is_none();
+        // Under a compositor that offers no blur at all (see
+        // `otto_kit::backdrop`) the panels are filled in rather than left
+        // translucent.
+        let blur = otto_kit::backdrop::blur_available();
         window.set_background_blur(blur);
         self.state.lock().unwrap().blur_available = blur;
 
@@ -6861,7 +6840,6 @@ impl App for FilesApp {
             let mut path_caret = None;
             let mut search_caret = None;
             let mut save_caret = None;
-            let mut palette_caret = None;
 
             if let Some(session) = browser.rename.as_ref() {
                 let (depth, index) = (session.depth, session.index);
@@ -6941,78 +6919,6 @@ impl App for FilesApp {
                 save_caret = caret_in_window(input, (rect.left, rect.top));
             }
 
-            // The palette, over the finished window and under the modal
-            // sheet. Its card is drawn from rows gathered first, then the
-            // field's text over the box the card left for it — the same
-            // two-step the rename and path fields take.
-            if browser.palette.is_some() && !pane_surfaces::palette_on_surface() {
-                let width = browser.size.0;
-                let rows = browser.palette_layout();
-                let message = browser.palette_message();
-                let prompt = browser.palette.as_ref().and_then(|p| p.prompt());
-                let view_rows: Vec<view::PaletteRow<'_>> = rows
-                    .iter()
-                    .map(|row| view::PaletteRow {
-                        kind: row.kind,
-                        title: &row.title,
-                        badge: row.badge.as_deref(),
-                        subtitle: row.subtitle.as_deref(),
-                        shortcut: row.shortcut.as_deref(),
-                        highlighted: row.highlighted,
-                    })
-                    .collect();
-                // The whole card moves together: drawn through the drag
-                // offset, hit-tested through the same one, so a dragged panel
-                // cannot end up clickable where it is not painted.
-                let offset = browser.palette_offset;
-                canvas.save();
-                canvas.translate(offset);
-                view::draw_palette(
-                    canvas,
-                    &theme,
-                    width,
-                    &view::PaletteData {
-                        prompt: prompt.as_deref(),
-                        rows: view_rows,
-                        message: message.as_deref(),
-                        on_surface: false,
-                        scroll: Some(browser.palette_scroll.state),
-                    },
-                );
-                canvas.restore();
-
-                // The prompt is not part of the field, so the field starts
-                // after it: what is typed is the argument, and the prefix
-                // cannot be edited or selected.
-                let field = view::palette_field_rect(width);
-                let lead = prompt
-                    .as_deref()
-                    .map(|prompt| {
-                        otto_kit::typography::styles::BODY_EMPHASIZED
-                            .font()
-                            .measure_str(prompt, None)
-                            .0
-                            + 8.0
-                    })
-                    .unwrap_or(0.0);
-                let placeholder = browser
-                    .palette
-                    .as_ref()
-                    .map(|p| p.placeholder())
-                    .unwrap_or_default();
-                if let Some(palette) = browser.palette.as_mut() {
-                    let input = palette.input_mut();
-                    input.state.placeholder = placeholder;
-                    input.set_size(field.width() - lead, field.height());
-                    let origin = (field.left + lead + offset.0, field.top + offset.1);
-                    canvas.save();
-                    canvas.translate(origin);
-                    input.render_at(canvas, field.width() - lead, field.height());
-                    canvas.restore();
-                    palette_caret = caret_in_window(input, origin);
-                }
-            }
-
             // Tell the compositor where the text is, so an input method — or
             // the emoji picker, or anything else watching
             // `otto_text_cursor_manager_v1` — can put itself beside the word
@@ -7022,12 +6928,11 @@ impl App for FilesApp {
             // than the order the fields are painted in: the caret to report is
             // the one the keys are going to.
             otto_kit::AppContext::report_text_cursor(
-                palette_caret
-                    .or(browser
-                        .palette
-                        .is_some()
-                        .then_some(browser.palette_caret)
-                        .flatten())
+                browser
+                    .palette
+                    .is_some()
+                    .then_some(browser.palette_caret)
+                    .flatten()
                     .or(rename_caret)
                     .or(path_caret)
                     .or(save_caret)
@@ -7056,9 +6961,7 @@ impl App for FilesApp {
 
         self.install_dnd(&window);
         self.install_quickview_pointer();
-        if pane_surfaces::palette_on_surface() {
-            self.install_palette_pointer();
-        }
+        self.install_palette_pointer();
         self.install_info_window_pointer();
         self.install_pointer(&window, self.context_menu.clone().unwrap());
         self.install_frame_loop(&window);
@@ -7304,11 +7207,9 @@ impl App for FilesApp {
             // advance here rather than on input, since they keep running after
             // the gesture ends.
             let scrolled = browser.tick_scroll() | std::mem::take(&mut browser.scroll_moved);
-            // The palette's list is a pane of its own when the palette is on
-            // a surface, and then its scroll is none of the window's business.
-            let palette_scrolled = (browser.tick_palette_scroll()
-                | std::mem::take(&mut browser.palette_scrolled))
-                && !pane_surfaces::palette_on_surface();
+            // The palette's list is a pane of its own, and its scroll is none
+            // of the window's business: stepped here, shown by its surfaces.
+            browser.tick_palette_scroll();
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
@@ -7331,7 +7232,6 @@ impl App for FilesApp {
             let quiet = !changed
                 && !browser.dirty
                 && !animating
-                && !palette_scrolled
                 && preview_target.is_none();
             let scrolled_only = scrolled && quiet;
             // A frame that only changes the file area — a scroll, a thumbnail
@@ -7341,13 +7241,11 @@ impl App for FilesApp {
                 .then(|| browser.scroll_damage())
                 .flatten();
             let scroll_on_surfaces = browser.scroll_on_surfaces();
-            let repaint = changed
-                || scrolled
-                || listing
-                || palette_scrolled
-                || std::mem::take(&mut browser.dirty)
-                || animating
-                || preview_target.is_some();
+            // Taken whatever else asks for the repaint, so it does not ask
+            // again on the next pass.
+            let dirty = std::mem::take(&mut browser.dirty);
+            let repaint =
+                changed || scrolled || listing || dirty || animating || preview_target.is_some();
             (
                 repaint,
                 preview_target,
@@ -8320,7 +8218,7 @@ impl FilesApp {
         // because painting it needs the browser back mutably — its field
         // renders itself — which the `Frame` above cannot allow while it
         // lives. See `PaneSurfaces::sync_palette`.
-        if pane_surfaces::palette_on_surface() {
+        {
             let theme = browser.theme();
             let size = browser.size;
             let palette = browser.palette_frame();
@@ -8557,34 +8455,16 @@ impl FilesApp {
             for event in events {
                 use smithay_client_toolkit::seat::pointer::PointerEventKind;
                 use wayland_client::Proxy;
-                let trace = std::env::var_os("OTTO_FILES_PALETTE_TRACE").is_some();
                 let Some((surface, rect)) = target.lock().unwrap().clone() else {
-                    if trace {
-                        eprintln!("palette ptr: no target; event on {:?}", event.surface.id());
-                    }
                     continue;
                 };
                 if event.surface.id() != surface {
-                    if trace {
-                        eprintln!(
-                            "palette ptr: event on {:?} {:?}, catcher is {:?}",
-                            event.surface.id(),
-                            event.kind,
-                            surface
-                        );
-                    }
                     continue;
                 }
                 // Surface-local, as the compositor reports it, shifted back
                 // into the window points everything else measures in.
                 let x = event.position.0 as f32 + rect.left;
                 let y = event.position.1 as f32 + rect.top;
-                if trace {
-                    eprintln!(
-                        "palette ptr: {:?} local=({:.0},{:.0}) rect={:?} -> window=({x:.0},{y:.0})",
-                        event.kind, event.position.0, event.position.1, rect
-                    );
-                }
                 let mut browser = state.lock().unwrap();
                 if browser.palette.is_none() {
                     continue;

@@ -1729,8 +1729,8 @@ pub fn content_height(count: usize) -> f32 {
 /// In list and grid views there is one pane and it is the whole content area;
 /// in Miller view each column scrolls on its own, so each gets its own strip.
 /// This is what a pane's [`ScrollView`](otto_kit::components::scroll::ScrollView)
-/// is given as its viewport, so the scrollbar lands on the right edge of the
-/// pane the pointer is actually over.
+/// is given as its viewport, so it clamps, bands and reveals against the pane
+/// the pointer is actually over.
 pub fn pane_viewport(
     width: f32,
     height: f32,
@@ -2596,7 +2596,7 @@ pub struct Frame<'a> {
     /// The preview pane — a trailing member of the Miller stack, panned into
     /// and out of view the same as any real column — when one is showing.
     /// `None` outside Miller view or with no single file selected; drawn at
-    /// [`PREVIEW_W`] by [`draw_miller`], the same way [`miller_w`] sizes
+    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller_w`] sizes
     /// every other pane rather than being carried on `Frame` itself.
     ///
     /// [`miller_w`]: Frame::miller_w
@@ -3084,17 +3084,6 @@ pub struct PaletteData<'a> {
     /// Shown in place of the list: why the last attempt did not work, or that
     /// nothing matches.
     pub message: Option<&'a str>,
-    /// Whether the card is being drawn into a surface of its own rather than
-    /// into the window's buffer.
-    ///
-    /// On its own surface the compositor owns the material: it blurs what is
-    /// actually behind the window, tints it for legibility and casts the
-    /// shadow outside the card's bounds — none of which this canvas can do,
-    /// because a blur painted here can only sample the window's own pixels.
-    /// So the shadow and the opaque ground are dropped and the translucent
-    /// popup material is used instead, which is what the compositor's blur
-    /// expects to sit under.
-    pub on_surface: bool,
     /// The list's scroll view, when the host runs one: where the rows have
     /// scrolled to, how far past an end they are stretched, and how much of
     /// the bar to show. `None` draws the rows where they lie.
@@ -3132,7 +3121,7 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
     let mut height = PALETTE_FIELD_H;
     let body = palette_list_h(rows);
     if body > 0.0 || message {
-        height += PALETTE_PAD * 2.0 + body + palette_footer_h(rows, message);
+        height += PALETTE_PAD * 2.0 + body + palette_footer_h(message);
     }
     Rect::from_xywh(left, palette_top(), w, height)
 }
@@ -3140,11 +3129,10 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
 /// The line the message takes: the whole body when there are no rows — it
 /// stands in for the list — and a footer under the list when there are, so a
 /// dry run can be summed up beneath its lines.
-pub fn palette_footer_h(rows: &[PaletteRow<'_>], message: bool) -> f32 {
+pub fn palette_footer_h(message: bool) -> f32 {
     if message {
         PALETTE_ROW_H
     } else {
-        let _ = rows;
         0.0
     }
 }
@@ -3245,44 +3233,17 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     let message = data.message.is_some();
     let card = palette_rect(width, &data.rows, message);
 
-    // A shadow rather than a dim over the window: the palette is not modal,
-    // and dimming the listing behind it would say that it was. Painted here
-    // only while the card is in the window's buffer — on its own surface the
-    // compositor casts it, and outside the card's bounds, which is the one
-    // place a shadow is worth having.
+    // The translucent material the compositor's blur sits under, filled in
+    // wherever it cannot frost a subsurface — see `Theme::card_material`. The
+    // shadow is the compositor's too, cast outside the card's bounds, which is
+    // the one place a shadow is worth having.
     let radius = palette_radius();
-    if !data.on_surface {
-        paint.set_color(theme.shadow);
-        paint.set_mask_filter(skia_safe::MaskFilter::blur(
-            skia_safe::BlurStyle::Normal,
-            14.0,
-            false,
-        ));
-        canvas.draw_rrect(
-            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), radius, radius),
-            &paint,
-        );
-        paint.set_mask_filter(None);
-    }
-
-    // The translucent material when the compositor is blurring behind this
-    // surface, and filled in when the card is inside the window's own buffer:
-    // there the material would be a tint over the listing it is covering,
-    // with no blur underneath to justify it. On a surface of its own it is
-    // still filled in wherever the compositor cannot frost a subsurface — see
-    // `Theme::card_material`.
-    paint.set_color(if data.on_surface {
-        otto_kit::frosting::material(theme.card_material())
-    } else {
-        content_ground()
-    });
+    paint.set_color(otto_kit::frosting::material(theme.card_material()));
     canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &paint);
 
     // The hairline is what says the card is above the listing rather than part
     // of it: the ground is the same colour on both sides of the edge, exactly
-    // as it is around the Get Info panel. On its own surface the compositor
-    // draws this; here the card is inside the window's own buffer, so it is
-    // painted.
+    // as it is around the Get Info panel.
     //
     // A ring rather than a stroke: the card's own rounded rect, less the same
     // shape one hairline in. A stroke centred half a point inside the edge
@@ -3330,42 +3291,10 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
                 card.bottom - PALETTE_PAD - PALETTE_ROW_H / 2.0,
             )
             .render(canvas);
-        if data.rows.is_empty() {
-            return;
-        }
     }
-
-    // On its own surface the rows are not the card's: they are a scroll pane
-    // of their own inside it, so scrolling the list moves that and repaints
-    // nothing here. See `PaneSurfaces::sync_palette`.
-    if data.on_surface {
-        return;
-    }
-
-    match data.scroll {
-        // The rows scroll under the field: drawn where they lie in the list,
-        // shifted and clipped by the view — which also paints the bar and
-        // shows the stretch past either end, since a stretched offset simply
-        // moves them further than the content allows.
-        Some(state) => {
-            // The renderer hands over a canvas in the *content's* own
-            // coordinates — the list's first row at the origin — while the row
-            // rects are measured from the window's corner like everything
-            // else in this file. Shift by the viewport's origin so the two
-            // agree, and the offset the renderer applied does the scrolling.
-            let viewport = state.viewport();
-            otto_kit::components::scroll::ScrollRenderer::draw(
-                canvas,
-                &state,
-                theme,
-                |canvas, _visible| {
-                    canvas.translate((-viewport.left, -viewport.top));
-                    draw_palette_rows(canvas, theme, width, data);
-                },
-            )
-        }
-        None => draw_palette_rows(canvas, theme, width, data),
-    }
+    // The rows are not the card's: they are a scroll pane of their own inside
+    // it, so scrolling the list moves that and repaints nothing here. See
+    // `PaneSurfaces::sync_palette`.
 }
 
 /// The palette's rows, in window points where the card rests.

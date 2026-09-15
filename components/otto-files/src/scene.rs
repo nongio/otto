@@ -524,8 +524,8 @@ fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usiz
             let name = view::ellipsize(&font, &entry.name, width - trailing - name_x);
 
             Row {
-                // Relative to the band, which is what the strip layer holds:
-                // the strip's own position carries `range.0` and the scroll.
+                // Relative to the band being painted: the band's own position
+                // carries `range.0` and the scroll.
                 top: (index - range.0) as f32 * view::ROW_H,
                 name,
                 icon,

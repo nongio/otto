@@ -68,31 +68,6 @@ pub fn quickview_centered() -> bool {
     })
 }
 
-/// Whether the command palette is presented on a surface of its own rather
-/// than painted into the window's canvas.
-///
-/// It has to be, for the same reason Quick View does: the card is dragged, and
-/// a card painted into the window's buffer cannot be dragged past the window's
-/// edge — there are no pixels out there to draw on. Clamping it to the window
-/// was a way of hiding that, not a design.
-///
-/// A surface also settles what the card is made of. The frosted material only
-/// means anything here: the compositor blurs and tints what is actually behind
-/// the *window*, where a blur painted into the window's own buffer can only
-/// sample the listing the card is already covering — which is why the card
-/// read as the same colour on the same colour.
-///
-/// `OTTO_FILES_PALETTE_SURFACE=0` goes back to painting it into the window.
-pub fn palette_on_surface() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        !matches!(
-            std::env::var("OTTO_FILES_PALETTE_SURFACE").as_deref(),
-            Ok("0") | Ok("false")
-        )
-    })
-}
-
 /// What the palette's surface needs in order to paint and place itself.
 ///
 /// The card is measured in window points on both sides of this seam — the
@@ -175,7 +150,6 @@ impl PaletteFrame {
                 })
                 .collect(),
             message: self.message.as_deref(),
-            on_surface: true,
             scroll: Some(self.scroll),
         }
     }
@@ -216,7 +190,7 @@ pub struct PaneSurfaces {
     /// The Quick View panel, in a surface of its own over everything.
     quickview: Option<PlacedSurface>,
     /// The command palette, in a surface of its own so it can be dragged clear
-    /// of the window. See [`palette_on_surface`].
+    /// of the window.
     palette: Option<PlacedSurface>,
     /// The palette's rows, a scroll pane inside its card, and what they were
     /// last painted from.
@@ -788,9 +762,9 @@ impl PaneSurfaces {
     /// see. It gets a surface of its own, stacked above every column and above
     /// the horizontal bar — the topmost thing this window puts on screen.
     ///
-    /// Its input region stays empty like the columns'. The panel already owns
-    /// the pointer through the host's own routing, which works in window
-    /// coordinates and does not care which surface the pixels came from.
+    /// Unlike the columns it answers for its own pointer: centred on the
+    /// display it hangs outside the toplevel, where no event reaches the
+    /// window. See [`Self::quickview_target`].
     fn sync_quickview(
         &mut self,
         parent: &WlSurface,
@@ -855,7 +829,7 @@ impl PaneSurfaces {
             return false;
         };
         let mut painted = pane.set_hidden(false);
-        let resized = pane.set_rect(rect);
+        pane.set_rect(rect);
         // Everything the panel's pixels depend on has to be in here or the
         // repaint is skipped: the card's rect, which file it is showing, how
         // far its content is scrolled — and now how far its picture is zoomed
@@ -863,7 +837,6 @@ impl PaneSurfaces {
         // inch.
         let key = quickview_key(panel, generation, session);
         let origin = (rect.left, rect.top);
-        let started = qv_trace::now();
         let paint = pane.paint(key, |canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
@@ -871,9 +844,6 @@ impl PaneSurfaces {
             view::draw_quickview(canvas, f, session, resting);
             canvas.restore();
         });
-        if paint == Paint::Painted {
-            qv_trace::frame(session, rect, resized, started);
-        }
         painted |= self.painted(paint);
         painted
     }
@@ -1289,11 +1259,6 @@ fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> 
 /// constant the hashers in this file use for the same purpose.
 const LOADING_KEY: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// A rect as a repaint key. Positions are the whole of what a bar draws, so
-/// its geometry is its identity.
-/// The zoom, as a repaint key contribution. Bit patterns rather than values,
-/// like [`hash_rect`]: a float has no `Hash`, and rounding one to compare it
-/// would let a slow pinch stall.
 /// How the pan's scrollbars are presented — how faded in each is, and how
 /// far each has widened under the pointer.
 fn hash_bars(session: &quickview::Session) -> u64 {
@@ -1314,6 +1279,9 @@ fn hash_bars(session: &quickview::Session) -> u64 {
     hasher.finish()
 }
 
+/// The zoom, as a repaint key contribution. Bit patterns rather than values,
+/// like [`hash_rect`]: a float has no `Hash`, and rounding one to compare it
+/// would let a slow pinch stall.
 fn hash_zoom(zoom: otto_kit::preview::Zoom) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -1331,6 +1299,7 @@ fn hash_zoom(zoom: otto_kit::preview::Zoom) -> u64 {
     hasher.finish()
 }
 
+/// A rect as a repaint key: its geometry is its identity.
 fn hash_rect(rect: Rect) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -1340,62 +1309,6 @@ fn hash_rect(rect: Rect) -> u64 {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
-}
-
-/// Per-frame timing for the Quick View entrance and exit.
-///
-/// The two animations run the same geometry in opposite directions, so if one
-/// is smooth and the other is not, the difference is either in what a frame
-/// costs or in how far apart the frames land — and those are two different
-/// bugs. `OTTO_FILES_QV_TRACE=1` prints a line per painted frame.
-mod qv_trace {
-    use std::cell::Cell;
-    use std::time::Instant;
-
-    use skia_safe::Rect;
-
-    use crate::quickview::Session;
-
-    thread_local! {
-        static LAST: Cell<Option<Instant>> = const { Cell::new(None) };
-    }
-
-    fn enabled() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("OTTO_FILES_QV_TRACE").is_some())
-    }
-
-    pub fn now() -> Option<Instant> {
-        enabled().then(Instant::now)
-    }
-
-    pub fn frame(session: &Session, rect: Rect, resized: bool, started: Option<Instant>) {
-        let Some(started) = started else { return };
-        let gap = LAST.with(|last| {
-            let gap = last.get().map(|prev| started.duration_since(prev));
-            last.set(Some(started));
-            gap
-        });
-        let (direction, t) = match session.closing {
-            Some(_) => ("out", session.exit_t()),
-            None => ("in ", session.entrance_t()),
-        };
-        // The pause between one animation and the next is not a gap worth
-        // reading, so it is left blank rather than reported as a stall.
-        let gap_ms = match gap {
-            Some(gap) if gap.as_millis() < 2000 => format!("{:>6.1}", gap.as_secs_f32() * 1000.0),
-            _ => "     -".to_string(),
-        };
-        eprintln!(
-            "qv {direction} t={t:.2} @({:>6.0},{:>5.0}) {:>4.0}x{:<4.0} {} paint {:>5}us  gap {gap_ms}ms",
-            rect.left,
-            rect.top,
-            rect.width(),
-            rect.height(),
-            if resized { "resize" } else { "      " },
-            started.elapsed().as_micros(),
-        );
-    }
 }
 
 #[cfg(test)]
