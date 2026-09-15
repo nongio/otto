@@ -1,4 +1,3 @@
-
 use super::rename_selection;
 
 #[test]

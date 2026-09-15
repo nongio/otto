@@ -5,7 +5,6 @@ use super::*;
 impl FilesApp {
     pub(super) fn handle_key(
         &mut self,
-        _ctx: &AppContext,
         event: &KeyEvent,
         key_state: wl_keyboard::KeyState,
         serial: u32,

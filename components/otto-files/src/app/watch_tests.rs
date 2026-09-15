@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// A real directory, swept up on drop. Watching is about the filesystem

@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// A browser sitting on a real directory, so leaving a search has

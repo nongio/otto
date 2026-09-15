@@ -1,4 +1,3 @@
-
 use super::typeahead_tests::browser_over;
 use super::*;
 

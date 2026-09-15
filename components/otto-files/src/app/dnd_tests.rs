@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// A real directory holding files and subdirectories, swept up on drop.

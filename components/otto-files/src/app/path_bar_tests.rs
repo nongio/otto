@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn icons_of(crumbs: &[view::PathCrumb]) -> Vec<&str> {

@@ -30,6 +30,7 @@ use wayland_client::protocol::{wl_keyboard, wl_surface};
 /// button.
 const BTN_RIGHT: u32 = 0x111;
 
+use listing_pointer::{After, DragStart, MenuAt};
 use model::{Column, Entry, Place, SortKey};
 use view::ViewMode;
 
@@ -44,6 +45,7 @@ mod keys;
 mod layout;
 mod lifecycle;
 mod listing;
+mod listing_pointer;
 mod menus;
 mod navigation;
 mod opening;

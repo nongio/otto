@@ -725,12 +725,12 @@ impl App for FilesApp {
 
     fn on_key_event(
         &mut self,
-        ctx: &AppContext,
+        _ctx: &AppContext,
         event: &KeyEvent,
         key_state: wl_keyboard::KeyState,
         serial: u32,
     ) {
-        self.handle_key(ctx, event, key_state, serial);
+        self.handle_key(event, key_state, serial);
     }
 }
 

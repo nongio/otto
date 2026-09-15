@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// A directory of real files, swept up on drop — `move_to_trash` works on
