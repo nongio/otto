@@ -1,0 +1,33 @@
+{
+  "description": "session/changesetsChanged with undefined clears state.changesets",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "changesets": [
+      {
+        "label": "Session Changes",
+        "uriTemplate": "copilot:/test-session/changeset/session",
+        "changeKind": "session"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/changesetsChanged",
+      "changesets": null
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "description": "session/activeClientSet replaces an existing client",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "vscode-1",
+        "displayName": "VS Code",
+        "tools": []
+      }
+    ],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/activeClientSet",
+      "activeClient": {
+        "clientId": "vscode-1",
+        "displayName": "VS Code Insiders",
+        "tools": [
+          {
+            "name": "openFile",
+            "description": "Open a file"
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "vscode-1",
+        "displayName": "VS Code Insiders",
+        "tools": [
+          {
+            "name": "openFile",
+            "description": "Open a file"
+          }
+        ]
+      }
+    ],
+    "chats": []
+  }
+}

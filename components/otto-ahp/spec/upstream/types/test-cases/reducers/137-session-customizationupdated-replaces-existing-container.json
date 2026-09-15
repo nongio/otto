@@ -1,0 +1,76 @@
+{
+  "description": "session/customizationUpdated replaces an existing container by id",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "load": {
+          "kind": "loading"
+        }
+      },
+      {
+        "type": "plugin",
+        "id": "plugin-b",
+        "uri": "https://plugins.example/b",
+        "name": "Plugin B",
+        "load": {
+          "kind": "loaded"
+        }
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationUpdated",
+      "customization": {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "load": {
+          "kind": "error",
+          "message": "Failed to load"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "load": {
+          "kind": "error",
+          "message": "Failed to load"
+        }
+      },
+      {
+        "type": "plugin",
+        "id": "plugin-b",
+        "uri": "https://plugins.example/b",
+        "name": "Plugin B",
+        "load": {
+          "kind": "loaded"
+        }
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

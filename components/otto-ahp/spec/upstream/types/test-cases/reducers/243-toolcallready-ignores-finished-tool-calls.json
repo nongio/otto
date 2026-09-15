@@ -1,0 +1,106 @@
+{
+  "description": "toolCallReady ignores completed and cancelled tool calls",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-completed",
+            "toolName": "bash",
+            "displayName": "Run Command",
+            "invocationMessage": "Run",
+            "confirmed": "user-action",
+            "success": true,
+            "pastTenseMessage": "Ran command"
+          }
+        },
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "cancelled",
+            "toolCallId": "tc-cancelled",
+            "toolName": "write_file",
+            "displayName": "Write File",
+            "invocationMessage": "Write file",
+            "reason": "denied"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-completed",
+      "invocationMessage": "Late completed update"
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-cancelled",
+      "invocationMessage": "Late cancelled update"
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-completed",
+            "toolName": "bash",
+            "displayName": "Run Command",
+            "invocationMessage": "Run",
+            "confirmed": "user-action",
+            "success": true,
+            "pastTenseMessage": "Ran command"
+          }
+        },
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "cancelled",
+            "toolCallId": "tc-cancelled",
+            "toolName": "write_file",
+            "displayName": "Write File",
+            "invocationMessage": "Write file",
+            "reason": "denied"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

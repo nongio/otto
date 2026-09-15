@@ -1,0 +1,56 @@
+{
+  "description": "session/chatAdded preserves side-chat selection snapshots on chat origins",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/chatAdded",
+      "summary": {
+        "resource": "ahp-chat:/c1",
+        "title": "Side Chat",
+        "status": 1,
+        "modifiedAt": "1970-01-01T00:00:01.000Z",
+        "origin": {
+          "kind": "sideChat",
+          "chat": "ahp-chat:/main",
+          "turnId": "turn-active",
+          "selection": {
+            "text": "const value = compute()",
+            "responsePartId": "part-7"
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [
+      {
+        "resource": "ahp-chat:/c1",
+        "title": "Side Chat",
+        "status": 1,
+        "modifiedAt": "1970-01-01T00:00:01.000Z",
+        "origin": {
+          "kind": "sideChat",
+          "chat": "ahp-chat:/main",
+          "turnId": "turn-active",
+          "selection": {
+            "text": "const value = compute()",
+            "responsePartId": "part-7"
+          }
+        }
+      }
+    ]
+  }
+}

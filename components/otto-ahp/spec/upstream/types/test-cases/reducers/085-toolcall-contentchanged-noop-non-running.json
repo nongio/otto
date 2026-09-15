@@ -1,0 +1,92 @@
+{
+  "description": "toolCallContentChanged is no-op for non-running tool call",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-1",
+            "toolName": "bash",
+            "displayName": "Run Command",
+            "intention": null,
+            "invocationMessage": "Ran command",
+            "toolInput": {
+              "uri": "file:///tool-inputs/tool-input.json"
+            },
+            "confirmed": "user-action",
+            "success": true,
+            "pastTenseMessage": "Ran command"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "agenthost:/terminal/1",
+          "title": "bash"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-1",
+            "toolName": "bash",
+            "displayName": "Run Command",
+            "intention": null,
+            "invocationMessage": "Ran command",
+            "toolInput": {
+              "uri": "file:///tool-inputs/tool-input.json"
+            },
+            "confirmed": "user-action",
+            "success": true,
+            "pastTenseMessage": "Ran command"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

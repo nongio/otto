@@ -1,0 +1,39 @@
+{
+  "description": "session/changesetsChanged replaces state.changesets with the new catalogue",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/changesetsChanged",
+      "changesets": [
+        {
+          "label": "Session Changes",
+          "uriTemplate": "copilot:/test-session/changeset/session",
+          "changeKind": "session"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "changesets": [
+      {
+        "label": "Session Changes",
+        "uriTemplate": "copilot:/test-session/changeset/session",
+        "changeKind": "session"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

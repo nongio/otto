@@ -1,0 +1,33 @@
+{
+  "description": "session-workingDirectoryRemoved removes existing",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "workingDirectories": [
+      "file:///repo-a",
+      "file:///repo-b"
+    ]
+  },
+  "actions": [
+    {
+      "type": "session/workingDirectoryRemoved",
+      "directory": "file:///repo-a"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "workingDirectories": [
+      "file:///repo-b"
+    ]
+  }
+}

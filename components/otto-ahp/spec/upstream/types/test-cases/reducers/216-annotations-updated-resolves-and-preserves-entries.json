@@ -1,0 +1,57 @@
+{
+  "description": "annotations/updated marks an annotation resolved while leaving its entries, range, anchor, and _meta untouched",
+  "reducer": "annotations",
+  "initial": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-1"
+        },
+        "resource": "file:///src/a.ts",
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        },
+        "resolved": false,
+        "entries": [
+          { "id": "c-1", "text": "original" },
+          { "id": "c-2", "text": "reply" }
+        ],
+        "_meta": { "author": "alice" }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "annotations/updated",
+      "annotationId": "t-1",
+      "resolved": true
+    }
+  ],
+  "expected": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-1"
+        },
+        "resource": "file:///src/a.ts",
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        },
+        "resolved": true,
+        "entries": [
+          { "id": "c-1", "text": "original" },
+          { "id": "c-2", "text": "reply" }
+        ],
+        "_meta": { "author": "alice" }
+      }
+    ]
+  }
+}

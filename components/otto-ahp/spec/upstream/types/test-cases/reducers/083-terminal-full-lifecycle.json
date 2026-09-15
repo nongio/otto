@@ -1,0 +1,73 @@
+{
+  "description": "full terminal lifecycle: cwd, data, resize, claim transfer, exit",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/cwdChanged",
+      "cwd": "file:///home/user"
+    },
+    {
+      "type": "terminal/resized",
+      "cols": 80,
+      "rows": 24
+    },
+    {
+      "type": "terminal/claimed",
+      "claim": {
+        "kind": "session",
+        "session": "copilot:/s1",
+        "turnId": "t1",
+        "toolCallId": "tc1",
+        "chat": "ahp-chat:/test-chat"
+      }
+    },
+    {
+      "type": "terminal/data",
+      "data": "$ npm test\r\nAll tests passed\r\n"
+    },
+    {
+      "type": "terminal/claimed",
+      "claim": {
+        "kind": "session",
+        "session": "copilot:/s1",
+        "chat": "ahp-chat:/test-chat"
+      }
+    },
+    {
+      "type": "terminal/exited",
+      "exitCode": 0
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "cwd": "file:///home/user",
+    "cols": 80,
+    "rows": 24,
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ npm test\r\nAll tests passed\r\n"
+      }
+    ],
+    "claim": {
+      "kind": "session",
+      "session": "copilot:/s1",
+      "chat": "ahp-chat:/test-chat"
+    },
+    "lifecycle": {
+      "status": "exited",
+      "exitCode": 0
+    }
+  }
+}

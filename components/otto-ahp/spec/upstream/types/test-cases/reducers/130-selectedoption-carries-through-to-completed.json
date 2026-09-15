@@ -1,0 +1,112 @@
+{
+  "description": "selectedOption carries through from running to completed via toolCallComplete",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "toolName": "bash",
+      "displayName": "Run Command"
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "invocationMessage": "Run: echo hello",
+      "options": [
+        {
+          "id": "approve-once",
+          "label": "Approve",
+          "kind": "approve",
+          "group": 1
+        },
+        {
+          "id": "approve-session",
+          "label": "Approve in this Session",
+          "kind": "approve",
+          "group": 1
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallConfirmed",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "approved": true,
+      "confirmed": "user-action",
+      "selectedOptionId": "approve-session"
+    },
+    {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "result": {
+        "success": true,
+        "pastTenseMessage": "Ran echo hello"
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-1",
+            "toolName": "bash",
+            "displayName": "Run Command",
+            "intention": null,
+            "contributor": null,
+            "_meta": null,
+            "invocationMessage": "Run: echo hello",
+            "toolInput": null,
+            "confirmed": "user-action",
+            "selectedOption": {
+              "id": "approve-session",
+              "label": "Approve in this Session",
+              "kind": "approve",
+              "group": 1
+            },
+            "success": true,
+            "pastTenseMessage": "Ran echo hello"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

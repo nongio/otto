@@ -1,0 +1,53 @@
+{
+  "description": "turn end normalizes timezone offsets across leap-day rollover",
+  "reducer": "chat",
+  "initial": {
+    "resource": "ahp-chat:/timestamp-rollover",
+    "title": "Timestamp rollover",
+    "status": 8,
+    "modifiedAt": "2024-02-29T23:59:59.750-05:00",
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "2024-02-29T23:59:59.750-05:00",
+      "message": {
+        "text": "Test rollover",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    }
+  },
+  "actions": [
+    {
+      "type": "chat/turnComplete",
+      "turnId": "turn-1",
+      "duration": 500
+    }
+  ],
+  "expected": {
+    "resource": "ahp-chat:/timestamp-rollover",
+    "title": "Timestamp rollover",
+    "status": 1,
+    "modifiedAt": "2024-03-01T05:00:00.250Z",
+    "turns": [
+      {
+        "id": "turn-1",
+        "startedAt": "2024-02-29T23:59:59.750-05:00",
+        "duration": 500,
+        "message": {
+          "text": "Test rollover",
+          "origin": {
+            "kind": "user"
+          }
+        },
+        "responseParts": [],
+        "usage": null,
+        "state": "complete"
+      }
+    ],
+    "activeTurn": null
+  }
+}

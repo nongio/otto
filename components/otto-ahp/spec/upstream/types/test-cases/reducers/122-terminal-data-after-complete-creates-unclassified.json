@@ -1,0 +1,60 @@
+{
+  "description": "terminal/data after completed command creates new unclassified part",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "command",
+        "commandId": "cmd-1",
+        "commandLine": "echo hi",
+        "output": "hi\r\n",
+        "timestamp": 1700000000000,
+        "isComplete": true,
+        "exitCode": 0,
+        "durationMs": 50
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "supportsCommandDetection": true,
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/data",
+      "data": "$ "
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "command",
+        "commandId": "cmd-1",
+        "commandLine": "echo hi",
+        "output": "hi\r\n",
+        "timestamp": 1700000000000,
+        "isComplete": true,
+        "exitCode": 0,
+        "durationMs": 50
+      },
+      {
+        "type": "unclassified",
+        "value": "$ "
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "supportsCommandDetection": true,
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

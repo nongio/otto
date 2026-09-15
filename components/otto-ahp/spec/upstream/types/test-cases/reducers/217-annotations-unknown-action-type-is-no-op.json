@@ -1,0 +1,49 @@
+{
+  "description": "annotations unknown action type is a no-op",
+  "reducer": "annotations",
+  "initial": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-1"
+        },
+        "resource": "file:///src/a.ts",
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        },
+        "resolved": false,
+        "entries": [
+          { "id": "c-1", "text": "only" }
+        ]
+      }
+    ]
+  },
+  "actions": [
+    { "type": "annotations/unknownActionType" }
+  ],
+  "expected": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-1"
+        },
+        "resource": "file:///src/a.ts",
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        },
+        "resolved": false,
+        "entries": [
+          { "id": "c-1", "text": "only" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "description": "full command lifecycle: unclassified → execute → data → finish → unclassified → next command",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/data",
+      "data": "$ "
+    },
+    {
+      "type": "terminal/commandExecuted",
+      "commandId": "cmd-1",
+      "commandLine": "echo hello",
+      "timestamp": 1700000000000
+    },
+    {
+      "type": "terminal/data",
+      "data": "hello\r\n"
+    },
+    {
+      "type": "terminal/commandFinished",
+      "commandId": "cmd-1",
+      "exitCode": 0,
+      "durationMs": 10
+    },
+    {
+      "type": "terminal/data",
+      "data": "$ "
+    },
+    {
+      "type": "terminal/commandExecuted",
+      "commandId": "cmd-2",
+      "commandLine": "exit 1",
+      "timestamp": 1700000001000
+    },
+    {
+      "type": "terminal/data",
+      "data": ""
+    },
+    {
+      "type": "terminal/commandFinished",
+      "commandId": "cmd-2",
+      "exitCode": 1,
+      "durationMs": 5
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ "
+      },
+      {
+        "type": "command",
+        "commandId": "cmd-1",
+        "commandLine": "echo hello",
+        "output": "hello\r\n",
+        "timestamp": 1700000000000,
+        "isComplete": true,
+        "exitCode": 0,
+        "durationMs": 10
+      },
+      {
+        "type": "unclassified",
+        "value": "$ "
+      },
+      {
+        "type": "command",
+        "commandId": "cmd-2",
+        "commandLine": "exit 1",
+        "output": "",
+        "timestamp": 1700000001000,
+        "isComplete": true,
+        "exitCode": 1,
+        "durationMs": 5
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "supportsCommandDetection": true,
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

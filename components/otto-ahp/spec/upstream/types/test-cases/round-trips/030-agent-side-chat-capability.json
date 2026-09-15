@@ -1,0 +1,58 @@
+{
+  "name": "agent-side-chat-capability",
+  "group": "A",
+  "description": "AgentInfo advertises capability-gated side-chat creation through capabilities.multipleChats.sideChat.",
+  "type": "InitializeResult",
+  "input": {
+    "protocolVersion": "0.6.0",
+    "serverSeq": 3,
+    "snapshots": [
+      {
+        "resource": "ahp-root://",
+        "state": {
+          "agents": [
+            {
+              "provider": "example",
+              "displayName": "Example",
+              "description": "Example agent",
+              "models": [],
+              "capabilities": {
+                "multipleChats": {
+                  "sideChat": true
+                }
+              }
+            }
+          ]
+        },
+        "fromSeq": 3
+      }
+    ]
+  },
+  "acceptableOutputs": [
+    {
+      "protocolVersion": "0.6.0",
+      "serverSeq": 3,
+      "snapshots": [
+        {
+          "resource": "ahp-root://",
+          "state": {
+            "agents": [
+              {
+                "provider": "example",
+                "displayName": "Example",
+                "description": "Example agent",
+                "models": [],
+                "capabilities": {
+                  "multipleChats": {
+                    "sideChat": true
+                  }
+                }
+              }
+            ]
+          },
+          "fromSeq": 3
+        }
+      ]
+    }
+  ]
+}

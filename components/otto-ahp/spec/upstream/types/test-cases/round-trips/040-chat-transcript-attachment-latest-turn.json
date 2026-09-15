@@ -1,0 +1,44 @@
+{
+  "name": "chat-transcript-attachment-latest-turn",
+  "group": "A",
+  "description": "A chat/turnStarted action preserves a chat transcript attachment whose end turn the host pins on acceptance.",
+  "type": "StateAction",
+  "input": {
+    "type": "chat/turnStarted",
+    "turnId": "turn-14",
+    "startedAt": "2026-07-27T19:01:00.000Z",
+    "message": {
+      "text": "Use the latest completed investigation.",
+      "origin": {
+        "kind": "user"
+      },
+      "attachments": [
+        {
+          "type": "chat",
+          "label": "Unloaded investigation",
+          "resource": "ahp-chat:/other-session-chat"
+        }
+      ]
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "type": "chat/turnStarted",
+      "turnId": "turn-14",
+      "startedAt": "2026-07-27T19:01:00.000Z",
+      "message": {
+        "text": "Use the latest completed investigation.",
+        "origin": {
+          "kind": "user"
+        },
+        "attachments": [
+          {
+            "type": "chat",
+            "label": "Unloaded investigation",
+            "resource": "ahp-chat:/other-session-chat"
+          }
+        ]
+      }
+    }
+  ]
+}

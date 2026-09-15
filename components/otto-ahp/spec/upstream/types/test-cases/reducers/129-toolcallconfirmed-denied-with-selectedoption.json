@@ -1,0 +1,110 @@
+{
+  "description": "toolCallConfirmed denied with selectedOptionId resolves selectedOption in cancelled state",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "toolName": "bash",
+      "displayName": "Run Command"
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "invocationMessage": "Run: rm -rf /",
+      "options": [
+        {
+          "id": "approve",
+          "label": "Approve",
+          "kind": "approve",
+          "group": 1
+        },
+        {
+          "id": "deny",
+          "label": "Deny",
+          "kind": "deny",
+          "group": 2
+        },
+        {
+          "id": "deny-reason",
+          "label": "Deny with reason",
+          "kind": "deny",
+          "group": 2
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallConfirmed",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "approved": false,
+      "reason": "denied",
+      "selectedOptionId": "deny-reason",
+      "reasonMessage": "Too dangerous"
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "cancelled",
+            "toolCallId": "tc-1",
+            "toolName": "bash",
+            "displayName": "Run Command",
+            "intention": null,
+            "contributor": null,
+            "_meta": null,
+            "invocationMessage": "Run: rm -rf /",
+            "toolInput": null,
+            "reason": "denied",
+            "reasonMessage": "Too dangerous",
+            "userSuggestion": null,
+            "selectedOption": {
+              "id": "deny-reason",
+              "label": "Deny with reason",
+              "kind": "deny",
+              "group": 2
+            }
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

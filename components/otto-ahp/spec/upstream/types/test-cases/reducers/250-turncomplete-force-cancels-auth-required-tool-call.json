@@ -1,0 +1,106 @@
+{
+  "description": "chat/turnComplete force-cancels a tool call that is paused in auth-required status, with reason skipped",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-7",
+      "toolName": "search",
+      "displayName": "Search Repo",
+      "contributor": {
+        "kind": "mcp",
+        "customizationId": "mcp-1"
+      }
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-7",
+      "invocationMessage": "Search: foo",
+      "toolInput": {
+        "uri": "file:///tool-inputs/tool-input.json"
+      },
+      "confirmed": "not-needed"
+    },
+    {
+      "type": "chat/toolCallAuthRequired",
+      "turnId": "turn-1",
+      "toolCallId": "tc-7",
+      "auth": {
+        "reason": "required",
+        "resource": {
+          "resource": "https://mcp.example.com"
+        }
+      }
+    },
+    {
+      "type": "chat/turnComplete",
+      "turnId": "turn-1",
+      "duration": 500
+    }
+  ],
+  "expected": {
+    "turns": [
+      {
+        "id": "turn-1",
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "duration": 500,
+        "message": {
+          "text": "Hello",
+          "origin": {
+            "kind": "user"
+          }
+        },
+        "responseParts": [
+          {
+            "kind": "toolCall",
+            "toolCall": {
+              "status": "cancelled",
+              "toolCallId": "tc-7",
+              "toolName": "search",
+              "displayName": "Search Repo",
+              "intention": null,
+              "contributor": {
+                "kind": "mcp",
+                "customizationId": "mcp-1"
+              },
+              "_meta": null,
+              "invocationMessage": "Search: foo",
+              "toolInput": {
+                "uri": "file:///tool-inputs/tool-input.json"
+              },
+              "reason": "skipped"
+            }
+          }
+        ],
+        "usage": null,
+        "state": "complete"
+      }
+    ],
+    "activeTurn": null,
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.500Z"
+  }
+}

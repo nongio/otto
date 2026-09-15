@@ -1,0 +1,14 @@
+name: Spec watch
+
+# Fails (and notifies) when upstream publishes a spec release newer than the pin.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/spec-status.sh

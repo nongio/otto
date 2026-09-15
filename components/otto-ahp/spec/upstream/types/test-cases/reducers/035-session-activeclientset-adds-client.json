@@ -1,0 +1,36 @@
+{
+  "description": "session/activeClientSet adds a client",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/activeClientSet",
+      "activeClient": {
+        "clientId": "vscode-1",
+        "displayName": "VS Code",
+        "tools": []
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "vscode-1",
+        "displayName": "VS Code",
+        "tools": []
+      }
+    ],
+    "chats": []
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "chat-origin-fork",
+  "group": "A",
+  "description": "A session/chatAdded action preserves discriminated fork provenance in ChatOrigin state.",
+  "type": "StateAction",
+  "input": {
+    "type": "session/chatAdded",
+    "summary": {
+      "resource": "ahp-chat:/fork",
+      "title": "Forked investigation",
+      "status": 1,
+      "modifiedAt": "2026-07-22T21:00:00.000Z",
+      "origin": {
+        "kind": "fork",
+        "chat": "ahp-chat:/main",
+        "turnId": "turn-12"
+      }
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "type": "session/chatAdded",
+      "summary": {
+        "resource": "ahp-chat:/fork",
+        "title": "Forked investigation",
+        "status": 1,
+        "modifiedAt": "2026-07-22T21:00:00.000Z",
+        "origin": {
+          "kind": "fork",
+          "chat": "ahp-chat:/main",
+          "turnId": "turn-12"
+        }
+      }
+    }
+  ]
+}

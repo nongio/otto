@@ -1,0 +1,99 @@
+{
+  "description": "turn end preserves unresolved input request parts in the completed transcript",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "inputRequest",
+          "request": {
+            "id": "url-input",
+            "message": "Review this URL",
+            "url": "https://example.com/form"
+          }
+        },
+        {
+          "kind": "inputRequest",
+          "request": {
+            "id": "form-input",
+            "message": "Answer this form",
+            "questions": [
+              {
+                "id": "q1",
+                "kind": "boolean",
+                "message": "Continue?"
+              }
+            ]
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 24,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/turnComplete",
+      "turnId": "turn-1",
+      "duration": 8999
+    }
+  ],
+  "expected": {
+    "turns": [
+      {
+        "id": "turn-1",
+        "startedAt": "1970-01-01T00:00:01.000Z",
+        "duration": 8999,
+        "message": {
+          "text": "Hello",
+          "origin": {
+            "kind": "user"
+          }
+        },
+        "responseParts": [
+          {
+            "kind": "inputRequest",
+            "request": {
+              "id": "url-input",
+              "message": "Review this URL",
+              "url": "https://example.com/form"
+            }
+          },
+          {
+            "kind": "inputRequest",
+            "request": {
+              "id": "form-input",
+              "message": "Answer this form",
+              "questions": [
+                {
+                  "id": "q1",
+                  "kind": "boolean",
+                  "message": "Continue?"
+                }
+              ]
+            }
+          }
+        ],
+        "usage": null,
+        "state": "complete"
+      }
+    ],
+    "activeTurn": null,
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:09.999Z"
+  }
+}

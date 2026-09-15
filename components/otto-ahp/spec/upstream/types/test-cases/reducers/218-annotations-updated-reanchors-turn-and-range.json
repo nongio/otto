@@ -1,0 +1,62 @@
+{
+  "description": "annotations/updated re-anchors turnId, resource, and range, leaving resolved and entries unchanged when those fields are omitted",
+  "reducer": "annotations",
+  "initial": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-1"
+        },
+        "resource": "file:///src/a.ts",
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        },
+        "resolved": false,
+        "entries": [
+          { "id": "c-1", "text": "original" }
+        ]
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "annotations/updated",
+      "annotationId": "t-1",
+      "origin": {
+        "session": "ahp-session:/test-session",
+        "chat": "ahp-chat:/test-chat",
+        "turnId": "turn-2"
+      },
+      "resource": "file:///src/b.ts",
+      "range": {
+        "start": { "line": 3, "character": 2 },
+        "end": { "line": 3, "character": 9 }
+      }
+    }
+  ],
+  "expected": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-2"
+        },
+        "resource": "file:///src/b.ts",
+        "range": {
+          "start": { "line": 3, "character": 2 },
+          "end": { "line": 3, "character": 9 }
+        },
+        "resolved": false,
+        "entries": [
+          { "id": "c-1", "text": "original" }
+        ]
+      }
+    ]
+  }
+}

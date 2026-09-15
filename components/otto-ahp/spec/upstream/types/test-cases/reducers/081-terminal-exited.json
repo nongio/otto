@@ -1,0 +1,45 @@
+{
+  "description": "terminal/exited sets exitCode",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "cwd": "file:///home/user",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ exit\r\n"
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/exited",
+      "exitCode": 0
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "cwd": "file:///home/user",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ exit\r\n"
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "exited",
+      "exitCode": 0
+    }
+  }
+}

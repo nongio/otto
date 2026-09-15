@@ -1,0 +1,48 @@
+{
+  "description": "session/customizationToggled is no-op for unknown id",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationToggled",
+      "id": "plugin-unknown",
+      "enablement": [
+        {
+          "kind": "session",
+          "enabled": false
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

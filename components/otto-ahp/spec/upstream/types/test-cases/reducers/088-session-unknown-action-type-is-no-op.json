@@ -1,0 +1,25 @@
+{
+  "description": "session unknown action type is no-op",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/nonExistentAction"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "side-chat-origin-selection",
+  "group": "A",
+  "description": "A session/chatAdded action preserves side-chat selection snapshots alongside the stable source turn identity.",
+  "type": "StateAction",
+  "input": {
+    "type": "session/chatAdded",
+    "summary": {
+      "resource": "ahp-chat:/side-selected",
+      "title": "Side investigation",
+      "status": 1,
+      "modifiedAt": "2026-07-23T19:00:00.000Z",
+      "origin": {
+        "kind": "sideChat",
+        "chat": "ahp-chat:/main",
+        "turnId": "turn-active",
+        "selection": {
+          "text": "const value = compute()",
+          "responsePartId": "part-7"
+        }
+      }
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "type": "session/chatAdded",
+      "summary": {
+        "resource": "ahp-chat:/side-selected",
+        "title": "Side investigation",
+        "status": 1,
+        "modifiedAt": "2026-07-23T19:00:00.000Z",
+        "origin": {
+          "kind": "sideChat",
+          "chat": "ahp-chat:/main",
+          "turnId": "turn-active",
+          "selection": {
+            "text": "const value = compute()",
+            "responsePartId": "part-7"
+          }
+        }
+      }
+    }
+  ]
+}

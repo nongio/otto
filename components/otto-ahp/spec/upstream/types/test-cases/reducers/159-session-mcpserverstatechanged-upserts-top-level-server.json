@@ -1,0 +1,53 @@
+{
+  "description": "session/mcpServerStateChanged replaces the state and channel of a top-level McpServer customization",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "customizations": [
+      {
+        "type": "mcpServer",
+        "id": "mcp-1",
+        "uri": "file:///workspace/.mcp/servers.json",
+        "name": "Filesystem",
+        "state": {
+          "kind": "starting"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "session/mcpServerStateChanged",
+      "id": "mcp-1",
+      "state": {
+        "kind": "ready"
+      },
+      "channel": "mcp://filesystem"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "customizations": [
+      {
+        "type": "mcpServer",
+        "id": "mcp-1",
+        "uri": "file:///workspace/.mcp/servers.json",
+        "name": "Filesystem",
+        "state": {
+          "kind": "ready"
+        },
+        "channel": "mcp://filesystem"
+      }
+    ]
+  }
+}

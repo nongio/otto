@@ -1,0 +1,92 @@
+{
+  "description": "chat/toolCallAuthRequired is a no-op when the tool call's contributor is a client (not MCP) — enforces the auth-required-implies-MCP-contributed invariant",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-2",
+      "toolName": "edit",
+      "displayName": "Edit File",
+      "contributor": {
+        "kind": "client",
+        "clientId": "client-1"
+      }
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-2",
+      "invocationMessage": "Editing",
+      "confirmed": "not-needed"
+    },
+    {
+      "type": "chat/toolCallAuthRequired",
+      "turnId": "turn-1",
+      "toolCallId": "tc-2",
+      "auth": {
+        "reason": "required",
+        "resource": {
+          "resource": "https://mcp.example.com"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "running",
+            "toolCallId": "tc-2",
+            "toolName": "edit",
+            "displayName": "Edit File",
+            "intention": null,
+            "contributor": {
+              "kind": "client",
+              "clientId": "client-1"
+            },
+            "_meta": null,
+            "invocationMessage": "Editing",
+            "toolInput": null,
+            "confirmed": "not-needed"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

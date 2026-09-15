@@ -1,0 +1,37 @@
+{
+  "description": "session/serverToolsChanged sets server tools",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/serverToolsChanged",
+      "tools": [
+        {
+          "name": "bash",
+          "description": "Run shell commands"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "serverTools": [
+      {
+        "name": "bash",
+        "description": "Run shell commands"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

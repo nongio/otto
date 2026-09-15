@@ -1,0 +1,28 @@
+{
+  "description": "session/activityChanged clears activity with null",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "activity": "Thinking",
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/activityChanged",
+      "activity": null
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "activity": null,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}
