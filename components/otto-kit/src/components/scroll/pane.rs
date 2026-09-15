@@ -52,6 +52,9 @@ pub struct ScrollPane {
     /// The content revision the band was last painted from.
     revision: Option<u64>,
     container: bool,
+    /// Where the pointer last was, in the parent's coordinates; see
+    /// [`Self::hovered`].
+    pointer: Option<Point>,
 }
 
 impl ScrollPane {
@@ -79,6 +82,7 @@ impl ScrollPane {
             viewport,
             revision: None,
             container,
+            pointer: None,
         }
     }
 
@@ -250,6 +254,32 @@ impl ScrollPane {
         self.step(theme, |_, _| {})
     }
 
+    /// [`Self::update_container`] for a container whose position is decided
+    /// elsewhere rather than by its own scroll view — paging that settles
+    /// onto whole pages, say. `offset` is taken as it is, a stretch past
+    /// either end included.
+    pub fn update_container_at(&mut self, length: f32, offset: f32, theme: &Theme) -> bool {
+        debug_assert!(self.container, "update_container_at on a pane with content");
+        self.view.set_content_length(length);
+        self.view.state.set_offset_overscrolled(offset);
+        self.step(theme, |_, _| {})
+    }
+
+    /// The point of the content under the pointer, through the scroll as it is
+    /// now — `None` when the pointer is not over the pane.
+    ///
+    /// A fling keeps moving after the fingers lift and nothing reports it, so
+    /// the item under a still pointer changes with no event to say so. A host
+    /// whose selection follows the pointer asks this on every update rather
+    /// than only when the pointer moves. The pointer is what the last
+    /// [`Self::pointer_motion`], [`Self::pointer_down`] or [`Self::wheel_at`]
+    /// said, until [`Self::pointer_leave`].
+    pub fn hovered(&self) -> Option<Point> {
+        let pointer = self.pointer?;
+        self.contains(pointer)
+            .then(|| self.parent_to_content(pointer))
+    }
+
     fn step(&mut self, theme: &Theme, paint: impl FnOnce(&Canvas, Rect)) -> bool {
         let animating = self.view.is_animating();
         // One step per presented frame: while the last move is still on its
@@ -265,6 +295,13 @@ impl ScrollPane {
     /// A wheel or touchpad delta along the pane's axis, in points. `discrete`
     /// for a notched wheel, `stop` when the fingers lift. Returns whether the
     /// offset changed.
+    /// [`Self::wheel`] with the pointer at `point`, in the parent's
+    /// coordinates, which [`Self::hovered`] then answers from.
+    pub fn wheel_at(&mut self, point: Point, delta: f32, discrete: bool, stop: bool) -> bool {
+        self.pointer = Some(point);
+        self.wheel(delta, discrete, stop)
+    }
+
     pub fn wheel(&mut self, delta: f32, discrete: bool, stop: bool) -> bool {
         if stop {
             self.view.on_wheel_end();
@@ -284,6 +321,7 @@ impl ScrollPane {
     /// A press at `point` in the parent's coordinates. Returns whether it
     /// landed on the scrollbar and started a thumb drag.
     pub fn pointer_down(&mut self, point: Point) -> bool {
+        self.pointer = Some(point);
         let local = self.local(point);
         self.view.on_pointer_down(local.x, local.y)
     }
@@ -292,6 +330,7 @@ impl ScrollPane {
     /// when one is held, otherwise tracks hovering the scrollbar. Returns
     /// whether anything changed.
     pub fn pointer_motion(&mut self, point: Point) -> bool {
+        self.pointer = Some(point);
         let local = self.local(point);
         self.view.on_pointer_drag(local.x, local.y) | self.view.on_pointer_move(local.x, local.y)
     }
@@ -301,6 +340,7 @@ impl ScrollPane {
     }
 
     pub fn pointer_leave(&mut self) {
+        self.pointer = None;
         self.view.on_pointer_leave();
     }
 
@@ -370,7 +410,7 @@ impl ScrollGroup {
             Axis::Vertical => event.dy,
             Axis::Horizontal => event.dx,
         };
-        pane.wheel(delta, event.discrete, event.stop);
+        pane.wheel_at(event.pointer, delta, event.discrete, event.stop);
         if event.stop || event.discrete {
             // Nothing is in flight to keep a pane for: the next event picks
             // afresh.

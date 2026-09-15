@@ -65,6 +65,7 @@ use crate::surfaces::{SubsurfaceSurface, SurfaceError};
 use crate::theme::Theme;
 
 use super::band::{Band, BandView};
+use super::fill::Fill;
 use super::renderer::ScrollRenderer;
 use super::scroll::ScrollView;
 use super::state::{Axis, ScrollState};
@@ -123,21 +124,19 @@ pub struct ScrollSurfaces {
     highlight: Option<Highlight>,
 }
 
-/// A rounded wash under the content marking one item: a pixel of colour the
-/// compositor stretches and rounds, sitting between the pane's ground and its
-/// band, so moving the selection repaints nothing.
+/// A rounded wash under the content marking one item: a [`Fill`] sitting
+/// between the pane's ground and its band, so moving the selection repaints
+/// nothing.
 struct Highlight {
-    surface: SubsurfaceSurface,
+    fill: Fill,
     /// Where it is going, in content coordinates.
     target: Rect,
     /// Where the slide towards `target` started, and when.
     from: Rect,
     started: Instant,
-    color: Option<Color>,
-    radius: f32,
-    hidden: bool,
-    /// The pane-local rect last sent, `None` when it has to be sent again.
-    sent: Option<Rect>,
+    /// Whether it is meant to be showing. The fill itself stays hidden until
+    /// it has been placed, so it never appears where it was last.
+    shown: bool,
 }
 
 /// Where a slide from `from` to `to` has got to after `elapsed`, eased out.
@@ -423,65 +422,44 @@ impl ScrollSurfaces {
     /// The wash is a surface of its own between the pane's ground and its
     /// band: moving it — to follow the keyboard or the pointer — slides it
     /// there over [`HIGHLIGHT_SLIDE`] and repaints nothing, and a scroll moves
-    /// it with the content. Takes effect on the next [`Self::sync`]; a host
+    /// it with the content. While the content is scrolling it does not slide:
+    /// it goes straight to the item it marks. Takes effect on the next [`Self::sync`]; a host
     /// keeps syncing while [`Self::highlight_animating`].
     pub fn set_highlight(&mut self, rect: Option<Rect>, color: Color, radius: f32) {
         let Some(rect) = rect else {
-            if let Some(highlight) = self.highlight.as_mut().filter(|h| !h.hidden) {
-                highlight.hidden = true;
-                if let Some(style) = highlight.surface.layer() {
-                    style.set_opacity(0.0);
-                }
-                highlight.surface.commit();
+            if let Some(highlight) = self.highlight.as_mut() {
+                highlight.shown = false;
+                highlight.fill.set_hidden(true);
             }
             return;
         };
         if self.highlight.is_none() {
-            let Ok(surface) = SubsurfaceSurface::new(self.clip.wl_surface(), 0, 0, 1, 1) else {
+            let Ok(mut fill) = Fill::new(self.clip.wl_surface()) else {
                 return;
             };
-            set_empty_input_region(surface.wl_surface());
-            surface.place_below(self.band_surface.wl_surface());
+            fill.set_hidden(true);
+            fill.place_below(self.band_surface.wl_surface());
             // The order is the clip's pending state.
             self.clip.commit();
             self.highlight = Some(Highlight {
-                surface,
+                fill,
                 target: rect,
                 from: rect,
                 started: Instant::now(),
-                color: None,
-                radius: -1.0,
-                hidden: true,
-                sent: None,
+                shown: false,
             });
         }
         let Some(highlight) = self.highlight.as_mut() else {
             return;
         };
-        if highlight.color != Some(color) {
-            highlight.color = Some(color);
-            highlight.surface.draw(|canvas| {
-                canvas.clear(color);
-            });
-        }
-        if highlight.radius != radius {
-            highlight.radius = radius;
-            if let Some(style) = highlight.surface.layer() {
-                style.set_corner_radius(radius as f64);
-            }
-        }
+        highlight.fill.set_style(color, radius);
         let now = Instant::now();
-        if highlight.hidden {
+        if !highlight.shown {
             // Nothing on screen to slide from: it appears where it belongs.
-            highlight.hidden = false;
+            highlight.shown = true;
             highlight.from = rect;
-            highlight.sent = None;
         } else if highlight.target != rect {
-            highlight.from = slide(
-                highlight.from,
-                highlight.target,
-                now - highlight.started,
-            );
+            highlight.from = slide(highlight.from, highlight.target, now - highlight.started);
         }
         if highlight.target != rect {
             highlight.target = rect;
@@ -492,18 +470,25 @@ impl ScrollSurfaces {
     /// Whether the highlight is still sliding.
     pub fn highlight_animating(&self) -> bool {
         self.highlight.as_ref().is_some_and(|highlight| {
-            !highlight.hidden
+            highlight.shown
                 && highlight.from != highlight.target
                 && highlight.started.elapsed() < HIGHLIGHT_SLIDE
         })
     }
 
     /// Put the highlight where its slide has got to, moved with the content.
-    fn position_highlight(&mut self, offset: f32) -> bool {
-        let (axis, scale) = (self.axis, self.scale());
-        let Some(highlight) = self.highlight.as_mut().filter(|h| !h.hidden) else {
+    /// `scrolled` says the content moved on this step.
+    fn position_highlight(&mut self, offset: f32, scrolled: bool) -> bool {
+        let axis = self.axis;
+        let Some(highlight) = self.highlight.as_mut().filter(|h| h.shown) else {
             return false;
         };
+        // A slide is measured in the content, so while the content itself is
+        // moving it would trail behind the item it marks — out of the pane,
+        // on a fast fling. The mark goes straight to its item instead.
+        if scrolled {
+            highlight.from = highlight.target;
+        }
         let rect = slide(
             highlight.from,
             highlight.target,
@@ -513,23 +498,8 @@ impl ScrollSurfaces {
             Axis::Vertical => rect.with_offset((0.0, -offset)),
             Axis::Horizontal => rect.with_offset((-offset, 0.0)),
         };
-        if highlight.sent == Some(local) {
-            return false;
-        }
-        let appearing = highlight.sent.is_none();
-        highlight.sent = Some(local);
-        // Style geometry only: the wash takes no input, so where the pointer
-        // would find it does not matter.
-        if let Some(style) = highlight.surface.layer() {
-            let px = |points: f32| (points * scale).round() as f64;
-            style.set_size(px(local.width()), px(local.height()));
-            style.set_position(px(local.left), px(local.top));
-            if appearing {
-                style.set_opacity(1.0);
-            }
-        }
-        highlight.surface.commit();
-        true
+        // Placed before it is shown, so it never appears where it last was.
+        highlight.fill.set_rect(local) | highlight.fill.set_hidden(false)
     }
 
     /// Bring the surfaces in line with the view: repaint the band if the scroll
@@ -616,8 +586,9 @@ impl ScrollSurfaces {
             }
         }
 
-        changed |= self.position_band(state.offset());
-        changed |= self.position_highlight(state.offset());
+        let band_moved = self.position_band(state.offset());
+        changed |= band_moved;
+        changed |= self.position_highlight(state.offset(), band_moved);
         changed |= self.position_thumb(state, theme);
         changed
     }
