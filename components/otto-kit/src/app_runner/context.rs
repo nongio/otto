@@ -149,8 +149,8 @@ thread_local! {
     /// one has been made.
     static FRAMES_REQUESTED: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
     /// Surfaces that have committed a painted frame the compositor has not yet
-    /// said it presented. See [`AppContext::frame_in_flight`].
-    static FRAMES_IN_FLIGHT: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// said it presented, and when. See [`AppContext::frame_in_flight`].
+    static FRAMES_IN_FLIGHT: RefCell<HashMap<ObjectId, std::time::Instant>> = RefCell::new(HashMap::new());
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
     static OUTPUT_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
@@ -1259,7 +1259,9 @@ impl<'a> AppContext<'a> {
 
         Self::request_loop_frame(surface);
         FRAMES_IN_FLIGHT.with(|surfaces| {
-            surfaces.borrow_mut().insert(surface.id());
+            surfaces
+                .borrow_mut()
+                .insert(surface.id(), std::time::Instant::now());
         });
     }
 
@@ -1299,8 +1301,19 @@ impl<'a> AppContext<'a> {
 
     /// Whether a painted frame committed on this surface has yet to be
     /// presented.
+    ///
+    /// A frame unanswered for [`FRAME_ANSWER_TIMEOUT`] no longer counts. The
+    /// compositor answers every frame it shows, but a surface it never shows —
+    /// one whose parent went away, a compositor that sends no callbacks for
+    /// what is out of sight — would otherwise hold everything paced on it for
+    /// good: a pane that never scrolls again, a card that never repaints.
     pub fn frame_in_flight(surface_id: &ObjectId) -> bool {
-        FRAMES_IN_FLIGHT.with(|surfaces| surfaces.borrow().contains(surface_id))
+        FRAMES_IN_FLIGHT.with(|surfaces| {
+            surfaces
+                .borrow()
+                .get(surface_id)
+                .is_some_and(|committed| still_in_flight(committed.elapsed()))
+        })
     }
 
     /// The compositor answered the surface's frame request.
@@ -1310,6 +1323,29 @@ impl<'a> AppContext<'a> {
         });
         FRAMES_IN_FLIGHT.with(|surfaces| {
             surfaces.borrow_mut().remove(surface_id);
+        });
+    }
+
+    /// Forget everything kept about a surface that is being destroyed: its
+    /// callback will never come, and its id may be handed to a new surface.
+    ///
+    /// Tolerates being called from inside a frame callback, where the
+    /// callback table is borrowed, and during thread teardown.
+    pub(crate) fn forget_surface(surface_id: &ObjectId) {
+        let _ = FRAMES_REQUESTED.try_with(|surfaces| {
+            if let Ok(mut surfaces) = surfaces.try_borrow_mut() {
+                surfaces.remove(surface_id);
+            }
+        });
+        let _ = FRAMES_IN_FLIGHT.try_with(|surfaces| {
+            if let Ok(mut surfaces) = surfaces.try_borrow_mut() {
+                surfaces.remove(surface_id);
+            }
+        });
+        let _ = FRAME_LOOPS.try_with(|loops| {
+            if let Ok(mut loops) = loops.try_borrow_mut() {
+                loops.remove(surface_id);
+            }
         });
     }
 
@@ -1877,6 +1913,30 @@ impl<'a> AppContext<'a> {
         }
 
         RENDERER_EXIT_FLAG.store(false, Ordering::Relaxed);
+    }
+}
+
+/// How long a committed frame may go unanswered before nothing waits on it.
+///
+/// Matches the slowest rate Otto sends callbacks at, to a window out of sight,
+/// so a pane in a hidden window still steps no faster than it is shown.
+pub const FRAME_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether a frame committed `elapsed` ago still holds the next one back.
+fn still_in_flight(elapsed: std::time::Duration) -> bool {
+    elapsed < FRAME_ANSWER_TIMEOUT
+}
+
+#[cfg(test)]
+mod frame_in_flight_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn an_unanswered_frame_stops_holding_the_next_one_back() {
+        assert!(still_in_flight(Duration::ZERO));
+        assert!(still_in_flight(FRAME_ANSWER_TIMEOUT - Duration::from_millis(1)));
+        assert!(!still_in_flight(FRAME_ANSWER_TIMEOUT));
     }
 }
 

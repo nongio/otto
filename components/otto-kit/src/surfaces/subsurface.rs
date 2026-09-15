@@ -190,12 +190,24 @@ impl SubsurfaceSurface {
 }
 
 impl SubsurfaceSurface {
-    /// Destroy the subsurface and its underlying wl_surface.
+    /// Destroy the subsurface and its underlying wl_surface. Calling it again
+    /// does nothing.
+    ///
+    /// Skia and EGL go first, then the style object, then the Wayland objects
+    /// they were built on; whatever was pacing itself on this surface's frame
+    /// callbacks stops waiting for one.
     pub fn destroy(&mut self) {
-        if let Some(subsurface) = self.subsurface.take() {
-            subsurface.destroy();
-        }
-        self.base_surface.wl_surface().destroy();
+        use wayland_client::Proxy;
+
+        let Some(subsurface) = self.subsurface.take() else {
+            return;
+        };
+        drop(self.base_surface.take_skia_surface());
+        self.base_surface.take_surface_style();
+        subsurface.destroy();
+        let surface = self.base_surface.wl_surface();
+        crate::app_runner::AppContext::forget_surface(&surface.id());
+        surface.destroy();
     }
 
     /// Get reference to the base surface

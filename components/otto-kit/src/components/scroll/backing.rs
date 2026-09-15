@@ -554,6 +554,10 @@ impl ScrollSurfaces {
             self.band = Band::empty();
             self.last_band_offset = None;
             self.last_thumb_offset = None;
+            // The thumb's claimed size was scaled too, and is only sent again
+            // when its length changes — which a scale change does not do.
+            self.thumb_size = (0.0, 0.0);
+            self.last_thumb_length = None;
         }
 
         debug_assert_eq!(
@@ -640,9 +644,6 @@ impl ScrollSurfaces {
     {
         let (width, height) = self.oriented(self.band.length(), self.cross_extent());
         self.band_surface.resize(width as i32, height as i32);
-        if let Some(style) = self.band_surface.layer() {
-            style.set_size(self.px(width), self.px(height));
-        }
 
         let rect = self.band.rect(self.axis, 0.0, self.cross_extent());
         let shift = match self.axis {
@@ -656,6 +657,13 @@ impl ScrollSurfaces {
             content(canvas, rect);
             canvas.restore();
         });
+        // Claimed behind the buffer that fits it, never ahead: the style
+        // applies a size the moment it arrives, and a size sent before the
+        // paint has the old band drawn stretched to it until the paint lands.
+        // The move that follows in `position_band` goes out in the same flush.
+        if let Some(style) = self.band_surface.layer() {
+            style.set_size(self.px(width), self.px(height));
+        }
         // A fresh buffer starts at the surface's own origin; wherever it was
         // standing before means nothing now.
         self.last_band_offset = None;
@@ -670,10 +678,7 @@ impl ScrollSurfaces {
         let (width, height) = self.oriented(self.band.length(), self.cross_extent());
         self.band_surface.resize(1, 1);
         if let Some(style) = self.band_surface.layer() {
-            style.set_size(
-                (width.max(1.0) * self.scale()) as f64,
-                (height.max(1.0) * self.scale()) as f64,
-            );
+            style.set_size(self.px(width.max(1.0)), self.px(height.max(1.0)));
         }
         self.band_surface.draw(|canvas| {
             canvas.clear(Color::TRANSPARENT);
@@ -856,6 +861,21 @@ impl ScrollSurfaces {
         }
         self.thumb.commit();
         true
+    }
+}
+
+impl Drop for ScrollSurfaces {
+    /// A pane let go of is torn down, children before the clip they hang
+    /// from: a subsurface merely forgotten stays mapped, with its buffer and
+    /// its input region, until the client exits.
+    ///
+    /// Panes nested in a container are the host's to drop, and belong before
+    /// the container — once its band is gone they have nowhere to be shown.
+    fn drop(&mut self) {
+        self.highlight = None;
+        self.thumb.destroy();
+        self.band_surface.destroy();
+        self.clip.destroy();
     }
 }
 
