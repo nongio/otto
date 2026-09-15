@@ -54,6 +54,8 @@
 //! [`ScrollSurfaces::set_input_passthrough`]: every event over the pane then
 //! reaches the window as though the pane were painted into it.
 
+use std::time::{Duration, Instant};
+
 use skia_safe::{Canvas, Color, Rect};
 use wayland_client::protocol::wl_surface::WlSurface;
 
@@ -74,6 +76,9 @@ const THUMB_STRIP: f32 = 16.0;
 /// How far the thumb's length may be stretched from the length its buffer was
 /// painted at, as a fraction, before it is painted again.
 const THUMB_STRETCH: f32 = 0.25;
+
+/// How long the highlight takes to slide onto a new item.
+const HIGHLIGHT_SLIDE: Duration = Duration::from_millis(110);
 
 /// The surfaces behind a [`ScrollView`], and the band currently painted into
 /// them.
@@ -114,6 +119,38 @@ pub struct ScrollSurfaces {
     /// The thumb length last claimed through the style, which may differ from
     /// the length its buffer was painted at while an overscroll squashes it.
     last_thumb_length: Option<f32>,
+    /// The selection wash under the content; see [`Self::set_highlight`].
+    highlight: Option<Highlight>,
+}
+
+/// A rounded wash under the content marking one item: a pixel of colour the
+/// compositor stretches and rounds, sitting between the pane's ground and its
+/// band, so moving the selection repaints nothing.
+struct Highlight {
+    surface: SubsurfaceSurface,
+    /// Where it is going, in content coordinates.
+    target: Rect,
+    /// Where the slide towards `target` started, and when.
+    from: Rect,
+    started: Instant,
+    color: Option<Color>,
+    radius: f32,
+    hidden: bool,
+    /// The pane-local rect last sent, `None` when it has to be sent again.
+    sent: Option<Rect>,
+}
+
+/// Where a slide from `from` to `to` has got to after `elapsed`, eased out.
+fn slide(from: Rect, to: Rect, elapsed: Duration) -> Rect {
+    let t = (elapsed.as_secs_f32() / HIGHLIGHT_SLIDE.as_secs_f32()).clamp(0.0, 1.0);
+    let eased = 1.0 - (1.0 - t) * (1.0 - t);
+    let lerp = |a: f32, b: f32| a + (b - a) * eased;
+    Rect::from_ltrb(
+        lerp(from.left, to.left),
+        lerp(from.top, to.top),
+        lerp(from.right, to.right),
+        lerp(from.bottom, to.bottom),
+    )
 }
 
 impl ScrollSurfaces {
@@ -213,6 +250,7 @@ impl ScrollSurfaces {
             hidden: false,
             waiting: false,
             last_thumb_length: None,
+            highlight: None,
         };
         surfaces.configure_clip();
         Ok(surfaces)
@@ -379,6 +417,121 @@ impl ScrollSurfaces {
         true
     }
 
+    /// Mark `rect`, in content coordinates, with a rounded wash of `color`
+    /// under the content, or take the mark away with `None`.
+    ///
+    /// The wash is a surface of its own between the pane's ground and its
+    /// band: moving it — to follow the keyboard or the pointer — slides it
+    /// there over [`HIGHLIGHT_SLIDE`] and repaints nothing, and a scroll moves
+    /// it with the content. Takes effect on the next [`Self::sync`]; a host
+    /// keeps syncing while [`Self::highlight_animating`].
+    pub fn set_highlight(&mut self, rect: Option<Rect>, color: Color, radius: f32) {
+        let Some(rect) = rect else {
+            if let Some(highlight) = self.highlight.as_mut().filter(|h| !h.hidden) {
+                highlight.hidden = true;
+                if let Some(style) = highlight.surface.layer() {
+                    style.set_opacity(0.0);
+                }
+                highlight.surface.commit();
+            }
+            return;
+        };
+        if self.highlight.is_none() {
+            let Ok(surface) = SubsurfaceSurface::new(self.clip.wl_surface(), 0, 0, 1, 1) else {
+                return;
+            };
+            set_empty_input_region(surface.wl_surface());
+            surface.place_below(self.band_surface.wl_surface());
+            // The order is the clip's pending state.
+            self.clip.commit();
+            self.highlight = Some(Highlight {
+                surface,
+                target: rect,
+                from: rect,
+                started: Instant::now(),
+                color: None,
+                radius: -1.0,
+                hidden: true,
+                sent: None,
+            });
+        }
+        let Some(highlight) = self.highlight.as_mut() else {
+            return;
+        };
+        if highlight.color != Some(color) {
+            highlight.color = Some(color);
+            highlight.surface.draw(|canvas| {
+                canvas.clear(color);
+            });
+        }
+        if highlight.radius != radius {
+            highlight.radius = radius;
+            if let Some(style) = highlight.surface.layer() {
+                style.set_corner_radius(radius as f64);
+            }
+        }
+        let now = Instant::now();
+        if highlight.hidden {
+            // Nothing on screen to slide from: it appears where it belongs.
+            highlight.hidden = false;
+            highlight.from = rect;
+            highlight.sent = None;
+        } else if highlight.target != rect {
+            highlight.from = slide(
+                highlight.from,
+                highlight.target,
+                now - highlight.started,
+            );
+        }
+        if highlight.target != rect {
+            highlight.target = rect;
+            highlight.started = now;
+        }
+    }
+
+    /// Whether the highlight is still sliding.
+    pub fn highlight_animating(&self) -> bool {
+        self.highlight.as_ref().is_some_and(|highlight| {
+            !highlight.hidden
+                && highlight.from != highlight.target
+                && highlight.started.elapsed() < HIGHLIGHT_SLIDE
+        })
+    }
+
+    /// Put the highlight where its slide has got to, moved with the content.
+    fn position_highlight(&mut self, offset: f32) -> bool {
+        let (axis, scale) = (self.axis, self.scale());
+        let Some(highlight) = self.highlight.as_mut().filter(|h| !h.hidden) else {
+            return false;
+        };
+        let rect = slide(
+            highlight.from,
+            highlight.target,
+            highlight.started.elapsed(),
+        );
+        let local = match axis {
+            Axis::Vertical => rect.with_offset((0.0, -offset)),
+            Axis::Horizontal => rect.with_offset((-offset, 0.0)),
+        };
+        if highlight.sent == Some(local) {
+            return false;
+        }
+        let appearing = highlight.sent.is_none();
+        highlight.sent = Some(local);
+        // Style geometry only: the wash takes no input, so where the pointer
+        // would find it does not matter.
+        if let Some(style) = highlight.surface.layer() {
+            let px = |points: f32| (points * scale).round() as f64;
+            style.set_size(px(local.width()), px(local.height()));
+            style.set_position(px(local.left), px(local.top));
+            if appearing {
+                style.set_opacity(1.0);
+            }
+        }
+        highlight.surface.commit();
+        true
+    }
+
     /// Bring the surfaces in line with the view: repaint the band if the scroll
     /// has reached its margin, then move it and the scrollbar to where the
     /// current offset puts them.
@@ -464,6 +617,7 @@ impl ScrollSurfaces {
         }
 
         changed |= self.position_band(state.offset());
+        changed |= self.position_highlight(state.offset());
         changed |= self.position_thumb(state, theme);
         changed
     }
@@ -743,4 +897,22 @@ fn set_empty_input_region(surface: &WlSurface) {
         .create_region(AppContext::queue_handle(), ());
     surface.set_input_region(Some(&region));
     region.destroy();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_slide_eases_out_from_where_it_started_to_where_it_is_going() {
+        let from = Rect::from_xywh(0.0, 0.0, 100.0, 20.0);
+        let to = Rect::from_xywh(0.0, 40.0, 100.0, 20.0);
+        assert_eq!(slide(from, to, Duration::ZERO), from);
+        assert_eq!(slide(from, to, HIGHLIGHT_SLIDE), to);
+        assert_eq!(slide(from, to, HIGHLIGHT_SLIDE * 3), to);
+        // Eased out: past halfway by half the time.
+        let half = slide(from, to, HIGHLIGHT_SLIDE / 2);
+        assert!(half.top > 20.0 && half.top < 40.0, "{half:?}");
+        assert_eq!(half.height(), 20.0);
+    }
 }

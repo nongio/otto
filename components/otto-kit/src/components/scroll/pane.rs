@@ -207,10 +207,18 @@ impl ScrollPane {
         Rect::from_xywh(origin.x, origin.y, rect.width(), rect.height())
     }
 
-    /// Whether the pane still has motion, a bounce or a scrollbar fade to run:
-    /// a host keeps calling [`Self::update`] while it does.
+    /// Whether the pane still has motion, a bounce, a scrollbar fade or a
+    /// highlight slide to run: a host keeps calling [`Self::update`] while it
+    /// does.
     pub fn is_animating(&self) -> bool {
-        self.view.is_animating()
+        self.view.is_animating() || self.surfaces.highlight_animating()
+    }
+
+    /// Mark `rect`, in content coordinates, with a rounded wash under the
+    /// content — the selected row, the cell under the pointer — or clear it
+    /// with `None`. Moving it slides it there and repaints nothing.
+    pub fn set_highlight(&mut self, rect: Option<Rect>, color: Color, radius: f32) {
+        self.surfaces.set_highlight(rect, color, radius);
     }
 
     /// Bring the pane up to date with `content`: its length, its revision,
@@ -251,7 +259,7 @@ impl ScrollPane {
             self.view.tick();
         }
         let sent = self.surfaces.sync(&self.view, theme, paint);
-        sent || self.surfaces.waiting() || animating
+        sent || self.surfaces.waiting() || animating || self.surfaces.highlight_animating()
     }
 
     /// A wheel or touchpad delta along the pane's axis, in points. `discrete`
