@@ -2,9 +2,9 @@
 //!
 //! Built the way otto-kit's other panels are: a tree of layers positioned once
 //! and then *changed*, rather than a canvas redrawn from scratch. That is what
-//! buys what an immediate-mode launcher could not have: the selection slides
-//! between rows instead of jumping, on a transition the engine runs without
-//! the app driving frames by hand.
+//! buys what an immediate-mode launcher could not have: the card grows and
+//! shrinks with the list on a transition the engine runs without the app
+//! driving frames by hand.
 //!
 //! There is deliberately no dimming behind the card. A scrim painted by this
 //! client would sit between the desktop and the card, and the compositor's
@@ -19,16 +19,20 @@
 //! menus and the islands do. What this file draws onto that material is the
 //! query, the divider, and the rows.
 //!
-//! Rows are allocated once, up to [`MAX_ROWS`], and reused: filtering swaps
-//! each row's draw content, never the shape of the tree. Layout is in logical
-//! points and absolute — a row appearing must not move the field being typed
-//! into.
+//! The result rows are not in this scene. They are a scroll pane over the card
+//! — see `main.rs` — whose band [`Palette::paint_rows`] paints, with the
+//! selection a highlight the pane slides under them: scrolling the list or
+//! moving the selection repaints neither the card nor the rows. Layout is in
+//! logical points and absolute — a row appearing must not move the field being
+//! typed into.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
+use otto_kit::components::scroll::RowLayout;
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::icons::named_icon_sized;
 use otto_kit::theme::Theme;
@@ -50,10 +54,14 @@ pub const ROW_H: f32 = 46.0;
 pub const MAX_ROWS: usize = 8;
 /// Padding above and below the list.
 const LIST_PAD: f32 = 8.0;
+/// Where the list starts, down the card.
+pub const LIST_TOP: f32 = FIELD_H + 1.0 + LIST_PAD;
 /// Corner radius of the card, applied by the compositor to the subsurface.
 pub const RADIUS: f32 = 10.0;
 const ICON: f32 = 28.0;
 const ROW_INSET: f32 = 8.0;
+/// Corner radius of the selection's highlight.
+pub const HIGHLIGHT_RADIUS: f32 = 9.0;
 /// The card at its tallest, which is how big its buffer is allocated: a
 /// shorter card is the same buffer with the compositor clipping it, so the
 /// height can change without reallocating anything.
@@ -113,11 +121,6 @@ pub fn input_rect(surface: (f32, f32), rows: usize) -> (i32, i32, i32, i32) {
     )
 }
 
-/// A row as the scene needs it — what to draw, with the icon already resolved.
-struct Row {
-    layer: Layer,
-}
-
 pub struct Palette {
     engine: Arc<Engine>,
     /// Root of the card subsurface's scene. Its own background is left to the
@@ -125,17 +128,20 @@ pub struct Palette {
     card: Layer,
     field: Layer,
     divider: Layer,
-    list: Layer,
-    highlight: Layer,
-    rows: Vec<Row>,
+    /// The line that stands in for the list when nothing matched.
+    message: Layer,
 
     size: (f32, f32),
-    /// Number of rows currently shown, which sets the card's height.
+    /// Number of lines currently shown, which sets the card's height.
     visible: usize,
+    /// Number of result rows on screen: `visible`, unless that one line is
+    /// the message.
+    rows_shown: usize,
     /// Icons live as long as the launcher does. It is open for seconds, and
     /// decoding the same icon on every keystroke is the one thing that would
-    /// make typing feel slow.
-    icons: HashMap<String, Option<Image>>,
+    /// make typing feel slow. Behind a cell because painting a band only
+    /// borrows the palette.
+    icons: RefCell<HashMap<String, Option<Image>>>,
     dark: bool,
 }
 
@@ -165,34 +171,22 @@ impl Palette {
 
         let field = new_layer("launcher-field");
         let divider = new_layer("launcher-divider");
-        let list = new_layer("launcher-list");
-        let highlight = new_layer("launcher-highlight");
+        let message = new_layer("launcher-message");
 
         let _ = card.add_sublayer(&field);
         let _ = card.add_sublayer(&divider);
-        let _ = card.add_sublayer(&list);
-        // Before the rows, so it is behind their text.
-        let _ = list.add_sublayer(&highlight);
-
-        let rows = (0..MAX_ROWS)
-            .map(|_| {
-                let layer = new_layer("launcher-row");
-                let _ = list.add_sublayer(&layer);
-                Row { layer }
-            })
-            .collect();
+        let _ = card.add_sublayer(&message);
 
         let mut palette = Self {
             engine,
             card,
             field,
             divider,
-            list,
-            highlight,
-            rows,
+            message,
             size: (0.0, 0.0),
             visible: 0,
-            icons: HashMap::new(),
+            rows_shown: 0,
+            icons: RefCell::new(HashMap::new()),
             dark,
         };
         palette.style();
@@ -235,20 +229,42 @@ impl Palette {
             },
             None,
         );
+    }
 
-        self.highlight.set_background_color(
-            PaintColor::Solid {
-                color: lay_color(if self.dark {
-                    Color::from_argb(46, 255, 255, 255)
-                } else {
-                    Color::from_argb(20, 0, 0, 0)
-                }),
-            },
-            None,
-        );
-        self.highlight
-            .set_border_corner_radius(BorderRadius::new_single(9.0), None);
-        self.highlight.set_opacity(0.0_f32, None);
+    /// The selection's wash, which the list pane draws under the rows.
+    pub fn highlight_color(&self) -> Color {
+        if self.dark {
+            Color::from_argb(46, 255, 255, 255)
+        } else {
+            Color::from_argb(20, 0, 0, 0)
+        }
+    }
+
+    /// Where the highlight goes for row `index`, in the list's content
+    /// coordinates.
+    pub fn highlight_rect(index: usize) -> Rect {
+        Rect::from_xywh(
+            ROW_INSET,
+            index as f32 * ROW_H + 2.0,
+            CARD_W - ROW_INSET * 2.0,
+            ROW_H - 4.0,
+        )
+    }
+
+    fn title_color(&self) -> Color {
+        if self.dark {
+            Color::from_argb(240, 255, 255, 255)
+        } else {
+            Color::from_argb(240, 12, 12, 14)
+        }
+    }
+
+    fn subtitle_color(&self) -> Color {
+        if self.dark {
+            Color::from_argb(150, 255, 255, 255)
+        } else {
+            Color::from_argb(140, 0, 0, 0)
+        }
     }
 
     /// The surface's size changed. Everything that does not depend on the
@@ -269,26 +285,11 @@ impl Palette {
         self.divider
             .set_position(LayerPoint { x: 0.0, y: FIELD_H }, None);
         self.divider.set_size(LayerSize::points(CARD_W, 1.0), None);
-        self.list.set_position(
+        self.message.set_position(
             LayerPoint {
                 x: 0.0,
-                y: FIELD_H + 1.0 + LIST_PAD,
+                y: LIST_TOP,
             },
-            None,
-        );
-
-        for (index, row) in self.rows.iter().enumerate() {
-            row.layer.set_position(
-                LayerPoint {
-                    x: 0.0,
-                    y: index as f32 * ROW_H,
-                },
-                None,
-            );
-            row.layer.set_size(LayerSize::points(CARD_W, ROW_H), None);
-        }
-        self.highlight.set_size(
-            LayerSize::points(CARD_W - ROW_INSET * 2.0, ROW_H - 4.0),
             None,
         );
 
@@ -311,39 +312,18 @@ impl Palette {
         input_rect(self.size, self.visible)
     }
 
-    /// Which visible row a point in the *card's own* coordinates is over.
-    ///
-    /// Pointer events on the card arrive relative to its subsurface, so this
-    /// takes them as they come rather than in screen coordinates.
-    pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
-        let (width, height) = self.card_size();
-        if x < 0.0 || x > width || y < 0.0 || y > height {
-            return None;
-        }
-        let local_y = y - (FIELD_H + 1.0 + LIST_PAD);
-        if local_y < 0.0 {
-            return None;
-        }
-        let row = (local_y / ROW_H) as usize;
-        (row < self.visible).then_some(row)
+    /// The list pane's viewport, in the card's own coordinates: as many rows
+    /// as are on screen, and empty when the card shows none.
+    pub fn list_rect(&self) -> Rect {
+        Rect::from_xywh(0.0, LIST_TOP, CARD_W, self.rows_shown as f32 * ROW_H)
     }
 
-    /// Push the current query and results into the scene.
+    /// Push the current query into the scene, and size the card for `count`
+    /// results.
     ///
-    /// `items` are the matches, already ranked; `offset` is the first of them
-    /// that is on screen and `selected` the one that is highlighted, both as
-    /// indices into `items`.
     /// `empty_message` is what to say when there is nothing to show — `None`
     /// when there is nothing to say, and the card is the field alone.
-    pub fn update(
-        &mut self,
-        input: &TextInput,
-        items: &[&Item],
-        labels: &[&'static str],
-        offset: usize,
-        selected: usize,
-        empty_message: Option<&str>,
-    ) {
+    pub fn update(&mut self, input: &TextInput, count: usize, empty_message: Option<&str>) {
         let field = input.clone();
         self.field
             .set_draw_content(move |canvas: &Canvas, width: f32, height: f32| {
@@ -351,65 +331,63 @@ impl Palette {
                 Rect::from_wh(width, height)
             });
 
-        let title_font = self.font(15.0, FontStyle::normal());
-        let subtitle_font = self.font(11.5, FontStyle::normal());
-        let badge_font = self.font(10.5, FontStyle::normal());
-        let title_color = if self.dark {
-            Color::from_argb(240, 255, 255, 255)
-        } else {
-            Color::from_argb(240, 12, 12, 14)
-        };
-        let subtitle_color = if self.dark {
-            Color::from_argb(150, 255, 255, 255)
-        } else {
-            Color::from_argb(140, 0, 0, 0)
-        };
-
-        let shown = items.len().saturating_sub(offset).min(MAX_ROWS);
-
-        // Nothing matched: the first row carries the message, so the card
-        // keeps a shape instead of collapsing to a bare field.
-        if items.is_empty() {
-            // A query that matched nothing says so, in the first row, so the
+        let transition = Some(Transition::ease_out_quad(0.12));
+        if count == 0 {
+            // A query that matched nothing says so, in the first line, so the
             // card keeps a shape instead of collapsing under the answer. An
             // empty query has nothing to report — a launcher just opened has
             // not failed to find anything — and the card is the field alone.
-            let rows = match empty_message {
+            let lines = match empty_message {
                 Some(message) => {
-                    self.rows[0].layer.set_opacity(1.0_f32, None);
-                    self.rows[0].layer.set_draw_content(draw_message(
+                    self.message.set_opacity(1.0_f32, None);
+                    self.message.set_draw_content(draw_message(
                         message.to_string(),
-                        title_font.clone(),
-                        subtitle_color,
+                        self.font(15.0, FontStyle::normal()),
+                        self.subtitle_color(),
                     ));
                     1
                 }
-                None => 0,
+                None => {
+                    self.message.set_opacity(0.0_f32, None);
+                    self.message.set_draw_content(draw_nothing());
+                    0
+                }
             };
-            for row in self.rows.iter().skip(rows) {
-                row.layer.set_opacity(0.0_f32, None);
-                row.layer.set_draw_content(draw_nothing());
-            }
-            self.highlight.set_opacity(0.0_f32, None);
-            self.visible = rows;
-            self.apply_card_height(rows, Some(Transition::ease_out_quad(0.12)));
+            self.visible = lines;
+            self.rows_shown = 0;
+            self.apply_card_height(lines, transition);
             return;
         }
 
-        for (row_index, row) in self.rows.iter().enumerate() {
-            let Some(item) = items.get(offset + row_index) else {
-                row.layer.set_opacity(0.0_f32, None);
-                row.layer.set_draw_content(draw_nothing());
-                continue;
-            };
+        self.message.set_opacity(0.0_f32, None);
+        self.message.set_draw_content(draw_nothing());
+        self.visible = count.min(MAX_ROWS);
+        self.rows_shown = self.visible;
+        self.apply_card_height(self.visible, transition);
+    }
 
+    /// Paint the rows of `items` that fall inside `band`, in the list's
+    /// content coordinates — row 0 at the top — for the list pane's band.
+    /// `labels` name each item's source.
+    pub fn paint_rows(
+        &self,
+        canvas: &Canvas,
+        band: Rect,
+        items: &[&Item],
+        labels: &[&'static str],
+    ) {
+        let title_font = self.font(15.0, FontStyle::normal());
+        let subtitle_font = self.font(11.5, FontStyle::normal());
+        let badge_font = self.font(10.5, FontStyle::normal());
+        let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
+        let layout = RowLayout::new(ROW_H, items.len());
+        for index in layout.visible(band) {
+            let item = items[index];
             let icon = item
                 .icon
                 .as_deref()
-                .and_then(|name| resolve_icon(&mut self.icons, name));
-
-            row.layer.set_opacity(1.0_f32, None);
-            row.layer.set_draw_content(draw_row(
+                .and_then(|name| resolve_icon(&mut self.icons.borrow_mut(), name));
+            let draw = draw_row(
                 icon,
                 item.title.clone(),
                 item.subtitle.clone(),
@@ -419,23 +397,13 @@ impl Palette {
                 badge_font.clone(),
                 title_color,
                 subtitle_color,
-            ));
+            );
+            let row = layout.rect(index, CARD_W);
+            canvas.save();
+            canvas.translate((row.left, row.top));
+            draw(canvas, row.width(), row.height());
+            canvas.restore();
         }
-
-        // The selection slides. `selected` is an index into the whole match
-        // list; on screen it is however far it is past the scroll offset.
-        let on_screen = selected.saturating_sub(offset);
-        self.highlight.set_opacity(1.0_f32, None);
-        self.highlight.set_position(
-            LayerPoint {
-                x: ROW_INSET,
-                y: on_screen as f32 * ROW_H + 2.0,
-            },
-            Some(Transition::ease_out_quad(0.11)),
-        );
-
-        self.visible = shown;
-        self.apply_card_height(shown, Some(Transition::ease_out_quad(0.12)));
     }
 
     fn apply_card_height(&self, rows: usize, transition: Option<Transition>) {
@@ -444,7 +412,7 @@ impl Palette {
         let height = card_height(rows);
         self.card
             .set_size(LayerSize::points(CARD_W, height), transition);
-        self.list
+        self.message
             .set_size(LayerSize::points(CARD_W, rows as f32 * ROW_H), None);
     }
 

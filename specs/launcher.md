@@ -82,7 +82,14 @@ and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
 
 **Pointer.** Moving the pointer over a row selects it. Releasing over a row acts
-on it. The row under the pointer must be the row that highlights.
+on it. The row under the pointer must be the row that highlights. A wheel or a
+touchpad over the card scrolls the list — a touchpad with momentum and a
+stretch past either end, a notched wheel a step at a time — and the row that
+comes under the pointer is selected.
+
+The rows scroll on a surface of their own inside the card, and the selection's
+highlight slides on another beneath them: scrolling the list or moving the
+selection repaints neither the card nor the rows.
 
 The launcher takes pointer input over the card that is drawn — the query field,
 plus however many result rows are showing — and nowhere else. Its shadow is not
