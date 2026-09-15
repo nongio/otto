@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
-use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane, ScrollState, ScrollSurfaces};
+use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
 use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
@@ -25,7 +25,7 @@ use otto_kit::protocols::otto_surface_style_v1::{BeakEdge, BlendMode, ClipMode, 
 use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
-use skia_safe::Rect;
+use skia_safe::{Point, Rect};
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -45,8 +45,8 @@ use otto_emoji::view::{
 };
 use otto_emoji::{rank, recents, typing};
 
-/// How long the scene is kept painting after a change, so the selection's
-/// slide and the marker's are seen through to the end.
+/// How long the scene is kept painting after the tab marker moves, so its
+/// slide is seen through to the end.
 const SETTLE: Duration = Duration::from_millis(220);
 
 /// A frame the compositor never answered must not freeze the picker.
@@ -136,7 +136,7 @@ struct Picker {
     /// category. Pooled — a pane past the current count is hidden, not
     /// destroyed. A swipe, a scroll or a new selection moves surfaces and
     /// repaints neither the card nor the cells.
-    stack: Option<ScrollSurfaces>,
+    stack: Option<ScrollPane>,
     panes: Vec<ScrollPane>,
     /// Moves whenever the cells would paint differently.
     grid_revision: u64,
@@ -144,6 +144,12 @@ struct Picker {
     grid_busy: bool,
     /// The pane the tab marker was last drawn for.
     shown_pane: usize,
+    /// The tab the marker was last pushed to, so only its slide keeps the
+    /// scene painting.
+    painted_tab: Option<Option<usize>>,
+    /// The selection is the pointer's: it follows the cell under the pointer
+    /// as a pane glides, with no event to say so. Cleared by the keyboard.
+    follow_pointer: bool,
     /// Which way the current two-finger gesture is going: `Some(true)` a pan
     /// across the panes, `Some(false)` a scroll inside one. Chosen by the
     /// gesture's first delta and kept until the fingers lift.
@@ -224,6 +230,8 @@ impl Picker {
             grid_revision: 0,
             grid_busy: false,
             shown_pane: 0,
+            painted_tab: None,
+            follow_pointer: false,
             gesture_horizontal: None,
             last_axis: None,
             selected: None,
@@ -407,11 +415,39 @@ impl Picker {
         self.panes.get(pane).map(ScrollPane::offset).unwrap_or(0.0)
     }
 
+    /// A point on the card in the stack's content coordinates, which is where
+    /// the category panes are placed.
+    fn grid_point(&self, x: f32, y: f32) -> Option<Point> {
+        self.stack
+            .as_ref()
+            .map(|stack| stack.parent_to_content(Point::new(x, y)))
+    }
+
     /// Bring the grid's surfaces in line: the stack panned to where the swipe
     /// is, the panes in view scrolled, and the highlight on the selected cell.
     fn sync_grid(&mut self) {
         if !self.sized {
             return;
+        }
+        // A fling carries on after the fingers lift, and the cell under a
+        // still pointer changes with it: the pane under the pointer says
+        // which point of its content that is.
+        if self.follow_pointer {
+            let pan = self.pan.offset();
+            let under = self
+                .panes
+                .iter()
+                .enumerate()
+                .take(self.layout.pane_count())
+                .find_map(|(index, pane)| {
+                    let point = pane.hovered()?;
+                    let scroll = pane.offset();
+                    let x = point.x + Layout::pane_origin(index) - pan;
+                    self.layout.cell_at(x, point.y - scroll, pan, scroll)
+                });
+            if let Some(cell) = under {
+                self.select(Some(cell));
+            }
         }
         let (Some(stack), Some(palette)) = (self.stack.as_mut(), self.palette.as_ref()) else {
             return;
@@ -421,13 +457,10 @@ impl Picker {
         let mut busy = stack.set_hidden(self.cells.is_empty());
         stack.set_viewport(viewport);
         // The pan's own physics decide where the stack is — a page settle,
-        // with a stretch past either end — so the container is handed a
-        // state built from it rather than scrolling on its own.
+        // with a stretch past either end — so the container is moved to it
+        // rather than scrolling on its own.
         let pan = self.pan.offset();
-        let mut state = ScrollState::on_axis(Axis::Horizontal, Rect::from_wh(CARD_W, GRID_H));
-        state.set_content_length(self.layout.content_width());
-        state.set_offset_overscrolled(pan);
-        busy |= stack.sync_state(&state, 0.0, &theme, |_, _| {}) || stack.waiting();
+        busy |= stack.update_container_at(self.layout.content_width(), pan, &theme);
 
         let selected = self
             .selected
@@ -490,6 +523,7 @@ impl Picker {
     /// each end — the cells run through the panes in order, so this is a walk
     /// through the whole palette.
     fn move_horizontal(&mut self, delta: isize) {
+        self.follow_pointer = false;
         if self.cells.is_empty() {
             return;
         }
@@ -501,6 +535,7 @@ impl Picker {
 
     /// Up or down a row inside the selection's own pane, keeping the column.
     fn move_vertical(&mut self, rows: isize) {
+        self.follow_pointer = false;
         if self.cells.is_empty() {
             return;
         }
@@ -523,6 +558,7 @@ impl Picker {
 
     /// Pan to a tab's pane, and select its first cell.
     fn go_to_tab(&mut self, tab: usize) {
+        self.follow_pointer = false;
         let Some(pane) = self.layout.pane_for_tab(tab) else {
             return;
         };
@@ -725,7 +761,11 @@ impl Picker {
         palette.update_tabs(active);
         palette.update_message(empty_message.as_deref());
         palette.update_footer(&name, tone);
-        self.settle_until = Some(Instant::now() + SETTLE);
+        // The marker slides on a transition; nothing else in the scene moves.
+        if self.painted_tab != Some(active) {
+            self.painted_tab = Some(active);
+            self.settle_until = Some(Instant::now() + SETTLE);
+        }
         self.place_card();
         self.update_input_region();
     }
@@ -1084,9 +1124,8 @@ impl App for Picker {
         );
         // The grid, over the card's own drawing and inside its frost: a
         // container the swipe pans, which the category panes are placed in.
-        let mut stack =
-            ScrollSurfaces::container(card.wl_surface(), palette.grid_rect(), Axis::Horizontal)?;
-        stack.set_input_passthrough();
+        let stack =
+            ScrollPane::container(card.wl_surface(), palette.grid_rect(), Axis::Horizontal)?;
         self.stack = Some(stack);
         self.palette = Some(palette);
         self.card = Some(card);
@@ -1329,8 +1368,19 @@ impl App for Picker {
             let (x, y) = (event.position.0 as f32, event.position.1 as f32);
             match event.kind {
                 PointerEventKind::Motion { .. } if on_card => {
+                    self.follow_pointer = true;
+                    if let Some(inner) = self.grid_point(x, y) {
+                        for pane in self.panes.iter_mut() {
+                            pane.pointer_motion(inner);
+                        }
+                    }
                     if let Hit::Cell(cell) = self.hit(x, y) {
                         self.select(Some(cell));
+                    }
+                }
+                PointerEventKind::Leave { .. } => {
+                    for pane in self.panes.iter_mut() {
+                        pane.pointer_leave();
                     }
                 }
                 PointerEventKind::Press { .. } => {
@@ -1382,6 +1432,9 @@ impl App for Picker {
                     // scroll inside the one under the pointer.
                     let horizontal_gesture =
                         *self.gesture_horizontal.get_or_insert(dx.abs() > dy.abs());
+                    // A scroll keeps the cell under the pointer selected as
+                    // the pane glides; a swipe leaves the selection alone.
+                    self.follow_pointer = !horizontal_gesture;
 
                     if horizontal_gesture {
                         // Searching is a single pane, with nothing to swipe to.
@@ -1398,14 +1451,15 @@ impl App for Picker {
                             }
                         }
                     } else {
+                        let point = self.grid_point(x, y).unwrap_or(Point::new(0.0, 0.0));
                         let Some(view) = self.panes.get_mut(pane) else {
                             continue;
                         };
                         if discrete {
                             // A notch is a fixed step: no fling, no band.
-                            view.wheel(dy, true, false);
+                            view.wheel_at(point, dy, true, false);
                         } else if dy != 0.0 {
-                            view.wheel(dy, false, false);
+                            view.wheel_at(point, dy, false, false);
                         } else {
                             continue;
                         }

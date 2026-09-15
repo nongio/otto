@@ -104,11 +104,36 @@ pane.content_to_parent(point);      // a rename field, a drop ring
 pane.parent_to_content(point);      // hit-testing a press
 pane.visible();                     // content rect on screen: a11y, thumbnails
 pane.reveal(span);                  // keyboard cursor into view
+
+// the selection, under the content, sliding between items
+pane.set_highlight(Some(rect), color, radius);
+
+// the pointer, as the host's handler sees it
+pane.pointer_motion(point);         // also the scrollbar's hover and drag
+pane.wheel_at(point, delta, discrete, stop);
+pane.pointer_leave();
+pane.hovered();                     // content point under a still pointer, now
+
+// a container moved by other physics — paging, say
+stack.update_container_at(length, offset, &theme);
 ```
 
 Input stays with the host's window handler (the pane's surfaces pass the
 pointer through), so an application keeps hit-testing in one coordinate space
-and converts with `parent_to_content`.
+and converts with `parent_to_content`. A selection that follows the pointer
+asks `hovered()` on every update: a fling keeps moving after the fingers lift,
+and the item under a still pointer changes with no event to say so.
+
+The highlight is a surface of its own between the pane's ground and its band:
+moving the selection repaints nothing, and while the content scrolls the
+highlight goes straight to its item rather than trailing behind it.
+
+### `Fill` — a flat rect that moves with a pane
+
+One pixel of colour, stretched and rounded by the compositor: what the
+highlight is made of, and what a host uses for anything flat that has to ride
+in a pane rather than be painted into one — the divider down a column's edge.
+Recolouring, moving or resizing it is a request, never a paint.
 
 ### `ScrollGroup` — which pane a gesture belongs to
 

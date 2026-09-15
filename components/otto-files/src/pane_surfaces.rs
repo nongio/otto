@@ -31,7 +31,7 @@
 //! so a pan moves the stack and the window repaints nothing.
 
 use otto_kit::app_runner::AppContext;
-use otto_kit::components::scroll::{Axis, ScrollSurfaces};
+use otto_kit::components::scroll::{Axis, Fill, ScrollSurfaces};
 use otto_kit::prelude::*;
 use otto_kit::surfaces::SubsurfaceSurface;
 use otto_kit::theme::Theme;
@@ -234,7 +234,7 @@ impl ColumnPane {
     fn hide(&mut self) -> bool {
         let mut changed = self.surfaces.set_hidden(true);
         if let Some(divider) = self.divider.as_mut() {
-            changed |= divider.hide();
+            changed |= divider.set_hidden(true);
         }
         if let Some(status) = self.status.as_mut() {
             changed |= status.hide();
@@ -446,7 +446,6 @@ impl PaneSurfaces {
                 &band,
                 rect,
                 f.theme,
-                self.scale,
                 &mut self.stack_children_dirty,
             );
             painted |= sync_status(
@@ -538,7 +537,7 @@ impl PaneSurfaces {
                 }
                 let dividers = self.columns.iter().filter_map(|c| c.divider.as_ref());
                 for fill in dividers.chain(self.preview_divider.as_ref()) {
-                    stack_on(&|b| fill.surface.place_above(b), fill.surface.wl_surface());
+                    stack_on(&|b| fill.place_above(b), fill.wl_surface());
                 }
                 // The order is the stack band's pending state.
                 stack.band_surface().commit();
@@ -1002,7 +1001,7 @@ impl PaneSurfaces {
                 .map(PaneSurface::hide)
                 .unwrap_or(false);
             if let Some(divider) = self.preview_divider.as_mut() {
-                changed |= divider.hide();
+                changed |= divider.set_hidden(true);
             }
             return changed;
         };
@@ -1017,7 +1016,6 @@ impl PaneSurfaces {
             stack,
             rect,
             f.theme,
-            scale,
             &mut self.stack_children_dirty,
         );
         let Some(pane) = self.preview_pane.as_mut() else {
@@ -1430,109 +1428,25 @@ impl PaneSurface {
     }
 }
 
-/// A rect of one colour: a single pixel the compositor stretches, so it costs
-/// a request to move or resize and nothing to paint.
-struct Fill {
-    surface: SubsurfaceSurface,
-    rect: Rect,
-    scale: f32,
-    color: Option<Color>,
-    hidden: bool,
-}
-
-impl Fill {
-    fn new(parent: &WlSurface) -> Option<Self> {
-        let surface = SubsurfaceSurface::new(parent, 0, 0, 1, 1).ok()?;
-        // Presentation only, like every surface in the stack.
-        let region = AppContext::compositor_state()
-            .wl_compositor()
-            .create_region(AppContext::queue_handle(), ());
-        surface.wl_surface().set_input_region(Some(&region));
-        region.destroy();
-        surface.commit();
-        Some(Self {
-            surface,
-            rect: Rect::new_empty(),
-            scale: 0.0,
-            color: None,
-            hidden: false,
-        })
-    }
-
-    /// Show `rect` in `color`. Returns whether anything was sent.
-    fn sync(&mut self, rect: Rect, color: Color, scale: f32) -> bool {
-        let mut sent = false;
-        if self.hidden {
-            self.hidden = false;
-            if let Some(style) = self.surface.layer() {
-                style.set_opacity(1.0);
-            }
-            sent = true;
-        }
-        if self.color != Some(color) {
-            self.color = Some(color);
-            self.surface.draw(|canvas| {
-                canvas.clear(color);
-            });
-            sent = true;
-        }
-        // Claimed after the pixel is attached, never before: a size claimed
-        // over no buffer is a size the compositor has nothing to stretch.
-        if self.rect != rect || self.scale != scale {
-            self.rect = rect;
-            self.scale = scale;
-            self.surface.set_position(rect.left as i32, rect.top as i32);
-            if let Some(style) = self.surface.layer() {
-                let px = |points: f32| (points * scale).round() as f64;
-                style.set_size(px(rect.width()), px(rect.height()));
-                style.set_position(px(rect.left), px(rect.top));
-            }
-            sent = true;
-        }
-        if sent {
-            self.surface.commit();
-        }
-        sent
-    }
-
-    fn hide(&mut self) -> bool {
-        if self.hidden {
-            return false;
-        }
-        self.hidden = true;
-        if let Some(style) = self.surface.layer() {
-            style.set_opacity(0.0);
-        }
-        self.surface.commit();
-        true
-    }
-}
-
-impl Drop for Fill {
-    fn drop(&mut self) {
-        self.surface.destroy();
-    }
-}
-
 /// The hairline down the trailing edge of `column`, in the stack's
-/// coordinates: a point wide, centred on the edge.
+/// coordinates: a point wide, centred on the edge — a kit [`Fill`], so it
+/// costs a request to move and nothing to paint.
 fn sync_divider(
     divider: &mut Option<Fill>,
     stack: &WlSurface,
     column: Rect,
     theme: &Theme,
-    scale: f32,
     created: &mut bool,
 ) -> bool {
     if divider.is_none() {
-        *divider = Fill::new(stack);
+        *divider = Fill::new(stack).ok();
         *created = true;
     }
     let Some(fill) = divider.as_mut() else {
         return false;
     };
     let line = Rect::from_xywh(column.right - 0.5, column.top, 1.0, column.height());
-    fill.sync(line, theme.fill_tertiary, scale)
+    fill.set_style(theme.fill_tertiary, 0.0) | fill.set_rect(line) | fill.set_hidden(false)
 }
 
 /// The line a column shows in place of rows — loading, empty, or why it could

@@ -44,8 +44,8 @@ use otto_launcher::view::{
 };
 use otto_launcher::windows;
 
-/// How long the scene is kept painting after a change, so the selection's
-/// slide and the card's resize are seen through to the end.
+/// How long the scene is kept painting after the card's height changes, so
+/// its resize is seen through to the end.
 const SETTLE: Duration = Duration::from_millis(220);
 
 /// A frame the compositor never answered must not freeze the launcher.
@@ -113,6 +113,9 @@ struct Launcher {
     list_revision: u64,
     /// The list still has a scroll or a highlight slide in hand.
     list_busy: bool,
+    /// The selection is the pointer's: it follows the row under the pointer
+    /// as the list glides, with no event to say so. Cleared by the keyboard.
+    follow_pointer: bool,
 
     shift: bool,
     sized: bool,
@@ -229,6 +232,7 @@ impl Launcher {
             list: None,
             list_revision: 0,
             list_busy: false,
+            follow_pointer: false,
             shift: false,
             sized: false,
             engaged: false,
@@ -317,6 +321,8 @@ impl Launcher {
         // Wrapping, because a list that stops at the end makes someone check
         // where the end was.
         self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
+        // The keyboard has the selection now, wherever the pointer is.
+        self.follow_pointer = false;
         self.scroll_to_selection();
         self.dirty = true;
     }
@@ -331,18 +337,27 @@ impl Launcher {
     /// Which result the point `(x, y)` on the card is over, through the list's
     /// scroll.
     fn list_row_at(&self, x: f32, y: f32) -> Option<usize> {
-        let (palette, list) = (self.palette.as_ref()?, self.list.as_ref()?);
-        let viewport = palette.list_rect();
-        if !(0.0..=CARD_W).contains(&x) || y < viewport.top || y >= viewport.bottom {
+        let list = self.list.as_ref()?;
+        let point = skia_safe::Point::new(x, y);
+        if !list.contains(point) {
             return None;
         }
-        RowLayout::new(ROW_H, self.row_count()).index_at(y - viewport.top + list.offset())
+        RowLayout::new(ROW_H, self.row_count()).index_at(list.parent_to_content(point).y)
     }
 
     /// Bring the list pane in line with the rows, the selection and the card.
     fn sync_list(&mut self) {
         if !self.sized {
             return;
+        }
+        // A fling carries on after the fingers lift, and the row under a
+        // still pointer changes with it: the pane says which row that is.
+        if self.follow_pointer {
+            let rows = RowLayout::new(ROW_H, self.row_count());
+            let hovered = self.list.as_ref().and_then(ScrollPane::hovered);
+            if let Some(row) = hovered.and_then(|point| rows.index_at(point.y)) {
+                self.selected = row;
+            }
         }
         let (Some(list), Some(palette)) = (self.list.as_mut(), self.palette.as_ref()) else {
             return;
@@ -405,8 +420,10 @@ impl Launcher {
         palette.update(&self.input, count, empty_message);
 
         let size = palette.card_size();
-        self.settle_until = Some(Instant::now() + SETTLE);
         if size != self.card_size {
+            // The card's height runs a transition: keep painting until it
+            // lands. Nothing else in the scene animates.
+            self.settle_until = Some(Instant::now() + SETTLE);
             self.card_size = size;
             self.resize_card(size);
         }
@@ -1024,6 +1041,10 @@ impl App for Launcher {
                 // The highlight is the list pane's, so following the pointer
                 // repaints nothing.
                 PointerEventKind::Motion { .. } if on_card => {
+                    self.follow_pointer = true;
+                    if let Some(list) = self.list.as_mut() {
+                        list.pointer_motion(skia_safe::Point::new(x, y));
+                    }
                     if let Some(row) = self.list_row_at(x, y) {
                         self.selected = row;
                     }
@@ -1032,8 +1053,10 @@ impl App for Launcher {
                 // the row that comes under the pointer is the one selected.
                 PointerEventKind::Axis { vertical, .. } if on_card => {
                     self.engaged = true;
+                    self.follow_pointer = true;
                     if let Some(list) = self.list.as_mut() {
-                        list.wheel(
+                        list.wheel_at(
+                            skia_safe::Point::new(x, y),
                             vertical.absolute as f32,
                             vertical.discrete != 0,
                             vertical.stop,
@@ -1062,6 +1085,11 @@ impl App for Launcher {
                         self.selected = row;
                         self.activate();
                         return;
+                    }
+                }
+                PointerEventKind::Leave { .. } => {
+                    if let Some(list) = self.list.as_mut() {
+                        list.pointer_leave();
                     }
                 }
                 _ => {}

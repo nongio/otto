@@ -505,6 +505,10 @@ struct Browser {
     /// apart from `dirty` because a frame that only scrolled repaints — and
     /// reports — the file area alone.
     scroll_moved: bool,
+    /// The palette's list moved under the wheel. Kept apart from
+    /// `scroll_moved`: on its own surface the list scrolls on a pane, and
+    /// the window has nothing to repaint for it.
+    palette_scrolled: bool,
     /// The portal request this window is serving, when it is a picker rather
     /// than the browser. `None` is the browser, and every difference between
     /// the two shells reads off this one field.
@@ -970,6 +974,7 @@ impl Browser {
             blur_available: false,
             dirty: true,
             scroll_moved: false,
+            palette_scrolled: false,
             picker: None,
             save_name: None,
             confirm: None,
@@ -2139,10 +2144,8 @@ impl Browser {
                 moved |= column.scroll.tick();
             }
         }
-        if self.palette_scroll.is_animating() {
-            moved |= self.palette_scroll.tick();
-        }
-        // The open preview's picture pans on scroll views of its own, and
+        // The palette's list glides on its own tick: see
+        // `tick_palette_scroll`. The open preview's picture pans on scroll views of its own, and
         // they fling and spring like any other.
         moved |= self.tick_quickview_pan();
         moved
@@ -3960,7 +3963,12 @@ impl Browser {
         } else {
             scroll.on_wheel(dy)
         };
-        self.dirty |= moved;
+        self.palette_scrolled |= moved;
+    }
+
+    /// Advance the palette list's glide by one tick. Returns whether it moved.
+    fn tick_palette_scroll(&mut self) -> bool {
+        self.palette_scroll.is_animating() && self.palette_scroll.tick()
     }
 
     /// Everything the palette's own surface needs, with its text owned.
@@ -7293,6 +7301,11 @@ impl App for FilesApp {
             // advance here rather than on input, since they keep running after
             // the gesture ends.
             let scrolled = browser.tick_scroll() | std::mem::take(&mut browser.scroll_moved);
+            // The palette's list is a pane of its own when the palette is on
+            // a surface, and then its scroll is none of the window's business.
+            let palette_scrolled = (browser.tick_palette_scroll()
+                | std::mem::take(&mut browser.palette_scrolled))
+                && !pane_surfaces::palette_on_surface();
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
@@ -7318,6 +7331,7 @@ impl App for FilesApp {
             let scroll_area = scrolled_only.then(|| browser.scroll_damage()).flatten();
             let repaint = changed
                 || scrolled
+                || palette_scrolled
                 || std::mem::take(&mut browser.dirty)
                 || animating
                 || preview_target.is_some();
