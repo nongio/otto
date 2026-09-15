@@ -1,12 +1,17 @@
+#[cfg(feature = "xwayland")]
 use std::os::fd::OwnedFd;
 
 use smithay::{
     delegate_primary_selection,
-    input::Seat,
     wayland::selection::{
         primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
-        SelectionHandler, SelectionSource, SelectionTarget,
+        SelectionHandler,
     },
+};
+#[cfg(feature = "xwayland")]
+use smithay::{
+    input::Seat,
+    wayland::selection::{SelectionSource, SelectionTarget},
 };
 #[cfg(feature = "xwayland")]
 use tracing::warn;

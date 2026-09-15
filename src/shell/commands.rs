@@ -795,6 +795,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let window = self.workspaces.windows_map.get(id);
         let title = window.map(|w| w.xdg_title()).unwrap_or_default();
         let app_id = window.map(|w| w.xdg_app_id()).unwrap_or_default();
+        #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
         let mut node = json!({
             "id": hash_id("window", &format!("{id:?}")),
             "type": "con",

@@ -445,6 +445,7 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// alone are not enough — they also poll `_NET_ACTIVE_WINDOW` on the root window.
     /// Without this the window stays black with no frames (the Cuphead startup deadlock).
     pub fn set_x11_active_window(&mut self, window: &crate::shell::WindowElement) {
+        #[cfg(feature = "xwayland")]
         use smithay::desktop::WindowSurface;
 
         // Never hand `_NET_ACTIVE_WINDOW` to another window while a self-managing
@@ -462,15 +463,20 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         }
 
-        let WindowSurface::X11(surface) = window.underlying_surface() else {
-            return;
-        };
-        let window_id = surface.window_id();
-        if let Some(xwm) = self.xwm.as_mut() {
-            if let Err(err) = xwm.set_active_window(window_id) {
-                tracing::warn!(?err, "failed to set _NET_ACTIVE_WINDOW for X11 window");
+        #[cfg(feature = "xwayland")]
+        {
+            let WindowSurface::X11(surface) = window.underlying_surface() else {
+                return;
+            };
+            let window_id = surface.window_id();
+            if let Some(xwm) = self.xwm.as_mut() {
+                if let Err(err) = xwm.set_active_window(window_id) {
+                    tracing::warn!(?err, "failed to set _NET_ACTIVE_WINDOW for X11 window");
+                }
             }
         }
+        #[cfg(not(feature = "xwayland"))]
+        let _ = window;
     }
 
     /// Entering Show All: the keyboard belongs to expose, not to whatever

@@ -1893,8 +1893,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 let x11 = x11.clone();
                 self.apply_tile_x11(&x11, &output, target, matches!(zone, TileZone::Maximize));
             }
-            #[cfg(not(feature = "xwayland"))]
-            _ => {}
         }
 
         // The window sits at its new rect now, so its menus have to be placed
@@ -2003,8 +2001,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 self.unmaximize_request_x11(&x11);
                 return;
             }
-            #[cfg(not(feature = "xwayland"))]
-            _ => return,
         }
 
         let Some(surface) = window.toplevel().cloned() else {
