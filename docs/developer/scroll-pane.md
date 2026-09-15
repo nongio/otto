@@ -161,9 +161,14 @@ that does not move: dividers, tints, headers.
    List and grid stay painted into the window with partial damage and the
    opaque region — one large band costs more to composite than the window's
    damaged strip — and their geometry is `RowLayout` / `GridLayout`, mapped
-   into the file area. Left: the palette list as a pane.
-4. **Everyone else.** otto-emoji's panes and page strip, the launcher's hand
-   rolled offset; Quick View's pan as a two-axis pane.
+   into the file area. The palette's rows are a pane inside its card, so the
+   card repaints only for its field.
+4. **Everyone else.** *Launcher and emoji done.* The launcher's rows are a
+   `ScrollPane` inside its card, with the selection a pane highlight
+   (`ScrollPane::set_highlight`) and wheel scrolling it did not have. otto-emoji's
+   categories are vertical panes in a horizontal container driven by its own
+   paging physics, with the highlight on the selected cell. Left: Quick View's
+   pan as a two-axis pane.
 
 Exit, for each step that moves an application: zero window commits during a
 fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under

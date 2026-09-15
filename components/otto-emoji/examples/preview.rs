@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use layers::prelude::Engine;
 use otto_emoji::data::{Table, Tone, GROUPS};
-use otto_emoji::view::{field_style, Layout, Pane, FIELD_H};
+use otto_emoji::view::{field_style, Layout, Pane, FIELD_H, GRID_H, HIGHLIGHT_RADIUS};
 use otto_emoji::{rank, Cell, Palette, CARD_H, CARD_W};
 use otto_kit::components::text_input::TextInput;
 
@@ -87,14 +87,13 @@ fn main() {
 
         palette.update_field(&input);
         palette.update_tabs((!searching).then_some(1));
-        let scrolls = vec![0.0_f32; layout.pane_count()];
         // OTTO_EMOJI_PAN lets the preview sit mid-pan, to check that panes
         // really do sit side by side rather than overlapping.
         let pan: f32 = std::env::var("OTTO_EMOJI_PAN")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
-        palette.update_grid(&cells, &layout, pan * CARD_W, &scrolls, selected, empty);
+        palette.update_message(empty);
         palette.update_footer(name, Tone::Medium);
         for _ in 0..60 {
             engine.update(0.016);
@@ -112,6 +111,43 @@ fn main() {
             skia_safe::Color::from_argb(255, 240, 240, 244)
         });
         layers::prelude::draw_scene(surface.canvas(), engine.scene(), palette.card_layer().id());
+
+        // The cells are scroll panes over the card in the picker itself; here
+        // each pane is painted where it rests, panned by OTTO_EMOJI_PAN.
+        let grid = palette.grid_rect();
+        let canvas = surface.canvas();
+        canvas.save();
+        canvas.clip_rect(grid, None, None);
+        canvas.translate((grid.left, grid.top));
+        for pane in 0..layout.pane_count() {
+            canvas.save();
+            canvas.translate((Layout::pane_origin(pane) - pan * CARD_W, 0.0));
+            let spot = selected
+                .filter(|cell| layout.place(*cell).is_some_and(|(p, _, _)| p == pane))
+                .and_then(|cell| layout.cell_rect(cell));
+            if let Some(rect) = spot {
+                let mut wash = skia_safe::Paint::default();
+                wash.set_anti_alias(true);
+                wash.set_color(palette.highlight_color());
+                canvas.draw_rrect(
+                    skia_safe::RRect::new_rect_xy(
+                        Palette::highlight_rect(rect),
+                        HIGHLIGHT_RADIUS,
+                        HIGHLIGHT_RADIUS,
+                    ),
+                    &wash,
+                );
+            }
+            palette.paint_cells(
+                canvas,
+                skia_safe::Rect::from_wh(CARD_W, GRID_H),
+                &cells,
+                &layout,
+                pane,
+            );
+            canvas.restore();
+        }
+        canvas.restore();
 
         let file = if query.is_empty() {
             "empty".to_string()

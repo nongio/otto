@@ -76,6 +76,13 @@ rubber-band when pulled past an end. A gesture belongs to whichever axis its
 first movement chose, and keeps it until the fingers lift. A notched wheel
 scrolls the pane under the pointer one step at a time, with no fling.
 
+The grid is not painted into the card. The panes are surfaces over it: a
+container the pan moves, holding one vertical scroll pane per category, with
+the selection's highlight a surface of its own under the emoji. A swipe, a
+scroll or a new selection moves surfaces; the cells are painted again only when
+what a pane shows changes, and the card only when its field, tab marker or
+footer does.
+
 A pan that comes to rest between two panes settles onto the nearer one, and
 the selection follows onto the pane landed on. The tab strip's marker sits
 under the pane the pan is resting on; clicking a tab, or `Tab` / `Shift+Tab`,
