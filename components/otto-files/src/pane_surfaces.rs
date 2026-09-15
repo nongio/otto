@@ -1157,7 +1157,10 @@ fn sync_status(
         None
     };
     let Some((text, color)) = line else {
-        return slot.as_mut().map(|pane| pane.set_hidden(true)).unwrap_or(false);
+        return slot
+            .as_mut()
+            .map(|pane| pane.set_hidden(true))
+            .unwrap_or(false);
     };
 
     let rect = Rect::from_xywh(
