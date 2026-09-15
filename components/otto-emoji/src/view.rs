@@ -15,11 +15,13 @@
 //! view, and a cell is an image blit — the emoji are rasterised once each and
 //! kept.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
+use otto_kit::components::scroll::RowLayout;
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::theme::Theme;
 use otto_kit::typography::{get_font, get_font_with_fallback, styles};
@@ -53,6 +55,8 @@ pub const GRID_PAD: f32 = 10.0;
 pub const FOOTER_H: f32 = 36.0;
 /// Corner radius of the card, applied by the compositor to the subsurface.
 pub const RADIUS: f32 = 12.0;
+/// Corner radius of the selected cell's highlight.
+pub const HIGHLIGHT_RADIUS: f32 = 9.0;
 /// The card, top to bottom, with a hairline between each part.
 pub const CARD_H: f32 =
     FIELD_H + 1.0 + TABS_H + 1.0 + GRID_PAD + GRID_H + GRID_PAD + 1.0 + FOOTER_H;
@@ -580,10 +584,12 @@ pub struct Palette {
     tabs: Layer,
     tab_marker: Layer,
     grid_clip: Layer,
+    /// The line shown in place of a grid with nothing in it. The cells
+    /// themselves are the grid panes', over the card — see `main.rs`.
     grid: Layer,
-    highlight: Layer,
     footer: Layer,
-    atlas: Atlas,
+    /// Behind a cell because painting a pane's band only borrows the palette.
+    atlas: RefCell<Atlas>,
 
     size: (f32, f32),
     dark: bool,
@@ -593,7 +599,6 @@ pub struct Palette {
     /// The images for the tab strip, made once.
     tab_icons: Vec<Option<Image>>,
     marker_placed: bool,
-    highlight_placed: bool,
 }
 
 impl Palette {
@@ -631,7 +636,6 @@ impl Palette {
         let tab_marker = new_layer("emoji-tab-marker");
         let grid_clip = new_layer("emoji-grid-clip");
         let grid = new_layer("emoji-grid");
-        let highlight = new_layer("emoji-highlight");
         let footer = new_layer("emoji-footer");
 
         let _ = card.add_sublayer(&field);
@@ -642,7 +646,6 @@ impl Palette {
         let _ = card.add_sublayer(&tab_marker);
         let _ = card.add_sublayer(&tabs);
         let _ = card.add_sublayer(&grid_clip);
-        let _ = grid_clip.add_sublayer(&highlight);
         let _ = grid_clip.add_sublayer(&grid);
         let _ = card.add_sublayer(&footer);
 
@@ -662,15 +665,13 @@ impl Palette {
             tab_marker,
             grid_clip,
             grid,
-            highlight,
             footer,
-            atlas,
+            atlas: RefCell::new(atlas),
             size: (0.0, 0.0),
             dark,
             caret: None,
             tab_icons,
             marker_placed: false,
-            highlight_placed: false,
         };
         palette.style();
         palette.place();
@@ -679,7 +680,73 @@ impl Palette {
 
     /// Whether the emoji font can draw an emoji starting with `codepoint`.
     pub fn can_draw(&self, codepoint: u32) -> bool {
-        self.atlas.can_draw(codepoint)
+        self.atlas.borrow().can_draw(codepoint)
+    }
+
+    /// The selected cell's wash, which the grid pane draws under the emoji.
+    pub fn highlight_color(&self) -> Color {
+        if self.dark {
+            Color::from_argb(46, 255, 255, 255)
+        } else {
+            Color::from_argb(20, 0, 0, 0)
+        }
+    }
+
+    /// Where the highlight goes for a cell at `cell`, in its pane's content
+    /// coordinates.
+    pub fn highlight_rect(cell: Rect) -> Rect {
+        cell.with_inset((2.0, 2.0))
+    }
+
+    /// The grid's viewport in the card surface's own coordinates: under the
+    /// tabs, and a beak's reach further down when the beak is on top.
+    pub fn grid_rect(&self) -> Rect {
+        let (x, y) = self.placement().body_offset();
+        Rect::from_xywh(x, y + GRID_Y, CARD_W, GRID_H)
+    }
+
+    /// Paint the cells of `pane` that fall inside `band`, in that pane's
+    /// content coordinates, for its scroll pane's band.
+    pub fn paint_cells(
+        &self,
+        canvas: &Canvas,
+        band: Rect,
+        cells: &[Cell],
+        layout: &Layout,
+        pane: usize,
+    ) {
+        let Some(spec) = layout.panes.get(pane) else {
+            return;
+        };
+        let side = EMOJI_PT * 1.3;
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        let mut atlas = self.atlas.borrow_mut();
+        for row in RowLayout::new(CELL, spec.rows()).visible(band) {
+            let start = spec.first + row * COLUMNS;
+            let end = (start + COLUMNS).min(spec.first + spec.count);
+            for index in start..end {
+                let (Some(cell), Some(rect)) = (cells.get(index), layout.cell_rect(index)) else {
+                    continue;
+                };
+                let Some(image) = atlas.image(&cell.text, EMOJI_PT) else {
+                    continue;
+                };
+                let dst = Rect::from_xywh(
+                    rect.left + (CELL - side) / 2.0,
+                    rect.top + (CELL - side) / 2.0,
+                    side,
+                    side,
+                );
+                canvas.draw_image_rect_with_sampling_options(
+                    &image,
+                    None,
+                    dst,
+                    SamplingOptions::from(skia_safe::FilterMode::Linear),
+                    &paint,
+                );
+            }
+        }
     }
 
     /// Switch the colour scheme. The portal answers after the palette is
@@ -724,15 +791,7 @@ impl Palette {
         for divider in &self.dividers {
             divider.set_background_color(PaintColor::Solid { color: hairline }, None);
         }
-        let wash = lay_color(if self.dark {
-            Color::from_argb(46, 255, 255, 255)
-        } else {
-            Color::from_argb(20, 0, 0, 0)
-        });
-        self.highlight
-            .set_background_color(PaintColor::Solid { color: wash }, None);
-        self.highlight
-            .set_border_corner_radius(BorderRadius::new_single(9.0), None);
+        let wash = lay_color(self.highlight_color());
         self.tab_marker
             .set_background_color(PaintColor::Solid { color: wash }, None);
         self.tab_marker
@@ -765,9 +824,6 @@ impl Palette {
             .set_size(LayerSize::points(CARD_W, GRID_H), None);
         self.grid_clip.set_clip_children(true, None);
         self.grid.set_size(LayerSize::points(CARD_W, GRID_H), None);
-        self.highlight
-            .set_size(LayerSize::points(CELL - 4.0, CELL - 4.0), None);
-        self.highlight.set_opacity(0.0_f32, None);
 
         self.footer.set_position(
             LayerPoint {
@@ -876,68 +932,14 @@ impl Palette {
         }
     }
 
-    /// Push the grid: the panes panned to `pan`, each scrolled by its own
-    /// entry in `scrolls`, with `selected` highlighted. `empty_message` is
-    /// shown instead of a grid with nothing in it.
-    pub fn update_grid(
-        &mut self,
-        cells: &[Cell],
-        layout: &Layout,
-        pan: f32,
-        scrolls: &[f32],
-        selected: Option<usize>,
-        empty_message: Option<&str>,
-    ) {
-        // Only the panes on screen, and within them only the rows on screen,
-        // with a cell of slack all round so a partly visible one is drawn
-        // whole.
-        let mut images: Vec<(Rect, Image)> = Vec::new();
-        for (index, pane) in layout.panes.iter().enumerate() {
-            let origin = Layout::pane_origin(index) - pan;
-            if origin + CARD_W < -CELL || origin > CARD_W + CELL {
-                continue;
-            }
-            let scroll = scrolls.get(index).copied().unwrap_or(0.0);
-            let (top, bottom) = (scroll - CELL, scroll + GRID_H + CELL);
-            for cell in pane.first..pane.first + pane.count {
-                let Some(rect) = layout.cell_rect(cell) else {
-                    continue;
-                };
-                if rect.bottom < top || rect.top > bottom {
-                    continue;
-                }
-                let Some(cell) = cells.get(cell) else {
-                    continue;
-                };
-                if let Some(image) = self.atlas.image(&cell.text, EMOJI_PT) {
-                    let side = EMOJI_PT * 1.3;
-                    let dst = Rect::from_xywh(
-                        origin + rect.left + (CELL - side) / 2.0,
-                        rect.top - scroll + (CELL - side) / 2.0,
-                        side,
-                        side,
-                    );
-                    images.push((dst, image));
-                }
-            }
-        }
-
+    /// Push what the grid says when it has nothing in it, or `None` to say
+    /// nothing. The cells are the grid panes' own.
+    pub fn update_message(&mut self, empty_message: Option<&str>) {
         let message_font = styles::BODY.font();
         let message_color = self.subtitle_color();
         let message = empty_message.map(str::to_string);
         self.grid
             .set_draw_content(move |canvas: &Canvas, width: f32, height: f32| {
-                let mut paint = Paint::default();
-                paint.set_anti_alias(true);
-                for (dst, image) in &images {
-                    canvas.draw_image_rect_with_sampling_options(
-                        image,
-                        None,
-                        *dst,
-                        SamplingOptions::from(skia_safe::FilterMode::Linear),
-                        &paint,
-                    );
-                }
                 if let Some(message) = &message {
                     let mut text_paint = Paint::new(Color4f::from(message_color), None);
                     text_paint.set_anti_alias(true);
@@ -951,30 +953,6 @@ impl Palette {
                 }
                 Rect::from_wh(width, height)
             });
-
-        let spot = selected.and_then(|cell| {
-            let (pane, _, _) = layout.place(cell)?;
-            let rect = layout.cell_rect(cell)?;
-            let scroll = scrolls.get(pane).copied().unwrap_or(0.0);
-            Some(LayerPoint {
-                x: Layout::pane_origin(pane) - pan + rect.left + 2.0,
-                y: rect.top - scroll + 2.0,
-            })
-        });
-        match spot {
-            Some(position) => {
-                let transition = self
-                    .highlight_placed
-                    .then(|| Transition::ease_out_quad(0.1));
-                self.highlight.set_position(position, transition);
-                self.highlight.set_opacity(1.0_f32, None);
-                self.highlight_placed = true;
-            }
-            None => {
-                self.highlight.set_opacity(0.0_f32, None);
-                self.highlight_placed = false;
-            }
-        }
     }
 
     /// Push the footer: the name of the selected emoji, and the tone

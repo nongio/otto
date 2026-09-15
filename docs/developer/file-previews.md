@@ -308,9 +308,7 @@ The panel is a **subsurface** of the browser toplevel, created and synced by
 - **Position.** By default it is centred on the display. `request_output_frame`
   is asked once when the panel opens and once when the exit starts, so a window
   moved in between carries the panel with it. `OTTO_FILES_QV_CENTER=0` centres
-  it on the window instead. Combined with `OTTO_FILES_PANE_SUBS` unset, that
-  paints the panel into the toplevel's own buffer. That legacy path is still
-  maintained.
+  it on the window instead; it is a subsurface either way.
 - **Material.** Set through `otto_surface_style_v1`: corner radius 12, a shadow,
   and `BackgroundBlur` when frosting is on (`OTTO_FROSTING`), `Normal`
   otherwise. The client draws no shadow of its own.
@@ -319,8 +317,8 @@ The panel is a **subsurface** of the browser toplevel, created and synced by
 - **Repaints.** The panel is repainted only when `quickview_key` changes (rect,
   generation, `first_row`, zoom, scrollbars, loading, the video's frame
   sequence), and not while a frame is in flight. A resize is claimed only once
-  the matching buffer has been painted (`PaneSurface::place` holds it as a
-  pending claim for `draw`), because the style protocol applies a size
+  the matching buffer has been painted (otto-kit's `PlacedSurface::set_rect`
+  holds it for the next `paint`), because the style protocol applies a size
   immediately and would stretch the old buffer. A hidden panel drops its input
   region.
 
@@ -464,10 +462,8 @@ needs to know:
 | `otto-quickview --render OUT.png FILE [--dark --page N --zoom Z --width W --height H]` | Draws the card through the same `otto_kit::preview::draw` |
 | `otto-quickview --filmstrip OUT.png FILE` | Samples the entrance animation over a mock desktop |
 | `otto-quickview --sandbox-selftest` | Reports which parts of the sandbox are in force |
-| `OTTO_FILES_QV_TRACE=1` | Logs decode generations, restack order, and a line per painted panel frame (rect, resize, paint time, gap) |
 | `OTTO_FILES_QV_AUTO=1` | Opens Quick View on the first entry, with no keypress |
 | `OTTO_FILES_QV_CENTER=0` | Centres the panel on the window rather than the display |
-| `OTTO_FILES_PANE_SUBS=1` | Puts each column on its own subsurface; also forces the panel onto a subsurface |
 | `OTTO_QUICKVIEW_OPEN_MS`, `OTTO_QUICKVIEW_CLOSE_MS`, `OTTO_QUICKVIEW_BOUNCE` | Tunes the entrance and exit |
 | `RUST_LOG=debug` | Forwarded to the worker, which logs the time and name of each decode |
 | `OTTO_MEDIA_TRACE=1`, `GST_DEBUG=3` | Worker stderr and GStreamer debugging; see [otto-media-kit](otto-media-kit.md#debugging) |

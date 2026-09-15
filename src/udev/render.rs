@@ -2398,10 +2398,9 @@ pub(super) fn render_output_frame<'a>(
 ) -> Result<RenderOutcome, SwapBuffersError> {
     // Start frame timing
     #[cfg(feature = "metrics")]
-    let _frame_timer = surface
-        .render_metrics
-        .as_ref()
-        .map(|m: &Arc<_>| m.start_frame());
+    let render_metrics = surface.render_metrics.clone();
+    #[cfg(feature = "metrics")]
+    let _frame_timer = render_metrics.as_ref().map(|m| m.start_frame());
 
     let output_geometry = Rectangle::new((0, 0).into(), output.current_mode().unwrap().size);
     let scale = Scale::from(output.current_scale().fractional_scale());

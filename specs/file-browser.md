@@ -297,36 +297,60 @@ underneath it resizes the window.
 ### Column surfaces
 
 Painting every column into the window's one buffer makes a scroll in a single
-column a repaint of the whole window, and — because the toolkit damages the
-whole buffer on commit — tells the compositor that everything changed. Under
-`OTTO_FILES_PANE_SUBS=1` each column instead gets its own Wayland subsurface,
-sized and positioned by `otto_surface_style_v1`. The client still does all the
-drawing, translating and clipping itself; what changes is the *scope*, so a
-scroll damages one column and leaves the toplevel alone.
+column a repaint of the whole window, and tells the compositor that
+everything changed. So the stack is a horizontal scroll container (otto-kit's
+`ScrollSurfaces::container`) clipped to the file area, and each column is a
+vertical scroll pane inside it: a clip surface the column's size, placed once
+in the stack's own coordinates, and inside it a *band* of rows taller than the
+column, on a transparent ground. The file area's paper is the window's and does
+not move. Everything that moves with the stack is in it: the active column's
+tint is the colour of that column's clip, and the hairline down each column's
+edge, the line an empty, loading or failed column shows and the docked preview
+are surfaces of their own beside the columns.
+A vertical scroll moves the band with `otto_surface_style_v1` and paints
+nothing. The rows are painted again only when a glide nears the edge of the
+band, or when what the column shows changes (a selection, the cursor, a
+listing or a thumbnail landing, the focus or the theme). The window is not
+repainted for a vertical scroll at all, and the compositor recomposites only
+the column.
 
-This is opt-in while it settles. The default path is unchanged.
+Four things follow from the columns no longer being in the window's buffer:
 
-Three things follow from the columns no longer being in the window's buffer:
-
-- **Input still belongs to the toplevel.** Every column surface carries an
-  empty input region, so pointer events fall through and hit-testing stays in
-  window coordinates exactly as it was.
-- **Nothing above clips the columns.** In the window they were cut off by the
-  content area's clip; a subsurface is a child of the toplevel and has no such
-  parent, so a column panned past the sidebar would draw over it. Each column
-  surface is cropped to its intersection with the content area instead, and
-  its drawing shifted by whatever was cropped off the left.
+- **Input still belongs to the toplevel.** Every column's surfaces pass the
+  pointer through, so events fall through and hit-testing stays in window
+  coordinates exactly as it was. A scroll over a column wakes the update loop,
+  which steps the scroll and moves the band; it does not ask the window for a
+  frame.
+- **The stack clips the columns, and a pan moves only the stack.** The
+  container's clip is the file area, so a column panned past the sidebar is cut
+  off there, whole, with no crop of its own to repaint. Panning moves the
+  container's band — one surface, whose buffer is a single transparent pixel
+  stretched to the stack's width — and every column and the preview's player
+  ride along inside it. A column panned wholly out of the file area is hidden.
 - **Scrolling chrome has to move with the content it describes.** A column's
-  vertical bar is drawn into that column's own surface, since the window is no
-  longer repainted for a scroll and a bar left there would fade in and freeze.
-  The stack's horizontal bar belongs to no column, so it gets a surface of its
-  own — a strip along the bottom of the content area, stacked above every
-  column, and restacked whenever the stack grows, because a subsurface created
-  later starts out on top of it.
+  vertical bar is a small surface of its own above the band, moved and faded by
+  the compositor. While an overscroll squashes it, its painted buffer is
+  stretched rather than repainted. The stack's horizontal bar is the
+  container's own, above everything in the stack. A column created later starts
+  out on top of its siblings, so the stack restacks its children whenever it
+  grows.
+- **A column steps once per presented frame.** Each band move asks to hear
+  when it reaches the screen, and the next step waits for that answer, so a
+  glide advances at the display's rate however often the loop happens to wake.
+- **A thumbnail landing repaints its column's band, not the window.** The
+  thumbnail store's epoch is part of what a band is painted from.
 
-The hairlines between columns are still drawn in the window, so a sideways pan
-— unlike a vertical scroll — does still repaint it, or they would be left
-behind while the columns slide.
+The file area's paper is opaque whether or not the window is frosted, and the
+window says so: it declares that area — from the sidebar's edge to the right,
+from the header down to the path bar, less the rounded corner at the bottom —
+as its opaque region, so the compositor does not blur behind it. The sidebar,
+the header and the picker's action row stay translucent and frosted.
+
+Neither a vertical scroll nor a sideways pan repaints the window: nothing the
+window draws moves with either. A hairline and a tint are a single pixel each,
+stretched by the compositor. Only transient overlays that point at a row — a
+drop target's outline, the open pulse, a rename field — are the window's, and
+the window repaints for as long as one is up.
 
 ### The preview column
 
@@ -1007,9 +1031,10 @@ flight that never lands and for an icon whose client exited mid-air.
 **A drop does not move the view.** The reload a drop causes keeps every pane
 scrolled exactly where it was, and the entry that landed is not scrolled to.
 
-With `OTTO_FILES_PANE_SUBS=1` the Miller columns are subsurfaces over the
-window's own canvas, so the drop outline is hidden behind them; that mode is
-opt-in and needs its own drop feedback.
+In column view the rows are the columns' own surfaces, over the window's
+canvas, while the drop outline is drawn on that canvas. Their bands are
+transparent between rows, so the outline shows everywhere a row's own pixels
+do not cover it.
 
 ### Get Info
 

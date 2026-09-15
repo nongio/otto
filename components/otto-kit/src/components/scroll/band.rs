@@ -1,27 +1,31 @@
 //! Bookkeeping for compositor-side scroll cropping.
 //!
 //! A scrollable pane is a fixed parent surface that clips its children, and
-//! the scrolled content lives in a child subsurface whose buffer is taller
-//! than the viewport — a *band* of content. Scrolling within that band costs
-//! nothing but a subsurface position change: no repaint, no new buffer, no
-//! round trip. The client only paints again when the scroll gets close enough
-//! to an edge of the band that the next few frames could run off it.
+//! the scrolled content lives in a child subsurface whose buffer is longer
+//! than the viewport along the scrolling axis — a *band* of content. Scrolling
+//! within that band costs nothing but a subsurface position change: no
+//! repaint, no new buffer, no round trip. The client only paints again when
+//! the scroll gets close enough to an edge of the band that the next few
+//! frames could run off it.
 //!
 //! This module is only the decision logic for that: where the band sits in
 //! content space, whether it still covers what is about to be visible, and
 //! where the child surface belongs for a given scroll offset. It knows
-//! nothing about Wayland, buffers or drawing.
+//! nothing about Wayland, buffers or drawing, and nothing about which way the
+//! pane scrolls: everything here is measured along the scrolling axis.
 //!
-//! Everything here is in the same one-dimensional content space as
-//! [`ScrollState`](super::ScrollState): `0` is the top of the content and
-//! `content_height` is its bottom, measured in points.
+//! Everything is in the same one-dimensional content space as
+//! [`ScrollState`](super::ScrollState): `0` is the start of the content and
+//! `content_length` is its end, measured in points.
 
 use skia_safe::Rect;
 
+use super::state::Axis;
+
 /// How much extra content to render beyond the viewport, per side, as a
-/// fraction of the viewport height. At `0.5` a band is twice the viewport
-/// tall: one viewport of visible content plus half a viewport of slack above
-/// and below.
+/// fraction of the viewport length. At `0.5` a band is twice the viewport
+/// long: one viewport of visible content plus half a viewport of slack before
+/// and after.
 ///
 /// This is the whole memory-versus-refill trade. A bigger ratio means the
 /// scroll can travel further before it runs out of rendered content, so
@@ -38,12 +42,12 @@ const OVERDRAW_RATIO: f32 = 0.5;
 /// small pane: a 200pt viewport would carry 100pt of slack per side, which a
 /// fling crosses in under a tenth of a second, and the band ends up refilling
 /// several times a second. A fling is measured in hundreds of points however
-/// tall the pane is, so the slack has an absolute floor too. The cost is
+/// long the pane is, so the slack has an absolute floor too. The cost is
 /// buffer memory — this is the knob to turn if that ever matters.
 const MIN_OVERDRAW: f32 = 600.0;
 
 /// How much rendered content must remain beyond the viewport edge before a
-/// refill is requested, as a fraction of the viewport height.
+/// refill is requested, as a fraction of the viewport length.
 ///
 /// The point of a margin is that a refill is not instantaneous: the client
 /// has to be woken, paint the new band, and commit it, and the compositor has
@@ -55,9 +59,10 @@ const REFILL_MARGIN_RATIO: f32 = 0.25;
 /// Floor on the refill margin, in points, so small panes still get a margin
 /// measured against real scroll speed rather than against their own size.
 ///
-/// The scroll view coasts at up to ~5000 pt/s. A repaint-and-commit round
-/// trip is realistically about four frames at 60 Hz, or ~67 ms, during which
-/// content at that speed travels ~335 points. 340 covers that, and covers it
+/// The scroll view caps a fling at 2200 pt/s unless `OTTO_SCROLL_MAX_VELOCITY`
+/// raises it; the margin is sized for 5000. A repaint-and-commit round trip is
+/// realistically about four frames at 60 Hz, or ~67 ms, during which content
+/// at that speed travels ~335 points. 340 covers that, and covers it
 /// with room to spare on any real fling, since a fling is at its peak only at
 /// the instant the finger leaves and decays from there.
 const MIN_REFILL_MARGIN: f32 = 340.0;
@@ -90,8 +95,8 @@ const MAX_LEAD_SHARE: f32 = 0.9;
 /// The speed at which the directional bias reaches [`MAX_LEAD_SHARE`], in
 /// points per second. Below it the bias ramps linearly from an even split.
 ///
-/// Chosen well under the scroll view's 5000 pt/s ceiling so that any gesture
-/// which reads as a fling rather than a drag is already fully biased.
+/// Chosen under the scroll view's fling cap (2200 pt/s by default) so that any
+/// gesture which reads as a fling rather than a drag is already fully biased.
 const BIAS_FULL_SPEED: f32 = 2000.0;
 
 /// Above this speed, in points per second, the scroll counts as travelling
@@ -106,39 +111,39 @@ const TRAVELLING_SPEED: f32 = 60.0;
 /// What the band has to cover: where the content is scrolled to, how much of
 /// it is visible, how much there is in total, and how fast it is moving.
 ///
-/// `velocity` is in points per second and positive means scrolling *down* —
-/// the same sign convention as a scroll offset increasing, so at positive
-/// velocity the bottom of the band is the leading edge.
+/// `velocity` is in points per second and positive means the offset is
+/// increasing — scrolling down, or right — so at positive velocity the end of
+/// the band is the leading edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BandView {
-    /// Content coordinate at the top of the viewport. May sit outside
-    /// `0..=content_height - viewport_height` during a rubber-band overscroll.
+    /// Content coordinate at the start of the viewport. May sit outside
+    /// `0..=content_length - viewport_length` during a rubber-band overscroll.
     pub offset: f32,
-    pub viewport_height: f32,
-    pub content_height: f32,
-    /// Points per second, positive scrolling down.
+    pub viewport_length: f32,
+    pub content_length: f32,
+    /// Points per second, positive towards the end of the content.
     pub velocity: f32,
 }
 
 impl BandView {
-    pub fn new(offset: f32, viewport_height: f32, content_height: f32, velocity: f32) -> Self {
+    pub fn new(offset: f32, viewport_length: f32, content_length: f32, velocity: f32) -> Self {
         Self {
             offset,
-            viewport_height,
-            content_height,
+            viewport_length,
+            content_length,
             velocity,
         }
     }
 
-    fn viewport_height(&self) -> f32 {
-        self.viewport_height.max(0.0)
+    fn viewport_length(&self) -> f32 {
+        self.viewport_length.max(0.0)
     }
 
-    fn content_height(&self) -> f32 {
-        self.content_height.max(0.0)
+    fn content_length(&self) -> f32 {
+        self.content_length.max(0.0)
     }
 
-    /// The viewport top used for coverage decisions, pulled back inside the
+    /// The viewport start used for coverage decisions, pulled back inside the
     /// content.
     ///
     /// During an overscroll the offset runs past an end, but there is no
@@ -146,13 +151,13 @@ impl BandView {
     /// meant to be empty. Judging coverage against the clamped position keeps
     /// a bounce from demanding a band that cannot exist.
     fn clamped_offset(&self) -> f32 {
-        let max = (self.content_height() - self.viewport_height()).max(0.0);
+        let max = (self.content_length() - self.viewport_length()).max(0.0);
         self.offset.clamp(0.0, max)
     }
 
     /// Total slack to distribute around the viewport.
     fn overdraw(&self) -> f32 {
-        (2.0 * OVERDRAW_RATIO * self.viewport_height()).max(MIN_OVERDRAW)
+        (2.0 * OVERDRAW_RATIO * self.viewport_length()).max(MIN_OVERDRAW)
     }
 
     /// How much of [`Self::overdraw`] is spent ahead of the scroll, ramping
@@ -165,12 +170,12 @@ impl BandView {
 
     /// Rendered content required beyond each viewport edge before a refill.
     fn refill_margin(&self) -> f32 {
-        let vh = self.viewport_height();
+        let length = self.viewport_length();
         // Derived from the same slack the band is actually built with, floor
         // included — computing it from the ratio again would leave the margin
         // and the band disagreeing about how much room there is.
         let at_rest_slack = self.overdraw() / 2.0;
-        (vh * REFILL_MARGIN_RATIO)
+        (length * REFILL_MARGIN_RATIO)
             .max(MIN_REFILL_MARGIN)
             .min(at_rest_slack * MAX_MARGIN_SHARE)
     }
@@ -179,22 +184,22 @@ impl BandView {
 /// A rendered band of content: the slice of content space that currently
 /// exists in the child subsurface's buffer.
 ///
-/// Only the vertical extent is modelled. The band's width is always the pane
-/// width and is decided by layout, not by scrolling, so carrying it here
-/// would be a field that every caller sets to the same thing and no rule in
-/// this module ever reads. Callers that want a rect for the buffer ask for
-/// one with [`Band::rect`].
+/// Only the extent along the scrolling axis is modelled. The band's extent
+/// across it is always the pane's and is decided by layout, not by scrolling,
+/// so carrying it here would be a field that every caller sets to the same
+/// thing and no rule in this module ever reads. Callers that want a rect for
+/// the buffer ask for one with [`Band::rect`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Band {
     origin: f32,
-    height: f32,
+    length: f32,
 }
 
 impl Band {
-    pub fn new(origin: f32, height: f32) -> Self {
+    pub fn new(origin: f32, length: f32) -> Self {
         Self {
             origin,
-            height: height.max(0.0),
+            length: length.max(0.0),
         }
     }
 
@@ -202,47 +207,54 @@ impl Band {
     pub fn empty() -> Self {
         Self {
             origin: 0.0,
-            height: 0.0,
+            length: 0.0,
         }
     }
 
-    /// Content coordinate of the band's first rendered row.
+    /// Content coordinate of the band's first rendered point.
     pub fn origin(&self) -> f32 {
         self.origin
     }
 
-    pub fn height(&self) -> f32 {
-        self.height
+    /// Extent along the scrolling axis.
+    pub fn length(&self) -> f32 {
+        self.length
     }
 
-    /// Content coordinate just past the band's last rendered row.
+    /// Content coordinate just past the band's last rendered point.
     pub fn end(&self) -> f32 {
-        self.origin + self.height
+        self.origin + self.length
     }
 
     pub fn is_empty(&self) -> bool {
-        self.height <= 0.0
+        self.length <= 0.0
     }
 
     /// The band as a rect in content space, for sizing and positioning the
-    /// buffer that backs it.
-    pub fn rect(&self, x: f32, width: f32) -> Rect {
-        Rect::from_xywh(x, self.origin, width, self.height)
+    /// buffer that backs it: along `axis` it is the band, across it
+    /// `cross_origin` and `cross_extent`.
+    pub fn rect(&self, axis: Axis, cross_origin: f32, cross_extent: f32) -> Rect {
+        match axis {
+            Axis::Vertical => Rect::from_xywh(cross_origin, self.origin, cross_extent, self.length),
+            Axis::Horizontal => {
+                Rect::from_xywh(self.origin, cross_origin, self.length, cross_extent)
+            }
+        }
     }
 
-    /// Where the child subsurface's top belongs, relative to the top of the
+    /// Where the child subsurface's leading edge belongs, relative to the
     /// parent's clip box, for a given scroll offset.
     ///
     /// This is the entire cost of scrolling within a band: the content does
     /// not move inside the buffer, the buffer moves under the clip.
     ///
     /// During a rubber-band overscroll the offset is allowed outside
-    /// `0..=content_height - viewport_height`, so this can put the surface
+    /// `0..=content_length - viewport_length`, so this can put the surface
     /// partly or even entirely outside the clip box. That is correct and is
     /// exactly what makes the overscroll visible: the content slides away
     /// from the edge it was pulled past and the empty space behind it is the
     /// rubber band.
-    pub fn surface_top(&self, offset: f32) -> f32 {
+    pub fn surface_offset(&self, offset: f32) -> f32 {
         self.origin - offset
     }
 
@@ -250,15 +262,15 @@ impl Band {
     /// viewport plus [`OVERDRAW_RATIO`] on each side, biased in the direction
     /// of travel and clamped to the content.
     pub fn for_view(view: &BandView) -> Self {
-        let vh = view.viewport_height();
-        let ch = view.content_height();
+        let viewport = view.viewport_length();
+        let content = view.content_length();
 
         // Content that fits within one band is simply rendered whole: there
         // is nothing to scroll off, and a band that already holds everything
         // can never need refilling.
-        let height = (vh + view.overdraw()).min(ch);
-        if height >= ch {
-            return Self::new(0.0, ch);
+        let length = (viewport + view.overdraw()).min(content);
+        if length >= content {
+            return Self::new(0.0, content);
         }
 
         let overdraw = view.overdraw();
@@ -266,15 +278,15 @@ impl Band {
         let behind = overdraw - ahead;
 
         let offset = view.clamped_offset();
-        // Positive velocity scrolls down, so the bottom is the leading edge
-        // and the slack above the viewport is the part left behind.
+        // Positive velocity moves towards the end, so the end is the leading
+        // edge and the slack before the viewport is the part left behind.
         let origin = if view.velocity >= 0.0 {
             offset - behind
         } else {
             offset - ahead
         };
 
-        Self::new(origin.clamp(0.0, ch - height), height)
+        Self::new(origin.clamp(0.0, content - length), length)
     }
 
     /// Whether this band still covers the viewport with enough margin that a
@@ -285,25 +297,25 @@ impl Band {
     /// is the smaller of [`BandView::refill_margin`] and whatever content
     /// actually remains on that side.
     pub fn covers(&self, view: &BandView) -> bool {
-        let vh = view.viewport_height();
-        let ch = view.content_height();
-        if self.origin <= 0.0 && self.end() >= ch {
+        let viewport = view.viewport_length();
+        let content = view.content_length();
+        if self.origin <= 0.0 && self.end() >= content {
             return true;
         }
 
-        let top = view.clamped_offset();
-        let bottom = top + vh;
+        let start = view.clamped_offset();
+        let end = start + viewport;
         let margin = view.refill_margin();
 
-        let above_ok = (top - self.origin) >= margin.min(top);
-        let below_ok = (self.end() - bottom) >= margin.min((ch - bottom).max(0.0));
+        let before_ok = (start - self.origin) >= margin.min(start);
+        let after_ok = (self.end() - end) >= margin.min((content - end).max(0.0));
 
         if view.velocity > TRAVELLING_SPEED {
-            below_ok
+            after_ok
         } else if view.velocity < -TRAVELLING_SPEED {
-            above_ok
+            before_ok
         } else {
-            above_ok && below_ok
+            before_ok && after_ok
         }
     }
 
@@ -333,7 +345,7 @@ mod tests {
     const VIEWPORT: f32 = 600.0;
     const CONTENT: f32 = 10_000.0;
 
-    /// A view onto tall content, scrolled to `offset`, at rest.
+    /// A view onto long content, scrolled to `offset`, at rest.
     fn at(offset: f32) -> BandView {
         BandView::new(offset, VIEWPORT, CONTENT, 0.0)
     }
@@ -351,7 +363,7 @@ mod tests {
     #[test]
     fn a_band_is_the_viewport_plus_overdraw_on_each_side() {
         let band = Band::for_view(&at(2000.0));
-        assert_eq!(band.height(), VIEWPORT * (1.0 + 2.0 * OVERDRAW_RATIO));
+        assert_eq!(band.length(), VIEWPORT * (1.0 + 2.0 * OVERDRAW_RATIO));
         // At rest the slack is split evenly.
         assert_eq!(band.origin(), 2000.0 - VIEWPORT * OVERDRAW_RATIO);
     }
@@ -369,7 +381,7 @@ mod tests {
     fn approaching_the_margin_triggers_a_refill() {
         let band = Band::for_view(&at(2000.0));
         let margin = at(2000.0).refill_margin();
-        // Rendered content below the viewport is band.end() - (offset + vh);
+        // Rendered content after the viewport is band.end() - (offset + vp);
         // push the offset until that dips under the margin.
         let last_ok = band.end() - VIEWPORT - margin;
         assert!(band.refill(&at(last_ok)).is_none());
@@ -409,47 +421,53 @@ mod tests {
     }
 
     #[test]
-    fn a_downward_fling_puts_more_of_the_band_below_the_viewport() {
+    fn a_forward_fling_puts_more_of_the_band_after_the_viewport() {
         let view = moving(2000.0, BIAS_FULL_SPEED);
         let band = Band::for_view(&view);
-        let above = view.offset - band.origin();
-        let below = band.end() - (view.offset + VIEWPORT);
-        assert!(below > above, "below {below} should exceed above {above}");
-        close(below, band.height() - VIEWPORT - above);
-        close(above, view.overdraw() * (1.0 - MAX_LEAD_SHARE));
+        let before = view.offset - band.origin();
+        let after = band.end() - (view.offset + VIEWPORT);
+        assert!(
+            after > before,
+            "after {after} should exceed before {before}"
+        );
+        close(after, band.length() - VIEWPORT - before);
+        close(before, view.overdraw() * (1.0 - MAX_LEAD_SHARE));
     }
 
     #[test]
-    fn an_upward_fling_puts_more_of_the_band_above_the_viewport() {
+    fn a_backward_fling_puts_more_of_the_band_before_the_viewport() {
         let view = moving(2000.0, -BIAS_FULL_SPEED);
         let band = Band::for_view(&view);
-        let above = view.offset - band.origin();
-        let below = band.end() - (view.offset + VIEWPORT);
-        assert!(above > below, "above {above} should exceed below {below}");
-        close(below, view.overdraw() * (1.0 - MAX_LEAD_SHARE));
+        let before = view.offset - band.origin();
+        let after = band.end() - (view.offset + VIEWPORT);
+        assert!(
+            before > after,
+            "before {before} should exceed after {after}"
+        );
+        close(after, view.overdraw() * (1.0 - MAX_LEAD_SHARE));
     }
 
     #[test]
     fn the_bias_ramps_with_speed() {
-        let above = |v: f32| {
+        let before = |v: f32| {
             let view = moving(2000.0, v);
             view.offset - Band::for_view(&view).origin()
         };
-        // Faster downward travel leaves progressively less behind.
-        assert!(above(0.0) > above(BIAS_FULL_SPEED / 2.0));
-        assert!(above(BIAS_FULL_SPEED / 2.0) > above(BIAS_FULL_SPEED));
+        // Faster forward travel leaves progressively less behind.
+        assert!(before(0.0) > before(BIAS_FULL_SPEED / 2.0));
+        assert!(before(BIAS_FULL_SPEED / 2.0) > before(BIAS_FULL_SPEED));
         // And it saturates rather than inverting at absurd speeds.
-        assert_eq!(above(BIAS_FULL_SPEED), above(5000.0));
+        assert_eq!(before(BIAS_FULL_SPEED), before(5000.0));
     }
 
     #[test]
     fn the_band_never_extends_past_the_content_ends() {
-        // Hard against the top, flinging up: the bias wants slack above 0.
+        // Hard against the start, flinging back: the bias wants slack before 0.
         let band = Band::for_view(&moving(0.0, -5000.0));
         assert_eq!(band.origin(), 0.0);
         assert!(band.end() <= CONTENT);
 
-        // Hard against the bottom, flinging down.
+        // Hard against the end, flinging forward.
         let band = Band::for_view(&moving(CONTENT - VIEWPORT, 5000.0));
         assert_eq!(band.end(), CONTENT);
         assert!(band.origin() >= 0.0);
@@ -457,12 +475,12 @@ mod tests {
 
     #[test]
     fn content_shorter_than_a_band_is_one_band_covering_everything() {
-        // Taller than the viewport but shorter than viewport + overdraw.
+        // Longer than the viewport but shorter than viewport + overdraw.
         let short = VIEWPORT * 1.5;
         let view = BandView::new(200.0, VIEWPORT, short, 3000.0);
         let band = Band::for_view(&view);
         assert_eq!(band.origin(), 0.0);
-        assert_eq!(band.height(), short);
+        assert_eq!(band.length(), short);
         // Nothing can ever scroll off it, at any offset or speed.
         for offset in [0.0, 100.0, short - VIEWPORT] {
             assert!(band
@@ -474,33 +492,33 @@ mod tests {
         let tiny = BandView::new(0.0, VIEWPORT, 40.0, 0.0);
         let band = Band::for_view(&tiny);
         assert_eq!(band.origin(), 0.0);
-        assert_eq!(band.height(), 40.0);
+        assert_eq!(band.length(), 40.0);
     }
 
     #[test]
-    fn surface_top_is_exact_at_the_band_origin() {
+    fn surface_offset_is_exact_at_the_band_origin() {
         let band = Band::new(1700.0, 1200.0);
-        assert_eq!(band.surface_top(1700.0), 0.0);
-        // Scrolling down by n moves the surface up by exactly n.
-        assert_eq!(band.surface_top(1750.0), -50.0);
-        assert_eq!(band.surface_top(1650.0), 50.0);
+        assert_eq!(band.surface_offset(1700.0), 0.0);
+        // Scrolling forward by n moves the surface back by exactly n.
+        assert_eq!(band.surface_offset(1750.0), -50.0);
+        assert_eq!(band.surface_offset(1650.0), 50.0);
     }
 
     #[test]
     fn overscroll_pushes_the_surface_outside_the_clip_box() {
-        // Pulled past the top: the band starts at content 0, and a negative
-        // offset slides it down, opening the rubber band above it.
+        // Pulled past the start: the band starts at content 0, and a negative
+        // offset slides it forward, opening the rubber band before it.
         let band = Band::for_view(&at(0.0));
         assert_eq!(band.origin(), 0.0);
-        assert_eq!(band.surface_top(-80.0), 80.0);
+        assert_eq!(band.surface_offset(-80.0), 80.0);
 
-        // Pulled past the bottom: the band's tail rises above the clip box's
-        // bottom edge, opening the rubber band below it.
-        let bottom = CONTENT - VIEWPORT;
-        let band = Band::for_view(&at(bottom));
-        let top = band.surface_top(bottom + 80.0);
-        assert_eq!(top + band.height(), band.end() - bottom - 80.0);
-        assert!(top + band.height() < VIEWPORT);
+        // Pulled past the end: the band's tail comes back inside the clip
+        // box's far edge, opening the rubber band after it.
+        let end = CONTENT - VIEWPORT;
+        let band = Band::for_view(&at(end));
+        let start = band.surface_offset(end + 80.0);
+        assert_eq!(start + band.length(), band.end() - end - 80.0);
+        assert!(start + band.length() < VIEWPORT);
     }
 
     #[test]
@@ -512,17 +530,17 @@ mod tests {
             .refill(&BandView::new(-150.0, VIEWPORT, CONTENT, -4000.0))
             .is_none());
 
-        let bottom = CONTENT - VIEWPORT;
-        let band = Band::for_view(&at(bottom));
+        let end = CONTENT - VIEWPORT;
+        let band = Band::for_view(&at(end));
         assert!(band
-            .refill(&BandView::new(bottom + 150.0, VIEWPORT, CONTENT, 4000.0))
+            .refill(&BandView::new(end + 150.0, VIEWPORT, CONTENT, 4000.0))
             .is_none());
     }
 
     #[test]
     fn a_trailing_edge_is_ignored_while_flinging_and_checked_once_stopped() {
-        // Build a band biased hard downwards, then ask about it at the same
-        // place. While the fling continues the thin slack above is fine.
+        // Build a band biased hard forward, then ask about it at the same
+        // place. While the fling continues the thin slack behind is fine.
         let fling = moving(2000.0, 4000.0);
         let band = Band::for_view(&fling);
         assert!(band.refill(&fling).is_none());
@@ -552,7 +570,7 @@ mod tests {
             "only {ahead} pt rendered ahead, need {travel}"
         );
 
-        // The same for an upward fling.
+        // The same backwards.
         let view = moving(2000.0, -MAX_FLING);
         let band = Band::for_view(&view);
         let ahead = view.offset - band.origin();
@@ -565,20 +583,24 @@ mod tests {
         // overdraw, the margin alone — the content still painted ahead at the
         // instant the refill is asked for — already covers the round trip, so
         // the refill lands before the edge is anywhere near exposed.
-        let tall = BandView::new(2000.0, 1200.0, CONTENT, MAX_FLING);
+        let long = BandView::new(2000.0, 1200.0, CONTENT, MAX_FLING);
         assert!(
-            tall.refill_margin() >= travel,
+            long.refill_margin() >= travel,
             "margin {} does not cover {travel}",
-            tall.refill_margin()
+            long.refill_margin()
         );
     }
 
     #[test]
-    fn the_band_rect_carries_the_layout_width() {
+    fn the_band_rect_lies_along_the_axis() {
         let band = Band::new(100.0, 900.0);
         assert_eq!(
-            band.rect(12.0, 340.0),
+            band.rect(Axis::Vertical, 12.0, 340.0),
             Rect::from_xywh(12.0, 100.0, 340.0, 900.0)
+        );
+        assert_eq!(
+            band.rect(Axis::Horizontal, 12.0, 340.0),
+            Rect::from_xywh(100.0, 12.0, 900.0, 340.0)
         );
     }
 }

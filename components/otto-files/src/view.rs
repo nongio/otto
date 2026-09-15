@@ -589,6 +589,9 @@ pub fn content_viewport(width: f32, height: f32, mode: ViewMode) -> Rect {
 // listing is the sectioned grid with a single unheaded section, so the two
 // cannot drift apart.
 
+use otto_kit::components::scroll::{GridLayout, GridSection as KitGridSection, RowLayout};
+use skia_safe::Size;
+
 /// The height of a section heading, including the air above and below it.
 pub const GRID_HEADER_H: f32 = 34.0;
 
@@ -618,41 +621,31 @@ impl GridSections {
         self.0.is_empty()
     }
 
-    /// The sections as the geometry wants them, which is never empty: a flat
-    /// grid is one unheaded section covering everything.
-    fn runs(&self, count: usize) -> Vec<GridSection> {
-        if self.0.is_empty() {
-            return vec![GridSection {
-                header: None,
-                first: 0,
-                count,
-            }];
-        }
-        self.0.clone()
-    }
-
-    /// The y of each section's *heading*, relative to the top of the content,
-    /// paired with the section. The section's first row of cells sits
-    /// `GRID_HEADER_H` below that when it has a heading, and at it when it
-    /// does not.
-    fn walk(&self, count: usize, cols: usize) -> Vec<(GridSection, f32)> {
-        let mut y = 0.0;
-        let mut out = Vec::new();
-        for section in self.runs(count) {
-            let rows = section.count.div_ceil(cols);
-            let height =
-                section.header.is_some() as u8 as f32 * GRID_HEADER_H + rows as f32 * CELL_H;
-            out.push((section, y));
-            y += height;
-        }
-        out
+    /// The grid's geometry in content coordinates, over `count` cells: the
+    /// kit's layout, which everything below maps into the file area. The
+    /// headings' text stays here; the layout only needs to know which
+    /// sections have one.
+    fn layout(&self, count: usize) -> GridLayout {
+        GridLayout::new(Size::new(CELL_W, CELL_H), count)
+            .with_pad(GRID_PAD)
+            .with_sections(
+                GRID_HEADER_H,
+                self.0
+                    .iter()
+                    .map(|section| KitGridSection {
+                        first: section.first,
+                        count: section.count,
+                        headed: section.header.is_some(),
+                    })
+                    .collect(),
+            )
     }
 }
 
 /// How many cells fit across `area`. Never zero, so a very narrow window
 /// degrades to one column rather than dividing by it.
 pub fn grid_columns(area: Rect) -> usize {
-    (((area.width() - GRID_PAD) / CELL_W).floor() as usize).max(1)
+    GridSections::FLAT.layout(0).columns(area.width())
 }
 
 /// The cell rect for `index`, in `area`, scrolled by `scroll`.
@@ -662,42 +655,16 @@ pub fn grid_cell_rect(area: Rect, index: usize, scroll: f32) -> Rect {
 
 /// [`grid_cell_rect`] against a sectioned grid.
 ///
-/// An index past the end of every section falls back to the flat lattice
-/// rather than returning nothing: callers ask for a cell rect while a listing
-/// is being replaced underneath them, and an empty rect off screen is a less
-/// surprising answer than a panic.
+/// An index past the end of every section is an empty rect: callers ask for a
+/// cell rect while a listing is being replaced underneath them, and an empty
+/// rect is a less surprising answer than a panic. A flat grid has no end to be
+/// past — every index has a place on the lattice.
 pub fn grid_cell_rect_in(area: Rect, sections: &GridSections, index: usize, scroll: f32) -> Rect {
-    let cols = grid_columns(area);
-    let (row, col) = match section_position(sections, index, cols) {
-        Some(pos) => pos,
-        None => return Rect::new_empty(),
-    };
-    Rect::from_xywh(
-        area.left + GRID_PAD + col as f32 * CELL_W,
-        area.top + GRID_PAD + row - scroll,
-        CELL_W,
-        CELL_H,
-    )
-}
-
-/// Where `index` sits: its top in content coordinates, and its column.
-fn section_position(sections: &GridSections, index: usize, cols: usize) -> Option<(f32, usize)> {
-    if sections.is_flat() {
-        return Some(((index / cols) as f32 * CELL_H, index % cols));
+    let cell = sections.layout(usize::MAX).cell_rect(index, area.width());
+    if cell.is_empty() {
+        return cell;
     }
-    // The count is only needed to size the synthetic flat section, which the
-    // branch above already took, so zero is safe here.
-    for (section, y) in sections.walk(0, cols) {
-        if index < section.first || index >= section.first + section.count {
-            continue;
-        }
-        let local = index - section.first;
-        let top = y
-            + section.header.is_some() as u8 as f32 * GRID_HEADER_H
-            + (local / cols) as f32 * CELL_H;
-        return Some((top, local % cols));
-    }
-    None
+    cell.with_offset((area.left, area.top - scroll))
 }
 
 /// The heading rects to draw, each with its text, in window coordinates.
@@ -713,19 +680,13 @@ pub fn grid_section_headers(
     if sections.is_flat() {
         return Vec::new();
     }
-    let cols = grid_columns(area);
     sections
-        .walk(0, cols)
+        .layout(usize::MAX)
+        .headers(area.width())
         .into_iter()
-        .filter_map(|(section, y)| {
-            let header = section.header?;
-            let rect = Rect::from_xywh(
-                area.left + GRID_PAD,
-                area.top + GRID_PAD + y - scroll,
-                area.width() - GRID_PAD * 2.0,
-                GRID_HEADER_H,
-            );
-            Some((rect, header))
+        .filter_map(|(index, rect)| {
+            let header = sections.0.get(index)?.header.clone()?;
+            Some((rect.with_offset((area.left, area.top - scroll)), header))
         })
         .collect()
 }
@@ -747,34 +708,12 @@ pub fn grid_cell_at_in(
     if !area.contains(Point::new(x, y)) {
         return None;
     }
-    let cols = grid_columns(area);
-    let local_x = x - area.left - GRID_PAD;
-    let local_y = y - area.top - GRID_PAD + scroll;
-    if local_x < 0.0 || local_y < 0.0 {
-        return None;
-    }
-    let col = (local_x / CELL_W) as usize;
-    if col >= cols {
-        return None;
-    }
-    for (section, top) in sections.walk(count, cols) {
-        let header_h = section.header.is_some() as u8 as f32 * GRID_HEADER_H;
-        let rows = section.count.div_ceil(cols);
-        let cells_top = top + header_h;
-        let cells_bottom = cells_top + rows as f32 * CELL_H;
-        if local_y < cells_top {
-            // In this section's heading band, or the air above it. A click
-            // there is a click on nothing, not on the row below.
-            return None;
-        }
-        if local_y >= cells_bottom {
-            continue;
-        }
-        let row = ((local_y - cells_top) / CELL_H) as usize;
-        let index = section.first + row * cols + col;
-        return (index < section.first + section.count && index < count).then_some(index);
-    }
-    None
+    // A heading, the padding and the air after a section's last cell are all
+    // clicks on nothing, not on the cell below.
+    sections.layout(count).index_at(
+        Point::new(x - area.left, y - area.top + scroll),
+        area.width(),
+    )
 }
 
 /// The cells that intersect `band` — the visible strip of the grid, in the
@@ -808,40 +747,10 @@ pub fn grid_visible_range_in(
     if count == 0 || band.is_empty() {
         return 0..0;
     }
-    if !sections.is_flat() {
-        let cols = grid_columns(area);
-        let top = area.top + GRID_PAD - scroll;
-        let (lo, hi) = (band.top - top, band.bottom - top);
-        let mut first = None;
-        let mut end = 0;
-        for (section, y) in sections.walk(count, cols) {
-            let cells_top = y + section.header.is_some() as u8 as f32 * GRID_HEADER_H;
-            let rows = section.count.div_ceil(cols);
-            if cells_top > hi {
-                break;
-            }
-            if cells_top + rows as f32 * CELL_H < lo {
-                continue;
-            }
-            let first_row = (((lo - cells_top) / CELL_H).floor().max(0.0) as usize).min(rows);
-            let last_row = (((hi - cells_top) / CELL_H).floor().max(0.0) as usize + 1).min(rows);
-            let start = (section.first + first_row * cols).min(count);
-            first = Some(first.map_or(start, |f: usize| f.min(start)));
-            end = end.max((section.first + last_row * cols).min(count));
-        }
-        let first = first.unwrap_or(0);
-        return first..end.max(first);
-    }
-    let cols = grid_columns(area);
-    let top = area.top + GRID_PAD - scroll;
-    let first_row = ((band.top - top) / CELL_H).floor().max(0.0) as usize;
-    let last_row = ((band.bottom - top) / CELL_H).floor().min(count as f32);
-    if last_row < 0.0 {
-        return 0..0;
-    }
-    let first = (first_row * cols).min(count);
-    let end = ((last_row as usize + 1) * cols).min(count);
-    first..end.max(first)
+    let top = area.top - scroll;
+    sections
+        .layout(count)
+        .range(band.top - top, band.bottom - top, area.width())
 }
 
 /// The cells `band` touches — the rubber band's hit test, the counterpart of
@@ -859,10 +768,8 @@ pub fn grid_cells_in_rect(area: Rect, count: usize, scroll: f32, band: Rect) -> 
 
 /// [`grid_cells_in_rect`] against a sectioned grid.
 ///
-/// The sectioned branch walks the listing rather than solving for it in closed
-/// form. That is fine where it is used — the Recent place, whose listing is
-/// bounded — and the flat branch below, which is every directory and the one
-/// that has to survive ten thousand files, keeps its closed form untouched.
+/// Costs what the band covers rather than what the listing holds, sectioned or
+/// not: only the rows the band spans are looked at.
 pub fn grid_cells_in_rect_in(
     area: Rect,
     sections: &GridSections,
@@ -870,49 +777,18 @@ pub fn grid_cells_in_rect_in(
     scroll: f32,
     band: Rect,
 ) -> Vec<usize> {
-    if !sections.is_flat() {
-        if count == 0 || (band.width() <= 0.0 && band.height() <= 0.0) {
-            return Vec::new();
-        }
-        return (0..count)
-            .filter(|&i| {
-                let cell = grid_cell_rect_in(area, sections, i, scroll);
-                !cell.is_empty() && cell.intersects(band)
-            })
-            .collect();
-    }
     // A band with no extent at all catches nothing, even sitting squarely
     // over a cell: that band is a click on empty space, and a click on empty
     // space means nothing is selected. A band flat in *one* axis is still a
     // drag — a pointer swept straight across a row rarely moves a whole pixel
-    // down — and catches what the line crosses.
+    // down — and catches what the line crosses; the layout sees to that.
     if count == 0 || (band.width() <= 0.0 && band.height() <= 0.0) {
         return Vec::new();
     }
-    let cols = grid_columns(area);
-    let origin_x = area.left + GRID_PAD;
-    let origin_y = area.top + GRID_PAD - scroll;
-
-    let span = |lo: f32, hi: f32, pitch: f32, origin: f32| {
-        let first = ((lo - origin) / pitch).floor().max(0.0);
-        let end = ((hi - origin) / pitch).ceil().max(0.0);
-        (first as usize, end as usize)
-    };
-    let (first_col, end_col) = span(band.left, band.right, CELL_W, origin_x);
-    let (first_row, end_row) = span(band.top, band.bottom, CELL_H, origin_y);
-    let end_col = end_col.min(cols);
-
-    let mut hit = Vec::new();
-    for row in first_row..end_row {
-        for col in first_col..end_col {
-            let index = row * cols + col;
-            if index >= count {
-                return hit;
-            }
-            hit.push(index);
-        }
-    }
-    hit
+    sections.layout(count).cells_in(
+        band.with_offset((-area.left, scroll - area.top)),
+        area.width(),
+    )
 }
 
 /// Total height `count` cells need in `area`.
@@ -923,16 +799,7 @@ pub fn grid_content_height(area: Rect, count: usize) -> f32 {
 /// [`grid_content_height`] against a sectioned grid — the cells plus every
 /// heading between them.
 pub fn grid_content_height_in(area: Rect, sections: &GridSections, count: usize) -> f32 {
-    let cols = grid_columns(area);
-    let total: f32 = sections
-        .walk(count, cols)
-        .iter()
-        .map(|(section, _)| {
-            section.header.is_some() as u8 as f32 * GRID_HEADER_H
-                + section.count.div_ceil(cols) as f32 * CELL_H
-        })
-        .sum();
-    total + GRID_PAD * 2.0
+    sections.layout(count).length(area.width())
 }
 
 pub fn place_rect(index: usize) -> Rect {
@@ -1291,11 +1158,11 @@ pub fn grid_rename_rect(width: f32, height: f32, scroll: f32, index: usize) -> R
 /// files cost a frame no more than one of ten.
 #[derive(Debug, Clone, Copy)]
 pub struct RowStrip {
-    /// Top of row 0, scroll already applied.
-    top: f32,
-    left: f32,
+    /// Where the rows' content coordinates start in the window: the pane's
+    /// top-left, scroll already applied.
+    origin: Point,
     width: f32,
-    count: usize,
+    rows: RowLayout,
 }
 
 impl RowStrip {
@@ -1303,10 +1170,9 @@ impl RowStrip {
     /// column-name band.
     pub fn list(width: f32, count: usize, scroll: f32) -> Self {
         Self {
-            top: header_h() + COLUMNS_H - scroll,
-            left: sidebar_w(),
+            origin: Point::new(sidebar_w(), header_h() + COLUMNS_H - scroll),
             width: width - sidebar_w(),
-            count,
+            rows: RowLayout::new(ROW_H, count),
         }
     }
 
@@ -1314,31 +1180,22 @@ impl RowStrip {
     /// first one does not touch the header hairline.
     pub(crate) fn miller(pane: Rect, count: usize, scroll: f32) -> Self {
         Self {
-            top: pane.top + MILLER_ROW_INSET - scroll,
-            left: pane.left,
+            origin: Point::new(pane.left, pane.top - scroll),
             width: pane.width(),
-            count,
+            rows: RowLayout::new(ROW_H, count).with_insets(MILLER_ROW_INSET, 0.0),
         }
     }
 
     pub fn rect(&self, index: usize) -> Rect {
-        Rect::from_xywh(
-            self.left,
-            self.top + index as f32 * ROW_H,
-            self.width,
-            ROW_H,
-        )
+        self.rows
+            .rect(index, self.width)
+            .with_offset((self.origin.x, self.origin.y))
     }
 
     /// The row `y` falls on, if any. Rows above the strip and past its last
     /// entry are both misses.
     pub fn index_at(&self, y: f32) -> Option<usize> {
-        let local = y - self.top;
-        if local < 0.0 {
-            return None;
-        }
-        let index = (local / ROW_H) as usize;
-        (index < self.count).then_some(index)
+        self.rows.index_at(y - self.origin.y)
     }
 
     /// The rows that intersect `band` — the visible band of the pane, in the
@@ -1354,20 +1211,11 @@ impl RowStrip {
     /// An empty band — a Miller pane panned off screen — yields no rows at
     /// all, which is the whole point: that pane costs nothing.
     pub fn visible(&self, band: Rect) -> std::ops::Range<usize> {
-        if self.count == 0 || band.is_empty() {
+        if band.is_empty() {
             return 0..0;
         }
-        let first = (((band.top - self.top) / ROW_H).floor().max(0.0) as usize).min(self.count);
-        // Clamped before the cast: a band far past the end of a short strip
-        // would otherwise turn into an index no `usize` can hold.
-        let last = ((band.bottom - self.top) / ROW_H)
-            .floor()
-            .min(self.count as f32);
-        if last < 0.0 {
-            return 0..0;
-        }
-        let end = (last as usize + 1).min(self.count);
-        first..end.max(first)
+        self.rows
+            .range(band.top - self.origin.y, band.bottom - self.origin.y)
     }
 }
 
@@ -1461,11 +1309,9 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
 /// Outline what the drop would land in.
 ///
 /// Drawn on the window canvas after the panes, which puts it over the rows in
-/// every view — including Miller, whose rows are the scene's own layers,
-/// composited under this canvas. The exception is `OTTO_FILES_PANE_SUBS=1`,
-/// where the columns are subsurfaces *over* this canvas and the outline is
-/// hidden behind them; that mode is opt-in and its own drop feedback is a
-/// separate piece of work.
+/// the list and the grid. In column view the rows are the columns' own
+/// surfaces, over this canvas; their bands are transparent between rows, so
+/// the outline shows through everywhere a row does not cover it.
 fn draw_drop_highlight(canvas: &Canvas, f: &Frame) {
     let Some(target) = f.drop_target else {
         return;
@@ -1875,7 +1721,7 @@ pub fn column_at(x: f32, y: f32, width: f32, widths: ListColumnWidths) -> Option
 }
 
 pub fn content_height(count: usize) -> f32 {
-    count as f32 * ROW_H
+    RowLayout::new(ROW_H, count).length()
 }
 
 /// The scrolling viewport of one pane, whichever view is on.
@@ -1883,8 +1729,8 @@ pub fn content_height(count: usize) -> f32 {
 /// In list and grid views there is one pane and it is the whole content area;
 /// in Miller view each column scrolls on its own, so each gets its own strip.
 /// This is what a pane's [`ScrollView`](otto_kit::components::scroll::ScrollView)
-/// is given as its viewport, so the scrollbar lands on the right edge of the
-/// pane the pointer is actually over.
+/// is given as its viewport, so it clamps, bands and reveals against the pane
+/// the pointer is actually over.
 pub fn pane_viewport(
     width: f32,
     height: f32,
@@ -1905,28 +1751,6 @@ pub fn pane_viewport(
             pane
         }
     }
-}
-
-/// Which of a Miller column's rows are on screen — the half-open range the
-/// scene records a picture for.
-///
-/// The same band [`draw_miller`] used to walk, lifted out so the scene can key
-/// its cached picture on it: cross a row boundary and the column re-records,
-/// scroll within one and it does not.
-pub fn miller_visible_range(f: &Frame, depth: usize) -> (usize, usize) {
-    let pane = &f.panes[depth];
-    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
-    let strip = RowStrip::miller(full, pane.entries.len(), pane.scroll);
-    let band = pane.band(pane_viewport(
-        f.width,
-        f.height,
-        ViewMode::Columns,
-        depth,
-        f.pan,
-        f.miller_w,
-    ));
-    let range = strip.visible(band);
-    (range.start, range.end)
 }
 
 // ---------------------------------------------------------------------------
@@ -2602,18 +2426,14 @@ pub fn item_span_in(
     sections: &GridSections,
     index: usize,
 ) -> (f32, f32) {
-    if mode == ViewMode::Grid && !sections.is_flat() {
-        let area = content_viewport(width, height, mode);
-        let cell = grid_cell_rect_in(area, sections, index, 0.0);
-        return (cell.top - area.top, CELL_H);
-    }
     match mode {
         ViewMode::List => (index as f32 * ROW_H, ROW_H),
         // Miller rows start a little way down the pane.
         ViewMode::Columns => (MILLER_ROW_INSET + index as f32 * ROW_H, ROW_H),
         ViewMode::Grid => {
-            let cols = grid_columns(content_viewport(width, height, mode));
-            (GRID_PAD + (index / cols) as f32 * CELL_H, CELL_H)
+            let area = content_viewport(width, height, mode);
+            let cell = sections.layout(usize::MAX).cell_rect(index, area.width());
+            (cell.top, CELL_H)
         }
     }
 }
@@ -2649,9 +2469,10 @@ pub fn control_at(x: f32, y: f32, width: f32) -> Option<WindowControl> {
 /// One pane's worth of already-filtered, already-sorted entries.
 pub struct PaneData<'a> {
     pub entries: Vec<&'a Entry>,
-    /// One flag per entry, parallel to `entries`. A multi-selection has no
-    /// single index, so this is a mask rather than a position.
-    pub selected: Vec<bool>,
+    /// The column's selection, by [`Entry::selection_key`]. Looked up per row
+    /// as rows are drawn rather than expanded into a mask over every entry,
+    /// which on a large directory was most of what building a frame cost.
+    pub selection: Option<&'a std::collections::BTreeSet<String>>,
     /// Where the keyboard is. Drawn as a ring when it is not itself selected,
     /// so extending a selection with Ctrl+Arrow stays legible.
     pub cursor: Option<usize>,
@@ -2660,6 +2481,9 @@ pub struct PaneData<'a> {
     /// is no live view to read — the anchor tests, which care only about row
     /// geometry.
     pub bar: Option<&'a ScrollState>,
+    /// Points per second the pane is gliding at, positive scrolling down. A
+    /// column on its own surfaces paints ahead of the glide with it.
+    pub velocity: f32,
     pub loading: bool,
     pub error: Option<&'a str>,
 }
@@ -2708,7 +2532,12 @@ impl PaneData<'_> {
 
 impl PaneData<'_> {
     pub fn is_selected(&self, index: usize) -> bool {
-        self.selected.get(index).copied().unwrap_or(false)
+        let (Some(selection), Some(entry)) = (self.selection, self.entries.get(index)) else {
+            return false;
+        };
+        // The common case while scrolling is an empty selection, which answers
+        // without touching the path at all.
+        !selection.is_empty() && selection.contains(entry.path.to_string_lossy().as_ref())
     }
 }
 
@@ -2767,7 +2596,7 @@ pub struct Frame<'a> {
     /// The preview pane — a trailing member of the Miller stack, panned into
     /// and out of view the same as any real column — when one is showing.
     /// `None` outside Miller view or with no single file selected; drawn at
-    /// [`PREVIEW_W`] by [`draw_miller`], the same way [`miller_w`] sizes
+    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller_w`] sizes
     /// every other pane rather than being carried on `Frame` itself.
     ///
     /// [`miller_w`]: Frame::miller_w
@@ -3024,7 +2853,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
             draw_column_strip(canvas, f);
             draw_list(canvas, f);
         }
-        ViewMode::Columns => draw_miller(canvas, f),
+        // The column stack is on surfaces of its own; see
+        // [`crate::pane_surfaces`].
+        ViewMode::Columns => {}
         ViewMode::Grid => draw_grid(canvas, f),
     }
 
@@ -3253,17 +3084,6 @@ pub struct PaletteData<'a> {
     /// Shown in place of the list: why the last attempt did not work, or that
     /// nothing matches.
     pub message: Option<&'a str>,
-    /// Whether the card is being drawn into a surface of its own rather than
-    /// into the window's buffer.
-    ///
-    /// On its own surface the compositor owns the material: it blurs what is
-    /// actually behind the window, tints it for legibility and casts the
-    /// shadow outside the card's bounds — none of which this canvas can do,
-    /// because a blur painted here can only sample the window's own pixels.
-    /// So the shadow and the opaque ground are dropped and the translucent
-    /// popup material is used instead, which is what the compositor's blur
-    /// expects to sit under.
-    pub on_surface: bool,
     /// The list's scroll view, when the host runs one: where the rows have
     /// scrolled to, how far past an end they are stretched, and how much of
     /// the bar to show. `None` draws the rows where they lie.
@@ -3301,7 +3121,7 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
     let mut height = PALETTE_FIELD_H;
     let body = palette_list_h(rows);
     if body > 0.0 || message {
-        height += PALETTE_PAD * 2.0 + body + palette_footer_h(rows, message);
+        height += PALETTE_PAD * 2.0 + body + palette_footer_h(message);
     }
     Rect::from_xywh(left, palette_top(), w, height)
 }
@@ -3309,11 +3129,10 @@ pub fn palette_rect(width: f32, rows: &[PaletteRow<'_>], message: bool) -> Rect 
 /// The line the message takes: the whole body when there are no rows — it
 /// stands in for the list — and a footer under the list when there are, so a
 /// dry run can be summed up beneath its lines.
-pub fn palette_footer_h(rows: &[PaletteRow<'_>], message: bool) -> f32 {
+pub fn palette_footer_h(message: bool) -> f32 {
     if message {
         PALETTE_ROW_H
     } else {
-        let _ = rows;
         0.0
     }
 }
@@ -3414,44 +3233,17 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
     let message = data.message.is_some();
     let card = palette_rect(width, &data.rows, message);
 
-    // A shadow rather than a dim over the window: the palette is not modal,
-    // and dimming the listing behind it would say that it was. Painted here
-    // only while the card is in the window's buffer — on its own surface the
-    // compositor casts it, and outside the card's bounds, which is the one
-    // place a shadow is worth having.
+    // The translucent material the compositor's blur sits under, filled in
+    // wherever it cannot frost a subsurface — see `Theme::card_material`. The
+    // shadow is the compositor's too, cast outside the card's bounds, which is
+    // the one place a shadow is worth having.
     let radius = palette_radius();
-    if !data.on_surface {
-        paint.set_color(theme.shadow);
-        paint.set_mask_filter(skia_safe::MaskFilter::blur(
-            skia_safe::BlurStyle::Normal,
-            14.0,
-            false,
-        ));
-        canvas.draw_rrect(
-            RRect::new_rect_xy(card.with_offset((0.0, 6.0)), radius, radius),
-            &paint,
-        );
-        paint.set_mask_filter(None);
-    }
-
-    // The translucent material when the compositor is blurring behind this
-    // surface, and filled in when the card is inside the window's own buffer:
-    // there the material would be a tint over the listing it is covering,
-    // with no blur underneath to justify it. On a surface of its own it is
-    // still filled in wherever the compositor cannot frost a subsurface — see
-    // `Theme::card_material`.
-    paint.set_color(if data.on_surface {
-        otto_kit::frosting::material(theme.card_material())
-    } else {
-        content_ground()
-    });
+    paint.set_color(otto_kit::frosting::material(theme.card_material()));
     canvas.draw_rrect(RRect::new_rect_xy(card, radius, radius), &paint);
 
     // The hairline is what says the card is above the listing rather than part
     // of it: the ground is the same colour on both sides of the edge, exactly
-    // as it is around the Get Info panel. On its own surface the compositor
-    // draws this; here the card is inside the window's own buffer, so it is
-    // painted.
+    // as it is around the Get Info panel.
     //
     // A ring rather than a stroke: the card's own rounded rect, less the same
     // shape one hairline in. A stroke centred half a point inside the edge
@@ -3499,38 +3291,19 @@ pub fn draw_palette(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteDa
                 card.bottom - PALETTE_PAD - PALETTE_ROW_H / 2.0,
             )
             .render(canvas);
-        if data.rows.is_empty() {
-            return;
-        }
     }
-
-    match data.scroll {
-        // The rows scroll under the field: drawn where they lie in the list,
-        // shifted and clipped by the view — which also paints the bar and
-        // shows the stretch past either end, since a stretched offset simply
-        // moves them further than the content allows.
-        Some(state) => {
-            // The renderer hands over a canvas in the *content's* own
-            // coordinates — the list's first row at the origin — while the row
-            // rects are measured from the window's corner like everything
-            // else in this file. Shift by the viewport's origin so the two
-            // agree, and the offset the renderer applied does the scrolling.
-            let viewport = state.viewport();
-            otto_kit::components::scroll::ScrollRenderer::draw(
-                canvas,
-                &state,
-                theme,
-                |canvas, _visible| {
-                    canvas.translate((-viewport.left, -viewport.top));
-                    draw_palette_rows(canvas, theme, width, data);
-                },
-            )
-        }
-        None => draw_palette_rows(canvas, theme, width, data),
-    }
+    // The rows are not the card's: they are a scroll pane of their own inside
+    // it, so scrolling the list moves that and repaints nothing here. See
+    // `PaneSurfaces::sync_palette`.
 }
 
-fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteData<'_>) {
+/// The palette's rows, in window points where the card rests.
+pub(crate) fn draw_palette_rows(
+    canvas: &Canvas,
+    theme: &Theme,
+    width: f32,
+    data: &PaletteData<'_>,
+) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     for (index, row) in data.rows.iter().enumerate() {
@@ -3683,15 +3456,15 @@ fn draw_palette_rows(canvas: &Canvas, theme: &Theme, width: f32, data: &PaletteD
 /// The preview pane's content, as a closure the scene records into its own
 /// layer's cached picture.
 ///
-/// The panel is the layer's own box, so this draws from `(0, 0)` rather than
-/// in window coordinates: the column's position on screen is the layer's, and
-/// panning the Miller stack moves it without touching what was recorded.
+/// The panel is the surface's own box, so this draws from `(0, 0)` rather than
+/// in window coordinates: the column's position on screen is the surface's,
+/// and panning the Miller stack moves it without touching what was painted.
 ///
 /// Nothing here paints the pane's ground. That is `content_ground` — and *not*
 /// `otto_kit::preview::background`, which is the translucent material Quick
 /// View floats over a dimmed window with. This pane is not a card laid over
 /// the browser; it reads as one more column on the same opaque paper the
-/// listing sits on. The scene carries it as the layer's background style.
+/// listing sits on. The surface is cleared to it first.
 ///
 /// The decode is cloned in, because the picture outlives the frame that
 /// recorded it. That only happens when the selection changes or a decode
@@ -4947,69 +4720,6 @@ fn draw_list(canvas: &Canvas, f: &Frame) {
 
     canvas.restore();
     pane.draw_scrollbar(canvas, theme);
-}
-
-/// Miller columns: the chrome over the stack.
-///
-/// The columns themselves — their ground, and every row in them — are layers
-/// the engine composites under this canvas; see [`crate::scene`]. What is left
-/// here is what sits *over* them and is cheap enough not to be worth a layer
-/// of its own: each column's scrollbar, the hairline down its trailing edge,
-/// and the stack's own horizontal bar.
-fn draw_miller(canvas: &Canvas, f: &Frame) {
-    let theme = f.theme;
-    let viewport = content_viewport(f.width, f.height, ViewMode::Columns);
-
-    canvas.save();
-    canvas.clip_rect(viewport, ClipOp::Intersect, true);
-
-    let mut divider = Paint::default();
-    divider.set_color(theme.fill_tertiary);
-    divider.set_stroke_width(1.0);
-
-    let trailing_edges = (0..f.panes.len())
-        .map(|depth| miller_pane_rect(depth, f.height, f.pan, f.miller_w))
-        .chain(
-            f.preview
-                .is_some()
-                .then(|| preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w)),
-        );
-
-    for (depth, full) in trailing_edges.enumerate() {
-        if full.right < viewport.left || full.left > viewport.right {
-            continue;
-        }
-        // The bar belongs to the column, but it is drawn from here so it lies
-        // over the column's content rather than being recorded into it — a
-        // scroll then moves the bar without the column re-recording anything.
-        // Unless the columns are in their own surfaces, in which case each
-        // draws its own bar into its own buffer: those surfaces sit over this
-        // canvas, so a bar drawn here would be hidden under them anyway, and
-        // would be stale besides.
-        if !crate::pane_surfaces::enabled() {
-            if let Some(pane) = f.panes.get(depth) {
-                pane.draw_scrollbar(canvas, theme);
-            }
-        }
-        canvas.draw_line(
-            Point::new(full.right, viewport.top),
-            Point::new(full.right, viewport.bottom),
-            &divider,
-        );
-    }
-
-    // The stack's own bar, along the bottom of every pane: the panes scroll
-    // vertically on their own bars, the stack scrolls sideways on this one.
-    // Drawn last so it lies over the pane dividers rather than under them.
-    // Unless it has a surface of its own over the columns — drawn here it
-    // would be covered by them. See [`crate::pane_surfaces`].
-    if !crate::pane_surfaces::enabled() {
-        if let Some(state) = f.pan_bar {
-            ScrollRenderer::draw(canvas, state, theme, |_, _| {});
-        }
-    }
-
-    canvas.restore();
 }
 
 /// Where a selected row sits within its run of selected rows. Rows abut, so a
@@ -7281,10 +6991,11 @@ mod geometry_tests {
     fn pane<'a>(owned: &'a [Entry], cursor: Option<usize>, scroll: f32) -> PaneData<'a> {
         PaneData {
             entries: owned.iter().collect(),
-            selected: vec![false; owned.len()],
+            selection: None,
             cursor,
             scroll,
             bar: None,
+            velocity: 0.0,
             loading: false,
             error: None,
         }

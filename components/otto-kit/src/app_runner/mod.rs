@@ -829,15 +829,15 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
     ) {
         use wayland_client::Proxy;
 
-        let has_callback = AppContext::has_frame_callback(&surface.id());
-
-        if has_callback {
-            AppContext::request_frame(surface);
-        }
-
         // The last committed frame is on screen, so a client throttling itself
         // to the compositor may paint the next one.
         AppContext::clear_frame_in_flight(&surface.id());
+
+        // A frame loop runs every frame whether or not the surface painted;
+        // any other callback runs once for each frame the surface commits.
+        if AppContext::has_frame_loop(&surface.id()) {
+            AppContext::request_loop_frame(surface);
+        }
 
         AppContext::dispatch_frame_callback(&surface.id());
     }

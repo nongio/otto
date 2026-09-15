@@ -2078,6 +2078,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         client_owns_size,
                         shared_gravity,
                     );
+                    crate::workspaces::utils::sync_surface_opaque_region(&layer, surface, wvs);
 
                     // Set up parent-child relationship using layers_engine.
                     // Only re-parent if the parent changed — re-appending on
@@ -2186,11 +2187,21 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     None,
                 );
 
+                // Only when the root is not already there. Appending detaches
+                // and re-attaches the node, which repaints it — and a surface
+                // layer answers a repaint with the damage of the buffer it last
+                // received, so a window update that changed nothing about the
+                // root (a style request on one of its subsurfaces, a scroll
+                // band moving) redrew the whole window.
                 if let Some(root_layer) = self.surface_layers.get(&id) {
-                    // Use layers_engine to set parent-child relationship
-                    let _ = self
-                        .layers_engine
-                        .append_layer(root_layer, content_layer.id());
+                    let content_id = content_layer.id();
+                    let attached = self.layers_engine.scene().with_arena(|arena| {
+                        arena.get(root_layer.id.0).and_then(|node| node.parent())
+                            == Some(content_id.0)
+                    });
+                    if !attached {
+                        let _ = self.layers_engine.append_layer(root_layer, content_id);
+                    }
                 }
 
                 // Keep the expose preview live. The preview mirror is a

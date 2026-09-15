@@ -6,37 +6,45 @@
 //! everything changed. Measured on the `scroll_ab` example, that is 82 full
 //! window repaints across one fling.
 //!
-//! Here each column gets a subsurface the size of the column. The client still
-//! does all the work — it renders, translates and clips the rows itself, in
-//! that subsurface's own buffer — so the painting is unchanged. What changes is
-//! the *scope*: a scroll damages one column, not the window, and the toplevel
-//! is left alone entirely.
+//! Here the stack is a horizontal container
+//! ([`otto_kit::components::scroll::ScrollSurfaces::container`]) clipped to the
+//! file area, and each column is a vertical pane inside it, placed once in the
+//! stack's content coordinates: a clip surface the column's size, and inside it
+//! a band of rows taller than the column. A frame of scrolling moves a band
+//! with `otto_surface_style_v1` and paints nothing; panning the stack moves the
+//! container's band, and every column rides along untouched. Rows are painted
+//! again only when a glide nears the edge of a band, or when what a column
+//! shows changes. The docked preview's player sits in the stack too, beside the
+//! last column. The stack's bar is the container's own.
 //!
-//! This is deliberately the cheaper of the two subsurface designs. The other,
-//! [`otto_kit::components::scroll::ScrollSurfaces`], keeps a band taller than
-//! the viewport and scrolls it with `otto_surface_style_v1`, so a frame of
-//! scrolling costs no paint at all — but it needs band management, the style
-//! protocol and pointer routing per column. This one reuses the existing
-//! drawing untouched and still gets the damage confinement.
+//! **Input is not routed here.** Every column's surfaces pass the pointer
+//! through, so events fall straight to the toplevel and the browser keeps
+//! hit-testing in window coordinates exactly as it always has. Without that,
+//! `Window::on_pointer_event` — which filters to the toplevel's own surface —
+//! would silently stop seeing anything over the columns.
 //!
-//! **Input is not routed here.** Every column surface carries an empty input
-//! region, so pointer events fall straight through to the toplevel and the
-//! browser keeps hit-testing in window coordinates exactly as it always has.
-//! Without that, `Window::on_pointer_event` — which filters to the toplevel's
-//! own surface — would silently stop seeing anything over the columns.
-//!
-//! Off by default; set `OTTO_FILES_PANE_SUBS=1` to turn it on.
+//! The rows are all a band carries, on a transparent ground. The file area's
+//! paper is the window's, underneath, and does not move. Everything that moves
+//! with the stack is in it: the active column's tint is the colour of that
+//! column's clip, and the hairline down each column's edge, the line an empty
+//! or loading column shows and the docked preview are surfaces of their own —
+//! so a pan moves the stack and the window repaints nothing.
 
 use otto_kit::app_runner::AppContext;
-use otto_kit::components::scroll::ScrollRenderer;
-use otto_kit::surfaces::SubsurfaceSurface;
-use skia_safe::Rect;
+use otto_kit::components::scroll::{Axis, Fill, Paint, PlacedSurface, ScrollSurfaces};
+use otto_kit::prelude::*;
+use otto_kit::theme::Theme;
+use otto_kit::typography::styles;
+use skia_safe::{Color, Rect};
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::quickview;
 use crate::scene;
-use crate::view::{self, Frame, ViewMode};
+use crate::view::{self, Frame, PaneData, ViewMode};
+
+/// Height of the box a column's status line is painted into.
+const STATUS_H: f32 = 40.0;
 
 /// Whether Quick View is centred on the display rather than on the window.
 ///
@@ -49,10 +57,7 @@ use crate::view::{self, Frame, ViewMode};
 /// happens to sit is no reason for it to open off to one side of the display.
 /// A window pushed to a screen edge otherwise puts its preview there too.
 ///
-/// This is independent of [`enabled`] — Quick View gets a surface of its own
-/// whether or not the columns do, because it is the only part of this module
-/// that needs one to be positioned at all. `OTTO_FILES_QV_CENTER=0` opts out
-/// and goes back to centring on the window.
+/// `OTTO_FILES_QV_CENTER=0` opts out and goes back to centring on the window.
 pub fn quickview_centered() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
@@ -61,46 +66,6 @@ pub fn quickview_centered() -> bool {
             Ok("0") | Ok("false")
         )
     })
-}
-
-/// Whether Quick View is presented on a subsurface rather than painted into
-/// the window's own canvas.
-///
-/// Centring on the display requires one: a client is never told where its
-/// window is, so the panel has to be a surface the compositor can place.
-pub fn quickview_on_surface() -> bool {
-    enabled() || quickview_centered()
-}
-
-/// Whether the command palette is presented on a surface of its own rather
-/// than painted into the window's canvas.
-///
-/// It has to be, for the same reason Quick View does: the card is dragged, and
-/// a card painted into the window's buffer cannot be dragged past the window's
-/// edge — there are no pixels out there to draw on. Clamping it to the window
-/// was a way of hiding that, not a design.
-///
-/// A surface also settles what the card is made of. The frosted material only
-/// means anything here: the compositor blurs and tints what is actually behind
-/// the *window*, where a blur painted into the window's own buffer can only
-/// sample the listing the card is already covering — which is why the card
-/// read as the same colour on the same colour.
-///
-/// `OTTO_FILES_PALETTE_SURFACE=0` goes back to painting it into the window.
-pub fn palette_on_surface() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        !matches!(
-            std::env::var("OTTO_FILES_PALETTE_SURFACE").as_deref(),
-            Ok("0") | Ok("false")
-        )
-    })
-}
-
-/// Whether the subsurface path is enabled for this process.
-pub fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("OTTO_FILES_PANE_SUBS").is_some())
 }
 
 /// What the palette's surface needs in order to paint and place itself.
@@ -122,9 +87,52 @@ pub struct PaletteFrame {
     pub rows: Vec<crate::app::PaletteRowData>,
     /// Where the list has scrolled to, and the state of its bar.
     pub scroll: otto_kit::components::scroll::ScrollState,
+    /// How fast the list is gliding, so its band is painted ahead of it.
+    pub velocity: f32,
+    /// Changes whenever the field would paint differently: its text, caret,
+    /// selection, focus or blink. The field paints itself, so this side
+    /// cannot tell by looking.
+    pub field_key: u64,
 }
 
 impl PaletteFrame {
+    /// Everything the card paints, less the rows and the scroll: what decides
+    /// whether the card has to be painted again.
+    fn card_key(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        self.prompt.hash(&mut hasher);
+        self.message.hash(&mut hasher);
+        self.rows.is_empty().hash(&mut hasher);
+        hash_rect(self.resting).hash(&mut hasher);
+        self.field_key.hash(&mut hasher);
+        view::is_dark().hash(&mut hasher);
+        otto_kit::frosting::enabled().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Everything the rows paint, less the scroll.
+    fn list_key(&self, width: f32) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        for row in &self.rows {
+            std::mem::discriminant(&row.kind).hash(&mut hasher);
+            if let view::PaletteRowKind::Preview { conflict, excluded } = row.kind {
+                (conflict, excluded).hash(&mut hasher);
+            }
+            row.title.hash(&mut hasher);
+            row.badge.hash(&mut hasher);
+            row.subtitle.hash(&mut hasher);
+            row.shortcut.hash(&mut hasher);
+            row.highlighted.hash(&mut hasher);
+        }
+        width.to_bits().hash(&mut hasher);
+        view::is_dark().hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Borrow the owned text as the view wants it.
     fn data(&self) -> view::PaletteData<'_> {
         view::PaletteData {
@@ -142,58 +150,52 @@ impl PaletteFrame {
                 })
                 .collect(),
             message: self.message.as_deref(),
-            on_surface: true,
             scroll: Some(self.scroll),
         }
     }
 }
 
-/// One column's surface and what it currently holds.
-struct PaneSurface {
-    surface: SubsurfaceSurface,
-    /// Where it sits and how big it is, in window points.
-    rect: Rect,
-    /// The scroll offset the painted content was drawn at.
-    scroll: f32,
-    /// The scrollbar opacity it was drawn at. The bar fades in on a scroll and
-    /// out again when the glide stops, and that fade is the column's own to
-    /// draw now — so it has to be able to make the column repaint on its own,
-    /// with the offset unchanged.
-    bar: f32,
-    /// Identity of everything else that feeds the drawing.
+/// One column's surfaces, and what its band was last painted from.
+struct ColumnPane {
+    surfaces: ScrollSurfaces,
+    /// Identity of everything other than the scroll that the rows draw.
     key: u64,
-    hidden: bool,
-    /// Whether this surface takes pointer input when it is showing. False for
-    /// the columns, whose hit-testing belongs to the toplevel; true for Quick
-    /// View, which hangs outside the toplevel and has to answer for itself.
-    ///
-    /// Held as state rather than applied once, because it has to be *withdrawn*
-    /// while the surface is hidden — see [`PaneSurface::hide`].
-    takes_input: bool,
-    /// The compositor owns this surface's position, so nothing here may set
-    /// it: a parent-relative position sent after the centring would simply
-    /// undo it.
-    output_centered: bool,
-    /// A size and position the compositor has not been told about yet.
-    ///
-    /// The style protocol applies a size the moment it arrives, not on the
-    /// next commit, so claiming a new size while the old buffer is still
-    /// attached has the compositor draw the old pixels stretched to the new
-    /// bounds until the paint lands. A resize therefore waits here and is
-    /// claimed by [`PaneSurface::draw`], right after the buffer that fits it.
-    claim: Option<(Rect, f32)>,
+    /// The hairline down the column's trailing edge.
+    divider: Option<Fill>,
+    /// The loading, empty or error line, in place of rows.
+    status: Option<PlacedSurface>,
+}
+
+impl ColumnPane {
+    /// Take the column and everything beside it out of sight.
+    fn hide(&mut self) -> bool {
+        let mut changed = self.surfaces.set_hidden(true);
+        if let Some(divider) = self.divider.as_mut() {
+            changed |= divider.set_hidden(true);
+        }
+        if let Some(status) = self.status.as_mut() {
+            changed |= status.set_hidden(true);
+        }
+        changed
+    }
 }
 
 /// The per-column subsurfaces, pooled the way the scene pools its pane layers.
+#[derive(Default)]
 pub struct PaneSurfaces {
-    panes: Vec<PaneSurface>,
-    /// The stack's horizontal bar, in a surface of its own over the columns.
-    pan: Option<PaneSurface>,
+    /// The column stack: a container clipped to the file area, panned
+    /// sideways, holding the columns and the preview's player.
+    stack: Option<ScrollSurfaces>,
+    columns: Vec<ColumnPane>,
     /// The Quick View panel, in a surface of its own over everything.
-    quickview: Option<PaneSurface>,
+    quickview: Option<PlacedSurface>,
     /// The command palette, in a surface of its own so it can be dragged clear
-    /// of the window. See [`palette_on_surface`].
-    palette: Option<PaneSurface>,
+    /// of the window.
+    palette: Option<PlacedSurface>,
+    /// The palette's rows, a scroll pane inside its card, and what they were
+    /// last painted from.
+    palette_list: Option<ScrollSurfaces>,
+    palette_list_key: u64,
     /// The display the palette may be dragged around, in window points, and
     /// whether an answer has been asked for and not yet arrived.
     ///
@@ -209,11 +211,19 @@ pub struct PaneSurfaces {
     /// cares about arrives here, in a frame that stays put for the length of
     /// a drag — which is what makes the drag exact. See [`Self::sync_palette`]
     /// for why the card cannot take its own pointer.
-    catcher: Option<PaneSurface>,
+    catcher: Option<PlacedSurface>,
     /// The docked preview column's video player, in a surface of its own so
-    /// its per-frame repaints never touch the toplevel. Sized to the video's
-    /// shape, placed over the column's stage; see [`Self::sync_preview_video`].
-    preview_video: Option<PaneSurface>,
+    /// its per-frame repaints never touch the toplevel. A child of the stack,
+    /// sized to the video's shape and placed over the column's stage; see
+    /// [`Self::sync_preview_video`].
+    preview_video: Option<PlacedSurface>,
+    /// The docked preview column itself — its paper, picture and caption — in
+    /// the stack beside the last column. See [`Self::sync_preview_pane`].
+    preview_pane: Option<PlacedSurface>,
+    preview_divider: Option<Fill>,
+    /// A surface was created in the stack, which puts it on top of its
+    /// siblings there.
+    stack_children_dirty: bool,
     /// Which panel, and which direction, [`Self::quickview_resting`] was
     /// worked out for: the session's generation and whether it is closing.
     /// `Some(closing)` once the output has been asked about for the panel
@@ -250,32 +260,11 @@ pub struct PaneSurfaces {
     /// disturb the sibling order: a new subsurface arrives on top of every
     /// one of its siblings, including the overlays that must stay above them.
     stack_dirty: bool,
-    scale: f32,
 }
 
-/// How tall a slice of the viewport the horizontal bar can touch: the gutter
-/// it sits in, plus room for the widening it does on hover.
-const PAN_BAR_STRIP: f32 = 16.0;
-
 impl PaneSurfaces {
-    pub fn new(scale: f32) -> Self {
-        Self {
-            panes: Vec::new(),
-            pan: None,
-            quickview: None,
-            palette: None,
-            palette_display: None,
-            palette_asked: false,
-            catcher: None,
-            preview_video: None,
-            quickview_placement: None,
-            quickview_awaiting: false,
-            quickview_display: None,
-            quickview_resting: None,
-            pending: false,
-            stack_dirty: false,
-            scale,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Bring the column surfaces in line with the frame: create, move, resize
@@ -290,12 +279,11 @@ impl PaneSurfaces {
         quickview: Option<(&quickview::Session, u64)>,
     ) -> bool {
         self.pending = false;
-        // The column half is still opt-in. When it is off this module exists
-        // only to carry Quick View's surface, so the scene keeps drawing the
-        // columns and nothing here touches them.
-        if f.mode != ViewMode::Columns || !enabled() {
+        // Outside column view there are no columns: what is left here is Quick
+        // View's surface. The preview's player is in the stack, and goes with
+        // it.
+        if f.mode != ViewMode::Columns {
             let mut changed = self.hide_all();
-            changed |= self.sync_preview_video(parent, f, quickview.is_some());
             changed |= self.sync_quickview(parent, f, quickview);
             self.restack(parent);
             return changed;
@@ -303,103 +291,124 @@ impl PaneSurfaces {
         let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
         let mut painted = false;
 
+        if self.stack.is_none() {
+            match ScrollSurfaces::container(parent, viewport, Axis::Horizontal) {
+                Ok(mut stack) => {
+                    stack.set_input_passthrough();
+                    self.stack = Some(stack);
+                    self.stack_dirty = true;
+                }
+                Err(_) => return false,
+            }
+        }
+        let Some(stack) = self.stack.as_mut() else {
+            return false;
+        };
+        painted |= stack.set_hidden(false);
+        stack.set_viewport(viewport);
+        if let Some(pan) = f.pan_bar {
+            // A container has no content to paint and nothing to paint ahead
+            // of, so the pan's speed is no use to it.
+            painted |= stack.sync_state(pan, 0.0, f.theme, |_, _| {}) || stack.waiting();
+        }
+        let band = stack.band_surface().clone();
+
+        // What of the stack the file area shows, along it.
+        let (shown_from, shown_to) = (f.pan, f.pan + viewport.width());
         for depth in 0..f.panes.len() {
-            let full = view::miller_pane_rect(depth, f.height, f.pan, f.miller_w);
-            // A column panned entirely off the content area has nothing to
-            // show; leaving its surface mapped would put it under the sidebar.
-            let visible = full.right > viewport.left && full.left < viewport.right;
-
-            if depth >= self.panes.len() {
-                match Self::create(parent, full) {
-                    Some(pane) => {
-                        self.panes.push(pane);
-                        self.stack_dirty = true;
+            // Placed once, in the stack's own coordinates: the pan moves the
+            // stack, never a column.
+            let rect = Rect::from_xywh(
+                depth as f32 * f.miller_w,
+                0.0,
+                f.miller_w,
+                viewport.height(),
+            );
+            if depth >= self.columns.len() {
+                match ScrollSurfaces::new(&band, rect, skia_safe::Color::TRANSPARENT) {
+                    Ok(mut surfaces) => {
+                        surfaces.set_input_passthrough();
+                        self.columns.push(ColumnPane {
+                            surfaces,
+                            key: 0,
+                            divider: None,
+                            status: None,
+                        });
+                        self.stack_children_dirty = true;
                     }
-                    None => continue,
+                    Err(_) => break,
                 }
             }
 
-            let scale = self.scale;
-            let pane = &mut self.panes[depth];
-            if !visible {
-                painted |= pane.hide();
+            // A column panned out of the file area is taken out of sight, so
+            // nothing about it is composited or kept painted.
+            let column = &mut self.columns[depth];
+            if rect.right <= shown_from || rect.left >= shown_to {
+                painted |= column.hide();
                 continue;
             }
-            painted |= pane.show();
-
-            // Crop the surface to the content area rather than letting it
-            // spill. The scene clipped columns with `content.set_clip_children`
-            // — a subsurface has no such parent, it is a child of the toplevel,
-            // so a column panned past the sidebar would simply draw over it.
-            // Shrinking the surface to the visible slice *is* the clip, and the
-            // content is then shifted by however much was cropped off the left.
-            let mut clipped = full;
-            if !clipped.intersect(viewport) {
-                painted |= pane.hide();
-                continue;
-            }
-            let dx = full.left - clipped.left;
-            pane.place(clipped, scale);
-
-            let key = column_key(f, depth);
-            let scroll = f.panes[depth].scroll;
-            let bar = f.panes[depth]
-                .bar
-                .map(|state| state.scrollbar_opacity())
-                .unwrap_or(0.0);
-            if pane.key == key && pane.scroll == scroll && pane.bar == bar {
-                continue;
-            }
-            // Frame-callback throttled, like the toplevel: painting again
-            // while the last buffer has not been presented only queues work
-            // the compositor has not asked for.
-            use wayland_client::Proxy;
-            if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
-                self.pending = true;
-                continue;
-            }
-            pane.key = key;
-            pane.scroll = scroll;
-            pane.bar = bar;
-            // The rows are laid out against the column's full width, then
-            // slid by the cropped-off amount, so a half-visible column shows
-            // the correct half rather than a squeezed whole.
-            let width = full.width();
-            let origin = (clipped.left, clipped.top);
-            pane.draw(|canvas| {
-                canvas.save();
-                canvas.translate((dx, 0.0));
-                scene::paint_column(canvas, f, depth, width);
-                canvas.restore();
-
-                // The column's own scrollbar. It used to be drawn over the
-                // stack from `view::draw_miller`, but the window is no longer
-                // repainted for a scroll — which is the point — so the bar
-                // would fade in and never move. It belongs to the column, so
-                // it rides in the column's surface, shifted out of window
-                // coordinates into this surface's own.
-                if let Some(state) = f.panes[depth].bar {
-                    canvas.save();
-                    canvas.translate((-origin.0, -origin.1));
-                    ScrollRenderer::draw(canvas, state, f.theme, |_, _| {});
-                    canvas.restore();
-                }
+            painted |= column.surfaces.set_hidden(false);
+            column.surfaces.set_viewport(rect);
+            // The active column is a shade off the ground: the colour of its
+            // clip, one pixel stretched, so which column has the keyboard
+            // repaints neither the rows nor the window.
+            column.surfaces.set_background(if depth == f.active {
+                f.theme.fill_quaternary
+            } else {
+                Color::TRANSPARENT
             });
-            painted = true;
+            painted |= sync_divider(
+                &mut column.divider,
+                &band,
+                rect,
+                f.theme,
+                &mut self.stack_children_dirty,
+            );
+            painted |= sync_status(
+                &mut column.status,
+                &band,
+                rect,
+                &f.panes[depth],
+                f.theme,
+                &mut self.pending,
+                &mut self.stack_children_dirty,
+            );
+
+            // Anything the rows show other than where they are scrolled to
+            // repaints the band; the scroll itself only moves it.
+            let key = column_key(f, depth);
+            if column.key != key {
+                column.key = key;
+                column.surfaces.invalidate();
+            }
+            let Some(state) = f.panes[depth].bar else {
+                continue;
+            };
+            // A step held back until the last one is on screen still counts:
+            // the column has the scroll in hand, and the window has nothing
+            // to repaint for it.
+            let width = rect.width();
+            painted |= column.surfaces.sync_state(
+                state,
+                f.panes[depth].velocity,
+                f.theme,
+                |canvas, band| scene::paint_column_band(canvas, f, depth, width, band),
+            ) || column.surfaces.waiting();
         }
 
-        for pane in self.panes.iter_mut().skip(f.panes.len()) {
-            painted |= pane.hide();
+        for column in self.columns.iter_mut().skip(f.panes.len()) {
+            painted |= column.hide();
         }
-        painted |= self.sync_pan_bar(parent, f, viewport);
-        painted |= self.sync_preview_video(parent, f, quickview.is_some());
+        painted |= self.sync_preview_pane(&band, f, viewport, (shown_from, shown_to));
+        painted |= self.sync_preview_video(&band, f, viewport, quickview.is_some());
         painted |= self.sync_quickview(parent, f, quickview);
         self.restack(parent);
         painted
     }
 
-    /// Put the sibling surfaces back into a known order, bottom to top:
-    /// columns in depth order, then the stack's bar, then Quick View.
+    /// Put the sibling surfaces back into a known order, bottom to top: in the
+    /// window the stack, then the palette and Quick View; in the stack the
+    /// columns in depth order, then the preview's player.
     ///
     /// Stacking each surface against the one below it states the whole order
     /// rather than assuming one. Placing an overlay above "the last column"
@@ -418,33 +427,54 @@ impl PaneSurfaces {
         // reaches into the sibling order: a pooled column is hidden by going
         // transparent, never destroyed, so it keeps its place in the stack
         // and coming back does not disturb anyone.
+        if std::mem::take(&mut self.stack_children_dirty) {
+            if let Some(stack) = self.stack.as_ref() {
+                // Columns, then what sits on them, then the preview and its
+                // player, and the hairlines over everything — a hairline runs
+                // down the seam between two neighbours and belongs to neither.
+                let mut below: Option<WlSurface> = None;
+                let mut stack_on = |place: &dyn Fn(&WlSurface), surface: &WlSurface| {
+                    if let Some(below) = &below {
+                        place(below);
+                    }
+                    below = Some(surface.clone());
+                };
+                for column in &self.columns {
+                    stack_on(
+                        &|b| column.surfaces.place_above(b),
+                        column.surfaces.clip_surface(),
+                    );
+                }
+                let beside = self.columns.iter().filter_map(|c| c.status.as_ref());
+                let player = [self.preview_pane.as_ref(), self.preview_video.as_ref()];
+                for pane in beside.chain(player.into_iter().flatten()) {
+                    stack_on(&|b| pane.place_above(b), pane.wl_surface());
+                }
+                let dividers = self.columns.iter().filter_map(|c| c.divider.as_ref());
+                for fill in dividers.chain(self.preview_divider.as_ref()) {
+                    stack_on(&|b| fill.place_above(b), fill.wl_surface());
+                }
+                // The order is the stack band's pending state.
+                stack.band_surface().commit();
+            }
+        }
         if !std::mem::take(&mut self.stack_dirty) {
             return;
         }
-        let trace = std::env::var_os("OTTO_FILES_QV_TRACE").is_some();
-        let mut order: Vec<String> = Vec::new();
-        let mut below: Option<WlSurface> = None;
+        let mut below: Option<WlSurface> = self
+            .stack
+            .as_ref()
+            .map(|stack| stack.clip_surface().clone());
         let overlays = [
-            self.preview_video.as_ref(),
-            self.pan.as_ref(),
             self.palette.as_ref(),
             self.catcher.as_ref(),
             self.quickview.as_ref(),
         ];
-        for (index, pane) in self.panes.iter().map(Some).chain(overlays).enumerate() {
-            let Some(pane) = pane else { continue };
-            let surface = pane.surface.wl_surface().clone();
-            if trace {
-                use wayland_client::Proxy;
-                order.push(format!("{index}:{}", surface.id().protocol_id()));
-            }
+        for pane in overlays.into_iter().flatten() {
             if let Some(below) = &below {
-                pane.surface.place_above(below);
+                pane.place_above(below);
             }
-            below = Some(surface);
-        }
-        if trace {
-            eprintln!("qv restack: {}", order.join(" < "));
+            below = Some(pane.wl_surface().clone());
         }
         // `place_above` is part of the *parent's* pending state, so committing
         // the children does nothing for it. Without this the new order waits
@@ -461,24 +491,19 @@ impl PaneSurfaces {
             return None;
         }
         let pane = self.quickview.as_ref()?;
-        let style = pane.surface.layer()?;
 
-        use wayland_client::Proxy;
         // Once per open, and again when the exit starts — the two moments the
         // answer can actually differ.
         let placement = session.closing.is_some();
         if self.quickview_placement != Some(placement) {
             self.quickview_placement = Some(placement);
             self.quickview_awaiting = true;
-            // Clear before asking, so a stale answer cannot be mistaken for
-            // the new one.
-            AppContext::clear_output_frame(&style.id());
-            style.request_output_frame();
+            pane.ask_output_frame();
         }
         // The *old* rect stays in force until the new answer lands. Nulling it
         // here is what made the panel snap to the window's centre and back.
         if self.quickview_awaiting {
-            if let Some(rect) = display_rect(pane, self.scale) {
+            if let Some(rect) = pane.output_frame() {
                 self.quickview_display = Some(rect);
                 self.quickview_awaiting = false;
             }
@@ -522,7 +547,7 @@ impl PaneSurfaces {
             return self
                 .palette
                 .as_mut()
-                .map(PaneSurface::hide)
+                .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false)
                 | had_catcher;
         };
@@ -533,64 +558,101 @@ impl PaneSurfaces {
         let rect = palette.card;
 
         if self.palette.is_none() {
-            self.palette = Self::create(parent, rect);
+            self.palette = PlacedSurface::new(parent, rect).ok();
             self.stack_dirty = true;
-            if let Some(pane) = self.palette.as_mut() {
-                Self::style_palette(pane, self.scale);
-                // The card keeps the empty input region `create` gave it. Its
-                // pointer is answered by the catcher below, never by the card
-                // itself: pointer positions arrive relative to the surface
-                // under the pointer, and a surface that is being dragged is a
-                // moving ruler — each motion event re-applies a correction
-                // that is already in flight, and the card runs away.
+            if let Some(pane) = self.palette.as_ref() {
+                Self::style_palette(pane);
+                // The card takes no pointer input. Its pointer is answered by
+                // the catcher below, never by the card itself: pointer
+                // positions arrive relative to the surface under the pointer,
+                // and a surface that is being dragged is a moving ruler — each
+                // motion event re-applies a correction that is already in
+                // flight, and the card runs away.
             }
         }
         let mut painted = self.sync_palette_catcher(parent, width, height);
-        let scale = self.scale;
         if let Some(pane) = self.palette.as_mut() {
             // The card is pooled between opens, so a corner or frosting
             // setting changed while it was closed is picked up here.
-            if pane.hidden {
-                Self::style_palette(pane, scale);
+            if pane.is_hidden() {
+                Self::style_palette(pane);
             }
-            painted |= pane.show();
-            pane.place(rect, scale);
+            painted |= pane.set_hidden(false);
+            pane.set_rect(rect);
 
-            // No content key here, unlike every other surface in this module:
-            // the field paints itself through the callback, so this side
-            // cannot tell whether the text changed. The frame-callback
-            // throttle is what keeps that from costing anything — a repaint
-            // only happens when the compositor has asked for a frame.
-            use wayland_client::Proxy;
-            if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
-                self.pending = true;
-            } else {
-                // The card is drawn where it *rests*, in window points, and
-                // the drag is carried entirely by the surface's position.
-                // Drawing the dragged rect into a surface that had already
-                // been moved would apply the offset twice.
-                let shift = (-palette.resting.left, -palette.resting.top);
-                let data = palette.data();
-                pane.draw(|canvas| {
-                    canvas.clear(skia_safe::Color::TRANSPARENT);
-                    canvas.save();
-                    canvas.translate(shift);
-                    view::draw_palette(canvas, theme, width, &data);
-                    // The field's text, over the box the card left for it —
-                    // the same two-step the rename and location fields take.
-                    // Still in window points, inside the same translate, so
-                    // the caller works in one coordinate space rather than
-                    // two.
-                    paint_field(canvas);
-                    canvas.restore();
-                });
-                painted = true;
-            }
+            // Painted only when the card itself changed: the rows and their
+            // scroll are the list pane's, below, and a drag is the surface's
+            // position. The field paints itself, so the frame carries a key
+            // for it.
+            //
+            // The card is drawn where it *rests*, in window points, and the
+            // drag is carried entirely by the surface's position. Drawing the
+            // dragged rect into a surface that had already been moved would
+            // apply the offset twice.
+            let shift = (-palette.resting.left, -palette.resting.top);
+            let data = palette.data();
+            let paint = pane.paint(palette.card_key(), |canvas| {
+                canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.save();
+                canvas.translate(shift);
+                view::draw_palette(canvas, theme, width, &data);
+                // The field's text, over the box the card left for it — the
+                // same two-step the rename and location fields take. Still in
+                // window points, inside the same translate, so the caller
+                // works in one coordinate space rather than two.
+                paint_field(canvas);
+                canvas.restore();
+            });
+            painted |= self.painted(paint);
         }
+        painted |= self.sync_palette_list(palette, theme, width);
         // On every path, not only the painting one: the catcher may have just
         // been created, and it has to land above the card before the first
         // press or that press goes to the card's empty region instead.
         self.restack(parent);
+        painted
+    }
+
+    /// The palette's rows: a vertical scroll pane inside the card, over the
+    /// list's viewport. A scroll moves its band; the rows are painted again
+    /// only when what they show changes — the highlight among them, since a
+    /// highlighted row's text changes colour with it.
+    fn sync_palette_list(&mut self, palette: &PaletteFrame, theme: &Theme, width: f32) -> bool {
+        let Some(card) = self.palette.as_ref() else {
+            return false;
+        };
+        let data = palette.data();
+        // In window points where the card rests, which is what the rows are
+        // measured in; the pane itself is placed in the card's coordinates.
+        let viewport = view::palette_list_rect(width, &data.rows, data.message.is_some());
+        let local = viewport.with_offset((-palette.resting.left, -palette.resting.top));
+        if self.palette_list.is_none() {
+            match ScrollSurfaces::new(card.wl_surface(), local, Color::TRANSPARENT) {
+                Ok(mut list) => {
+                    list.set_input_passthrough();
+                    self.palette_list = Some(list);
+                }
+                Err(_) => return false,
+            }
+        }
+        let Some(list) = self.palette_list.as_mut() else {
+            return false;
+        };
+        if data.rows.is_empty() || local.height() <= 0.0 {
+            return list.set_hidden(true);
+        }
+        let mut painted = list.set_hidden(false);
+        list.set_viewport(local);
+        let key = palette.list_key(width);
+        if self.palette_list_key != key {
+            self.palette_list_key = key;
+            list.invalidate();
+        }
+        painted |= list.sync_state(&palette.scroll, palette.velocity, theme, |canvas, _band| {
+            // The band's canvas starts at the list's first row.
+            canvas.translate((-viewport.left, -viewport.top));
+            view::draw_palette_rows(canvas, theme, width, &data);
+        }) || list.waiting();
         painted
     }
 
@@ -601,14 +663,14 @@ impl PaneSurfaces {
     /// which is what lifts the card off a listing of the same colour; it also
     /// casts the shadow outside the card's bounds, where a shadow is actually
     /// visible. Neither is possible in the window's own buffer.
-    fn style_palette(pane: &PaneSurface, scale: f32) {
-        let Some(style) = pane.surface.layer() else {
+    fn style_palette(pane: &PlacedSurface) {
+        let Some(style) = pane.style() else {
             return;
         };
         // Physical pixels for the shadow; the radius alone is in points — the
         // compositor scales it itself, and pre-scaling it here rounded the clip
         // at twice the card's radius on a 2x display.
-        let scale = scale as f64;
+        let scale = AppContext::fractional_scale();
         // The radius the card paints itself with, so the blur and the shadow
         // follow the corners instead of squaring them off — and the hairline
         // meets the clip rather than sitting inside a rounder one.
@@ -627,8 +689,8 @@ impl PaneSurfaces {
     /// window points, against a rect that does not change under it mid-drag.
     pub fn palette_target(&self) -> Option<(ObjectId, Rect)> {
         use wayland_client::Proxy;
-        let pane = self.catcher.as_ref().filter(|pane| !pane.hidden)?;
-        Some((pane.surface.wl_surface().id(), pane.rect))
+        let pane = self.catcher.as_ref().filter(|pane| !pane.is_hidden())?;
+        Some((pane.wl_surface().id(), pane.rect()))
     }
 
     /// Keep the catcher covering the display — or the window, until the
@@ -642,40 +704,37 @@ impl PaneSurfaces {
             .palette_display
             .unwrap_or_else(|| Rect::from_wh(width, height));
         if self.catcher.is_none() {
-            self.catcher = Self::create(parent, rect);
+            self.catcher = PlacedSurface::new(parent, rect).ok();
             self.stack_dirty = true;
-            if std::env::var_os("OTTO_FILES_PALETTE_TRACE").is_some() {
-                use wayland_client::Proxy;
-                eprintln!(
-                    "palette catcher created: {:?} rect={rect:?}",
-                    self.catcher.as_ref().map(|p| p.surface.wl_surface().id())
-                );
-            }
             if let Some(pane) = self.catcher.as_mut() {
-                pane.takes_input = true;
-                pane.accept_input(true);
-                pane.surface.commit();
+                pane.set_takes_input(true);
             }
         }
-        let scale = self.scale;
         let Some(pane) = self.catcher.as_mut() else {
             return false;
         };
-        let mut painted = pane.show();
-        let resized = pane.place(rect, scale);
-        if resized && std::env::var_os("OTTO_FILES_PALETTE_TRACE").is_some() {
-            eprintln!("palette catcher placed: rect={rect:?}");
-        }
+        let mut painted = pane.set_hidden(false);
+        pane.set_rect(rect);
         // Painted once per size: there is nothing on it, but a surface with no
         // buffer is not mapped and takes no input.
-        if resized || pane.key == 0 {
-            pane.key = 1;
-            pane.draw(|canvas| {
-                canvas.clear(skia_safe::Color::TRANSPARENT);
-            });
-            painted = true;
-        }
+        let paint = pane.paint(0, |canvas| {
+            canvas.clear(skia_safe::Color::TRANSPARENT);
+        });
+        painted |= self.painted(paint);
         painted
+    }
+
+    /// Whether a paint happened, noting one the throttle held back so the
+    /// caller keeps the loop turning until it lands.
+    fn painted(&mut self, paint: Paint) -> bool {
+        match paint {
+            Paint::Painted => true,
+            Paint::Held => {
+                self.pending = true;
+                false
+            }
+            Paint::Unchanged => false,
+        }
     }
 
     /// The display the palette is on, in window points, or `None` until the
@@ -685,17 +744,12 @@ impl PaneSurfaces {
     /// only means anything for as long as the window stays put — which for the
     /// length of one palette session it does.
     pub fn palette_display(&mut self) -> Option<Rect> {
-        use wayland_client::Proxy;
         let pane = self.palette.as_ref()?;
-        let style = pane.surface.layer()?;
         if !self.palette_asked {
             self.palette_asked = true;
-            // Clear before asking, so a stale answer cannot be mistaken for
-            // the new one.
-            AppContext::clear_output_frame(&style.id());
-            style.request_output_frame();
+            pane.ask_output_frame();
         }
-        if let Some(rect) = display_rect(pane, self.scale) {
+        if let Some(rect) = pane.output_frame() {
             self.palette_display = Some(rect);
         }
         self.palette_display
@@ -708,9 +762,9 @@ impl PaneSurfaces {
     /// see. It gets a surface of its own, stacked above every column and above
     /// the horizontal bar — the topmost thing this window puts on screen.
     ///
-    /// Its input region stays empty like the columns'. The panel already owns
-    /// the pointer through the host's own routing, which works in window
-    /// coordinates and does not care which surface the pixels came from.
+    /// Unlike the columns it answers for its own pointer: centred on the
+    /// display it hangs outside the toplevel, where no event reaches the
+    /// window. See [`Self::quickview_target`].
     fn sync_quickview(
         &mut self,
         parent: &WlSurface,
@@ -727,7 +781,7 @@ impl PaneSurfaces {
             return self
                 .quickview
                 .as_mut()
-                .map(PaneSurface::hide)
+                .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
         };
         // Centred on the display when the compositor has told us where the
@@ -754,72 +808,136 @@ impl PaneSurfaces {
             return self
                 .quickview
                 .as_mut()
-                .map(PaneSurface::hide)
+                .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
         }
 
         if self.quickview.is_none() {
-            self.quickview = Self::create(parent, rect);
+            self.quickview = PlacedSurface::new(parent, rect).ok();
             self.stack_dirty = true;
             if let Some(pane) = self.quickview.as_mut() {
-                pane.output_centered = quickview_centered();
-                Self::style_quickview(pane, self.scale);
-                // Undo the empty input region `create` sets. A panel centred
-                // on the display hangs outside the toplevel, and the pointer
-                // never reports those coordinates to this client — so the
-                // close button would be dead exactly when the panel is where
-                // it is supposed to be. `None` means "the whole surface".
-                //
-                // Recorded as well as applied: the region has to come back off
-                // whenever the panel is hidden, or it goes on answering for a
-                // band of the screen nobody can see. See `PaneSurface::hide`.
-                pane.takes_input = true;
-                pane.accept_input(true);
-                pane.surface.commit();
+                Self::style_quickview(pane);
+                // A panel centred on the display hangs outside the toplevel,
+                // and the pointer never reports those coordinates to this
+                // client — so the close button would be dead exactly when the
+                // panel is where it is supposed to be. The surface answers for
+                // itself, and stops while it is hidden.
+                pane.set_takes_input(true);
             }
         }
-        let scale = self.scale;
         let Some(pane) = self.quickview.as_mut() else {
             return false;
         };
-        let mut painted = pane.show();
-        let resized = pane.place(rect, scale);
+        let mut painted = pane.set_hidden(false);
+        pane.set_rect(rect);
         // Everything the panel's pixels depend on has to be in here or the
         // repaint is skipped: the card's rect, which file it is showing, how
         // far its content is scrolled — and now how far its picture is zoomed
         // and dragged, which changes what is drawn without moving the card an
         // inch.
         let key = quickview_key(panel, generation, session);
-        if pane.key == key {
-            return painted;
-        }
-        use wayland_client::Proxy;
-        if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
-            self.pending = true;
-            return painted;
-        }
-        pane.key = key;
         let origin = (rect.left, rect.top);
-        let started = qv_trace::now();
-        pane.draw(|canvas| {
+        let paint = pane.paint(key, |canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
             view::draw_quickview(canvas, f, session, resting);
             canvas.restore();
         });
-        qv_trace::frame(session, rect, resized, started);
-        painted = true;
+        painted |= self.painted(paint);
         painted
     }
+    /// The docked preview column, in the stack beside the last column: its
+    /// paper, its picture or text and its caption, painted when what it shows
+    /// changes and never for a pan. Hidden while the stack is panned away
+    /// from it.
+    fn sync_preview_pane(
+        &mut self,
+        stack: &WlSurface,
+        f: &Frame,
+        viewport: Rect,
+        (shown_from, shown_to): (f32, f32),
+    ) -> bool {
+        let rect = Rect::from_xywh(
+            f.panes.len() as f32 * f.miller_w,
+            0.0,
+            view::PREVIEW_W,
+            viewport.height(),
+        );
+        let shown = rect.right > shown_from && rect.left < shown_to;
+        let Some(data) = f.preview.as_ref().filter(|_| shown) else {
+            let mut changed = self
+                .preview_pane
+                .as_mut()
+                .map(|pane| pane.set_hidden(true))
+                .unwrap_or(false);
+            if let Some(divider) = self.preview_divider.as_mut() {
+                changed |= divider.set_hidden(true);
+            }
+            return changed;
+        };
+
+        if self.preview_pane.is_none() {
+            self.preview_pane = PlacedSurface::new(stack, rect).ok();
+            self.stack_children_dirty = true;
+        }
+        let mut painted = sync_divider(
+            &mut self.preview_divider,
+            stack,
+            rect,
+            f.theme,
+            &mut self.stack_children_dirty,
+        );
+        let Some(pane) = self.preview_pane.as_mut() else {
+            return painted;
+        };
+        painted |= pane.set_hidden(false);
+        pane.set_rect(rect);
+
+        let key = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            data.name.hash(&mut hasher);
+            data.first_row.hash(&mut hasher);
+            data.decoded.is_some().hash(&mut hasher);
+            // A video painted here re-records on every frame of it; on its own
+            // surface it is none of this one's business.
+            if !data.video_on_surface {
+                data.video
+                    .map(crate::quickview::Video::key)
+                    .hash(&mut hasher);
+            }
+            view::is_dark().hash(&mut hasher);
+            hash_rect(Rect::from_wh(rect.width(), rect.height())).hash(&mut hasher);
+            hasher.finish()
+        };
+        let ground = view::content_ground();
+        let (width, height) = (rect.width(), rect.height());
+        let paint = pane.paint(key, |canvas| {
+            canvas.clear(ground);
+            view::preview_content(data, f.theme.clone())(canvas, width, height);
+        });
+        painted |= self.painted(paint);
+        painted
+    }
+
     /// The docked preview column's video, on its own subsurface.
     ///
     /// Sized to the video's shape and placed over the column's stage, so the
     /// picture updates without the toplevel — or the scene's cached preview
-    /// picture — being touched. Input stays with the toplevel, exactly like
-    /// the columns: the browser's pointer routing already hit-tests the box
-    /// in window coordinates (see `Browser::preview_video_pointer`).
-    fn sync_preview_video(&mut self, parent: &WlSurface, f: &Frame, quickview_up: bool) -> bool {
+    /// picture — being touched. A child of the stack's band, placed in the
+    /// stack's coordinates, so it pans and is clipped with the columns. Input
+    /// stays with the toplevel, exactly like the columns: the browser's
+    /// pointer routing already hit-tests the box in window coordinates (see
+    /// `Browser::preview_video_pointer`).
+    fn sync_preview_video(
+        &mut self,
+        stack: &WlSurface,
+        f: &Frame,
+        viewport: Rect,
+        quickview_up: bool,
+    ) -> bool {
         // Shown only for a video in the column view, and never behind the
         // Quick View panel — which is its own, larger player.
         let video = (f.mode == ViewMode::Columns && !quickview_up)
@@ -833,7 +951,7 @@ impl PaneSurfaces {
             return self
                 .preview_video
                 .as_mut()
-                .map(PaneSurface::hide)
+                .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
         };
 
@@ -848,54 +966,41 @@ impl PaneSurfaces {
             return self
                 .preview_video
                 .as_mut()
-                .map(PaneSurface::hide)
+                .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
         };
 
-        let full = view::preview_pane_rect(f.panes.len(), f.height, f.pan, f.miller_w);
-        let viewport = view::content_viewport(f.width, f.height, ViewMode::Columns);
+        // Unpanned, then moved from the window's coordinates into the stack's.
+        let full = view::preview_pane_rect(f.panes.len(), f.height, 0.0, f.miller_w);
         let stage = view::preview_stage_rect(full, info_lines);
-        let rect = view::preview_video_box(stage, Some(aspect));
-        // A column panned so its player would spill over the sidebar is not
-        // shown on a surface — the surface has no parent clip. The scene's
-        // in-layer draw, which is clipped, covers that transient.
-        if rect.left < viewport.left || rect.right > viewport.right || rect.width() <= 1.0 {
+        let rect = view::preview_video_box(stage, Some(aspect))
+            .with_offset((-viewport.left, -viewport.top));
+        if rect.width() <= 1.0 {
             return self
                 .preview_video
                 .as_mut()
-                .map(PaneSurface::hide)
+                .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
         }
 
         if self.preview_video.is_none() {
-            self.preview_video = Self::create(parent, rect);
-            self.stack_dirty = true;
+            self.preview_video = PlacedSurface::new(stack, rect).ok();
+            self.stack_children_dirty = true;
         }
-        let scale = self.scale;
         let Some(pane) = self.preview_video.as_mut() else {
             return false;
         };
-        let mut painted = pane.show();
-        pane.place(rect, scale);
+        let mut painted = pane.set_hidden(false);
+        pane.set_rect(rect);
 
         let key = hash_rect(rect) ^ video.key().rotate_left(19);
-        if pane.key == key {
-            return painted;
-        }
-        use wayland_client::Proxy;
-        if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
-            self.pending = true;
-            return painted;
-        }
-        pane.key = key;
-
-        let poster = snapshot
-            .poster
-            .as_ref()
-            .and_then(otto_kit::preview::Pixels::to_image);
         let theme = f.theme.clone();
         let origin = (rect.left, rect.top);
-        pane.draw(|canvas| {
+        let paint = pane.paint(key, |canvas| {
+            let poster = snapshot
+                .poster
+                .as_ref()
+                .and_then(otto_kit::preview::Pixels::to_image);
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
@@ -913,68 +1018,7 @@ impl PaneSurfaces {
             );
             canvas.restore();
         });
-        painted = true;
-        painted
-    }
-
-    /// The stack's horizontal bar.
-    ///
-    /// It spans the whole stack, so unlike the vertical bars it belongs to no
-    /// column and cannot ride in one. Drawn into the window it would be buried:
-    /// subsurfaces sit over the toplevel, so the columns would cover it. It
-    /// gets a surface of its own instead, a strip along the bottom of the
-    /// content area, stacked above every column.
-    fn sync_pan_bar(&mut self, parent: &WlSurface, f: &Frame, viewport: Rect) -> bool {
-        let Some(state) = f.pan_bar.filter(|s| s.scrollbar_opacity() > 0.0) else {
-            return self.pan.as_mut().map(PaneSurface::hide).unwrap_or(false);
-        };
-        let bar_viewport = state.viewport();
-        let mut strip = Rect::from_ltrb(
-            bar_viewport.left,
-            bar_viewport.bottom - PAN_BAR_STRIP,
-            bar_viewport.right,
-            bar_viewport.bottom,
-        );
-        if !strip.intersect(viewport) {
-            return self.pan.as_mut().map(PaneSurface::hide).unwrap_or(false);
-        }
-
-        if self.pan.is_none() {
-            self.pan = Self::create(parent, strip);
-            self.stack_dirty = true;
-        }
-        let scale = self.scale;
-        let Some(pane) = self.pan.as_mut() else {
-            return false;
-        };
-        let mut painted = pane.show();
-        pane.place(strip, scale);
-
-        // The thumb slides as the stack pans and widens on hover, and neither
-        // shows up in the opacity, so the geometry is what decides a repaint.
-        let thumb = ScrollRenderer::thumb_rect(state).unwrap_or(Rect::new_empty());
-        let key = hash_rect(thumb);
-        let bar = state.scrollbar_opacity();
-        if pane.key == key && pane.bar == bar {
-            return painted;
-        }
-        use wayland_client::Proxy;
-        if AppContext::frame_in_flight(&pane.surface.wl_surface().id()) {
-            self.pending = true;
-            return painted;
-        }
-        pane.key = key;
-        pane.bar = bar;
-        let origin = (strip.left, strip.top);
-        let theme = f.theme;
-        pane.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
-            canvas.save();
-            canvas.translate((-origin.0, -origin.1));
-            ScrollRenderer::draw(canvas, state, theme, |_, _| {});
-            canvas.restore();
-        });
-        painted = true;
+        painted |= self.painted(paint);
         painted
     }
 
@@ -985,17 +1029,10 @@ impl PaneSurfaces {
     }
 
     fn hide_all(&mut self) -> bool {
-        let mut changed = false;
-        for pane in &mut self.panes {
-            changed |= pane.hide();
-        }
-        if let Some(pan) = self.pan.as_mut() {
-            changed |= pan.hide();
-        }
-        if let Some(preview_video) = self.preview_video.as_mut() {
-            changed |= preview_video.hide();
-        }
-        changed
+        // The columns and the player are the stack's children, and go with it.
+        self.stack
+            .as_mut()
+            .is_some_and(|stack| stack.set_hidden(true))
     }
 
     /// Quick View's surface and where its card sits *within* that surface,
@@ -1016,10 +1053,10 @@ impl PaneSurfaces {
         let panel = Rect::from_xywh(
             quickview::SURFACE_MARGIN,
             quickview::SURFACE_MARGIN,
-            pane.rect.width() - quickview::SURFACE_MARGIN * 2.0,
-            pane.rect.height() - quickview::SURFACE_MARGIN * 2.0,
+            pane.rect().width() - quickview::SURFACE_MARGIN * 2.0,
+            pane.rect().height() - quickview::SURFACE_MARGIN * 2.0,
         );
-        Some((pane.surface.wl_surface().id(), panel))
+        Some((pane.wl_surface().id(), panel))
     }
 
     /// Where Quick View's panel actually rests, once it has been worked out.
@@ -1045,13 +1082,13 @@ impl PaneSurfaces {
     ///
     /// `material_popup` is 0xD8 — the toolkit's popup material is translucent
     /// by design, expecting exactly this blur behind it.
-    fn style_quickview(pane: &PaneSurface, scale: f32) {
-        let Some(style) = pane.surface.layer() else {
+    fn style_quickview(pane: &PlacedSurface) {
+        let Some(style) = pane.style() else {
             return;
         };
         // Physical pixels for the shadow; the radius is in points, because the
         // compositor scales it itself.
-        let scale = scale as f64;
+        let scale = AppContext::fractional_scale();
         // Matches the radius the card paints itself with, so the blur and the
         // shadow follow the corners instead of squaring them off.
         style.set_corner_radius(12.0);
@@ -1076,169 +1113,95 @@ impl PaneSurfaces {
         // for its columns, moves them together — and keeps the entrance, since
         // the icon it grows from is in the same coordinates as the answer.
     }
-
-    fn create(parent: &WlSurface, rect: Rect) -> Option<PaneSurface> {
-        let surface = SubsurfaceSurface::new(
-            parent,
-            rect.left as i32,
-            rect.top as i32,
-            rect.width().max(1.0) as i32,
-            rect.height().max(1.0) as i32,
-        )
-        .ok()?;
-        // Presentation only: input belongs to the toplevel, which is where all
-        // of the browser's hit-testing already happens. Quick View is the
-        // exception and undoes this — see `accept_input`.
-        surface.wl_surface().set_input_region(Some(
-            &AppContext::compositor_state()
-                .wl_compositor()
-                .create_region(AppContext::queue_handle(), ()),
-        ));
-        surface.commit();
-        Some(PaneSurface {
-            surface,
-            rect: Rect::new_empty(),
-            scroll: f32::NAN,
-            bar: f32::NAN,
-            key: 0,
-            hidden: false,
-            takes_input: false,
-            output_centered: false,
-            claim: None,
-        })
-    }
 }
 
-impl Drop for PaneSurface {
-    /// A surface let go of is torn down, not merely forgotten.
-    ///
-    /// `SubsurfaceSurface` has no `Drop` of its own: dropping one leaves the
-    /// wl_surface mapped, with its buffer and its input region, until the
-    /// process exits. For the palette's catcher that meant a dead,
-    /// display-sized surface still on top after the palette closed — taking
-    /// every press meant for the window, and for the next palette's catcher
-    /// stacked underneath it. So the card could be moved exactly once.
-    fn drop(&mut self) {
-        self.surface.destroy();
+/// The hairline down the trailing edge of `column`, in the stack's
+/// coordinates: a point wide, centred on the edge — a kit [`Fill`], so it
+/// costs a request to move and nothing to paint.
+fn sync_divider(
+    divider: &mut Option<Fill>,
+    stack: &WlSurface,
+    column: Rect,
+    theme: &Theme,
+    created: &mut bool,
+) -> bool {
+    if divider.is_none() {
+        *divider = Fill::new(stack).ok();
+        *created = true;
     }
+    let Some(fill) = divider.as_mut() else {
+        return false;
+    };
+    let line = Rect::from_xywh(column.right - 0.5, column.top, 1.0, column.height());
+    fill.set_style(theme.fill_tertiary, 0.0) | fill.set_rect(line) | fill.set_hidden(false)
 }
 
-impl PaneSurface {
-    /// Returns whether the surface had to be reallocated, which is the
-    /// expensive half of a move.
-    fn place(&mut self, rect: Rect, scale: f32) -> bool {
-        if self.rect == rect {
-            return false;
-        }
-        let resized = self.rect.width() != rect.width() || self.rect.height() != rect.height();
-        self.rect = rect;
-        if resized {
-            self.surface
-                .resize(rect.width().max(1.0) as i32, rect.height().max(1.0) as i32);
-            // A resize invalidates what was painted.
-            self.scroll = f32::NAN;
-        }
-        // A move does too, now that the bar is drawn in window coordinates
-        // shifted by this rect's origin.
-        self.bar = f32::NAN;
-        // The wl position is what the pointer is hit-tested against; it is
-        // parent state and lands with the parent's commit, so it is safe to
-        // send now whatever the buffer is.
-        self.surface.set_position(rect.left as i32, rect.top as i32);
-        if resized || self.claim.is_some() {
-            // Not claimed yet: the buffer on screen is the old size, and the
-            // compositor would stretch it. The draw that follows claims it,
-            // with the new buffer in hand — and a move that lands while a
-            // claim is waiting joins it rather than overtaking it.
-            self.claim = Some((rect, scale));
-            return resized;
-        }
-        Self::claim_bounds(&self.surface, rect, scale);
-        self.surface.commit();
-        resized
-    }
+/// The line a column shows in place of rows — loading, empty, or why it could
+/// not be read — centred on the column, on a small surface of its own.
+fn sync_status(
+    slot: &mut Option<PlacedSurface>,
+    stack: &WlSurface,
+    column: Rect,
+    pane: &PaneData<'_>,
+    theme: &Theme,
+    pending: &mut bool,
+    created: &mut bool,
+) -> bool {
+    let line = if let Some(error) = pane.error {
+        Some((error.to_string(), theme.text_secondary))
+    } else if pane.loading {
+        Some((otto_kit::t_owned!("files-loading"), theme.text_tertiary))
+    } else if pane.entries.is_empty() {
+        Some((otto_kit::t_owned!("files-empty"), theme.text_tertiary))
+    } else {
+        None
+    };
+    let Some((text, color)) = line else {
+        return slot
+            .as_mut()
+            .map(|pane| pane.set_hidden(true))
+            .unwrap_or(false);
+    };
 
-    /// Tell the compositor where this surface is and how big. Claiming the
-    /// size stops it re-deriving both size and position from the surface
-    /// tree — see `ScrollSurfaces`, which depends on the same rule.
-    fn claim_bounds(surface: &SubsurfaceSurface, rect: Rect, scale: f32) {
-        if let Some(style) = surface.layer() {
-            style.set_size(
-                (rect.width() * scale) as f64,
-                (rect.height() * scale) as f64,
-            );
-            style.set_position((rect.left * scale) as f64, (rect.top * scale) as f64);
-        }
+    let rect = Rect::from_xywh(
+        column.left,
+        column.center_y() - STATUS_H / 2.0,
+        column.width(),
+        STATUS_H,
+    );
+    if slot.is_none() {
+        *slot = PlacedSurface::new(stack, rect).ok();
+        *created = true;
     }
+    let Some(surface) = slot.as_mut() else {
+        return false;
+    };
+    let mut painted = surface.set_hidden(false);
+    surface.set_rect(rect);
 
-    /// Paint the surface, and claim any size it has been waiting to claim.
-    ///
-    /// The paint attaches and commits a buffer of the current size; the claim
-    /// goes out right behind it, in the same flush, so the compositor never
-    /// holds a new size with an old buffer.
-    fn draw(&mut self, paint: impl FnOnce(&skia_safe::Canvas)) {
-        self.surface.draw(paint);
-        if let Some((rect, scale)) = self.claim.take() {
-            Self::claim_bounds(&self.surface, rect, scale);
-        }
+    let key = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        (color.a(), color.r(), color.g(), color.b()).hash(&mut hasher);
+        rect.width().to_bits().hash(&mut hasher);
+        hasher.finish()
+    };
+    let (width, height) = (rect.width(), rect.height());
+    match surface.paint(key, |canvas| {
+        canvas.clear(Color::TRANSPARENT);
+        Label::new(&text)
+            .with_style(styles::BODY)
+            .with_color(color)
+            .centered_at(width / 2.0, height / 2.0)
+            .render(canvas);
+    }) {
+        Paint::Painted => painted = true,
+        Paint::Held => *pending = true,
+        Paint::Unchanged => {}
     }
-
-    /// Say whether the surface answers for the pointer over its own area.
-    ///
-    /// `None` is "all of me"; an empty region is "none of me", which is how a
-    /// surface lets events fall through to whatever is behind it.
-    fn accept_input(&self, yes: bool) {
-        let surface = self.surface.wl_surface();
-        if yes {
-            surface.set_input_region(None);
-            return;
-        }
-        // An empty region. The compositor copies it on `set_input_region`, so
-        // it is destroyed straight away rather than accumulating one object
-        // per hide for the life of the window.
-        let region = AppContext::compositor_state()
-            .wl_compositor()
-            .create_region(AppContext::queue_handle(), ());
-        surface.set_input_region(Some(&region));
-        region.destroy();
-    }
-
-    /// Take the surface out of sight — and out of the pointer's way.
-    ///
-    /// Opacity alone is not hiding. The surface stays mapped, and a mapped
-    /// surface with an input region still answers for every pointer event over
-    /// it: Quick View's panel is centred on the *display*, so an invisible one
-    /// left holding its region swallowed the scroll wheel across a band
-    /// through the middle of the screen, for the rest of the session.
-    fn hide(&mut self) -> bool {
-        if self.hidden {
-            return false;
-        }
-        self.hidden = true;
-        if let Some(style) = self.surface.layer() {
-            style.set_opacity(0.0);
-        }
-        if self.takes_input {
-            self.accept_input(false);
-        }
-        self.surface.commit();
-        true
-    }
-
-    fn show(&mut self) -> bool {
-        if !self.hidden {
-            return false;
-        }
-        self.hidden = false;
-        if let Some(style) = self.surface.layer() {
-            style.set_opacity(1.0);
-        }
-        if self.takes_input {
-            self.accept_input(true);
-        }
-        self.surface.commit();
-        true
-    }
+    painted
 }
 
 /// Everything other than the scroll offset that decides what a column draws.
@@ -1259,6 +1222,9 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
     pane.cursor.hash(&mut hasher);
     pane.loading.hash(&mut hasher);
     pane.error.hash(&mut hasher);
+    // A thumbnail landing changes the rows without changing anything else
+    // here; the store's epoch moves exactly when one does.
+    f.thumbs.map(|store| store.epoch()).hash(&mut hasher);
     (depth == f.active).hash(&mut hasher);
     f.renaming.map(|(d, i)| (d == depth, i)).hash(&mut hasher);
     view::is_dark().hash(&mut hasher);
@@ -1296,11 +1262,6 @@ fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> 
 /// constant the hashers in this file use for the same purpose.
 const LOADING_KEY: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// A rect as a repaint key. Positions are the whole of what a bar draws, so
-/// its geometry is its identity.
-/// The zoom, as a repaint key contribution. Bit patterns rather than values,
-/// like [`hash_rect`]: a float has no `Hash`, and rounding one to compare it
-/// would let a slow pinch stall.
 /// How the pan's scrollbars are presented — how faded in each is, and how
 /// far each has widened under the pointer.
 fn hash_bars(session: &quickview::Session) -> u64 {
@@ -1321,6 +1282,9 @@ fn hash_bars(session: &quickview::Session) -> u64 {
     hasher.finish()
 }
 
+/// The zoom, as a repaint key contribution. Bit patterns rather than values,
+/// like [`hash_rect`]: a float has no `Hash`, and rounding one to compare it
+/// would let a slow pinch stall.
 fn hash_zoom(zoom: otto_kit::preview::Zoom) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -1338,6 +1302,7 @@ fn hash_zoom(zoom: otto_kit::preview::Zoom) -> u64 {
     hasher.finish()
 }
 
+/// A rect as a repaint key: its geometry is its identity.
 fn hash_rect(rect: Rect) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -1347,86 +1312,6 @@ fn hash_rect(rect: Rect) -> u64 {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
-}
-
-/// Per-frame timing for the Quick View entrance and exit.
-///
-/// The two animations run the same geometry in opposite directions, so if one
-/// is smooth and the other is not, the difference is either in what a frame
-/// costs or in how far apart the frames land — and those are two different
-/// bugs. `OTTO_FILES_QV_TRACE=1` prints a line per painted frame.
-mod qv_trace {
-    use std::cell::Cell;
-    use std::time::Instant;
-
-    use skia_safe::Rect;
-
-    use crate::quickview::Session;
-
-    thread_local! {
-        static LAST: Cell<Option<Instant>> = const { Cell::new(None) };
-    }
-
-    fn enabled() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("OTTO_FILES_QV_TRACE").is_some())
-    }
-
-    pub fn now() -> Option<Instant> {
-        enabled().then(Instant::now)
-    }
-
-    pub fn frame(session: &Session, rect: Rect, resized: bool, started: Option<Instant>) {
-        let Some(started) = started else { return };
-        let gap = LAST.with(|last| {
-            let gap = last.get().map(|prev| started.duration_since(prev));
-            last.set(Some(started));
-            gap
-        });
-        let (direction, t) = match session.closing {
-            Some(_) => ("out", session.exit_t()),
-            None => ("in ", session.entrance_t()),
-        };
-        // The pause between one animation and the next is not a gap worth
-        // reading, so it is left blank rather than reported as a stall.
-        let gap_ms = match gap {
-            Some(gap) if gap.as_millis() < 2000 => format!("{:>6.1}", gap.as_secs_f32() * 1000.0),
-            _ => "     -".to_string(),
-        };
-        eprintln!(
-            "qv {direction} t={t:.2} @({:>6.0},{:>5.0}) {:>4.0}x{:<4.0} {} paint {:>5}us  gap {gap_ms}ms",
-            rect.left,
-            rect.top,
-            rect.width(),
-            rect.height(),
-            if resized { "resize" } else { "      " },
-            started.elapsed().as_micros(),
-        );
-    }
-}
-
-/// Where the panel rests when it is centred on the display, in window points.
-///
-/// `None` until the compositor has answered — the request goes out when the
-/// surface is created, and the reply lands a round trip later, so the first
-/// frame or two of an entrance are still centred on the window. Those frames
-/// are the smallest ones, at the file's icon, so the correction is invisible.
-fn display_rect(pane: &PaneSurface, scale: f32) -> Option<Rect> {
-    use wayland_client::Proxy;
-
-    let style = pane.surface.layer()?;
-    let frame = AppContext::output_frame(&style.id())?;
-    if std::env::var_os("OTTO_FILES_QV_TRACE").is_some() {
-        eprintln!("qv output_frame(px) = {frame:?} scale={scale}");
-    }
-    let (x, y, width, height) = frame;
-    if width <= 0.0 || height <= 0.0 || scale <= 0.0 {
-        return None;
-    }
-    // The answer is in the same pixels the positions are set in; the rest of
-    // this module works in points.
-    let (x, y, width, height) = (x / scale, y / scale, width / scale, height / scale);
-    Some(Rect::from_xywh(x, y, width, height))
 }
 
 #[cfg(test)]

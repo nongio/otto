@@ -75,6 +75,13 @@ pub(crate) struct SurfaceAdapter {
     /// technology attached. Until it has, an update must carry the whole tree —
     /// which is all a kit application ever sends anyway.
     pub(crate) described: bool,
+    /// Whether something has been painted since the tree was last built. A
+    /// tree is declared from the same state the paint reads, so a window that
+    /// has not painted has nothing new to say.
+    pub(crate) stale: bool,
+    /// Whether an assistive technology was attached on the last pass, so one
+    /// that has just attached is described even if nothing has painted.
+    pub(crate) was_wanted: bool,
     /// The last frame handed to the adapter, so an unmoved window does not
     /// push the same bounds on every pass of the run loop.
     desktop_frame: Option<accesskit::Rect>,
@@ -93,6 +100,8 @@ impl SurfaceAdapter {
             adapter,
             mailbox,
             described: false,
+            stale: true,
+            was_wanted: false,
             desktop_frame: None,
         }
     }
@@ -103,6 +112,7 @@ impl SurfaceAdapter {
     pub(crate) fn update(&mut self, build: impl FnOnce() -> TreeUpdate) {
         self.adapter.update_if_active(build);
         self.described = true;
+        self.stale = false;
     }
 
     /// Whether this surface has the keyboard. A screen reader reads the focused

@@ -441,19 +441,20 @@ painted flat — a tint over an unblurred desktop is not a material.
 
 The selected pane scrolls independently of the window's chrome. The window
 surface paints the chrome — titlebar, sidebar, divider and the grounds behind
-them — and nothing else; the pane's background, content and scrollbar are
-separate surfaces the compositor crops and moves, so a frame of scrolling costs
+them, the pane's included — and nothing else; the pane's content and scrollbar
+are transparent surfaces the compositor crops and moves, so a frame of scrolling
+costs
 the app no drawing at all. The content surface is only repainted when a scroll
 approaches the edge of what has been drawn, or when something other than the
 scroll changes what a row looks like. A configure that repeats the size the
 window already has changes nothing about the pane and repaints nothing, so an
-idle window draws no frames at all. Pointer events over the pane land on
-those surfaces and are translated back into the pane's coordinates before
-hit-testing; the window's resize edges along the pane's right and bottom stay
-live. The content surface is taller than the pane and hangs out of it at both
-ends, so it accepts input only over the part the pane actually shows: the
-window takes no clicks below its own bottom edge, and the chrome above the pane
-keeps its own.
+idle window draws no frames at all. The pane's surfaces take no input: every
+pointer event lands on the window in its own coordinates, a press over the pane
+is hit-tested against the pane's rows at the current scroll, and a press
+anywhere else goes to the chrome. The window's resize edges along the pane's
+right and bottom stay live, a wheel anywhere over the window scrolls the pane,
+and a slider or scrollbar drag keeps going when the pointer wanders off the
+pane.
 
 ### Shortcuts
 

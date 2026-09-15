@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 use layers::prelude::Engine;
 use otto_kit::components::text_input::TextInput;
+use otto_launcher::view::HIGHLIGHT_RADIUS;
 use otto_launcher::{field_style, rank, Apps, Item, Palette, Source, CARD_W, MAX_CARD_H};
 
 fn main() {
@@ -50,7 +51,7 @@ fn main() {
         let matches = rank(&items, query);
         let shown: Vec<&Item> = matches.iter().map(|m| &items[m.index]).collect();
         let empty = (!query.trim().is_empty()).then_some("No results");
-        palette.update(&input, &shown, &labels, 0, 0, empty);
+        palette.update(&input, shown.len(), empty);
         for _ in 0..60 {
             engine.update(0.016);
         }
@@ -65,6 +66,34 @@ fn main() {
             skia_safe::Color::from_argb(255, 240, 240, 244)
         });
         layers::prelude::draw_scene(surface.canvas(), engine.scene(), palette.card_layer().id());
+
+        // The rows are a scroll pane over the card in the launcher itself;
+        // here they are painted where they rest, the first one selected.
+        let list = palette.list_rect();
+        if list.height() > 0.0 {
+            let canvas = surface.canvas();
+            canvas.save();
+            canvas.clip_rect(list, None, None);
+            canvas.translate((list.left, list.top));
+            let mut wash = skia_safe::Paint::default();
+            wash.set_anti_alias(true);
+            wash.set_color(palette.highlight_color());
+            canvas.draw_rrect(
+                skia_safe::RRect::new_rect_xy(
+                    Palette::highlight_rect(0),
+                    HIGHLIGHT_RADIUS,
+                    HIGHLIGHT_RADIUS,
+                ),
+                &wash,
+            );
+            palette.paint_rows(
+                canvas,
+                skia_safe::Rect::from_wh(list.width(), list.height()),
+                &shown,
+                &labels,
+            );
+            canvas.restore();
+        }
 
         let name = if query.is_empty() {
             "empty".to_string()

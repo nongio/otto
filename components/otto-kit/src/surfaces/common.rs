@@ -52,6 +52,19 @@ pub struct BaseWaylandSurface {
     pub(super) dirty: std::sync::Arc<std::sync::atomic::AtomicBool>,
     // Optional layer node for layers engine rendering
     pub(super) layer_node: Option<layers::prelude::Layer>,
+    // What the next draw is known to have changed; `None` when nobody said,
+    // which reports the whole buffer. Shared, so a clone of the surface (a
+    // `Window` holds several) records it for the draw the surface performs.
+    pub(super) frame_damage: Rc<std::cell::RefCell<Option<FrameDamage>>>,
+}
+
+/// What a surface's next draw is known to have changed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FrameDamage {
+    /// Anything may have changed: the whole buffer is reported.
+    All,
+    /// Only these rects, in points, changed.
+    Rects(Vec<skia_safe::Rect>),
 }
 
 impl BaseWaylandSurface {
@@ -99,6 +112,7 @@ impl BaseWaylandSurface {
             surface_style,
             layer_node,
             dirty: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            frame_damage: Rc::new(std::cell::RefCell::new(None)),
         }
     }
 
@@ -259,20 +273,56 @@ impl BaseWaylandSurface {
             // Ask to be told when this frame reaches the screen. `wl_surface
             // .frame` is double-buffered state, so the request has to be made
             // before the commit that carries it — and that commit is the one
-            // eglSwapBuffers makes below, not one of ours. Surfaces already
-            // driving their own frame loop through `on_frame` are left alone:
-            // the runner re-requests for those, and a second callback would
-            // run their loop twice per frame.
-            if !AppContext::has_frame_callback(&self.wl_surface.id()) {
-                AppContext::request_throttled_frame(&self.wl_surface);
-            }
+            // eglSwapBuffers makes below, not one of ours. A surface that
+            // already has a request outstanding — a frame loop's — is not
+            // asked twice, so its callback still runs once per frame.
+            AppContext::request_throttled_frame(&self.wl_surface);
+            AppContext::mark_accessibility_stale();
 
             // Present the frame. eglSwapBuffers attaches the buffer, damages it
             // and commits, so committing again here would only ask the
             // compositor to recomposite the output for a surface that has
-            // nothing new on it.
-            surface.swap_buffers(ctx);
+            // nothing new on it. Damage the application reported for this
+            // frame goes out with the swap instead of the whole buffer.
+            match self.frame_damage.borrow_mut().take() {
+                Some(FrameDamage::Rects(rects)) => {
+                    let scale = self.buffer_scale.max(1) as f32;
+                    let rects: Vec<skia_safe::IRect> = rects
+                        .iter()
+                        .map(|r| {
+                            // Rounded outwards, so a fractional edge is still covered.
+                            skia_safe::IRect::from_ltrb(
+                                (r.left * scale).floor() as i32,
+                                (r.top * scale).floor() as i32,
+                                (r.right * scale).ceil() as i32,
+                                (r.bottom * scale).ceil() as i32,
+                            )
+                        })
+                        .collect();
+                    surface.swap_buffers_with_damage(ctx, &rects);
+                }
+                None | Some(FrameDamage::All) => surface.swap_buffers(ctx),
+            }
         });
+    }
+
+    /// Record that the next draw changes `rects` (in points), and nothing else
+    /// that has not already been recorded. Combined with earlier rects until
+    /// that draw consumes them; if the whole surface is already recorded as
+    /// changed, it stays so.
+    pub fn add_frame_damage(&self, rects: &[skia_safe::Rect]) {
+        let mut damage = self.frame_damage.borrow_mut();
+        match damage.as_mut() {
+            Some(FrameDamage::All) => {}
+            Some(FrameDamage::Rects(pending)) => pending.extend_from_slice(rects),
+            None => *damage = Some(FrameDamage::Rects(rects.to_vec())),
+        }
+    }
+
+    /// Record that the next draw may change anything: it reports the whole
+    /// buffer, whatever narrower damage was recorded before or after it.
+    pub fn mark_frame_damage_all(&self) {
+        *self.frame_damage.borrow_mut() = Some(FrameDamage::All);
     }
 
     /// Whether a frame committed on this surface has yet to reach the screen.
@@ -323,9 +373,7 @@ impl BaseWaylandSurface {
 
         let surface_id = self.wl_surface.id();
         AppContext::register_frame_callback(surface_id, callback);
-
-        // Request the initial frame callback to start the loop
-        AppContext::request_initial_frame(&self.wl_surface);
+        AppContext::register_frame_loop(&self.wl_surface);
     }
 
     /// Check if surface style protocol is available for this surface

@@ -138,17 +138,6 @@ pub fn pane_viewport(width: f32, height: f32) -> Rect {
     Rect::from_ltrb(SIDEBAR_W, titlebar_h(), width, height)
 }
 
-/// The same viewport in the pane's *own* coordinates, origin at its top-left.
-///
-/// This is the space the pane's subsurfaces live in, so it is also the space
-/// the [`ScrollView`](otto_kit::components::scroll::ScrollView) driving them
-/// has to be told about: `ScrollSurfaces` positions the scrollbar from the
-/// thumb rect the view computes, relative to the pane, not to the window.
-pub fn pane_viewport_local(width: f32, height: f32) -> Rect {
-    let viewport = pane_viewport(width, height);
-    Rect::from_wh(viewport.width(), viewport.height())
-}
-
 /// The flat ground the pane's content sits on. Forms want a high-contrast,
 /// opaque backdrop rather than the sidebar's material.
 pub fn pane_background(dark: bool) -> Color {
@@ -876,12 +865,6 @@ impl Settings {
     /// window-local coordinates.
     pub fn viewport(&self) -> Rect {
         pane_viewport(self.width, self.height)
-    }
-
-    /// The same viewport in the pane's own coordinates — see
-    /// [`pane_viewport_local`].
-    pub fn local_viewport(&self) -> Rect {
-        pane_viewport_local(self.width, self.height)
     }
 
     /// Where each mid-flip switch's knob currently is, 0.0 off to 1.0 on.
@@ -1724,15 +1707,6 @@ impl Settings {
         }
 
         for group in &layout.groups {
-            if std::env::var_os("OTTO_PANE_DEBUG").is_some() {
-                eprintln!(
-                    "[groupdbg] {:?} bounds {:?} band {:?} drawn={}",
-                    group.title,
-                    group.bounds(),
-                    content,
-                    intersects_band(group.bounds(), content)
-                );
-            }
             if !intersects_band(group.bounds(), content) {
                 continue;
             }
@@ -2699,17 +2673,6 @@ mod tests {
                 pixel_at(&settings, |canvas| settings.render_chrome(canvas), x, y),
             );
         }
-    }
-
-    #[test]
-    fn the_panes_own_viewport_is_the_windows_with_its_origin_at_zero() {
-        // What the surfaces the pane lives in are placed and sized against.
-        let settings = Settings::new(0, false);
-        let window = settings.viewport();
-        assert_eq!(
-            settings.local_viewport(),
-            Rect::from_wh(window.width(), window.height())
-        );
     }
 
     #[test]

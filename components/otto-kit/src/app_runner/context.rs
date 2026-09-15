@@ -140,9 +140,17 @@ thread_local! {
     /// for a batch. See [`AppContext::register_pointer_batch_end_callback`].
     static POINTER_BATCH_END_CALLBACKS: RefCell<Vec<Box<dyn FnMut()>>> = const { RefCell::new(Vec::new()) };
     static FRAME_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut()>>> = RefCell::new(HashMap::new());
-    /// Surfaces that have committed a frame the compositor has not yet said it
-    /// presented. See [`AppContext::frame_in_flight`].
-    static FRAMES_IN_FLIGHT: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// Surfaces whose frame callback runs every frame rather than once per
+    /// frame the surface paints. See [`AppContext::register_frame_loop`].
+    static FRAME_LOOPS: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// Surfaces with a `wl_surface.frame` request the compositor has not yet
+    /// answered, so a second request is not sent for the same frame. A request
+    /// only takes effect with the next commit: this says nothing about whether
+    /// one has been made.
+    static FRAMES_REQUESTED: RefCell<HashSet<ObjectId>> = RefCell::new(HashSet::new());
+    /// Surfaces that have committed a painted frame the compositor has not yet
+    /// said it presented, and when. See [`AppContext::frame_in_flight`].
+    static FRAMES_IN_FLIGHT: RefCell<HashMap<ObjectId, std::time::Instant>> = RefCell::new(HashMap::new());
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
     static OUTPUT_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
@@ -1240,23 +1248,104 @@ impl<'a> AppContext<'a> {
     /// Painting again before that callback arrives only queues work the
     /// compositor has not asked for, so a client with continuous content
     /// should hold off while [`AppContext::frame_in_flight`] is true.
+    /// Ask for a frame callback for a paint that is about to be committed, and
+    /// hold the next paint until the compositor answers.
+    ///
+    /// Called just before the commit that carries it. One outstanding request
+    /// per surface: a second would only deliver a second callback for the same
+    /// frame, running a frame loop twice.
     pub fn request_throttled_frame(surface: &wl_surface::WlSurface) {
         use wayland_client::Proxy;
 
-        Self::request_frame(surface);
+        Self::request_loop_frame(surface);
         FRAMES_IN_FLIGHT.with(|surfaces| {
-            surfaces.borrow_mut().insert(surface.id());
+            surfaces
+                .borrow_mut()
+                .insert(surface.id(), std::time::Instant::now());
         });
     }
 
-    /// Whether a frame committed on this surface has yet to be presented.
-    pub fn frame_in_flight(surface_id: &ObjectId) -> bool {
-        FRAMES_IN_FLIGHT.with(|surfaces| surfaces.borrow().contains(surface_id))
+    /// Ask for a frame callback without claiming a paint is on its way.
+    ///
+    /// The request takes effect with whatever the surface commits next, so it
+    /// must not hold that commit back: a surface that has not painted yet, or
+    /// that paints only because this callback asked it to, would otherwise
+    /// wait for an answer to a request it never sent.
+    pub(crate) fn request_loop_frame(surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+
+        let first = FRAMES_REQUESTED.with(|surfaces| surfaces.borrow_mut().insert(surface.id()));
+        if first {
+            Self::request_frame(surface);
+        }
     }
 
+    /// Make `surface`'s frame callback run on every frame the compositor
+    /// presents, not only on frames the surface itself commits.
+    ///
+    /// For content that animates on its own clock. A callback registered
+    /// without this runs once per frame the surface paints, which is what a
+    /// window that repaints on demand wants: nothing wakes it while it is idle.
+    pub fn register_frame_loop(surface: &wl_surface::WlSurface) {
+        use wayland_client::Proxy;
+
+        FRAME_LOOPS.with(|loops| {
+            loops.borrow_mut().insert(surface.id());
+        });
+        Self::request_loop_frame(surface);
+    }
+
+    pub(crate) fn has_frame_loop(surface_id: &ObjectId) -> bool {
+        FRAME_LOOPS.with(|loops| loops.borrow().contains(surface_id))
+    }
+
+    /// Whether a painted frame committed on this surface has yet to be
+    /// presented.
+    ///
+    /// A frame unanswered for [`FRAME_ANSWER_TIMEOUT`] no longer counts. The
+    /// compositor answers every frame it shows, but a surface it never shows —
+    /// one whose parent went away, a compositor that sends no callbacks for
+    /// what is out of sight — would otherwise hold everything paced on it for
+    /// good: a pane that never scrolls again, a card that never repaints.
+    pub fn frame_in_flight(surface_id: &ObjectId) -> bool {
+        FRAMES_IN_FLIGHT.with(|surfaces| {
+            surfaces
+                .borrow()
+                .get(surface_id)
+                .is_some_and(|committed| still_in_flight(committed.elapsed()))
+        })
+    }
+
+    /// The compositor answered the surface's frame request.
     pub(crate) fn clear_frame_in_flight(surface_id: &ObjectId) {
+        FRAMES_REQUESTED.with(|surfaces| {
+            surfaces.borrow_mut().remove(surface_id);
+        });
         FRAMES_IN_FLIGHT.with(|surfaces| {
             surfaces.borrow_mut().remove(surface_id);
+        });
+    }
+
+    /// Forget everything kept about a surface that is being destroyed: its
+    /// callback will never come, and its id may be handed to a new surface.
+    ///
+    /// Tolerates being called from inside a frame callback, where the
+    /// callback table is borrowed, and during thread teardown.
+    pub(crate) fn forget_surface(surface_id: &ObjectId) {
+        let _ = FRAMES_REQUESTED.try_with(|surfaces| {
+            if let Ok(mut surfaces) = surfaces.try_borrow_mut() {
+                surfaces.remove(surface_id);
+            }
+        });
+        let _ = FRAMES_IN_FLIGHT.try_with(|surfaces| {
+            if let Ok(mut surfaces) = surfaces.try_borrow_mut() {
+                surfaces.remove(surface_id);
+            }
+        });
+        let _ = FRAME_LOOPS.try_with(|loops| {
+            if let Ok(mut loops) = loops.try_borrow_mut() {
+                loops.remove(surface_id);
+            }
         });
     }
 
@@ -1310,10 +1399,6 @@ impl<'a> AppContext<'a> {
     // ========================================================================
     // Event dispatch (called by handlers in mod.rs)
     // ========================================================================
-
-    pub(crate) fn has_frame_callback(surface_id: &ObjectId) -> bool {
-        FRAME_CALLBACKS.with(|callbacks| callbacks.borrow().contains_key(surface_id))
-    }
 
     pub(crate) fn dispatch_frame_callback(surface_id: &ObjectId) {
         FRAME_CALLBACKS.with(|callbacks| {
@@ -1642,12 +1727,33 @@ impl<'a> AppContext<'a> {
         surface_id: &ObjectId,
     ) -> (bool, Vec<crate::accessibility::ActionRequest>) {
         A11Y_ADAPTERS.with(|adapters| {
-            let adapters = adapters.borrow();
-            let Some(adapter) = adapters.get(surface_id) else {
+            let mut adapters = adapters.borrow_mut();
+            let Some(adapter) = adapters.get_mut(surface_id) else {
                 return (false, Vec::new());
             };
-            (adapter.mailbox.is_wanted(), adapter.mailbox.take_actions())
+            let wanted = adapter.mailbox.is_wanted();
+            // Rebuilt when the window has painted since the last tree, or when
+            // an assistive technology has just attached — not on every pass of
+            // the run loop, which turns many times per frame while input and
+            // wakeups arrive.
+            let rebuild = wanted && (adapter.stale || !adapter.was_wanted);
+            adapter.was_wanted = wanted;
+            (rebuild, adapter.mailbox.take_actions())
         })
+    }
+
+    /// Something was painted, so every accessible surface's tree may be out
+    /// of date.
+    ///
+    /// All of them rather than the one that painted: a window's content often
+    /// lives in subsurfaces — a scroll pane's band — whose paints change what
+    /// the window describes without the window's own surface drawing at all.
+    pub(crate) fn mark_accessibility_stale() {
+        A11Y_ADAPTERS.with(|adapters| {
+            for adapter in adapters.borrow_mut().values_mut() {
+                adapter.stale = true;
+            }
+        });
     }
 
     /// Hands a freshly built tree to the adapter.
@@ -1807,6 +1913,32 @@ impl<'a> AppContext<'a> {
         }
 
         RENDERER_EXIT_FLAG.store(false, Ordering::Relaxed);
+    }
+}
+
+/// How long a committed frame may go unanswered before nothing waits on it.
+///
+/// Matches the slowest rate Otto sends callbacks at, to a window out of sight,
+/// so a pane in a hidden window still steps no faster than it is shown.
+pub const FRAME_ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether a frame committed `elapsed` ago still holds the next one back.
+fn still_in_flight(elapsed: std::time::Duration) -> bool {
+    elapsed < FRAME_ANSWER_TIMEOUT
+}
+
+#[cfg(test)]
+mod frame_in_flight_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn an_unanswered_frame_stops_holding_the_next_one_back() {
+        assert!(still_in_flight(Duration::ZERO));
+        assert!(still_in_flight(
+            FRAME_ANSWER_TIMEOUT - Duration::from_millis(1)
+        ));
+        assert!(!still_in_flight(FRAME_ANSWER_TIMEOUT));
     }
 }
 

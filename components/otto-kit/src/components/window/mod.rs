@@ -361,6 +361,38 @@ impl Window {
         self.fades_own_material.store(fades, Ordering::Relaxed);
     }
 
+    /// Tell the compositor where this window paints opaque pixels, in points.
+    ///
+    /// A frosted window's backdrop is blurred under its whole shape and then
+    /// covered by whatever the window draws; wherever that is opaque — a
+    /// listing's paper, say — the compositor can skip the backdrop, which is
+    /// most of what a repaint of a frosted window costs. A promise about
+    /// pixels: a rect that is not really opaque shows whatever was on screen
+    /// before rather than the frost.
+    ///
+    /// Committed here, so it lands even if nothing is repainted.
+    pub fn set_opaque_region(&self, rects: &[skia_safe::Rect]) {
+        let Some(surface) = self.wl_surface() else {
+            return;
+        };
+        let region = crate::app_runner::AppContext::compositor_state()
+            .wl_compositor()
+            .create_region(crate::app_runner::AppContext::queue_handle(), ());
+        for rect in rects {
+            // Rounded inwards: a partly covered point is not opaque.
+            let left = rect.left.ceil() as i32;
+            let top = rect.top.ceil() as i32;
+            let right = rect.right.floor() as i32;
+            let bottom = rect.bottom.floor() as i32;
+            if right > left && bottom > top {
+                region.add(left, top, right - left, bottom - top);
+            }
+        }
+        surface.set_opaque_region(Some(&region));
+        region.destroy();
+        surface.commit();
+    }
+
     /// Turn the compositor's backdrop blur on or off now, for a window that
     /// has taken the timing over with [`Window::set_fades_own_material`].
     ///
@@ -645,6 +677,20 @@ impl Window {
     }
 
     /// Get the underlying ToplevelSurface
+    /// Repaint, telling the compositor only `rects` (in points) changed.
+    ///
+    /// The window still paints its whole buffer; the compositor recomposites
+    /// only these rects. Every pixel outside them must be exactly what the last
+    /// frame showed. Rects from several requests before one draw are combined,
+    /// and a plain [`Window::request_frame`] in between — which may change
+    /// anything — reports the whole window instead.
+    pub fn request_frame_damaged(&self, rects: &[skia_safe::Rect]) {
+        if let Some(surface) = self.surface() {
+            surface.base_surface().add_frame_damage(rects);
+            surface.request_frame();
+        }
+    }
+
     pub fn surface(&self) -> Option<ToplevelSurface> {
         self.surface.read().ok()?.clone()
     }
@@ -923,9 +969,13 @@ impl Window {
             }
         }
     }
+    /// Repaint the window. Anything may have changed, so the whole window is
+    /// reported to the compositor — see [`Window::request_frame_damaged`] for
+    /// a repaint that knows what it changed.
     pub fn request_frame(&self) {
         if let Ok(surface_guard) = self.surface.read() {
             if let Some(ref surface) = *surface_guard {
+                surface.base_surface().mark_frame_damage_all();
                 surface.request_frame();
             }
         }

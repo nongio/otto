@@ -32,7 +32,7 @@ use otto_kit::accessibility::{node_id as a11y_node, A11yTree, Action, ActionRequ
 use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
-use otto_kit::components::scroll::ScrollSurfaces;
+use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
 use otto_kit::components::text_input::{KeyMods, TextInput, TextInputKey, TextInputResponse};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
@@ -52,17 +52,22 @@ struct SettingsApp {
     /// Shared with the draw and pointer callbacks, which outlive this struct's
     /// borrow of itself.
     selected: Arc<Mutex<usize>>,
-    /// The pane content's scroll position. Lives here rather than inside
-    /// `Settings` because `Settings` is rebuilt fresh every frame, while the
-    /// scroll offset — like `selected` — has to survive across frames.
-    scroll: Arc<Mutex<ScrollView>>,
-    /// The subsurfaces the pane is drawn into, so the compositor does the
-    /// scrolling. `None` until the window exists to parent them to.
-    surfaces: Rc<RefCell<Option<ScrollSurfaces>>>,
+    /// The pane's scroll position and the surfaces it is drawn into, so the
+    /// compositor does the scrolling. Lives here rather than inside `Settings`
+    /// because `Settings` is rebuilt fresh every frame, while the scroll
+    /// offset — like `selected` — has to survive across frames. `None` until
+    /// the window exists to parent it to.
+    pane: Rc<RefCell<Option<ScrollPane>>>,
     /// Set when something other than the scroll changed what the pane should
     /// look like, so the next update repaints its band. See
     /// [`SettingsApp::sync_pane`].
     pane_dirty: Arc<Mutex<bool>>,
+    /// Moves each time the pane's content changes, which is what tells the
+    /// pane to repaint its band rather than only move it.
+    pane_revision: u64,
+    /// The pane still has a scroll in hand — a step on its way to the screen,
+    /// or motion left to run — so the update loop has to keep turning.
+    pane_busy: bool,
     /// Identifier of the slider currently being dragged, if any.
     dragging: Arc<Mutex<Option<String>>>,
     /// What the keyboard was on last pass, so a focus that *moved* can be
@@ -411,50 +416,58 @@ fn mark_pane_dirty(dirty: &Arc<Mutex<bool>>) {
     *dirty.lock().unwrap() = true;
 }
 
-/// Feed one axis event to the scroll view.
+/// Whether a point in window coordinates is over the pane.
 ///
-/// Shared by the window and the pane's surfaces: a wheel anywhere over the
-/// window scrolls the pane, as it did when the window was a single surface.
-fn handle_wheel(scroll: &Mutex<ScrollView>, vertical: &AxisScroll) {
-    let mut scroll = scroll.lock().unwrap();
-    // A notched wheel reports discrete steps and should move exactly one step
-    // per click; a touchpad reports a continuous stream, which is what
-    // momentum and rubber banding are for.
-    if vertical.stop {
-        // Fingers off the touchpad: whatever the gesture was carrying becomes
-        // a fling, and anything pulled past an end springs back.
-        scroll.on_wheel_end();
-    } else if vertical.discrete != 0 {
-        scroll.on_wheel_discrete(vertical.absolute as f32);
-    } else {
-        scroll.on_wheel(vertical.absolute as f32);
+/// The pane's surfaces pass the pointer through, so every event lands on the
+/// window; this is what divides a press between the chrome's handler and the
+/// pane's.
+fn in_pane(size: &Arc<Mutex<(f32, f32)>>, x: f32, y: f32) -> bool {
+    let viewport = viewport_for(size);
+    x >= viewport.left && x < viewport.right && y >= viewport.top && y < viewport.bottom
+}
+
+/// The pane's scroll offset, or the top before the pane exists.
+fn pane_offset(pane: &RefCell<Option<ScrollPane>>) -> f32 {
+    pane.borrow().as_ref().map_or(0.0, ScrollPane::offset)
+}
+
+/// Feed one axis event to the pane: a wheel anywhere over the window scrolls
+/// it, as it did when the window was a single surface.
+fn handle_wheel(pane: &RefCell<Option<ScrollPane>>, vertical: &AxisScroll) {
+    if let Some(pane) = pane.borrow_mut().as_mut() {
+        // A notched wheel reports discrete steps and should move exactly one
+        // step per click; a touchpad reports a continuous stream, which is
+        // what momentum and rubber banding are for. Fingers off the touchpad
+        // turn whatever the gesture was carrying into a fling.
+        pane.wheel(
+            vertical.absolute as f32,
+            vertical.discrete != 0,
+            vertical.stop,
+        );
     }
 }
 
-/// Which of the pane's surfaces a pointer event landed on.
-///
-/// The pane is three subsurfaces (see `ScrollSurfaces`), and the pointer is
-/// hit-tested against them rather than against the window, so an event over
-/// the pane never reaches the window's own handler and arrives in that
-/// surface's local coordinates instead of the window's. Each variant is one
-/// way of putting those coordinates back into the pane's own space, which is
-/// where every hit test below happens.
-enum PaneTarget {
-    /// The band holding the content. It is the surface that *moves* to
-    /// scroll, so its origin sits `band_origin - offset` points down the
-    /// pane — which is also why a coordinate translated through it stays
-    /// still when the pointer does, however far the content has scrolled.
-    Content,
-    /// The clip box the band scrolls inside. The band is only as tall as
-    /// there is content, so wherever it falls short of the viewport — the
-    /// space below the two rows of the Sound pane, say — the clip is what the
-    /// pointer is over. It does not move, and it *is* the viewport, so its
-    /// local coordinates are already the pane's and need no adjusting.
-    ///
-    /// The scrollbar is never a target: `ScrollSurfaces` gives it an empty
-    /// input region, so it receives no pointer events at all and the scroll
-    /// view's own hit tests decide what a press in the gutter means.
-    Clip,
+/// What the pane shows: the selected pane's rows, as `Settings` lays them out.
+struct PaneContent<'a> {
+    settings: &'a Settings,
+    revision: u64,
+}
+
+impl ScrollContent for PaneContent<'_> {
+    fn length(&self, _cross: f32) -> f32 {
+        // Re-measured every time rather than cached: it is cheap, and it keeps
+        // the scroll range correct if the pane's content changes shape (a row
+        // gaining a detail line, say) without the window resizing.
+        self.settings.pane_content_height()
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
+        self.settings.render_content(canvas, band);
+    }
 }
 
 /// The serial of a press, which the compositor requires to open a popup.
@@ -894,7 +907,9 @@ fn select_pane(app: &SettingsApp, index: usize) -> bool {
     if let Some(window) = app.window.as_ref() {
         window.set_title(&window_title(index));
     }
-    app.scroll.lock().unwrap().state.set_offset(0.0);
+    if let Some(pane) = app.pane.borrow_mut().as_mut() {
+        pane.scroll_to(0.0);
+    }
     mark_pane_dirty(&app.pane_dirty);
     if let Some(window) = app.window.as_ref() {
         window.request_frame();
@@ -982,15 +997,13 @@ fn cancel_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
 const IDLE_TICK: std::time::Duration = std::time::Duration::from_millis(8);
 
 impl SettingsApp {
-    /// Bring the pane's surfaces in line with the model: where the viewport
-    /// is, how tall the content is, and where the scroll has put it.
+    /// Bring the pane in line with the model: where the viewport is, how tall
+    /// the content is, and where the scroll has put it.
     ///
-    /// `repaint` says the content itself changed — a value applied, a menu
-    /// opened, the window resized — rather than merely scrolled. The surfaces
-    /// repaint their band only when a scroll runs off its edge, which is the
-    /// whole point of them and no help at all here, so anything else that
-    /// changes how the pane looks has to invalidate it explicitly.
-    fn sync_pane(&mut self, repaint: bool) {
+    /// The band is repainted only when a scroll runs off its edge or
+    /// `pane_revision` has moved — anything other than a scroll that changes
+    /// how the pane looks has to move it.
+    fn sync_pane(&mut self) {
         let settings = current_settings(
             &self.selected,
             &self.size,
@@ -1003,44 +1016,22 @@ impl SettingsApp {
         .with_open_picker(*self.open_picker.lock().unwrap())
         .with_active(self.active.load(std::sync::atomic::Ordering::Relaxed));
 
-        let mut scroll = self.scroll.lock().unwrap();
-        // The scroll view drives surfaces that live inside the pane, so its
-        // viewport is the pane's own, not the window-local one the all-in-one
-        // render path uses.
-        scroll.set_viewport(settings.local_viewport());
-        // Re-measured every time rather than cached: it is cheap, and it keeps
-        // the scroll range correct if the pane's content changes shape (a row
-        // gaining a detail line, say) without the window resizing.
-        scroll.set_content_length(settings.pane_content_height());
-
-        let mut guard = self.surfaces.borrow_mut();
-        let Some(surfaces) = guard.as_mut() else {
+        let mut guard = self.pane.borrow_mut();
+        let Some(pane) = guard.as_mut() else {
             return;
         };
+        // The pane is transparent: its ground is the window's, painted by
+        // `render_chrome`, so a light/dark switch only repaints the rows.
+        pane.set_viewport(settings.viewport());
+        let content = PaneContent {
+            settings: &settings,
+            revision: self.pane_revision,
+        };
+        self.pane_busy = pane.update(&content, &settings.theme);
+    }
 
-        surfaces.set_viewport(settings.viewport());
-        // The pane's ground lives in the clip surface, which is painted once
-        // and then left alone, so a light/dark switch has to be pushed in or
-        // it keeps the old scheme under freshly themed content.
-        surfaces.set_background(view::pane_background(settings.dark));
-        if repaint {
-            surfaces.invalidate();
-        }
-
-        surfaces.sync(&scroll, &settings.theme, |canvas, band| {
-            if std::env::var_os("OTTO_PANE_DEBUG").is_some() {
-                eprintln!(
-                    "[panedbg] band {:.0}..{:.0} offset={:.0} vp={:?} content_h={:.0} width={:.0}",
-                    band.top,
-                    band.bottom,
-                    scroll.offset(),
-                    settings.local_viewport(),
-                    settings.pane_content_height(),
-                    settings.width
-                );
-            }
-            settings.render_content(canvas, band)
-        });
+    fn pane_offset(&self) -> f32 {
+        pane_offset(&self.pane)
     }
 }
 
@@ -1055,6 +1046,28 @@ fn apply_material(window: &Window) {
     window.set_material(view::sidebar_material(
         current_color_scheme() == ColorScheme::Dark,
     ));
+}
+
+/// Tell the compositor which part of the window is opaque: the pane's ground,
+/// short of the rounded bottom-right corner. The frost is not computed under
+/// it, and the scrolling pane's bands above it cost no blur.
+fn apply_opaque_region(window: &Window, (width, height): (f32, f32)) {
+    let viewport = view::pane_viewport(width.max(view::MIN_W), height.max(view::MIN_H));
+    let corner = view::corner();
+    window.set_opaque_region(&[
+        Rect::from_ltrb(
+            viewport.left,
+            viewport.top,
+            viewport.right,
+            viewport.bottom - corner,
+        ),
+        Rect::from_ltrb(
+            viewport.left,
+            viewport.bottom - corner,
+            viewport.right - corner,
+            viewport.bottom,
+        ),
+    ]);
 }
 
 impl SettingsApp {
@@ -1075,7 +1088,7 @@ impl SettingsApp {
             &self.pressed,
             &self.hovered_preview,
         );
-        let offset = self.scroll.lock().unwrap().state.offset();
+        let offset = self.pane_offset();
         let rows: Vec<(FocusId, Rect)> = settings
             .pane_rows(offset)
             .into_iter()
@@ -1152,8 +1165,7 @@ impl SettingsApp {
         let (width, height) = *self.size.lock().unwrap();
         let viewport = view::pane_viewport(width, height);
 
-        let mut scroll = self.scroll.lock().unwrap();
-        let offset = scroll.state.offset();
+        let offset = self.pane_offset();
         let Some((_, bounds)) = settings.pane_rows(offset).into_iter().find(|(row, rect)| {
             row_stops(row, *rect)
                 .iter()
@@ -1173,8 +1185,9 @@ impl SettingsApp {
             return;
         };
 
-        scroll.state.set_offset(moved.max(0.0));
-        drop(scroll);
+        if let Some(pane) = self.pane.borrow_mut().as_mut() {
+            pane.view_mut().state.set_offset(moved.max(0.0));
+        }
         mark_pane_dirty(&self.pane_dirty);
     }
 
@@ -1191,7 +1204,7 @@ impl SettingsApp {
             &self.pressed,
             &self.hovered_preview,
         );
-        let offset = self.scroll.lock().unwrap().state.offset();
+        let offset = self.pane_offset();
         settings
             .pane_rows(offset)
             .into_iter()
@@ -1438,28 +1451,27 @@ impl App for SettingsApp {
                 .render_chrome(canvas);
         });
 
-        // The pane's surfaces, parented to the window. The background colour
-        // they are given is the one the chrome paints under them, so the two
-        // agree wherever an overscroll pulls the content away from an edge.
+        // The pane's surfaces, parented to the window. They are transparent
+        // over the ground the chrome paints, which is also what an overscroll
+        // shows, and pass the pointer through to the window.
         let parent = window
             .surface()
             .map(|s| s.wl_surface().clone())
             .ok_or("window has no surface to hang the pane from")?;
-        let surfaces = ScrollSurfaces::new(
+        let pane = ScrollPane::new(
             &parent,
             view::pane_viewport(WINDOW_W, WINDOW_H),
-            view::pane_background(current_color_scheme() == ColorScheme::Dark),
+            Axis::Vertical,
         )?;
-        let content_id = surfaces.content_surface().id();
-        let clip_id = surfaces.clip_surface().id();
         let window_id = parent.id();
-        *self.surfaces.borrow_mut() = Some(surfaces);
+        *self.pane.borrow_mut() = Some(pane);
+        apply_opaque_region(&window, *self.size.lock().unwrap());
 
-        // What the window surface itself is still pointed at: its resize
-        // edges, its titlebar, and the sidebar. Clicking a sidebar row selects
-        // that pane.
+        // The chrome: the window's resize edges, its titlebar, and the
+        // sidebar. Clicking a sidebar row selects that pane. A press over the
+        // pane is the pane handler's, further down.
         let selected = self.selected.clone();
-        let scroll = self.scroll.clone();
+        let pane = self.pane.clone();
         let pane_dirty = self.pane_dirty.clone();
         let size_hit = self.size.clone();
         let controls_hit = self.controls.clone();
@@ -1471,6 +1483,9 @@ impl App for SettingsApp {
                 let (x, y) = (x as f32, y as f32);
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {
+                        if in_pane(&size_hit, x, y) {
+                            continue;
+                        }
                         // The window draws its own decoration, so its edges
                         // are its own resize handles too.
                         let (win_w, win_h) = *size_hit.lock().unwrap();
@@ -1503,9 +1518,7 @@ impl App for SettingsApp {
                             continue;
                         }
 
-                        // Everything else the window still owns is the
-                        // sidebar: the pane is hit-tested on its own surface,
-                        // further down.
+                        // Everything else the chrome owns is the sidebar.
                         if let Some(index) = view::pane_at(x, y) {
                             let mut current = selected.lock().unwrap();
                             if *current != index {
@@ -1514,7 +1527,9 @@ impl App for SettingsApp {
                                 // A different pane has an unrelated content
                                 // height, so its old scroll position means
                                 // nothing here.
-                                scroll.lock().unwrap().state.set_offset(0.0);
+                                if let Some(pane) = pane.borrow_mut().as_mut() {
+                                    pane.scroll_to(0.0);
+                                }
                                 mark_pane_dirty(&pane_dirty);
                                 needs_redraw = true;
                             }
@@ -1536,9 +1551,9 @@ impl App for SettingsApp {
                             needs_redraw = true;
                         }
                     }
-                    // A wheel over the chrome still scrolls the pane, as it
-                    // did when the window was a single surface.
-                    PointerEventKind::Axis { vertical, .. } => handle_wheel(&scroll, vertical),
+                    // A wheel anywhere over the window scrolls the pane; the
+                    // pane handler leaves it to this one.
+                    PointerEventKind::Axis { vertical, .. } => handle_wheel(&pane, vertical),
                     PointerEventKind::Release { .. } => {
                         let win_w = size_hit.lock().unwrap().0;
                         let control = view::titlebar_control_at(x, y, win_w);
@@ -1571,12 +1586,12 @@ impl App for SettingsApp {
             }
         });
 
-        // The pane is no longer part of the window surface, so its events
-        // arrive here rather than in the handler above — and in the local
-        // coordinates of whichever of its surfaces they landed on.
+        // The pane. Its surfaces pass the pointer through, so its events land
+        // on the window in window coordinates: this handler takes a press
+        // over the pane, and follows motion, release and leave everywhere so
+        // a drag that wanders off the pane keeps going.
         let selected = self.selected.clone();
-        let scroll = self.scroll.clone();
-        let surfaces = self.surfaces.clone();
+        let pane = self.pane.clone();
         let dragging = self.dragging.clone();
         let dropdowns = self.dropdowns.clone();
         let open_dropdown = self.open_dropdown.clone();
@@ -1591,50 +1606,22 @@ impl App for SettingsApp {
         let redraw = window.clone();
         AppContext::register_pointer_callback(move |events| {
             for event in events {
-                let surface = event.surface.id();
-                let target = if surface == content_id {
-                    PaneTarget::Content
-                } else if surface == window_id {
-                    // The handler above has this one.
+                // Only the window's own events: a popup of ours, or a drag
+                // icon, handles its own.
+                if event.surface.id() != window_id {
                     continue;
-                } else if open_dropdown.lock().unwrap().is_some()
-                    || open_picker.lock().unwrap().is_some()
-                {
-                    // A popup of ours is up and handles its own events.
-                    continue;
-                } else if surface == clip_id {
-                    PaneTarget::Clip
-                } else {
-                    // Some other surface of this app — a popup that has just
-                    // closed, a drag icon. Recognised surfaces only: taking
-                    // everything else as the pane put events from wherever
-                    // through a translation written for one of these.
-                    continue;
-                };
-
-                let viewport = viewport_for(&size_hit);
-                let (lx, ly) = event.position;
-                let (lx, ly) = (lx as f32, ly as f32);
-                // Into the pane's own coordinates, which is where the scroll
-                // view's viewport, gutter and thumb live.
-                let (px, py) = match target {
-                    PaneTarget::Content => {
-                        let band_origin = surfaces
-                            .borrow()
-                            .as_ref()
-                            .map(|s| s.band_origin())
-                            .unwrap_or(0.0);
-                        let offset = scroll.lock().unwrap().offset();
-                        (lx, ly + band_origin - offset)
-                    }
-                    PaneTarget::Clip => (lx, ly),
-                };
-                // And on into window coordinates, which is what the pane's
-                // hit tests take and what the popups anchor against.
-                let (x, y) = (px + viewport.left, py + viewport.top);
+                }
+                // Window coordinates, which is what the pane's hit tests take
+                // and what the popups anchor against.
+                let (x, y) = event.position;
+                let (x, y) = (x as f32, y as f32);
+                let point = skia_safe::Point::new(x, y);
 
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {
+                        if !in_pane(&size_hit, x, y) {
+                            continue;
+                        }
                         // The pane reaches the window's right and bottom
                         // edges, so two of its resize handles are over it.
                         let (win_w, win_h) = *size_hit.lock().unwrap();
@@ -1648,14 +1635,18 @@ impl App for SettingsApp {
                         // A press anywhere in the pane catches an in-flight
                         // fling; on the scrollbar it also starts a drag, and
                         // then it is not a press on a control.
-                        if scroll.lock().unwrap().on_pointer_down(px, py) {
+                        let on_scrollbar = pane
+                            .borrow_mut()
+                            .as_mut()
+                            .is_some_and(|pane| pane.pointer_down(point));
+                        if on_scrollbar {
                             continue;
                         }
 
                         // A control in the pane. The settings state is rebuilt
                         // here rather than cached because a successful Set
                         // changes what the next one would hit.
-                        let offset = scroll.lock().unwrap().offset();
+                        let offset = pane_offset(&pane);
                         let settings = current_settings(
                             &selected,
                             &size_hit,
@@ -1850,7 +1841,9 @@ impl App for SettingsApp {
                         }
                     }
                     PointerEventKind::Release { .. } => {
-                        scroll.lock().unwrap().on_pointer_up();
+                        if let Some(pane) = pane.borrow_mut().as_mut() {
+                            pane.pointer_up();
+                        }
                         *dragging.lock().unwrap() = None;
 
                         // A button acts here, not on the press — and only if
@@ -1873,7 +1866,7 @@ impl App for SettingsApp {
                                 &pressed_hit,
                                 &hovered_preview,
                             );
-                            let offset = scroll.lock().unwrap().offset();
+                            let offset = pane_offset(&pane);
                             if released_on(&settings, held, x, y, offset) {
                                 activate(held);
                             }
@@ -1887,12 +1880,10 @@ impl App for SettingsApp {
                             None => AppContext::set_cursor_shape(CursorShape::Default),
                         }
 
-                        {
-                            let mut scroll = scroll.lock().unwrap();
-                            // Hovering the scrollbar keeps it up and widens
-                            // it; dragging it moves the content.
-                            scroll.on_pointer_move(px, py);
-                            scroll.on_pointer_drag(px, py);
+                        // Hovering the scrollbar keeps it up and widens it;
+                        // dragging it moves the content.
+                        if let Some(pane) = pane.borrow_mut().as_mut() {
+                            pane.pointer_motion(point);
                         }
 
                         // A preview shows its remove button only while the
@@ -1907,7 +1898,7 @@ impl App for SettingsApp {
                                 &pressed_hit,
                                 &hovered_preview,
                             );
-                            let offset = scroll.lock().unwrap().offset();
+                            let offset = pane_offset(&pane);
                             let over = settings.preview_hit(x, y, offset).map(|preview| preview.id);
                             let mut current = hovered_preview.lock().unwrap();
                             if *current != over {
@@ -1930,7 +1921,7 @@ impl App for SettingsApp {
                                 &pressed_hit,
                                 &hovered_preview,
                             );
-                            let offset = scroll.lock().unwrap().offset();
+                            let offset = pane_offset(&pane);
                             if !released_on(&settings, held, x, y, offset) {
                                 *pressed_hit.lock().unwrap() = None;
                                 mark_pane_dirty(&pane_dirty);
@@ -1954,9 +1945,12 @@ impl App for SettingsApp {
                             }
                         }
                     }
-                    PointerEventKind::Axis { vertical, .. } => handle_wheel(&scroll, vertical),
+                    // The chrome's handler scrolls the pane from anywhere.
+                    PointerEventKind::Axis { .. } => {}
                     PointerEventKind::Leave { .. } => {
-                        scroll.lock().unwrap().on_pointer_leave();
+                        if let Some(pane) = pane.borrow_mut().as_mut() {
+                            pane.pointer_leave();
+                        }
                         // The pointer is off the pane, so no preview is
                         // hovered — without this the button stays drawn on a
                         // picture nobody is pointing at.
@@ -2051,6 +2045,7 @@ impl App for SettingsApp {
 
         // The pane's surfaces are placed against the window's size, so they
         // have to be told about the new one and repainted at it.
+        apply_opaque_region(window, (width, height));
         mark_pane_dirty(&self.pane_dirty);
         window.request_frame();
     }
@@ -2068,19 +2063,6 @@ impl App for SettingsApp {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);
         }
-
-        // Scroll momentum, the overscroll bounce and the scrollbar's fade all
-        // advance here rather than on input, since they keep running after
-        // the gesture ends. `idle_timeout` keeps the loop turning while
-        // there is something left to animate.
-        let animating = {
-            let mut scroll = self.scroll.lock().unwrap();
-            let animating = scroll.is_animating();
-            if animating {
-                scroll.tick();
-            }
-            animating
-        };
 
         // A flip that has landed is dropped rather than left at 1.0: the row
         // then draws from the value itself again, and nothing keeps asking
@@ -2108,11 +2090,23 @@ impl App for SettingsApp {
         };
 
         let dirty = std::mem::replace(&mut *self.pane_dirty.lock().unwrap(), false);
-        if animating || flipping || dirty || blinking {
-            // A flip changes what a row looks like, not where the pane is
-            // scrolled, so it has to repaint the band like any other value
-            // change.
-            self.sync_pane(dirty || flipping || blinking);
+        // A flip changes what a row looks like, not where the pane is
+        // scrolled, so it repaints the band like any other value change.
+        let changed = dirty || flipping || blinking;
+        if changed {
+            self.pane_revision = self.pane_revision.wrapping_add(1);
+        }
+        // Scroll momentum, the overscroll bounce and the scrollbar's fade all
+        // advance in the pane's update rather than on input, since they keep
+        // running after the gesture ends. `idle_timeout` keeps the loop
+        // turning while the pane has any of that in hand.
+        let animating = self
+            .pane
+            .borrow()
+            .as_ref()
+            .is_some_and(ScrollPane::is_animating);
+        if changed || animating || self.pane_busy {
+            self.sync_pane();
         }
     }
 
@@ -2351,7 +2345,7 @@ impl App for SettingsApp {
             &self.pressed,
             &self.hovered_preview,
         );
-        let offset = self.scroll.lock().unwrap().state.offset();
+        let offset = self.pane_offset();
         let (width, height) = *self.size.lock().unwrap();
         let rows = pane_settings.pane_rows(offset);
 
@@ -2410,7 +2404,7 @@ impl App for SettingsApp {
             &self.pressed,
             &self.hovered_preview,
         );
-        let offset = self.scroll.lock().unwrap().state.offset();
+        let offset = self.pane_offset();
         let target = settings
             .pane_rows(offset)
             .into_iter()
@@ -2460,7 +2454,9 @@ impl App for SettingsApp {
     /// spinning wheel does. Nothing else in the pointer stream says so: a hold
     /// carries no motion and no button.
     fn on_pointer_hold_begin(&mut self, _ctx: &AppContext, _fingers: u32) {
-        self.scroll.lock().unwrap().stop();
+        if let Some(pane) = self.pane.borrow_mut().as_mut() {
+            pane.stop();
+        }
         mark_pane_dirty(&self.pane_dirty);
     }
 
@@ -2469,7 +2465,12 @@ impl App for SettingsApp {
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         // A blinking caret needs one too: nothing else wakes the loop while
         // the user is looking at a field they have stopped typing into.
-        let animating = self.scroll.lock().unwrap().is_animating()
+        let animating = self.pane_busy
+            || self
+                .pane
+                .borrow()
+                .as_ref()
+                .is_some_and(ScrollPane::is_animating)
             || !self.toggle_flips.lock().unwrap().is_empty()
             // A blinking caret needs the same steady clock, and for the same
             // reason: nothing else is going to ask for the next frame.
@@ -2509,13 +2510,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     AppRunner::new(SettingsApp {
         window: None,
         selected: Arc::new(Mutex::new(0)),
-        scroll: Arc::new(Mutex::new(ScrollView::new(view::pane_viewport_local(
-            view::WINDOW_W,
-            view::WINDOW_H,
-        )))),
-        surfaces: Rc::new(RefCell::new(None)),
+        pane: Rc::new(RefCell::new(None)),
         // The pane has never been painted, so the first update has to.
         pane_dirty: Arc::new(Mutex::new(true)),
+        pane_revision: 0,
+        pane_busy: false,
         dragging: Arc::new(Mutex::new(None)),
         last_focus: None,
         toggle_flips: Arc::new(Mutex::new(HashMap::new())),

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
+use otto_kit::components::scroll::{Axis, RowLayout, ScrollContent, ScrollPane};
 use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
@@ -38,12 +39,13 @@ use otto_launcher::apps::Apps;
 use otto_launcher::calc::Calculator;
 use otto_launcher::source::{rank, Item, Origin, Source};
 use otto_launcher::view::{
-    field_style, Palette, CARD_W, FIELD_H, MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
+    field_style, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, MAX_CARD_H, MAX_ROWS,
+    RADIUS, ROW_H,
 };
 use otto_launcher::windows;
 
-/// How long the scene is kept painting after a change, so the selection's
-/// slide and the card's resize are seen through to the end.
+/// How long the scene is kept painting after the card's height changes, so
+/// its resize is seen through to the end.
 const SETTLE: Duration = Duration::from_millis(220);
 
 /// A frame the compositor never answered must not freeze the launcher.
@@ -103,8 +105,17 @@ struct Launcher {
     input: TextInput,
     /// Index into `matches` of the highlighted row.
     selected: usize,
-    /// First row on screen — the list scrolls past [`MAX_ROWS`].
-    offset: usize,
+    /// The result rows: a scroll pane over the card, so scrolling the list or
+    /// moving the selection repaints neither the card nor the rows. `None`
+    /// until the card exists.
+    list: Option<ScrollPane>,
+    /// Moves whenever the rows would paint differently.
+    list_revision: u64,
+    /// The list still has a scroll or a highlight slide in hand.
+    list_busy: bool,
+    /// The selection is the pointer's: it follows the row under the pointer
+    /// as the list glides, with no event to say so. Cleared by the keyboard.
+    follow_pointer: bool,
 
     shift: bool,
     sized: bool,
@@ -218,7 +229,10 @@ impl Launcher {
             rows: Vec::new(),
             input,
             selected: 0,
-            offset: 0,
+            list: None,
+            list_revision: 0,
+            list_busy: false,
+            follow_pointer: false,
             shift: false,
             sized: false,
             engaged: false,
@@ -280,7 +294,10 @@ impl Launcher {
 
         self.rows = rows;
         self.selected = 0;
-        self.offset = 0;
+        if let Some(list) = self.list.as_mut() {
+            list.scroll_to(0.0);
+        }
+        self.list_revision = self.list_revision.wrapping_add(1);
         self.dirty = true;
     }
 
@@ -304,16 +321,68 @@ impl Launcher {
         // Wrapping, because a list that stops at the end makes someone check
         // where the end was.
         self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
+        // The keyboard has the selection now, wherever the pointer is.
+        self.follow_pointer = false;
         self.scroll_to_selection();
         self.dirty = true;
     }
 
     fn scroll_to_selection(&mut self) {
-        if self.selected < self.offset {
-            self.offset = self.selected;
-        } else if self.selected >= self.offset + MAX_ROWS {
-            self.offset = self.selected + 1 - MAX_ROWS;
+        if let Some(list) = self.list.as_mut() {
+            let top = self.selected as f32 * ROW_H;
+            list.reveal(top, top + ROW_H);
         }
+    }
+
+    /// Which result the point `(x, y)` on the card is over, through the list's
+    /// scroll.
+    fn list_row_at(&self, x: f32, y: f32) -> Option<usize> {
+        let list = self.list.as_ref()?;
+        let point = skia_safe::Point::new(x, y);
+        if !list.contains(point) {
+            return None;
+        }
+        RowLayout::new(ROW_H, self.row_count()).index_at(list.parent_to_content(point).y)
+    }
+
+    /// Bring the list pane in line with the rows, the selection and the card.
+    fn sync_list(&mut self) {
+        if !self.sized {
+            return;
+        }
+        // A fling carries on after the fingers lift, and the row under a
+        // still pointer changes with it: the pane says which row that is.
+        if self.follow_pointer {
+            let rows = RowLayout::new(ROW_H, self.row_count());
+            let hovered = self.list.as_ref().and_then(ScrollPane::hovered);
+            if let Some(row) = hovered.and_then(|point| rows.index_at(point.y)) {
+                self.selected = row;
+            }
+        }
+        let (Some(list), Some(palette)) = (self.list.as_mut(), self.palette.as_ref()) else {
+            return;
+        };
+        let viewport = palette.list_rect();
+        if viewport.height() <= 0.0 {
+            list.set_hidden(true);
+            self.list_busy = false;
+            return;
+        }
+        list.set_hidden(false);
+        list.set_viewport(viewport);
+        list.set_highlight(
+            Some(Palette::highlight_rect(self.selected)),
+            palette.highlight_color(),
+            HIGHLIGHT_RADIUS,
+        );
+        let items: Vec<&Item> = self.rows.iter().collect();
+        let content = Rows {
+            palette,
+            items: &items,
+            labels: &self.labels,
+            revision: self.list_revision,
+        };
+        self.list_busy = list.update(&content, &AppContext::current_theme());
     }
 
     /// Carry out the selection and leave. A source that refuses says why and
@@ -341,30 +410,20 @@ impl Launcher {
         if !self.sized {
             return;
         }
-        // Destructured so the rows and the palette borrow different fields:
-        // the references handed to the palette point into `rows`, and they have
-        // to outlive the call that draws them.
-        let Self {
-            rows,
-            palette,
-            input,
-            labels,
-            offset,
-            selected,
-            ..
-        } = self;
-        let Some(palette) = palette.as_mut() else {
-            return;
-        };
-        let shown: Vec<&Item> = rows.iter().collect();
         // "No results" answers a question. Nothing has been asked yet when the
         // query is empty, and the launcher has nothing to report.
-        let empty_message = (!input.value().trim().is_empty()).then_some("No results");
-        palette.update(input, &shown, labels, *offset, *selected, empty_message);
+        let empty_message = (!self.input.value().trim().is_empty()).then_some("No results");
+        let count = self.rows.len();
+        let Some(palette) = self.palette.as_mut() else {
+            return;
+        };
+        palette.update(&self.input, count, empty_message);
 
         let size = palette.card_size();
-        self.settle_until = Some(Instant::now() + SETTLE);
         if size != self.card_size {
+            // The card's height runs a transition: keep painting until it
+            // lands. Nothing else in the scene animates.
+            self.settle_until = Some(Instant::now() + SETTLE);
             self.card_size = size;
             self.resize_card(size);
         }
@@ -539,6 +598,29 @@ impl Launcher {
                 base.render_layer_node(canvas);
             });
         }
+    }
+}
+
+/// What the list pane shows: the rows, as the palette paints them.
+struct Rows<'a> {
+    palette: &'a Palette,
+    items: &'a [&'a Item],
+    labels: &'a [&'static str],
+    revision: u64,
+}
+
+impl ScrollContent for Rows<'_> {
+    fn length(&self, _cross: f32) -> f32 {
+        RowLayout::new(ROW_H, self.items.len()).length()
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
+        self.palette
+            .paint_rows(canvas, band, self.items, self.labels);
     }
 }
 
@@ -723,7 +805,16 @@ impl App for Launcher {
             return Err("the layers engine is unavailable".into());
         };
         let palette = Palette::new(engine, card.base_surface().layer_node(), dark());
+        // The rows, over the card's own drawing and inside its frost. A row's
+        // height to start with; the pane follows the list from the first
+        // update.
+        let list = ScrollPane::new(
+            card.wl_surface(),
+            Rect::from_xywh(0.0, LIST_TOP, CARD_W, ROW_H),
+            Axis::Vertical,
+        )?;
 
+        self.list = Some(list);
         self.palette = Some(palette);
         self.card = Some(card);
         self.surface = Some(surface);
@@ -757,6 +848,8 @@ impl App for Launcher {
         if let Some(card) = self.card.as_ref() {
             apply_card_colour(card);
         }
+        // The rows' text is coloured from the scheme too.
+        self.list_revision = self.list_revision.wrapping_add(1);
         self.dirty = true;
     }
 
@@ -931,9 +1024,9 @@ impl App for Launcher {
         if self.closing_at.is_some() {
             return;
         }
-        let Some(palette) = self.palette.as_ref() else {
+        if self.palette.is_none() {
             return;
-        };
+        }
         let card_surface = self.card.as_ref().map(|card| card.wl_surface().clone());
         for event in events {
             // Positions are relative to the surface the pointer is over, and
@@ -945,13 +1038,32 @@ impl App for Launcher {
                 .is_some_and(|surface| *surface == event.surface);
             let (x, y) = (event.position.0 as f32, event.position.1 as f32);
             match event.kind {
+                // The highlight is the list pane's, so following the pointer
+                // repaints nothing.
                 PointerEventKind::Motion { .. } if on_card => {
-                    if let Some(row) = palette.row_at(x, y) {
-                        let target = self.offset + row;
-                        if target < self.row_count() && target != self.selected {
-                            self.selected = target;
-                            self.dirty = true;
-                        }
+                    self.follow_pointer = true;
+                    if let Some(list) = self.list.as_mut() {
+                        list.pointer_motion(skia_safe::Point::new(x, y));
+                    }
+                    if let Some(row) = self.list_row_at(x, y) {
+                        self.selected = row;
+                    }
+                }
+                // A wheel or a touchpad over the card scrolls the list, and
+                // the row that comes under the pointer is the one selected.
+                PointerEventKind::Axis { vertical, .. } if on_card => {
+                    self.engaged = true;
+                    self.follow_pointer = true;
+                    if let Some(list) = self.list.as_mut() {
+                        list.wheel_at(
+                            skia_safe::Point::new(x, y),
+                            vertical.absolute as f32,
+                            vertical.discrete != 0,
+                            vertical.stop,
+                        );
+                    }
+                    if let Some(row) = self.list_row_at(x, y) {
+                        self.selected = row;
                     }
                 }
                 PointerEventKind::Press { .. } => {
@@ -961,20 +1073,23 @@ impl App for Launcher {
                     // but a region is applied a commit late, and a press that
                     // arrives against the old one is still a press beside the
                     // card, which is the other way of saying Escape.
-                    let beside = !on_card || y > palette.card_size().1;
+                    let card_h = self.palette.as_ref().map_or(0.0, |p| p.card_size().1);
+                    let beside = !on_card || y > card_h;
                     if beside {
                         self.close();
                         return;
                     }
                 }
                 PointerEventKind::Release { .. } if on_card => {
-                    if let Some(row) = palette.row_at(x, y) {
-                        let target = self.offset + row;
-                        if target < self.row_count() {
-                            self.selected = target;
-                            self.activate();
-                            return;
-                        }
+                    if let Some(row) = self.list_row_at(x, y) {
+                        self.selected = row;
+                        self.activate();
+                        return;
+                    }
+                }
+                PointerEventKind::Leave { .. } => {
+                    if let Some(list) = self.list.as_mut() {
+                        list.pointer_leave();
                     }
                 }
                 _ => {}
@@ -1005,11 +1120,13 @@ impl App for Launcher {
 
         // Only the rows on screen: the list scrolls, and a row that has been
         // scrolled past is not something to point at.
-        let first = self.offset;
-        let last = (self.offset + MAX_ROWS).min(self.row_count());
+        let viewport = palette.list_rect();
+        let offset = self.list.as_ref().map_or(0.0, ScrollPane::offset);
+        let shown =
+            RowLayout::new(ROW_H, self.row_count()).range(offset, offset + viewport.height());
         let list = Rect::from_xywh(card_x, card_y + FIELD_H, card_w, card_h - FIELD_H);
 
-        let rows: Vec<(usize, String, Option<String>)> = (first..last)
+        let rows: Vec<(usize, String, Option<String>)> = shown
             .filter_map(|index| {
                 let item = self.row(index)?;
                 Some((index, item.title.clone(), item.subtitle.clone()))
@@ -1024,10 +1141,9 @@ impl App for Launcher {
             otto_kit::t!("a11y-results"),
             |tree| {
                 for (index, title, subtitle) in rows {
-                    let on_screen = index - first;
                     let bounds = Rect::from_xywh(
                         card_x,
-                        card_y + FIELD_H + on_screen as f32 * ROW_H,
+                        card_y + viewport.top + index as f32 * ROW_H - offset,
                         card_w,
                         ROW_H,
                     );
@@ -1119,9 +1235,14 @@ impl App for Launcher {
             // The first frame is on the card, so it has something to arrive
             // with.
             self.open();
+            self.sync_list();
             tracing::debug!(ms = since_start(), "first frame");
             return;
         }
+
+        // Every pass: the list's scroll, fling and highlight move on the
+        // pane's own surfaces, whatever the card is doing.
+        self.sync_list();
 
         if self.frame_in_flight() {
             return;
@@ -1138,7 +1259,7 @@ impl App for Launcher {
         if self.closing_at.is_some() {
             return Some(Duration::from_millis(8));
         }
-        Some(if self.settle_until.is_some() {
+        Some(if self.settle_until.is_some() || self.list_busy {
             Duration::from_millis(8)
         } else {
             // Half a blink period: the slowest the loop may sleep and still

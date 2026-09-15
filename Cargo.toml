@@ -203,7 +203,9 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# Pinned to a release: v1.17.0 (nongio/layers#27) takes the transaction locks
+# On the feat/blur-cache branch (nongio/layers#28) for kept blurred backdrops,
+# clipped damage and opaque regions, until it is released; before that,
+# pinned to v1.17.0 (nongio/layers#27), which takes the transaction locks
 # in one order, ending the deadlock that left the compositor black at login.
 # v1.16.0 (#26) keeps the backdrop blur from sampling past a layer's bounds and
 # carries the cancelled-change re-sync (#25). v1.15.0 brought
@@ -211,7 +213,7 @@ too_many_arguments = "allow"
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.17.0", features = [
+laye-rs = { git = "https://github.com/nongio/layers", branch = "feat/blur-cache", features = [
     "export-taffy",
 ] }
 
