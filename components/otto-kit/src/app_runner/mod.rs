@@ -5,6 +5,7 @@
 
 pub mod context;
 mod handlers;
+mod key_repeat;
 
 pub use context::AppContext;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
@@ -501,6 +502,15 @@ impl<A: App + 'static> AppRunnerWithType<A> {
     ///
     /// Returns an initialized runner ready to start the event loop.
     pub fn init(self) -> Result<AppRunnerInitialized<A>, Box<dyn std::error::Error>> {
+        // Answered here, before the connection, for every app built on the
+        // kit: the packaging check probes each installed binary with
+        // `--version` to prove it loads. An app that ignored the flag and
+        // connected anyway joined whatever session the probe ran in — a
+        // second bar, a second set of islands — and never came back.
+        if std::env::args().nth(1).as_deref() == Some("--version") {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
         // Connect to Wayland
         let conn = Connection::connect_to_env()?;
         let (globals, event_queue) = registry_queue_init::<AppData<A>>(&conn)?;
@@ -611,6 +621,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             context_data: context,
             hold_gestures: Vec::new(),
             pinch_gestures: Vec::new(),
+            key_repeat: key_repeat::KeyRepeat::default(),
             exit: false,
         };
 
@@ -679,9 +690,22 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
         let wake_fd = AppContext::wakeup_read_fd();
         let mut theme_generation_seen = self.theme_generation_seen;
 
+        // Shut down however the loop ends — an error from the connection or a
+        // panic in the app included. Left to thread-local destructors at exit,
+        // the EGL surfaces are destroyed over a connection already gone, which
+        // crashes and hides the error that ended the loop.
+        struct Shutdown;
+        impl Drop for Shutdown {
+            fn drop(&mut self) {
+                AppContext::clear();
+            }
+        }
+        let _shutdown = Shutdown;
+
         while !self.app_data.exit {
             // 1. Drain any events already queued (no I/O).
             self.event_queue.dispatch_pending(&mut self.app_data)?;
+            self.app_data.deliver_key_repeat();
             self.conn.flush()?;
 
             AppContext::update_windows();
@@ -729,11 +753,14 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             };
 
             let wl_fd = guard.connection_fd().as_raw_fd();
-            let timeout_ms = self
-                .app_data
-                .app
-                .idle_timeout()
-                .map(|d| d.as_millis().min(i32::MAX as u128) as i32)
+            let repeat_timeout = self.app_data.key_repeat.timeout(std::time::Instant::now());
+            let timeout_ms = [self.app_data.app.idle_timeout(), repeat_timeout]
+                .into_iter()
+                .flatten()
+                .min()
+                // Rounded up: waking a millisecond early would find nothing due
+                // and spin until it is.
+                .map(|d| d.as_micros().div_ceil(1000).min(i32::MAX as u128) as i32)
                 .unwrap_or(-1); // -1 = block forever
 
             let mut fds = vec![
@@ -788,7 +815,6 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             // Otherwise (timeout or only wakeup), guard drops and cancels the read.
         }
 
-        AppContext::clear();
         Ok(())
     }
 }
@@ -805,6 +831,8 @@ pub struct AppData<A: App + 'static> {
     /// separate protocol objects with separate lifetimes, not because either
     /// list is ever read.
     pinch_gestures: Vec<ZwpPointerGesturePinchV1>,
+    /// The key being held, repeated at the compositor's rate.
+    key_repeat: key_repeat::KeyRepeat,
     exit: bool,
 }
 
@@ -1162,6 +1190,21 @@ impl<A: App + 'static> AppData<A> {
         }
         true
     }
+
+    /// Sends the held key again if its repeat is due. Only the interpreted
+    /// key event repeats: the raw stream stays one press per release, and the
+    /// close-window shortcut is never repeated into closing a second window.
+    fn deliver_key_repeat(&mut self) {
+        let Some((event, serial)) = self.key_repeat.due(std::time::Instant::now()) else {
+            return;
+        };
+        if move_focus_for_key(&event) {
+            return;
+        }
+        let ctx = AppContext::new(&self.context_data);
+        self.app
+            .on_key_event(&ctx, &event, wl_keyboard::KeyState::Pressed, serial);
+    }
 }
 
 impl<A: App + 'static> KeyboardHandler for AppData<A> {
@@ -1188,6 +1231,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         _serial: u32,
     ) {
         use wayland_client::Proxy;
+        self.key_repeat.cancel();
         // The window keeps its focus ring — it will still be focused where it
         // was when the keyboard comes back — but no surface of ours holds the
         // keyboard now.
@@ -1211,6 +1255,13 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         serial: u32,
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
+        if is_close_window_key(event.keysym, AppContext::current_modifiers()) {
+            self.key_repeat.cancel();
+        } else {
+            self.key_repeat
+                .press(&event, serial, std::time::Instant::now());
+        }
+
         // Tab moves the focus between the window's own controls before the
         // application sees the key — but only in a window that declared any,
         // so an application that handles Tab itself is unaffected.
@@ -1238,6 +1289,7 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         serial: u32,
         event: smithay_client_toolkit::seat::keyboard::KeyEvent,
     ) {
+        self.key_repeat.release(event.raw_code);
         let ctx = AppContext::new(&self.context_data);
         self.app.on_keyboard_event(
             &ctx,
@@ -1247,6 +1299,16 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         );
         self.app
             .on_key_event(&ctx, &event, wl_keyboard::KeyState::Released, serial);
+    }
+
+    fn update_repeat_info(
+        &mut self,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        info: smithay_client_toolkit::seat::keyboard::RepeatInfo,
+    ) {
+        self.key_repeat.set_info(info);
     }
 
     fn update_modifiers(

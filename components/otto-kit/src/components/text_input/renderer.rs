@@ -173,6 +173,37 @@ impl TextInputRenderer {
         state.scroll_px = scroll.clamp(0.0, text_width - inner);
     }
 
+    /// The completion drawn after the caret, or empty when there is none to
+    /// draw. Only with the caret at the end of the value and nothing selected:
+    /// a suggestion for text somewhere else is noise, and one drawn over a
+    /// selection is unreadable.
+    pub fn ghost_text(state: &TextInputState) -> &str {
+        let at_end = state.caret() == state.value().len() && state.selection().is_empty();
+        if state.password || state.is_empty() || !at_end {
+            return "";
+        }
+        &state.ghost
+    }
+
+    fn draw_ghost(
+        canvas: &Canvas,
+        state: &TextInputState,
+        style: &TextInputStyle,
+        font: &skia_safe::Font,
+        origin_x: f32,
+        baseline: f32,
+    ) {
+        let ghost = Self::ghost_text(state);
+        if ghost.is_empty() {
+            return;
+        }
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(style.placeholder_color);
+        let x = origin_x + Self::text_width(state, style);
+        canvas.draw_str(ghost, (x, baseline), font, &paint);
+    }
+
     /// Draw the field into a box of `width` x `height` at the canvas origin.
     ///
     /// `caret_visible` drives the blink — pass `true` for a steady caret.
@@ -246,6 +277,7 @@ impl TextInputRenderer {
         } else if selection.is_empty() {
             paint.set_color(style.text_color);
             canvas.draw_str(&text, (origin_x, baseline), &font, &paint);
+            Self::draw_ghost(canvas, state, style, &font, origin_x, baseline);
         } else {
             // Three runs so the selected glyphs can take their own color.
             let before = Self::display_prefix(state, selection.start);
@@ -296,6 +328,90 @@ mod tests {
 
     fn style() -> TextInputStyle {
         TextInputStyle::default().with_align(TextAlign::Left)
+    }
+
+    /// A completion is only drawn where it reads as one: after what is being
+    /// typed, with nothing selected and nothing masked.
+    #[test]
+    fn a_completion_is_offered_only_at_the_end_of_the_text() {
+        let mut s = TextInputState::new("/conf");
+        s.ghost = "igure-otto".into();
+        assert_eq!(TextInputRenderer::ghost_text(&s), "igure-otto");
+
+        let mut moved = s.clone();
+        moved.set_caret(2, false);
+        assert_eq!(
+            TextInputRenderer::ghost_text(&moved),
+            "",
+            "the caret is not where the completion would land"
+        );
+
+        let mut selecting = s.clone();
+        selecting.select_all();
+        assert_eq!(TextInputRenderer::ghost_text(&selecting), "");
+
+        let mut secret = s.clone();
+        secret.password = true;
+        assert_eq!(
+            TextInputRenderer::ghost_text(&secret),
+            "",
+            "a masked field gives nothing away"
+        );
+
+        let mut empty = TextInputState::default();
+        empty.ghost = "igure-otto".into();
+        assert_eq!(
+            TextInputRenderer::ghost_text(&empty),
+            "",
+            "an empty field shows its placeholder, not a completion"
+        );
+    }
+
+    /// What one keystroke costs to draw, with and without a completion
+    /// behind it. Ignored by default — it is a measurement, not an assertion.
+    ///
+    ///     cargo test -p otto-kit --lib field_paint_cost -- --ignored --nocapture
+    #[test]
+    #[ignore = "a measurement, run it by hand"]
+    fn field_paint_cost() {
+        use std::time::Instant;
+
+        let style = style();
+        let (w, h) = (600.0_f32, 44.0_f32);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((w as i32, h as i32))
+            .expect("an offscreen surface");
+
+        let mut plain = TextInputState::new("/configure-otto put the dock on the left");
+        plain.set_focused(true);
+        let mut ghosted = TextInputState::new("/conf");
+        ghosted.set_focused(true);
+        ghosted.ghost = "igure-otto".into();
+
+        let runs = 2000;
+        for (name, state) in [("no ghost", &plain), ("with ghost", &ghosted)] {
+            // Warm the font cache and the raster surface.
+            for _ in 0..50 {
+                TextInputRenderer::render(surface.canvas(), state, &style, w, h, true);
+            }
+            let start = Instant::now();
+            for _ in 0..runs {
+                TextInputRenderer::render(surface.canvas(), state, &style, w, h, true);
+            }
+            let each = start.elapsed() / runs;
+            println!("{name:>12}: {each:?} per paint");
+        }
+
+        let start = Instant::now();
+        for _ in 0..runs {
+            let _ = TextInputRenderer::measure(&style, "/configure-otto");
+        }
+        println!("     measure: {:?} per call", start.elapsed() / runs);
+
+        let start = Instant::now();
+        for _ in 0..runs {
+            let _ = style.font();
+        }
+        println!("  style.font: {:?} per call", start.elapsed() / runs);
     }
 
     #[test]
