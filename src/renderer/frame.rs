@@ -202,6 +202,48 @@ impl Frame for SkiaFrame<'_> {
             .flush_and_submit_surface(&mut surface.surface, None);
         crate::render_phase_stats::record_skia_flush(flush_t.elapsed());
 
+        // Diagnostic (`touch /tmp/otto-probe-black`): sample five patches of
+        // the finished frame and log their brightness, to catch a frame
+        // that reached the screen black.
+        if crate::debug_hooks::toggle("/tmp/otto-probe-black") {
+            let w = surface.surface.width();
+            let h = surface.surface.height();
+            let info = skia::ImageInfo::new(
+                (8, 8),
+                skia::ColorType::RGBA8888,
+                skia::AlphaType::Premul,
+                None,
+            );
+            let mut buf = vec![0u8; 8 * 8 * 4];
+            let points = [
+                (w / 2, h / 2),
+                (w / 8, h / 8),
+                (w * 7 / 8, h / 8),
+                (w / 8, h * 7 / 8),
+                (w * 7 / 8, h * 7 / 8),
+            ];
+            let mut means = Vec::with_capacity(5);
+            for (x, y) in points {
+                let ok = surface
+                    .surface
+                    .read_pixels(&info, &mut buf, 8 * 4, (x.max(0), y.max(0)));
+                let sum: u32 = buf
+                    .chunks(4)
+                    .map(|p| (p[0] as u32 + p[1] as u32 + p[2] as u32) / 3)
+                    .sum();
+                means.push(if ok { (sum / 64) as i32 } else { -1 });
+            }
+            let target = match self.renderer.current_target.as_ref() {
+                Some(crate::skia_renderer::SkiaTarget::EGLSurface(_)) => "egl",
+                Some(crate::skia_renderer::SkiaTarget::Texture(_)) => "texture",
+                Some(crate::skia_renderer::SkiaTarget::Renderbuffer(_)) => "renderbuffer",
+                Some(crate::skia_renderer::SkiaTarget::Dmabuf(_)) => "dmabuf",
+                Some(crate::skia_renderer::SkiaTarget::Fbo(_)) => "fbo",
+                None => "none",
+            };
+            tracing::info!(target: "otto::probe", "frame {target} {w}x{h} brightness {means:?}");
+        }
+
         let sync = SkiaSync::create(self.renderer.egl_context().display())
             .map(SyncPoint::from)
             .unwrap_or_else(|err| {
