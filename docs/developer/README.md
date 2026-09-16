@@ -38,6 +38,7 @@ and hands the whole tree to the renderer as a single render element. Most of
 | [Screen Sharing](screenshare.md) | Portal, PipeWire, wlr-screencopy, window capture |
 | [File Previews](file-previews.md) | Thumbnails, the preview column, Quick View, the sandboxed decode worker, video |
 | [otto-media-kit](otto-media-kit.md) | Video playback: the embeddable player and its GStreamer worker |
+| [Agents](agents.md) | Running coding agents behind the launcher: `otto-agentsd`, AHP and ACP, permission prompts |
 | [Accessibility](accessibility.md) | Key grabs for screen readers, and the shell and kit apps on AT-SPI |
 | [Color Scheme](color-scheme-setting.md) | How apps learn whether Otto is in light or dark mode |
 | [Settings D-Bus API](settings-dbus-api.md) | The `org.otto.Settings` wire contract |
