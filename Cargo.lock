@@ -5598,15 +5598,21 @@ dependencies = [
 name = "otto-launcher"
 version = "1.3.0"
 dependencies = [
+ "ahp",
+ "ahp-types",
+ "ahp-ws",
  "freedesktop-desktop-entry",
  "laye-rs",
  "otto-kit",
+ "serde_json",
  "shell-words",
  "skia-safe",
  "smithay-client-toolkit",
  "taffy",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wayland-client",
  "wayland-protocols-wlr",
 ]

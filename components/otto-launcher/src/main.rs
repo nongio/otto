@@ -11,6 +11,7 @@
 //! entry scan is the only work at startup, and it is milliseconds.
 
 use std::os::fd::RawFd;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
@@ -36,11 +37,13 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 };
 
 use otto_launcher::apps::Apps;
+use otto_launcher::ask::{attached_text, Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
+use otto_launcher::log::{lay_out, Block, Line as LogLine};
 use otto_launcher::source::{rank, Item, Origin, Source};
 use otto_launcher::view::{
-    field_style, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, MAX_CARD_H, MAX_ROWS,
-    RADIUS, ROW_H,
+    field_style, log_length, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H,
+    LOG_W, MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
 };
 use otto_launcher::windows;
 
@@ -61,6 +64,11 @@ const FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 /// and does not bounce: on the way out there is nothing to settle into.
 const FADE_IN: Duration = Duration::from_millis(90);
 const SCALE_IN: Duration = Duration::from_millis(340);
+
+/// How long after a change of state the card's changes of size spring. Long
+/// enough for what the new state shows — a session's conversation, the list
+/// of sessions — to come back from otto-agentsd and spring in too.
+const SPRING_WINDOW: Duration = Duration::from_millis(400);
 const FADE_OUT: Duration = Duration::from_millis(90);
 const SCALE_OUT: Duration = Duration::from_millis(110);
 
@@ -70,6 +78,10 @@ const BOUNCE: f64 = 0.35;
 
 /// When the launcher may stop — the longest thing the exit is waiting on.
 const CLOSE: Duration = Duration::from_millis(120);
+
+/// How long closing may wait on an ask request still on its way to otto-agentsd.
+/// Past this the service is not answering, and the launcher goes anyway.
+const HAND_OFF_GRACE: Duration = Duration::from_secs(3);
 
 /// How small the card is before it arrives, and again once it has gone. Near
 /// enough to full size that it reads as a swell rather than a zoom.
@@ -116,6 +128,12 @@ struct Launcher {
     /// The selection is the pointer's: it follows the row under the pointer
     /// as the list glides, with no event to say so. Cleared by the keyboard.
     follow_pointer: bool,
+    /// The card is being dragged: where the pointer took hold of it, in the
+    /// card's coordinates.
+    dragging: Option<(f32, f32)>,
+    /// Where the card subsurface was last placed on the parent. Pointer
+    /// positions over the card arrive relative to this.
+    card_placed: (f32, f32),
 
     shift: bool,
     sized: bool,
@@ -133,14 +151,50 @@ struct Launcher {
 
     dirty: bool,
     painted_at: Option<Instant>,
+    /// The parent surface has been painted since it was last configured. It
+    /// draws nothing, so once is enough: see [`Launcher::paint`].
+    parent_painted: bool,
     settle_until: Option<Instant>,
     last_tick: Instant,
+
+    /// Ask mode's connection to otto-agentsd, and the request once it is made.
+    ask: Option<Ask>,
+    /// The ask log, laid out for the card.
+    log: Vec<LogLine>,
+    /// The answer and its status as plain text, for assistive technologies.
+    log_text: String,
+    /// The log keeps its end in view as it grows. Scrolling up stops that,
+    /// and scrolling back to the end starts it again.
+    log_following: bool,
+    /// The ask log's pane, above the field. `None` until the card exists.
+    log_pane: Option<ScrollPane>,
+    /// Moves whenever the log would paint differently.
+    log_revision: u64,
+    /// The log pane still has a scroll in hand.
+    log_busy: bool,
+    /// The tool call id of the agent's question the rows answer, so a new
+    /// question can start from its default answer.
+    asked: Option<String>,
+    /// Agents mode, until a session is picked: the rows are the sessions, and
+    /// what is typed narrows them.
+    picking: bool,
+    /// Down has listed the agents under the field, to send the first request
+    /// to another than the default.
+    choosing_agent: bool,
+    /// Until when the card's changes of size spring, as the card does on
+    /// opening, instead of snapping; see [`Launcher::spring`].
+    spring_until: Option<Instant>,
+    /// Where the field sat down the card at the last resize: how much log was
+    /// above it.
+    log_top: f32,
 }
 
 /// The query field's identity for assistive technologies.
 const FIELD: FocusId = FocusId::from_raw(0xF1E1_D000);
 /// The results list's.
 const RESULTS: FocusId = FocusId::from_raw(0xF1E1_D001);
+/// The ask log's.
+const LOG: FocusId = FocusId::from_raw(0xF1E1_D002);
 
 /// One result row's, by its position in the list.
 fn row_focus(index: usize) -> FocusId {
@@ -155,6 +209,11 @@ enum Scope {
     Everything,
     Apps,
     Windows,
+    /// What is typed is a request for an agent, handed to otto-agentsd.
+    Ask,
+    /// The agent sessions otto-agentsd has, to pick one and carry it on in ask
+    /// mode.
+    Agents,
 }
 
 impl Scope {
@@ -166,9 +225,17 @@ impl Scope {
             Scope::Everything => otto_kit::t!("launcher-search-everything"),
             Scope::Apps => otto_kit::t!("launcher-search-apps"),
             Scope::Windows => otto_kit::t!("launcher-search-windows"),
+            Scope::Ask => otto_kit::t!("launcher-search-ask"),
+            Scope::Agents => otto_kit::t!("launcher-search-agents"),
         }
     }
 }
+
+/// Ask mode's rows: the agents, sessions or answers to pick from…
+const ASK_ROWS: usize = 0;
+/// …and, under them, the files going with the next request, which are only
+/// shown.
+const ATTACHMENT_ROWS: usize = 1;
 
 /// When the process started, for the startup timings. A launcher is judged on
 /// how long it takes to appear, so the stages that make up that time are
@@ -186,7 +253,17 @@ impl Launcher {
         let mut sources: Vec<Box<dyn Source>> = Vec::new();
         let mut labels: Vec<&'static str> = Vec::new();
 
-        if scope != Scope::Windows {
+        // Ask mode has no sources. Its rows are the agents to ask, which the
+        // connection brings, and a badge on them would only repeat the mode.
+        // Agents mode is ask mode that starts from a list of sessions.
+        let ask = matches!(scope, Scope::Ask | Scope::Agents).then(|| {
+            // Two kinds of row, `ASK_ROWS` and `ATTACHMENT_ROWS`, neither
+            // badged.
+            labels.extend(["", ""]);
+            Ask::open()
+        });
+
+        if matches!(scope, Scope::Everything | Scope::Apps) {
             let apps = Apps::load(sources.len());
             tracing::debug!(ms = since_start(), "desktop entries scanned");
             labels.push(apps.label());
@@ -197,7 +274,7 @@ impl Launcher {
             sources.push(Box::new(calculator));
         }
 
-        if scope != Scope::Apps {
+        if matches!(scope, Scope::Everything | Scope::Windows) {
             let started = Instant::now();
             let connected = windows::Windows::connect(sources.len(), scope == Scope::Windows);
             tracing::debug!(ms = started.elapsed().as_millis(), "toplevels listed");
@@ -233,6 +310,8 @@ impl Launcher {
             list_revision: 0,
             list_busy: false,
             follow_pointer: false,
+            dragging: None,
+            card_placed: (0.0, 0.0),
             shift: false,
             sized: false,
             engaged: false,
@@ -240,8 +319,21 @@ impl Launcher {
             closing_at: None,
             dirty: true,
             painted_at: None,
+            parent_painted: false,
             settle_until: None,
             last_tick: Instant::now(),
+            ask,
+            log: Vec::new(),
+            log_text: String::new(),
+            log_following: true,
+            log_pane: None,
+            log_revision: 0,
+            log_busy: false,
+            asked: None,
+            picking: scope == Scope::Agents,
+            choosing_agent: false,
+            spring_until: None,
+            log_top: 0.0,
         }
     }
 
@@ -272,6 +364,38 @@ impl Launcher {
     }
 
     fn refilter(&mut self) {
+        // What is typed in ask mode is the request, so it filters nothing: the
+        // rows are the agents, and the selection stays on the one picked.
+        // Once a request is made, the rows are the answers to the agent's
+        // question, when it asked one. The files going with the next request
+        // are listed under either, until it is sent.
+        if let Some(ask) = self.ask.as_ref() {
+            let question = ask.question();
+            self.rows = if question.is_some() {
+                ask.question_rows(ASK_ROWS)
+            } else if self.picking {
+                ask.session_rows(ASK_ROWS, self.input.value())
+            } else if ask.running() || !self.choosing_agent {
+                Vec::new()
+            } else {
+                ask.agent_rows(ASK_ROWS)
+            };
+            if question.is_none() && !self.picking {
+                self.rows.extend(ask.attachment_rows(ATTACHMENT_ROWS));
+            }
+            let asked = question.as_ref().map(|q| q.tool_call_id.clone());
+            if asked != self.asked {
+                // A new question offers its narrowest allowing answer first.
+                self.selected = question.as_ref().map_or(0, |q| q.default_choice());
+                self.asked = asked;
+            }
+            self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+            self.list_revision = self.list_revision.wrapping_add(1);
+            self.dirty = true;
+            self.update_completion();
+            return;
+        }
+
         let query = self.input.value().to_string();
 
         let mut rows: Vec<Item> = self
@@ -314,10 +438,19 @@ impl Launcher {
     }
 
     fn move_selection(&mut self, delta: isize) {
-        if self.row_count() == 0 {
+        // While the agents are listed, the selection stays among them rather
+        // than wandering onto the attached files under them.
+        let count = if self.choosing_agent {
+            self.rows
+                .iter()
+                .filter(|row| row.origin.source == ASK_ROWS)
+                .count()
+        } else {
+            self.row_count()
+        } as isize;
+        if count == 0 {
             return;
         }
-        let count = self.row_count() as isize;
         // Wrapping, because a list that stops at the end makes someone check
         // where the end was.
         self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
@@ -359,6 +492,9 @@ impl Launcher {
                 self.selected = row;
             }
         }
+        // An attached file is not something to pick, so it is never shown
+        // picked.
+        let highlighted = !self.attachment_row(self.selected);
         let (Some(list), Some(palette)) = (self.list.as_mut(), self.palette.as_ref()) else {
             return;
         };
@@ -371,7 +507,7 @@ impl Launcher {
         list.set_hidden(false);
         list.set_viewport(viewport);
         list.set_highlight(
-            Some(Palette::highlight_rect(self.selected)),
+            highlighted.then(|| Palette::highlight_rect(self.selected)),
             palette.highlight_color(),
             HIGHLIGHT_RADIUS,
         );
@@ -380,15 +516,64 @@ impl Launcher {
             palette,
             items: &items,
             labels: &self.labels,
+            compact_source: self.ask.is_some().then_some(ATTACHMENT_ROWS),
             revision: self.list_revision,
         };
         self.list_busy = list.update(&content, &AppContext::current_theme());
+    }
+
+    /// Bring the log pane above the field in line with the ask log, keeping
+    /// its end in view while it follows.
+    fn sync_log(&mut self) {
+        if !self.sized {
+            return;
+        }
+        let (Some(pane), Some(palette)) = (self.log_pane.as_mut(), self.palette.as_ref()) else {
+            return;
+        };
+        let viewport = palette.log_rect();
+        if viewport.height() <= 0.0 {
+            pane.set_hidden(true);
+            self.log_busy = false;
+            return;
+        }
+        pane.set_hidden(false);
+        pane.set_viewport(viewport);
+        let content = LogRows {
+            palette,
+            lines: &self.log,
+            revision: self.log_revision,
+        };
+        self.log_busy = pane.update(&content, &AppContext::current_theme());
+        let end = (log_length(self.log.len()) - viewport.height()).max(0.0);
+        if self.log_following {
+            if (pane.offset() - end).abs() > 0.5 {
+                pane.scroll_to(end);
+                self.log_busy = true;
+            }
+        } else if pane.offset() >= end - 0.5 && !pane.is_animating() {
+            self.log_following = true;
+        }
     }
 
     /// Carry out the selection and leave. A source that refuses says why and
     /// the launcher stays up, because the alternative is vanishing without
     /// having done anything.
     fn activate(&mut self) {
+        if self.picking {
+            self.resume_selected();
+            return;
+        }
+        if self.ask.is_some() {
+            // With nothing typed, Return answers the agent's question when it
+            // asked one; otherwise it sends what is typed.
+            if self.asked_question() && self.input.value().trim().is_empty() {
+                self.answer_selected();
+            } else {
+                self.send_ask();
+            }
+            return;
+        }
         let Some(origin) = self.selected_origin() else {
             return;
         };
@@ -404,6 +589,265 @@ impl Launcher {
         }
     }
 
+    // === Asking ===
+
+    /// Whether a request has been made, and the card is its log.
+    /// Whether an agent can still be picked: ask mode, more than one agent,
+    /// nothing asked yet, and no session being picked or question answered.
+    /// The agent the next request would go to: the row picked in the agent
+    /// list, if one is picked.
+    fn chosen_agent(&self) -> Option<usize> {
+        self.selected_origin()
+            .filter(|origin| origin.source == ASK_ROWS)
+            .map(|origin| origin.index)
+    }
+
+    /// Offer the rest of the skill name being typed, in grey after the caret.
+    /// Tab takes it; typing past it, or away from it, drops it.
+    fn update_completion(&mut self) {
+        let agent = self.chosen_agent();
+        let ghost = self
+            .ask
+            .as_ref()
+            .filter(|ask| !self.picking && ask.question().is_none())
+            .and_then(|ask| ask.completion(self.input.value(), agent))
+            .unwrap_or_default();
+        if self.input.state.ghost != ghost {
+            self.input.state.ghost = ghost;
+            self.dirty = true;
+        }
+    }
+
+    /// Take the offered completion, with a space after it so the request
+    /// carries straight on. Returns whether there was one to take.
+    fn accept_completion(&mut self) -> bool {
+        let ghost = std::mem::take(&mut self.input.state.ghost);
+        if ghost.is_empty() {
+            return false;
+        }
+        let completed = format!("{}{ghost} ", self.input.value());
+        self.input.set_value(completed);
+        self.refilter();
+        true
+    }
+
+    fn can_choose_agent(&self) -> bool {
+        !self.picking
+            && !self.asked_question()
+            && self
+                .ask
+                .as_ref()
+                .is_some_and(|ask| !ask.running() && !ask.agent_rows(ASK_ROWS).is_empty())
+    }
+
+    fn ask_running(&self) -> bool {
+        self.ask.as_ref().is_some_and(Ask::running)
+    }
+
+    /// Whether the agent's question is waiting, and the rows are its answers.
+    fn asked_question(&self) -> bool {
+        self.ask
+            .as_ref()
+            .is_some_and(|ask| ask.question().is_some())
+    }
+
+    /// Whether the row at `index` is an attached file.
+    fn attachment_row(&self, index: usize) -> bool {
+        self.ask.is_some()
+            && self
+                .row(index)
+                .is_some_and(|item| item.origin.source == ATTACHMENT_ROWS)
+    }
+
+    /// Attach `files` to the first request, and open the session `session`
+    /// names instead of starting one, when there is one.
+    fn prepare_ask(&mut self, files: Vec<PathBuf>, session: Option<&str>) {
+        let Some(ask) = self.ask.as_mut() else {
+            return;
+        };
+        ask.attach(files);
+        if let Some(session) = session {
+            ask.resume(session);
+            self.follow_session();
+        }
+    }
+
+    /// How to open a session in a terminal: the one being followed, or, while
+    /// the list of sessions is up, the one highlighted in it.
+    fn selected_terminal(&self) -> Option<Terminal> {
+        let ask = self.ask.as_ref()?;
+        if let Some(terminal) = ask.terminal() {
+            return Some(terminal.clone());
+        }
+        if !self.picking {
+            return None;
+        }
+        let origin = self.selected_origin()?;
+        (origin.source == ASK_ROWS)
+            .then(|| ask.terminal_at(origin.index))
+            .flatten()
+    }
+
+    /// Open the session picked from the list.
+    fn resume_selected(&mut self) {
+        let Some(index) = self.selected_origin().map(|origin| origin.index) else {
+            return;
+        };
+        if self.ask.as_mut().is_some_and(|ask| ask.resume_at(index)) {
+            self.input.set_value("");
+            self.follow_session();
+        }
+    }
+
+    /// The session is chosen: from here on the launcher is its conversation,
+    /// as in ask mode.
+    fn follow_session(&mut self) {
+        self.spring();
+        self.picking = false;
+        self.input.state.placeholder = otto_kit::t!("launcher-search-ask-more").to_string();
+        self.rows.clear();
+        self.selected = 0;
+        self.log_following = true;
+        self.refilter();
+        self.relayout_log();
+    }
+
+    /// Spring the card's changes of size for a moment, as it springs open: the
+    /// launcher is changing state, and what the new state shows may take a
+    /// round trip to otto-agentsd to arrive.
+    fn spring(&mut self) {
+        self.spring_until = Some(Instant::now() + SPRING_WINDOW);
+    }
+
+    /// Leave the session for the list of sessions, as a back button would.
+    ///
+    /// The connection goes with the session and a new one lists the sessions
+    /// afresh, so the one just left is there, most recently changed. Leaving
+    /// costs the session nothing, as closing the launcher does not: the
+    /// service owns its requests, and its questions go to a dialog.
+    fn back_to_sessions(&mut self) {
+        self.spring();
+        self.ask = Some(Ask::open());
+        self.picking = true;
+        self.input.set_value("");
+        self.input.state.placeholder = Scope::Agents.placeholder().to_string();
+        self.selected = 0;
+        self.asked = None;
+        self.choosing_agent = false;
+        self.log.clear();
+        self.log_text.clear();
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.log_following = true;
+        self.refilter();
+    }
+
+    /// Hand what is typed to the agent, and move it into the log above the
+    /// field. The field empties for the next request, which queues behind
+    /// whatever the agent is doing. The launcher stays up: closing it is
+    /// always the user's call.
+    fn send_ask(&mut self) {
+        let prompt = self.input.value().trim().to_string();
+        let agent = self.chosen_agent();
+        let Some(ask) = self.ask.as_mut() else {
+            return;
+        };
+        if prompt.is_empty() {
+            return;
+        }
+        let first = !ask.running();
+        ask.send(&prompt, agent);
+        self.input.set_value("");
+        if first {
+            // The agent is chosen for the session now, so its list goes.
+            self.input.state.placeholder = otto_kit::t!("launcher-search-ask-more").to_string();
+            self.selected = 0;
+            self.choosing_agent = false;
+        }
+        // The attached files went with the request, into the log.
+        self.refilter();
+        self.log_following = true;
+        self.relayout_log();
+    }
+
+    /// Answer the agent's question with the selected row.
+    fn answer_selected(&mut self) {
+        let Some(ask) = self.ask.as_mut() else {
+            return;
+        };
+        if ask.answer(self.selected) {
+            self.log_following = true;
+            self.refilter();
+            self.relayout_log();
+        }
+    }
+
+    /// Lay the log out again from the conversation.
+    fn relayout_log(&mut self) {
+        let (Some(ask), Some(palette)) = (self.ask.as_ref(), self.palette.as_ref()) else {
+            return;
+        };
+        let Some(transcript) = ask.transcript() else {
+            return;
+        };
+        let attached: Vec<Option<String>> = transcript
+            .entries
+            .iter()
+            .map(|entry| attached_text(&entry.attachments))
+            .collect();
+        let notes: Vec<Option<String>> = transcript
+            .entries
+            .iter()
+            .map(|entry| entry.note.as_ref().map(Note::text))
+            .collect();
+        let steps: Vec<Vec<String>> = transcript
+            .entries
+            .iter()
+            .map(|entry| entry.steps.iter().map(Step::text).collect())
+            .collect();
+        let blocks: Vec<Block> = transcript
+            .entries
+            .iter()
+            .zip(&notes)
+            .zip(&steps)
+            .zip(&attached)
+            .map(|(((entry, note), steps), attached)| Block {
+                prompt: &entry.prompt,
+                attachments: attached.as_deref(),
+                answer: &entry.answer,
+                steps,
+                question: entry
+                    .question
+                    .as_ref()
+                    .map(|question| (question.title.as_str(), question.detail.as_str())),
+                note: note.as_deref(),
+            })
+            .collect();
+        let status = transcript.status.as_ref().map(Status::text);
+        self.log = lay_out(&blocks, status.as_deref(), LOG_W, |text, style| {
+            palette.measure_log(text, style)
+        });
+        self.log_text = self
+            .log
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.dirty = true;
+    }
+
+    /// Scroll the log by `delta` points, from the keyboard.
+    fn scroll_log(&mut self, delta: f32) {
+        let (Some(pane), Some(palette)) = (self.log_pane.as_mut(), self.palette.as_ref()) else {
+            return;
+        };
+        let end = (log_length(self.log.len()) - palette.log_rect().height()).max(0.0);
+        let target = (pane.offset() + delta).clamp(0.0, end);
+        pane.scroll_to(target);
+        self.log_following = target >= end;
+        self.log_busy = true;
+    }
+
     // === Painting ===
 
     fn push(&mut self) {
@@ -412,19 +856,54 @@ impl Launcher {
         }
         // "No results" answers a question. Nothing has been asked yet when the
         // query is empty, and the launcher has nothing to report.
-        let empty_message = (!self.input.value().trim().is_empty()).then_some("No results");
+        let empty_message = match self.ask.as_ref() {
+            // Ask mode has nothing to report about an empty list, only about a
+            // service that is not there to ask — and once the conversation
+            // has started, the log says that.
+            Some(ask) if ask.running() => None,
+            // Picking a session: say when there are none to pick.
+            Some(ask) if self.picking && ask.unreachable().is_none() => {
+                (ask.sessions_listed() && self.rows.is_empty()).then(|| {
+                    if self.input.value().trim().is_empty() {
+                        otto_kit::t!("launcher-agents-none")
+                    } else {
+                        "No results"
+                    }
+                })
+            }
+            Some(ask) => ask
+                .unreachable()
+                .map(|_| otto_kit::t!("launcher-ask-unreachable")),
+            None => (!self.input.value().trim().is_empty()).then_some("No results"),
+        };
         let count = self.rows.len();
+        // The log is empty until there is something to show: a conversation,
+        // or files waiting to go with the first request.
+        let log = if self.ask.is_some() {
+            log_length(self.log.len())
+        } else {
+            0.0
+        };
         let Some(palette) = self.palette.as_mut() else {
             return;
         };
+        palette.set_log(log);
         palette.update(&self.input, count, empty_message);
 
         let size = palette.card_size();
+        let log_top = palette.field_top();
         if size != self.card_size {
             // The card's height runs a transition: keep painting until it
             // lands. Nothing else in the scene animates.
             self.settle_until = Some(Instant::now() + SETTLE);
             self.card_size = size;
+            // The log opening above the field springs the card open upwards,
+            // as the agents do below it. Growing a line at a time as the
+            // answer streams stays a plain resize.
+            if self.log_top <= 0.0 && log_top > 0.0 {
+                self.spring();
+            }
+            self.log_top = log_top;
             self.resize_card(size);
         }
         self.update_input_region();
@@ -471,9 +950,11 @@ impl Launcher {
         };
         let (x, y, width, height) = rect;
         on_parent.add(x, y, width, height);
-        // The same rectangle in the card's own coordinates, which start at its
-        // top-left corner.
-        on_card.add(0, 0, width, height);
+        // The card itself takes no input: the pointer arrives on the parent,
+        // under it, as Files' palette takes its pointer on a catcher surface.
+        // The parent never moves, so positions stay put while the card is
+        // dragged — over the card they would shift under the pointer with
+        // every step it moved.
         let parent = surface.wl_surface();
         parent.set_input_region(Some(on_parent.wl_region()));
         card.wl_surface()
@@ -491,7 +972,7 @@ impl Launcher {
     /// Tell the compositor how much of the card's buffer is card. The frost,
     /// the rounding and the shadow follow this rectangle, so a list that grew
     /// or shrank has to say so or the material keeps the old shape.
-    fn resize_card(&self, (width, height): (f32, f32)) {
+    fn resize_card(&mut self, (width, height): (f32, f32)) {
         let (Some(card), Some(palette)) = (self.card.as_ref(), self.palette.as_ref()) else {
             return;
         };
@@ -501,15 +982,43 @@ impl Launcher {
         // Surface-style geometry is in physical pixels.
         let scale = AppContext::fractional_scale();
         let (x, y) = palette.card_origin();
-        // The anchor is the top centre, and position is measured from it.
-        style.set_position((x + width / 2.0) as f64 * scale, y as f64 * scale);
-        style.set_size(width as f64 * scale, height as f64 * scale);
+        let place = || {
+            // The anchor is the top centre, and position is measured from it.
+            style.set_position((x + width / 2.0) as f64 * scale, y as f64 * scale);
+            style.set_size(width as f64 * scale, height as f64 * scale);
+        };
+        // The agents opening under the field, and the log above it, grow the
+        // card with the spring it opens with. The material clips what is drawn
+        // past its edge, so rows and log are uncovered as it grows rather than
+        // drawn outside it.
+        if self
+            .spring_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            animate(SCALE_IN, Curve::Spring(BOUNCE), place);
+        } else {
+            place();
+        }
         // And the subsurface itself follows, in logical points. The style moves
         // where the card is *drawn*; this is where the compositor looks for it
         // when the pointer is over it, and pointer positions arrive relative to
         // it. Left behind at the parent's origin, the card would be hovered
         // three rows away from the cursor.
         card.set_position(x as i32, y as i32);
+        self.card_placed = ((x as i32) as f32, (y as i32) as f32);
+    }
+
+    /// Drag the card's corner to `(x, y)` on the output, with where the
+    /// compositor draws it and takes input over it following.
+    fn move_card_to(&mut self, x: f32, y: f32) {
+        let Some(palette) = self.palette.as_mut() else {
+            return;
+        };
+        palette.move_card_to(x, y);
+        let size = palette.card_size();
+        self.resize_card(size);
+        self.update_input_region();
+        self.dirty = true;
     }
 
     /// Let the card in, once there is something drawn on it.
@@ -579,24 +1088,60 @@ impl Launcher {
         let (Some(surface), true) = (self.surface.as_ref(), self.sized) else {
             return;
         };
+        let first_paint = self.painted_at.is_none();
         self.painted_at = Some(Instant::now());
         tracing::trace!(selected = self.selected, rows = self.rows.len(), "painting");
         // otto-kit hands over a canvas with the buffer scale already applied,
         // so both scenes are drawn in logical points.
         // The parent surface draws nothing: it is there to take the keyboard
-        // and to catch the click that lands beside the card.
-        surface.draw(|canvas| {
-            canvas.clear(skia_safe::Color::TRANSPARENT);
-        });
+        // and to catch the click that lands beside the card. Painted once per
+        // configure, not once per frame: it covers the whole output, and
+        // every commit of it — a caret blink, a keystroke — told the
+        // compositor the whole screen had changed, which had the dock and
+        // the bar re-blurred under a card that never touches them.
+        if !self.parent_painted {
+            surface.draw(|canvas| {
+                canvas.clear(skia_safe::Color::TRANSPARENT);
+            });
+            self.parent_painted = true;
+        }
 
         if let Some(card) = self.card.as_ref() {
             let base = card.base_surface();
+            // The card's scene is the only thing drawn on it, so the engine
+            // knows exactly which part of the buffer this paint changes —
+            // the field for a blink, a row for a highlight — and that is all
+            // the compositor is told to recomposite. Taken and cleared before
+            // drawing, so a change landing during the draw is still owed to
+            // the next paint. The card's buffer is as tall as the card ever
+            // gets, and reporting all of it reached down to the dock. And
+            // nothing changed is nothing to draw: a pass that asked for a
+            // paint while the scene stood still — the settle after a resize,
+            // a source reporting in — costs no frame at all. The first paint
+            // is the whole buffer regardless: the card has to arrive complete,
+            // whatever the engine has or has not been asked to lay out yet.
+            // What was pushed into the scene just before this paint is applied
+            // first, rather than on the engine thread's next tick: otherwise a
+            // keystroke painted the scene from before it, and waited for the
+            // caret to blink to be seen.
+            if !first_paint {
+                let damage = AppContext::take_layers_damage();
+                if damage.is_empty() {
+                    return;
+                }
+                base.add_frame_damage(&[damage]);
+            }
+            let drew_at = Instant::now();
             card.draw(|canvas| {
                 // Transparent, not the card's colour: what shows through is
                 // the frosted material the compositor put underneath.
                 canvas.clear(skia_safe::Color::TRANSPARENT);
                 base.render_layer_node(canvas);
             });
+            let took = drew_at.elapsed();
+            if took > Duration::from_millis(20) {
+                tracing::debug!(ms = took.as_millis(), "card draw blocked");
+            }
         }
     }
 }
@@ -606,6 +1151,8 @@ struct Rows<'a> {
     palette: &'a Palette,
     items: &'a [&'a Item],
     labels: &'a [&'static str],
+    /// The source whose rows are drawn small: the attached files, in ask mode.
+    compact_source: Option<usize>,
     revision: u64,
 }
 
@@ -620,7 +1167,28 @@ impl ScrollContent for Rows<'_> {
 
     fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
         self.palette
-            .paint_rows(canvas, band, self.items, self.labels);
+            .paint_rows(canvas, band, self.items, self.labels, self.compact_source);
+    }
+}
+
+/// What the list pane shows once a request is made: the ask log.
+struct LogRows<'a> {
+    palette: &'a Palette,
+    lines: &'a [LogLine],
+    revision: u64,
+}
+
+impl ScrollContent for LogRows<'_> {
+    fn length(&self, _cross: f32) -> f32 {
+        log_length(self.lines.len())
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
+        self.palette.paint_log(canvas, band, self.lines);
     }
 }
 
@@ -733,14 +1301,17 @@ fn apply_card_material(card: &SubsurfaceSurface) {
         otto_kit::corners::radius(RADIUS) as f64 * AppContext::fractional_scale(),
     );
     style.set_masks_to_bounds(ClipMode::Enabled);
+    // The rows and the log are panes of their own, subsurfaces of the card:
+    // without this they spill past its edge while it is shorter than they are.
+    style.set_clip_children(ClipMode::Enabled);
     style.set_shadow(0.32, 32.0, 0.0, 12.0, 0.0, 0.0, 0.0);
     // The buffer is the card at its tallest; a shorter card shows the top of
     // it, so the field stays where it is as rows come and go.
     style.set_contents_gravity(ContentsGravity::TopLeft);
 
     // Transforms are taken about the top centre. Centre horizontally so the
-    // card swells outwards evenly; top vertically so the field stays put both
-    // while the card arrives and later when the list grows under it.
+    // card swells outwards evenly; top vertically so the field stays put while
+    // the card arrives and when the list grows under it.
     style.set_anchor_point(0.5, 0.0);
 
     // Where the card starts: just short of full size, and invisible. The
@@ -804,7 +1375,10 @@ impl App for Launcher {
         let Some(engine) = AppContext::layers_renderer(|renderer| renderer.engine().clone()) else {
             return Err("the layers engine is unavailable".into());
         };
-        let palette = Palette::new(engine, card.base_surface().layer_node(), dark());
+        let mut palette = Palette::new(engine, card.base_surface().layer_node(), dark());
+        // A conversation, or a list of sessions, sits centred on the output
+        // and grows both ways from there.
+        palette.set_centered(self.ask.is_some());
         // The rows, over the card's own drawing and inside its frost. A row's
         // height to start with; the pane follows the list from the first
         // update.
@@ -813,6 +1387,15 @@ impl App for Launcher {
             Rect::from_xywh(0.0, LIST_TOP, CARD_W, ROW_H),
             Axis::Vertical,
         )?;
+        // The ask log, above the field. Hidden until there is a log.
+        if self.ask.is_some() {
+            let log = ScrollPane::new(
+                card.wl_surface(),
+                Rect::from_xywh(0.0, 0.0, CARD_W, LOG_LINE_H),
+                Axis::Vertical,
+            )?;
+            self.log_pane = Some(log);
+        }
 
         self.list = Some(list);
         self.palette = Some(palette);
@@ -820,6 +1403,8 @@ impl App for Launcher {
         self.surface = Some(surface);
         tracing::debug!(ms = since_start(), "surfaces created");
         self.reload();
+        // Attached files, or an opened session, have a log from the start.
+        self.relayout_log();
         tracing::debug!(ms = since_start(), "sources loaded");
         Ok(())
     }
@@ -831,6 +1416,9 @@ impl App for Launcher {
         }
         self.sized = true;
         self.dirty = true;
+        // A configure can bring a new size, and a buffer of the old one would
+        // be the wrong shape: the next paint draws the parent again.
+        self.parent_painted = false;
         // The card is centred on the output, so a different output size is a
         // different rectangle to hit-test.
         self.update_input_region();
@@ -882,6 +1470,84 @@ impl App for Launcher {
             .and_then(|text| text.chars().next())
             .filter(|c| (*c as u32) < 0x20 && *c != '\r' && *c != '\n' && *c != '\t')
             .map(|c| char::from(c as u8 + 0x60));
+        // Cmd+C stops an agent as Ctrl+C does.
+        let modifiers = AppContext::current_modifiers();
+        let stop_key = control == Some('c')
+            || (modifiers.logo
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && matches!(event.keysym, Keysym::c | Keysym::C));
+
+        // Left with nothing typed goes back from a session to the list of
+        // sessions. Not while a request is still on its way to the service,
+        // which leaving would lose.
+        if event.keysym == Keysym::Left
+            && self.input.value().is_empty()
+            && self
+                .ask
+                .as_ref()
+                .is_some_and(|ask| ask.running() && !ask.handing_off())
+        {
+            self.back_to_sessions();
+            return;
+        }
+
+        // Ctrl+O takes the session up in a terminal, in the agent's own
+        // interface, and the launcher goes: the terminal has the keyboard now.
+        // The session being followed, or the one highlighted in the list.
+        if control == Some('o') {
+            if let Some(terminal) = self.selected_terminal() {
+                match terminal.open() {
+                    Ok(()) => self.close(),
+                    Err(err) => tracing::warn!(%err, "could not open the session in a terminal"),
+                }
+                return;
+            }
+        }
+
+        // In the list of sessions, Ctrl+C or Cmd+C with nothing selected to
+        // copy stops the highlighted session's turn.
+        if stop_key && self.picking && !self.input.state.has_selection() {
+            let index = self
+                .selected_origin()
+                .filter(|origin| origin.source == ASK_ROWS)
+                .map(|origin| origin.index);
+            if let (Some(index), Some(ask)) = (index, self.ask.as_mut()) {
+                ask.stop_at(index);
+            }
+            return;
+        }
+
+        // Once a request is made the log sits above the field, and the field
+        // takes the next request. When the agent asks something, Up and Down
+        // pick an answer from the rows under the field; otherwise they scroll
+        // the log, as the page keys always do. Ctrl+C or Cmd+C with nothing
+        // selected to copy stops the agent's turn; Escape still closes, leaving
+        // the agent to it.
+        if self.ask_running() {
+            let page = self
+                .palette
+                .as_ref()
+                .map_or(0.0, |palette| palette.log_rect().height());
+            let answering = self.asked_question();
+            let scroll = match (event.keysym, control) {
+                (Keysym::Up, _) if !answering => Some(-LOG_LINE_H * 3.0),
+                (Keysym::Down, _) if !answering => Some(LOG_LINE_H * 3.0),
+                (Keysym::Page_Up, _) => Some(-page),
+                (Keysym::Page_Down, _) => Some(page),
+                _ => None,
+            };
+            if let Some(delta) = scroll {
+                self.scroll_log(delta);
+                return;
+            }
+            if stop_key && !self.input.state.has_selection() {
+                if let Some(ask) = self.ask.as_mut() {
+                    ask.cancel();
+                }
+                return;
+            }
+        }
 
         match (event.keysym, control) {
             (Keysym::Escape, _) => {
@@ -890,6 +1556,24 @@ impl App for Launcher {
             }
             (Keysym::Return | Keysym::KP_Enter, _) => {
                 self.activate();
+                return;
+            }
+            // Before the first request, the agents stay out of the way: the
+            // request goes to the default agent unless Down lists them, and
+            // Up from the first one puts them away again.
+            (Keysym::Down, _) | (_, Some('n'))
+                if self.can_choose_agent() && !self.choosing_agent =>
+            {
+                self.choosing_agent = true;
+                self.spring();
+                self.selected = 0;
+                self.refilter();
+                return;
+            }
+            (Keysym::Up, _) | (_, Some('p')) if self.choosing_agent && self.selected == 0 => {
+                self.choosing_agent = false;
+                self.spring();
+                self.refilter();
                 return;
             }
             (Keysym::Down, _) | (_, Some('n')) => {
@@ -901,6 +1585,11 @@ impl App for Launcher {
                 return;
             }
             (Keysym::Tab, _) => {
+                // A completion on offer is what Tab is for; with none, it goes
+                // back to walking the rows.
+                if !self.shift && self.accept_completion() {
+                    return;
+                }
                 self.move_selection(if self.shift { -1 } else { 1 });
                 return;
             }
@@ -1028,15 +1717,37 @@ impl App for Launcher {
             return;
         }
         let card_surface = self.card.as_ref().map(|card| card.wl_surface().clone());
+        let (card_w, card_h) = self.palette.as_ref().map_or((0.0, 0.0), Palette::card_size);
         for event in events {
-            // Positions are relative to the surface the pointer is over, and
-            // the card is a surface of its own: an event on it is already in
-            // card coordinates, an event on the parent is not on the card at
-            // all.
-            let on_card = card_surface
-                .as_ref()
-                .is_some_and(|surface| *surface == event.surface);
-            let (x, y) = (event.position.0 as f32, event.position.1 as f32);
+            // The pointer arrives on the parent, in the output's points (see
+            // `update_input_region`) — or on the card itself while its empty
+            // input region is still a commit away, relative to where the card
+            // was placed. Both are brought to the output's points, and from
+            // there to the card's.
+            let (left, top) = self.card_placed;
+            let (screen_x, screen_y) = if card_surface.as_ref() == Some(&event.surface) {
+                (
+                    event.position.0 as f32 + left,
+                    event.position.1 as f32 + top,
+                )
+            } else {
+                (event.position.0 as f32, event.position.1 as f32)
+            };
+            let (x, y) = (screen_x - left, screen_y - top);
+            let on_card = (0.0..card_w).contains(&x) && (0.0..card_h).contains(&y);
+            if let Some((grab_x, grab_y)) = self.dragging {
+                match event.kind {
+                    PointerEventKind::Motion { .. } => {
+                        self.move_card_to(screen_x - grab_x, screen_y - grab_y);
+                        continue;
+                    }
+                    PointerEventKind::Release { .. } => {
+                        self.dragging = None;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             match event.kind {
                 // The highlight is the list pane's, so following the pointer
                 // repaints nothing.
@@ -1044,6 +1755,9 @@ impl App for Launcher {
                     self.follow_pointer = true;
                     if let Some(list) = self.list.as_mut() {
                         list.pointer_motion(skia_safe::Point::new(x, y));
+                    }
+                    if let Some(log) = self.log_pane.as_mut() {
+                        log.pointer_motion(skia_safe::Point::new(x, y));
                     }
                     if let Some(row) = self.list_row_at(x, y) {
                         self.selected = row;
@@ -1053,14 +1767,26 @@ impl App for Launcher {
                 // the row that comes under the pointer is the one selected.
                 PointerEventKind::Axis { vertical, .. } if on_card => {
                     self.engaged = true;
+                    let point = skia_safe::Point::new(x, y);
+                    let delta = vertical.absolute as f32;
+                    let over_log = self
+                        .log_pane
+                        .as_ref()
+                        .is_some_and(|log| log.contains(point));
+                    if over_log {
+                        if let Some(log) = self.log_pane.as_mut() {
+                            log.wheel_at(point, delta, vertical.discrete != 0, vertical.stop);
+                        }
+                        // Scrolling up takes the log off its end; reaching the
+                        // end again puts it back on, in `sync_log`.
+                        if delta < 0.0 {
+                            self.log_following = false;
+                        }
+                        continue;
+                    }
                     self.follow_pointer = true;
                     if let Some(list) = self.list.as_mut() {
-                        list.wheel_at(
-                            skia_safe::Point::new(x, y),
-                            vertical.absolute as f32,
-                            vertical.discrete != 0,
-                            vertical.stop,
-                        );
+                        list.wheel_at(point, delta, vertical.discrete != 0, vertical.stop);
                     }
                     if let Some(row) = self.list_row_at(x, y) {
                         self.selected = row;
@@ -1079,17 +1805,34 @@ impl App for Launcher {
                         self.close();
                         return;
                     }
+                    // The field and the log are the card's handle.
+                    if self.palette.as_ref().is_some_and(|p| p.drags_at(y)) {
+                        self.dragging = Some((x, y));
+                    }
                 }
                 PointerEventKind::Release { .. } if on_card => {
                     if let Some(row) = self.list_row_at(x, y) {
+                        // An attached file is only shown; clicking it does
+                        // nothing.
+                        if self.attachment_row(row) {
+                            return;
+                        }
                         self.selected = row;
-                        self.activate();
+                        // A click on an answer answers, whatever is typed.
+                        if self.asked_question() {
+                            self.answer_selected();
+                        } else {
+                            self.activate();
+                        }
                         return;
                     }
                 }
                 PointerEventKind::Leave { .. } => {
                     if let Some(list) = self.list.as_mut() {
                         list.pointer_leave();
+                    }
+                    if let Some(log) = self.log_pane.as_mut() {
+                        log.pointer_leave();
                     }
                 }
                 _ => {}
@@ -1111,12 +1854,21 @@ impl App for Launcher {
         let title = self.input.state.placeholder.clone();
         let mut tree = A11yTree::new(title.clone());
 
-        let field = Rect::from_xywh(card_x, card_y, card_w, FIELD_H);
+        let field = Rect::from_xywh(card_x, card_y + palette.field_top(), card_w, FIELD_H);
         tree.control(FIELD, field, Role::SearchInput, true, |node| {
             node.set_label(title.clone());
             node.set_value(self.input.value().to_owned());
             node.add_action(Action::SetValue);
         });
+
+        // Once a request is made, the log above the field is read out as it
+        // changes; the rows under the field, when there are any, are the
+        // answers to the agent's question.
+        if !self.log.is_empty() {
+            let log = palette.log_rect();
+            let bounds = Rect::from_xywh(card_x, card_y + log.top, card_w, log.height());
+            tree.status(LOG, bounds, self.log_text.clone());
+        }
 
         // Only the rows on screen: the list scrolls, and a row that has been
         // scrolled past is not something to point at.
@@ -1124,7 +1876,8 @@ impl App for Launcher {
         let offset = self.list.as_ref().map_or(0.0, ScrollPane::offset);
         let shown =
             RowLayout::new(ROW_H, self.row_count()).range(offset, offset + viewport.height());
-        let list = Rect::from_xywh(card_x, card_y + FIELD_H, card_w, card_h - FIELD_H);
+        let below_field = palette.field_top() + FIELD_H;
+        let list = Rect::from_xywh(card_x, card_y + below_field, card_w, card_h - below_field);
 
         let rows: Vec<(usize, String, Option<String>)> = shown
             .filter_map(|index| {
@@ -1194,7 +1947,14 @@ impl App for Launcher {
     fn on_update(&mut self, _ctx: &AppContext) {
         // The card has gone; nothing is left to do but stop.
         if let Some(at) = self.closing_at {
-            if Instant::now() >= at {
+            // A request still on its way to otto-agentsd would go with the
+            // launcher, so the card goes but the process waits for it.
+            if let Some(ask) = self.ask.as_mut() {
+                ask.pump();
+            }
+            let now = Instant::now();
+            let handing_off = self.ask.as_ref().is_some_and(Ask::handing_off);
+            if now >= at && (!handing_off || now >= at + HAND_OFF_GRACE) {
                 AppContext::request_exit();
             }
             return;
@@ -1206,6 +1966,16 @@ impl App for Launcher {
         // only thing it leaves behind is the keyboard moving on.
         if !self.engaged && AppContext::keyboard_focus().is_some() {
             self.engaged = true;
+        }
+
+        match self.ask.as_mut().map(|ask| (ask.pump(), ask.running())) {
+            Some((true, true)) => {
+                // The rows follow the agent's question as much as the log does.
+                self.refilter();
+                self.relayout_log();
+            }
+            Some((true, false)) => self.reload(),
+            _ => {}
         }
 
         let mut changed = false;
@@ -1234,15 +2004,20 @@ impl App for Launcher {
             self.paint();
             // The first frame is on the card, so it has something to arrive
             // with.
+            let first = !self.opened;
             self.open();
             self.sync_list();
-            tracing::debug!(ms = since_start(), "first frame");
+            self.sync_log();
+            if first {
+                tracing::debug!(ms = since_start(), "first frame");
+            }
             return;
         }
 
         // Every pass: the list's scroll, fling and highlight move on the
         // pane's own surfaces, whatever the card is doing.
         self.sync_list();
+        self.sync_log();
 
         if self.frame_in_flight() {
             return;
@@ -1259,17 +2034,23 @@ impl App for Launcher {
         if self.closing_at.is_some() {
             return Some(Duration::from_millis(8));
         }
-        Some(if self.settle_until.is_some() || self.list_busy {
-            Duration::from_millis(8)
-        } else {
-            // Half a blink period: the slowest the loop may sleep and still
-            // turn the caret on and off on time.
-            Duration::from_secs_f32(CARET_BLINK_PERIOD / 2.0)
-        })
+        Some(
+            if self.settle_until.is_some() || self.list_busy || self.log_busy {
+                Duration::from_millis(8)
+            } else {
+                // Half a blink period: the slowest the loop may sleep and still
+                // turn the caret on and off on time.
+                Duration::from_secs_f32(CARET_BLINK_PERIOD / 2.0)
+            },
+        )
     }
 
     fn poll_fds(&self) -> Vec<RawFd> {
-        self.sources.iter().filter_map(|s| s.poll_fd()).collect()
+        self.sources
+            .iter()
+            .filter_map(|s| s.poll_fd())
+            .chain(self.ask.as_ref().map(Ask::poll_fd))
+            .collect()
     }
 }
 
@@ -1292,20 +2073,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // already filtered.
     // Apps unless asked otherwise: the two bindings are "launch something" and
     // "switch to a window", and a mode that quietly does both is neither.
-    let mut scope = Scope::Apps;
+    let mut args = std::env::args();
+    let mut scope = args
+        .next()
+        .as_deref()
+        .and_then(scope_for_program)
+        .unwrap_or(Scope::Apps);
     let mut words: Vec<String> = Vec::new();
-    for arg in std::env::args().skip(1) {
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut session: Option<String> = None;
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--apps" | "-a" => scope = Scope::Apps,
             "--windows" | "-w" => scope = Scope::Windows,
             "--all" => scope = Scope::Everything,
+            "--ask" => scope = Scope::Ask,
+            "--agents" => scope = Scope::Agents,
+            // A file attached to the first request, and a session to open in
+            // place of starting one. Either means asking.
+            "--file" => files.extend(args.next().map(PathBuf::from)),
+            "--session" => session = args.next(),
             "--help" | "-h" => {
-                println!("usage: otto-launcher [--apps|--windows|--all] [query]");
+                println!(
+                    "usage: otto-launcher [--apps|--windows|--all|--ask|--agents] \
+                     [--file PATH]... [--session ID] [query]\n\
+                     otto-ask and otto-agents open in --ask and --agents mode"
+                );
                 return Ok(());
             }
             _ => words.push(arg),
         }
     }
-    AppRunner::new(Launcher::new(&words.join(" "), scope)).run()?;
+    if (!files.is_empty() || session.is_some()) && scope != Scope::Agents {
+        scope = Scope::Ask;
+    }
+    let mut launcher = Launcher::new(&words.join(" "), scope);
+    launcher.prepare_ask(files, session.as_deref());
+    AppRunner::new(launcher).run()?;
     Ok(())
+}
+
+/// The mode an alias starts in: `otto-ask` and `otto-agents` are symlinks to
+/// the launcher, standing for `--ask` and `--agents`.
+fn scope_for_program(program: &str) -> Option<Scope> {
+    match std::path::Path::new(program).file_name()?.to_str()? {
+        "otto-ask" => Some(Scope::Ask),
+        "otto-agents" => Some(Scope::Agents),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod program_name_tests {
+    use super::*;
+
+    #[test]
+    fn aliases_pick_their_mode() {
+        assert!(scope_for_program("/usr/bin/otto-ask") == Some(Scope::Ask));
+        assert!(scope_for_program("otto-agents") == Some(Scope::Agents));
+        assert!(scope_for_program("/usr/bin/otto-launcher").is_none());
+    }
 }
