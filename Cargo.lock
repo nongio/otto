@@ -5671,6 +5671,7 @@ dependencies = [
  "laye-rs",
  "libc",
  "otto-kit",
+ "otto-md-kit",
  "skia-safe",
  "smithay-client-toolkit",
  "tokio",

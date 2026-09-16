@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
+otto-md-kit = { path = "../otto-md-kit" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wayland-client = "0.31"
