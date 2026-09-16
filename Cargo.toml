@@ -228,6 +228,7 @@ repository = "https://github.com/nongio/otto"
 
 
 [package.metadata.deb]
+preserve-symlinks = true
 maintainer = "Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"
 copyright = "2024-2026, Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"
 license-file = ["LICENSE", "4"]
@@ -255,6 +256,11 @@ assets = [
     ["target/release/otto-emoji", "usr/bin/", "755"],
     ["target/release/otto-quickview", "usr/bin/", "755"],
     ["target/release/otto-msg", "usr/bin/", "755"],
+    ["target/release/otto-agentsd", "usr/bin/", "755"],
+    # Aliases: symlinks to otto-launcher, which opens in ask or agents mode
+    # under these names. Kept as links by preserve-symlinks.
+    ["resources/bin/otto-ask", "usr/bin/", "777"],
+    ["resources/bin/otto-agents", "usr/bin/", "777"],
     ["target/release/otto-media-worker", "usr/bin/", "755"],
     ["target/release/otto-greeter", "usr/bin/", "755"],
     ["target/release/otto-rdp", "usr/bin/", "755"],
@@ -282,6 +288,7 @@ assets = [
     ["components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", "usr/share/dbus-1/services/", "644"],
     # The D-Bus service file above names this unit in SystemdService=.
     ["components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", "usr/lib/systemd/user/", "644"],
+    ["components/otto-agentsd/otto-agentsd.service", "usr/lib/systemd/user/", "644"],
     ["components/xdg-desktop-portal-otto/portals.conf.example", "usr/share/doc/otto/", "644"],
     # Debian's PAM stack is `common-auth`, not the `system-auth` this file
     # includes, so it ships as an example to copy to /etc/pam.d/otto-lock
@@ -290,6 +297,10 @@ assets = [
 ]
 
 [package.metadata.generate-rpm]
+# generate-rpm cannot package a symlink, so the launcher aliases (otto-ask,
+# otto-agents) are made on install and removed on erase, not on upgrade.
+post_install_script = "ln -sf otto-launcher /usr/bin/otto-ask; ln -sf otto-launcher /usr/bin/otto-agents"
+post_uninstall_script = "if [ \"$1\" -eq 0 ]; then rm -f /usr/bin/otto-ask /usr/bin/otto-agents; fi"
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
 version = "1.3.0"
@@ -302,6 +313,7 @@ assets = [
     { source = "target/release/otto-emoji", dest = "/usr/bin/otto-emoji", mode = "755" },
     { source = "target/release/otto-quickview", dest = "/usr/bin/otto-quickview", mode = "755" },
     { source = "target/release/otto-msg", dest = "/usr/bin/otto-msg", mode = "755" },
+    { source = "target/release/otto-agentsd", dest = "/usr/bin/otto-agentsd", mode = "755" },
     { source = "target/release/otto-media-worker", dest = "/usr/bin/otto-media-worker", mode = "755" },
     { source = "resources/otto-files.desktop", dest = "/usr/share/applications/otto-files.desktop", mode = "644" },
     { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
@@ -328,6 +340,7 @@ assets = [
     { source = "components/xdg-desktop-portal-otto/otto.portal", dest = "/usr/share/xdg-desktop-portal/portals/otto.portal", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service", dest = "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service", dest = "/usr/lib/systemd/user/xdg-desktop-portal-otto.service", mode = "644" },
+    { source = "components/otto-agentsd/otto-agentsd.service", dest = "/usr/lib/systemd/user/otto-agentsd.service", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/portals.conf.example", dest = "/usr/share/doc/otto/portals.conf.example", mode = "644", doc = true },
     { source = "components/otto-lock/otto-lock.pam", dest = "/etc/pam.d/otto-lock", mode = "644", config = true },
 ]
@@ -402,6 +415,8 @@ files = [
     ["target/release/otto-emoji", "/usr/bin/otto-emoji", "755"],
     ["target/release/otto-quickview", "/usr/bin/otto-quickview", "755"],
     ["target/release/otto-msg", "/usr/bin/otto-msg", "755"],
+    ["target/release/otto-agentsd", "/usr/bin/otto-agentsd", "755"],
+    ["components/otto-agentsd/otto-agentsd.service", "/usr/lib/systemd/user/otto-agentsd.service", "644"],
     ["target/release/otto-media-worker", "/usr/bin/otto-media-worker", "755"],
     ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],
     ["README.md", "/usr/share/doc/otto/README.md", "644"],

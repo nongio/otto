@@ -33,7 +33,7 @@ check() {
 
 echo "== binaries =="
 for b in otto otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp; do
+         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp otto-agentsd; do
     check "/usr/bin/$b" exec
 done
 check /usr/libexec/xdg-desktop-portal-otto exec
@@ -53,8 +53,33 @@ check /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.servic
 # without the other leaves the portal bus-activatable but unstartable.
 check /usr/lib/systemd/user/xdg-desktop-portal-otto.service
 
+echo "== agent service =="
+check /usr/lib/systemd/user/otto-agentsd.service
+for a in otto-ask otto-agents; do
+    if [[ "$(readlink "/usr/bin/$a")" == otto-launcher ]]; then
+        echo "  ok  /usr/bin/$a -> otto-launcher"
+    else
+        echo "MISSING alias: /usr/bin/$a -> otto-launcher"; fail=1
+    fi
+done
+
 echo "== configuration =="
 check /etc/otto/config.toml
+
+echo "== agent skills =="
+# The plugin an agent on this desktop loads from. A skill with no SKILL.md is
+# a skill nothing can find, and the starter script has to stay executable.
+# Arch only for now: the three PKGBUILDs install it, the deb and the rpm do
+# not ship it yet.
+if [[ "$flavour" == arch ]]; then
+    check /usr/share/otto/plugins/otto/.claude-plugin/plugin.json
+    check /usr/share/otto/plugins/otto/skills/otto/SKILL.md
+    check /usr/share/otto/plugins/otto/skills/otto/references/configure.md
+    check /usr/share/otto/plugins/otto/skills/otto/references/files/starter exec
+    check /usr/share/otto/plugins/otto/skills/otto/scripts/files-command exec
+else
+    echo "  (not packaged for $flavour, skipped)"
+fi
 
 echo "== documentation =="
 check /usr/share/doc/otto/README.md
@@ -145,7 +170,7 @@ else
 for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-lock \
          /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-msg \
          /usr/bin/otto-quickview /usr/bin/otto-media-worker \
-         /usr/bin/otto-greeter /usr/bin/otto-rdp \
+         /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agentsd \
          /usr/libexec/xdg-desktop-portal-otto; do
     [[ -x "$b" ]] || continue   # already reported missing above
     # `version \`GLIBC_2.44' not found` is the foreign-glibc case above, not a
@@ -177,12 +202,17 @@ else
 # to prove the install is runnable without a seat, a GPU or a compositor.
 "/usr/bin/otto" --version || { echo "otto --version failed"; fail=1; }
 for b in otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp; do
+         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp otto-agentsd; do
     [[ -x "/usr/bin/$b" ]] || continue
     # Not every component parses --version; a component that instead prints
     # usage and exits non-zero has still loaded successfully. Only a loader
     # failure (127, or a message from ld.so) is a real failure.
-    out=$("/usr/bin/$b" --version 2>&1); rc=$?
+    #
+    # With no display in the environment, so that a component which takes
+    # the flag for an ordinary start cannot join a live session (run on a
+    # desktop this once started a second otto-bar), and with a timeout, so
+    # that one which does not exit cannot stall the check.
+    out=$(env -u WAYLAND_DISPLAY -u DISPLAY timeout 30 "/usr/bin/$b" --version 2>&1); rc=$?
     if grep -qiE 'error while loading shared libraries|cannot open shared object' <<<"$out"; then
         echo "LOADER FAILURE: $b: $out"; fail=1
     elif (( rc == 127 )); then
