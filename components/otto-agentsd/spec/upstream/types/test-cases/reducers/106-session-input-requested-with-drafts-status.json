@@ -1,0 +1,94 @@
+{
+  "description": "session/inputRequested sets inputNeeded status and syncs draft answers",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/inputRequested",
+      "request": {
+        "id": "input-1",
+        "message": "Clarify requirements",
+        "questions": [
+          {
+            "id": "q1",
+            "kind": "number",
+            "message": "How many?"
+          }
+        ]
+      }
+    },
+    {
+      "type": "chat/inputAnswerChanged",
+      "requestId": "input-1",
+      "questionId": "q1",
+      "answer": {
+        "state": "draft",
+        "value": {
+          "kind": "number",
+          "value": 1.5
+        }
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "inputRequest",
+          "request": {
+            "id": "input-1",
+            "message": "Clarify requirements",
+            "questions": [
+              {
+                "id": "q1",
+                "kind": "number",
+                "message": "How many?"
+              }
+            ],
+            "answers": {
+              "q1": {
+                "state": "draft",
+                "value": {
+                  "kind": "number",
+                  "value": 1.5
+                }
+              }
+            }
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 24,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

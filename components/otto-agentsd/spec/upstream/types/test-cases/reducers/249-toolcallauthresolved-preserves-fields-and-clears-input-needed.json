@@ -1,0 +1,143 @@
+{
+  "description": "chat/toolCallAuthResolved returns an auth-required tool call to running, preserving selectedOption and partial content, updates _meta, and clears the InputNeeded status once it was the only blocker",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-6",
+      "toolName": "search",
+      "displayName": "Search Repo",
+      "contributor": {
+        "kind": "mcp",
+        "customizationId": "mcp-1"
+      }
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-6",
+      "invocationMessage": "Search: foo",
+      "toolInput": {
+        "uri": "file:///tool-inputs/tool-input.json"
+      },
+      "options": [
+        {
+          "id": "opt-1",
+          "label": "Approve",
+          "kind": "approve"
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallConfirmed",
+      "turnId": "turn-1",
+      "toolCallId": "tc-6",
+      "approved": true,
+      "confirmed": "user-action",
+      "selectedOptionId": "opt-1"
+    },
+    {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-1",
+      "toolCallId": "tc-6",
+      "content": [
+        {
+          "type": "text",
+          "text": "partial output"
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallAuthRequired",
+      "turnId": "turn-1",
+      "toolCallId": "tc-6",
+      "auth": {
+        "reason": "required",
+        "resource": {
+          "resource": "https://mcp.example.com"
+        }
+      }
+    },
+    {
+      "type": "chat/toolCallAuthResolved",
+      "turnId": "turn-1",
+      "toolCallId": "tc-6",
+      "_meta": {
+        "phase": "resolved"
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "running",
+            "toolCallId": "tc-6",
+            "toolName": "search",
+            "displayName": "Search Repo",
+            "intention": null,
+            "contributor": {
+              "kind": "mcp",
+              "customizationId": "mcp-1"
+            },
+            "_meta": {
+              "phase": "resolved"
+            },
+            "invocationMessage": "Search: foo",
+            "toolInput": {
+              "uri": "file:///tool-inputs/tool-input.json"
+            },
+            "confirmed": "user-action",
+            "selectedOption": {
+              "id": "opt-1",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "partial output"
+              }
+            ]
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

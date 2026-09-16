@@ -1,0 +1,45 @@
+{
+  "description": "session/customizationUpdated creates the customizations list when absent",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationUpdated",
+      "customization": {
+        "type": "directory",
+        "id": "dir-skills",
+        "uri": "file:///workspace/.github/skills",
+        "name": "Workspace Skills",
+        "enabled": true,
+        "contents": "skill",
+        "writable": true
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "directory",
+        "id": "dir-skills",
+        "uri": "file:///workspace/.github/skills",
+        "name": "Workspace Skills",
+        "enabled": true,
+        "contents": "skill",
+        "writable": true
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

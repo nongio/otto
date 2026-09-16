@@ -1,0 +1,36 @@
+{
+  "description": "terminal/cleared empties content",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ hello world\r\n$ "
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/cleared"
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

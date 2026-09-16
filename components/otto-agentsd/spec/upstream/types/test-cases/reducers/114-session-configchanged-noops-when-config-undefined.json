@@ -1,0 +1,28 @@
+{
+  "description": "session/configChanged is a no-op when config is undefined",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/configChanged",
+      "config": {
+        "verbosity": "verbose"
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}

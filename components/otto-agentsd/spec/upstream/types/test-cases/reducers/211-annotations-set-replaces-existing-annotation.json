@@ -1,0 +1,62 @@
+{
+  "description": "annotations/set replaces an existing annotation when the id matches, dropping the range to anchor to the whole file and marking it resolved",
+  "reducer": "annotations",
+  "initial": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-1"
+        },
+        "resource": "file:///src/a.ts",
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        },
+        "resolved": false,
+        "entries": [
+          { "id": "c-1", "text": "original" }
+        ]
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "annotations/set",
+      "annotation": {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-2"
+        },
+        "resource": "file:///src/a.ts",
+        "resolved": true,
+        "entries": [
+          { "id": "c-1", "text": "rewritten" },
+          { "id": "c-2", "text": "reply" }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "annotations": [
+      {
+        "id": "t-1",
+        "origin": {
+          "session": "ahp-session:/test-session",
+          "chat": "ahp-chat:/test-chat",
+          "turnId": "turn-2"
+        },
+        "resource": "file:///src/a.ts",
+        "resolved": true,
+        "entries": [
+          { "id": "c-1", "text": "rewritten" },
+          { "id": "c-2", "text": "reply" }
+        ]
+      }
+    ]
+  }
+}

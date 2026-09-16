@@ -1,0 +1,27 @@
+{
+  "description": "reorder is no-op when no queued messages exist",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/queuedMessagesReordered",
+      "order": [
+        "a",
+        "b"
+      ]
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  }
+}

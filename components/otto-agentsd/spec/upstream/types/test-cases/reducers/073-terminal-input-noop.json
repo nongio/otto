@@ -1,0 +1,42 @@
+{
+  "description": "terminal/input is a no-op in the reducer",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ "
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/input",
+      "data": "ls -la\r"
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ "
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

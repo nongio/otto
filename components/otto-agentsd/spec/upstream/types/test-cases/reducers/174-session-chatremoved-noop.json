@@ -1,0 +1,48 @@
+{
+  "description": "session/chatRemoved is a no-op when the chat URI is unknown",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [
+      {
+        "resource": "ahp-chat:/c1",
+        "title": "Chat 1",
+        "status": 1,
+        "modifiedAt": "1970-01-01T00:00:01.000Z",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    ],
+    "defaultChat": "ahp-chat:/c1"
+  },
+  "actions": [
+    {
+      "type": "session/chatRemoved",
+      "chat": "ahp-chat:/cX"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [
+      {
+        "resource": "ahp-chat:/c1",
+        "title": "Chat 1",
+        "status": 1,
+        "modifiedAt": "1970-01-01T00:00:01.000Z",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    ],
+    "defaultChat": "ahp-chat:/c1"
+  }
+}

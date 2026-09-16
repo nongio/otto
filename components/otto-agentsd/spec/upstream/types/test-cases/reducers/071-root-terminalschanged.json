@@ -1,0 +1,65 @@
+{
+  "description": "root/terminalsChanged",
+  "reducer": "root",
+  "initial": {
+    "agents": []
+  },
+  "actions": [
+    {
+      "type": "root/terminalsChanged",
+      "terminals": [
+        {
+          "resource": "agenthost:/terminal/1",
+          "title": "bash",
+          "claim": {
+            "kind": "client",
+            "clientId": "c1"
+          },
+          "lifecycle": {
+            "status": "running"
+          }
+        },
+        {
+          "resource": "agenthost:/terminal/2",
+          "title": "zsh",
+          "claim": {
+            "kind": "session",
+            "session": "copilot:/s1",
+            "chat": "ahp-chat:/test-chat"
+          },
+          "lifecycle": {
+            "status": "running"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "agents": [],
+    "terminals": [
+      {
+        "resource": "agenthost:/terminal/1",
+        "title": "bash",
+        "claim": {
+          "kind": "client",
+          "clientId": "c1"
+        },
+        "lifecycle": {
+          "status": "running"
+        }
+      },
+      {
+        "resource": "agenthost:/terminal/2",
+        "title": "zsh",
+        "claim": {
+          "kind": "session",
+          "session": "copilot:/s1",
+          "chat": "ahp-chat:/test-chat"
+        },
+        "lifecycle": {
+          "status": "running"
+        }
+      }
+    ]
+  }
+}

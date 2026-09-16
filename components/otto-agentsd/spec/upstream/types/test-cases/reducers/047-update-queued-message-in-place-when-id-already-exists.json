@@ -1,0 +1,71 @@
+{
+  "description": "update queued message in place when ID already exists",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "queuedMessages": [
+      {
+        "id": "pm-1",
+        "message": {
+          "text": "First",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      },
+      {
+        "id": "pm-2",
+        "message": {
+          "text": "Second",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      }
+    ],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/pendingMessageSet",
+      "kind": "queued",
+      "id": "pm-1",
+      "message": {
+        "text": "Updated first",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "queuedMessages": [
+      {
+        "id": "pm-1",
+        "message": {
+          "text": "Updated first",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      },
+      {
+        "id": "pm-2",
+        "message": {
+          "text": "Second",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      }
+    ],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  }
+}

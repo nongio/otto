@@ -1,0 +1,41 @@
+{
+  "description": "changeset/operationsChanged sets the operations list and clears it when undefined",
+  "reducer": "changeset",
+  "initial": {
+    "status": "ready",
+    "files": [],
+    "operations": [
+      {
+        "id": "stage",
+        "label": "Stage",
+        "scopes": [
+          "resource"
+        ],
+        "status": "idle"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "changeset/operationsChanged",
+      "operations": [
+        {
+          "id": "make-pr",
+          "label": "Create Pull Request",
+          "scopes": [
+            "changeset"
+          ],
+          "status": "idle"
+        }
+      ]
+    },
+    {
+      "type": "changeset/operationsChanged",
+      "operations": null
+    }
+  ],
+  "expected": {
+    "status": "ready",
+    "files": []
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "description": "session-workingDirectorySet appends to existing set",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "workingDirectories": [
+      "file:///repo-a"
+    ]
+  },
+  "actions": [
+    {
+      "type": "session/workingDirectorySet",
+      "directory": "file:///repo-b"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "workingDirectories": [
+      "file:///repo-a",
+      "file:///repo-b"
+    ]
+  }
+}

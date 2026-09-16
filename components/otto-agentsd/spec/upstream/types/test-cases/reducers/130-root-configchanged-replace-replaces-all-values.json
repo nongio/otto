@@ -1,0 +1,72 @@
+{
+  "description": "root/configChanged with replace replaces all config values",
+  "reducer": "root",
+  "initial": {
+    "agents": [],
+    "config": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "theme": {
+            "type": "string",
+            "title": "Theme",
+            "enum": [
+              "light",
+              "dark"
+            ]
+          },
+          "locale": {
+            "type": "string",
+            "title": "Locale",
+            "enum": [
+              "en",
+              "fr"
+            ]
+          }
+        }
+      },
+      "values": {
+        "theme": "light",
+        "locale": "en"
+      }
+    }
+  },
+  "actions": [
+    {
+      "type": "root/configChanged",
+      "config": {
+        "theme": "dark"
+      },
+      "replace": true
+    }
+  ],
+  "expected": {
+    "agents": [],
+    "config": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "theme": {
+            "type": "string",
+            "title": "Theme",
+            "enum": [
+              "light",
+              "dark"
+            ]
+          },
+          "locale": {
+            "type": "string",
+            "title": "Locale",
+            "enum": [
+              "en",
+              "fr"
+            ]
+          }
+        }
+      },
+      "values": {
+        "theme": "dark"
+      }
+    }
+  }
+}

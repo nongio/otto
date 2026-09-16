@@ -1,0 +1,26 @@
+{
+  "description": "session/titleChanged updates title",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/titleChanged",
+      "title": "New Title"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "New Title",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  }
+}

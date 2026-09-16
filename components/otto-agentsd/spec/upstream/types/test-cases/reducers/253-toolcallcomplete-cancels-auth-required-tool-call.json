@@ -1,0 +1,167 @@
+{
+  "description": "chat/toolCallComplete cancels an auth-required MCP tool call with a failed result (error code cancelled) instead of resolving the auth challenge, transitioning auth-required -> completed while preserving confirmed, selectedOption, contributor, invocationMessage/toolInput, pre-auth partial content, and updating _meta, and clearing the InputNeeded status once it was the only blocker",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-8",
+      "toolName": "search",
+      "displayName": "Search Repo",
+      "contributor": {
+        "kind": "mcp",
+        "customizationId": "mcp-1"
+      },
+      "_meta": {
+        "phase": "start"
+      }
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-8",
+      "invocationMessage": "Search: foo",
+      "toolInput": {
+        "uri": "file:///tool-inputs/tool-input.json"
+      },
+      "confirmationTitle": "Search repo",
+      "options": [
+        {
+          "id": "opt-1",
+          "label": "Approve",
+          "kind": "approve"
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallConfirmed",
+      "turnId": "turn-1",
+      "toolCallId": "tc-8",
+      "approved": true,
+      "confirmed": "user-action",
+      "selectedOptionId": "opt-1"
+    },
+    {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-1",
+      "toolCallId": "tc-8",
+      "content": [
+        {
+          "type": "text",
+          "text": "partial output"
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallAuthRequired",
+      "turnId": "turn-1",
+      "toolCallId": "tc-8",
+      "auth": {
+        "reason": "insufficientScope",
+        "resource": {
+          "resource": "https://mcp.example.com"
+        },
+        "requiredScopes": [
+          "repo:read"
+        ]
+      },
+      "_meta": {
+        "phase": "auth-required"
+      }
+    },
+    {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-1",
+      "toolCallId": "tc-8",
+      "result": {
+        "success": false,
+        "pastTenseMessage": "Cancelled search",
+        "error": {
+          "message": "User declined to authenticate",
+          "code": "cancelled"
+        }
+      },
+      "_meta": {
+        "phase": "cancelled"
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-8",
+            "toolName": "search",
+            "displayName": "Search Repo",
+            "intention": null,
+            "contributor": {
+              "kind": "mcp",
+              "customizationId": "mcp-1"
+            },
+            "_meta": {
+              "phase": "cancelled"
+            },
+            "invocationMessage": "Search: foo",
+            "toolInput": {
+              "uri": "file:///tool-inputs/tool-input.json"
+            },
+            "confirmed": "user-action",
+            "selectedOption": {
+              "id": "opt-1",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "partial output"
+              }
+            ],
+            "success": false,
+            "pastTenseMessage": "Cancelled search",
+            "error": {
+              "message": "User declined to authenticate",
+              "code": "cancelled"
+            }
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

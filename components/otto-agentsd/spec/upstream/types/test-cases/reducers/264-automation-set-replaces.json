@@ -1,0 +1,85 @@
+{
+  "description": "automation set replaces an existing catalogue entry in place",
+  "reducer": "automation",
+  "initial": {
+    "entries": [
+      {
+        "resource": "ahp-automation:/a1",
+        "definition": {
+          "title": "Old",
+          "message": { "text": "old", "origin": { "kind": "automation" } },
+          "session": {},
+          "enabled": true,
+          "triggers": []
+        },
+        "runs": [],
+        "operations": ["run"],
+        "createdAt": "2025-01-01T00:00:00Z",
+        "modifiedAt": "2025-01-01T00:00:00Z"
+      },
+      {
+        "resource": "ahp-automation:/a2",
+        "definition": {
+          "title": "Second",
+          "message": { "text": "second", "origin": { "kind": "automation" } },
+          "session": {},
+          "enabled": true,
+          "triggers": []
+        },
+        "runs": [],
+        "operations": ["run"],
+        "createdAt": "2025-01-01T00:00:00Z",
+        "modifiedAt": "2025-01-01T00:00:00Z"
+      }
+    ]
+  },
+  "actions": [{
+    "type": "automation/set",
+    "automation": {
+      "resource": "ahp-automation:/a1",
+      "definition": {
+        "title": "New",
+        "message": { "text": "new", "origin": { "kind": "automation" } },
+        "session": {},
+        "enabled": false,
+        "triggers": []
+      },
+      "runs": [],
+      "operations": ["update", "remove", "run"],
+      "createdAt": "2025-01-01T00:00:00Z",
+      "modifiedAt": "2025-01-02T00:00:00Z"
+    }
+  }],
+  "expected": {
+    "entries": [
+      {
+        "resource": "ahp-automation:/a1",
+        "definition": {
+          "title": "New",
+          "message": { "text": "new", "origin": { "kind": "automation" } },
+          "session": {},
+          "enabled": false,
+          "triggers": []
+        },
+        "runs": [],
+        "operations": ["update", "remove", "run"],
+        "createdAt": "2025-01-01T00:00:00Z",
+        "modifiedAt": "2025-01-02T00:00:00Z"
+      },
+      {
+        "resource": "ahp-automation:/a2",
+        "definition": {
+          "title": "Second",
+          "message": { "text": "second", "origin": { "kind": "automation" } },
+          "session": {},
+          "enabled": true,
+          "triggers": []
+        },
+        "runs": [],
+        "operations": ["run"],
+        "createdAt": "2025-01-01T00:00:00Z",
+        "modifiedAt": "2025-01-01T00:00:00Z"
+      }
+    ]
+  }
+}

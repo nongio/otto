@@ -1,0 +1,56 @@
+{
+  "description": "session/customizationRemoved removes a top-level container and its children",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "children": [
+          {
+            "type": "skill",
+            "id": "skill-1",
+            "uri": "https://plugins.example/a#skills/lint",
+            "name": "lint"
+          }
+        ]
+      },
+      {
+        "type": "plugin",
+        "id": "plugin-b",
+        "uri": "https://plugins.example/b",
+        "name": "Plugin B"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationRemoved",
+      "id": "plugin-a"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-b",
+        "uri": "https://plugins.example/b",
+        "name": "Plugin B"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

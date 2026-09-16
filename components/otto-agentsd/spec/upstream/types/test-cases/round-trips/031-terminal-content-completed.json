@@ -1,0 +1,52 @@
+{
+  "name": "terminal-content-completed",
+  "group": "A",
+  "description": "ActionEnvelope carries a terminal block whose result object is present after the command exited, with exit code, bounded preview, and truncation marker.",
+  "type": "ActionEnvelope",
+  "input": {
+    "channel": "ahp-chat:/s1/c1",
+    "action": {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-1",
+      "toolCallId": "tool-1",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "ahp-terminal:/s1/t1",
+          "title": "npm test",
+          "isPty": false,
+          "result": {
+            "exitCode": 1,
+            "preview": "line 2\nline 3\n",
+            "truncated": true
+          }
+        }
+      ]
+    },
+    "serverSeq": 11
+  },
+  "acceptableOutputs": [
+    {
+      "action": {
+        "content": [
+          {
+            "isPty": false,
+            "resource": "ahp-terminal:/s1/t1",
+            "result": {
+              "exitCode": 1,
+              "preview": "line 2\nline 3\n",
+              "truncated": true
+            },
+            "title": "npm test",
+            "type": "terminal"
+          }
+        ],
+        "toolCallId": "tool-1",
+        "turnId": "turn-1",
+        "type": "chat/toolCallContentChanged"
+      },
+      "channel": "ahp-chat:/s1/c1",
+      "serverSeq": 11
+    }
+  ]
+}

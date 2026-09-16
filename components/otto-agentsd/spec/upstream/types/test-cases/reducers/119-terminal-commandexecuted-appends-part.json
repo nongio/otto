@@ -1,0 +1,44 @@
+{
+  "description": "terminal/commandExecuted appends a command part and sets supportsCommandDetection",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/commandExecuted",
+      "commandId": "cmd-1",
+      "commandLine": "npm test",
+      "timestamp": 1700000000000
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "command",
+        "commandId": "cmd-1",
+        "commandLine": "npm test",
+        "output": "",
+        "timestamp": 1700000000000,
+        "isComplete": false
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "supportsCommandDetection": true,
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

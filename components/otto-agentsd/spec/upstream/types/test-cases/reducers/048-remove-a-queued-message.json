@@ -1,0 +1,56 @@
+{
+  "description": "remove a queued message",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "queuedMessages": [
+      {
+        "id": "pm-1",
+        "message": {
+          "text": "First",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      },
+      {
+        "id": "pm-2",
+        "message": {
+          "text": "Second",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      }
+    ],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/pendingMessageRemoved",
+      "kind": "queued",
+      "id": "pm-1"
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "queuedMessages": [
+      {
+        "id": "pm-2",
+        "message": {
+          "text": "Second",
+          "origin": {
+            "kind": "user"
+          }
+        }
+      }
+    ],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  }
+}

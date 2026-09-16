@@ -1,0 +1,95 @@
+#!/bin/sh
+# Drafts and publishes Otto Files palette commands.
+#
+#   files-command new NAME      start a draft from the starter, print its path
+#   files-command edit NAME     start a draft from a published command
+#   files-command check NAME    run the draft's describe and check it prints JSON
+#   files-command publish NAME  move the draft, executable, to where Files reads it
+#   files-command list          drafts and published commands
+#
+# A draft lives in ~/.local/state/otto/files-drafts/, where Files never looks,
+# so a half-written command never shows up in a window. Only `publish` puts it
+# in ~/.config/otto/files-scripts/.
+
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+starter="$here/../references/files/starter"
+drafts="$HOME/.local/state/otto/files-drafts"
+published="${XDG_CONFIG_HOME:-$HOME/.config}/otto/files-scripts"
+
+die() {
+    echo "files-command: $*" >&2
+    exit 1
+}
+
+usage() {
+    sed -n '2,8s/^# \{0,1\}//p' "$0" >&2
+    exit 2
+}
+
+# A name Files will read: lower case, starting with a letter, no dots or
+# spaces. A leading dot would hide it, and a slash would escape the folder.
+valid_name() {
+    case $1 in
+        '' | *[!a-z0-9-]* | [!a-z]*) die "\"$1\" is not a valid name: use lower-case letters, digits and -, starting with a letter" ;;
+    esac
+}
+
+[ $# -ge 1 ] || usage
+command=$1
+shift
+
+case $command in
+    new)
+        [ $# -eq 1 ] || usage
+        valid_name "$1"
+        [ -e "$published/$1" ] && die "\"$1\" is already published; use: files-command edit $1"
+        [ -e "$drafts/$1" ] && die "a draft of \"$1\" already exists: $drafts/$1"
+        mkdir -p "$drafts"
+        cp "$starter" "$drafts/$1"
+        chmod +x "$drafts/$1"
+        echo "$drafts/$1"
+        ;;
+    edit)
+        [ $# -eq 1 ] || usage
+        valid_name "$1"
+        [ -f "$published/$1" ] || die "no published command called \"$1\""
+        [ -e "$drafts/$1" ] && die "a draft of \"$1\" already exists: $drafts/$1"
+        mkdir -p "$drafts"
+        cp "$published/$1" "$drafts/$1"
+        chmod +x "$drafts/$1"
+        echo "$drafts/$1"
+        ;;
+    check)
+        [ $# -eq 1 ] || usage
+        valid_name "$1"
+        [ -f "$drafts/$1" ] || die "no draft called \"$1\""
+        out=$(timeout 3 "$drafts/$1" describe) || die "describe failed or took longer than 3 seconds"
+        printf '%s' "$out" | python3 -c 'import json, sys; json.load(sys.stdin)' 2>/dev/null ||
+            die "describe did not print JSON and nothing else"
+        echo "ok: describe prints JSON"
+        ;;
+    publish)
+        [ $# -eq 1 ] || usage
+        valid_name "$1"
+        [ -f "$drafts/$1" ] || die "no draft called \"$1\"; start one with: files-command new $1"
+        mkdir -p "$published"
+        # Copied beside the target and renamed over it, so a Files window
+        # opening meanwhile never reads half a script.
+        cp "$drafts/$1" "$published/.$1.tmp"
+        chmod +x "$published/.$1.tmp"
+        mv -f "$published/.$1.tmp" "$published/$1"
+        rm "$drafts/$1"
+        echo "$published/$1"
+        echo "Open a new Files window to see it."
+        ;;
+    list)
+        [ $# -eq 0 ] || usage
+        echo "drafts ($drafts):"
+        ls -1 "$drafts" 2>/dev/null | sed 's/^/  /'
+        echo "published ($published):"
+        ls -1 "$published" 2>/dev/null | sed 's/^/  /'
+        ;;
+    *) usage ;;
+esac

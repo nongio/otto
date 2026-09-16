@@ -1,0 +1,11 @@
+{
+  "name": "otto",
+  "description": "Skills for using and configuring the Otto desktop.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Otto",
+    "url": "https://github.com/nongio/otto"
+  },
+  "homepage": "https://github.com/nongio/otto",
+  "license": "MIT"
+}

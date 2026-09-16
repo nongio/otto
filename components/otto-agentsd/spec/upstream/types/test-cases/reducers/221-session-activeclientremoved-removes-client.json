@@ -1,0 +1,40 @@
+{
+  "description": "session/activeClientRemoved removes the named client",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "vscode-1",
+        "tools": []
+      },
+      {
+        "clientId": "cli-1",
+        "tools": []
+      }
+    ],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/activeClientRemoved",
+      "clientId": "vscode-1"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "cli-1",
+        "tools": []
+      }
+    ],
+    "chats": []
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "description": "session input completion and truncation remove outstanding requests",
+  "reducer": "chat",
+  "initial": {
+    "turns": [
+      {
+        "id": "kept",
+        "message": {
+          "text": "Kept",
+          "origin": {
+            "kind": "user"
+          }
+        },
+        "responseParts": [],
+        "usage": null,
+        "state": "complete"
+      },
+      {
+        "id": "dropped",
+        "message": {
+          "text": "Dropped",
+          "origin": {
+            "kind": "user"
+          }
+        },
+        "responseParts": [],
+        "usage": null,
+        "state": "complete"
+      }
+    ],
+    "activeTurn": {
+      "id": "active",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Active",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "inputRequest",
+          "request": {
+            "id": "complete-me",
+            "message": "Complete me"
+          }
+        },
+        {
+          "kind": "inputRequest",
+          "request": {
+            "id": "remaining-input",
+            "message": "Remaining request",
+            "url": "https://example.com/form"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 24,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/inputCompleted",
+      "requestId": "complete-me",
+      "response": "decline"
+    },
+    {
+      "type": "chat/truncated",
+      "turnId": "kept"
+    }
+  ],
+  "expected": {
+    "turns": [
+      {
+        "id": "kept",
+        "message": {
+          "text": "Kept",
+          "origin": {
+            "kind": "user"
+          }
+        },
+        "responseParts": [],
+        "usage": null,
+        "state": "complete"
+      }
+    ],
+    "activeTurn": null,
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "description": "session/isReadChanged marks session as read",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/isReadChanged",
+      "isRead": true
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 33,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}

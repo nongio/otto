@@ -1,0 +1,36 @@
+{
+  "name": "side-chat-origin-active",
+  "group": "A",
+  "description": "A session/chatAdded action preserves stable side-chat turn identities even when the source was active at creation time.",
+  "type": "StateAction",
+  "input": {
+    "type": "session/chatAdded",
+    "summary": {
+      "resource": "ahp-chat:/side-active",
+      "title": "Side investigation",
+      "status": 1,
+      "modifiedAt": "2026-07-22T20:00:00.000Z",
+      "origin": {
+        "kind": "sideChat",
+        "chat": "ahp-chat:/main",
+        "turnId": "turn-active"
+      }
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "type": "session/chatAdded",
+      "summary": {
+        "resource": "ahp-chat:/side-active",
+        "title": "Side investigation",
+        "status": 1,
+        "modifiedAt": "2026-07-22T20:00:00.000Z",
+        "origin": {
+          "kind": "sideChat",
+          "chat": "ahp-chat:/main",
+          "turnId": "turn-active"
+        }
+      }
+    }
+  ]
+}

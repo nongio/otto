@@ -1,0 +1,46 @@
+{
+  "name": "chat-transcript-attachment",
+  "group": "A",
+  "description": "A chat/turnStarted action preserves a bounded chat transcript attachment through the MessageAttachment discriminated union.",
+  "type": "StateAction",
+  "input": {
+    "type": "chat/turnStarted",
+    "turnId": "turn-13",
+    "startedAt": "2026-07-13T19:01:00.000Z",
+    "message": {
+      "text": "Use this investigation.",
+      "origin": {
+        "kind": "user"
+      },
+      "attachments": [
+        {
+          "type": "chat",
+          "label": "Side investigation",
+          "resource": "ahp-chat:/side",
+          "endTurn": "side-turn-3"
+        }
+      ]
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "type": "chat/turnStarted",
+      "turnId": "turn-13",
+      "startedAt": "2026-07-13T19:01:00.000Z",
+      "message": {
+        "text": "Use this investigation.",
+        "origin": {
+          "kind": "user"
+        },
+        "attachments": [
+          {
+            "type": "chat",
+            "label": "Side investigation",
+            "resource": "ahp-chat:/side",
+            "endTurn": "side-turn-3"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "chat-source-side-chat-selection",
+  "group": "A",
+  "description": "ChatSource preserves an optional side-chat selected-text snapshot and advisory response-part provenance.",
+  "type": "ChatSource",
+  "input": {
+    "kind": "sideChat",
+    "chat": "ahp-chat:/main",
+    "turnId": "turn-active",
+    "selection": {
+      "text": "const value = compute()",
+      "responsePartId": "part-7"
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "kind": "sideChat",
+      "chat": "ahp-chat:/main",
+      "turnId": "turn-active",
+      "selection": {
+        "text": "const value = compute()",
+        "responsePartId": "part-7"
+      }
+    }
+  ]
+}

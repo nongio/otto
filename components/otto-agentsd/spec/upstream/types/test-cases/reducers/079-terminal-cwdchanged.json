@@ -1,0 +1,34 @@
+{
+  "description": "terminal/cwdChanged updates cwd",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "cwd": "file:///home/user",
+    "content": [],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/cwdChanged",
+      "cwd": "file:///home/user/project"
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "cwd": "file:///home/user/project",
+    "content": [],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "side-chat-origin",
+  "group": "A",
+  "description": "A session/chatAdded action preserves stable side-chat turn identities for historical source turns.",
+  "type": "StateAction",
+  "input": {
+    "type": "session/chatAdded",
+    "summary": {
+      "resource": "ahp-chat:/side",
+      "title": "Side investigation",
+      "status": 1,
+      "modifiedAt": "2026-07-13T19:00:00.000Z",
+      "origin": {
+        "kind": "sideChat",
+        "chat": "ahp-chat:/main",
+        "turnId": "turn-12"
+      }
+    }
+  },
+  "acceptableOutputs": [
+    {
+      "type": "session/chatAdded",
+      "summary": {
+        "resource": "ahp-chat:/side",
+        "title": "Side investigation",
+        "status": 1,
+        "modifiedAt": "2026-07-13T19:00:00.000Z",
+        "origin": {
+          "kind": "sideChat",
+          "chat": "ahp-chat:/main",
+          "turnId": "turn-12"
+        }
+      }
+    }
+  ]
+}
