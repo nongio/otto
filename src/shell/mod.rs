@@ -818,14 +818,31 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         if !container_owns_size {
+            // The size is what the client painted, not what the layer map
+            // arranged for it. The two agree until the client commits a
+            // buffer of a new size without asking for it first — the bar's
+            // right cluster growing an icon — and then the buffer is drawn
+            // at its own size, anchored by its gravity, past the container's
+            // edge. Pixels outside a layer's bounds are pixels the scene does
+            // not know it painted: a partial repaint that reached them culled
+            // the layer and wiped them, cutting the island at the container's
+            // edge. The arrangement still places the container; only the
+            // extent follows the buffer.
+            let painted = smithay::wayland::compositor::with_states(&wl_surface, |states| {
+                states
+                    .data_map
+                    .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>()
+                    .and_then(|data| data.lock().ok()?.view().map(|view| view.dst))
+            });
+            let size = painted.unwrap_or(geometry.size);
             // Rounded, not truncated: the size is a logical integer times the
             // output scale, so on a fractional scale it is fractional (a 34pt
             // bar at 1.75 is 59.5), and truncating loses most of a pixel off
             // the far edge. The container's ORIGIN comes from the Taffy
             // layout, which rounds, so rounding the extent here keeps both
             // edges on the grid — see `snap_extent_px`.
-            let container_w = (geometry.size.w as f64 * scale_factor).round() as f32;
-            let container_h = (geometry.size.h as f64 * scale_factor).round() as f32;
+            let container_w = (size.w as f64 * scale_factor).round() as f32;
+            let container_h = (size.h as f64 * scale_factor).round() as f32;
             layer.set_size(layers::types::Size::points(container_w, container_h), None);
         }
         layer.set_hidden(false);
