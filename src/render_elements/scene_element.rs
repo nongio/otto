@@ -151,20 +151,60 @@ impl SceneElement {
 
         if has_damage {
             self.commit_counter.increment();
-            let safe = 0;
-            let damage = Rectangle::new(
-                (
-                    scene_damage.x() as i32 - safe,
-                    scene_damage.y() as i32 - safe,
-                )
-                    .into(),
-                (
-                    scene_damage.width() as i32 + safe * 2,
-                    scene_damage.height() as i32 + safe * 2,
-                )
-                    .into(),
+            // The damage as the rectangles it was reported in, in this
+            // element's space and inside it. The engine also offers their
+            // bounding box, and that used to be all that was handed on — so
+            // a window repainting on another workspace (a rectangle off the
+            // left of the output) and a caret blinking on this one became a
+            // box spanning the screen between them, repainted at the
+            // window's frame rate for nothing anyone could see. Kept apart
+            // and cut to the output, the off-screen rectangle is simply not
+            // there. A rectangle that survives the cut is repainted in its
+            // own pass (see `draw`), so their number is capped: past it the
+            // box of what is left is cheaper than the passes.
+            const MAX_DAMAGE_RECTS: usize = 8;
+            let (ox, oy) = self
+                .output_root
+                .and_then(|oid| self.engine.get_layer(&oid))
+                .map(|layer| {
+                    let pos = layer.render_position();
+                    (pos.x, pos.y)
+                })
+                .unwrap_or((0.0, 0.0));
+            let output = Rectangle::<i32, Physical>::new(
+                (0, 0).into(),
+                (self.size.0 as i32, self.size.1 as i32).into(),
             );
-            self.damage.borrow_mut().add(vec![damage]);
+            let to_local = |r: layers::skia::Rect| -> Option<Rectangle<i32, Physical>> {
+                let local = Rectangle::<i32, Physical>::new(
+                    ((r.left - ox).floor() as i32, (r.top - oy).floor() as i32).into(),
+                    (
+                        (r.right - ox).ceil() as i32 - (r.left - ox).floor() as i32,
+                        (r.bottom - oy).ceil() as i32 - (r.top - oy).floor() as i32,
+                    )
+                        .into(),
+                );
+                local.intersection(output)
+            };
+            let mut rects: Vec<Rectangle<i32, Physical>> = self
+                .engine
+                .damage_rects()
+                .into_iter()
+                .filter(|r| !r.is_empty())
+                .filter_map(to_local)
+                .collect();
+            rects.sort_by_key(|r| (r.loc.x, r.loc.y, r.size.w, r.size.h));
+            rects.dedup();
+            if rects.len() > MAX_DAMAGE_RECTS {
+                let all = rects.iter().skip(1).fold(rects[0], |acc, r| acc.merge(*r));
+                rects = vec![all];
+            }
+            // Everything that changed may lie off this output; the frame
+            // then has nothing to repaint here, and `draw` still runs to
+            // consume the engine's damage for every output that shares it.
+            if !rects.is_empty() {
+                self.damage.borrow_mut().add(rects);
+            }
         }
 
         has_damage
@@ -348,66 +388,31 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::profile_scope!("render_scene");
         let mut surface = frame.skia_surface.clone();
+        tracing::debug!(target: "otto::planes", "scene draw {damage:?}");
 
         let canvas = surface.canvas();
         let scene = self.engine.scene();
         // Use per-output root if set, otherwise fall back to global scene root.
         let root_id = self.output_root.or_else(|| self.engine.scene_root());
-        let save_point = canvas.save();
 
-        // Clip to the output destination rectangle to prevent drawing outside screen bounds.
-        let output_clip = layers::skia::Rect::from_xywh(
-            dst.loc.x as f32,
-            dst.loc.y as f32,
-            dst.size.w as f32,
-            dst.size.h as f32,
-        );
-        canvas.clip_rect(output_clip, Some(layers::skia::ClipOp::Intersect), false);
-
-        // Build a Skia Region from the damage rects for canvas clipping and
-        // node-level culling. Each damage rect is offset by the destination
-        // position so it aligns with scene-space coordinates on the canvas.
-        let damage_region = if !damage.is_empty() {
-            let irects: Vec<layers::skia::IRect> = damage
-                .iter()
-                .map(|r| {
-                    layers::skia::IRect::from_xywh(
-                        r.loc.x + dst.loc.x,
-                        r.loc.y + dst.loc.y,
-                        r.size.w,
-                        r.size.h,
-                    )
-                })
-                .collect();
-            let mut region = layers::skia::Region::new();
-            region.set_rects(&irects);
-            // Clip the canvas to the damage region so Skia skips drawing
-            // outside the damaged area entirely.
-            canvas.clip_region(&region, Some(layers::skia::ClipOp::Intersect));
-            Some(region)
-        } else {
-            None
-        };
-
-        // If rendering from an output sub-tree, translate so the output_layer's
-        // scene-space position maps to (0,0) on the output framebuffer.
-        if let Some(oid) = self.output_root {
-            if let Some(layer) = self.engine.get_layer(&oid) {
-                let pos = layer.render_position();
-                if let Some((ox, oy)) = self.subtree_origin {
-                    // Plane subtree: the tree renders root-local, which loses
-                    // the ancestor scroll offset — re-apply the dynamic part
-                    // of the root's global position, minus the output's
-                    // static origin (same correction as SceneDmabufElement).
-                    let (dx, dy) = (pos.x - ox, pos.y - oy);
-                    if dx != 0.0 || dy != 0.0 {
-                        canvas.translate((dx, dy));
-                    }
-                } else if pos.x != 0.0 || pos.y != 0.0 {
-                    canvas.translate((-pos.x, -pos.y));
-                }
-            }
-        }
+        // The damage rects in canvas coordinates: each is offset by the
+        // destination position so it aligns with scene space, and kept
+        // inside the output.
+        let output_clip =
+            layers::skia::IRect::from_xywh(dst.loc.x, dst.loc.y, dst.size.w, dst.size.h);
+        let rects: Vec<layers::skia::IRect> = damage
+            .iter()
+            .filter_map(|r| {
+                let r = layers::skia::IRect::from_xywh(
+                    r.loc.x + dst.loc.x,
+                    r.loc.y + dst.loc.y,
+                    r.size.w,
+                    r.size.h,
+                );
+                layers::skia::IRect::intersect(&r, &output_clip)
+            })
+            .filter(|r| !r.is_empty())
+            .collect();
 
         // Compute occlusion for this output's root and retrieve the occluded set.
         // Skipped for plane subtrees — they mirror the KMS plane path, which
@@ -425,14 +430,132 @@ impl RenderElement<SkiaRenderer> for SceneElement {
             None
         };
         let occluded_ref = occluded_set.as_ref();
-        // The damage region is always forwarded so render_node_tree can cull
-        // whole untouched subtrees instead of re-walking them per frame.
-        let damage_ref = damage_region.as_ref();
+
+        // Where the scene's own position has to be re-based for this element.
+        let translate = self.output_root.and_then(|oid| {
+            let layer = self.engine.get_layer(&oid)?;
+            let pos = layer.render_position();
+            let (dx, dy) = match self.subtree_origin {
+                // Plane subtree: the tree renders root-local, which loses
+                // the ancestor scroll offset — re-apply the dynamic part
+                // of the root's global position, minus the output's
+                // static origin (same correction as SceneDmabufElement).
+                Some((ox, oy)) => (pos.x - ox, pos.y - oy),
+                None => (-pos.x, -pos.y),
+            };
+            (dx != 0.0 || dy != 0.0).then_some((dx, dy))
+        });
+
+        // A frosted shape has to be blurred whole: its blur reads the pixels
+        // beneath it, and past the edge of a pass those pixels are last
+        // frame's — the shape's own frost among them — so a pass that covers
+        // part of the shape blurs frost into frost and leaves a seam where it
+        // stopped, and lay-rs keeps a seam-free blurred backdrop only from a
+        // pass that covered the whole shape. Every pass that touches a
+        // `BackgroundBlur` shape is grown to cover it, and passes that then
+        // overlap are merged, so the frost is blurred once, in one piece.
+        let (dx, dy) = translate.unwrap_or((0.0, 0.0));
+        let blur_shapes: Vec<layers::skia::IRect> = scene.with_arena(|arena| {
+            arena
+                .iter()
+                .filter(|node| !node.is_removed())
+                .map(|node| node.get())
+                .filter(|node| !node.hidden())
+                .map(|node| node.render_layer())
+                .filter(|layer| {
+                    layer.blend_mode == layers::prelude::BlendMode::BackgroundBlur
+                        && layer.premultiplied_opacity > 0.0
+                })
+                .map(|layer| {
+                    let b = layer.global_transformed_bounds.with_offset((dx, dy));
+                    let ir: layers::skia::IRect = layers::skia::RoundOut::round_out(&b);
+                    ir
+                })
+                .filter(|r| !r.is_empty())
+                .collect()
+        });
+        let hits = |a: &layers::skia::IRect, b: &layers::skia::IRect| {
+            a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+        };
+        let covers = |a: &layers::skia::IRect, b: &layers::skia::IRect| {
+            a.left <= b.left && a.top <= b.top && a.right >= b.right && a.bottom >= b.bottom
+        };
+        let union = |a: &layers::skia::IRect, b: &layers::skia::IRect| {
+            layers::skia::IRect::from_ltrb(
+                a.left.min(b.left),
+                a.top.min(b.top),
+                a.right.max(b.right),
+                a.bottom.max(b.bottom),
+            )
+        };
+        let mut rects = rects;
+        if !blur_shapes.is_empty() {
+            let mut grown = true;
+            while grown {
+                grown = false;
+                for rect in rects.iter_mut() {
+                    for shape in &blur_shapes {
+                        if hits(rect, shape) && !covers(rect, shape) {
+                            *rect = union(rect, shape);
+                            grown = true;
+                        }
+                    }
+                }
+                // Merge passes that overlap, so no shape is blurred twice and
+                // no pixel is painted twice.
+                let mut merged: Vec<layers::skia::IRect> = Vec::with_capacity(rects.len());
+                for rect in rects.drain(..) {
+                    let mut rect = rect;
+                    let mut i = 0;
+                    while i < merged.len() {
+                        if hits(&merged[i], &rect) {
+                            rect = union(&rect, &merged.swap_remove(i));
+                            grown = true;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    merged.push(rect);
+                }
+                rects = merged;
+            }
+            for rect in rects.iter_mut() {
+                if let Some(clipped) = layers::skia::IRect::intersect(rect, &output_clip) {
+                    *rect = clipped;
+                }
+            }
+        }
 
         let scene_draw_t = std::time::Instant::now();
         scene.with_arena(|arena| {
             scene.with_renderable_arena(|renderable_arena| {
-                if let Some(root_id) = root_id {
+                let Some(root_id) = root_id else {
+                    self.engine.clear_damage();
+                    return;
+                };
+                // One pass per damage rect, each under a plain rectangular
+                // clip. The rects used to be joined into one Skia region and
+                // clipped in a single pass, but a region of more than one
+                // rectangle is a path clip on this render target, and what
+                // Skia painted under it was the region's bounding box for
+                // some draws and the exact rects for others: with a window
+                // repainting on another workspace and a card open above the
+                // chrome, the bar and the dock shadow came out wiped in the
+                // box's corners, cut along the card's edges. A rectangle
+                // clips the same way for every draw. Damage arrives from the
+                // tracker already merged, so the passes are few, and each
+                // one culls what lies outside its own rect.
+                for rect in &rects {
+                    let save_point = canvas.save();
+                    canvas.clip_irect(*rect, Some(layers::skia::ClipOp::Intersect));
+                    if let Some((dx, dy)) = translate {
+                        canvas.translate((dx, dy));
+                    }
+                    // The rect is forwarded as the damage region so
+                    // render_node_tree can cull whole untouched subtrees
+                    // instead of re-walking them per frame.
+                    let mut region = layers::skia::Region::new();
+                    region.set_rect(*rect);
                     render_node_tree(
                         root_id,
                         arena,
@@ -440,15 +563,15 @@ impl RenderElement<SkiaRenderer> for SceneElement {
                         canvas,
                         1.0,
                         occluded_ref,
-                        damage_ref,
+                        Some(&region),
                         None,
                     );
+                    canvas.restore_to_count(save_point);
                 }
                 self.engine.clear_damage();
             });
         });
         crate::render_phase_stats::record_scene_draw(scene_draw_t.elapsed());
-        canvas.restore_to_count(save_point);
 
         Ok(())
     }

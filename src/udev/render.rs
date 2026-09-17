@@ -1204,6 +1204,32 @@ impl Otto<UdevData> {
             .get(&output.name())
             .map(|ows| self.scene_element.for_output_layer(&ows.output_layer))
             .unwrap_or_else(|| self.scene_element.clone());
+        // The whole-output tree render cannot show exposé: the tree hides
+        // the workspace subtree while exposé is up and draws the overview
+        // through the plane path, subtree by subtree, ignoring that. A frame
+        // forced onto the tree render during exposé — the launcher's modal
+        // overlay holding the composite while a swipe opens the overview —
+        // came out black. So the composite fallback stacks the plane
+        // subtrees instead, top→bottom like the plane push order (and like
+        // the winit backend and virtual outputs already do).
+        let expose_scene_stack: Vec<crate::render_elements::scene_element::SceneElement> =
+            match self.workspaces.output_workspaces.get(&output.name()) {
+                Some(ows) if expose_active => {
+                    let pos = ows.output_layer.render_position();
+                    let origin = (pos.x, pos.y);
+                    vec![
+                        self.scene_element
+                            .for_plane_subtree(&ows.switcher_plane, origin),
+                        self.scene_element
+                            .for_plane_subtree(&ows.overlay_plane, origin),
+                        self.scene_element
+                            .for_plane_subtree(&ows.expose_layer, origin),
+                        self.scene_element
+                            .for_plane_subtree(&ows.background_plane, origin),
+                    ]
+                }
+                _ => Vec::new(),
+            };
 
         // A surface lagging the global damage generation must render even if
         // its own tick reported no damage — the damage flag was consumed on
@@ -1354,6 +1380,7 @@ impl Otto<UdevData> {
             planes_enabled,
             composite_active,
             output_scene_element,
+            expose_scene_stack,
             &self.layers_engine,
             // Popups live in the primary output's overlay plane only.
             if chrome_output {
@@ -2382,6 +2409,7 @@ pub(super) fn render_output_frame<'a>(
     planes_enabled: bool,
     force_composite: bool,
     output_scene_element: crate::render_elements::scene_element::SceneElement,
+    expose_scene_stack: Vec<crate::render_elements::scene_element::SceneElement>,
     engine: &std::sync::Arc<layers::engine::Engine>,
     // Popup subtree root, folded into the overlay plane's backdrop so a submenu
     // blurs the popup(s) beneath it. Only set for the primary/chrome output.
@@ -2587,8 +2615,19 @@ pub(super) fn render_output_frame<'a>(
             // This frame consumes engine damage without updating the
             // backdrop composite — mark it stale for the next planes frame.
             surface.backdrop_dirty = true;
-            workspace_render_elements
-                .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+            if expose_scene_stack.is_empty() {
+                workspace_render_elements
+                    .push(WorkspaceRenderElements::Scene(output_scene_element.clone()));
+            } else {
+                // Exposé is up: the tree render would be black (see the
+                // caller), so composite the plane subtrees instead.
+                workspace_render_elements.extend(
+                    expose_scene_stack
+                        .iter()
+                        .cloned()
+                        .map(WorkspaceRenderElements::Scene),
+                );
+            }
             scene_element_pushed = true;
         } else {
             // Push plane elements top→bottom. Smithay's `DrmCompositor::render_frame`
@@ -2998,6 +3037,25 @@ pub(super) fn render_output_frame<'a>(
             }
         })?;
     crate::render_phase_stats::record_render_frame(render_frame_t.elapsed());
+
+    // Diagnostic (`touch /tmp/otto-probe-black`): what each submitted frame
+    // was made of, to attribute a frame that reached the screen black.
+    if crate::debug_hooks::toggle("/tmp/otto-probe-black") {
+        use smithay::backend::drm::compositor::PrimaryPlaneElement;
+        let primary = match &render_frame_result.primary_element {
+            PrimaryPlaneElement::Swapchain(element) => format!(
+                "swapchain damage={:?}",
+                element.damage.damage_since(None).map(|d| d.len())
+            ),
+            PrimaryPlaneElement::Element(_) => "direct-scanout".to_string(),
+        };
+        tracing::info!(
+            target: "otto::probe",
+            "frame elements={} empty={} primary={primary} force_composite={force_composite}",
+            output_elements.len(),
+            render_frame_result.is_empty
+        );
+    }
 
     #[cfg(feature = "renderer_sync")]
     {
