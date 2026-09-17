@@ -619,6 +619,66 @@ pub fn step_row(layout: &DialogLayout, current: Option<usize>, delta: i32) -> Op
     Some((current as i64 + delta as i64).clamp(0, last as i64) as usize)
 }
 
+/// A button the keyboard can land on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogButton {
+    Deny,
+    Grant,
+    Open,
+}
+
+/// Where the keyboard is: an option row (an index into `option_rects`) or a
+/// button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardTarget {
+    Row(usize),
+    Button(DialogButton),
+}
+
+/// The buttons the layout shows, in the order Tab visits them: the main row
+/// left to right, then the open button's row when it has one of its own.
+pub fn buttons(layout: &DialogLayout) -> Vec<DialogButton> {
+    let mut order = vec![DialogButton::Deny];
+    if layout.grant_rect.is_some() {
+        order.push(DialogButton::Grant);
+    }
+    if layout.open_rect.is_some() {
+        order.push(DialogButton::Open);
+    }
+    order
+}
+
+/// Where `button` is drawn, when the layout shows it.
+pub fn button_rect(layout: &DialogLayout, button: DialogButton) -> Option<Rect> {
+    match button {
+        DialogButton::Deny => Some(layout.deny_rect),
+        DialogButton::Grant => layout.grant_rect,
+        DialogButton::Open => layout.open_rect,
+    }
+}
+
+/// The target Tab (`backwards` for Shift+Tab) moves to from `current`: every
+/// option row, then every button, wrapping around at either end.
+pub fn tab_step(
+    layout: &DialogLayout,
+    current: Option<KeyboardTarget>,
+    backwards: bool,
+) -> KeyboardTarget {
+    let order: Vec<KeyboardTarget> = (0..layout.option_rects.len())
+        .map(KeyboardTarget::Row)
+        .chain(buttons(layout).into_iter().map(KeyboardTarget::Button))
+        .collect();
+    let len = order.len();
+    let index = current.and_then(|c| order.iter().position(|t| *t == c));
+    let next = match (index, backwards) {
+        (None, false) => 0,
+        (None, true) => len - 1,
+        (Some(i), false) => (i + 1) % len,
+        (Some(i), true) => (i + len - 1) % len,
+    };
+    order[next]
+}
+
 /// The scroll that brings `row` fully into view, moving as little as
 /// possible from `scroll`.
 pub fn reveal(layout: &DialogLayout, row: usize, scroll: f32) -> f32 {
@@ -744,15 +804,15 @@ fn draw_lines(
 /// canvas. The buffer is sized to the panel by `draw_content`, so content is
 /// drawn from the origin, matching the pill/card model.
 /// `selected[gi]` is the chosen option index for group `gi`; `scroll` is how
-/// far the content is scrolled. `focus_row`, when the panel holds the
-/// keyboard, is the option row that gets the focus ring.
+/// far the content is scrolled. `focus`, when the panel holds the keyboard,
+/// is the option row or button that gets the focus ring.
 pub fn draw_dialog(
     canvas: &Canvas,
     view: &DialogView,
     selected: &[usize],
     layout: &DialogLayout,
     scroll: f32,
-    focus_row: Option<usize>,
+    focus: Option<KeyboardTarget>,
 ) {
     canvas.save();
 
@@ -849,7 +909,7 @@ pub fn draw_dialog(
         );
         // Focus ring: where the arrow keys are, drawn just outside the row so
         // it reads on the accent fill of a selected row too.
-        if focus_row == Some(row) {
+        if focus == Some(KeyboardTarget::Row(row)) {
             let mut ring = Paint::default();
             ring.set_anti_alias(true);
             ring.set_color(accent);
@@ -949,6 +1009,19 @@ pub fn draw_dialog(
             draw_button(canvas, rect, &view.open_label, Color::TRANSPARENT, accent);
         } else {
             draw_button(canvas, rect, &view.open_label, theme.fill_secondary, text);
+        }
+    }
+    // Focus ring on the button the keyboard is on.
+    if let Some(KeyboardTarget::Button(button)) = focus {
+        if let Some(rect) = button_rect(layout, button) {
+            let mut ring = Paint::default();
+            ring.set_anti_alias(true);
+            ring.set_color(accent);
+            ring.set_style(skia_safe::paint::Style::Stroke);
+            ring.set_stroke_width(2.0);
+            let outer = rect.with_outset((FOCUS_RING_OUTSET, FOCUS_RING_OUTSET));
+            let r = BTN_RADIUS + FOCUS_RING_OUTSET;
+            canvas.draw_rrect(RRect::new_rect_xy(outer, r, r), &ring);
         }
     }
 
@@ -1298,6 +1371,35 @@ mod tests {
         assert!(p.collapsed());
         p.expand();
         assert_eq!(p.shape(true), Shape::Panel);
+    }
+
+    #[test]
+    fn tab_walks_rows_then_buttons_and_wraps() {
+        let mut v = view("Answer", "Open in Ask");
+        v.choices = vec![group("a", "First?", &["One", "Two"])];
+        let layout = dialog_layout(&v);
+        let row = |r| Some(KeyboardTarget::Row(r));
+        let button = |b| KeyboardTarget::Button(b);
+        assert_eq!(tab_step(&layout, row(0), false), KeyboardTarget::Row(1));
+        assert_eq!(tab_step(&layout, row(1), false), button(DialogButton::Deny));
+        assert_eq!(
+            tab_step(&layout, Some(button(DialogButton::Deny)), false),
+            button(DialogButton::Grant)
+        );
+        assert_eq!(
+            tab_step(&layout, Some(button(DialogButton::Grant)), false),
+            button(DialogButton::Open)
+        );
+        assert_eq!(
+            tab_step(&layout, Some(button(DialogButton::Open)), false),
+            KeyboardTarget::Row(0)
+        );
+        assert_eq!(tab_step(&layout, row(0), true), button(DialogButton::Open));
+
+        // No grant button and no options: Tab only visits deny and open.
+        let bare = dialog_layout(&view("", "Open in Ask"));
+        assert_eq!(buttons(&bare), vec![DialogButton::Deny, DialogButton::Open]);
+        assert_eq!(tab_step(&bare, None, false), button(DialogButton::Deny));
     }
 
     #[test]

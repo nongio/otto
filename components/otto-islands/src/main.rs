@@ -149,6 +149,8 @@ struct DialogPanel {
     /// Whether the arrow keys have been used since the panel opened or was
     /// last clicked: the focus ring stays hidden until they are.
     keyboard_nav: bool,
+    /// The button the keyboard is on, when Tab has moved past the options.
+    focus_button: Option<dialog::DialogButton>,
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +195,8 @@ struct IslandApp {
     focus_pulse_until: Option<std::time::Instant>,
     /// Whether the pointer is on the shrunk dialog's circle, which then peeks.
     dialog_hovered: bool,
+    /// Whether a Shift key is down, so Tab can walk the dialog backwards.
+    shift_held: bool,
     /// Center x of the circle a shrunk dialog sits in, at the end of the
     /// island row — placed by `layout`.
     dialog_circle_x: f32,
@@ -221,6 +225,7 @@ impl IslandApp {
             keyboard_exclusive: false,
             focus_pulse_until: None,
             dialog_hovered: false,
+            shift_held: false,
             dialog_circle_x: LAYER_W as f32 / 2.0,
             dock_badges: DockBadges::new(),
         }
@@ -1079,6 +1084,7 @@ impl IslandApp {
             last_target: (0.0, 0.0, 0.0, 0.0),
             focus_row: None,
             keyboard_nav: false,
+            focus_button: None,
         })
     }
 
@@ -1125,8 +1131,12 @@ impl IslandApp {
         let view = panel.view.clone();
         let scroll = panel.scroll;
         // The ring shows where the arrow keys are, only while they reach us.
-        let focus_row = (has_keyboard && panel.keyboard_nav)
-            .then(|| dialog::keyboard_row(&layout, &selected, panel.focus_row))
+        let focus = (has_keyboard && panel.keyboard_nav)
+            .then(|| match panel.focus_button {
+                Some(button) => Some(dialog::KeyboardTarget::Button(button)),
+                None => dialog::keyboard_row(&layout, &selected, panel.focus_row)
+                    .map(dialog::KeyboardTarget::Row),
+            })
             .flatten();
         draw_content(&mut panel.surface, w, h, |canvas| match shape {
             Shape::Circle => renderer::draw_mini(canvas, &view.icon, w, h),
@@ -1135,9 +1145,7 @@ impl IslandApp {
             Shape::Peek => {
                 renderer::draw_pill(canvas, &view.icon, &view.title, dialog::text_color(), w, h)
             }
-            Shape::Panel => {
-                dialog::draw_dialog(canvas, &view, &selected, &layout, scroll, focus_row)
-            }
+            Shape::Panel => dialog::draw_dialog(canvas, &view, &selected, &layout, scroll, focus),
         });
 
         if !panel.entered {
@@ -1207,6 +1215,7 @@ impl IslandApp {
                 }
                 panel.focus_row = dialog::row_of(&layout, group, option);
                 panel.keyboard_nav = false;
+                panel.focus_button = None;
                 self.render_dialog();
             }
             Some(DialogHit::Grant) => self.resolve_active_dialog(dialog::RESPONSE_GRANTED),
@@ -1249,6 +1258,12 @@ impl IslandApp {
         };
         let layout = dialog::dialog_layout(&panel.view);
         let current = dialog::keyboard_row(&layout, &panel.selected, panel.focus_row);
+        // Up and Down belong to the options: from a button they come back to
+        // the option the keyboard left.
+        if panel.focus_button.take().is_some() && current.is_some() {
+            self.render_dialog();
+            return;
+        }
         // The first navigation key only reveals the ring on the current
         // option; the next ones move it.
         if !panel.keyboard_nav {
@@ -1267,6 +1282,41 @@ impl IslandApp {
         }
         panel.focus_row = Some(row);
         panel.scroll = dialog::reveal(&layout, row, panel.scroll);
+        self.render_dialog();
+    }
+
+    /// Move the keyboard with Tab (`backwards` for Shift+Tab) through every
+    /// option row and then every button, wrapping around.
+    fn tab_dialog_focus(&mut self, backwards: bool) {
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
+        let layout = dialog::dialog_layout(&panel.view);
+        let current = match panel.focus_button {
+            Some(button) => Some(dialog::KeyboardTarget::Button(button)),
+            None => dialog::keyboard_row(&layout, &panel.selected, panel.focus_row)
+                .map(dialog::KeyboardTarget::Row),
+        };
+        // Like the arrows, the first Tab only reveals where the keyboard is.
+        if !panel.keyboard_nav {
+            panel.keyboard_nav = true;
+            if current.is_some() {
+                self.render_dialog();
+                return;
+            }
+        }
+        match dialog::tab_step(&layout, current, backwards) {
+            dialog::KeyboardTarget::Row(row) => {
+                let (group, option, _) = layout.option_rects[row];
+                if let Some(sel) = panel.selected.get_mut(group) {
+                    *sel = option;
+                }
+                panel.focus_row = Some(row);
+                panel.focus_button = None;
+                panel.scroll = dialog::reveal(&layout, row, panel.scroll);
+            }
+            dialog::KeyboardTarget::Button(button) => panel.focus_button = Some(button),
+        }
         self.render_dialog();
     }
 
@@ -1622,20 +1672,40 @@ impl App for IslandApp {
     }
 
     fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, state: KeyState, _serial: u32) {
+        // evdev LEFTSHIFT = 42, RIGHTSHIFT = 54.
+        if key == 42 || key == 54 {
+            self.shift_held = state == KeyState::Pressed;
+            return;
+        }
         // A shrunk dialog answers nothing from the keyboard: the island layer
         // may hold the focus for another island.
         if state != KeyState::Pressed || self.dialog.as_ref().is_none_or(|p| p.presence.collapsed())
         {
             return;
         }
-        // evdev keycodes: ESC = 1, TAB = 15, ENTER = 28, KP_ENTER = 96,
-        // UP = 103, DOWN = 108.
+        // The button Tab put the keyboard on, once its ring is showing.
+        let focused_button = self
+            .dialog
+            .as_ref()
+            .filter(|p| p.keyboard_nav)
+            .and_then(|p| p.focus_button);
+        // evdev keycodes: ESC = 1, TAB = 15, ENTER = 28, SPACE = 57,
+        // KP_ENTER = 96, UP = 103, DOWN = 108.
         match key {
             1 => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
             103 => self.move_dialog_focus(-1),
-            108 | 15 => self.move_dialog_focus(1),
-            // Enter confirms only when there is a grant button to confirm with;
-            // it never triggers the open button.
+            108 => self.move_dialog_focus(1),
+            15 => self.tab_dialog_focus(self.shift_held),
+            // Enter or Space presses the button the keyboard is on.
+            28 | 96 | 57 if focused_button.is_some() => {
+                self.resolve_active_dialog(match focused_button {
+                    Some(dialog::DialogButton::Grant) => dialog::RESPONSE_GRANTED,
+                    Some(dialog::DialogButton::Open) => dialog::RESPONSE_OPEN,
+                    _ => dialog::RESPONSE_DENIED,
+                })
+            }
+            // Otherwise Enter confirms, when there is a grant button to confirm
+            // with; it never triggers the open button.
             28 | 96
                 if self
                     .dialog
