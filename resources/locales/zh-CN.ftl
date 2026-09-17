@@ -847,6 +847,46 @@ workspace-numbered = 桌面 { $number }
 launcher-search-everything = 搜索应用程序和窗口…
 launcher-search-apps = 搜索应用程序…
 launcher-search-windows = 搜索窗口…
+# Ask mode: what is typed is a request for an AI agent, not a search.
+launcher-search-ask = 询问智能体…
+# Ask mode, once a request has been sent: the empty field takes the next one.
+launcher-search-ask-more = 继续提问…
+# Agents mode: what is typed narrows the list of agent sessions to pick one
+# to open.
+launcher-search-agents = 搜索智能体会话…
+# Agents mode: a session in the list. Its title, when it has none yet.
+launcher-agents-untitled = 未命名会话
+# Agents mode: what a session in the list is doing, before its folder.
+launcher-agents-idle = 空闲
+launcher-agents-working = 工作中
+launcher-agents-needs-input = 等待回答
+launcher-agents-error = 失败
+launcher-agents-none = 尚无智能体会话
+# Ask mode: the files that go with a request, under it in the log, or above
+# the field before it is sent. { $files } is their names, comma-separated.
+launcher-ask-attached = 附件：{ $files }
+# Ask mode, while an existing session is being opened to continue it.
+launcher-ask-opening = 正在打开会话…
+# Ask mode: the last line of the log above the field, saying what the agent is
+# doing now.
+launcher-ask-starting = 正在启动 { $agent }…
+launcher-ask-starting-agent = 正在启动智能体…
+launcher-ask-thinking = 正在思考…
+launcher-ask-working = 正在工作…
+# The agent asked for permission; its answers are the rows under the field.
+launcher-ask-waiting = 正在等待你在下方回答
+# Ask mode: a tool call the agent made, in the log. { $tool } is the command or
+# file, as the agent names it.
+launcher-ask-step-running = ▸ { $tool }
+launcher-ask-step-done = ✓ { $tool }
+launcher-ask-step-failed = ✗ { $tool }
+launcher-ask-step-denied = 已拒绝：{ $tool }
+# Ask mode: under a request in the log, what became of it.
+launcher-ask-queued = 排队中
+launcher-ask-cancelled = 已取消
+launcher-ask-failed = 失败：{ $error }
+# Ask mode, when the agent service is not running to take a request.
+launcher-ask-unreachable = 智能体服务未运行
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.
