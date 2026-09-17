@@ -72,9 +72,12 @@ const GAP_QUESTION_CONTEXT: f32 = 6.0;
 /// several questions the page counter sits at the bottom of that lower band,
 /// a caption on the list rather than a label over the buttons.
 const GAP_CHOICES: f32 = 24.0;
+/// Over the counter: it sits close under the list it counts, nearer the
+/// choices than the buttons.
+const GAP_COUNTER_ABOVE: f32 = 14.0;
 /// Under the counter, before the buttons: its own air, so the caption does
 /// not crowd what it sits over.
-const GAP_COUNTER_BUTTONS: f32 = 18.0;
+const GAP_COUNTER_BUTTONS: f32 = 28.0;
 /// Between option rows, which are one list.
 const OPTION_GAP: f32 = 8.0;
 /// Between the button row and the open button's row under it.
@@ -895,7 +898,7 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     let counter_row = pages > 1;
     let mut footer_h = GAP_CHOICES + BTN_H + PAD_BOTTOM;
     if counter_row {
-        footer_h += COUNTER_LINE_H + GAP_COUNTER_BUTTONS;
+        footer_h += COUNTER_LINE_H + GAP_COUNTER_BUTTONS - (GAP_CHOICES - GAP_COUNTER_ABOVE);
     }
     if has_grant && has_open {
         footer_h += OPEN_ROW_GAP + OPEN_BTN_H;
@@ -921,6 +924,7 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
                 .replace("{total}", &pages.to_string())
         };
         // At the foot of the choices' own air, with its own gap under it.
+        y -= GAP_CHOICES - GAP_COUNTER_ABOVE;
         page_counter = Some(TextBlock {
             y,
             lines: vec![text],
@@ -2307,15 +2311,16 @@ mod tests {
         // buttons; the single-question case below asserts the plain equality.
         let below = gap(last.bottom, layout.page_counter.as_ref().unwrap().y);
         assert_eq!(above, GAP_CHOICES);
-        assert_eq!(above, below, "the choices sit evenly between the two");
+        assert_eq!(below, GAP_COUNTER_ABOVE, "the counter sits under its list");
 
         // Rows are one list, and the counter closes their air rather than
         // sitting on the buttons.
         assert_eq!(gap(first.bottom, layout.option_rects[1].2.top), OPTION_GAP);
         let counter = layout.page_counter.as_ref().expect("counter");
-        // The counter closes the choices' own air, then has a gap of its own
-        // before the buttons.
-        assert_eq!(gap(last.bottom, counter.y), GAP_CHOICES);
+        // The counter sits close under the list it counts, with a wider gap
+        // of its own before the buttons.
+        assert_eq!(gap(last.bottom, counter.y), GAP_COUNTER_ABOVE);
+        const { assert!(GAP_COUNTER_BUTTONS > GAP_COUNTER_ABOVE) };
         assert_eq!(
             gap(counter.y + COUNTER_LINE_H, layout.deny_rect.top),
             GAP_COUNTER_BUTTONS
