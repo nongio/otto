@@ -41,9 +41,8 @@ const BODY_GAP: f32 = 8.0;
 const OPTION_H: f32 = 44.0;
 const OPTION_GAP: f32 = 6.0;
 const OPTION_RADIUS: f32 = 11.0;
-/// Space kept clear at the right edge of an option row for the checkmark.
-/// Reserved on unselected rows too, so labels don't reflow as selection moves.
-const CHECK_GUTTER: f32 = 30.0;
+/// Right padding inside an option row, matching the badge's inset on the left.
+const OPTION_PAD_RIGHT: f32 = 14.0;
 /// Gap between an option row and its keyboard focus ring. Kept under half of
 /// `OPTION_GAP` so rings never touch the next row.
 const FOCUS_RING_OUTSET: f32 = 2.5;
@@ -482,7 +481,7 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
         for (oi, opt) in group.options.iter().enumerate() {
             let (label, description) = split_option_label(&opt.label);
             let text_x = option_text_x(!opt.icon.is_empty());
-            let col_w = (w - PAD - CHECK_GUTTER) - (PAD + text_x);
+            let col_w = (w - PAD - OPTION_PAD_RIGHT) - (PAD + text_x);
             let label_lines = wrap(label, &label_font, col_w, OPTION_LABEL_MAX_LINES);
             let desc_lines = wrap(description, &desc_font, col_w, OPTION_DESC_MAX_LINES);
             let text_h = OPTION_LABEL_LINE_H * label_lines.len().max(1) as f32
@@ -1050,23 +1049,6 @@ pub fn draw_dialog(
                 dim
             },
         );
-
-        // Checkmark on the selected row.
-        if is_selected {
-            let mut ck = Paint::default();
-            ck.set_anti_alias(true);
-            ck.set_color(on_accent);
-            ck.set_style(skia_safe::paint::Style::Stroke);
-            ck.set_stroke_width(2.0);
-            ck.set_stroke_cap(skia_safe::paint::Cap::Round);
-            let mx = rect.right - 22.0;
-            let my = rect.center_y();
-            let mut p = skia_safe::PathBuilder::new();
-            p.move_to((mx - 5.0, my));
-            p.line_to((mx - 1.5, my + 4.0));
-            p.line_to((mx + 5.0, my - 5.0));
-            canvas.draw_path(&p.detach(), &ck);
-        }
     }
     canvas.restore();
 
