@@ -44,6 +44,9 @@ const OPTION_RADIUS: f32 = 11.0;
 /// Space kept clear at the right edge of an option row for the checkmark.
 /// Reserved on unselected rows too, so labels don't reflow as selection moves.
 const CHECK_GUTTER: f32 = 30.0;
+/// Gap between an option row and its keyboard focus ring. Kept under half of
+/// `OPTION_GAP` so rings never touch the next row.
+const FOCUS_RING_OUTSET: f32 = 2.5;
 const BTN_H: f32 = 36.0;
 const BTN_GAP: f32 = 10.0;
 const BTN_RADIUS: f32 = 10.0;
@@ -213,8 +216,20 @@ impl Presence {
         }
     }
 
-    /// The user clicked the open panel, which gives it the keyboard.
-    pub fn clicked(&mut self) {
+    /// Which shape the dialog takes: the open panel, the circle, or — while
+    /// the pointer is on the circle — the peek pill an island grows to.
+    pub fn shape(&self, hovered: bool) -> Shape {
+        match (self.collapsed, hovered) {
+            (false, _) => Shape::Panel,
+            (true, false) => Shape::Circle,
+            (true, true) => Shape::Peek,
+        }
+    }
+
+    /// The open panel got the keyboard: on presenting, on a click, or on
+    /// opening from the circle. It now waits for that focus to leave rather
+    /// than for the read window.
+    pub fn focus_gained(&mut self) {
         if !self.collapsed {
             self.focused = true;
             self.read_until = None;
@@ -253,6 +268,18 @@ impl Presence {
         self.read_until = None;
         true
     }
+}
+
+/// The shape a presented dialog takes on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    /// The full panel below the island bar.
+    Panel,
+    /// Shrunk: a Mini-sized circle at the end of the island row.
+    Circle,
+    /// Shrunk, with the pointer on it: grown to the Compact pill, icon and
+    /// title, as a hovered island does.
+    Peek,
 }
 
 /// What was hit by a pointer, in panel-local coordinates.
@@ -556,6 +583,60 @@ pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32, scroll: f32) -> Option<
 }
 
 // ---------------------------------------------------------------------------
+// Keyboard navigation
+// ---------------------------------------------------------------------------
+
+/// The index into [`DialogLayout::option_rects`] of `option` in `group`.
+pub fn row_of(layout: &DialogLayout, group: usize, option: usize) -> Option<usize> {
+    layout
+        .option_rects
+        .iter()
+        .position(|(g, o, _)| *g == group && *o == option)
+}
+
+/// The row the keyboard is on: `focus`, or else the selected option of the
+/// first group. `None` when the dialog has no options.
+pub fn keyboard_row(
+    layout: &DialogLayout,
+    selected: &[usize],
+    focus: Option<usize>,
+) -> Option<usize> {
+    focus
+        .filter(|row| *row < layout.option_rects.len())
+        .or_else(|| {
+            let (group, _, _) = layout.option_rects.first()?;
+            row_of(layout, *group, selected.get(*group).copied().unwrap_or(0))
+        })
+}
+
+/// The row `delta` steps from `current` (Up is `-1`, Down `+1`), stopping at
+/// the first and last rows. Rows run through every group in order.
+pub fn step_row(layout: &DialogLayout, current: Option<usize>, delta: i32) -> Option<usize> {
+    let last = layout.option_rects.len().checked_sub(1)?;
+    let Some(current) = current else {
+        return Some(0);
+    };
+    Some((current as i64 + delta as i64).clamp(0, last as i64) as usize)
+}
+
+/// The scroll that brings `row` fully into view, moving as little as
+/// possible from `scroll`.
+pub fn reveal(layout: &DialogLayout, row: usize, scroll: f32) -> f32 {
+    let Some((_, _, rect)) = layout.option_rects.get(row) else {
+        return scroll;
+    };
+    let view_h = layout.viewport.height();
+    let mut scroll = scroll;
+    if rect.bottom + OPTION_GAP > scroll + view_h {
+        scroll = rect.bottom + OPTION_GAP - view_h;
+    }
+    if rect.top - OPTION_GAP < scroll {
+        scroll = rect.top - OPTION_GAP;
+    }
+    scroll.clamp(0.0, layout.max_scroll())
+}
+
+// ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
 
@@ -663,13 +744,15 @@ fn draw_lines(
 /// canvas. The buffer is sized to the panel by `draw_content`, so content is
 /// drawn from the origin, matching the pill/card model.
 /// `selected[gi]` is the chosen option index for group `gi`; `scroll` is how
-/// far the content is scrolled.
+/// far the content is scrolled. `focus_row`, when the panel holds the
+/// keyboard, is the option row that gets the focus ring.
 pub fn draw_dialog(
     canvas: &Canvas,
     view: &DialogView,
     selected: &[usize],
     layout: &DialogLayout,
     scroll: f32,
+    focus_row: Option<usize>,
 ) {
     canvas.save();
 
@@ -739,8 +822,11 @@ pub fn draw_dialog(
     // Option rows.
     let label_font = font(OPTION_LABEL_SIZE, 500);
     let desc_font = font(OPTION_DESC_SIZE, 400);
-    for ((gi, oi, rect), (label_lines, desc_lines)) in
-        layout.option_rects.iter().zip(&layout.option_text)
+    for (row, ((gi, oi, rect), (label_lines, desc_lines))) in layout
+        .option_rects
+        .iter()
+        .zip(&layout.option_text)
+        .enumerate()
     {
         let Some(group) = view.choices.get(*gi) else {
             continue;
@@ -761,6 +847,18 @@ pub fn draw_dialog(
             RRect::new_rect_xy(*rect, OPTION_RADIUS, OPTION_RADIUS),
             &row_bg,
         );
+        // Focus ring: where the arrow keys are, drawn just outside the row so
+        // it reads on the accent fill of a selected row too.
+        if focus_row == Some(row) {
+            let mut ring = Paint::default();
+            ring.set_anti_alias(true);
+            ring.set_color(accent);
+            ring.set_style(skia_safe::paint::Style::Stroke);
+            ring.set_stroke_width(2.0);
+            let outer = rect.with_outset((FOCUS_RING_OUTSET, FOCUS_RING_OUTSET));
+            let r = OPTION_RADIUS + FOCUS_RING_OUTSET;
+            canvas.draw_rrect(RRect::new_rect_xy(outer, r, r), &ring);
+        }
 
         if !opt.icon.is_empty() {
             draw_icon(
@@ -1177,9 +1275,68 @@ mod tests {
     fn a_clicked_dialog_shrinks_when_focus_moves_away() {
         let now = Instant::now();
         let mut p = Presence::new(false, now);
-        p.clicked();
+        p.focus_gained();
         assert!(!p.tick(now + Duration::from_secs(DIALOG_READ_SECS * 2)));
         assert!(p.focus_lost());
         assert!(p.collapsed());
+    }
+
+    #[test]
+    fn a_shrunk_dialog_peeks_while_hovered() {
+        let now = Instant::now();
+        let mut p = Presence::new(false, now);
+        assert_eq!(p.shape(true), Shape::Panel, "the open panel never peeks");
+        assert!(p.focus_lost());
+        assert_eq!(p.shape(false), Shape::Circle);
+        assert_eq!(p.shape(true), Shape::Peek);
+        // Hovering is not opening: still shrunk, still pending.
+        assert!(p.collapsed());
+        p.expand();
+        assert_eq!(p.shape(true), Shape::Panel);
+    }
+
+    #[test]
+    fn arrow_keys_walk_every_option_row_and_stop_at_the_ends() {
+        let mut v = view("Answer", "");
+        v.choices = vec![
+            group("a", "First?", &["One", "Two"]),
+            group("b", "Second?", &["Three", "Four", "Five"]),
+        ];
+        let layout = dialog_layout(&v);
+        // Starts on the first group's selection.
+        let start = keyboard_row(&layout, &[1, 0], None);
+        assert_eq!(start, Some(1));
+        let down = step_row(&layout, start, 1);
+        assert_eq!(down, Some(2));
+        assert_eq!(layout.option_rects[2].0, 1, "into the second group");
+        assert_eq!(step_row(&layout, Some(4), 1), Some(4));
+        assert_eq!(step_row(&layout, Some(0), -1), Some(0));
+        assert_eq!(row_of(&layout, 1, 2), Some(4));
+
+        let empty = dialog_layout(&view("Allow", ""));
+        assert_eq!(keyboard_row(&empty, &[], None), None);
+        assert_eq!(step_row(&empty, None, 1), None);
+    }
+
+    #[test]
+    fn moving_the_keyboard_scrolls_its_row_into_view() {
+        let mut v = view("Answer", "");
+        v.subtitle = LONG.into();
+        v.choices = (0..4)
+            .map(|i| group(&format!("q{i}"), LONG, &["One", "Two", "Three", "Four"]))
+            .collect();
+        let layout = dialog_layout(&v);
+        assert!(layout.max_scroll() > 0.0);
+        let last = layout.option_rects.len() - 1;
+        let scroll = reveal(&layout, last, 0.0);
+        let rect = layout.option_rects[last].2;
+        assert!(rect.bottom - scroll <= layout.viewport.bottom);
+        assert!(rect.top - scroll >= 0.0);
+        // Back to the first row scrolls back up.
+        let first = layout.option_rects[0].2;
+        let up = reveal(&layout, 0, scroll);
+        assert!(first.top - up >= 0.0);
+        // A row already in view doesn't move anything.
+        assert_eq!(reveal(&layout, 0, 0.0), 0.0);
     }
 }

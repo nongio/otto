@@ -94,8 +94,9 @@ A request carries:
 4. Renderer presents the dialog:
    - If `modal`, it takes exclusive keyboard focus on an on-top layer and must
      not be occluded or click-through while pending (anti-spoofing).
-   - If not `modal`, it takes no keyboard focus on arrival and catches clicks
-     only on itself; it can shrink out of the way without answering.
+   - If not `modal`, it takes the keyboard on arrival without grabbing it,
+     catches clicks only on itself, and can shrink out of the way without
+     answering.
    - It shows title/subtitle/body/icon and any choice groups as interactive
      controls, plus grant and deny actions.
    - Default selections are pre-highlighted.
@@ -227,25 +228,42 @@ label 12, option label 3, description 4); text past a cap ends in an ellipsis.
 
 A dialog presented with `modal = false` asks without taking over:
 
-- It opens as the usual panel below the island bar, with **on-demand** keyboard
-  interactivity, and its input region covers only the panel. Keys keep going
-  to the focused window and clicks beside the panel reach whatever is behind.
-  Clicking the panel gives it the keyboard (`Esc` / `Enter` then work).
+- It opens as the usual panel below the island bar and its input region covers
+  only the panel: clicks beside it reach whatever is behind.
+- It **takes the keyboard** as it opens, so it can be answered straight away.
+  The island layer switches to *exclusive* keyboard interactivity just long
+  enough for the compositor to focus it (Otto focuses an overlay surface when
+  it switches to exclusive), then back to *on-demand* — once it has the focus,
+  or after 400 ms if the focus never comes (a locked session). The focus stays;
+  nothing is grabbed. The same happens when it opens again from its circle.
+  Notification islands never take the keyboard.
+- Keys while it holds the keyboard: **Up** / **Down** (and **Tab**) move through
+  the option rows of every group in order, stopping at the ends, selecting the
+  option they land on and scrolling it into view; the row the keyboard is on
+  gets a focus ring (accent stroke just outside the row), drawn only while the
+  panel holds the keyboard. The ring starts on the first group's selection.
+  **Enter** confirms (when there is a grant button), **Esc** denies.
+- Clicking an option or button shows the hand cursor over it, and moves the
+  focus ring to a clicked option.
 - It **shrinks into a circle** — a Mini-sized island showing the dialog's icon,
   at the end of the island row, using the same springs an island moves and
   resizes with — when the user moves on:
-  - the keyboard focus it was given by a click leaves (another window, or a
-    click on the desktop: the compositor hands the keyboard back from an
-    on-demand overlay surface the same way it does from a top-layer panel), or
-  - it was never clicked and 12 seconds pass without the pointer on it (the
-    pointer resting on the panel, or scrolling it, restarts the count).
+  - the keyboard focus leaves (a click on another window, or on the desktop:
+    the compositor hands the keyboard back from an on-demand overlay surface the
+    same way it does from a top-layer panel), or
+  - it never got the keyboard and 12 seconds pass without the pointer on it
+    (the pointer resting on the panel, or scrolling it, restarts the count).
+- Hovering the circle **peeks**: it grows to the Compact island pill — icon and
+  the dialog's title — as a hovered island does, with the hand cursor, and
+  shrinks back when the pointer leaves. The row makes room for it.
 - Shrinking is **not an answer**: the D-Bus call stays pending, and queued
-  dialogs behind it keep waiting. Clicking the circle opens the panel again,
-  with the keyboard, and it then only shrinks on focus loss.
-- While shrunk, `Esc` and `Enter` do nothing, even if the island layer holds the
-  keyboard for a notification.
+  dialogs behind it keep waiting. Clicking the circle (or its peek) opens the
+  panel again, with the keyboard, and it then only shrinks on focus loss.
+- While shrunk, keys do nothing, even if the island layer holds the keyboard
+  for a notification.
 - A non-modal dialog does not claim the modal-overlay treatment below, so it is
-  not shown over a fullscreen window.
+  not shown over a fullscreen window. Its brief exclusive request while taking
+  the keyboard does count as a modal overlay for that moment.
 
 A modal dialog never shrinks.
 

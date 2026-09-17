@@ -35,7 +35,7 @@ fn action_focus(id: u64, key: &str) -> otto_kit::focus::FocusId {
     otto_kit::focus::FocusId::new(format!("island-{id}-{key}"))
 }
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
-use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView, Presence};
+use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView, Presence, Shape};
 use crate::dock_badges::DockBadges;
 use crate::renderer::{
     animate_to, apply_island_style, draw_content, set_size_and_position, COMPACT_H, MINI_H,
@@ -143,6 +143,9 @@ struct DialogPanel {
     scroll: f32,
     /// Last geometry target (w, h, cx, cy) — animate only when it changes.
     last_target: (f32, f32, f32, f32),
+    /// The option row the arrow keys last moved to (an index into the
+    /// layout's `option_rects`); `None` until they or a click move it.
+    focus_row: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,8 +182,14 @@ struct IslandApp {
     /// The currently-presented Access-style dialog, if any.
     dialog: Option<DialogPanel>,
     /// Whether the layer surface currently holds exclusive keyboard
-    /// interactivity for a modal dialog — see `sync_dialog_modality`.
-    dialog_modal_active: bool,
+    /// interactivity — see `sync_dialog_keyboard`.
+    keyboard_exclusive: bool,
+    /// While set, a non-modal dialog is taking the keyboard: the layer asks
+    /// for exclusive interactivity, which the compositor answers by focusing
+    /// it, and drops back to on-demand once focused or at this deadline.
+    focus_pulse_until: Option<std::time::Instant>,
+    /// Whether the pointer is on the shrunk dialog's circle, which then peeks.
+    dialog_hovered: bool,
     /// Center x of the circle a shrunk dialog sits in, at the end of the
     /// island row — placed by `layout`.
     dialog_circle_x: f32,
@@ -206,7 +215,9 @@ impl IslandApp {
             last_layer_size: None,
             last_input_region: None,
             dialog: None,
-            dialog_modal_active: false,
+            keyboard_exclusive: false,
+            focus_pulse_until: None,
+            dialog_hovered: false,
             dialog_circle_x: LAYER_W as f32 / 2.0,
             dock_badges: DockBadges::new(),
         }
@@ -411,8 +422,9 @@ impl IslandApp {
     }
 
     fn layout(&mut self, notifications: &[Activity], reposition_delay: bool) {
-        // A shrunk dialog takes a circle's slot at the end of the row.
-        let dialog_slot = self.dialog.as_ref().is_some_and(|p| p.presence.collapsed());
+        // A shrunk dialog takes a slot at the end of the row: a circle, or the
+        // peek pill while hovered.
+        let dialog_slot = self.dialog_shrunk_size().map(|(w, _)| w);
         if self.islands.is_empty() {
             self.dialog_circle_x = self.layer_width() / 2.0;
             let size_changed = self.update_layer_size();
@@ -500,8 +512,8 @@ impl IslandApp {
 
         let mut total_w: f32 =
             group_widths.iter().sum::<f32>() + (group_widths.len().saturating_sub(1)) as f32 * GAP;
-        if dialog_slot {
-            total_w += GAP + MINI_H;
+        if let Some(slot_w) = dialog_slot {
+            total_w += GAP + slot_w;
         }
 
         // The row stays centred on its current width, so an island growing
@@ -527,7 +539,7 @@ impl IslandApp {
             group_x += group_widths[gi] + GAP;
         }
         // Past the last group (and its trailing gap): the dialog's circle.
-        self.dialog_circle_x = group_x + MINI_H / 2.0;
+        self.dialog_circle_x = group_x + dialog_slot.unwrap_or(MINI_H) / 2.0;
 
         // The push travels along the row rather than hitting every bubble at
         // once: whichever island is currently grown is the source, and each
@@ -891,7 +903,8 @@ impl IslandApp {
             state.front_dialog_view()
         };
 
-        let circle_before = self.dialog.as_ref().is_some_and(|p| p.presence.collapsed());
+        let circle_before = self.dialog_shrunk_size();
+        let shown_before = self.dialog.as_ref().map(|p| p.id);
         match (front, self.dialog.as_ref().map(|p| p.id)) {
             // Same dialog already presented — just (re)render below.
             (Some(view), Some(cur)) if view.id == cur => {
@@ -920,35 +933,104 @@ impl IslandApp {
         }
         // A shrunk dialog answered, withdrawn or replaced frees its slot in
         // the island row.
-        let circle_after = self.dialog.as_ref().is_some_and(|p| p.presence.collapsed());
+        let circle_after = self.dialog_shrunk_size();
         if circle_before != circle_after {
             self.dialog_presence_changed();
         }
+        // A newly presented non-modal dialog takes the keyboard, so it can be
+        // answered from it straight away.
+        let shown_after = self.dialog.as_ref().map(|p| (p.id, p.view.modal));
+        if let Some((id, false)) = shown_after {
+            if shown_before != Some(id) {
+                self.dialog_hovered = false;
+                self.request_dialog_focus();
+            }
+        }
 
-        self.sync_dialog_modality();
+        self.sync_dialog_keyboard();
         self.render_dialog();
         let size_changed = self.update_layer_size();
         self.update_input_region(size_changed);
     }
 
-    /// Ask for exclusive keyboard interactivity while a modal dialog is up.
+    /// Ask for exclusive keyboard interactivity while a modal dialog is up,
+    /// and briefly while a non-modal one takes the keyboard.
     ///
-    /// This is also how the compositor learns a prompt is on screen: fullscreen
-    /// hides the layer-shell chrome and scans the window out directly, and an
-    /// exclusive overlay surface is what makes it keep compositing so the
-    /// dialog is actually visible over a fullscreen window.
-    fn sync_dialog_modality(&mut self) {
+    /// A modal dialog holding it is also how the compositor learns a prompt is
+    /// on screen: fullscreen hides the layer-shell chrome and scans the window
+    /// out directly, and an exclusive overlay surface is what makes it keep
+    /// compositing so the dialog is actually visible over a fullscreen window.
+    ///
+    /// A non-modal dialog only wants the focus, not the grab. The compositor
+    /// focuses an overlay surface when it switches to exclusive, and keeps the
+    /// focus there when it drops back to on-demand — from where a click
+    /// elsewhere takes it away again, which shrinks the dialog.
+    fn sync_dialog_keyboard(&mut self) {
         let modal = self.dialog.as_ref().is_some_and(|p| p.view.modal);
-        if modal == self.dialog_modal_active {
+        let pulse = self.dialog.is_some() && self.focus_pulse_until.is_some();
+        let exclusive = modal || pulse;
+        if exclusive == self.keyboard_exclusive {
             return;
         }
-        self.dialog_modal_active = modal;
+        self.keyboard_exclusive = exclusive;
         if let Some(layer) = &self.layer_surface {
-            layer.set_keyboard_interactivity(if modal {
+            layer.set_keyboard_interactivity(if exclusive {
                 KeyboardInteractivity::Exclusive
             } else {
                 KeyboardInteractivity::OnDemand
             });
+            // Interactivity is double-buffered state: it only applies on commit.
+            layer.base_surface().wl_surface().commit();
+        }
+    }
+
+    /// Give the open non-modal dialog the keyboard — see `sync_dialog_keyboard`.
+    fn request_dialog_focus(&mut self) {
+        /// How long the layer holds exclusive interactivity waiting for the
+        /// focus, if it never arrives (a locked session, say).
+        const FOCUS_PULSE: Duration = Duration::from_millis(400);
+        if self
+            .dialog
+            .as_ref()
+            .is_none_or(|p| p.view.modal || p.presence.collapsed())
+        {
+            return;
+        }
+        self.focus_pulse_until = Some(std::time::Instant::now() + FOCUS_PULSE);
+        self.sync_dialog_keyboard();
+    }
+
+    /// End a focus pulse once the keyboard has arrived, or its time is up.
+    fn settle_focus_pulse(&mut self, now: std::time::Instant) {
+        let Some(until) = self.focus_pulse_until else {
+            return;
+        };
+        let focused = AppContext::keyboard_focus().is_some();
+        if !focused && now < until {
+            return;
+        }
+        self.focus_pulse_until = None;
+        if focused {
+            if let Some(panel) = self.dialog.as_mut() {
+                panel.presence.focus_gained();
+                tracing::info!(id = panel.id, "dialog took the keyboard");
+            }
+        } else {
+            tracing::info!("dialog did not get the keyboard");
+        }
+        self.sync_dialog_keyboard();
+        // Draw the focus ring now that the keyboard is here.
+        self.render_dialog();
+    }
+
+    /// Size of the shrunk dialog's slot in the island row — the circle, or the
+    /// peek pill while hovered — or `None` when no dialog is shrunk.
+    fn dialog_shrunk_size(&self) -> Option<(f32, f32)> {
+        let panel = self.dialog.as_ref()?;
+        match panel.presence.shape(self.dialog_hovered) {
+            Shape::Panel => None,
+            Shape::Circle => Some((MINI_H, MINI_H)),
+            Shape::Peek => Some((renderer::pill_width(&panel.view.title), COMPACT_H)),
         }
     }
 
@@ -985,6 +1067,7 @@ impl IslandApp {
             entered: false,
             scroll: 0.0,
             last_target: (0.0, 0.0, 0.0, 0.0),
+            focus_row: None,
         })
     }
 
@@ -993,29 +1076,27 @@ impl IslandApp {
     fn render_dialog(&mut self) {
         let layer_w = self.layer_width();
         let circle_x = self.dialog_circle_x;
+        let shrunk = self.dialog_shrunk_size();
+        let hovered = self.dialog_hovered;
+        let has_keyboard = AppContext::keyboard_focus().is_some();
         let Some(panel) = self.dialog.as_mut() else {
             return;
         };
-        let collapsed = panel.presence.collapsed();
+        let shape = panel.presence.shape(hovered);
         let layout = dialog::dialog_layout(&panel.view);
         panel.scroll = panel.scroll.clamp(0.0, layout.max_scroll());
 
-        let (w, h, cx, cy, radius) = if collapsed {
-            (
-                MINI_H,
-                MINI_H,
-                circle_x,
-                BAR_HEIGHT / 2.0,
-                MINI_H as f64 / 2.0,
-            )
-        } else {
-            (
+        let (w, h, cx, cy, radius) = match shrunk {
+            // The circle and the peek pill sit in the island row, sized and
+            // rounded exactly as a Mini or Compact island is.
+            Some((w, h)) => (w, h, circle_x, BAR_HEIGHT / 2.0, h as f64 / 2.0),
+            None => (
                 layout.width,
                 layout.height,
                 layer_w / 2.0,
                 DIALOG_TOP + layout.height / 2.0,
                 dialog::PANEL_RADIUS as f64,
-            )
+            ),
         };
         panel.origin = (cx - w / 2.0, cy - h / 2.0);
         panel.layout_w = w;
@@ -1032,11 +1113,15 @@ impl IslandApp {
         let selected = panel.selected.clone();
         let view = panel.view.clone();
         let scroll = panel.scroll;
-        draw_content(&mut panel.surface, w, h, |canvas| {
-            if collapsed {
-                renderer::draw_mini(canvas, &view.icon, w, h);
-            } else {
-                dialog::draw_dialog(canvas, &view, &selected, &layout, scroll);
+        // The ring shows where the arrow keys are, only while they reach us.
+        let focus_row = has_keyboard
+            .then(|| dialog::keyboard_row(&layout, &selected, panel.focus_row))
+            .flatten();
+        draw_content(&mut panel.surface, w, h, |canvas| match shape {
+            Shape::Circle => renderer::draw_mini(canvas, &view.icon, w, h),
+            Shape::Peek => renderer::draw_pill(canvas, &view.icon, &view.title, w, h),
+            Shape::Panel => {
+                dialog::draw_dialog(canvas, &view, &selected, &layout, scroll, focus_row)
             }
         });
 
@@ -1087,20 +1172,25 @@ impl IslandApp {
                 return false;
             }
             panel.presence.expand();
+            self.dialog_hovered = false;
             self.dialog_presence_changed();
+            // The click gave the layer the keyboard already; make sure of it.
+            self.request_dialog_focus();
             return true;
         }
         if !on_shape {
             // A modal dialog swallows clicks beside it too.
             return panel.view.modal;
         }
-        panel.presence.clicked();
+        // The press gave the (on-demand) layer the keyboard.
+        panel.presence.focus_gained();
         let layout = dialog::dialog_layout(&panel.view);
         match dialog::hit_test(&layout, px - ox, py - oy, panel.scroll) {
             Some(DialogHit::Option { group, option }) => {
                 if let Some(sel) = panel.selected.get_mut(group) {
                     *sel = option;
                 }
+                panel.focus_row = dialog::row_of(&layout, group, option);
                 self.render_dialog();
             }
             Some(DialogHit::Grant) => self.resolve_active_dialog(dialog::RESPONSE_GRANTED),
@@ -1110,6 +1200,49 @@ impl IslandApp {
             None => {}
         }
         true
+    }
+
+    /// Whether (px, py) is on the shrunk dialog's circle (or peek pill).
+    fn over_shrunk_dialog(&self, px: f32, py: f32) -> bool {
+        let Some((w, h)) = self.dialog_shrunk_size() else {
+            return false;
+        };
+        let (cx, cy) = (self.dialog_circle_x, BAR_HEIGHT / 2.0);
+        (px - cx).abs() <= w / 2.0 && (py - cy).abs() <= h / 2.0
+    }
+
+    /// Whether (px, py) is on something in the open dialog that a click acts
+    /// on: an option row or a button.
+    fn over_dialog_control(&self, px: f32, py: f32) -> bool {
+        let Some(panel) = self.dialog.as_ref() else {
+            return false;
+        };
+        if !self.over_open_dialog(px, py) {
+            return false;
+        }
+        let (ox, oy) = panel.origin;
+        let layout = dialog::dialog_layout(&panel.view);
+        dialog::hit_test(&layout, px - ox, py - oy, panel.scroll).is_some()
+    }
+
+    /// Move the keyboard `delta` option rows, selecting the option it lands
+    /// on, and scroll it into view.
+    fn move_dialog_focus(&mut self, delta: i32) {
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
+        let layout = dialog::dialog_layout(&panel.view);
+        let current = dialog::keyboard_row(&layout, &panel.selected, panel.focus_row);
+        let Some(row) = dialog::step_row(&layout, current, delta) else {
+            return;
+        };
+        let (group, option, _) = layout.option_rects[row];
+        if let Some(sel) = panel.selected.get_mut(group) {
+            *sel = option;
+        }
+        panel.focus_row = Some(row);
+        panel.scroll = dialog::reveal(&layout, row, panel.scroll);
+        self.render_dialog();
     }
 
     /// Whether (px, py) is on the open dialog panel.
@@ -1386,6 +1519,8 @@ impl App for IslandApp {
             drop(state);
         }
 
+        self.settle_focus_pulse(now);
+
         // An untouched non-modal dialog shrinks once its read window is over.
         if let Some(panel) = self.dialog.as_mut() {
             if panel.presence.tick(now) {
@@ -1429,6 +1564,11 @@ impl App for IslandApp {
             deadlines.push(now + Duration::from_millis(500));
             deadlines.extend(panel.presence.deadline());
         }
+        // Waiting on the keyboard: look again soon, so the exclusive grab it
+        // needs is dropped as soon as the focus has arrived.
+        if self.focus_pulse_until.is_some() {
+            deadlines.push(now + Duration::from_millis(30));
+        }
         // Focus timeout only counts down when it can actually fire (see on_update).
         if self.focused_island.is_some()
             && !self.islands.iter().any(|i| i.mode == IslandMode::Expanded)
@@ -1463,15 +1603,19 @@ impl App for IslandApp {
         {
             return;
         }
-        // evdev keycodes: ESC = 1, ENTER = 28.
+        // evdev keycodes: ESC = 1, TAB = 15, ENTER = 28, KP_ENTER = 96,
+        // UP = 103, DOWN = 108.
         match key {
             1 => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
+            103 => self.move_dialog_focus(-1),
+            108 | 15 => self.move_dialog_focus(1),
             // Enter confirms only when there is a grant button to confirm with;
             // it never triggers the open button.
-            28 if self
-                .dialog
-                .as_ref()
-                .is_some_and(|p| !p.view.grant_label.is_empty()) =>
+            28 | 96
+                if self
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|p| !p.view.grant_label.is_empty()) =>
             {
                 self.resolve_active_dialog(dialog::RESPONSE_GRANTED)
             }
@@ -1519,6 +1663,15 @@ impl App for IslandApp {
                             panel.presence.pointer_over(std::time::Instant::now());
                         }
                     }
+                    // The shrunk dialog peeks while the pointer is on it.
+                    let over_circle = self.over_shrunk_dialog(px as f32, py as f32);
+                    if over_circle != self.dialog_hovered {
+                        self.dialog_hovered = over_circle;
+                        let mut state = self.state.lock().unwrap();
+                        state.dirty = true;
+                    }
+                    let over_dialog_control =
+                        over_circle || self.over_dialog_control(px as f32, py as f32);
                     let hit = self.hit_test(px as f32, py as f32);
                     let new_island = hit.as_ref().map(|(id, _)| *id);
                     let new_app = new_island.and_then(|id| {
@@ -1534,16 +1687,20 @@ impl App for IslandApp {
                         let mut state = self.state.lock().unwrap();
                         state.dirty = true;
                     }
-                    if hit.is_some() {
+                    if hit.is_some() || over_dialog_control {
                         AppContext::set_cursor_shape(otto_kit::CursorShape::Pointer);
                     } else {
                         AppContext::set_cursor_shape(otto_kit::CursorShape::Default);
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    if self.hovered_app.is_some() || self.hovered_island.is_some() {
+                    if self.hovered_app.is_some()
+                        || self.hovered_island.is_some()
+                        || self.dialog_hovered
+                    {
                         self.hovered_app = None;
                         self.hovered_island = None;
+                        self.dialog_hovered = false;
                         let mut state = self.state.lock().unwrap();
                         state.dirty = true;
                     }
