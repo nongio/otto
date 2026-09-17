@@ -616,7 +616,7 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
 /// current centre x and height in logical points.
 pub fn animate_sling(surface: &otto_kit::SubsurfaceSurface, cx: f32, h: f32) {
     /// How long the shot takes, pull-back included.
-    const DURATION: f64 = 0.38;
+    const DURATION: f64 = 0.46;
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
