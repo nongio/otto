@@ -870,9 +870,53 @@ pub mod styles {
     };
 }
 
+/// The character boundary of `text` nearest `x` points from its left edge,
+/// drawn in `font`.
+///
+/// What a click in a line of text means: the caret goes to the boundary the
+/// pointer is closest to, so pressing on the left half of a character puts it
+/// before that character and on the right half after it. `x` past either end
+/// answers that end.
+pub fn offset_at(font: &Font, text: &str, x: f32) -> usize {
+    if x <= 0.0 {
+        return 0;
+    }
+    let mut best = (0usize, x.abs());
+    let mut boundary = |offset: usize, width: f32| {
+        let distance = (x - width).abs();
+        if distance < best.1 {
+            best = (offset, distance);
+        }
+    };
+    for (offset, _) in text.char_indices().skip(1) {
+        boundary(offset, measure_runs(font, &text[..offset]));
+    }
+    boundary(text.len(), measure_runs(font, text));
+    best.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a press in a line of text puts the caret: the boundary nearest
+    /// it, and the ends when it is past either of them.
+    #[test]
+    fn a_caret_goes_to_the_boundary_nearest_the_point() {
+        let font = get_font_with_fallback("sans-serif", FontStyle::normal(), 16.0);
+        let text = "selectable";
+        assert_eq!(offset_at(&font, text, -10.0), 0);
+        assert_eq!(offset_at(&font, text, 0.0), 0);
+        assert_eq!(offset_at(&font, text, 10_000.0), text.len());
+        // Either side of the boundary after "select" answers that boundary.
+        let boundary = measure_runs(&font, "select");
+        assert_eq!(offset_at(&font, text, boundary), 6);
+        assert_eq!(offset_at(&font, text, boundary - 1.0), 6);
+        assert_eq!(offset_at(&font, text, boundary + 1.0), 6);
+        // And a caret inside a character goes to the half it is nearer.
+        let next = measure_runs(&font, "selecta");
+        assert_eq!(offset_at(&font, text, (boundary + next) / 2.0 + 1.0), 7);
+    }
 
     #[test]
     fn test_font_cache() {

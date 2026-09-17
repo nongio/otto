@@ -512,6 +512,15 @@ fn font_for(base: TextStyle, span: SpanStyle) -> Font {
 // Drawing
 // ---------------------------------------------------------------------------
 
+impl Run {
+    /// The font this run is drawn in, for a host that has to measure inside
+    /// it — where a caret falls in a line of an answer, say. The run's own
+    /// style is folded in here, so the measurement matches what was painted.
+    pub fn font(&self) -> Font {
+        font_for(self.base, self.style)
+    }
+}
+
 impl Line {
     /// The link under `x`, in the space [`wrap`] laid this line out in.
     ///

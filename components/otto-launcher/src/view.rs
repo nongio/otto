@@ -42,7 +42,8 @@ use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
 use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y};
-use crate::source::Item;
+use crate::selection::Span;
+use crate::source::{Activity, Item};
 
 /// Width of the card. Wide enough for a window title and its application, and
 /// narrow enough to stay a dialog rather than become a page.
@@ -64,6 +65,8 @@ pub const RADIUS: f32 = 10.0;
 const ICON: f32 = 28.0;
 /// The icon on a compact row, such as a file attached to an ask request.
 const SMALL_ICON: f32 = 18.0;
+/// The activity dot beside a row with no icon, such as an agent session.
+const DOT_RADIUS: f32 = 4.0;
 const ROW_INSET: f32 = 8.0;
 /// Corner radius of the selection's highlight.
 pub const HIGHLIGHT_RADIUS: f32 = 9.0;
@@ -513,9 +516,77 @@ impl Palette {
         )
     }
 
+    /// Every piece of text in the ask log, in reading order, with the box it
+    /// is painted in — what [`crate::selection`] selects over.
+    ///
+    /// This walks the log exactly as [`Palette::paint_log`] does, because a
+    /// highlight that does not sit on the words is worse than no highlight at
+    /// all: the two have to agree about where each line was put.
+    pub fn log_spans(&self, lines: &[Line]) -> Vec<Span> {
+        let plain = self.log_font(Style::Answer);
+        let mut spans = Vec::new();
+        let mut row = 0usize;
+        for line in lines {
+            match &line.kind {
+                Kind::Text { text, style } => {
+                    let font = self.log_font(*style);
+                    let width = measure_runs(&font, text);
+                    spans.push(Span {
+                        rect: Rect::from_xywh(LOG_INSET, line.top, width, LOG_LINE_H),
+                        text: text.clone(),
+                        font,
+                        line: row,
+                    });
+                    row += 1;
+                }
+                Kind::Bubble {
+                    lines: words,
+                    width,
+                    ..
+                } => {
+                    let left = LOG_INSET + LOG_W - width + BUBBLE_PAD_X;
+                    for (index, words) in words.iter().enumerate() {
+                        let top = line.top + BUBBLE_PAD_Y + index as f32 * LOG_LINE_H;
+                        spans.push(Span {
+                            rect: Rect::from_xywh(
+                                left,
+                                top,
+                                measure_runs(&plain, words),
+                                LOG_LINE_H,
+                            ),
+                            text: words.clone(),
+                            font: plain.clone(),
+                            line: row,
+                        });
+                        row += 1;
+                    }
+                }
+                Kind::Document(doc) => {
+                    for text_line in doc {
+                        for run in &text_line.runs {
+                            spans.push(Span {
+                                rect: Rect::from_xywh(
+                                    LOG_INSET + run.x,
+                                    line.top + text_line.top,
+                                    run.width,
+                                    text_line.height,
+                                ),
+                                text: run.text.clone(),
+                                font: run.font(),
+                                line: row,
+                            });
+                        }
+                        row += 1;
+                    }
+                }
+            }
+        }
+        spans
+    }
+
     /// Paint the lines of the ask log that fall inside `band`, in the list's
     /// content coordinates.
-    pub fn paint_log(&self, canvas: &Canvas, band: Rect, lines: &[Line]) {
+    pub fn paint_log(&self, canvas: &Canvas, band: Rect, lines: &[Line], selection: &[Rect]) {
         let prompt_font = self.log_font(Style::Prompt);
         let font = self.log_font(Style::Answer);
         let mut text = Paint::new(Color4f::from(self.title_color()), None);
@@ -530,6 +601,16 @@ impl Palette {
         };
         let mut request = Paint::new(Color4f::from(theme.text_primary), None);
         request.set_anti_alias(true);
+
+        // The highlight goes down first, so the words sit on top of it.
+        let mut highlight = Paint::new(Color4f::from(selection_color(&theme)), None);
+        highlight.set_anti_alias(true);
+        for rect in selection {
+            if rect.bottom < band.top || rect.top > band.bottom {
+                continue;
+            }
+            canvas.draw_round_rect(*rect, 2.0, 2.0, &highlight);
+        }
         let mut bubble_fill = Paint::new(Color4f::from(theme.fill_secondary), None);
         bubble_fill.set_anti_alias(true);
 
@@ -600,6 +681,11 @@ impl Palette {
         let small_subtitle_font = self.font(10.0, FontStyle::normal());
         let badge_font = self.font(10.5, FontStyle::normal());
         let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
+        let theme = if self.dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        };
         let layout = RowLayout::new(ROW_H, items.len());
         for index in layout.visible(band) {
             let item = items[index];
@@ -613,8 +699,14 @@ impl Palette {
                 .icon
                 .as_deref()
                 .and_then(|name| resolve_icon(&mut self.icons.borrow_mut(), name));
+            let dot = item.activity.map(|activity| match activity {
+                Activity::Working => theme.accent,
+                Activity::Idle => theme.text_tertiary,
+                Activity::Waiting => theme.accent_yellow,
+            });
             let draw = draw_row(
                 icon,
+                dot,
                 icon_size,
                 item.title.clone(),
                 item.subtitle.clone(),
@@ -688,6 +780,7 @@ impl Palette {
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     icon: Option<Image>,
+    dot: Option<Color>,
     icon_size: f32,
     title: String,
     subtitle: Option<String>,
@@ -714,6 +807,14 @@ fn draw_row(
                 SamplingOptions::default(),
                 &paint,
             );
+        }
+
+        if let Some(color) = dot {
+            // In the icon's place, centred where a full-size icon would be.
+            let centre = (ROW_INSET + 8.0 + ICON / 2.0, height / 2.0);
+            let mut dot_paint = Paint::new(Color4f::from(color), None);
+            dot_paint.set_anti_alias(true);
+            canvas.draw_circle(centre, DOT_RADIUS, &dot_paint);
         }
 
         // The badge is measured first: the title is clipped to what is left,
@@ -821,6 +922,13 @@ pub fn field_style(dark: bool) -> TextInputStyle {
     style
 }
 
+/// What selected text in the log sits on: the accent, faint enough to read
+/// through.
+fn selection_color(theme: &Theme) -> Color {
+    let accent = theme.accent;
+    Color::from_argb(90, accent.r(), accent.g(), accent.b())
+}
+
 fn lay_color(color: Color) -> LayerColor {
     LayerColor::new_rgba255(color.r(), color.g(), color.b(), color.a())
 }
@@ -926,6 +1034,67 @@ mod tests {
             (5.0, 5.0),
             "and back off the edge at once"
         );
+    }
+
+    /// Selecting text in the log is hit-testing against the boxes this file
+    /// says each piece of text was painted in, so those boxes have to hold
+    /// every kind of line the log draws — a request in its bubble, an answer
+    /// laid out as a document, a tool call, the status — and be where the
+    /// words are.
+    #[test]
+    fn every_kind_of_line_in_the_log_can_be_pointed_at() {
+        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
+        let steps = ["✓ ls".to_string()];
+        let blocks = [crate::log::Block {
+            prompt: "how do I build it",
+            attachments: None,
+            answer: "Run `cargo build` first\n\n- then the tests",
+            steps: &steps,
+            inputs: &[],
+            question: None,
+            note: None,
+        }];
+        let lines = crate::log::lay_out(&blocks, Some("Working…"), LOG_W, |text, style| {
+            palette.measure_log(text, style)
+        });
+        let spans = palette.log_spans(&lines);
+        // All of it, copied, reads as the conversation does on screen: the
+        // request, the answer with its code and its list, the tool call and
+        // the status, each on its own line.
+        let all = crate::selection::everything(&spans).expect("something to select");
+        assert_eq!(
+            crate::selection::text(&spans, all),
+            "how do I build it\nRun cargo build first\n• then the tests\n✓ ls\n\nWorking…"
+        );
+
+        let length = crate::log::length(&lines);
+        for span in &spans {
+            assert!(
+                span.rect.left >= 0.0 && span.rect.right <= CARD_W + 0.5,
+                "{:?} is drawn off the card",
+                span.text
+            );
+            assert!(
+                span.rect.top >= 0.0 && span.rect.bottom <= length + 0.5,
+                "{:?} is drawn outside the log",
+                span.text
+            );
+        }
+        // Reading order: a span never starts above the one before it.
+        for pair in spans.windows(2) {
+            assert!(pair[1].rect.top >= pair[0].rect.top - 0.5);
+        }
+        // And a press in the middle of a span lands in that span.
+        let request = spans
+            .iter()
+            .position(|span| span.text.contains("how do I build it"))
+            .expect("the request is there");
+        let rect = spans[request].rect;
+        let caret =
+            crate::selection::caret_at(&spans, (rect.left + rect.width() / 2.0, rect.center_y()))
+                .expect("a press on the words selects them");
+        assert_eq!(caret.span, request);
+        assert!(caret.byte > 0 && caret.byte < spans[request].text.len());
     }
 
     #[test]

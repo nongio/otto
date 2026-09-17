@@ -12,6 +12,12 @@
 //! service leaves the question to it; closing the launcher hands the question
 //! to a dialog instead.
 //!
+//! When the agent asks the person something — a choice, a value, a link to
+//! open — the request sits in the chat as an input request, and the launcher
+//! asks its questions one at a time, with the answers as rows and the field
+//! taking typed ones. Drafts and answers are shared as they are given, so a
+//! request answered somewhere else closes here too; see [`crate::input`].
+//!
 //! Files handed to the launcher go with the next request, as attachments that
 //! point the agent at them. And instead of starting a session, the launcher
 //! can open one that is already there — named on the command line, or picked
@@ -29,6 +35,7 @@
 //! nothing: the service already owns the requests, and the session carries on
 //! without anyone watching.
 
+use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -39,21 +46,24 @@ use std::time::Duration;
 use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, ClientConfig, SubscriptionEvent};
 use ahp_types::actions::{
-    ChatPendingMessageSetAction, ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
+    ChatInputAnswerChangedAction, ChatInputCompletedAction, ChatPendingMessageSetAction,
+    ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
 };
 use ahp_types::commands::ListSessionsResult;
 use ahp_types::common::StringOrMarkdown;
 use ahp_types::state::{
-    AgentInfo, ChatState, ChildCustomization, ConfirmationOptionKind, Customization, Message,
-    MessageAttachment, MessageKind, MessageOrigin, MessageResourceAttachment, PendingMessageKind,
-    ResponsePart, SessionStatus, SessionSummary, SnapshotState, ToolCallConfirmationReason,
-    ToolCallState, TurnState,
+    AgentInfo, ChatInputAnswer, ChatInputResponseKind, ChatState, ChildCustomization,
+    ConfirmationOptionKind, Customization, Message, MessageAttachment, MessageKind, MessageOrigin,
+    MessageResourceAttachment, PendingMessageKind, ResponsePart, SessionStatus, SessionSummary,
+    SnapshotState, ToolCallConfirmationReason, ToolCallState, TurnState,
 };
 use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
 
-use crate::source::{Item, Origin};
+use crate::input::{self, Change, InputRequest, Outcome};
+use crate::log::Style;
+use crate::source::{Activity, Item, Origin};
 
 /// Where otto-agentsd listens unless `OTTO_AGENTS_URL` says otherwise.
 const DEFAULT_URL: &str = "ws://127.0.0.1:4800";
@@ -85,6 +95,9 @@ enum Update {
     HandedOff,
     /// A request, or the session behind them, failed.
     Failed(String),
+    /// The service refused a change to the input request with this id: it
+    /// was settled elsewhere first, or the answers did not do.
+    InputRefused(String),
 }
 
 /// What the launcher asks of the connection thread.
@@ -114,6 +127,18 @@ enum Command {
         tool_call_id: String,
         approved: bool,
         option_id: String,
+    },
+    /// An answer to one of the questions of an input request, draft or final.
+    InputAnswer {
+        request_id: String,
+        question_id: String,
+        answer: ChatInputAnswer,
+    },
+    /// An input request answered, declined or dismissed.
+    InputComplete {
+        request_id: String,
+        response: ChatInputResponseKind,
+        answers: Option<HashMap<String, ChatInputAnswer>>,
     },
 }
 
@@ -258,7 +283,7 @@ pub fn attached_text(attachments: &[String]) -> Option<String> {
 }
 
 /// One request and what came of it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub prompt: String,
     /// The names of the files that went with the request.
@@ -268,11 +293,13 @@ pub struct Entry {
     pub steps: Vec<Step>,
     /// The agent's question, while it waits for an answer.
     pub question: Option<Question>,
+    /// What the agent asked the person in the turn, open or settled, in order.
+    pub inputs: Vec<InputRequest>,
     pub note: Option<Note>,
 }
 
 /// The conversation so far, oldest first, and what the agent is doing now.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Transcript {
     pub entries: Vec<Entry>,
     /// `None` when the agent has nothing in hand.
@@ -286,6 +313,39 @@ impl Transcript {
             .iter()
             .find_map(|entry| entry.question.as_ref())
     }
+
+    /// The first input request still waiting for an answer.
+    pub fn input(&self) -> Option<&InputRequest> {
+        self.entries
+            .iter()
+            .flat_map(|entry| &entry.inputs)
+            .find(|request| request.is_open())
+    }
+}
+
+/// Input requests as answered from the launcher, ahead of the service saying
+/// so.
+#[derive(Default)]
+struct Inputs {
+    /// Answers given here, by request and question id, until the chat carries
+    /// them.
+    answers: HashMap<String, HashMap<String, ChatInputAnswer>>,
+    /// Requests settled here, and how.
+    completed: Vec<(String, ChatInputResponseKind)>,
+    /// The question being asked, when it is not the first unanswered one:
+    /// the person went back, or on past one answered elsewhere.
+    cursor: Option<(String, usize)>,
+    /// Why the last answer to a request was not taken.
+    invalid: Option<(String, String)>,
+}
+
+/// What answering an input request did, for the launcher to follow up on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InputAnswered {
+    /// What was typed went into the answer, so the field can empty.
+    pub took_text: bool,
+    /// The request's link was opened.
+    pub opened: bool,
 }
 
 /// The requests made so far.
@@ -300,11 +360,53 @@ struct Run {
     /// Questions answered from the launcher, hidden before the service says so.
     answered: Vec<String>,
     chat: Option<ChatState>,
+    inputs: Inputs,
     failure: Option<String>,
     /// Whether the session was already there, opened rather than created.
     resumed: bool,
     /// How to open the session in a terminal, once the service says.
     terminal: Option<Terminal>,
+}
+
+impl Run {
+    /// Drop what the launcher holds about input requests once the chat has
+    /// caught up: answers the chat now carries, and anything about a request
+    /// no longer open — settled here, in a dialog or on another client.
+    fn forget_settled_inputs(&mut self) {
+        let Some(chat) = self.chat.as_ref() else {
+            return;
+        };
+        let open: Vec<InputRequest> = chat
+            .active_turn
+            .iter()
+            .flat_map(|turn| input_requests(&turn.response_parts, true))
+            .filter(InputRequest::is_open)
+            .collect();
+        let find = |id: &str| open.iter().find(|request| request.id == id);
+        let inputs = &mut self.inputs;
+        inputs.answers.retain(|id, answers| {
+            let Some(request) = find(id) else {
+                return false;
+            };
+            answers.retain(|question, answer| request.answers.get(question) != Some(answer));
+            !answers.is_empty()
+        });
+        inputs.completed.retain(|(id, _)| find(id).is_some());
+        if inputs
+            .cursor
+            .as_ref()
+            .is_some_and(|(id, _)| find(id).is_none())
+        {
+            inputs.cursor = None;
+        }
+        if inputs
+            .invalid
+            .as_ref()
+            .is_some_and(|(id, _)| find(id).is_none())
+        {
+            inputs.invalid = None;
+        }
+    }
 }
 
 /// A command that opens the session in a terminal, with the agent's own
@@ -460,6 +562,7 @@ impl Ask {
                     }
                     .to_string(),
                 ),
+                activity: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -500,6 +603,7 @@ impl Ask {
             handed_off: 0,
             answered: Vec::new(),
             chat: None,
+            inputs: Inputs::default(),
             failure: self.unreachable.clone(),
             resumed: true,
             terminal: None,
@@ -550,6 +654,7 @@ impl Ask {
                     home.as_deref(),
                 )),
                 icon: None,
+                activity: Some(session_activity(session)),
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -611,11 +716,23 @@ impl Ask {
                         run.sent.splice(0..0, earlier);
                     }
                     run.chat = Some(*chat);
+                    run.forget_settled_inputs();
                 }
             }
             Update::Action(action) => {
-                if let Some(chat) = self.run.as_mut().and_then(|run| run.chat.as_mut()) {
-                    apply_action_to_chat(chat, &action);
+                if let Some(run) = self.run.as_mut() {
+                    if let Some(chat) = run.chat.as_mut() {
+                        apply_action_to_chat(chat, &action);
+                        run.forget_settled_inputs();
+                    }
+                }
+            }
+            Update::InputRefused(request_id) => {
+                // Whatever the chat says about the request is the truth: shown
+                // settled if it was, asked again if it was not.
+                if let Some(run) = self.run.as_mut() {
+                    run.inputs.answers.remove(&request_id);
+                    run.inputs.completed.retain(|(id, _)| *id != request_id);
                 }
             }
             Update::HandedOff => {
@@ -646,6 +763,7 @@ impl Ask {
                 title: agent.display_name.clone(),
                 subtitle: (!agent.description.is_empty()).then(|| agent.description.clone()),
                 icon: None,
+                activity: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -734,6 +852,7 @@ impl Ask {
                 title: choice.label.clone(),
                 subtitle: None,
                 icon: None,
+                activity: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -767,6 +886,180 @@ impl Ask {
             .is_ok()
     }
 
+    /// The input request waiting for an answer from the launcher, with the
+    /// answers given here over the chat's, and the question to ask now —
+    /// `None` once no question is left and the request is ready to send.
+    pub fn input(&self) -> Option<(InputRequest, Option<usize>)> {
+        let request = self.transcript()?.input()?.clone();
+        let current = self.input_current(&request);
+        Some((request, current))
+    }
+
+    fn input_current(&self, request: &InputRequest) -> Option<usize> {
+        match self.run.as_ref().and_then(|run| run.inputs.cursor.as_ref()) {
+            Some((id, index)) if *id == request.id && *index < request.fields.len() => Some(*index),
+            _ => request.first_unsettled(),
+        }
+    }
+
+    /// Names the question being asked, so the launcher can tell when it moves
+    /// on to another.
+    pub fn input_key(&self) -> Option<String> {
+        self.input()
+            .map(|(request, current)| format!("input:{}:{current:?}", request.id))
+    }
+
+    /// The answers to the question being asked, as rows.
+    pub fn input_rows(&self, source: usize) -> Vec<Item> {
+        let Some((request, current)) = self.input() else {
+            return Vec::new();
+        };
+        request
+            .rows(current)
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let (title, subtitle) = request.row_text(row, current);
+                Item {
+                    title,
+                    subtitle,
+                    icon: None,
+                    activity: None,
+                    search_terms: Vec::new(),
+                    origin: Origin { source, index },
+                }
+            })
+            .collect()
+    }
+
+    /// The row to start from on the question being asked.
+    pub fn input_default_row(&self) -> usize {
+        self.input()
+            .map_or(0, |(request, current)| request.default_row(current))
+    }
+
+    /// What the field starts with on the question being asked.
+    pub fn input_prefill(&self) -> Option<String> {
+        let (request, current) = self.input()?;
+        request.prefill(current)
+    }
+
+    /// What the empty field says on the question being asked.
+    pub fn input_placeholder(&self) -> Option<&'static str> {
+        let (request, current) = self.input()?;
+        request.placeholder(current)
+    }
+
+    /// Whether typing answers the question being asked.
+    pub fn input_takes_text(&self) -> bool {
+        self.input().is_some_and(|(request, current)| {
+            current
+                .and_then(|index| request.fields.get(index))
+                .is_some_and(input::Field::takes_text)
+        })
+    }
+
+    /// What the log says about `request`, one of the transcript's.
+    pub fn input_lines(&self, request: &InputRequest) -> Vec<(String, Style)> {
+        let invalid = self
+            .run
+            .as_ref()
+            .and_then(|run| run.inputs.invalid.as_ref())
+            .filter(|(id, _)| *id == request.id)
+            .map(|(_, text)| text.as_str());
+        request.lines(self.input_current(request), invalid)
+    }
+
+    /// Choose the row at `index` on the question being asked, with `typed` in
+    /// the field.
+    pub fn choose_input(&mut self, index: usize, typed: &str) -> InputAnswered {
+        let Some((request, current)) = self.input() else {
+            return InputAnswered::default();
+        };
+        let Some(row) = request.rows(current).get(index).copied() else {
+            return InputAnswered::default();
+        };
+        let step = request.choose(row, current, typed);
+        self.take_input_step(&request, step)
+    }
+
+    /// Answer the question being asked with what is typed.
+    pub fn answer_input(&mut self, typed: &str) -> InputAnswered {
+        let Some((request, current)) = self.input() else {
+            return InputAnswered::default();
+        };
+        let step = request.answer_text(current, typed);
+        self.take_input_step(&request, step)
+    }
+
+    /// Go back to the question before the one being asked. Returns whether
+    /// there was one.
+    pub fn input_back(&mut self) -> bool {
+        let Some((request, current)) = self.input() else {
+            return false;
+        };
+        let previous = match current {
+            Some(0) => return false,
+            Some(index) => index - 1,
+            None if request.fields.is_empty() => return false,
+            None => request.fields.len() - 1,
+        };
+        if let Some(run) = self.run.as_mut() {
+            run.inputs.cursor = Some((request.id.clone(), previous));
+            run.inputs.invalid = None;
+        }
+        true
+    }
+
+    fn take_input_step(&mut self, request: &InputRequest, step: input::Step) -> InputAnswered {
+        let Some(run) = self.run.as_mut() else {
+            return InputAnswered::default();
+        };
+        let mut answered = InputAnswered {
+            took_text: step.took_text,
+            opened: false,
+        };
+        if let Some(url) = step.open.as_deref() {
+            match input::open_link(url) {
+                Ok(()) => answered.opened = true,
+                Err(err) => tracing::warn!(%err, "could not open the link"),
+            }
+        }
+        run.inputs.invalid = step
+            .invalid
+            .map(|invalid| (request.id.clone(), invalid.text()));
+        run.inputs.cursor = step.next.map(|next| (request.id.clone(), next));
+        for change in step.changes {
+            let command = match change {
+                Change::Answer {
+                    question_id,
+                    answer,
+                } => {
+                    run.inputs
+                        .answers
+                        .entry(request.id.clone())
+                        .or_default()
+                        .insert(question_id.clone(), answer.clone());
+                    Command::InputAnswer {
+                        request_id: request.id.clone(),
+                        question_id,
+                        answer,
+                    }
+                }
+                Change::Complete { response, answers } => {
+                    run.inputs.completed.push((request.id.clone(), response));
+                    Command::InputComplete {
+                        request_id: request.id.clone(),
+                        response,
+                        answers,
+                    }
+                }
+            };
+            let _ = self.commands.send(command);
+        }
+        answered
+    }
+
     /// Why the service cannot be asked anything, before a request is made.
     pub fn unreachable(&self) -> Option<&str> {
         self.unreachable.as_deref()
@@ -797,6 +1090,7 @@ impl Ask {
                     handed_off: 0,
                     answered: Vec::new(),
                     chat: None,
+                    inputs: Inputs::default(),
                     // An unreachable service fails the request at once, rather
                     // than leaving it to look as if it is starting.
                     failure: self.unreachable.clone(),
@@ -875,6 +1169,31 @@ impl Ask {
         if run.resumed && run.chat.is_none() && run.failure.is_none() {
             transcript.status = Some(Status::Opening);
         }
+        // Answers given here show before the service carries them.
+        for request in transcript
+            .entries
+            .iter_mut()
+            .flat_map(|entry| entry.inputs.iter_mut())
+            .filter(|request| request.is_open())
+        {
+            if let Some(answers) = run.inputs.answers.get(&request.id) {
+                request.answers.extend(answers.clone());
+            }
+            let completed = run
+                .inputs
+                .completed
+                .iter()
+                .find(|(id, _)| *id == request.id);
+            if let Some((_, response)) = completed {
+                request.outcome = Outcome::Responded(*response);
+            }
+        }
+        if transcript.status == Some(Status::Waiting)
+            && transcript.question().is_none()
+            && transcript.input().is_none()
+        {
+            transcript.status = Some(Status::Working);
+        }
         Some(transcript)
     }
 }
@@ -925,6 +1244,19 @@ fn file_label(file: &Path) -> String {
 /// Which agent a session belongs to, and what it is doing, and in which folder.
 /// `agent` is the agent's name, when the service has said what its providers
 /// are called.
+/// The dot beside a session in the list. A failed session has stopped, so it
+/// reads as idle; the subtitle says why.
+fn session_activity(session: &SessionSummary) -> Activity {
+    let status = SessionStatus::from_bits(session.status);
+    if status.contains(SessionStatus::InputNeeded) {
+        Activity::Waiting
+    } else if status.contains(SessionStatus::InProgress) {
+        Activity::Working
+    } else {
+        Activity::Idle
+    }
+}
+
 fn session_subtitle(session: &SessionSummary, agent: Option<&str>, home: Option<&Path>) -> String {
     let status = SessionStatus::from_bits(session.status);
     let status = if status.contains(SessionStatus::InputNeeded) {
@@ -1050,6 +1382,7 @@ fn transcript(
                 answer: answer(&turn.response_parts),
                 steps,
                 question: None,
+                inputs: input_requests(&turn.response_parts, false),
                 note,
             });
         }
@@ -1057,13 +1390,16 @@ fn transcript(
             let (steps, question) = tool_calls(&turn.id, &turn.response_parts);
             let question = question.filter(|question| !answered.contains(&question.tool_call_id));
             let thinking = matches!(turn.response_parts.last(), Some(ResponsePart::Reasoning(_)));
-            status = Some(if question.is_some() {
-                Status::Waiting
-            } else if thinking {
-                Status::Thinking
-            } else {
-                Status::Working
-            });
+            let inputs = input_requests(&turn.response_parts, true);
+            status = Some(
+                if question.is_some() || inputs.iter().any(InputRequest::is_open) {
+                    Status::Waiting
+                } else if thinking {
+                    Status::Thinking
+                } else {
+                    Status::Working
+                },
+            );
             let Request {
                 prompt,
                 attachments,
@@ -1074,6 +1410,7 @@ fn transcript(
                 answer: answer(&turn.response_parts),
                 steps,
                 question,
+                inputs,
                 note: None,
             });
         }
@@ -1106,6 +1443,7 @@ fn transcript(
             answer: String::new(),
             steps: Vec::new(),
             question: None,
+            inputs: Vec::new(),
             note,
         });
     }
@@ -1183,6 +1521,43 @@ fn tool_calls(turn_id: &str, parts: &[ResponsePart]) -> (Vec<Step>, Option<Quest
         }
     }
     (steps, question)
+}
+
+/// The input requests in `parts`, in order. `active` says whether the turn is
+/// still running, which is the only time one can be answered.
+fn input_requests(parts: &[ResponsePart], active: bool) -> Vec<InputRequest> {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            ResponsePart::InputRequest(request) => Some(InputRequest::from_part(request, active)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The action that carries an answer to an input request, or its completion.
+fn input_action(command: Command) -> Option<StateAction> {
+    Some(match command {
+        Command::InputAnswer {
+            request_id,
+            question_id,
+            answer,
+        } => StateAction::ChatInputAnswerChanged(ChatInputAnswerChangedAction {
+            request_id,
+            question_id,
+            answer: Some(answer),
+        }),
+        Command::InputComplete {
+            request_id,
+            response,
+            answers,
+        } => StateAction::ChatInputCompleted(ChatInputCompletedAction {
+            request_id,
+            response,
+            answers,
+        }),
+        _ => return None,
+    })
 }
 
 fn plain(text: &StringOrMarkdown) -> String {
@@ -1328,6 +1703,12 @@ async fn serve(
                             selected_option_id: Some(option_id),
                         })
                     }
+                    command @ (Command::InputAnswer { .. } | Command::InputComplete { .. }) => {
+                        match input_action(command) {
+                            Some(action) => action,
+                            None => continue,
+                        }
+                    }
                 };
                 if let Err(err) = client.dispatch(chat_uri.clone(), action).await {
                     reporter.send(Update::Failed(err.to_string()));
@@ -1359,7 +1740,22 @@ async fn serve(
                     {
                         tracing::info!(%reason, "the answer came too late")
                     }
-                    Some(reason) => reporter.send(Update::Failed(reason)),
+                    // The same goes for an input request: settled elsewhere,
+                    // or refused, the chat says where it stands.
+                    Some(reason) => match &envelope.action {
+                        StateAction::ChatInputAnswerChanged(ChatInputAnswerChangedAction {
+                            request_id,
+                            ..
+                        })
+                        | StateAction::ChatInputCompleted(ChatInputCompletedAction {
+                            request_id,
+                            ..
+                        }) => {
+                            tracing::info!(%reason, %request_id, "the answer was refused");
+                            reporter.send(Update::InputRefused(request_id.clone()));
+                        }
+                        _ => reporter.send(Update::Failed(reason)),
+                    },
                     None => reporter.send(Update::Action(Box::new(envelope.action))),
                 },
                 Some(_) => {}
@@ -1732,6 +2128,7 @@ mod tests {
             answer: answer.into(),
             steps: Vec::new(),
             question: None,
+            inputs: Vec::new(),
             note,
         }
     }
@@ -1827,6 +2224,51 @@ mod tests {
         let answered = transcript(Some(&chat), &prompts, &["call-1".into()], None, None);
         assert!(answered.question().is_none());
         assert_eq!(answered.status, Some(Status::Working));
+    }
+
+    fn input_request(response: Option<&str>) -> ResponsePart {
+        let mut part = json!({
+            "kind": "inputRequest",
+            "request": {
+                "id": "req-1",
+                "questions": [
+                    { "kind": "boolean", "id": "tests", "message": "Write tests?", "required": true }
+                ]
+            }
+        });
+        if let Some(response) = response {
+            part["response"] = json!(response);
+        }
+        serde_json::from_value(part).expect("an input request part")
+    }
+
+    #[test]
+    fn an_open_input_request_waits_and_an_ended_turn_leaves_it_unanswered() {
+        let prompts = sent(&["set it up"]);
+        let chat = with_active(empty_chat(), "set it up", vec![input_request(None)]);
+        let waiting = of(Some(&chat), &prompts);
+        assert_eq!(waiting.status, Some(Status::Waiting));
+        let request = waiting.input().expect("an open input request");
+        assert_eq!(request.id, "req-1");
+
+        let chat = with_active(
+            empty_chat(),
+            "set it up",
+            vec![input_request(Some("accept"))],
+        );
+        let answered = of(Some(&chat), &prompts);
+        assert!(answered.input().is_none());
+        assert_eq!(answered.status, Some(Status::Working));
+
+        let chat = with_ended(
+            empty_chat(),
+            "set it up",
+            TurnState::Complete,
+            vec![input_request(None)],
+        );
+        let ended = of(Some(&chat), &prompts);
+        assert!(ended.input().is_none());
+        assert_eq!(ended.entries[0].inputs[0].outcome, Outcome::Unanswered);
     }
 
     #[test]
@@ -2114,6 +2556,30 @@ mod tests {
             "workingDirectories": ["file:///home/me/My%20Projects"],
         }))
         .expect("a session summary")
+    }
+
+    #[test]
+    fn a_session_row_carries_what_the_session_is_doing() {
+        let with_status = |bits: u32| {
+            let mut session = summary("abc", "one");
+            session.status = bits;
+            session_activity(&session)
+        };
+        assert_eq!(with_status(SessionStatus::Idle.bits()), Activity::Idle);
+        assert_eq!(with_status(SessionStatus::Error.bits()), Activity::Idle);
+        assert_eq!(
+            with_status(SessionStatus::InProgress.bits()),
+            Activity::Working
+        );
+        // Waiting on input is a turn in progress too; the wait is what shows.
+        assert_eq!(
+            with_status(SessionStatus::InputNeeded.bits()),
+            Activity::Waiting
+        );
+        assert_eq!(
+            with_status(SessionStatus::InputNeeded.bits() | SessionStatus::IsRead.bits()),
+            Activity::Waiting
+        );
     }
 
     #[test]

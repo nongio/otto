@@ -44,6 +44,13 @@ agents mode the card is centred on the output instead, and stays centred as the
 conversation above the field or the list of sessions under it grows. The card
 clips its panes, so neither log nor rows draw past its edge.
 
+**Session status.** In agents mode each session row has a small dot where an
+icon would go: the theme's accent while the session is working, its yellow
+while it waits for input, and its faint text colour (`text_tertiary`) when it
+is idle or stopped (a failed session included — the subtitle says it failed).
+The colours come from the theme, so the dot follows the user's accent and the
+colour scheme.
+
 **Modes.** A run offers applications, windows, or both, chosen when it starts.
 Applications is the default: the two bindings mean "launch something" and
 "switch to a window", and a mode that quietly does both is neither. The empty
@@ -84,6 +91,32 @@ fires on the first word only, so an ordinary sentence never sprouts grey text,
 and where one skill's name is the start of another's the shorter one is
 offered, since the longer is a keystroke further on.
 
+**Answering the agent.** When the agent asks the person something — a choice,
+a value, a link to open (an input request in its turn) — and no permission
+question comes first, the launcher asks the request's questions one at a time.
+The log shows the request's message and link, the answers given so far as
+"question: answer" lines, "Question n of m" when there are several, and the
+question at hand in full, with why the last answer was not taken under it. The
+rows are the answers: the options of a single- or multi-select question (a
+suggested one says so, and starts selected), Yes and No for a boolean,
+Continue for text, numbers and multi-select, Skip this one for a question that
+is not required, and Don't answer on every question, which declines the whole
+request. Typing answers a text or number question, and stands in for an option
+when the question takes an answer of its own; numbers and lengths are checked
+before anything is sent, and Enter on an empty field of an optional question
+skips it. Picking in a multi-select question ticks and unticks. Left with
+nothing typed goes back a question.
+
+Every answer is shared as it is given (`chat/inputAnswerChanged`) — drafts
+while ticking, submitted or skipped once a question is settled — and the last
+one sends the request (`chat/inputCompleted`) with every answer, unless a
+required question further up is still open, which the launcher returns to. A
+request with no questions offers Open the link (web links only; any other
+scheme is shown and never opened) and Done. Answers given elsewhere show here
+as they arrive, and a request settled on another client or refused by the
+service falls back to what the chat says. Once settled, a request collapses to
+its answers, or to Declined, Dismissed or Not answered.
+
 **Reading an answer.** The agent's answer in the log is Markdown and is drawn
 as a document: headings, emphasis, lists, quotes, code and links take the
 toolkit's document typography, and the markup itself is not shown. Each
@@ -93,6 +126,26 @@ than its words need. Everything else — attached files, tool calls, notes, the
 status — stays plain text. An answer still arriving is drawn as far as it has come, so
 an unclosed code fence reads as code until its end lands. Tables are drawn as
 code and images as their alt text, as in Quick View.
+
+**Selecting what the log says.** The conversation can be picked up and copied.
+Pressing on a word in the log starts a selection and dragging extends it,
+across lines and through an answer's own formatting; a second press takes the
+word under it, a third the line. The selection is painted as the accent behind
+the words, faint enough to read through. Ctrl+C or Cmd+C copies it — before the
+same key means stop the turn, because a selection on screen says which was
+meant — and Ctrl+A with nothing typed selects the whole log. Escape puts the
+selection down before it closes the launcher. Copied text keeps the log's line
+breaks, and the gaps a layout leaves inside a line, such as after a list's
+bullet, come out as spaces. The card is still moved by dragging the field or
+the log's background; its words are text now, not a handle.
+
+The log is painted rather than laid out as widgets, so what can be selected is
+described separately: one box per run of text, in reading order, rebuilt
+whenever the log is laid out again. Those boxes have to agree with what was
+painted — the same fonts, the same positions — or the highlight sits off the
+words. An answer grows at its end, so a selection made while it is still
+arriving survives the rest of it; one whose text has since been laid out
+differently is dropped rather than left highlighting whatever now sits there.
 
 **Choosing.** Up/Down move the selection and wrap at both ends. Tab takes the
 completion when one is being offered; otherwise Tab and Shift+Tab move the
@@ -107,7 +160,9 @@ Ctrl+W, and clearing the query with Ctrl+U. Ctrl+C, Ctrl+X and Ctrl+V copy, cut
 and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
 
-**Pointer.** Moving the pointer over a row selects it. Releasing over a row acts
+**Pointer.** Over the log's words the pointer is a text cursor, because
+nothing else about painted text says it can be picked up. Moving the pointer
+over a row selects it. Releasing over a row acts
 on it. The row under the pointer must be the row that highlights. A wheel or a
 touchpad over the card scrolls the list — a touchpad with momentum and a
 stretch past either end, a notched wheel a step at a time — and the row that
@@ -190,7 +245,12 @@ the list, keeping the selection on the same item where that item still exists.
   installed are skipped rather than shown.
 - An answer cannot be put on the clipboard by the launcher itself: a Wayland
   selection dies with the client that offered it, and the launcher exits as soon
-  as the answer is taken. Something that outlives it has to own the offer.
+  as the answer is taken. Something that outlives it has to own the offer —
+  `wl-copy`, which forks and stays to serve it. Everything the launcher copies,
+  from the log or from the field, is offered here *and* handed to `wl-copy`: the
+  first is what makes a paste work while the launcher is still up, the second is
+  what makes it work afterwards. Without `wl-copy` installed, a copy lasts only
+  as long as the launcher does.
 - If the compositor does not offer foreign-toplevel management, the launcher
   runs with applications only.
 

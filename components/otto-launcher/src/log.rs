@@ -96,6 +96,9 @@ pub struct Block<'a> {
     pub answer: &'a str,
     /// The tool calls the agent made, already allowed or refused.
     pub steps: &'a [String],
+    /// What the agent asked the person, each request as its lines: open ones
+    /// with their question, settled ones with their answers.
+    pub inputs: &'a [Vec<(String, Style)>],
     /// The agent's question waiting for an answer: who wants to do what, and
     /// what exactly.
     pub question: Option<(&'a str, &'a str)>,
@@ -132,6 +135,12 @@ pub fn lay_out(
         answer(&mut lines, block.answer, width);
         for step in block.steps {
             push(&mut lines, step, Style::Note);
+        }
+        for input in block.inputs.iter().filter(|input| !input.is_empty()) {
+            blank(&mut lines);
+            for (text, style) in input {
+                push(&mut lines, text, *style);
+            }
         }
         if let Some((title, detail)) = block.question {
             blank(&mut lines);
@@ -312,6 +321,7 @@ mod tests {
             attachments: None,
             answer,
             steps: &[],
+            inputs: &[],
             question: None,
             note,
         }
@@ -346,6 +356,7 @@ mod tests {
             attachments: None,
             answer: "Sure",
             steps: &steps,
+            inputs: &[],
             question: Some(("Claude wants to run a command", "rm -rf build")),
             note: None,
         }];
@@ -359,6 +370,36 @@ mod tests {
                 text("", Style::Answer),
                 text("Claude wants to run a command", Style::Prompt),
                 text("rm -rf build", Style::Answer),
+            ]
+        );
+    }
+
+    #[test]
+    fn what_the_agent_asked_follows_its_tool_calls() {
+        let steps = ["✓ ls".to_string()];
+        let inputs = [
+            vec![("Which database?: Postgres".to_string(), Style::Note)],
+            vec![
+                ("Question 2 of 2".to_string(), Style::Note),
+                ("Port?".to_string(), Style::Prompt),
+            ],
+        ];
+        let blocks = [Block {
+            steps: &steps,
+            inputs: &inputs,
+            ..block("set it up", "", None)
+        }];
+        let lines = lay_out(&blocks, None, 40.0, |text, _| chars(text));
+        assert_eq!(
+            styled(&lines),
+            [
+                text("set it up", Style::Request),
+                text("✓ ls", Style::Note),
+                text("", Style::Answer),
+                text("Which database?: Postgres", Style::Note),
+                text("", Style::Answer),
+                text("Question 2 of 2", Style::Note),
+                text("Port?", Style::Prompt),
             ]
         );
     }

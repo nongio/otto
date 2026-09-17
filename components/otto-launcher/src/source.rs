@@ -20,12 +20,26 @@ pub struct Item {
     pub subtitle: Option<String>,
     /// Icon theme name, resolved by the view.
     pub icon: Option<String>,
+    /// What the thing behind the row is doing, drawn as a small dot in the
+    /// icon's place — an agent session at work, idle, or waiting on someone.
+    pub activity: Option<Activity>,
     /// Extra text that matches but is never shown: keywords, the binary name,
     /// the app id behind a window.
     pub search_terms: Vec<String>,
     /// Which source this came from, and its index there. The launcher hands
     /// this back to activate the item.
     pub origin: Origin,
+}
+
+/// What a row's item is doing. The view picks the colour from the theme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Activity {
+    /// Busy: the accent.
+    Working,
+    /// Nothing happening, or stopped: a faint gray.
+    Idle,
+    /// Blocked until someone answers: yellow.
+    Waiting,
 }
 
 /// Where an item came from, so the right source is asked to act on it.
@@ -153,6 +167,7 @@ mod tests {
             title: title.to_string(),
             subtitle: None,
             icon: None,
+            activity: None,
             search_terms: Vec::new(),
             origin: Origin {
                 source: 0,

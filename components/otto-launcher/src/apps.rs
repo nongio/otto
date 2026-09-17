@@ -108,6 +108,7 @@ impl Source for Apps {
                 title: entry.name.clone(),
                 subtitle: entry.comment.clone(),
                 icon: entry.icon.clone(),
+                activity: None,
                 search_terms: entry
                     .keywords
                     .iter()
