@@ -348,6 +348,9 @@ impl BaseWaylandSurface {
             return;
         };
 
+        // Whatever the app changed before painting is part of this frame.
+        AppContext::flush_layers();
+
         // Render the assigned layer node from the shared engine
         layers::prelude::draw_scene(canvas, engine.scene(), layer.id());
     }

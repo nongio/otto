@@ -25,6 +25,11 @@ pub struct TextInputState {
     focused: bool,
     /// Shown when `value` is empty.
     pub placeholder: String,
+    /// Completion offered after the caret, drawn in the placeholder's colour:
+    /// what pressing Tab would add. Ignored unless the caret sits at the end of
+    /// the value with nothing selected — a suggestion for text that is not
+    /// being typed at is noise — and never drawn in password mode.
+    pub ghost: String,
     /// Mask the glyphs and refuse to hand the text out (lock screen, greeter).
     pub password: bool,
     /// Maximum length in `char`s. Inserts that would exceed it are truncated.
@@ -42,6 +47,7 @@ impl Default for TextInputState {
             caret: 0,
             focused: false,
             placeholder: String::new(),
+            ghost: String::new(),
             password: false,
             max_chars: None,
             scroll_px: 0.0,
@@ -58,6 +64,7 @@ impl Hash for TextInputState {
         self.caret.hash(state);
         self.focused.hash(state);
         self.placeholder.hash(state);
+        self.ghost.hash(state);
         self.password.hash(state);
         self.max_chars.hash(state);
         self.scroll_px.to_bits().hash(state);

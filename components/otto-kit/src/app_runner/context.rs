@@ -813,6 +813,20 @@ impl<'a> AppContext<'a> {
             .map(|r| r.engine().clone())
     }
 
+    /// Bring the layer engine up to date with every change made so far, so a
+    /// paint that follows draws them and [`AppContext::take_layers_damage`]
+    /// reports them. Cheap when nothing is pending. See
+    /// [`LayersRenderer::flush`](crate::rendering::LayersRenderer::flush).
+    pub fn flush_layers() {
+        Self::layers_renderer(|renderer| renderer.flush());
+    }
+
+    /// The scene area changed since the last call, with pending changes
+    /// applied first. Empty when nothing did — or when there is no engine.
+    pub fn take_layers_damage() -> skia_safe::Rect {
+        Self::layers_renderer(|renderer| renderer.take_damage()).unwrap_or_default()
+    }
+
     pub fn enable_layer_engine(width: f32, height: f32) -> bool {
         use std::sync::atomic::Ordering;
 
@@ -1322,7 +1336,14 @@ impl<'a> AppContext<'a> {
             surfaces.borrow_mut().remove(surface_id);
         });
         FRAMES_IN_FLIGHT.with(|surfaces| {
-            surfaces.borrow_mut().remove(surface_id);
+            if let Some(committed) = surfaces.borrow_mut().remove(surface_id) {
+                tracing::debug!(
+                    target: "otto_kit::frame",
+                    ?surface_id,
+                    ms = committed.elapsed().as_millis(),
+                    "frame answered"
+                );
+            }
         });
     }
 
