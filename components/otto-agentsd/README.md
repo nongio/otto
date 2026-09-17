@@ -60,8 +60,9 @@ What it needs:
   Environment=PATH=%h/.config/nvm/versions/node/v24.7.0/bin:%h/.local/bin:/usr/bin
   ```
 
-- **otto-islands**, to show permission requests. Without it, a request that needs
-  an answer is denied.
+- **otto-islands**, to show permission requests and agents' questions when no
+  client is watching. Without it, a permission request is denied and a question
+  waits in the chat.
 
 ## Repository layout
 

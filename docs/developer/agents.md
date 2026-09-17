@@ -14,7 +14,7 @@ other reasons, plus one new one:
 |---|---|---|
 | **otto-agentsd** | A headless service that runs agents and publishes their sessions | `components/otto-agentsd/` |
 | **otto-launcher** | The client: *ask* mode sends requests, *agents* mode lists sessions | `components/otto-launcher/src/ask.rs` |
-| **otto-islands** | Where an agent's permission question goes when no client is watching | `org.otto.Dialog1` |
+| **otto-islands** | Where an agent's permission requests and questions go when no client is watching | `org.otto.Dialog1` |
 | **Files "Ask…"** | A files-script that opens the launcher with the selection attached | `components/otto-files/scripts/ask` |
 
 The service draws nothing and the launcher stores nothing. A session belongs to
@@ -90,7 +90,8 @@ through the protocol.
 | `rpc.rs` | JSON-RPC framing and error shapes |
 | `agent.rs` | The `Backend` trait: what actually runs a turn, plus the echo backend |
 | `acp.rs` | The real backend: an ACP agent per session, on stdio |
-| `dialog.rs` | Permission prompts, and the `org.otto.Dialog1` prompter |
+| `dialog.rs` | Permission and question prompts, and the `org.otto.Dialog1` prompter |
+| `elicitation.rs` | ACP form elicitations (Claude's AskUserQuestion) as AHP input requests |
 | `config.rs` | `agents.toml`: which agents exist, their models and permissions |
 | `store.rs` | Sessions on disk, so they survive a restart |
 | `cli.rs` | `otto-agentsd sessions` and `otto-agentsd show`, for the terminal |
@@ -181,9 +182,12 @@ whoever is actually in front of the user. The rule is in `host.rs`:
    launcher shows the question in the log and the options as rows under the
    field, starting on the narrowest allow.
 3. **Nobody is subscribed**, or the last watcher closes: `escalate` sends the
-   question to otto-islands through `org.otto.Dialog1.PresentAccess`, the same
-   Access-style panel the portal uses. A plain yes or no picks the narrowest
-   matching option.
+   question to otto-islands through `org.otto.Dialog1.PresentQuestion`, the
+   same Access-style panel the portal uses, with an extra **Open in Ask** button.
+   A plain yes or no picks the narrowest matching option; Open in Ask starts
+   `otto-ask --session <uri>` and leaves the question waiting in the chat. An
+   older renderer without `PresentQuestion` gets `PresentAccess`, minus that
+   button.
 4. **The dialog can't be shown** — no session bus, no renderer, an error — and
    the request is **denied**. An agent is never granted something nobody saw.
 
@@ -193,6 +197,32 @@ while an island dialog is already up and answer there, the dialog stays on
 screen with an answer that no longer counts, because `org.otto.Dialog1` has no
 way to withdraw a prompt. Giving it one is the obvious next step, and would also
 let the islands carry session status rather than questions alone.
+
+## Where an agent's question goes
+
+Agents also ask the user things outright: Claude's AskUserQuestion, or an MCP
+server's form. otto-agentsd declares form elicitation in its ACP client
+capabilities (that is what turns AskUserQuestion on), and `elicitation.rs` turns
+each `elicitation/create` into an AHP input request:
+
+- Each field of the requested schema becomes a question keyed by its name:
+  enums as single or multi selects, strings, numbers, integers and booleans as
+  their own kinds. AskUserQuestion's free-text "Other" field, marked in its
+  `_meta`, is folded into its select as free-form input.
+- The request opens in the chat's active turn (`chat/inputRequested`) and is
+  mirrored into the session's `inputNeeded`, so a client watching only the
+  session sees it. A URL-mode elicitation, or one outside a turn, is declined.
+- Clients answer with `chat/inputAnswerChanged` and `chat/inputCompleted`. The
+  host checks each answer fits its question and that an accept answers every
+  required one; the answers go back to the agent under the field names.
+- With nobody watching, the question escalates like a permission request. When
+  every question is a single select, the dialog asks them as choice groups with
+  an **Answer** button (a choice group needs a grant label, or the renderer
+  returns no picks); otherwise it only shows what is asked, with **Skip** and
+  **Open in Ask**. Skipping or dismissing declines; a dialog that can't be shown
+  leaves the question waiting in the chat.
+- Cancelling or ending the turn cancels its open questions, and a restarted
+  session drops the ones its earlier agent was waiting on.
 
 ## The skills the desktop gives an agent
 

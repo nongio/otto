@@ -737,7 +737,10 @@ async fn opening_an_agents_question_in_ask_keeps_it_waiting() {
     timeout(Duration::from_secs(5), dialog.open.notified())
         .await
         .expect("Ask was never opened");
-    assert_eq!(*dialog.opened.lock().unwrap(), [session_uri.clone()]);
+    assert_eq!(
+        *dialog.opened.lock().unwrap(),
+        std::slice::from_ref(&session_uri)
+    );
 
     let (mut chat, mut events) = watch(&client, &chat_uri).await;
     until(&mut chat, &mut events, |chat| pending_input(chat).is_some()).await;

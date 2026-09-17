@@ -361,6 +361,11 @@ impl Islands {
 
 impl Prompter for Islands {
     fn ask(&self, prompt: Prompt) -> Pin<Box<dyn Future<Output = Reply> + Send + '_>> {
+        // The renderer returns no picks without a grant button to submit them.
+        debug_assert!(
+            prompt.choices.is_empty() || !prompt.grant.is_empty(),
+            "choice groups need a grant label"
+        );
         Box::pin(async move {
             let Some(connection) = self.connection().await else {
                 return Reply::Unavailable;

@@ -89,6 +89,11 @@ the POC ask mode ([0010](0010-poc.md)), on branch `launcher-ask` in `../otto-4`.
     it.
   - Allowed tool calls complete when the agent reports them finished, and show in the
     log as ✓, ✗ or Denied.
+  - The agent's own questions (ACP form elicitations, such as Claude's AskUserQuestion)
+    route the same way (implemented 2026-09-17): an input request in the chat and the
+    session's `inputNeeded`, answered with `chat/inputCompleted`, or, with nobody
+    watching, `org.otto.Dialog1.PresentQuestion` with the selects as choice groups and
+    an Open in Ask button. See `docs/developer/agents.md`.
 
 ## Attachments, opening sessions, agents mode (added 2026-09-15)
 
