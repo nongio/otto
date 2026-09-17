@@ -33,6 +33,9 @@ pub struct Theme {
     /// with it: a count that must not read as another selection, a delete that
     /// must not read as an ordinary button.
     pub accent_red: Color,
+    /// The palette's yellow — for what is waiting on someone: a session
+    /// blocked on an answer, a thing that needs a look but is not an error.
+    pub accent_yellow: Color,
 
     // Fill colors (backgrounds)
     pub fill_primary: Color,
@@ -167,6 +170,7 @@ impl Theme {
             accent: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
             accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
             accent_red: Color::from_argb(0xFF, 0xFF, 0x3B, 0x30),
+            accent_yellow: Color::from_argb(0xFF, 0xFF, 0xCC, 0x00),
 
             fill_primary: Color::from_argb(0x35, 0x00, 0x00, 0x00),
             fill_secondary: Color::from_argb(0x14, 0x00, 0x00, 0x00),
@@ -200,6 +204,7 @@ impl Theme {
             accent: Color::from_argb(0xFF, 0x0A, 0x84, 0xFF),
             accent_gray: Color::from_argb(0xFF, 0x8E, 0x8E, 0x93),
             accent_red: Color::from_argb(0xFF, 0xFF, 0x45, 0x3A),
+            accent_yellow: Color::from_argb(0xFF, 0xFF, 0xD6, 0x0A),
 
             // Semi-transparent whites for layering on dark backgrounds
             fill_primary: Color::from_argb(0x40, 0xFF, 0xFF, 0xFF),

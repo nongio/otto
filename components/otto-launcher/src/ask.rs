@@ -53,7 +53,7 @@ use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
 
-use crate::source::{Item, Origin};
+use crate::source::{Activity, Item, Origin};
 
 /// Where otto-agentsd listens unless `OTTO_AGENTS_URL` says otherwise.
 const DEFAULT_URL: &str = "ws://127.0.0.1:4800";
@@ -460,6 +460,7 @@ impl Ask {
                     }
                     .to_string(),
                 ),
+                activity: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -518,6 +519,11 @@ impl Ask {
         true
     }
 
+    /// The URI of the session at `index` in the list.
+    pub fn session_at(&self, index: usize) -> Option<&str> {
+        self.sessions.get(index).map(|s| s.resource.as_str())
+    }
+
     /// Whether the service has said which sessions it has.
     pub fn sessions_listed(&self) -> bool {
         self.sessions_listed
@@ -545,6 +551,7 @@ impl Ask {
                     home.as_deref(),
                 )),
                 icon: None,
+                activity: Some(session_activity(session)),
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -641,6 +648,7 @@ impl Ask {
                 title: agent.display_name.clone(),
                 subtitle: (!agent.description.is_empty()).then(|| agent.description.clone()),
                 icon: None,
+                activity: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -729,6 +737,7 @@ impl Ask {
                 title: choice.label.clone(),
                 subtitle: None,
                 icon: None,
+                activity: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -920,6 +929,19 @@ fn file_label(file: &Path) -> String {
 /// Which agent a session belongs to, and what it is doing, and in which folder.
 /// `agent` is the agent's name, when the service has said what its providers
 /// are called.
+/// The dot beside a session in the list. A failed session has stopped, so it
+/// reads as idle; the subtitle says why.
+fn session_activity(session: &SessionSummary) -> Activity {
+    let status = SessionStatus::from_bits(session.status);
+    if status.contains(SessionStatus::InputNeeded) {
+        Activity::Waiting
+    } else if status.contains(SessionStatus::InProgress) {
+        Activity::Working
+    } else {
+        Activity::Idle
+    }
+}
+
 fn session_subtitle(session: &SessionSummary, agent: Option<&str>, home: Option<&Path>) -> String {
     let status = SessionStatus::from_bits(session.status);
     let status = if status.contains(SessionStatus::InputNeeded) {
@@ -2109,6 +2131,30 @@ mod tests {
             "workingDirectories": ["file:///home/me/My%20Projects"],
         }))
         .expect("a session summary")
+    }
+
+    #[test]
+    fn a_session_row_carries_what_the_session_is_doing() {
+        let with_status = |bits: u32| {
+            let mut session = summary("abc", "one");
+            session.status = bits;
+            session_activity(&session)
+        };
+        assert_eq!(with_status(SessionStatus::Idle.bits()), Activity::Idle);
+        assert_eq!(with_status(SessionStatus::Error.bits()), Activity::Idle);
+        assert_eq!(
+            with_status(SessionStatus::InProgress.bits()),
+            Activity::Working
+        );
+        // Waiting on input is a turn in progress too; the wait is what shows.
+        assert_eq!(
+            with_status(SessionStatus::InputNeeded.bits()),
+            Activity::Waiting
+        );
+        assert_eq!(
+            with_status(SessionStatus::InputNeeded.bits() | SessionStatus::IsRead.bits()),
+            Activity::Waiting
+        );
     }
 
     #[test]

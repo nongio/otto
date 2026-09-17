@@ -10,6 +10,7 @@ description = "A keyboard-driven launcher for Otto — type to filter apps and w
 [dependencies]
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
+otto-md-kit = { path = "../otto-md-kit" }
 taffy = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

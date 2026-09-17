@@ -1,0 +1,30 @@
+[package]
+name = "otto-md-kit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Markdown read as a document — Otto's Markdown parser for the toolkit's block vocabulary"
+
+[lib]
+name = "otto_md_kit"
+path = "src/lib.rs"
+
+# Only the toolkit, for the block vocabulary the parser produces. No browser
+# engine, no HTML, no networking: see the crate documentation.
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+
+# The example draws a window; the parser itself needs none of this.
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+wayland-client = "0.31"
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+
+[[example]]
+name = "markdown_window"
+path = "examples/markdown_window.rs"
+
+[lints]
+workspace = true

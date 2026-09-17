@@ -17,6 +17,10 @@
 //! [`PreviewLayout::row_at`] answers what is under a point. Both halves read
 //! the same geometry, so they cannot drift.
 
+pub mod document;
+
+pub use document::{Block, Span, SpanStyle};
+
 use skia_safe::{Canvas, Color, Contains, Image, Paint, Rect};
 
 use crate::common::Renderable;

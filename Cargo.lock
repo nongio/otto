@@ -5604,6 +5604,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "laye-rs",
  "otto-kit",
+ "otto-md-kit",
  "serde_json",
  "shell-words",
  "skia-safe",
@@ -5631,6 +5632,16 @@ dependencies = [
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
+]
+
+[[package]]
+name = "otto-md-kit"
+version = "1.3.0"
+dependencies = [
+ "otto-kit",
+ "smithay-client-toolkit",
+ "tokio",
+ "wayland-client",
 ]
 
 [[package]]
