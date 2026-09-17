@@ -99,8 +99,12 @@ Path `/org/otto/Dialog`. Mirrors `org.freedesktop.impl.portal.Access` so
 through the island UI. `PresentAccess` blocks until the user answers or the
 caller disappears, returning `(response, results)` with response `0` granted,
 `1` denied/cancelled, `2` ended. A modal dialog takes an input region over the
-whole layer so clicks cannot fall through while a decision is pending. `Esc`
-denies, `Enter` grants — the only keyboard interaction in the app.
+whole layer so clicks cannot fall through while a decision is pending. A
+non-modal one catches clicks only on itself, and shrinks into a Mini-sized
+circle at the end of the island row when the user moves on, still pending,
+until clicked open again. `Esc` denies, `Enter` grants — the only keyboard
+interaction in the app. Text wraps and the panel grows, scrolling past a
+maximum height; see [portal-access-dialog](portal-access-dialog.md).
 
 When otto-islands is not running the portal falls back to the GTK, GNOME and KDE
 Access backends in that order; only with none of them available does the request

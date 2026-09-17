@@ -344,7 +344,12 @@ fn card_text_column(w: f32) -> (f32, f32) {
 /// Break `text` into at most `max_lines` lines that each fit `max_width`.
 /// The last line is ellipsised if there is more text than fits. Words longer
 /// than the column are broken mid-word rather than overflowing.
-fn wrap_text(text: &str, font: &skia_safe::Font, max_width: f32, max_lines: usize) -> Vec<String> {
+pub(crate) fn wrap_text(
+    text: &str,
+    font: &skia_safe::Font,
+    max_width: f32,
+    max_lines: usize,
+) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
 

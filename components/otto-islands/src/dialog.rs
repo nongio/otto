@@ -1,5 +1,5 @@
-//! Access-style dialog: a modal permission/choice panel rendered as a dropdown
-//! below the island bar.
+//! Access-style dialog: a permission/choice panel rendered as a dropdown below
+//! the island bar.
 //!
 //! Mirrors the semantics of `org.freedesktop.impl.portal.Access`: a caller
 //! presents a request with title/subtitle/body/icon and zero or more choice
@@ -10,6 +10,10 @@
 //! grant button is optional (hidden when its label is empty), and an optional
 //! *open* button hands the question off to another app (response `3`).
 //!
+//! A modal dialog holds the keyboard until it is answered. A non-modal one
+//! can be ignored: once the user moves on it shrinks into a circle in the
+//! island row, still pending, and a click opens it again — see [`Presence`].
+//!
 //! See `specs/portal-access-dialog.md`.
 
 use otto_kit::icons::named_icon_sized;
@@ -17,6 +21,8 @@ use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGr
 use otto_kit::typography::TextStyle;
 use otto_kit::SubsurfaceSurface;
 use skia_safe::{Canvas, Color, Paint, RRect, Rect};
+use std::time::{Duration, Instant};
+
 use tokio::sync::oneshot;
 
 pub type DialogId = u64;
@@ -32,7 +38,6 @@ const ICON_GAP: f32 = 10.0;
 const TITLE_GAP: f32 = 6.0;
 const SUBTITLE_GAP: f32 = 4.0;
 const BODY_GAP: f32 = 8.0;
-const GROUP_LABEL_H: f32 = 18.0;
 const OPTION_H: f32 = 44.0;
 const OPTION_GAP: f32 = 6.0;
 const OPTION_RADIUS: f32 = 11.0;
@@ -48,9 +53,9 @@ const OPEN_BTN_H: f32 = 32.0;
 pub const PANEL_RADIUS: f32 = 20.0;
 
 /// Subsurface buffer dimensions (logical units passed to `SubsurfaceSurface::new`).
-/// Sized generously so a tall stack of choices fits without reallocation.
+/// Sized for the tallest panel so it never reallocates on the way there.
 pub const DIALOG_BUF_W: i32 = 360;
-pub const DIALOG_BUF_H: i32 = 640;
+pub const DIALOG_BUF_H: i32 = DIALOG_MAX_H as i32;
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -160,6 +165,96 @@ pub struct DialogView {
     pub choices: Vec<ChoiceGroup>,
 }
 
+/// How long a non-modal dialog nobody has touched stays open before it
+/// shrinks into its circle. Held open while the pointer rests on it.
+pub const DIALOG_READ_SECS: u64 = 12;
+
+/// Whether a presented dialog is open as a panel or shrunk into a circle.
+///
+/// A modal dialog is always open. A non-modal one opens on arrival and
+/// shrinks when the user moves on: when the keyboard focus it was given
+/// leaves, or, if it was never touched, once [`DIALOG_READ_SECS`] pass
+/// without the pointer on it. Shrinking is not an answer; the request stays
+/// pending, and clicking the circle opens the panel again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Presence {
+    modal: bool,
+    collapsed: bool,
+    /// The user clicked the panel, so it holds the keyboard focus and waits
+    /// for that focus to leave rather than for the read window.
+    focused: bool,
+    /// When the untouched panel shrinks.
+    read_until: Option<Instant>,
+}
+
+impl Presence {
+    pub fn new(modal: bool, now: Instant) -> Self {
+        Self {
+            modal,
+            collapsed: false,
+            focused: false,
+            read_until: (!modal).then(|| now + Duration::from_secs(DIALOG_READ_SECS)),
+        }
+    }
+
+    pub fn collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    /// The next instant [`Presence::tick`] has something to do.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.read_until.filter(|_| !self.collapsed)
+    }
+
+    /// The pointer is over the open panel: keep it open while it is read.
+    pub fn pointer_over(&mut self, now: Instant) {
+        if self.read_until.is_some() && !self.collapsed {
+            self.read_until = Some(now + Duration::from_secs(DIALOG_READ_SECS));
+        }
+    }
+
+    /// The user clicked the open panel, which gives it the keyboard.
+    pub fn clicked(&mut self) {
+        if !self.collapsed {
+            self.focused = true;
+            self.read_until = None;
+        }
+    }
+
+    /// The keyboard focus left the island layer. Returns whether the dialog
+    /// shrank.
+    pub fn focus_lost(&mut self) -> bool {
+        self.focused = false;
+        self.collapse()
+    }
+
+    /// Shrink an untouched panel whose read window ran out. Returns whether
+    /// the dialog shrank.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        match self.read_until {
+            Some(until) if !self.focused && now >= until => self.collapse(),
+            _ => false,
+        }
+    }
+
+    /// The user clicked the circle: open the panel, holding the keyboard.
+    pub fn expand(&mut self) {
+        self.collapsed = false;
+        self.focused = true;
+        self.read_until = None;
+    }
+
+    fn collapse(&mut self) -> bool {
+        if self.modal || self.collapsed {
+            return false;
+        }
+        self.collapsed = true;
+        self.focused = false;
+        self.read_until = None;
+        true
+    }
+}
+
 /// What was hit by a pointer, in panel-local coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialogHit {
@@ -173,29 +268,125 @@ pub enum DialogHit {
 // Layout
 // ---------------------------------------------------------------------------
 
+/// Title: 15pt bold, wrapped over at most this many lines.
+const TITLE_SIZE: f32 = 15.0;
+const TITLE_LINE_H: f32 = 19.0;
+const TITLE_MAX_LINES: usize = 3;
+/// Subtitle and body: 12pt. Both wrap; a question's text usually lives here.
+const TEXT_SIZE: f32 = 12.0;
+const TEXT_LINE_H: f32 = 16.0;
+const SUBTITLE_MAX_LINES: usize = 12;
+const BODY_MAX_LINES: usize = 40;
+/// A group label is the question a choice group answers, so it wraps too.
+const GROUP_LABEL_SIZE: f32 = 12.0;
+const GROUP_LABEL_MAX_LINES: usize = 12;
+/// Space between a group label's last line and the group's first option.
+const GROUP_LABEL_GAP: f32 = 4.0;
+/// Option rows: a wrapped label, and under it an optional wrapped description.
+const OPTION_LABEL_SIZE: f32 = 13.0;
+const OPTION_LABEL_LINE_H: f32 = 17.0;
+const OPTION_LABEL_MAX_LINES: usize = 3;
+const OPTION_DESC_SIZE: f32 = 11.0;
+const OPTION_DESC_LINE_H: f32 = 14.0;
+const OPTION_DESC_MAX_LINES: usize = 4;
+const OPTION_PAD_Y: f32 = 12.0;
+const OPTION_ICON: f32 = 24.0;
+/// The tallest a panel gets. Past it the text and choices scroll under a
+/// fixed row of buttons, which always stay on screen.
+pub const DIALOG_MAX_H: f32 = 520.0;
+
 /// Computed geometry for a dialog panel, in panel-local coordinates
 /// (origin at the panel top-left, logical units).
+///
+/// Everything above the buttons — icon, text and choices — is laid out in
+/// *content* coordinates and scrolls inside [`DialogLayout::viewport`] when it
+/// runs taller than the panel allows. The buttons are in panel coordinates.
 pub struct DialogLayout {
     pub width: f32,
     pub height: f32,
+    /// The part of the panel the content shows through: `(0, 0)` to the top
+    /// of the button row.
+    pub viewport: Rect,
+    /// Full height of the content, which may exceed the viewport's.
+    pub content_h: f32,
     /// `None` when the grant button is hidden (empty label).
     pub grant_rect: Option<Rect>,
     pub deny_rect: Rect,
     /// `None` when the open button is hidden (empty label).
     pub open_rect: Option<Rect>,
-    /// `(group_idx, option_idx, row_rect)` for every option row.
+    /// `(group_idx, option_idx, row_rect)` for every option row, in content
+    /// coordinates.
     pub option_rects: Vec<(usize, usize, Rect)>,
-    // Internal draw anchors (local coords).
+    // Internal draw anchors (content coords).
     icon_present: bool,
-    title_y: f32,
-    subtitle_y: Option<f32>,
-    body_y: Option<f32>,
-    group_label_ys: Vec<(usize, f32)>,
+    title: TextBlock,
+    subtitle: Option<TextBlock>,
+    body: Option<TextBlock>,
+    group_labels: Vec<TextBlock>,
+    /// Parallel to `option_rects`: the wrapped label and description lines.
+    option_text: Vec<(Vec<String>, Vec<String>)>,
+}
+
+/// Wrapped lines and the top edge they start at.
+struct TextBlock {
+    y: f32,
+    lines: Vec<String>,
+}
+
+impl DialogLayout {
+    /// How far the content can scroll: zero when it fits.
+    pub fn max_scroll(&self) -> f32 {
+        (self.content_h - self.viewport.height()).max(0.0)
+    }
+}
+
+/// An option's label and its description. Callers pass a description after
+/// the label's first line break (`"Postgres\nRelational, battle-tested"`), so
+/// the wire format stays `(id, label, icon)`.
+pub fn split_option_label(label: &str) -> (&str, &str) {
+    match label.split_once('\n') {
+        Some((label, description)) => (label.trim_end(), description.trim()),
+        None => (label, ""),
+    }
+}
+
+/// Wrap `text` to `max_w`, keeping the caller's own line breaks, over at most
+/// `max_lines` lines. Blank lines are kept as paragraph breaks.
+fn wrap(text: &str, f: &skia_safe::Font, max_w: f32, max_lines: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for paragraph in text.lines() {
+        if lines.len() >= max_lines {
+            break;
+        }
+        if paragraph.trim().is_empty() {
+            // A run of blank lines is one paragraph break, never a leading one.
+            if lines.last().is_some_and(|l| !l.is_empty()) {
+                lines.push(String::new());
+            }
+            continue;
+        }
+        let budget = max_lines - lines.len();
+        lines.extend(crate::renderer::wrap_text(paragraph, f, max_w, budget));
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    // Lines dropped past the cap: say so on the last line kept.
+    let kept: usize = lines.iter().map(|l| l.split_whitespace().count()).sum();
+    if kept < text.split_whitespace().count() {
+        if let Some(last) = lines.last_mut() {
+            if !last.ends_with('…') {
+                *last = ellipsize(&format!("{last} …"), f, max_w);
+            }
+        }
+    }
+    lines
 }
 
 /// Compute the panel layout for the given request view.
 pub fn dialog_layout(view: &DialogView) -> DialogLayout {
     let w = DIALOG_W;
+    let text_max_w = w - PAD * 2.0;
     let mut y = PAD;
 
     let icon_present = !view.icon.is_empty();
@@ -203,54 +394,91 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
         y += ICON + ICON_GAP;
     }
 
-    // Title (one line, ~18px tall).
-    let title_y = y;
-    y += 18.0 + TITLE_GAP;
-
-    let subtitle_y = if view.subtitle.is_empty() {
-        None
-    } else {
-        let sy = y;
-        y += 15.0 + SUBTITLE_GAP;
-        Some(sy)
+    let title_lines = wrap(
+        &view.title,
+        &font(TITLE_SIZE, 700),
+        text_max_w,
+        TITLE_MAX_LINES,
+    );
+    let title = TextBlock {
+        y,
+        lines: title_lines,
     };
+    y += TITLE_LINE_H * title.lines.len().max(1) as f32 + TITLE_GAP;
 
-    let body_y = if view.body.is_empty() {
-        None
-    } else {
-        let by = y;
-        y += 16.0 + BODY_GAP;
-        Some(by)
+    let text_block = |text: &str, weight: i32, max_lines: usize, gap: f32, y: &mut f32| {
+        let lines = wrap(text, &font(TEXT_SIZE, weight), text_max_w, max_lines);
+        if lines.is_empty() {
+            return None;
+        }
+        let block = TextBlock { y: *y, lines };
+        *y += TEXT_LINE_H * block.lines.len() as f32 + gap;
+        Some(block)
     };
+    let subtitle = text_block(
+        &view.subtitle,
+        500,
+        SUBTITLE_MAX_LINES,
+        SUBTITLE_GAP,
+        &mut y,
+    );
+    let body = text_block(&view.body, 400, BODY_MAX_LINES, BODY_GAP, &mut y);
 
     // Choice groups.
     let mut option_rects = Vec::new();
-    let mut group_label_ys = Vec::new();
+    let mut option_text = Vec::new();
+    let mut group_labels = Vec::new();
+    let label_font = font(OPTION_LABEL_SIZE, 500);
+    let desc_font = font(OPTION_DESC_SIZE, 400);
     for (gi, group) in view.choices.iter().enumerate() {
         if group.options.is_empty() {
             continue;
         }
-        if !group.label.is_empty() {
-            group_label_ys.push((gi, y));
-            y += GROUP_LABEL_H;
+        let lines = wrap(
+            &group.label,
+            &font(GROUP_LABEL_SIZE, 600),
+            text_max_w,
+            GROUP_LABEL_MAX_LINES,
+        );
+        if !lines.is_empty() {
+            let h = TEXT_LINE_H * lines.len() as f32;
+            group_labels.push(TextBlock { y, lines });
+            y += h + GROUP_LABEL_GAP;
         }
-        for (oi, _opt) in group.options.iter().enumerate() {
-            let rect = Rect::from_xywh(PAD, y, w - PAD * 2.0, OPTION_H);
+        for (oi, opt) in group.options.iter().enumerate() {
+            let (label, description) = split_option_label(&opt.label);
+            let text_x = option_text_x(!opt.icon.is_empty());
+            let col_w = (w - PAD - CHECK_GUTTER) - (PAD + text_x);
+            let label_lines = wrap(label, &label_font, col_w, OPTION_LABEL_MAX_LINES);
+            let desc_lines = wrap(description, &desc_font, col_w, OPTION_DESC_MAX_LINES);
+            let text_h = OPTION_LABEL_LINE_H * label_lines.len().max(1) as f32
+                + OPTION_DESC_LINE_H * desc_lines.len() as f32;
+            let row_h = (text_h + OPTION_PAD_Y * 2.0).max(OPTION_H);
+            let rect = Rect::from_xywh(PAD, y, w - PAD * 2.0, row_h);
             option_rects.push((gi, oi, rect));
-            y += OPTION_H + OPTION_GAP;
+            option_text.push((label_lines, desc_lines));
+            y += row_h + OPTION_GAP;
         }
         y += 4.0; // extra gap after a group
     }
+    let content_h = y;
 
     // Buttons. The grant button is the default action and always sits at the
     // right of the main row. The open button is secondary: with a grant button
     // it gets a row of its own below; without one it takes the grant's slot,
     // drawn neutral so it never reads as the default.
-    y += 2.0;
-    let full_w = w - PAD * 2.0;
-    let half_w = (full_w - BTN_GAP) / 2.0;
     let has_grant = !view.grant_label.is_empty();
     let has_open = !view.open_label.is_empty();
+    let mut footer_h = 2.0 + BTN_H + PAD;
+    if has_grant && has_open {
+        footer_h += OPEN_ROW_GAP + OPEN_BTN_H;
+    }
+    let height = (content_h + footer_h).min(DIALOG_MAX_H);
+    let viewport = Rect::from_xywh(0.0, 0.0, w, height - footer_h);
+
+    let mut y = viewport.bottom + 2.0;
+    let full_w = w - PAD * 2.0;
+    let half_w = (full_w - BTN_GAP) / 2.0;
     let (deny_rect, grant_rect, mut open_rect) = if has_grant || has_open {
         let deny = Rect::from_xywh(PAD, y, half_w, BTN_H);
         let right = Rect::from_xywh(PAD + half_w + BTN_GAP, y, half_w, BTN_H);
@@ -266,22 +494,32 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
     if has_grant && has_open {
         y += OPEN_ROW_GAP;
         open_rect = Some(Rect::from_xywh(PAD, y, full_w, OPEN_BTN_H));
-        y += OPEN_BTN_H;
     }
-    y += PAD;
 
     DialogLayout {
         width: w,
-        height: y,
+        height,
+        viewport,
+        content_h,
         grant_rect,
         deny_rect,
         open_rect,
         option_rects,
         icon_present,
-        title_y,
-        subtitle_y,
-        body_y,
-        group_label_ys,
+        title,
+        subtitle,
+        body,
+        group_labels,
+        option_text,
+    }
+}
+
+/// Where an option's text starts, relative to its row's left edge.
+fn option_text_x(has_icon: bool) -> f32 {
+    if has_icon {
+        10.0 + OPTION_ICON + 10.0
+    } else {
+        14.0
     }
 }
 
@@ -289,8 +527,9 @@ fn in_rect(r: &Rect, x: f32, y: f32) -> bool {
     x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
 }
 
-/// Hit-test a point in panel-local coordinates.
-pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32) -> Option<DialogHit> {
+/// Hit-test a point in panel-local coordinates, with the content scrolled
+/// down by `scroll`.
+pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32, scroll: f32) -> Option<DialogHit> {
     if layout.grant_rect.is_some_and(|r| in_rect(&r, lx, ly)) {
         return Some(DialogHit::Grant);
     }
@@ -300,8 +539,13 @@ pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32) -> Option<DialogHit> {
     if layout.open_rect.is_some_and(|r| in_rect(&r, lx, ly)) {
         return Some(DialogHit::Open);
     }
+    // A row scrolled out from under the buttons can't be picked through them.
+    if !in_rect(&layout.viewport, lx, ly) {
+        return None;
+    }
+    let cy = ly + scroll.clamp(0.0, layout.max_scroll());
     for (gi, oi, rect) in &layout.option_rects {
-        if in_rect(rect, lx, ly) {
+        if in_rect(rect, lx, cy) {
             return Some(DialogHit::Option {
                 group: *gi,
                 option: *oi,
@@ -326,9 +570,9 @@ fn font(size: f32, weight: i32) -> skia_safe::Font {
 
 /// Truncate `text` to fit `max_w`, appending an ellipsis when it doesn't.
 ///
-/// Window titles are arbitrary and frequently longer than the panel — without
-/// this they run under the checkmark and off the rounded edge. Walks back by
-/// character (not byte) so multi-byte titles can't be split mid-codepoint.
+/// Button labels are arbitrary and can be longer than the button — without
+/// this they run off its rounded edge. Walks back by character (not byte) so
+/// multi-byte text can't be split mid-codepoint.
 fn ellipsize(text: &str, f: &skia_safe::Font, max_w: f32) -> String {
     if f.measure_str(text, None).0 <= max_w {
         return text.to_string();
@@ -380,18 +624,57 @@ fn draw_text_centered(
     canvas.draw_str(text, (cx - tw / 2.0, baseline_y), f, &paint);
 }
 
+/// Draw wrapped lines centered on `cx`, the first line's top at `top`.
+fn draw_lines_centered(
+    canvas: &Canvas,
+    lines: &[String],
+    cx: f32,
+    top: f32,
+    line_h: f32,
+    f: &skia_safe::Font,
+    color: Color,
+) {
+    for (i, line) in lines.iter().enumerate() {
+        let baseline = top + line_h * i as f32 + line_h - 4.0;
+        draw_text_centered(canvas, line, cx, baseline, f, color);
+    }
+}
+
+/// Draw wrapped lines from `x`, the first line's top at `top`.
+fn draw_lines(
+    canvas: &Canvas,
+    lines: &[String],
+    x: f32,
+    top: f32,
+    line_h: f32,
+    f: &skia_safe::Font,
+    color: Color,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(color);
+    for (i, line) in lines.iter().enumerate() {
+        let baseline = top + line_h * i as f32 + line_h - 4.0;
+        canvas.draw_str(line, (x, baseline), f, &paint);
+    }
+}
+
 /// Draw the dialog content into the (already background-styled) subsurface
 /// canvas. The buffer is sized to the panel by `draw_content`, so content is
 /// drawn from the origin, matching the pill/card model.
-/// `selected[gi]` is the chosen option index for group `gi`.
-pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layout: &DialogLayout) {
-    let _ = (layout.width, layout.height);
+/// `selected[gi]` is the chosen option index for group `gi`; `scroll` is how
+/// far the content is scrolled.
+pub fn draw_dialog(
+    canvas: &Canvas,
+    view: &DialogView,
+    selected: &[usize],
+    layout: &DialogLayout,
+    scroll: f32,
+) {
     canvas.save();
 
     let w = layout.width;
     let cx = w / 2.0;
-    // Every centered run of text is clamped to the panel's content width.
-    let text_max_w = w - PAD * 2.0;
     let theme = otto_kit::AppContext::current_theme();
     // Text is black on light, white on dark — the theme decides. The dialog
     // takes it fully opaque: `text_primary` is deliberately soft (0xD9) for
@@ -410,67 +693,55 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
     // a blurred backdrop (see [`apply_dialog_style`]) and clips the rounded
     // corners, so the canvas only carries content.
 
+    // Scrollable content: clipped to the viewport, shifted by the scroll.
+    canvas.save();
+    canvas.clip_rect(layout.viewport, skia_safe::ClipOp::Intersect, true);
+    canvas.translate((0.0, -scroll.clamp(0.0, layout.max_scroll())));
+
     // Icon.
     if layout.icon_present {
         let ix = cx - ICON / 2.0;
         draw_icon(canvas, &view.icon, ix, PAD, ICON);
     }
 
-    // Title.
-    draw_text_centered_clamped(
+    draw_lines_centered(
         canvas,
-        &view.title,
+        &layout.title.lines,
         cx,
-        layout.title_y + 14.0,
-        &font(15.0, 700),
+        layout.title.y,
+        TITLE_LINE_H,
+        &font(TITLE_SIZE, 700),
         text,
-        text_max_w,
     );
+    if let Some(block) = &layout.subtitle {
+        let f = font(TEXT_SIZE, 500);
+        draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim);
+    }
+    if let Some(block) = &layout.body {
+        let f = font(TEXT_SIZE, 400);
+        draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim2);
+    }
 
-    // Subtitle.
-    if let Some(sy) = layout.subtitle_y {
-        draw_text_centered_clamped(
+    // Group labels: the question each group answers, in full.
+    let group_font = font(GROUP_LABEL_SIZE, 600);
+    for block in &layout.group_labels {
+        draw_lines(
             canvas,
-            &view.subtitle,
-            cx,
-            sy + 12.0,
-            &font(12.0, 500),
+            &block.lines,
+            PAD,
+            block.y,
+            TEXT_LINE_H,
+            &group_font,
             dim,
-            text_max_w,
         );
-    }
-
-    // Body.
-    if let Some(by) = layout.body_y {
-        draw_text_centered_clamped(
-            canvas,
-            &view.body,
-            cx,
-            by + 12.0,
-            &font(12.0, 400),
-            dim2,
-            text_max_w,
-        );
-    }
-
-    // Group labels.
-    for (gi, gy) in &layout.group_label_ys {
-        if let Some(group) = view.choices.get(*gi) {
-            let mut paint = Paint::default();
-            paint.set_anti_alias(true);
-            paint.set_color(dim2);
-            let gf = font(11.0, 600);
-            canvas.draw_str(
-                ellipsize(&group.label, &gf, text_max_w),
-                (PAD, gy + 12.0),
-                &gf,
-                &paint,
-            );
-        }
     }
 
     // Option rows.
-    for (gi, oi, rect) in &layout.option_rects {
+    let label_font = font(OPTION_LABEL_SIZE, 500);
+    let desc_font = font(OPTION_DESC_SIZE, 400);
+    for ((gi, oi, rect), (label_lines, desc_lines)) in
+        layout.option_rects.iter().zip(&layout.option_text)
+    {
         let Some(group) = view.choices.get(*gi) else {
             continue;
         };
@@ -491,31 +762,42 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
             &row_bg,
         );
 
-        let mut text_x = rect.left + 14.0;
         if !opt.icon.is_empty() {
-            let sz = 24.0;
             draw_icon(
                 canvas,
                 &opt.icon,
                 rect.left + 10.0,
-                rect.center_y() - sz / 2.0,
-                sz,
+                rect.center_y() - OPTION_ICON / 2.0,
+                OPTION_ICON,
             );
-            text_x = rect.left + 10.0 + sz + 10.0;
         }
+        let text_x = rect.left + option_text_x(!opt.icon.is_empty());
 
-        let mut paint = Paint::default();
-        paint.set_anti_alias(true);
-        paint.set_color(if is_selected { on_accent } else { text });
-        // Reserve the checkmark gutter on every row, selected or not, so a
-        // label doesn't reflow when the selection moves.
-        let label_font = font(13.0, 500);
-        let label_max_w = (rect.right - CHECK_GUTTER) - text_x;
-        canvas.draw_str(
-            ellipsize(&opt.label, &label_font, label_max_w),
-            (text_x, rect.center_y() + 4.5),
+        // The text block sits centered in the row, however many lines it took.
+        let label_h = OPTION_LABEL_LINE_H * label_lines.len().max(1) as f32;
+        let text_h = label_h + OPTION_DESC_LINE_H * desc_lines.len() as f32;
+        let top = rect.center_y() - text_h / 2.0;
+        draw_lines(
+            canvas,
+            label_lines,
+            text_x,
+            top,
+            OPTION_LABEL_LINE_H,
             &label_font,
-            &paint,
+            if is_selected { on_accent } else { text },
+        );
+        draw_lines(
+            canvas,
+            desc_lines,
+            text_x,
+            top + label_h,
+            OPTION_DESC_LINE_H,
+            &desc_font,
+            if is_selected {
+                Color::from_argb(0xD9, 0xFF, 0xFF, 0xFF)
+            } else {
+                dim
+            },
         );
 
         // Checkmark on the selected row.
@@ -534,6 +816,19 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
             p.line_to((mx + 5.0, my - 5.0));
             canvas.draw_path(&p.detach(), &ck);
         }
+    }
+    canvas.restore();
+
+    // A hairline over the buttons when content scrolls beneath them.
+    if layout.max_scroll() > 0.0 {
+        let mut line = Paint::default();
+        line.set_anti_alias(true);
+        line.set_color(dim2);
+        line.set_alpha(0x40);
+        canvas.draw_rect(
+            Rect::from_xywh(0.0, layout.viewport.bottom - 0.5, w, 1.0),
+            &line,
+        );
     }
 
     // Deny button.
@@ -671,9 +966,9 @@ mod tests {
         assert!(layout.open_rect.is_none());
         assert!(grant.left > layout.deny_rect.right);
         let (x, y) = center(grant);
-        assert_eq!(hit_test(&layout, x, y), Some(DialogHit::Grant));
+        assert_eq!(hit_test(&layout, x, y, 0.0), Some(DialogHit::Grant));
         let (x, y) = center(layout.deny_rect);
-        assert_eq!(hit_test(&layout, x, y), Some(DialogHit::Deny));
+        assert_eq!(hit_test(&layout, x, y, 0.0), Some(DialogHit::Deny));
     }
 
     #[test]
@@ -693,7 +988,7 @@ mod tests {
         assert_eq!(open.top, layout.deny_rect.top);
         assert!(open.left > layout.deny_rect.right);
         let (x, y) = center(open);
-        assert_eq!(hit_test(&layout, x, y), Some(DialogHit::Open));
+        assert_eq!(hit_test(&layout, x, y, 0.0), Some(DialogHit::Open));
     }
 
     #[test]
@@ -706,8 +1001,185 @@ mod tests {
         assert!(open.top >= three.deny_rect.bottom);
         assert!(three.height > two.height);
         let (x, y) = center(open);
-        assert_eq!(hit_test(&three, x, y), Some(DialogHit::Open));
+        assert_eq!(hit_test(&three, x, y, 0.0), Some(DialogHit::Open));
         let (x, y) = center(grant);
-        assert_eq!(hit_test(&three, x, y), Some(DialogHit::Grant));
+        assert_eq!(hit_test(&three, x, y, 0.0), Some(DialogHit::Grant));
+    }
+
+    fn group(id: &str, label: &str, options: &[&str]) -> ChoiceGroup {
+        ChoiceGroup {
+            id: id.into(),
+            label: label.into(),
+            options: options
+                .iter()
+                .enumerate()
+                .map(|(i, label)| ChoiceOption {
+                    id: format!("{id}-{i}"),
+                    label: (*label).into(),
+                    icon: String::new(),
+                })
+                .collect(),
+            default: 0,
+        }
+    }
+
+    const LONG: &str = "Should the migration keep the legacy session table around \
+        until every client has upgraded, or drop it in this release and accept \
+        that clients older than three months will need to log in again?";
+
+    fn words(text: &str) -> Vec<&str> {
+        text.split_whitespace().collect()
+    }
+
+    #[test]
+    fn long_text_wraps_instead_of_being_cut() {
+        let short = dialog_layout(&view("Answer", ""));
+        let mut long = view("Answer", "");
+        long.subtitle = LONG.into();
+        long.body = "in ~/dev/otto\nsecond line".into();
+        let layout = dialog_layout(&long);
+
+        let subtitle = layout.subtitle.as_ref().expect("subtitle laid out");
+        assert!(subtitle.lines.len() > 1, "a long question wraps");
+        assert_eq!(words(&subtitle.lines.join(" ")), words(LONG));
+        let body = layout.body.as_ref().expect("body laid out");
+        assert_eq!(body.lines, ["in ~/dev/otto", "second line"]);
+        assert!(layout.height > short.height);
+        assert_eq!(layout.max_scroll(), 0.0);
+    }
+
+    #[test]
+    fn group_labels_and_option_descriptions_are_laid_out_in_full() {
+        let mut v = view("Answer", "Open in Ask");
+        v.choices = vec![group(
+            "question_0",
+            LONG,
+            &[
+                "Keep it\nClients keep working; the table is dropped next release",
+                "Drop it",
+            ],
+        )];
+        let layout = dialog_layout(&v);
+        assert_eq!(words(&layout.group_labels[0].lines.join(" ")), words(LONG));
+
+        let (label, desc) = &layout.option_text[0];
+        assert_eq!(label, &["Keep it"]);
+        assert_eq!(
+            words(&desc.join(" ")),
+            words("Clients keep working; the table is dropped next release")
+        );
+        let with_desc = layout.option_rects[0].2;
+        let plain = layout.option_rects[1].2;
+        assert!(with_desc.height() > plain.height());
+        assert_eq!(plain.height(), OPTION_H);
+        assert!(plain.top >= with_desc.bottom);
+        // The group's label sits above its first option.
+        assert!(layout.group_labels[0].y < with_desc.top);
+    }
+
+    #[test]
+    fn options_split_label_and_description_at_the_first_line_break() {
+        assert_eq!(split_option_label("Postgres"), ("Postgres", ""));
+        assert_eq!(
+            split_option_label("Postgres\nRelational\nand old"),
+            ("Postgres", "Relational\nand old")
+        );
+    }
+
+    #[test]
+    fn a_tall_dialog_clamps_and_scrolls_under_fixed_buttons() {
+        let mut v = view("Answer", "Open in Ask");
+        v.subtitle = LONG.into();
+        v.choices = (0..4)
+            .map(|i| {
+                group(
+                    &format!("question_{i}"),
+                    LONG,
+                    &["One\nThe first option", "Two\nThe second", "Three", "Four"],
+                )
+            })
+            .collect();
+        let layout = dialog_layout(&v);
+        assert_eq!(layout.height, DIALOG_MAX_H);
+        assert!(layout.max_scroll() > 0.0);
+        assert_eq!(layout.option_rects.len(), 16);
+
+        // The buttons stay inside the panel, below the scrolling content.
+        let grant = layout.grant_rect.expect("grant shown");
+        let open = layout.open_rect.expect("open shown");
+        assert!(grant.top >= layout.viewport.bottom);
+        assert!(open.bottom <= layout.height);
+        let (x, y) = center(grant);
+        assert_eq!(
+            hit_test(&layout, x, y, layout.max_scroll()),
+            Some(DialogHit::Grant)
+        );
+
+        // The last option is out of view until scrolled to.
+        let (_, _, last) = *layout.option_rects.last().unwrap();
+        let x = last.center_x();
+        let at_bottom = last.center_y() - layout.max_scroll();
+        assert!(last.center_y() > layout.viewport.bottom);
+        assert_eq!(
+            hit_test(&layout, x, at_bottom, layout.max_scroll()),
+            Some(DialogHit::Option {
+                group: 3,
+                option: 3
+            })
+        );
+        // A row scrolled out of view can't be clicked.
+        let (_, _, first) = layout.option_rects[0];
+        let under = first.center_y() - layout.max_scroll();
+        assert_ne!(
+            hit_test(&layout, first.center_x(), under, layout.max_scroll()),
+            Some(DialogHit::Option {
+                group: 0,
+                option: 0
+            })
+        );
+    }
+
+    #[test]
+    fn a_modal_dialog_never_shrinks() {
+        let now = Instant::now();
+        let mut p = Presence::new(true, now);
+        assert_eq!(p.deadline(), None);
+        assert!(!p.tick(now + Duration::from_secs(3600)));
+        assert!(!p.focus_lost());
+        assert!(!p.collapsed());
+    }
+
+    #[test]
+    fn an_ignored_dialog_shrinks_after_its_read_window() {
+        let now = Instant::now();
+        let read = Duration::from_secs(DIALOG_READ_SECS);
+        let mut p = Presence::new(false, now);
+        assert_eq!(p.deadline(), Some(now + read));
+        assert!(!p.tick(now + read / 2));
+        // The pointer resting on it holds it open.
+        p.pointer_over(now + read / 2);
+        assert!(!p.tick(now + read));
+        assert!(p.tick(now + read + read / 2));
+        assert!(p.collapsed());
+        assert_eq!(p.deadline(), None);
+
+        // Clicking the circle opens it, holding the keyboard: only a focus
+        // loss shrinks it again, not time.
+        p.expand();
+        assert!(!p.collapsed());
+        assert!(!p.tick(now + read * 10));
+        assert!(p.focus_lost());
+        assert!(p.collapsed());
+        assert!(!p.focus_lost(), "already shrunk");
+    }
+
+    #[test]
+    fn a_clicked_dialog_shrinks_when_focus_moves_away() {
+        let now = Instant::now();
+        let mut p = Presence::new(false, now);
+        p.clicked();
+        assert!(!p.tick(now + Duration::from_secs(DIALOG_READ_SECS * 2)));
+        assert!(p.focus_lost());
+        assert!(p.collapsed());
     }
 }

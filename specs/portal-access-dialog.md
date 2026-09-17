@@ -62,12 +62,16 @@ A request carries:
 - `parent_window` — opaque parent handle (may be empty).
 - `title`, `subtitle`, `body` — text. `title` is required; the others optional.
 - `icon` — themed icon name or empty.
-- `modal` — whether the dialog grabs input until answered (default true).
+- `modal` — whether the dialog grabs input until answered (default true). A
+  non-modal dialog can be ignored — see [Non-modal dialogs](#non-modal-dialogs).
+  otto-agentsd asks non-modal; portal and screencast callers ask modal.
 - `grant_label`, `deny_label` — confirm/cancel button text (defaults:
   "Allow" / "Deny", or "OK" / "Cancel" when there are no choices to grant).
 - `choices` — zero or more choice groups. Each group has an `id`, a `label`, a
   list of options `(option_id, option_label, option_icon)`, and an optional
-  `default` option_id. A group with options renders as a single-select list; a
+  `default` option_id. An option label may carry a description after its first
+  line break (`"Postgres\nRelational, battle-tested"`); the renderer draws it
+  smaller, under the label. A group with options renders as a single-select list; a
   group with no options renders as a boolean toggle (matching Access
   semantics where an empty choice list means a checkbox).
 
@@ -90,6 +94,8 @@ A request carries:
 4. Renderer presents the dialog:
    - If `modal`, it takes exclusive keyboard focus on an on-top layer and must
      not be occluded or click-through while pending (anti-spoofing).
+   - If not `modal`, it takes no keyboard focus on arrival and catches clicks
+     only on itself; it can shrink out of the way without answering.
    - It shows title/subtitle/body/icon and any choice groups as interactive
      controls, plus grant and deny actions.
    - Default selections are pre-highlighted.
@@ -160,7 +166,7 @@ Stages 1–3 implemented (compiling; runtime verification pending):
 - **otto-islands** renders dialogs via `org.otto.Dialog1` at `/org/otto/Dialog`
   (`present_access(app_id, title, subtitle, body, icon, grant_label,
   deny_label, modal, choices) → (response, results)`), a typed superset of
-  Access. Panel is a modal dropdown below the island bar.
+  Access. Panel is a dropdown below the island bar, modal or not per `modal`.
   It also serves `present_question(app_id, title, subtitle, body, icon,
   grant_label, deny_label, open_label, modal, choices) → (response, results)`
   (bus signature `ssssssssba(ssa(sss)s)` → `ua(ss)`) — see
@@ -205,6 +211,43 @@ Responses:
   Opening the other app is the caller's job.
 
 `PresentAccess` never returns `3`.
+
+### Text and height
+
+Nothing the caller sends is cut off. The title, subtitle, body, each group's
+label (for a question, the question itself) and each option's label and
+description wrap to the panel's width, keeping the caller's own line breaks.
+The panel grows to fit, up to 520 points tall. Past that, the text and choices
+scroll (pointer wheel or touchpad over the panel) under the button row, which
+stays put; a hairline marks the edge. Only button labels are ellipsised.
+Line caps bound pathological input (title 3 lines, subtitle 12, body 40, group
+label 12, option label 3, description 4); text past a cap ends in an ellipsis.
+
+### Non-modal dialogs
+
+A dialog presented with `modal = false` asks without taking over:
+
+- It opens as the usual panel below the island bar, with **on-demand** keyboard
+  interactivity, and its input region covers only the panel. Keys keep going
+  to the focused window and clicks beside the panel reach whatever is behind.
+  Clicking the panel gives it the keyboard (`Esc` / `Enter` then work).
+- It **shrinks into a circle** — a Mini-sized island showing the dialog's icon,
+  at the end of the island row, using the same springs an island moves and
+  resizes with — when the user moves on:
+  - the keyboard focus it was given by a click leaves (another window, or a
+    click on the desktop: the compositor hands the keyboard back from an
+    on-demand overlay surface the same way it does from a top-layer panel), or
+  - it was never clicked and 12 seconds pass without the pointer on it (the
+    pointer resting on the panel, or scrolling it, restarts the count).
+- Shrinking is **not an answer**: the D-Bus call stays pending, and queued
+  dialogs behind it keep waiting. Clicking the circle opens the panel again,
+  with the keyboard, and it then only shrinks on focus loss.
+- While shrunk, `Esc` and `Enter` do nothing, even if the island layer holds the
+  keyboard for a notification.
+- A non-modal dialog does not claim the modal-overlay treatment below, so it is
+  not shown over a fullscreen window.
+
+A modal dialog never shrinks.
 
 ## Resolved decisions
 

@@ -35,7 +35,7 @@ fn action_focus(id: u64, key: &str) -> otto_kit::focus::FocusId {
     otto_kit::focus::FocusId::new(format!("island-{id}-{key}"))
 }
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
-use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView};
+use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView, Presence};
 use crate::dock_badges::DockBadges;
 use crate::renderer::{
     animate_to, apply_island_style, draw_content, set_size_and_position, COMPACT_H, MINI_H,
@@ -131,10 +131,18 @@ struct DialogPanel {
     selected: Vec<usize>,
     /// Panel top-left in layer coordinates (for hit testing).
     origin: (f32, f32),
-    /// Cached content height (for layer sizing / input region).
+    /// Size of the shape on screen — the panel, or the circle it shrank
+    /// into (for layer sizing / input region).
+    layout_w: f32,
     layout_h: f32,
     /// Whether the entrance animation has played.
     entered: bool,
+    /// Open as a panel, or shrunk into a circle in the island row.
+    presence: Presence,
+    /// How far the panel's content is scrolled, when it is taller than fits.
+    scroll: f32,
+    /// Last geometry target (w, h, cx, cy) — animate only when it changes.
+    last_target: (f32, f32, f32, f32),
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +181,9 @@ struct IslandApp {
     /// Whether the layer surface currently holds exclusive keyboard
     /// interactivity for a modal dialog — see `sync_dialog_modality`.
     dialog_modal_active: bool,
+    /// Center x of the circle a shrunk dialog sits in, at the end of the
+    /// island row — placed by `layout`.
+    dialog_circle_x: f32,
     /// Unread-notification counts published onto the dock icons.
     dock_badges: DockBadges,
 }
@@ -196,6 +207,7 @@ impl IslandApp {
             last_input_region: None,
             dialog: None,
             dialog_modal_active: false,
+            dialog_circle_x: LAYER_W as f32 / 2.0,
             dock_badges: DockBadges::new(),
         }
     }
@@ -399,7 +411,10 @@ impl IslandApp {
     }
 
     fn layout(&mut self, notifications: &[Activity], reposition_delay: bool) {
+        // A shrunk dialog takes a circle's slot at the end of the row.
+        let dialog_slot = self.dialog.as_ref().is_some_and(|p| p.presence.collapsed());
         if self.islands.is_empty() {
+            self.dialog_circle_x = self.layer_width() / 2.0;
             let size_changed = self.update_layer_size();
             self.update_input_region(size_changed);
             return;
@@ -483,8 +498,11 @@ impl IslandApp {
             placements.push(placed);
         }
 
-        let total_w: f32 =
+        let mut total_w: f32 =
             group_widths.iter().sum::<f32>() + (group_widths.len().saturating_sub(1)) as f32 * GAP;
+        if dialog_slot {
+            total_w += GAP + MINI_H;
+        }
 
         // The row stays centred on its current width, so an island growing
         // spreads in both directions: its neighbours to the left are pushed
@@ -508,6 +526,8 @@ impl IslandApp {
             }
             group_x += group_widths[gi] + GAP;
         }
+        // Past the last group (and its trailing gap): the dialog's circle.
+        self.dialog_circle_x = group_x + MINI_H / 2.0;
 
         // The push travels along the row rather than hitting every bubble at
         // once: whichever island is currently grown is the source, and each
@@ -652,7 +672,7 @@ impl IslandApp {
             let (_, h, _, cy) = island.last_layout;
             max_h = max_h.max(cy + h / 2.0 + 4.0);
         }
-        if let Some(panel) = &self.dialog {
+        if let Some(panel) = self.dialog.as_ref().filter(|p| !p.presence.collapsed()) {
             max_h = max_h.max(DIALOG_TOP + panel.layout_h + 12.0);
         }
 
@@ -701,11 +721,13 @@ impl IslandApp {
                     rects.push((0, 0, lw as i32, lh as i32));
                 }
             } else {
+                // Only the panel, or the circle it shrank into: clicks
+                // anywhere else reach the windows behind.
                 let (ox, oy) = panel.origin;
                 rects.push((
                     ox.max(0.0) as i32,
                     oy.max(0.0) as i32,
-                    dialog::DIALOG_W.ceil() as i32,
+                    panel.layout_w.ceil() as i32,
                     panel.layout_h.ceil() as i32,
                 ));
             }
@@ -773,7 +795,8 @@ impl IslandApp {
     // -----------------------------------------------------------------------
 
     fn handle_click(&mut self, px: f32, py: f32) {
-        // A dialog is modal — it consumes all clicks while present.
+        // A modal dialog consumes all clicks while present; a non-modal one
+        // only those on itself.
         if self.handle_dialog_click(px, py) {
             return;
         }
@@ -868,10 +891,12 @@ impl IslandApp {
             state.front_dialog_view()
         };
 
+        let circle_before = self.dialog.as_ref().is_some_and(|p| p.presence.collapsed());
         match (front, self.dialog.as_ref().map(|p| p.id)) {
             // Same dialog already presented — just (re)render below.
             (Some(view), Some(cur)) if view.id == cur => {
-                // Update view in case labels changed; keep selection/anim state.
+                // Update view in case labels changed; keep selection, scroll,
+                // presence and animation state.
                 if let Some(panel) = self.dialog.as_mut() {
                     panel.view = view;
                 }
@@ -892,6 +917,12 @@ impl IslandApp {
                 }
             }
             (None, None) => {}
+        }
+        // A shrunk dialog answered, withdrawn or replaced frees its slot in
+        // the island row.
+        let circle_after = self.dialog.as_ref().is_some_and(|p| p.presence.collapsed());
+        if circle_before != circle_after {
+            self.dialog_presence_changed();
         }
 
         self.sync_dialog_modality();
@@ -941,51 +972,100 @@ impl IslandApp {
             canvas.clear(skia_safe::Color::TRANSPARENT);
         });
         let selected: Vec<usize> = view.choices.iter().map(|g| g.default).collect();
-        tracing::info!(id = view.id, app_id = %view.app_id, title = %view.title, "dialog shown");
+        tracing::info!(id = view.id, app_id = %view.app_id, title = %view.title, modal = view.modal, "dialog shown");
         Some(DialogPanel {
             id: view.id,
             surface,
+            presence: Presence::new(view.modal, std::time::Instant::now()),
             view,
             selected,
             origin: (0.0, 0.0),
+            layout_w: 0.0,
             layout_h: 0.0,
             entered: false,
+            scroll: 0.0,
+            last_target: (0.0, 0.0, 0.0, 0.0),
         })
     }
 
-    /// Draw and position the active dialog panel.
+    /// Draw and position the active dialog: the panel below the island bar,
+    /// or the circle it shrank into at the end of the island row.
     fn render_dialog(&mut self) {
         let layer_w = self.layer_width();
+        let circle_x = self.dialog_circle_x;
         let Some(panel) = self.dialog.as_mut() else {
             return;
         };
+        let collapsed = panel.presence.collapsed();
         let layout = dialog::dialog_layout(&panel.view);
-        let w = layout.width;
-        let h = layout.height;
+        panel.scroll = panel.scroll.clamp(0.0, layout.max_scroll());
 
-        let cx = layer_w / 2.0;
-        let cy = DIALOG_TOP + h / 2.0;
-        panel.origin = (cx - w / 2.0, DIALOG_TOP);
+        let (w, h, cx, cy, radius) = if collapsed {
+            (
+                MINI_H,
+                MINI_H,
+                circle_x,
+                BAR_HEIGHT / 2.0,
+                MINI_H as f64 / 2.0,
+            )
+        } else {
+            (
+                layout.width,
+                layout.height,
+                layer_w / 2.0,
+                DIALOG_TOP + layout.height / 2.0,
+                dialog::PANEL_RADIUS as f64,
+            )
+        };
+        panel.origin = (cx - w / 2.0, cy - h / 2.0);
+        panel.layout_w = w;
         panel.layout_h = h;
+        let target = (w, h, cx, cy);
 
-        // Geometry before content: `draw` commits the buffer, so a panel drawn
-        // while still at its default position would be presented there for a
-        // frame before the entrance moved it.
-        set_size_and_position(&panel.surface, w, h, cx, cy);
+        if !panel.entered {
+            // Geometry before content: `draw` commits the buffer, so a panel
+            // drawn while still at its default position would be presented
+            // there for a frame before the entrance moved it.
+            set_size_and_position(&panel.surface, w, h, cx, cy);
+        }
 
         let selected = panel.selected.clone();
         let view = panel.view.clone();
+        let scroll = panel.scroll;
         draw_content(&mut panel.surface, w, h, |canvas| {
-            dialog::draw_dialog(canvas, &view, &selected, &layout);
+            if collapsed {
+                renderer::draw_mini(canvas, &view.icon, w, h);
+            } else {
+                dialog::draw_dialog(canvas, &view, &selected, &layout, scroll);
+            }
         });
 
         if !panel.entered {
             // Pop open from a small rounded shape — the transform animates,
             // the content does not. Opacity was pinned to 0 at creation, so
             // this is the first frame the panel can be seen at all.
-            renderer::animate_enter_pop(&panel.surface, dialog::PANEL_RADIUS as f64);
+            renderer::animate_enter_pop(&panel.surface, radius);
             panel.entered = true;
+        } else if panel.last_target != target {
+            // Shrinking into the circle and growing back out of it ride the
+            // same springs an island does between its sizes.
+            renderer::animate_to(&panel.surface, w, h, cx, cy, radius, 0.0);
         }
+        panel.last_target = target;
+    }
+
+    /// The dialog opened or shrank: re-run the row layout (which makes or
+    /// frees the circle's slot) and the dialog's own geometry.
+    fn dialog_presence_changed(&mut self) {
+        if let Some(panel) = &self.dialog {
+            tracing::info!(
+                id = panel.id,
+                collapsed = panel.presence.collapsed(),
+                "dialog presence"
+            );
+        }
+        let mut state = self.state.lock().unwrap();
+        state.dirty = true;
     }
 
     fn animate_dialog_out(&mut self, panel: DialogPanel) {
@@ -995,27 +1075,67 @@ impl IslandApp {
 
     /// Route a click to the active dialog. Returns true if a dialog consumed it.
     fn handle_dialog_click(&mut self, px: f32, py: f32) -> bool {
-        let Some(panel) = self.dialog.as_ref() else {
+        let Some(panel) = self.dialog.as_mut() else {
             return false;
         };
         let (ox, oy) = panel.origin;
+        let on_shape =
+            px >= ox && px <= ox + panel.layout_w && py >= oy && py <= oy + panel.layout_h;
+        if panel.presence.collapsed() {
+            // The circle opens the panel again; anything else is not ours.
+            if !on_shape {
+                return false;
+            }
+            panel.presence.expand();
+            self.dialog_presence_changed();
+            return true;
+        }
+        if !on_shape {
+            // A modal dialog swallows clicks beside it too.
+            return panel.view.modal;
+        }
+        panel.presence.clicked();
         let layout = dialog::dialog_layout(&panel.view);
-        match dialog::hit_test(&layout, px - ox, py - oy) {
+        match dialog::hit_test(&layout, px - ox, py - oy, panel.scroll) {
             Some(DialogHit::Option { group, option }) => {
-                if let Some(panel) = self.dialog.as_mut() {
-                    if let Some(sel) = panel.selected.get_mut(group) {
-                        *sel = option;
-                    }
+                if let Some(sel) = panel.selected.get_mut(group) {
+                    *sel = option;
                 }
                 self.render_dialog();
             }
             Some(DialogHit::Grant) => self.resolve_active_dialog(dialog::RESPONSE_GRANTED),
             Some(DialogHit::Deny) => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
             Some(DialogHit::Open) => self.resolve_active_dialog(dialog::RESPONSE_OPEN),
-            // Click landed on the panel background — swallow it (modal).
+            // Click landed on the panel background — swallow it.
             None => {}
         }
         true
+    }
+
+    /// Whether (px, py) is on the open dialog panel.
+    fn over_open_dialog(&self, px: f32, py: f32) -> bool {
+        self.dialog.as_ref().is_some_and(|p| {
+            let (ox, oy) = p.origin;
+            !p.presence.collapsed()
+                && px >= ox
+                && px <= ox + p.layout_w
+                && py >= oy
+                && py <= oy + p.layout_h
+        })
+    }
+
+    /// Scroll a dialog whose content is taller than the panel.
+    fn scroll_dialog(&mut self, delta: f32) {
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
+        let max = dialog::dialog_layout(&panel.view).max_scroll();
+        let scroll = (panel.scroll + delta).clamp(0.0, max);
+        if scroll != panel.scroll {
+            panel.scroll = scroll;
+            panel.presence.pointer_over(std::time::Instant::now());
+            self.render_dialog();
+        }
     }
 
     /// Deliver a decision for the active dialog and let the next tick dismiss it.
@@ -1266,6 +1386,13 @@ impl App for IslandApp {
             drop(state);
         }
 
+        // An untouched non-modal dialog shrinks once its read window is over.
+        if let Some(panel) = self.dialog.as_mut() {
+            if panel.presence.tick(now) {
+                self.dialog_presence_changed();
+            }
+        }
+
         let mut state = self.state.lock().unwrap();
         state.check_expired_refocus();
 
@@ -1298,8 +1425,9 @@ impl App for IslandApp {
         }
         // While a dialog is up, poll periodically to detect caller withdrawal
         // (the D-Bus method future being dropped closes the response channel).
-        if self.dialog.is_some() {
+        if let Some(panel) = &self.dialog {
             deadlines.push(now + Duration::from_millis(500));
+            deadlines.extend(panel.presence.deadline());
         }
         // Focus timeout only counts down when it can actually fire (see on_update).
         if self.focused_island.is_some()
@@ -1329,7 +1457,10 @@ impl App for IslandApp {
     }
 
     fn on_keyboard_event(&mut self, _ctx: &AppContext, key: u32, state: KeyState, _serial: u32) {
-        if state != KeyState::Pressed || self.dialog.is_none() {
+        // A shrunk dialog answers nothing from the keyboard: the island layer
+        // may hold the focus for another island.
+        if state != KeyState::Pressed || self.dialog.as_ref().is_none_or(|p| p.presence.collapsed())
+        {
             return;
         }
         // evdev keycodes: ESC = 1, ENTER = 28.
@@ -1361,6 +1492,14 @@ impl App for IslandApp {
                 changed = true;
             }
         }
+        // A non-modal dialog shrinks into its circle when the user moves on.
+        // It is still pending; clicking the circle opens it again.
+        if let Some(panel) = self.dialog.as_mut() {
+            if panel.presence.focus_lost() {
+                changed = true;
+                tracing::info!(id = panel.id, "keyboard focus left: dialog shrinks");
+            }
+        }
         // Restart the focus timeout from now.
         self.last_interaction = std::time::Instant::now();
         if changed {
@@ -1375,6 +1514,11 @@ impl App for IslandApp {
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     let (px, py) = event.position;
+                    if self.over_open_dialog(px as f32, py as f32) {
+                        if let Some(panel) = self.dialog.as_mut() {
+                            panel.presence.pointer_over(std::time::Instant::now());
+                        }
+                    }
                     let hit = self.hit_test(px as f32, py as f32);
                     let new_island = hit.as_ref().map(|(id, _)| *id);
                     let new_app = new_island.and_then(|id| {
@@ -1408,6 +1552,12 @@ impl App for IslandApp {
                 PointerEventKind::Press { button: 0x110, .. } => {
                     let (px, py) = event.position;
                     self.handle_click(px as f32, py as f32);
+                }
+                PointerEventKind::Axis { ref vertical, .. } => {
+                    let (px, py) = event.position;
+                    if self.over_open_dialog(px as f32, py as f32) {
+                        self.scroll_dialog(vertical.absolute as f32);
+                    }
                 }
                 _ => {}
             }
