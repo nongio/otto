@@ -1009,8 +1009,9 @@ impl IslandApp {
                 }
                 self.render_dialog();
             }
-            Some(DialogHit::Grant) => self.resolve_active_dialog(0),
-            Some(DialogHit::Deny) => self.resolve_active_dialog(1),
+            Some(DialogHit::Grant) => self.resolve_active_dialog(dialog::RESPONSE_GRANTED),
+            Some(DialogHit::Deny) => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
+            Some(DialogHit::Open) => self.resolve_active_dialog(dialog::RESPONSE_OPEN),
             // Click landed on the panel background — swallow it (modal).
             None => {}
         }
@@ -1022,7 +1023,8 @@ impl IslandApp {
         let Some(panel) = self.dialog.as_ref() else {
             return;
         };
-        let results: Vec<(String, String)> = if response == 0 {
+        // Only a confirmation carries selections; deny and open return none.
+        let results: Vec<(String, String)> = if response == dialog::RESPONSE_GRANTED {
             panel
                 .view
                 .choices
@@ -1332,8 +1334,16 @@ impl App for IslandApp {
         }
         // evdev keycodes: ESC = 1, ENTER = 28.
         match key {
-            1 => self.resolve_active_dialog(1),
-            28 => self.resolve_active_dialog(0),
+            1 => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
+            // Enter confirms only when there is a grant button to confirm with;
+            // it never triggers the open button.
+            28 if self
+                .dialog
+                .as_ref()
+                .is_some_and(|p| !p.view.grant_label.is_empty()) =>
+            {
+                self.resolve_active_dialog(dialog::RESPONSE_GRANTED)
+            }
             _ => {}
         }
     }

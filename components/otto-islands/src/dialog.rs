@@ -6,6 +6,10 @@
 //! groups; the user confirms (grant) or cancels (deny), and a
 //! [`DialogResponse`] is returned over the channel held in the request.
 //!
+//! A question (`PresentQuestion`) is the same dialog with two extra rules: the
+//! grant button is optional (hidden when its label is empty), and an optional
+//! *open* button hands the question off to another app (response `3`).
+//!
 //! See `specs/portal-access-dialog.md`.
 
 use otto_kit::icons::named_icon_sized;
@@ -38,6 +42,9 @@ const CHECK_GUTTER: f32 = 30.0;
 const BTN_H: f32 = 36.0;
 const BTN_GAP: f32 = 10.0;
 const BTN_RADIUS: f32 = 10.0;
+/// The open button's own row, below grant/deny, when both are shown.
+const OPEN_ROW_GAP: f32 = 4.0;
+const OPEN_BTN_H: f32 = 32.0;
 pub const PANEL_RADIUS: f32 = 20.0;
 
 /// Subsurface buffer dimensions (logical units passed to `SubsurfaceSurface::new`).
@@ -70,16 +77,23 @@ pub struct ChoiceGroup {
 /// The user's decision, returned to the caller.
 #[derive(Clone, Debug, Default)]
 pub struct DialogResponse {
-    /// `0` granted/confirmed, `1` cancelled/denied, `2` ended (withdrawn/error).
+    /// `0` granted/confirmed, `1` cancelled/denied, `2` ended (withdrawn/error),
+    /// `3` the open button was pressed.
     pub response: u32,
     /// `(group_id, selected_option_id)` for each choice group.
     pub results: Vec<(String, String)>,
 }
 
+/// Response codes carried in [`DialogResponse::response`].
+pub const RESPONSE_GRANTED: u32 = 0;
+pub const RESPONSE_DENIED: u32 = 1;
+pub const RESPONSE_ENDED: u32 = 2;
+pub const RESPONSE_OPEN: u32 = 3;
+
 impl DialogResponse {
     pub fn ended() -> Self {
         Self {
-            response: 2,
+            response: RESPONSE_ENDED,
             results: Vec::new(),
         }
     }
@@ -94,8 +108,11 @@ pub struct DialogRequest {
     pub subtitle: String,
     pub body: String,
     pub icon: String,
+    /// Empty hides the grant button.
     pub grant_label: String,
     pub deny_label: String,
+    /// Empty hides the open button.
+    pub open_label: String,
     pub modal: bool,
     pub choices: Vec<ChoiceGroup>,
     pub response_tx: Option<oneshot::Sender<DialogResponse>>,
@@ -113,6 +130,7 @@ impl DialogRequest {
             icon: self.icon.clone(),
             grant_label: self.grant_label.clone(),
             deny_label: self.deny_label.clone(),
+            open_label: self.open_label.clone(),
             modal: self.modal,
             choices: self.choices.clone(),
         }
@@ -133,8 +151,11 @@ pub struct DialogView {
     pub subtitle: String,
     pub body: String,
     pub icon: String,
+    /// Empty hides the grant button.
     pub grant_label: String,
     pub deny_label: String,
+    /// Empty hides the open button.
+    pub open_label: String,
     pub modal: bool,
     pub choices: Vec<ChoiceGroup>,
 }
@@ -144,6 +165,7 @@ pub struct DialogView {
 pub enum DialogHit {
     Grant,
     Deny,
+    Open,
     Option { group: usize, option: usize },
 }
 
@@ -156,8 +178,11 @@ pub enum DialogHit {
 pub struct DialogLayout {
     pub width: f32,
     pub height: f32,
-    pub grant_rect: Rect,
+    /// `None` when the grant button is hidden (empty label).
+    pub grant_rect: Option<Rect>,
     pub deny_rect: Rect,
+    /// `None` when the open button is hidden (empty label).
+    pub open_rect: Option<Rect>,
     /// `(group_idx, option_idx, row_rect)` for every option row.
     pub option_rects: Vec<(usize, usize, Rect)>,
     // Internal draw anchors (local coords).
@@ -217,18 +242,40 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
         y += 4.0; // extra gap after a group
     }
 
-    // Buttons row.
+    // Buttons. The grant button is the default action and always sits at the
+    // right of the main row. The open button is secondary: with a grant button
+    // it gets a row of its own below; without one it takes the grant's slot,
+    // drawn neutral so it never reads as the default.
     y += 2.0;
-    let btn_w = (w - PAD * 2.0 - BTN_GAP) / 2.0;
-    let deny_rect = Rect::from_xywh(PAD, y, btn_w, BTN_H);
-    let grant_rect = Rect::from_xywh(PAD + btn_w + BTN_GAP, y, btn_w, BTN_H);
-    y += BTN_H + PAD;
+    let full_w = w - PAD * 2.0;
+    let half_w = (full_w - BTN_GAP) / 2.0;
+    let has_grant = !view.grant_label.is_empty();
+    let has_open = !view.open_label.is_empty();
+    let (deny_rect, grant_rect, mut open_rect) = if has_grant || has_open {
+        let deny = Rect::from_xywh(PAD, y, half_w, BTN_H);
+        let right = Rect::from_xywh(PAD + half_w + BTN_GAP, y, half_w, BTN_H);
+        if has_grant {
+            (deny, Some(right), None)
+        } else {
+            (deny, None, Some(right))
+        }
+    } else {
+        (Rect::from_xywh(PAD, y, full_w, BTN_H), None, None)
+    };
+    y += BTN_H;
+    if has_grant && has_open {
+        y += OPEN_ROW_GAP;
+        open_rect = Some(Rect::from_xywh(PAD, y, full_w, OPEN_BTN_H));
+        y += OPEN_BTN_H;
+    }
+    y += PAD;
 
     DialogLayout {
         width: w,
         height: y,
         grant_rect,
         deny_rect,
+        open_rect,
         option_rects,
         icon_present,
         title_y,
@@ -244,11 +291,14 @@ fn in_rect(r: &Rect, x: f32, y: f32) -> bool {
 
 /// Hit-test a point in panel-local coordinates.
 pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32) -> Option<DialogHit> {
-    if in_rect(&layout.grant_rect, lx, ly) {
+    if layout.grant_rect.is_some_and(|r| in_rect(&r, lx, ly)) {
         return Some(DialogHit::Grant);
     }
     if in_rect(&layout.deny_rect, lx, ly) {
         return Some(DialogHit::Deny);
+    }
+    if layout.open_rect.is_some_and(|r| in_rect(&r, lx, ly)) {
+        return Some(DialogHit::Open);
     }
     for (gi, oi, rect) in &layout.option_rects {
         if in_rect(rect, lx, ly) {
@@ -494,14 +544,20 @@ pub fn draw_dialog(canvas: &Canvas, view: &DialogView, selected: &[usize], layou
         theme.fill_secondary,
         text,
     );
-    // Grant button (accent).
-    draw_button(
-        canvas,
-        &layout.grant_rect,
-        &view.grant_label,
-        accent,
-        on_accent,
-    );
+    // Grant button (accent) — the default action.
+    if let Some(rect) = &layout.grant_rect {
+        draw_button(canvas, rect, &view.grant_label, accent, on_accent);
+    }
+    // Open button. Beside deny (no grant) it matches deny's neutral fill; on
+    // its own row below grant/deny it is a borderless accent-text action, so
+    // it can't be mistaken for either.
+    if let Some(rect) = &layout.open_rect {
+        if layout.grant_rect.is_some() {
+            draw_button(canvas, rect, &view.open_label, Color::TRANSPARENT, accent);
+        } else {
+            draw_button(canvas, rect, &view.open_label, theme.fill_secondary, text);
+        }
+    }
 
     canvas.restore();
 }
@@ -581,5 +637,77 @@ pub fn apply_dialog_style(surface: &SubsurfaceSurface) {
         });
         ss.set_contents_gravity(ContentsGravity::TopLeft);
         ss.set_anchor_point(0.5, 0.5);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view(grant: &str, open: &str) -> DialogView {
+        DialogView {
+            id: 1,
+            app_id: String::new(),
+            title: "Question".into(),
+            subtitle: String::new(),
+            body: String::new(),
+            icon: String::new(),
+            grant_label: grant.into(),
+            deny_label: "Deny".into(),
+            open_label: open.into(),
+            modal: true,
+            choices: Vec::new(),
+        }
+    }
+
+    fn center(r: Rect) -> (f32, f32) {
+        (r.center_x(), r.center_y())
+    }
+
+    #[test]
+    fn access_dialog_has_grant_and_deny_only() {
+        let layout = dialog_layout(&view("Allow", ""));
+        let grant = layout.grant_rect.expect("grant shown");
+        assert!(layout.open_rect.is_none());
+        assert!(grant.left > layout.deny_rect.right);
+        let (x, y) = center(grant);
+        assert_eq!(hit_test(&layout, x, y), Some(DialogHit::Grant));
+        let (x, y) = center(layout.deny_rect);
+        assert_eq!(hit_test(&layout, x, y), Some(DialogHit::Deny));
+    }
+
+    #[test]
+    fn empty_grant_label_hides_grant() {
+        let layout = dialog_layout(&view("", ""));
+        assert!(layout.grant_rect.is_none());
+        assert!(layout.open_rect.is_none());
+        // Deny spans the row on its own.
+        assert_eq!(layout.deny_rect.width(), DIALOG_W - PAD * 2.0);
+    }
+
+    #[test]
+    fn open_without_grant_takes_the_right_slot() {
+        let layout = dialog_layout(&view("", "Open in Ask"));
+        assert!(layout.grant_rect.is_none());
+        let open = layout.open_rect.expect("open shown");
+        assert_eq!(open.top, layout.deny_rect.top);
+        assert!(open.left > layout.deny_rect.right);
+        let (x, y) = center(open);
+        assert_eq!(hit_test(&layout, x, y), Some(DialogHit::Open));
+    }
+
+    #[test]
+    fn open_with_grant_gets_its_own_row_below() {
+        let two = dialog_layout(&view("Allow", ""));
+        let three = dialog_layout(&view("Allow", "Open in Ask"));
+        let grant = three.grant_rect.expect("grant shown");
+        let open = three.open_rect.expect("open shown");
+        assert!(open.top >= grant.bottom);
+        assert!(open.top >= three.deny_rect.bottom);
+        assert!(three.height > two.height);
+        let (x, y) = center(open);
+        assert_eq!(hit_test(&three, x, y), Some(DialogHit::Open));
+        let (x, y) = center(grant);
+        assert_eq!(hit_test(&three, x, y), Some(DialogHit::Grant));
     }
 }

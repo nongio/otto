@@ -161,12 +161,50 @@ Stages 1–3 implemented (compiling; runtime verification pending):
   (`present_access(app_id, title, subtitle, body, icon, grant_label,
   deny_label, modal, choices) → (response, results)`), a typed superset of
   Access. Panel is a modal dropdown below the island bar.
+  It also serves `present_question(app_id, title, subtitle, body, icon,
+  grant_label, deny_label, open_label, modal, choices) → (response, results)`
+  (bus signature `ssssssssba(ssa(sss)s)` → `ua(ss)`) — see
+  [Questions](#questions-presentquestion).
 - **otto-portal** exposes `org.freedesktop.impl.portal.Access` (`AccessDialog`)
   and brokers to the renderer, translating `a{sv}` options/results ↔ the typed
   call. Denies if no renderer is reachable.
 - **Screencast** `SelectSources` prompts via the renderer (consent + output
   choice); the `~/.config/otto/screencast-output` override now only *skips* the
   prompt for headless/testing.
+
+### Questions (`PresentQuestion`)
+
+`org.otto.Dialog1.PresentQuestion` is the same dialog for questions another
+app can answer at more length — otto-agentsd uses it so an agent's question can
+be picked up in otto-ask. It takes the `PresentAccess` arguments with one more,
+`open_label`, after `deny_label`, and shares the implementation: choices,
+defaults, modality, queueing and withdrawal behave identically.
+
+Button rules:
+
+- An empty `grant_label` **hides** the grant button (unlike `PresentAccess`,
+  where it falls back to "Allow"/"Continue"). Enter then does nothing.
+- An empty `deny_label` falls back to "Deny", as in `PresentAccess`.
+- An empty `open_label` hides the open button; a non-empty one adds it.
+
+Layout — the grant button is always the default (accent, right of the main
+row, confirmed by Enter); the open button never is:
+
+- grant + deny: `[deny][grant]`, as `PresentAccess`.
+- grant + deny + open: `[deny][grant]`, then a full-width open button on its
+  own row below, drawn borderless with accent-coloured text.
+- deny + open: `[deny][open]`, both in the neutral fill.
+- deny only: one full-width deny button.
+
+Responses:
+
+- `0` confirmed — `results` carries the selected option per choice group.
+- `1` cancelled, denied, dismissed, or Escape.
+- `2` ended without an answer (caller withdrew, renderer went away).
+- `3` the open button was pressed — `results` is empty and the dialog closes.
+  Opening the other app is the caller's job.
+
+`PresentAccess` never returns `3`.
 
 ## Resolved decisions
 
