@@ -39,11 +39,11 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 use otto_launcher::apps::Apps;
 use otto_launcher::ask::{attached_text, Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
-use otto_launcher::log::{lay_out, Block, Line as LogLine};
+use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
 use otto_launcher::source::{rank, Item, Origin, Source};
 use otto_launcher::view::{
-    field_style, log_length, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H,
-    LOG_W, MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
+    field_style, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H, LOG_W,
+    MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
 };
 use otto_launcher::windows;
 
@@ -178,6 +178,11 @@ struct Launcher {
     /// Agents mode, until a session is picked: the rows are the sessions, and
     /// what is typed narrows them.
     picking: bool,
+    /// The session opened from the list, by URI, so going back to the list
+    /// highlights it again wherever it now sits.
+    opened_session: Option<String>,
+    /// The session to highlight once the list of sessions arrives.
+    return_to: Option<String>,
     /// Down has listed the agents under the field, to send the first request
     /// to another than the default.
     choosing_agent: bool,
@@ -331,6 +336,8 @@ impl Launcher {
             log_busy: false,
             asked: None,
             picking: scope == Scope::Agents,
+            opened_session: None,
+            return_to: None,
             choosing_agent: false,
             spring_until: None,
             log_top: 0.0,
@@ -370,11 +377,25 @@ impl Launcher {
         // question, when it asked one. The files going with the next request
         // are listed under either, until it is sent.
         if let Some(ask) = self.ask.as_ref() {
+            let mut returned = false;
             let question = ask.question();
             self.rows = if question.is_some() {
                 ask.question_rows(ASK_ROWS)
             } else if self.picking {
-                ask.session_rows(ASK_ROWS, self.input.value())
+                let rows = ask.session_rows(ASK_ROWS, self.input.value());
+                if let Some(resource) = self.return_to.as_deref() {
+                    let found = rows
+                        .iter()
+                        .position(|item| ask.session_at(item.origin.index) == Some(resource));
+                    if let Some(position) = found {
+                        self.selected = position;
+                        self.return_to = None;
+                        returned = true;
+                    } else if ask.sessions_listed() {
+                        self.return_to = None;
+                    }
+                }
+                rows
             } else if ask.running() || !self.choosing_agent {
                 Vec::new()
             } else {
@@ -390,6 +411,9 @@ impl Launcher {
                 self.asked = asked;
             }
             self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+            if returned {
+                self.scroll_to_selection();
+            }
             self.list_revision = self.list_revision.wrapping_add(1);
             self.dirty = true;
             self.update_completion();
@@ -545,7 +569,7 @@ impl Launcher {
             revision: self.log_revision,
         };
         self.log_busy = pane.update(&content, &AppContext::current_theme());
-        let end = (log_length(self.log.len()) - viewport.height()).max(0.0);
+        let end = (ask_log::length(&self.log) - viewport.height()).max(0.0);
         if self.log_following {
             if (pane.offset() - end).abs() > 0.5 {
                 pane.scroll_to(end);
@@ -693,6 +717,11 @@ impl Launcher {
         let Some(index) = self.selected_origin().map(|origin| origin.index) else {
             return;
         };
+        self.opened_session = self
+            .ask
+            .as_ref()
+            .and_then(|ask| ask.session_at(index))
+            .map(str::to_string);
         if self.ask.as_mut().is_some_and(|ask| ask.resume_at(index)) {
             self.input.set_value("");
             self.follow_session();
@@ -729,6 +758,8 @@ impl Launcher {
         self.spring();
         self.ask = Some(Ask::open());
         self.picking = true;
+        // Back where the user was, once the list arrives: the session left.
+        self.return_to = self.opened_session.take();
         self.input.set_value("");
         self.input.state.placeholder = Scope::Agents.placeholder().to_string();
         self.selected = 0;
@@ -829,7 +860,7 @@ impl Launcher {
         self.log_text = self
             .log
             .iter()
-            .map(|line| line.text.as_str())
+            .map(LogLine::text)
             .collect::<Vec<_>>()
             .join("\n");
         self.log_revision = self.log_revision.wrapping_add(1);
@@ -841,7 +872,7 @@ impl Launcher {
         let (Some(pane), Some(palette)) = (self.log_pane.as_mut(), self.palette.as_ref()) else {
             return;
         };
-        let end = (log_length(self.log.len()) - palette.log_rect().height()).max(0.0);
+        let end = (ask_log::length(&self.log) - palette.log_rect().height()).max(0.0);
         let target = (pane.offset() + delta).clamp(0.0, end);
         pane.scroll_to(target);
         self.log_following = target >= end;
@@ -882,7 +913,7 @@ impl Launcher {
         // The log is empty until there is something to show: a conversation,
         // or files waiting to go with the first request.
         let log = if self.ask.is_some() {
-            log_length(self.log.len())
+            ask_log::length(&self.log)
         } else {
             0.0
         };
@@ -1182,7 +1213,7 @@ struct LogRows<'a> {
 
 impl ScrollContent for LogRows<'_> {
     fn length(&self, _cross: f32) -> f32 {
-        log_length(self.lines.len())
+        ask_log::length(self.lines)
     }
 
     fn revision(&self) -> u64 {

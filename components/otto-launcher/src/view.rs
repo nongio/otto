@@ -35,12 +35,13 @@ use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize}
 use otto_kit::components::scroll::RowLayout;
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::icons::named_icon_sized;
+use otto_kit::preview::document;
 use otto_kit::theme::Theme;
 use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styles};
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
-use crate::log::{Line, Style};
+use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y};
 use crate::source::Item;
 
 /// Width of the card. Wide enough for a window title and its application, and
@@ -87,19 +88,17 @@ const fn log_block(log: f32) -> f32 {
 /// Space above the ask log, between the card's top edge and its first line.
 const LOG_TOP_PAD: f32 = 20.0;
 
-/// Height of one line of the ask log.
-pub const LOG_LINE_H: f32 = 21.0;
+/// Height of one line of plain text in the ask log.
+pub const LOG_LINE_H: f32 = crate::log::LINE_H;
 /// Size of the ask log's text.
 const LOG_TEXT: f32 = 14.0;
 /// Space either side of the ask log's text.
 const LOG_INSET: f32 = 20.0;
+
+/// Corner radius of a request's bubble; a one-line request is a pill.
+const BUBBLE_RADIUS: f32 = 16.0;
 /// How wide a line of the ask log may run.
 pub const LOG_W: f32 = CARD_W - LOG_INSET * 2.0;
-
-/// How tall the ask log is with `lines` lines in it.
-pub fn log_length(lines: usize) -> f32 {
-    lines as f32 * LOG_LINE_H
-}
 
 /// Where the top of the card sits, as a fraction of the output's height.
 /// Above centre: the eye starts there, and the list grows downwards into
@@ -506,7 +505,7 @@ impl Palette {
     fn log_font(&self, style: Style) -> Font {
         let weight = match style {
             Style::Prompt => Weight::SEMI_BOLD,
-            Style::Answer | Style::Note => Weight::NORMAL,
+            Style::Request | Style::Answer | Style::Note => Weight::NORMAL,
         };
         self.font(
             LOG_TEXT,
@@ -524,19 +523,61 @@ impl Palette {
         let mut dim = Paint::new(Color4f::from(self.subtitle_color()), None);
         dim.set_anti_alias(true);
 
-        let first = (band.top / LOG_LINE_H).floor().max(0.0) as usize;
-        let last = ((band.bottom / LOG_LINE_H).ceil().max(0.0) as usize).min(lines.len());
-        for (index, line) in lines.iter().enumerate().take(last).skip(first) {
-            if line.text.is_empty() {
+        let theme = if self.dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        };
+        let mut request = Paint::new(Color4f::from(theme.text_primary), None);
+        request.set_anti_alias(true);
+        let mut bubble_fill = Paint::new(Color4f::from(theme.fill_secondary), None);
+        bubble_fill.set_anti_alias(true);
+
+        for line in lines {
+            if line.top + line.height < band.top || line.top > band.bottom {
                 continue;
             }
-            let baseline = index as f32 * LOG_LINE_H + LOG_LINE_H * 0.72;
-            let (font, paint) = match line.style {
-                Style::Prompt => (&prompt_font, &text),
-                Style::Answer => (&font, &text),
-                Style::Note => (&font, &dim),
-            };
-            draw_runs(canvas, &line.text, (LOG_INSET, baseline), font, paint);
+            match &line.kind {
+                Kind::Text { text: words, .. } if words.is_empty() => {}
+                Kind::Text { text: words, style } => {
+                    let baseline = line.top + LOG_LINE_H * 0.72;
+                    let (font, paint) = match style {
+                        Style::Prompt => (&prompt_font, &text),
+                        Style::Request | Style::Answer => (&font, &text),
+                        Style::Note => (&font, &dim),
+                    };
+                    draw_runs(canvas, words, (LOG_INSET, baseline), font, paint);
+                }
+                Kind::Bubble {
+                    lines: words,
+                    width,
+                    ..
+                } => {
+                    let bubble = Rect::from_xywh(
+                        LOG_INSET + LOG_W - width,
+                        line.top,
+                        *width,
+                        line.height - BUBBLE_GAP,
+                    );
+                    let radius = BUBBLE_RADIUS.min(bubble.height() / 2.0);
+                    canvas.draw_round_rect(bubble, radius, radius, &bubble_fill);
+                    for (index, words) in words.iter().enumerate() {
+                        let baseline =
+                            line.top + BUBBLE_PAD_Y + index as f32 * LOG_LINE_H + LOG_LINE_H * 0.72;
+                        draw_runs(
+                            canvas,
+                            words,
+                            (bubble.left + BUBBLE_PAD_X, baseline),
+                            &font,
+                            &request,
+                        );
+                    }
+                }
+                Kind::Document(doc) => {
+                    let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
+                    document::draw_scrolled(canvas, content, doc, 0.0, &theme);
+                }
+            }
         }
     }
 
