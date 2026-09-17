@@ -675,6 +675,7 @@ impl Host {
                 || "The agent".to_owned(),
                 |agent| agent.display_name.clone(),
             );
+        let provider = session.state.provider.clone();
         let Some(pending) = state
             .sessions
             .get_mut(session_uri)
@@ -691,7 +692,7 @@ impl Host {
             request_id,
             "no client is watching; asking in a dialog"
         );
-        let prompt = question_prompt(&agent, &request);
+        let prompt = question_prompt(&agent, &provider, &request);
         let prompter = Arc::clone(&self.prompter);
         let host = Arc::downgrade(self);
         let (session_uri, request_id) = (session_uri.to_owned(), request_id.to_owned());
@@ -2021,9 +2022,12 @@ fn merged_answers(
 /// Every question is shown in full: its own words, and each option's label
 /// with its description after a line break, which otto-islands draws under
 /// the label.
-pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
+pub fn question_prompt(agent: &str, provider: &str, request: &ChatInputRequest) -> Prompt {
     let questions: Vec<&ChatInputQuestion> = request.questions.iter().flatten().collect();
-    let message = request.message.as_deref().filter(|m| !m.trim().is_empty());
+    // Only a message that says something of its own: "Please answer the
+    // following questions" is the dialog's own job to convey, and repeating it
+    // over the questions themselves is noise.
+    let message = request.message.as_deref().filter(|m| says_something(m));
     // What each question asks. Claude's AskUserQuestion puts a lone question's
     // words in the request's message and leaves the field only its short
     // header; the message is the question then.
@@ -2087,7 +2091,7 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
     };
     match choices.filter(|choices| !choices.is_empty()) {
         Some(choices) => Prompt {
-            title: handle(agent),
+            title: handle(provider, agent),
             handle_title: true,
             // One question a page says which page this is; a message that only
             // announces there are several questions would say it again.
@@ -2099,8 +2103,11 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
             // No folder line: where the agent runs says nothing about the
             // question it asks. Permission prompts still carry it.
             body: String::new(),
-            grant: "Answer".into(),
-            deny: "Skip".into(),
+            // The dialog owns the words for answering and skipping, and
+            // localises them; only the button that opens Ask is ours, since
+            // only this service knows there is an Ask to open.
+            grant: String::new(),
+            deny: String::new(),
             open: dialog::OPEN_IN_ASK.into(),
             icon: "dialog-question".into(),
             choices,
@@ -2132,7 +2139,7 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
                 .join("\n\n"),
             subtitle,
             grant: String::new(),
-            deny: "Skip".into(),
+            deny: String::new(),
             open: dialog::OPEN_IN_ASK.into(),
             icon: "dialog-question".into(),
             choices: Vec::new(),
@@ -2140,17 +2147,63 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
     }
 }
 
-/// An agent's handle, as the dialog attributes a question to it: its name in
-/// lower case, without spaces, after an `@`.
-fn handle(agent: &str) -> String {
-    format!(
-        "@{}",
-        agent
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .flat_map(char::to_lowercase)
-            .collect::<String>()
-    )
+/// An agent's handle, which is how a question is attributed to it: its
+/// provider — the id it is configured under, whose own lowercasing stands —
+/// or else a slug of its display name, or else just `@agent`.
+fn handle(provider: &str, display_name: &str) -> String {
+    let provider = provider.trim();
+    if !provider.is_empty() {
+        return format!("@{provider}");
+    }
+    let slug: String = display_name
+        .trim()
+        .trim_start_matches('@')
+        .chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .collect();
+    if slug.is_empty() {
+        return "@agent".to_owned();
+    }
+    format!("@{slug}")
+}
+
+/// Whether an elicitation's message carries anything the questions under it
+/// do not already say. "Please answer the following questions" is boilerplate:
+/// the dialog says that by showing them. A message with a word of its own is
+/// the agent's context, and is shown as it was written.
+fn says_something(message: &str) -> bool {
+    /// Words that only announce that there are questions. A message made of
+    /// nothing but these says nothing.
+    const FILLER: &[&str] = &[
+        "a",
+        "an",
+        "answer",
+        "answers",
+        "below",
+        "choose",
+        "following",
+        "from",
+        "of",
+        "one",
+        "option",
+        "options",
+        "please",
+        "question",
+        "questions",
+        "respond",
+        "response",
+        "select",
+        "the",
+        "these",
+        "this",
+        "to",
+        "your",
+    ];
+    message
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .any(|word| !FILLER.contains(&word.to_lowercase().as_str()))
 }
 
 /// An option as the dialog labels it: its label, and its description after
@@ -2468,7 +2521,7 @@ mod tests {
     #[test]
     fn a_lone_question_is_asked_in_its_own_words() {
         let request = ask_user_question(&[("Migration", LONG, false)]);
-        let prompt = question_prompt("Claude", &request);
+        let prompt = question_prompt("Claude", "claude", &request);
         assert_eq!(prompt.title, "@claude");
         assert!(prompt.handle_title);
         // The question is the group's label, not a header, and not repeated.
@@ -2491,7 +2544,7 @@ mod tests {
                 ("Ask later".to_owned(), "Ask later".to_owned()),
             ]
         );
-        assert_eq!(prompt.grant, "Answer");
+        assert_eq!((prompt.grant.as_str(), prompt.deny.as_str()), ("", ""));
     }
 
     #[test]
@@ -2500,7 +2553,7 @@ mod tests {
             ("Migration", LONG, false),
             ("Rollout", "Which environments should get it first?", false),
         ]);
-        let prompt = question_prompt("Claude", &request);
+        let prompt = question_prompt("Claude", "claude", &request);
         // Who is asking, small at the top; the questions are the headings.
         assert_eq!(prompt.title, "@claude");
         assert!(prompt.handle_title);
@@ -2518,10 +2571,13 @@ mod tests {
             ("Migration", LONG, false),
             ("Rollout", "Which environments?", true),
         ]);
-        let prompt = question_prompt("Claude", &request);
+        let prompt = question_prompt("Claude", "claude", &request);
         let multi: Vec<bool> = prompt.choices.iter().map(|c| c.multi).collect();
         assert_eq!(multi, [false, true]);
-        assert_eq!(prompt.grant, "Answer");
+        // The words for answering are the dialog's own; only the question and
+        // the button that opens Ask come from here.
+        assert_eq!((prompt.grant.as_str(), prompt.deny.as_str()), ("", ""));
+        assert_eq!(prompt.open, "Open in Ask");
         assert_eq!(prompt.choices[1].label, "Which environments?");
         assert_eq!(prompt.choices[1].options.len(), 3);
     }
@@ -2543,7 +2599,7 @@ mod tests {
             },
         ));
         request.questions = Some(questions);
-        let prompt = question_prompt("Claude", &request);
+        let prompt = question_prompt("Claude", "claude", &request);
         assert!(prompt.choices.is_empty());
         // Nothing to ask here: the dialog says what happened instead.
         assert_eq!(prompt.title, "Claude has some questions");
@@ -2564,7 +2620,7 @@ mod tests {
     #[test]
     fn a_lone_multi_select_question_is_asked_in_the_messages_words() {
         let request = ask_user_question(&[("Rollout", "Which environments?", true)]);
-        let prompt = question_prompt("Claude", &request);
+        let prompt = question_prompt("Claude", "claude", &request);
         let [choice] = &prompt.choices[..] else {
             panic!("one choice group: {:?}", prompt.choices);
         };
@@ -2632,7 +2688,7 @@ mod tests {
             .unwrap_or_else(|_| "/tmp/claude-1000/shots/prompt.txt".into());
         let request: ChatInputRequest =
             serde_json::from_str(&std::fs::read_to_string(input).unwrap()).unwrap();
-        let prompt = question_prompt("Claude", &request);
+        let prompt = question_prompt("Claude", "claude", &request);
         let esc = |s: &str| {
             s.replace('\\', "\\\\")
                 .replace('\n', "\\n")

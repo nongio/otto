@@ -231,8 +231,17 @@ A question is `(id, label, multi, options, default_option_ids)`, with options
 single-select question starts on the first of its defaults; a multi-select one
 starts with all of them picked.
 
-`labels` (every key optional) lets the caller name what the renderer would
-otherwise have to invent:
+**The words are the dialog's.** A caller sends the questions; how to get
+through them — answer, skip, next, back, the page counter, the multi-select
+hint — belongs to otto-islands, which localises it from Otto's own catalogues
+(`islands-dialog-answer`, `-skip`, `-next`, `-back`, `-page`, `-multi-hint`).
+So an empty `grant_label` becomes "Answer" (and stays empty, hiding the button,
+when there is nothing to answer) and an empty `deny_label` becomes "Skip", not
+"Deny" — not answering a question is skipping it. Only `open_label` is the
+caller's: nothing else knows whether there is anywhere to open the question.
+
+`labels` (every key optional) overrides those words, for a caller with better
+ones, and carries the two hints that are presentation rather than words:
 
 | key | meaning |
 | --- | --- |
@@ -250,14 +259,24 @@ than moving on. `results` then carries one `(group_id, option_id)` per picked
 option, and none at all when the user picked nothing — which is an answer, not
 a refusal.
 
-**A handle, not a headline.** With `title-style: handle` the title is who is
-asking ("@claude"): one small muted line at the top, centred, with the dialog's
-icon shrunk to 14 points beside it instead of the 44-point icon above. The
-question a page asks then becomes the panel's largest text — 15pt semibold,
-primary colour, wrapped, **left-aligned** like the option rows under it, since a
-centred wrapped question over a left-aligned list leaves no edge to read down.
-Without the label (every `PresentAccess` dialog, and any caller that does not
-ask for it) the headline title and big centred icon stay exactly as they were.
+**A handle, not a headline.** With `title-style: handle` the panel is stacked
+so that the question is what it is about:
+
+- the icon on its own line at the top, centred, at 28 points — smaller than a
+  permission dialog's 44, big enough to read as a mark rather than a glyph;
+- the title under it, centred: who is asking ("@claude"), one small muted line;
+- the progress dots under that;
+- then the question, with room above and below it so it stands clear of the
+  dots over it and the first option row under it. It is the panel's largest
+  text — 15pt semibold, primary colour, wrapped, **left-aligned** like the
+  option rows, since a centred wrapped question over a left-aligned list leaves
+  no edge to read down.
+
+An asker's own `subtitle` is kept as context under the question, on the first
+page only, left-aligned and muted — never rewritten, and never repeated per
+page. Without `title-style: handle` (every `PresentAccess` dialog, and any
+caller that does not ask for it) the headline title, big centred icon and
+centred subtitle stay exactly as they were.
 
 **One question a page.** With more than one question the dialog shows one at a
 time:
@@ -267,11 +286,13 @@ time:
   click target (18 points, larger than the 6-point dot) for **going back** to
   its question; dots ahead do nothing, since the questions between them have
   not been answered yet. One question shows no dots.
-- **The page counter** ("2 of 3") sits at the left of the button row, in a
-  40-point column the buttons make room for, so it reads next to the way on
-  from the page. The open button keeps the full width on its own row below.
-- **The back button** ("‹ Back") is at the top-left corner, beside the handle,
-  from the second page on.
+- **The page counter** ("2 of 3") has a line of its own between the options and
+  the buttons, centred, reading as a caption over them. It is shown whenever
+  there is more than one question — it is what says how far along the panel is
+  in words — and the buttons keep the full width under it.
+- **The back button** is at the top-left corner, beside the handle, from the
+  second page on. Its label is the word alone ("Back"); the chevron pointing
+  back is drawn, not part of the string.
 - The buttons are `[Skip][Next]`, with **Next** becoming the grant label on the
   last page. `Enter`, the Next button, or a digit on a single-select question
   turns the page; `Left`, the back button, a dot, or `Shift+Tab` onto the back

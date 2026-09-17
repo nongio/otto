@@ -656,7 +656,9 @@ async fn with_nobody_watching_a_select_question_is_answered_in_the_dialog() {
     start_turn(&client, &chat_uri, "pick").await;
     dialog.wait_shown().await;
     let prompt = dialog.asked().remove(0);
-    assert_eq!(prompt.title, "Questioner has a question");
+    // Who is asking, as a handle; the dialog owns the rest of the words.
+    assert_eq!(prompt.title, "@questioner");
+    assert!(prompt.handle_title);
     assert_eq!(prompt.subtitle, "Questioner needs to know");
     assert_eq!(
         (
@@ -664,7 +666,7 @@ async fn with_nobody_watching_a_select_question_is_answered_in_the_dialog() {
             prompt.deny.as_str(),
             prompt.open.as_str()
         ),
-        ("Answer", "Skip", "Open in Ask")
+        ("", "", "Open in Ask")
     );
     let [choice] = &prompt.choices[..] else {
         panic!("expected one choice group: {:?}", prompt.choices);

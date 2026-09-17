@@ -1325,6 +1325,32 @@ islands-dialog-continue = Continue
 islands-dialog-deny = Deny
 
 
+## Islands — agents' questions
+##
+## An agent (Claude, say) asking the person something: one question a page,
+## with the options as rows beneath it. The dialog owns these words, not the
+## agent — only the question and its options come from the agent itself.
+## Buttons sit side by side and narrow: one word each.
+
+# Sends the answers back to the agent, on the last (or only) question.
+islands-dialog-answer = Answer
+# Leaves every question unanswered and lets the agent carry on without them.
+islands-dialog-skip = Skip
+# Goes on to the next question, keeping what has been picked so far. Shown in
+# the place of "Answer" until the last question.
+islands-dialog-next = Next
+# Goes back to the question before. A small button at the top-left corner; the
+# chevron pointing back is drawn, so the word alone belongs here.
+islands-dialog-back = Back
+# Which question of how many this is: a caption on its own line between the
+# options and the buttons, shown whenever there is more than one question.
+islands-dialog-page = { $current } of { $total }
+# Under a question that takes any number of answers, where the rows are
+# toggles rather than a single choice. No full stop: it is a hint, not a
+# sentence of instructions.
+islands-dialog-multi-hint = Pick any that apply
+
+
 ## Accessibility
 ##
 ## Spoken by a screen reader, never drawn on screen, so these are the only

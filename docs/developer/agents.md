@@ -230,7 +230,19 @@ each `elicitation/create` into an AHP input request:
 - The picks come back as one answer per question: the option chosen for a
   single select, every picked option for a multi select (an empty list when
   none were picked). A renderer too old for `PresentQuestions` is asked the old
-  way, with the multi-select questions spelled out instead of asked. Skipping or dismissing declines; a dialog that can't be shown
+  way, with the multi-select questions spelled out instead of asked.
+- The service sends only content: who is asking, the questions, the options and
+  their descriptions, the multi flag, any message of the agent's own — and
+  **Open in Ask**, since nothing else knows there is an Ask to open. The words
+  for answering, skipping, paging and the multi-select hint belong to
+  otto-islands, which localises them.
+- Who is asking is a handle: the agent's provider (the id it is configured
+  under, whose own lowercasing stands) as `@claude`, or else a slug of its
+  display name (`Code Review Bot` → `@code-review-bot`), or else `@agent`.
+- An elicitation's message is shown as context under the first question, in the
+  agent's own words, unless it says nothing the questions do not — "Please
+  answer the following questions" and its like are dropped rather than
+  repeated. Skipping or dismissing declines; a dialog that can't be shown
   leaves the question waiting in the chat.
 - Cancelling or ending the turn cancels its open questions, and a restarted
   session drops the ones its earlier agent was waiting on.

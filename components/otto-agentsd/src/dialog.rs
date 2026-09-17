@@ -270,10 +270,11 @@ type WireQuestion = (
     Vec<String>,
 );
 
-/// The labels `PresentQuestions` reads beyond the buttons: paging, the
-/// multi-select hint, and how to set the body.
+/// How the dialog should set what it is given. Only presentation: the words
+/// for getting through the questions — answer, skip, next, back, the counter,
+/// the multi-select hint — are the dialog's own, and localised there.
 pub(crate) fn question_labels(prompt: &Prompt) -> HashMap<String, String> {
-    let mut labels = HashMap::from([("multi-hint".to_owned(), "Pick any that apply.".to_owned())]);
+    let mut labels = HashMap::new();
     if prompt.handle_title {
         labels.insert("title-style".to_owned(), "handle".to_owned());
     }
@@ -281,13 +282,6 @@ pub(crate) fn question_labels(prompt: &Prompt) -> HashMap<String, String> {
     // the left edge, not centred.
     if prompt.body.contains('\n') {
         labels.insert("body-align".to_owned(), "start".to_owned());
-    }
-    if prompt.choices.len() > 1 {
-        labels.extend([
-            ("next".to_owned(), "Next".to_owned()),
-            ("back".to_owned(), "Back".to_owned()),
-            ("page".to_owned(), "{current} of {total}".to_owned()),
-        ]);
     }
     labels
 }
@@ -696,17 +690,22 @@ mod tests {
         );
     }
 
+    /// The words for answering, skipping and paging belong to the dialog,
+    /// which localises them; this service sends only how to set what it sends.
     #[test]
-    fn paging_labels_come_with_several_questions() {
+    fn only_presentation_is_sent_with_the_questions() {
         let one = Prompt {
             choices: vec![choice("a", false)],
+            handle_title: true,
             ..Prompt::default()
         };
         let labels = question_labels(&one);
-        assert!(!labels.contains_key("next") && !labels.contains_key("page"));
+        for word in ["next", "back", "page", "multi-hint", "answer", "skip"] {
+            assert!(!labels.contains_key(word), "{word} is the dialog's own");
+        }
         assert_eq!(
-            labels.get("multi-hint").map(String::as_str),
-            Some("Pick any that apply.")
+            labels.get("title-style").map(String::as_str),
+            Some("handle")
         );
         assert!(
             !labels.contains_key("body-align"),
@@ -719,13 +718,8 @@ mod tests {
             ..Prompt::default()
         };
         let labels = question_labels(&several);
-        assert_eq!(labels.get("next").map(String::as_str), Some("Next"));
-        assert_eq!(labels.get("back").map(String::as_str), Some("Back"));
-        assert_eq!(
-            labels.get("page").map(String::as_str),
-            Some("{current} of {total}")
-        );
         assert_eq!(labels.get("body-align").map(String::as_str), Some("start"));
+        assert!(!labels.contains_key("title-style"));
     }
 
     #[test]

@@ -5,7 +5,9 @@ use tokio::sync::oneshot;
 use zbus::interface;
 
 use crate::activity::Priority;
-use crate::dialog::{ChoiceGroup, ChoiceOption, DialogRequest, QuestionStyle, RESPONSE_ENDED};
+use crate::dialog::{
+    ChoiceGroup, ChoiceOption, DialogRequest, DialogView, QuestionStyle, RESPONSE_ENDED,
+};
 use crate::state::SharedState;
 
 pub const DBUS_NAME: &str = "org.otto.Island";
@@ -138,6 +140,11 @@ enum DialogKind {
     Access,
     /// `PresentQuestion`: an empty grant or open label hides that button.
     Question,
+    /// `PresentQuestions`: the dialog owns the words for answering — the
+    /// asker sends the questions, not the buttons — so an empty grant or deny
+    /// label falls back to the dialog's own. An empty open label still hides
+    /// that button: only the caller knows whether there is anywhere to open.
+    Questions,
 }
 
 /// Convert wire choice groups into the dialog model, dropping groups with no
@@ -203,11 +210,16 @@ fn question_groups(questions: Vec<WireQuestion>) -> Vec<ChoiceGroup> {
         .collect()
 }
 
-/// The `PresentQuestions` labels a dialog reads, from its `labels` map.
+/// The `PresentQuestions` style: the dialog's own words for getting through
+/// the questions, and the presentation hints the caller does send. A caller
+/// that supplies one of the labels itself overrides the dialog's.
 fn question_style(groups: usize, labels: &HashMap<String, String>) -> QuestionStyle {
     let label = |key: &str| labels.get(key).cloned().unwrap_or_default();
     QuestionStyle {
         paged: groups > 1,
+        // Left empty, each of these becomes the dialog's own word for it —
+        // see `DialogView::fill_question_words`, and `dialog_layout` for the
+        // counter, which is built with the page numbers in it.
         next_label: label("next"),
         back_label: label("back"),
         page_label: label("page"),
@@ -234,25 +246,29 @@ impl DialogService {
         groups: Vec<ChoiceGroup>,
         style: QuestionStyle,
     ) -> (u32, Vec<(String, String)>) {
-        let grant_label = if !grant_label.is_empty() || kind == DialogKind::Question {
-            grant_label.to_string()
-        } else if groups.is_empty() {
-            otto_kit::t_owned!("islands-dialog-allow")
-        } else {
-            otto_kit::t_owned!("islands-dialog-continue")
+        let grant_label = match kind {
+            _ if !grant_label.is_empty() => grant_label.to_string(),
+            // Nothing to answer with, and nothing to answer: the caller only
+            // wants the question read, or handed somewhere else. A questions
+            // dialog fills in its own words below.
+            DialogKind::Question | DialogKind::Questions => String::new(),
+            DialogKind::Access if groups.is_empty() => {
+                otto_kit::t_owned!("islands-dialog-allow")
+            }
+            DialogKind::Access => otto_kit::t_owned!("islands-dialog-continue"),
         };
-        let deny_label = if deny_label.is_empty() {
-            otto_kit::t_owned!("islands-dialog-deny")
-        } else {
-            deny_label.to_string()
+        let deny_label = match kind {
+            _ if !deny_label.is_empty() => deny_label.to_string(),
+            DialogKind::Questions => String::new(),
+            _ => otto_kit::t_owned!("islands-dialog-deny"),
         };
         let open_label = match kind {
             DialogKind::Access => String::new(),
-            DialogKind::Question => open_label.to_string(),
+            DialogKind::Question | DialogKind::Questions => open_label.to_string(),
         };
 
         let (tx, rx) = oneshot::channel();
-        let req = DialogRequest {
+        let mut view = DialogView {
             id: 0,
             app_id: app_id.to_string(),
             title: title.to_string(),
@@ -265,8 +281,13 @@ impl DialogService {
             modal,
             choices: groups,
             style,
-            response_tx: Some(tx),
         };
+        if kind == DialogKind::Questions {
+            // The caller sends the questions; the words for getting through
+            // them are the dialog's own, in the user's language.
+            view.fill_question_words();
+        }
+        let req = DialogRequest::from_view(view, tx);
 
         {
             let mut state = self.state.lock().unwrap();
@@ -373,10 +394,18 @@ impl DialogService {
     /// options as in `PresentQuestion`. An option label may carry a
     /// description after its first line break.
     ///
-    /// `labels` (all optional): `next` — the grant button before the last
-    /// page; `back` — a back button from the second page on; `page` — a page
-    /// counter with `{current}` and `{total}`; `multi-hint` — a line under a
-    /// multi-select question; `body-align` — `start` for a left-aligned body;
+    /// The dialog owns the words for getting through the questions — answer,
+    /// skip, next, back, the counter, the multi-select hint — and localises
+    /// them, so a caller need only send the questions themselves and, when
+    /// there is somewhere to open them, `open_label`. An empty `grant_label`
+    /// or `deny_label` takes the dialog's own.
+    ///
+    /// `labels` (all optional) overrides those words, for a caller that has
+    /// better ones: `next` — the grant button before the last page; `back` —
+    /// the back button from the second page on; `page` — a page counter with
+    /// `{current}` and `{total}`; `multi-hint` — a line under a multi-select
+    /// question. Two are presentation, not words:
+    /// `body-align` — `start` for a left-aligned body;
     /// `title-style` — `handle` when the title is the asker's handle
     /// ("@claude") rather than a headline, which makes the question itself the
     /// panel's largest text.
@@ -402,7 +431,7 @@ impl DialogService {
         let groups = question_groups(questions);
         let style = question_style(groups.len(), &labels);
         self.present(
-            DialogKind::Question,
+            DialogKind::Questions,
             app_id,
             title,
             subtitle,
@@ -510,13 +539,48 @@ mod tests {
         assert_eq!(groups[1].picked, [0, 2]);
 
         let labels = HashMap::from([
-            ("next".to_owned(), "Next".to_owned()),
+            ("next".to_owned(), "Onward".to_owned()),
             ("body-align".to_owned(), "start".to_owned()),
             ("title-style".to_owned(), "handle".to_owned()),
         ]);
         let style = question_style(groups.len(), &labels);
         assert!(style.paged && style.body_start && style.handle_title);
-        assert_eq!(style.next_label, "Next");
+        // A caller's own label is kept; what it sends none of, the dialog
+        // fills in with its own words.
+        assert_eq!(style.next_label, "Onward");
+        let mut view = DialogView {
+            id: 0,
+            app_id: String::new(),
+            title: String::new(),
+            subtitle: String::new(),
+            body: String::new(),
+            icon: String::new(),
+            grant_label: String::new(),
+            deny_label: String::new(),
+            open_label: String::new(),
+            modal: false,
+            choices: groups,
+            style: question_style(2, &HashMap::new()),
+        };
+        view.fill_question_words();
+        assert_eq!(
+            view.grant_label,
+            otto_kit::t_owned!("islands-dialog-answer")
+        );
+        assert_eq!(view.deny_label, otto_kit::t_owned!("islands-dialog-skip"));
+        assert_eq!(
+            view.style.next_label,
+            otto_kit::t_owned!("islands-dialog-next")
+        );
+        assert_eq!(
+            view.style.back_label,
+            otto_kit::t_owned!("islands-dialog-back")
+        );
+        assert_eq!(
+            view.style.multi_hint,
+            otto_kit::t_owned!("islands-dialog-multi-hint")
+        );
+        assert!(!view.style.handle_title && !view.style.body_start);
         assert!(!question_style(1, &labels).paged);
     }
 }

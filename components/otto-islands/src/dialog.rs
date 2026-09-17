@@ -237,6 +237,25 @@ pub struct DialogRequest {
 }
 
 impl DialogRequest {
+    /// The request for `view`, with the channel its answer goes back through.
+    pub fn from_view(view: DialogView, response_tx: oneshot::Sender<DialogResponse>) -> Self {
+        Self {
+            id: view.id,
+            app_id: view.app_id,
+            title: view.title,
+            subtitle: view.subtitle,
+            body: view.body,
+            icon: view.icon,
+            grant_label: view.grant_label,
+            deny_label: view.deny_label,
+            open_label: view.open_label,
+            modal: view.modal,
+            choices: view.choices,
+            style: view.style,
+            response_tx: Some(response_tx),
+        }
+    }
+
     /// A clone-able display snapshot (without the response channel) for the UI.
     pub fn view(&self) -> DialogView {
         DialogView {
@@ -281,6 +300,32 @@ pub struct DialogView {
 }
 
 impl DialogView {
+    /// Fill in the words the dialog owns — answering, skipping, moving on and
+    /// back, the multi-select hint — wherever the caller sent none. Only for
+    /// `PresentQuestions`: a `PresentQuestion` caller that leaves the grant
+    /// label empty means to hide that button.
+    ///
+    /// The caller sends the questions; the dialog says how to get through
+    /// them, in the user's own language.
+    pub fn fill_question_words(&mut self) {
+        if self.grant_label.is_empty() && !self.choices.is_empty() {
+            self.grant_label = otto_kit::t_owned!("islands-dialog-answer");
+        }
+        if self.deny_label.is_empty() {
+            // Not answering a question is skipping it, not denying it.
+            self.deny_label = otto_kit::t_owned!("islands-dialog-skip");
+        }
+        if self.style.next_label.is_empty() {
+            self.style.next_label = otto_kit::t_owned!("islands-dialog-next");
+        }
+        if self.style.back_label.is_empty() {
+            self.style.back_label = otto_kit::t_owned!("islands-dialog-back");
+        }
+        if self.style.multi_hint.is_empty() {
+            self.style.multi_hint = otto_kit::t_owned!("islands-dialog-multi-hint");
+        }
+    }
+
     /// How many pages the dialog has: one per group when paged, else one.
     pub fn pages(&self) -> usize {
         if self.style.paged {
@@ -566,13 +611,23 @@ fn back_label(label: &str) -> String {
     format!("\u{2039} {label}")
 }
 
-/// The handle row at the top: a small icon and the agent's handle.
+/// The mark at the top of a handle-titled panel, on its own line: smaller
+/// than a permission dialog's 44pt icon, big enough to read as a mark rather
+/// than a thin glyph.
+const MARK_ICON: f32 = 28.0;
+const MARK_GAP: f32 = 6.0;
+/// The handle's own line, under the mark.
 const HANDLE_ROW_H: f32 = 18.0;
 const HANDLE_SIZE: f32 = 12.0;
-const HANDLE_ICON: f32 = 14.0;
 /// The back button, at the left of the handle row.
 const BACK_BTN_H: f32 = 20.0;
 const BACK_BTN_PAD_X: f32 = 8.0;
+/// Room above and below the question, so it stands clear of the dots over it
+/// and the first option under it.
+const QUESTION_TOP_GAP: f32 = 8.0;
+const QUESTION_BOTTOM_GAP: f32 = 10.0;
+/// The page counter's own line between the options and the buttons.
+const COUNTER_ROW_H: f32 = 18.0;
 /// Progress dots: one per question, under the handle.
 const DOT: f32 = 6.0;
 const DOT_GAP: f32 = 7.0;
@@ -580,9 +635,8 @@ const DOT_ROW_H: f32 = 16.0;
 const DOT_ROW_GAP: f32 = 10.0;
 /// A dot's click target, centred on the dot itself.
 const DOT_HIT: f32 = 18.0;
-/// The page counter beside the buttons ("2 of 3"), and the column it takes.
+/// The page counter ("2 of 3").
 const PAGE_TEXT_SIZE: f32 = 11.0;
-const COUNTER_W: f32 = 40.0;
 /// The question a page asks, the largest text on a handle-titled panel.
 const QUESTION_SIZE: f32 = 15.0;
 const QUESTION_LINE_H: f32 = 20.0;
@@ -602,8 +656,14 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     let handle_title = view.style.handle_title;
     let icon_present = !view.icon.is_empty();
     let mut back_rect = None;
-    if icon_present && !handle_title {
-        y += ICON + ICON_GAP;
+    if icon_present {
+        // The mark comes first on its own line either way; a handle-titled
+        // panel just wears a smaller one.
+        y += if handle_title {
+            MARK_ICON + MARK_GAP
+        } else {
+            ICON + ICON_GAP
+        };
     }
 
     let (title_font, title_line_h, title_max_lines) = if handle_title {
@@ -612,8 +672,8 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         (font(TITLE_SIZE, 700), TITLE_LINE_H, TITLE_MAX_LINES)
     };
     let title_max_w = if handle_title {
-        // Room for the icon beside it, and for the back button either side.
-        text_max_w - (HANDLE_ICON + 6.0) - BACK_BTN_H * 2.0
+        // Clear of the back button in the corner, either side of centre.
+        text_max_w - BACK_BTN_H * 4.0
     } else {
         text_max_w
     };
@@ -653,6 +713,7 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         y += DOT_ROW_H + DOT_ROW_GAP;
     }
 
+    let mut subtitle;
     let text_block = |text: &str, weight: i32, max_lines: usize, gap: f32, y: &mut f32| {
         let lines = wrap(text, &font(TEXT_SIZE, weight), text_max_w, max_lines);
         if lines.is_empty() {
@@ -662,13 +723,19 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         *y += TEXT_LINE_H * block.lines.len() as f32 + gap;
         Some(block)
     };
-    let subtitle = text_block(
-        &view.subtitle,
-        500,
-        SUBTITLE_MAX_LINES,
-        SUBTITLE_GAP,
-        &mut y,
-    );
+    // A handle-titled panel keeps the asker's own message as context under
+    // the question it belongs to, and only on the first page — see below.
+    subtitle = if handle_title {
+        None
+    } else {
+        text_block(
+            &view.subtitle,
+            500,
+            SUBTITLE_MAX_LINES,
+            SUBTITLE_GAP,
+            &mut y,
+        )
+    };
     let body = text_block(&view.body, 400, BODY_MAX_LINES, BODY_GAP, &mut y);
 
     // Choice groups.
@@ -690,8 +757,32 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         );
         if !lines.is_empty() {
             let h = question_line_h(handle_title) * lines.len() as f32;
+            // The question is the panel's heading: it needs room over it and
+            // under it, not to sit tight against the dots and the first row.
+            if handle_title {
+                y += QUESTION_TOP_GAP;
+            }
             group_labels.push(TextBlock { y, lines });
-            y += h + GROUP_LABEL_GAP;
+            y += h + if handle_title {
+                QUESTION_BOTTOM_GAP
+            } else {
+                GROUP_LABEL_GAP
+            };
+        }
+        // The asker's message, under the question on the first page: context
+        // for what is being asked, in its own words, never repeated per page.
+        if handle_title && page == 0 && !view.subtitle.is_empty() {
+            let lines = wrap(
+                &view.subtitle,
+                &font(TEXT_SIZE, 400),
+                text_max_w,
+                SUBTITLE_MAX_LINES,
+            );
+            if !lines.is_empty() {
+                let h = TEXT_LINE_H * lines.len() as f32;
+                subtitle = Some(TextBlock { y: y - 2.0, lines });
+                y += h + GROUP_LABEL_GAP;
+            }
         }
         if group.multi && !view.style.multi_hint.is_empty() {
             let lines = wrap(
@@ -734,7 +825,13 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     };
     let has_grant = !grant_text.is_empty();
     let has_open = !view.open_label.is_empty();
+    // The counter is a caption over the buttons, on a line of its own: it
+    // says where the page is without crowding them.
+    let counter_row = pages > 1;
     let mut footer_h = 2.0 + BTN_H + PAD;
+    if counter_row {
+        footer_h += COUNTER_ROW_H;
+    }
     if has_grant && has_open {
         footer_h += OPEN_ROW_GAP + OPEN_BTN_H;
     }
@@ -745,21 +842,27 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     // With several questions the counter takes a column at the left of the
     // button row, so it says where the page is next to the way on from it.
     let mut page_counter = None;
-    let mut buttons_x = PAD;
-    let mut full_w = w - PAD * 2.0;
-    if pages > 1 && !view.style.page_label.is_empty() {
-        let text = view
-            .style
-            .page_label
-            .replace("{current}", &(page + 1).to_string())
-            .replace("{total}", &pages.to_string());
+    if counter_row {
+        let text = if view.style.page_label.is_empty() {
+            otto_kit::t_owned!(
+                "islands-dialog-page",
+                current = (page + 1) as i64,
+                total = pages as i64
+            )
+        } else {
+            view.style
+                .page_label
+                .replace("{current}", &(page + 1).to_string())
+                .replace("{total}", &pages.to_string())
+        };
         page_counter = Some(TextBlock {
-            y: y + (BTN_H - TEXT_LINE_H) / 2.0,
+            y: y + (COUNTER_ROW_H - TEXT_LINE_H) / 2.0,
             lines: vec![text],
         });
-        buttons_x += COUNTER_W;
-        full_w -= COUNTER_W;
+        y += COUNTER_ROW_H;
     }
+    let full_w = w - PAD * 2.0;
+    let buttons_x = PAD;
     let half_w = (full_w - BTN_GAP) / 2.0;
     let (deny_rect, grant_rect, mut open_rect) = if has_grant || has_open {
         let deny = Rect::from_xywh(buttons_x, y, half_w, BTN_H);
@@ -1198,43 +1301,24 @@ pub fn draw_dialog(
     canvas.clip_rect(layout.viewport, skia_safe::ClipOp::Intersect, true);
     canvas.translate((0.0, -scroll.clamp(0.0, layout.max_scroll())));
 
+    // The mark, centred on its own line at the top.
+    if layout.icon_present {
+        let size = if layout.handle_title { MARK_ICON } else { ICON };
+        draw_icon(canvas, &view.icon, cx - size / 2.0, PAD, size);
+    }
     if layout.handle_title {
-        // Who is asking, in one small line: the icon and the handle together,
-        // centred, so the question below is what the panel is about.
-        let handle = layout.title.lines.first().cloned().unwrap_or_default();
-        let f = font(HANDLE_SIZE, 600);
-        let tw = f.measure_str(&handle, None).0;
-        let icon_w = if layout.icon_present {
-            HANDLE_ICON + 6.0
-        } else {
-            0.0
-        };
-        let left = cx - (tw + icon_w) / 2.0;
-        let mid = layout.title.y + HANDLE_ROW_H / 2.0;
-        if layout.icon_present {
-            draw_icon(
-                canvas,
-                &view.icon,
-                left,
-                mid - HANDLE_ICON / 2.0,
-                HANDLE_ICON,
-            );
-        }
-        draw_lines(
+        // Who is asking, in one small line under the mark, so the question
+        // below is what the panel is about.
+        draw_lines_centered(
             canvas,
-            &[handle],
-            left + icon_w,
-            mid - HANDLE_ROW_H / 2.0,
+            &layout.title.lines,
+            cx,
+            layout.title.y,
             HANDLE_ROW_H,
-            &f,
+            &font(HANDLE_SIZE, 600),
             dim,
         );
     } else {
-        // Icon.
-        if layout.icon_present {
-            let ix = cx - ICON / 2.0;
-            draw_icon(canvas, &view.icon, ix, PAD, ICON);
-        }
         draw_lines_centered(
             canvas,
             &layout.title.lines,
@@ -1258,8 +1342,14 @@ pub fn draw_dialog(
         canvas.draw_circle((dot.center_x(), dot.center_y()), dot.width() / 2.0, &paint);
     }
     if let Some(block) = &layout.subtitle {
-        let f = font(TEXT_SIZE, 500);
-        draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim);
+        if layout.handle_title {
+            // Context under the question, reading down the same left edge.
+            let f = font(TEXT_SIZE, 400);
+            draw_lines(canvas, &block.lines, PAD, block.y, TEXT_LINE_H, &f, dim2);
+        } else {
+            let f = font(TEXT_SIZE, 500);
+            draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim);
+        }
     }
     if let Some(block) = &layout.body {
         let f = font(TEXT_SIZE, 400);
@@ -1433,12 +1523,12 @@ pub fn draw_dialog(
         );
     }
 
-    // The page counter, in its column beside the buttons.
+    // The page counter, a caption centred over the buttons.
     if let Some(block) = &layout.page_counter {
-        draw_lines(
+        draw_lines_centered(
             canvas,
             &block.lines,
-            PAD,
+            cx,
             block.y,
             TEXT_LINE_H,
             &font(PAGE_TEXT_SIZE, 600),
@@ -2107,7 +2197,7 @@ mod tests {
     }
 
     #[test]
-    fn the_counter_sits_beside_the_buttons() {
+    fn the_counter_gets_its_own_line_over_the_buttons() {
         let v = questions(
             paged_style(),
             vec![
@@ -2118,20 +2208,28 @@ mod tests {
         let layout = dialog_layout(&v, 0);
         let counter = layout.page_counter.as_ref().expect("counter");
         assert_eq!(counter.lines, ["1 of 2"]);
-        // On the button row, at its left, with the buttons making room.
+        // Between the options and the buttons, which keep the full width.
         assert!(counter.y >= layout.viewport.bottom);
-        assert!(counter.y < layout.deny_rect.bottom);
-        assert!(layout.deny_rect.left >= PAD + COUNTER_W);
+        assert!(counter.y + TEXT_LINE_H <= layout.deny_rect.top);
+        assert_eq!(layout.deny_rect.left, PAD);
         let grant = layout.grant_rect.expect("grant");
-        assert!(grant.right <= layout.width - PAD + 0.01);
-        // The open button keeps the full width under them.
+        assert!((grant.right - (layout.width - PAD)).abs() < 0.01);
+        assert!(grant.width() > layout.width / 2.0 - PAD - BTN_GAP);
+        // The open button keeps its own full-width row under them.
         assert_eq!(layout.open_rect.expect("open").left, PAD);
 
-        // Without paging the buttons span the panel as before.
-        let one = questions(QuestionStyle::default(), v.choices.clone());
-        let layout = dialog_layout(&one, 0);
-        assert!(layout.page_counter.is_none());
-        assert_eq!(layout.deny_rect.left, PAD);
+        // One question has nowhere to be in: no counter, and the panel is
+        // shorter for it.
+        let one = questions(
+            QuestionStyle::default(),
+            vec![group("a", "First?", &["One", "Two"])],
+        );
+        let alone = dialog_layout(&one, 0);
+        assert!(alone.page_counter.is_none());
+        assert!(
+            alone.height - alone.content_h < layout.height - layout.content_h,
+            "the counter's line is only there when it is"
+        );
     }
 
     #[test]
@@ -2202,9 +2300,10 @@ mod tests {
                 _ => {}
             }
         }
-        // As `question_style` decides it on the bus: several questions are
-        // asked a page each.
+        // As the bus decides them: several questions are asked a page each,
+        // and the dialog fills in its own words for getting through them.
         v.style.paged = v.choices.len() > 1;
+        v.fill_question_words();
         v
     }
 
