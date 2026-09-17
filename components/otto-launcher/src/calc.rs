@@ -48,6 +48,7 @@ impl Source for Calculator {
             title: answer,
             subtitle: Some(format!("{} — copy to the clipboard", query.trim())),
             icon: icon_name(),
+            activity: None,
             search_terms: Vec::new(),
             origin: Origin {
                 source: self.index,

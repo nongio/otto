@@ -44,6 +44,13 @@ agents mode the card is centred on the output instead, and stays centred as the
 conversation above the field or the list of sessions under it grows. The card
 clips its panes, so neither log nor rows draw past its edge.
 
+**Session status.** In agents mode each session row has a small dot where an
+icon would go: the theme's accent while the session is working, its yellow
+while it waits for input, and its faint text colour (`text_tertiary`) when it
+is idle or stopped (a failed session included — the subtitle says it failed).
+The colours come from the theme, so the dot follows the user's accent and the
+colour scheme.
+
 **Modes.** A run offers applications, windows, or both, chosen when it starts.
 Applications is the default: the two bindings mean "launch something" and
 "switch to a window", and a mode that quietly does both is neither. The empty

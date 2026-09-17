@@ -42,7 +42,7 @@ use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
 use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y};
-use crate::source::Item;
+use crate::source::{Activity, Item};
 
 /// Width of the card. Wide enough for a window title and its application, and
 /// narrow enough to stay a dialog rather than become a page.
@@ -64,6 +64,8 @@ pub const RADIUS: f32 = 10.0;
 const ICON: f32 = 28.0;
 /// The icon on a compact row, such as a file attached to an ask request.
 const SMALL_ICON: f32 = 18.0;
+/// The activity dot beside a row with no icon, such as an agent session.
+const DOT_RADIUS: f32 = 4.0;
 const ROW_INSET: f32 = 8.0;
 /// Corner radius of the selection's highlight.
 pub const HIGHLIGHT_RADIUS: f32 = 9.0;
@@ -600,6 +602,11 @@ impl Palette {
         let small_subtitle_font = self.font(10.0, FontStyle::normal());
         let badge_font = self.font(10.5, FontStyle::normal());
         let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
+        let theme = if self.dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        };
         let layout = RowLayout::new(ROW_H, items.len());
         for index in layout.visible(band) {
             let item = items[index];
@@ -613,8 +620,14 @@ impl Palette {
                 .icon
                 .as_deref()
                 .and_then(|name| resolve_icon(&mut self.icons.borrow_mut(), name));
+            let dot = item.activity.map(|activity| match activity {
+                Activity::Working => theme.accent,
+                Activity::Idle => theme.text_tertiary,
+                Activity::Waiting => theme.accent_yellow,
+            });
             let draw = draw_row(
                 icon,
+                dot,
                 icon_size,
                 item.title.clone(),
                 item.subtitle.clone(),
@@ -688,6 +701,7 @@ impl Palette {
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     icon: Option<Image>,
+    dot: Option<Color>,
     icon_size: f32,
     title: String,
     subtitle: Option<String>,
@@ -714,6 +728,14 @@ fn draw_row(
                 SamplingOptions::default(),
                 &paint,
             );
+        }
+
+        if let Some(color) = dot {
+            // In the icon's place, centred where a full-size icon would be.
+            let centre = (ROW_INSET + 8.0 + ICON / 2.0, height / 2.0);
+            let mut dot_paint = Paint::new(Color4f::from(color), None);
+            dot_paint.set_anti_alias(true);
+            canvas.draw_circle(centre, DOT_RADIUS, &dot_paint);
         }
 
         // The badge is measured first: the title is clipped to what is left,
