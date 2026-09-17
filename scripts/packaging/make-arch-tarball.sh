@@ -37,7 +37,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 for b in otto otto-bar otto-islands otto-lock otto-greeter otto-rdp \
          otto-settings otto-files otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg \
-         xdg-desktop-portal-otto; do
+         otto-agentsd xdg-desktop-portal-otto; do
     install -Dm755 "target/release/$b" "$tmpdir/$PKGDIR/target/release/$b"
 done
 
@@ -67,8 +67,17 @@ for f in otto.portal \
     install -Dm644 "components/xdg-desktop-portal-otto/$f" \
         "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/$f"
 done
+install -Dm644 components/otto-agentsd/otto-agentsd.service "$tmpdir/$PKGDIR/components/otto-agentsd/otto-agentsd.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
+
+# The agent skills, as a tree: PKGBUILD and PKGBUILD-nightly-bin install
+# whatever is under resources/plugins/otto, so the tarball has to carry all of
+# it, modes included — the example Files script is executable.
+while IFS= read -r f; do
+    if [ -x "$f" ]; then m=755; else m=644; fi
+    install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
+done < <(find resources/plugins/otto -type f)
 
 install -m644 PKGBUILD-git         "$tmpdir/$PKGDIR/PKGBUILD-git"
 install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
