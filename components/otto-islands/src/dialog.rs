@@ -997,6 +997,11 @@ fn draw_icon(canvas: &Canvas, icon_name: &str, x: f32, y: f32, size: f32) {
 /// Apply the frosted-panel surface style to a dialog subsurface: a translucent
 /// theme material over a blurred backdrop, rounded clipping, drop shadow, and
 /// center anchor. [`draw_dialog`] draws only the content on top.
+/// The dialog's primary text colour: black on light, white on dark.
+pub fn text_color() -> Color {
+    opaque(otto_kit::AppContext::current_theme().text_primary)
+}
+
 /// Drop a colour's transparency, keeping its RGB.
 fn opaque(c: Color) -> Color {
     Color::from_argb(0xFF, c.r(), c.g(), c.b())

@@ -594,7 +594,14 @@ impl IslandApp {
                         renderer::draw_mini(canvas, &activity.icon, w, h);
                     }),
                     IslandMode::Compact => draw_content(surface, w, h, |canvas| {
-                        renderer::draw_pill(canvas, &activity.icon, &activity.title, w, h);
+                        renderer::draw_pill(
+                            canvas,
+                            &activity.icon,
+                            &activity.title,
+                            skia_safe::Color::WHITE,
+                            w,
+                            h,
+                        );
                     }),
                     IslandMode::Expanded => draw_content(surface, w, h, |canvas| {
                         renderer::draw_card(canvas, &activity, w, h);
@@ -1119,7 +1126,11 @@ impl IslandApp {
             .flatten();
         draw_content(&mut panel.surface, w, h, |canvas| match shape {
             Shape::Circle => renderer::draw_mini(canvas, &view.icon, w, h),
-            Shape::Peek => renderer::draw_pill(canvas, &view.icon, &view.title, w, h),
+            // The peek wears the dialog's themed material, so its text follows
+            // the theme rather than the dark island pill's white.
+            Shape::Peek => {
+                renderer::draw_pill(canvas, &view.icon, &view.title, dialog::text_color(), w, h)
+            }
             Shape::Panel => {
                 dialog::draw_dialog(canvas, &view, &selected, &layout, scroll, focus_row)
             }

@@ -71,7 +71,7 @@ pub fn pill_width(title: &str) -> f32 {
 }
 
 /// Compact: this notification's own icon and title on one line.
-pub fn draw_pill(canvas: &Canvas, icon: &str, title: &str, w: f32, h: f32) {
+pub fn draw_pill(canvas: &Canvas, icon: &str, title: &str, text: Color, w: f32, h: f32) {
     let pad = 8.0;
     let icon_size = h - pad * 2.0;
     let icon_x = pad;
@@ -89,7 +89,7 @@ pub fn draw_pill(canvas: &Canvas, icon: &str, title: &str, w: f32, h: f32) {
     .font();
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_color(Color::WHITE);
+    paint.set_color(text);
     let label = truncate_text(title, &font, max_w);
     canvas.draw_str(&label, (text_x, h / 2.0 + 4.0), &font, &paint);
 }
