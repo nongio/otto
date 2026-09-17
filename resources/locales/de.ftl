@@ -859,6 +859,48 @@ workspace-numbered = Schreibtisch { $number }
 launcher-search-everything = Apps und Fenster durchsuchen…
 launcher-search-apps = Apps durchsuchen…
 launcher-search-windows = Fenster durchsuchen…
+# What is typed matched nothing.
+launcher-no-results = Keine Ergebnisse
+# Ask mode: what is typed is a request for an AI agent, not a search.
+launcher-search-ask = Einen Agenten fragen…
+# Ask mode, once a request has been sent: the empty field takes the next one.
+launcher-search-ask-more = Weitere Frage stellen…
+# Agents mode: what is typed narrows the list of agent sessions to pick one
+# to open.
+launcher-search-agents = Agent-Sitzungen durchsuchen…
+# Agents mode: a session in the list. Its title, when it has none yet.
+launcher-agents-untitled = Unbenannte Sitzung
+# Agents mode: what a session in the list is doing, before its folder.
+launcher-agents-idle = Inaktiv
+launcher-agents-working = Arbeitet
+launcher-agents-needs-input = Wartet auf Antwort
+launcher-agents-error = Fehlgeschlagen
+launcher-agents-none = Noch keine Agent-Sitzungen
+# Ask mode: the files that go with a request, under it in the log, or above
+# the field before it is sent. { $files } is their names, comma-separated.
+launcher-ask-attached = Angehängt: { $files }
+# Ask mode, while an existing session is being opened to continue it.
+launcher-ask-opening = Sitzung wird geöffnet…
+# Ask mode: the last line of the log above the field, saying what the agent is
+# doing now.
+launcher-ask-starting = { $agent } wird gestartet…
+launcher-ask-starting-agent = Agent wird gestartet…
+launcher-ask-thinking = Denkt nach…
+launcher-ask-working = Arbeitet…
+# The agent asked for permission; its answers are the rows under the field.
+launcher-ask-waiting = Wartet unten auf eine Antwort
+# Ask mode: a tool call the agent made, in the log. { $tool } is the command or
+# file, as the agent names it.
+launcher-ask-step-running = ▸ { $tool }
+launcher-ask-step-done = ✓ { $tool }
+launcher-ask-step-failed = ✗ { $tool }
+launcher-ask-step-denied = Abgelehnt: { $tool }
+# Ask mode: under a request in the log, what became of it.
+launcher-ask-queued = In Warteschlange
+launcher-ask-cancelled = Abgebrochen
+launcher-ask-failed = Fehlgeschlagen: { $error }
+# Ask mode, when the agent service is not running to take a request.
+launcher-ask-unreachable = Der Agent-Dienst läuft nicht
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.

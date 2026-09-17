@@ -13,6 +13,7 @@ settings-colour-scheme = Color scheme
 settings-background-colour = Background color
 greeter-status-no-match = Fingerprint not recognized
 lock-status-no-match = Fingerprint not recognized
+launcher-ask-cancelled = Canceled
 
 
 ## Formats

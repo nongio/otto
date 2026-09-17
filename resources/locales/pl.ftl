@@ -901,6 +901,48 @@ workspace-numbered = Biurko { $number }
 launcher-search-everything = Szukaj aplikacji i okien…
 launcher-search-apps = Szukaj aplikacji…
 launcher-search-windows = Szukaj okien…
+# What is typed matched nothing.
+launcher-no-results = Brak wyników
+# Ask mode: what is typed is a request for an AI agent, not a search.
+launcher-search-ask = Zapytaj agenta…
+# Ask mode, once a request has been sent: the empty field takes the next one.
+launcher-search-ask-more = Zadaj kolejne pytanie…
+# Agents mode: what is typed narrows the list of agent sessions to pick one
+# to open.
+launcher-search-agents = Szukaj sesji agentów…
+# Agents mode: a session in the list. Its title, when it has none yet.
+launcher-agents-untitled = Sesja bez tytułu
+# Agents mode: what a session in the list is doing, before its folder.
+launcher-agents-idle = Bezczynna
+launcher-agents-working = Pracuje
+launcher-agents-needs-input = Czeka na odpowiedź
+launcher-agents-error = Niepowodzenie
+launcher-agents-none = Brak sesji agentów
+# Ask mode: the files that go with a request, under it in the log, or above
+# the field before it is sent. { $files } is their names, comma-separated.
+launcher-ask-attached = Załączniki: { $files }
+# Ask mode, while an existing session is being opened to continue it.
+launcher-ask-opening = Otwieranie sesji…
+# Ask mode: the last line of the log above the field, saying what the agent is
+# doing now.
+launcher-ask-starting = Uruchamianie: { $agent }…
+launcher-ask-starting-agent = Uruchamianie agenta…
+launcher-ask-thinking = Myśli…
+launcher-ask-working = Pracuje…
+# The agent asked for permission; its answers are the rows under the field.
+launcher-ask-waiting = Czeka na odpowiedź poniżej
+# Ask mode: a tool call the agent made, in the log. { $tool } is the command or
+# file, as the agent names it.
+launcher-ask-step-running = ▸ { $tool }
+launcher-ask-step-done = ✓ { $tool }
+launcher-ask-step-failed = ✗ { $tool }
+launcher-ask-step-denied = Odmówiono: { $tool }
+# Ask mode: under a request in the log, what became of it.
+launcher-ask-queued = W kolejce
+launcher-ask-cancelled = Anulowano
+launcher-ask-failed = Niepowodzenie: { $error }
+# Ask mode, when the agent service is not running to take a request.
+launcher-ask-unreachable = Usługa agentów nie działa
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.

@@ -870,6 +870,48 @@ workspace-numbered = Escritorio { $number }
 launcher-search-everything = Buscar aplicaciones y ventanas…
 launcher-search-apps = Buscar aplicaciones…
 launcher-search-windows = Buscar ventanas…
+# What is typed matched nothing.
+launcher-no-results = Sin resultados
+# Ask mode: what is typed is a request for an AI agent, not a search.
+launcher-search-ask = Preguntar a un agente…
+# Ask mode, once a request has been sent: the empty field takes the next one.
+launcher-search-ask-more = Hacer otra pregunta…
+# Agents mode: what is typed narrows the list of agent sessions to pick one
+# to open.
+launcher-search-agents = Buscar sesiones de agente…
+# Agents mode: a session in the list. Its title, when it has none yet.
+launcher-agents-untitled = Sesión sin título
+# Agents mode: what a session in the list is doing, before its folder.
+launcher-agents-idle = Inactiva
+launcher-agents-working = Trabajando
+launcher-agents-needs-input = Esperando una respuesta
+launcher-agents-error = Error
+launcher-agents-none = Aún no hay sesiones de agente
+# Ask mode: the files that go with a request, under it in the log, or above
+# the field before it is sent. { $files } is their names, comma-separated.
+launcher-ask-attached = Adjuntos: { $files }
+# Ask mode, while an existing session is being opened to continue it.
+launcher-ask-opening = Abriendo la sesión…
+# Ask mode: the last line of the log above the field, saying what the agent is
+# doing now.
+launcher-ask-starting = Iniciando { $agent }…
+launcher-ask-starting-agent = Iniciando el agente…
+launcher-ask-thinking = Pensando…
+launcher-ask-working = Trabajando…
+# The agent asked for permission; its answers are the rows under the field.
+launcher-ask-waiting = Esperando una respuesta abajo
+# Ask mode: a tool call the agent made, in the log. { $tool } is the command or
+# file, as the agent names it.
+launcher-ask-step-running = ▸ { $tool }
+launcher-ask-step-done = ✓ { $tool }
+launcher-ask-step-failed = ✗ { $tool }
+launcher-ask-step-denied = Denegado: { $tool }
+# Ask mode: under a request in the log, what became of it.
+launcher-ask-queued = En cola
+launcher-ask-cancelled = Cancelada
+launcher-ask-failed = Error: { $error }
+# Ask mode, when the agent service is not running to take a request.
+launcher-ask-unreachable = El servicio de agentes no está en ejecución
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.

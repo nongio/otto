@@ -2,7 +2,9 @@
 //! can build the same scene the binary does without a compositor.
 
 pub mod apps;
+pub mod ask;
 pub mod calc;
+pub mod log;
 pub mod source;
 pub mod view;
 pub mod windows;

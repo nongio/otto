@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Ask an agent about the selection, in the launcher.
+
+A sample script for Otto Files' command palette. Copy it to
+~/.config/otto/files-scripts/ and it shows up as "Ask…" whenever something is
+selected. Return opens the launcher in ask mode with the selection attached to
+the request, for an agent run by otto-agentsd. The protocol is described at the
+top of components/otto-files/src/scripts.rs.
+
+    ask describe        what this script offers, once, at startup
+    ask run < json      open the launcher with the targets attached
+
+The launcher is `otto-launcher` on the PATH, or `$OTTO_LAUNCHER`.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+STRINGS = {
+    "en": {
+        "title": "Ask…",
+        "keywords": ["agent", "ai", "claude", "question", "chat"],
+        "missing": "Could not start the launcher: {error}",
+    },
+    "it": {
+        "title": "Chiedi…",
+        "keywords": ["agente", "ai", "claude", "domanda", "chat"],
+        "missing": "Impossibile avviare il launcher: {error}",
+    },
+}
+
+
+def strings(locale):
+    tag = (locale or "en").replace("_", "-").lower()
+    for candidate in (tag, tag.split("-")[0], "en"):
+        for key in STRINGS:
+            if key.lower() == candidate:
+                return STRINGS[key]
+    return STRINGS["en"]
+
+
+def by_locale(key):
+    return {tag: table[key] for tag, table in STRINGS.items()}
+
+
+def describe():
+    return {
+        "commands": [
+            {
+                "id": "ask",
+                "title": by_locale("title"),
+                "keywords": by_locale("keywords"),
+                "group": "file",
+                "when": {"targets": "some", "kinds": "any"},
+            }
+        ]
+    }
+
+
+def run(request):
+    launcher = os.environ.get("OTTO_LAUNCHER", "otto-launcher")
+    args = [launcher, "--ask"]
+    for target in request["targets"]:
+        args += ["--file", target]
+    try:
+        # A session of its own, so the launcher outlives this script, and
+        # Files is not left waiting for it to close.
+        subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        table = strings(request.get("locale") or os.environ.get("OTTO_LOCALE"))
+        sys.exit(table["missing"].format(error=error))
+    return {}
+
+
+def main():
+    verb = sys.argv[1] if len(sys.argv) > 1 else ""
+    if verb == "describe":
+        out = describe()
+    elif verb == "run":
+        out = run(json.load(sys.stdin))
+    else:
+        sys.exit(f"usage: {sys.argv[0]} describe|run")
+    json.dump(out, sys.stdout)
+
+
+if __name__ == "__main__":
+    main()

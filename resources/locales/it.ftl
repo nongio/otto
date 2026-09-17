@@ -876,6 +876,48 @@ workspace-numbered = Scrivania { $number }
 launcher-search-everything = Cerca app e finestre…
 launcher-search-apps = Cerca app…
 launcher-search-windows = Cerca finestre…
+# What is typed matched nothing.
+launcher-no-results = Nessun risultato
+# Ask mode: what is typed is a request for an AI agent, not a search.
+launcher-search-ask = Chiedi a un agente…
+# Ask mode, once a request has been sent: the empty field takes the next one.
+launcher-search-ask-more = Fai un’altra domanda…
+# Agents mode: what is typed narrows the list of agent sessions to pick one
+# to open.
+launcher-search-agents = Cerca sessioni degli agenti…
+# Agents mode: a session in the list. Its title, when it has none yet.
+launcher-agents-untitled = Sessione senza titolo
+# Agents mode: what a session in the list is doing, before its folder.
+launcher-agents-idle = Inattiva
+launcher-agents-working = In corso
+launcher-agents-needs-input = In attesa di risposta
+launcher-agents-error = Non riuscita
+launcher-agents-none = Ancora nessuna sessione degli agenti
+# Ask mode: the files that go with a request, under it in the log, or above
+# the field before it is sent. { $files } is their names, comma-separated.
+launcher-ask-attached = Allegati: { $files }
+# Ask mode, while an existing session is being opened to continue it.
+launcher-ask-opening = Apertura della sessione…
+# Ask mode: the last line of the log above the field, saying what the agent is
+# doing now.
+launcher-ask-starting = Avvio di { $agent }…
+launcher-ask-starting-agent = Avvio dell’agente…
+launcher-ask-thinking = Ragionamento…
+launcher-ask-working = In corso…
+# The agent asked for permission; its answers are the rows under the field.
+launcher-ask-waiting = In attesa di una risposta qui sotto
+# Ask mode: a tool call the agent made, in the log. { $tool } is the command or
+# file, as the agent names it.
+launcher-ask-step-running = ▸ { $tool }
+launcher-ask-step-done = ✓ { $tool }
+launcher-ask-step-failed = ✗ { $tool }
+launcher-ask-step-denied = Negato: { $tool }
+# Ask mode: under a request in the log, what became of it.
+launcher-ask-queued = In coda
+launcher-ask-cancelled = Annullata
+launcher-ask-failed = Non riuscita: { $error }
+# Ask mode, when the agent service is not running to take a request.
+launcher-ask-unreachable = Il servizio degli agenti non è in esecuzione
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.

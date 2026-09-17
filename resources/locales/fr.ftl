@@ -881,6 +881,48 @@ workspace-numbered = Bureau { $number }
 launcher-search-everything = Rechercher des applications et des fenêtres…
 launcher-search-apps = Rechercher des applications…
 launcher-search-windows = Rechercher des fenêtres…
+# What is typed matched nothing.
+launcher-no-results = Aucun résultat
+# Ask mode: what is typed is a request for an AI agent, not a search.
+launcher-search-ask = Demander à un agent…
+# Ask mode, once a request has been sent: the empty field takes the next one.
+launcher-search-ask-more = Poser une autre question…
+# Agents mode: what is typed narrows the list of agent sessions to pick one
+# to open.
+launcher-search-agents = Rechercher des sessions d’agent…
+# Agents mode: a session in the list. Its title, when it has none yet.
+launcher-agents-untitled = Session sans titre
+# Agents mode: what a session in the list is doing, before its folder.
+launcher-agents-idle = Inactive
+launcher-agents-working = En cours
+launcher-agents-needs-input = En attente d’une réponse
+launcher-agents-error = Échec
+launcher-agents-none = Aucune session d’agent pour l’instant
+# Ask mode: the files that go with a request, under it in the log, or above
+# the field before it is sent. { $files } is their names, comma-separated.
+launcher-ask-attached = Pièces jointes : { $files }
+# Ask mode, while an existing session is being opened to continue it.
+launcher-ask-opening = Ouverture de la session…
+# Ask mode: the last line of the log above the field, saying what the agent is
+# doing now.
+launcher-ask-starting = Démarrage de { $agent }…
+launcher-ask-starting-agent = Démarrage de l’agent…
+launcher-ask-thinking = Réflexion…
+launcher-ask-working = En cours…
+# The agent asked for permission; its answers are the rows under the field.
+launcher-ask-waiting = En attente d’une réponse ci-dessous
+# Ask mode: a tool call the agent made, in the log. { $tool } is the command or
+# file, as the agent names it.
+launcher-ask-step-running = ▸ { $tool }
+launcher-ask-step-done = ✓ { $tool }
+launcher-ask-step-failed = ✗ { $tool }
+launcher-ask-step-denied = Refusé : { $tool }
+# Ask mode: under a request in the log, what became of it.
+launcher-ask-queued = En file d’attente
+launcher-ask-cancelled = Annulée
+launcher-ask-failed = Échec : { $error }
+# Ask mode, when the agent service is not running to take a request.
+launcher-ask-unreachable = Le service d’agents n’est pas en cours d’exécution
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.
