@@ -36,14 +36,54 @@ pub type DialogId = u64;
 // ---------------------------------------------------------------------------
 
 pub const DIALOG_W: f32 = 320.0;
-const PAD: f32 = 18.0;
-const ICON: f32 = 44.0;
-const ICON_GAP: f32 = 10.0;
+
+// ---------------------------------------------------------------------------
+// Spacing
+//
+// One scale for the whole panel — 4, 6, 8, 10, 12, 16, 20 — applied by the
+// rule that things belonging together sit tight and one step separates the
+// groups they make. Every vertical gap in the layout comes from a name here:
+// the panel's rhythm is read (and changed) in this block, not hunted through
+// the arithmetic.
+//
+// A question panel reads as two groups and a list. Who is asking — the mark
+// and the handle under it — sits tight together; a full step below that come
+// the dots, which belong to the question they count, tight above it. The
+// choices then sit evenly between the question and the buttons: the same air
+// above the first row as below the last, with the page counter floating in
+// the lower band rather than taking a step of its own.
+// ---------------------------------------------------------------------------
+
+/// Side padding, and the panel's own top and bottom.
+const PAD: f32 = 20.0;
+const PAD_TOP: f32 = 20.0;
+const PAD_BOTTOM: f32 = 16.0;
+/// The mark and the handle under it: one unit, who is asking.
+const GAP_MARK_HANDLE: f32 = 6.0;
+/// The step from that unit to the question's own: dots, then the question.
+const GAP_HANDLE_DOTS: f32 = 20.0;
+/// The dots count the questions, so they sit with the question, not the
+/// handle.
+const GAP_DOTS_QUESTION: f32 = 8.0;
+/// The agent's own message about the question, tucked under it.
+const GAP_QUESTION_CONTEXT: f32 = 6.0;
+/// The air around the choices: the same above the first row as below the
+/// last, so the list sits evenly between what asks and what answers. The page
+/// counter is centred in the lower band.
+const GAP_CHOICES: f32 = 24.0;
+/// Between option rows, which are one list.
+const OPTION_GAP: f32 = 8.0;
+/// Between the button row and the open button's row under it.
+const OPEN_ROW_GAP: f32 = 10.0;
+/// A permission dialog's headline stack: the big icon, its title, and the
+/// supporting lines under it.
+const ICON_GAP: f32 = 12.0;
 const TITLE_GAP: f32 = 6.0;
 const SUBTITLE_GAP: f32 = 4.0;
-const BODY_GAP: f32 = 8.0;
+const BODY_GAP: f32 = 12.0;
+
+const ICON: f32 = 44.0;
 const OPTION_H: f32 = 44.0;
-const OPTION_GAP: f32 = 6.0;
 const OPTION_RADIUS: f32 = 11.0;
 /// Right padding inside an option row, matching the badge's inset on the left.
 const OPTION_PAD_RIGHT: f32 = 14.0;
@@ -54,7 +94,6 @@ const BTN_H: f32 = 36.0;
 const BTN_GAP: f32 = 10.0;
 const BTN_RADIUS: f32 = 10.0;
 /// The open button's own row, below grant/deny, when both are shown.
-const OPEN_ROW_GAP: f32 = 4.0;
 const OPEN_BTN_H: f32 = 32.0;
 pub const PANEL_RADIUS: f32 = 20.0;
 
@@ -481,8 +520,7 @@ const BODY_MAX_LINES: usize = 40;
 /// A group label is the question a choice group answers, so it wraps too.
 const GROUP_LABEL_SIZE: f32 = 12.0;
 const GROUP_LABEL_MAX_LINES: usize = 12;
-/// Space between a group label's last line and the group's first option.
-const GROUP_LABEL_GAP: f32 = 4.0;
+
 /// Option rows: a wrapped label, and under it an optional wrapped description.
 const OPTION_LABEL_SIZE: f32 = 13.0;
 const OPTION_LABEL_LINE_H: f32 = 17.0;
@@ -615,24 +653,17 @@ fn back_label(label: &str) -> String {
 /// than a permission dialog's 44pt icon, big enough to read as a mark rather
 /// than a thin glyph.
 const MARK_ICON: f32 = 28.0;
-const MARK_GAP: f32 = 6.0;
 /// The handle's own line, under the mark.
-const HANDLE_ROW_H: f32 = 18.0;
+const HANDLE_LINE_H: f32 = 16.0;
 const HANDLE_SIZE: f32 = 12.0;
 /// The back button, at the left of the handle row.
 const BACK_BTN_H: f32 = 20.0;
 const BACK_BTN_PAD_X: f32 = 8.0;
-/// Room above and below the question, so it stands clear of the dots over it
-/// and the first option under it.
-const QUESTION_TOP_GAP: f32 = 8.0;
-const QUESTION_BOTTOM_GAP: f32 = 10.0;
 /// The page counter's own line between the options and the buttons.
-const COUNTER_ROW_H: f32 = 18.0;
+const COUNTER_LINE_H: f32 = 14.0;
 /// Progress dots: one per question, under the handle.
 const DOT: f32 = 6.0;
 const DOT_GAP: f32 = 7.0;
-const DOT_ROW_H: f32 = 16.0;
-const DOT_ROW_GAP: f32 = 10.0;
 /// A dot's click target, centred on the dot itself.
 const DOT_HIT: f32 = 18.0;
 /// The page counter ("2 of 3").
@@ -660,14 +691,14 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         // The mark comes first on its own line either way; a handle-titled
         // panel just wears a smaller one.
         y += if handle_title {
-            MARK_ICON + MARK_GAP
+            MARK_ICON + GAP_MARK_HANDLE
         } else {
             ICON + ICON_GAP
         };
     }
 
     let (title_font, title_line_h, title_max_lines) = if handle_title {
-        (font(HANDLE_SIZE, 600), HANDLE_ROW_H, 1)
+        (font(HANDLE_SIZE, 600), HANDLE_LINE_H, 1)
     } else {
         (font(TITLE_SIZE, 700), TITLE_LINE_H, TITLE_MAX_LINES)
     };
@@ -692,12 +723,19 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         // the question.
         back_rect = Some(Rect::from_xywh(
             PAD,
-            PAD + (HANDLE_ROW_H - BACK_BTN_H).max(0.0) / 2.0,
+            PAD_TOP + (HANDLE_LINE_H - BACK_BTN_H).max(0.0) / 2.0,
             bw,
             BACK_BTN_H,
         ));
     }
-    y += title_line_h * title.lines.len().max(1) as f32 + TITLE_GAP;
+    // The handle stands clear of the question's own group below it; a
+    // headline stands closer to the lines that support it.
+    y += title_line_h * title.lines.len().max(1) as f32
+        + if handle_title {
+            GAP_HANDLE_DOTS
+        } else {
+            TITLE_GAP
+        };
 
     // Progress: one dot per question, the current one accented. They stand in
     // for the counter at the top; the counter itself sits by the buttons.
@@ -705,24 +743,31 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     if pages > 1 {
         let row_w = pages as f32 * DOT + (pages - 1) as f32 * DOT_GAP;
         let mut x = (w - row_w) / 2.0;
-        let cy = y + DOT_ROW_H / 2.0;
         for _ in 0..pages {
-            dots.push(Rect::from_xywh(x, cy - DOT / 2.0, DOT, DOT));
+            dots.push(Rect::from_xywh(x, y, DOT, DOT));
             x += DOT + DOT_GAP;
         }
-        y += DOT_ROW_H + DOT_ROW_GAP;
+        // Tight above the question: the dots count it, they do not head the
+        // panel.
+        y += DOT + GAP_DOTS_QUESTION;
     }
 
     let mut subtitle;
-    let text_block = |text: &str, weight: i32, max_lines: usize, gap: f32, y: &mut f32| {
-        let lines = wrap(text, &font(TEXT_SIZE, weight), text_max_w, max_lines);
-        if lines.is_empty() {
-            return None;
-        }
-        let block = TextBlock { y: *y, lines };
-        *y += TEXT_LINE_H * block.lines.len() as f32 + gap;
-        Some(block)
-    };
+    // Where the content actually ends, so the footer can set the air under it
+    // without a block's trailing gap counting twice.
+    let mut bottom = y + title_line_h * title.lines.len().max(1) as f32;
+    let text_block =
+        |text: &str, weight: i32, max_lines: usize, gap: f32, y: &mut f32, bottom: &mut f32| {
+            let lines = wrap(text, &font(TEXT_SIZE, weight), text_max_w, max_lines);
+            if lines.is_empty() {
+                return None;
+            }
+            let block = TextBlock { y: *y, lines };
+            let h = TEXT_LINE_H * block.lines.len() as f32;
+            *bottom = *y + h;
+            *y += h + gap;
+            Some(block)
+        };
     // A handle-titled panel keeps the asker's own message as context under
     // the question it belongs to, and only on the first page — see below.
     subtitle = if handle_title {
@@ -734,9 +779,17 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
             SUBTITLE_MAX_LINES,
             SUBTITLE_GAP,
             &mut y,
+            &mut bottom,
         )
     };
-    let body = text_block(&view.body, 400, BODY_MAX_LINES, BODY_GAP, &mut y);
+    let body = text_block(
+        &view.body,
+        400,
+        BODY_MAX_LINES,
+        BODY_GAP,
+        &mut y,
+        &mut bottom,
+    );
 
     // Choice groups.
     let mut option_rects = Vec::new();
@@ -757,16 +810,14 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         );
         if !lines.is_empty() {
             let h = question_line_h(handle_title) * lines.len() as f32;
-            // The question is the panel's heading: it needs room over it and
-            // under it, not to sit tight against the dots and the first row.
-            if handle_title {
-                y += QUESTION_TOP_GAP;
-            }
+            bottom = y + h;
             group_labels.push(TextBlock { y, lines });
+            // The air above the choices, which the lines below — the agent's
+            // message, the multi-select hint — take back out of.
             y += h + if handle_title {
-                QUESTION_BOTTOM_GAP
+                GAP_CHOICES
             } else {
-                GROUP_LABEL_GAP
+                SUBTITLE_GAP
             };
         }
         // The asker's message, under the question on the first page: context
@@ -779,9 +830,13 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
                 SUBTITLE_MAX_LINES,
             );
             if !lines.is_empty() {
+                // Tucked under the question, and the air above the choices
+                // measured from here instead.
+                let top = y - GAP_CHOICES + GAP_QUESTION_CONTEXT;
                 let h = TEXT_LINE_H * lines.len() as f32;
-                subtitle = Some(TextBlock { y: y - 2.0, lines });
-                y += h + GROUP_LABEL_GAP;
+                subtitle = Some(TextBlock { y: top, lines });
+                bottom = top + h;
+                y = top + h + GAP_CHOICES;
             }
         }
         if group.multi && !view.style.multi_hint.is_empty() {
@@ -791,9 +846,11 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
                 text_max_w,
                 2,
             );
+            let top = y - GAP_CHOICES + GAP_QUESTION_CONTEXT;
             let h = OPTION_DESC_LINE_H * lines.len() as f32;
-            group_hints.push(TextBlock { y: y - 2.0, lines });
-            y += h + GROUP_LABEL_GAP;
+            group_hints.push(TextBlock { y: top, lines });
+            bottom = top + h;
+            y = top + h + GAP_CHOICES;
         }
         for (oi, opt) in group.options.iter().enumerate() {
             let (label, description) = split_option_label(&opt.label);
@@ -807,11 +864,13 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
             let rect = Rect::from_xywh(PAD, y, w - PAD * 2.0, row_h);
             option_rects.push((gi, oi, rect));
             option_text.push((label_lines, desc_lines));
+            bottom = rect.bottom;
             y += row_h + OPTION_GAP;
         }
-        y += 4.0; // extra gap after a group
     }
-    let content_h = y;
+    // The footer sets the air under the content itself, and keeps it equal to
+    // the air above the choices.
+    let content_h = bottom;
 
     // Buttons. The grant button is the default action and always sits at the
     // right of the main row. The open button is secondary: with a grant button
@@ -827,18 +886,17 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     let has_open = !view.open_label.is_empty();
     // The counter is a caption over the buttons, on a line of its own: it
     // says where the page is without crowding them.
+    // The same air under the choices as above them, with the counter floating
+    // in it rather than adding a step of its own.
     let counter_row = pages > 1;
-    let mut footer_h = 2.0 + BTN_H + PAD;
-    if counter_row {
-        footer_h += COUNTER_ROW_H;
-    }
+    let mut footer_h = GAP_CHOICES + BTN_H + PAD_BOTTOM;
     if has_grant && has_open {
         footer_h += OPEN_ROW_GAP + OPEN_BTN_H;
     }
     let height = (content_h + footer_h).min(DIALOG_MAX_H);
     let viewport = Rect::from_xywh(0.0, 0.0, w, height - footer_h);
 
-    let mut y = viewport.bottom + 2.0;
+    let mut y = viewport.bottom + GAP_CHOICES;
     // With several questions the counter takes a column at the left of the
     // button row, so it says where the page is next to the way on from it.
     let mut page_counter = None;
@@ -855,11 +913,11 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
                 .replace("{current}", &(page + 1).to_string())
                 .replace("{total}", &pages.to_string())
         };
+        // Centred in the band between the last option and the buttons.
         page_counter = Some(TextBlock {
-            y: y + (COUNTER_ROW_H - TEXT_LINE_H) / 2.0,
+            y: y - (GAP_CHOICES + COUNTER_LINE_H) / 2.0,
             lines: vec![text],
         });
-        y += COUNTER_ROW_H;
     }
     let full_w = w - PAD * 2.0;
     let buttons_x = PAD;
@@ -1314,7 +1372,7 @@ pub fn draw_dialog(
             &layout.title.lines,
             cx,
             layout.title.y,
-            HANDLE_ROW_H,
+            HANDLE_LINE_H,
             &font(HANDLE_SIZE, 600),
             dim,
         );
@@ -2196,40 +2254,101 @@ mod tests {
         assert!(layout.dots.is_empty() && layout.page_counter.is_none());
     }
 
+    /// Every vertical gap comes from the spacing block, and the choices sit
+    /// evenly between the question that asks and the buttons that answer.
     #[test]
-    fn the_counter_gets_its_own_line_over_the_buttons() {
-        let v = questions(
-            paged_style(),
+    fn the_panel_keeps_to_its_spacing_scale() {
+        let mut v = questions(
+            QuestionStyle {
+                handle_title: true,
+                ..paged_style()
+            },
             vec![
                 group("a", "First?", &["One", "Two"]),
                 group("b", "Second?", &["Three"]),
             ],
         );
+        v.icon = "dialog-question".into();
+        v.subtitle = "Some context of the agent's own.".into();
         let layout = dialog_layout(&v, 0);
-        let counter = layout.page_counter.as_ref().expect("counter");
-        assert_eq!(counter.lines, ["1 of 2"]);
-        // Between the options and the buttons, which keep the full width.
-        assert!(counter.y >= layout.viewport.bottom);
-        assert!(counter.y + TEXT_LINE_H <= layout.deny_rect.top);
-        assert_eq!(layout.deny_rect.left, PAD);
-        let grant = layout.grant_rect.expect("grant");
-        assert!((grant.right - (layout.width - PAD)).abs() < 0.01);
-        assert!(grant.width() > layout.width / 2.0 - PAD - BTN_GAP);
-        // The open button keeps its own full-width row under them.
-        assert_eq!(layout.open_rect.expect("open").left, PAD);
+        let gap = |from: f32, to: f32| (to - from * 1.0).round();
 
-        // One question has nowhere to be in: no counter, and the panel is
-        // shorter for it.
-        let one = questions(
-            QuestionStyle::default(),
-            vec![group("a", "First?", &["One", "Two"])],
-        );
-        let alone = dialog_layout(&one, 0);
-        assert!(alone.page_counter.is_none());
+        // Who is asking: the mark, then the handle tight under it.
+        assert_eq!(gap(PAD_TOP + MARK_ICON, layout.title.y), GAP_MARK_HANDLE);
+        // Then a clear step to the question's own group: dots, then question.
+        let handle_bottom = layout.title.y + HANDLE_LINE_H;
+        assert_eq!(gap(handle_bottom, layout.dots[0].top), GAP_HANDLE_DOTS);
+        let question = &layout.group_labels[0];
+        assert_eq!(gap(layout.dots[0].bottom, question.y), GAP_DOTS_QUESTION);
+        // The dots belong to the question, not the handle.
+        assert!(gap(layout.dots[0].bottom, question.y) < gap(handle_bottom, layout.dots[0].top));
+
+        // The agent's own message tucks under the question.
+        let context = layout.subtitle.as_ref().expect("context line");
+        let question_bottom = question.y + QUESTION_LINE_H * question.lines.len() as f32;
+        assert_eq!(gap(question_bottom, context.y), GAP_QUESTION_CONTEXT);
+
+        // The choices sit evenly: the same air above the first row as below
+        // the last. That is the point of the block — assert the equality, not
+        // just the two numbers.
+        let context_bottom = context.y + TEXT_LINE_H * context.lines.len() as f32;
+        let first = layout.option_rects[0].2;
+        let last = layout.option_rects.last().unwrap().2;
+        let above = gap(context_bottom, first.top);
+        let below = gap(last.bottom, layout.deny_rect.top);
+        assert_eq!(above, GAP_CHOICES);
+        assert_eq!(above, below, "the choices sit evenly between the two");
+
+        // Rows are one list, and the counter floats in the lower band rather
+        // than taking a step of its own.
+        assert_eq!(gap(first.bottom, layout.option_rects[1].2.top), OPTION_GAP);
+        let counter = layout.page_counter.as_ref().expect("counter");
+        assert!(counter.y > last.bottom);
+        assert!(counter.y + COUNTER_LINE_H < layout.deny_rect.top);
+        let over = counter.y - last.bottom;
+        let under = layout.deny_rect.top - (counter.y + COUNTER_LINE_H);
         assert!(
-            alone.height - alone.content_h < layout.height - layout.content_h,
-            "the counter's line is only there when it is"
+            (over - under).abs() < 1.0,
+            "centred in the band: {over} over, {under} under"
         );
+
+        // The buttons keep the full width, with the open row and the panel's
+        // own bottom padding under them.
+        assert_eq!(layout.deny_rect.left, PAD);
+        let open = layout.open_rect.expect("open");
+        assert_eq!(gap(layout.deny_rect.bottom, open.top), OPEN_ROW_GAP);
+        assert_eq!(gap(open.bottom, layout.height), PAD_BOTTOM);
+
+        // Without the counter the band is unchanged: it never paid for it.
+        let mut alone = v.clone();
+        alone.choices.truncate(1);
+        alone.style.paged = false;
+        let single = dialog_layout(&alone, 0);
+        assert!(single.page_counter.is_none() && single.dots.is_empty());
+        let last = single.option_rects.last().unwrap().2;
+        assert_eq!(gap(last.bottom, single.deny_rect.top), GAP_CHOICES);
+    }
+
+    /// A permission dialog keeps its headline stack: the big icon, the title
+    /// under it, then the lines that support it, then the buttons.
+    #[test]
+    fn a_permission_dialog_keeps_its_own_spacing() {
+        let mut v = view("Allow", "");
+        v.icon = "system-run".into();
+        v.subtitle = "cargo test --all".into();
+        v.body = "in ~/dev/otto".into();
+        let layout = dialog_layout(&v, 0);
+        let gap = |from: f32, to: f32| (to - from).round();
+        assert_eq!(gap(PAD_TOP + ICON, layout.title.y), ICON_GAP);
+        let title_bottom = layout.title.y + TITLE_LINE_H * layout.title.lines.len() as f32;
+        let subtitle = layout.subtitle.as_ref().expect("subtitle");
+        assert_eq!(gap(title_bottom, subtitle.y), TITLE_GAP);
+        let subtitle_bottom = subtitle.y + TEXT_LINE_H * subtitle.lines.len() as f32;
+        let body = layout.body.as_ref().expect("body");
+        assert_eq!(gap(subtitle_bottom, body.y), SUBTITLE_GAP);
+        let body_bottom = body.y + TEXT_LINE_H * body.lines.len() as f32;
+        assert_eq!(gap(body_bottom, layout.deny_rect.top), GAP_CHOICES);
+        assert_eq!(gap(layout.deny_rect.bottom, layout.height), PAD_BOTTOM);
     }
 
     #[test]
@@ -2366,6 +2485,51 @@ mod tests {
         one.choices.truncate(1);
         one.style.paged = false;
         render_png(&one, &format!("{dir}/{tag}-single.png"));
+
+        // The bands as laid out, for reading off next to the PNG.
+        for page in 0..v.pages() {
+            let l = dialog_layout(&v, page);
+            let question = &l.group_labels[0];
+            let question_bottom = question.y + QUESTION_LINE_H * question.lines.len() as f32;
+            let block_bottom = l
+                .subtitle
+                .as_ref()
+                .map(|b| b.y + TEXT_LINE_H * b.lines.len() as f32)
+                .into_iter()
+                .chain(
+                    l.group_hints
+                        .first()
+                        .map(|b| b.y + OPTION_DESC_LINE_H * b.lines.len() as f32),
+                )
+                .fold(question_bottom, f32::max);
+            let first = l.option_rects[0].2;
+            let last = l.option_rects.last().unwrap().2;
+            eprintln!(
+                "page {}: icon>handle {:.0}, handle>dots {:.0}, dots>question {:.0}, \
+                 question>context {:.0}, block>options {:.0}, rows {:.0}, \
+                 options>buttons {:.0}, counter over/under {:.0}/{:.0}, bottom {:.0}",
+                page + 1,
+                l.title.y - (PAD_TOP + MARK_ICON),
+                l.dots[0].top - (l.title.y + HANDLE_LINE_H),
+                question.y - l.dots[0].bottom,
+                l.subtitle
+                    .as_ref()
+                    .map(|b| b.y - question_bottom)
+                    .unwrap_or(f32::NAN),
+                first.top - block_bottom,
+                l.option_rects[1].2.top - first.bottom,
+                l.deny_rect.top - last.bottom,
+                l.page_counter
+                    .as_ref()
+                    .map(|c| c.y - last.bottom)
+                    .unwrap_or(f32::NAN),
+                l.page_counter
+                    .as_ref()
+                    .map(|c| l.deny_rect.top - (c.y + COUNTER_LINE_H))
+                    .unwrap_or(f32::NAN),
+                l.height - l.open_rect.map(|r| r.bottom).unwrap_or(l.deny_rect.bottom),
+            );
+        }
 
         // A permission dialog, which keeps its headline title and big icon.
         let access = DialogView {

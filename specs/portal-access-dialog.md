@@ -265,12 +265,37 @@ so that the question is what it is about:
 - the icon on its own line at the top, centred, at 28 points — smaller than a
   permission dialog's 44, big enough to read as a mark rather than a glyph;
 - the title under it, centred: who is asking ("@claude"), one small muted line;
-- the progress dots under that;
-- then the question, with room above and below it so it stands clear of the
-  dots over it and the first option row under it. It is the panel's largest
-  text — 15pt semibold, primary colour, wrapped, **left-aligned** like the
-  option rows, since a centred wrapped question over a left-aligned list leaves
-  no edge to read down.
+- the progress dots under that — but a step below the handle and tight above
+  the question, because they count the questions rather than head the panel;
+- then the question. It is the panel's largest text — 15pt semibold, primary
+  colour, wrapped, **left-aligned** like the option rows, since a centred
+  wrapped question over a left-aligned list leaves no edge to read down.
+
+### Spacing
+
+One scale — 4, 6, 8, 10, 12, 16, 20, 24 — with things that belong together set
+tight and one step between the groups they make. Every vertical gap comes from
+a named constant in one block at the top of otto-islands' `dialog.rs`, and a
+test asserts the layout's own gaps against them, so the rhythm cannot drift.
+
+A question panel reads as two groups and a list:
+
+| band | points |
+| --- | --- |
+| panel padding | 20 sides, 20 top, 16 bottom |
+| mark → handle | 6 |
+| handle → dots | 20 |
+| dots → question | 8 |
+| question → its context line | 6 |
+| question block → first option | 24 |
+| between option rows | 8 |
+| last option → buttons | 24 |
+| buttons → open row | 10 |
+
+The two 24s are one rule, not two numbers: **the choices sit evenly between
+the question that asks and the buttons that answer**, with the counter floating
+in the lower band. A permission dialog keeps its own headline stack (icon 12,
+title 6, subtitle 4) and the same 24 above its buttons.
 
 An asker's own `subtitle` is kept as context under the question, on the first
 page only, left-aligned and muted — never rewritten, and never repeated per
@@ -286,10 +311,11 @@ time:
   click target (18 points, larger than the 6-point dot) for **going back** to
   its question; dots ahead do nothing, since the questions between them have
   not been answered yet. One question shows no dots.
-- **The page counter** ("2 of 3") has a line of its own between the options and
-  the buttons, centred, reading as a caption over them. It is shown whenever
-  there is more than one question — it is what says how far along the panel is
-  in words — and the buttons keep the full width under it.
+- **The page counter** ("2 of 3") floats centred in the band between the last
+  option and the buttons, as a caption on the page rather than a label on a
+  button. It takes no room of its own, so it cannot unbalance the choices (see
+  below), and it is shown whenever there is more than one question. The buttons
+  keep the full width under it.
 - **The back button** is at the top-left corner, beside the handle, from the
   second page on. Its label is the word alone ("Back"); the chevron pointing
   back is drawn, not part of the string.
