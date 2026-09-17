@@ -1,7 +1,7 @@
 ---
 name: otto
 description: Use and extend the Otto desktop. Use when someone wants to change how their desktop looks or behaves ("make the dock bigger", "dark mode", "change the wallpaper", "swap caps lock for escape", "rebind a shortcut", "set up my second monitor", "lock after 5 minutes", "what can I configure?"), asks where a setting lives, or wants Otto Files to do something it does not do yet ("add a Convert to PNG command", "batch rename from Files", "why doesn't my Files script show up?").
-allowed-tools: Read(//**/skills/otto/**) Bash(busctl --user list) Bash(busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings *) Bash(busctl --user --json=short call org.otto.Settings /org/otto/Settings org.otto.Settings *) Bash(*/skills/otto/scripts/files-command new *) Bash(*/skills/otto/scripts/files-command edit *) Bash(*/skills/otto/scripts/files-command publish *) Bash(*/skills/otto/scripts/files-command list) Write(~/.local/state/otto/files-drafts/**) Edit(~/.local/state/otto/files-drafts/**)
+allowed-tools: Read(//**/skills/otto/**) Bash(busctl --user list) Bash(busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings *) Bash(busctl --user --json=short call org.otto.Settings /org/otto/Settings org.otto.Settings *) Bash(*/skills/otto/scripts/files-command new *) Bash(*/skills/otto/scripts/files-command edit *) Bash(*/skills/otto/scripts/files-command publish *) Bash(*/skills/otto/scripts/files-command list) Bash(*/skills/otto/scripts/files-command review *) Write(~/.local/state/otto/files-drafts/**) Edit(~/.local/state/otto/files-drafts/**)
 ---
 
 # Otto
