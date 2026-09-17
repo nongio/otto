@@ -237,18 +237,25 @@ A dialog presented with `modal = false` asks without taking over:
   or after 400 ms if the focus never comes (a locked session). The focus stays;
   nothing is grabbed. The same happens when it opens again from its circle.
   Notification islands never take the keyboard.
-- Keys while it holds the keyboard: **Up** / **Down** move through
-  the option rows of every group in order, stopping at the ends, selecting the
-  option they land on and scrolling it into view; the row the keyboard is on
-  gets a focus ring (accent stroke just outside the row), drawn only while the
-  panel holds the keyboard and only once a navigation key has been pressed.
-  The first such key reveals the ring on the current selection (the first
-  group's, to begin with) without moving it; later ones move it.
-  **Tab** / **Shift+Tab** walk every option row and then every button (deny,
-  grant, open, in that order), wrapping around; the focused button gets the
-  same ring. **Up** / **Down** from a button come back to the option it left.
-  **Enter** (or **Space**) presses the focused button; with no button focused,
-  **Enter** confirms (when there is a grant button). **Esc** denies.
+- Keys while it holds the keyboard:
+  - **Tab** / **Shift+Tab** rotate through the stops, wrapping around: each
+    question's options as one stop, then deny, grant and open. Tab lands on a
+    question's selected option.
+  - **Up** / **Down** move within the focused question's options, stopping at
+    its first and last, selecting the option they land on and scrolling it
+    into view.
+  - **1**–**9** (top row or keypad) pick that option of the focused question.
+    Each option row shows its digit in a badge on its left (the first nine per
+    question). With a single question and a grant button, the digit answers
+    the dialog at once; with several, it moves on to the next question.
+  - **Enter** (or **Space**) presses the focused button; with no button
+    focused, **Enter** confirms (when there is a grant button). **Esc** denies.
+  - The focused option or button gets a focus ring (accent stroke just outside
+    it), drawn only while the panel holds the keyboard and only once a
+    navigation key has been pressed. The first such key reveals the ring on
+    the current selection without moving it; later ones move it.
+- The dialog has no free-text field: a question that takes typed text (such as
+  an agent's "Other" answer) is answered from the Ask window through **open**.
 - Clicking an option or button shows the hand cursor over it. Clicking an
   option moves the keyboard to it and hides the ring until a navigation key is
   pressed again.

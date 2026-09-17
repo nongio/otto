@@ -1305,7 +1305,7 @@ impl IslandApp {
                 return;
             }
         }
-        match dialog::tab_step(&layout, current, backwards) {
+        match dialog::tab_step(&layout, &panel.selected, current, backwards) {
             dialog::KeyboardTarget::Row(row) => {
                 let (group, option, _) = layout.option_rects[row];
                 if let Some(sel) = panel.selected.get_mut(group) {
@@ -1317,6 +1317,36 @@ impl IslandApp {
             }
             dialog::KeyboardTarget::Button(button) => panel.focus_button = Some(button),
         }
+        self.render_dialog();
+    }
+
+    /// Pick option `number` (1-based) of the question the keyboard is on.
+    /// With a single question that answers the dialog at once; with several
+    /// it moves on to the next question.
+    fn quick_answer(&mut self, number: usize) {
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
+        let layout = dialog::dialog_layout(&panel.view);
+        let Some(current) = dialog::keyboard_row(&layout, &panel.selected, panel.focus_row) else {
+            return;
+        };
+        let group = layout.option_rects[current].0;
+        let Some(row) = dialog::row_of(&layout, group, number - 1) else {
+            return;
+        };
+        if let Some(sel) = panel.selected.get_mut(group) {
+            *sel = number - 1;
+        }
+        panel.focus_button = None;
+        if !dialog::has_several_groups(&layout) && !panel.view.grant_label.is_empty() {
+            self.resolve_active_dialog(dialog::RESPONSE_GRANTED);
+            return;
+        }
+        let next = dialog::next_group_row(&layout, &panel.selected, row).unwrap_or(row);
+        panel.focus_row = Some(next);
+        panel.keyboard_nav = true;
+        panel.scroll = dialog::reveal(&layout, next, panel.scroll);
         self.render_dialog();
     }
 
@@ -1696,6 +1726,12 @@ impl App for IslandApp {
             103 => self.move_dialog_focus(-1),
             108 => self.move_dialog_focus(1),
             15 => self.tab_dialog_focus(self.shift_held),
+            // Digits 1–9 (top row KEY_1 = 2 … KEY_9 = 10) pick an option.
+            2..=10 => self.quick_answer(key as usize - 1),
+            // Keypad digits: KP7 = 71, KP8, KP9, KP4 = 75, KP5, KP6, KP1 = 79, KP2, KP3.
+            71..=73 => self.quick_answer(key as usize - 71 + 7),
+            75..=77 => self.quick_answer(key as usize - 75 + 4),
+            79..=81 => self.quick_answer(key as usize - 79 + 1),
             // Enter or Space presses the button the keyboard is on.
             28 | 96 | 57 if focused_button.is_some() => {
                 self.resolve_active_dialog(match focused_button {

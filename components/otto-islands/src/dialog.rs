@@ -318,6 +318,13 @@ const OPTION_DESC_LINE_H: f32 = 14.0;
 const OPTION_DESC_MAX_LINES: usize = 4;
 const OPTION_PAD_Y: f32 = 12.0;
 const OPTION_ICON: f32 = 24.0;
+/// The number badge an option's digit shortcut is shown in.
+const BADGE: f32 = 20.0;
+const BADGE_X: f32 = 10.0;
+/// Where an option's icon (or, without one, its text) starts.
+const OPTION_ICON_X: f32 = BADGE_X + BADGE + 10.0;
+/// Options past this many in a group have no digit shortcut.
+pub const MAX_SHORTCUTS: usize = 9;
 /// The tallest a panel gets. Past it the text and choices scroll under a
 /// fixed row of buttons, which always stay on screen.
 pub const DIALOG_MAX_H: f32 = 520.0;
@@ -541,12 +548,13 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
     }
 }
 
-/// Where an option's text starts, relative to its row's left edge.
+/// Where an option's text starts, relative to its row's left edge: after the
+/// number badge column, and the icon when there is one.
 fn option_text_x(has_icon: bool) -> f32 {
     if has_icon {
-        10.0 + OPTION_ICON + 10.0
+        OPTION_ICON_X + OPTION_ICON + 10.0
     } else {
-        14.0
+        OPTION_ICON_X
     }
 }
 
@@ -609,14 +617,23 @@ pub fn keyboard_row(
         })
 }
 
-/// The row `delta` steps from `current` (Up is `-1`, Down `+1`), stopping at
-/// the first and last rows. Rows run through every group in order.
+/// The row `delta` steps from `current` (Up is `-1`, Down `+1`) within its
+/// group, stopping at the group's first and last options; Tab moves between
+/// groups.
 pub fn step_row(layout: &DialogLayout, current: Option<usize>, delta: i32) -> Option<usize> {
-    let last = layout.option_rects.len().checked_sub(1)?;
     let Some(current) = current else {
-        return Some(0);
+        return (!layout.option_rects.is_empty()).then_some(0);
     };
-    Some((current as i64 + delta as i64).clamp(0, last as i64) as usize)
+    let group = layout.option_rects.get(current)?.0;
+    let first = layout
+        .option_rects
+        .iter()
+        .position(|(g, _, _)| *g == group)?;
+    let last = layout
+        .option_rects
+        .iter()
+        .rposition(|(g, _, _)| *g == group)?;
+    Some((current as i64 + delta as i64).clamp(first as i64, last as i64) as usize)
 }
 
 /// A button the keyboard can land on.
@@ -657,26 +674,75 @@ pub fn button_rect(layout: &DialogLayout, button: DialogButton) -> Option<Rect> 
     }
 }
 
-/// The target Tab (`backwards` for Shift+Tab) moves to from `current`: every
-/// option row, then every button, wrapping around at either end.
+/// A place Tab stops: a whole choice group, or a button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabStop {
+    Group(usize),
+    Button(DialogButton),
+}
+
+/// The groups that have option rows, in order.
+fn groups(layout: &DialogLayout) -> Vec<usize> {
+    let mut groups: Vec<usize> = Vec::new();
+    for (group, _, _) in &layout.option_rects {
+        if groups.last() != Some(group) {
+            groups.push(*group);
+        }
+    }
+    groups
+}
+
+/// The target Tab (`backwards` for Shift+Tab) moves to from `current`: each
+/// choice group as one stop (landing on its selected option), then each
+/// button, wrapping around at either end.
 pub fn tab_step(
     layout: &DialogLayout,
+    selected: &[usize],
     current: Option<KeyboardTarget>,
     backwards: bool,
 ) -> KeyboardTarget {
-    let order: Vec<KeyboardTarget> = (0..layout.option_rects.len())
-        .map(KeyboardTarget::Row)
-        .chain(buttons(layout).into_iter().map(KeyboardTarget::Button))
+    let order: Vec<TabStop> = groups(layout)
+        .into_iter()
+        .map(TabStop::Group)
+        .chain(buttons(layout).into_iter().map(TabStop::Button))
         .collect();
     let len = order.len();
-    let index = current.and_then(|c| order.iter().position(|t| *t == c));
+    let here = current.map(|c| match c {
+        KeyboardTarget::Row(row) => TabStop::Group(layout.option_rects[row].0),
+        KeyboardTarget::Button(button) => TabStop::Button(button),
+    });
+    let index = here.and_then(|h| order.iter().position(|t| *t == h));
     let next = match (index, backwards) {
         (None, false) => 0,
         (None, true) => len - 1,
         (Some(i), false) => (i + 1) % len,
         (Some(i), true) => (i + len - 1) % len,
     };
-    order[next]
+    match order[next] {
+        TabStop::Group(group) => {
+            let option = selected.get(group).copied().unwrap_or(0);
+            KeyboardTarget::Row(row_of(layout, group, option).unwrap_or_else(|| {
+                layout
+                    .option_rects
+                    .iter()
+                    .position(|(g, _, _)| *g == group)
+                    .unwrap_or(0)
+            }))
+        }
+        TabStop::Button(button) => KeyboardTarget::Button(button),
+    }
+}
+
+/// The row of the next group after `row`'s, on its selected option.
+pub fn next_group_row(layout: &DialogLayout, selected: &[usize], row: usize) -> Option<usize> {
+    let group = layout.option_rects.get(row)?.0;
+    let next = groups(layout).into_iter().find(|g| *g > group)?;
+    row_of(layout, next, selected.get(next).copied().unwrap_or(0))
+}
+
+/// Whether the dialog asks more than one question.
+pub fn has_several_groups(layout: &DialogLayout) -> bool {
+    groups(layout).len() > 1
 }
 
 /// The scroll that brings `row` fully into view, moving as little as
@@ -920,11 +986,38 @@ pub fn draw_dialog(
             canvas.draw_rrect(RRect::new_rect_xy(outer, r, r), &ring);
         }
 
+        // The digit that picks this option from the keyboard.
+        if *oi < MAX_SHORTCUTS {
+            let badge = Rect::from_xywh(
+                rect.left + BADGE_X,
+                rect.center_y() - BADGE / 2.0,
+                BADGE,
+                BADGE,
+            );
+            let mut badge_bg = Paint::default();
+            badge_bg.set_anti_alias(true);
+            badge_bg.set_color(if is_selected {
+                Color::from_argb(0x40, 0xFF, 0xFF, 0xFF)
+            } else {
+                theme.fill_secondary
+            });
+            canvas.draw_rrect(RRect::new_rect_xy(badge, 6.0, 6.0), &badge_bg);
+            draw_text_centered_clamped(
+                canvas,
+                &(oi + 1).to_string(),
+                badge.center_x(),
+                badge.center_y() + 4.0,
+                &font(11.0, 600),
+                if is_selected { on_accent } else { dim },
+                BADGE,
+            );
+        }
+
         if !opt.icon.is_empty() {
             draw_icon(
                 canvas,
                 &opt.icon,
-                rect.left + 10.0,
+                rect.left + OPTION_ICON_X,
                 rect.center_y() - OPTION_ICON / 2.0,
                 OPTION_ICON,
             );
@@ -1378,28 +1471,52 @@ mod tests {
         let mut v = view("Answer", "Open in Ask");
         v.choices = vec![group("a", "First?", &["One", "Two"])];
         let layout = dialog_layout(&v);
+        let sel = [1];
         let row = |r| Some(KeyboardTarget::Row(r));
         let button = |b| KeyboardTarget::Button(b);
-        assert_eq!(tab_step(&layout, row(0), false), KeyboardTarget::Row(1));
-        assert_eq!(tab_step(&layout, row(1), false), button(DialogButton::Deny));
+        // The options are one stop: Tab leaves them for the buttons.
         assert_eq!(
-            tab_step(&layout, Some(button(DialogButton::Deny)), false),
+            tab_step(&layout, &sel, row(0), false),
+            button(DialogButton::Deny)
+        );
+        assert_eq!(
+            tab_step(&layout, &sel, Some(button(DialogButton::Deny)), false),
             button(DialogButton::Grant)
         );
         assert_eq!(
-            tab_step(&layout, Some(button(DialogButton::Grant)), false),
+            tab_step(&layout, &sel, Some(button(DialogButton::Grant)), false),
             button(DialogButton::Open)
         );
+        // Coming back lands on the selected option.
         assert_eq!(
-            tab_step(&layout, Some(button(DialogButton::Open)), false),
-            KeyboardTarget::Row(0)
+            tab_step(&layout, &sel, Some(button(DialogButton::Open)), false),
+            KeyboardTarget::Row(1)
         );
-        assert_eq!(tab_step(&layout, row(0), true), button(DialogButton::Open));
+        assert_eq!(
+            tab_step(&layout, &sel, row(1), true),
+            button(DialogButton::Open)
+        );
+
+        // Two questions are two stops.
+        let mut two = view("Answer", "");
+        two.choices = vec![
+            group("a", "First?", &["One", "Two"]),
+            group("b", "Second?", &["Three", "Four"]),
+        ];
+        let two = dialog_layout(&two);
+        assert!(has_several_groups(&two));
+        assert_eq!(
+            tab_step(&two, &[0, 1], row(0), false),
+            KeyboardTarget::Row(3)
+        );
 
         // No grant button and no options: Tab only visits deny and open.
         let bare = dialog_layout(&view("", "Open in Ask"));
         assert_eq!(buttons(&bare), vec![DialogButton::Deny, DialogButton::Open]);
-        assert_eq!(tab_step(&bare, None, false), button(DialogButton::Deny));
+        assert_eq!(
+            tab_step(&bare, &[], None, false),
+            button(DialogButton::Deny)
+        );
     }
 
     #[test]
@@ -1413,11 +1530,14 @@ mod tests {
         // Starts on the first group's selection.
         let start = keyboard_row(&layout, &[1, 0], None);
         assert_eq!(start, Some(1));
-        let down = step_row(&layout, start, 1);
-        assert_eq!(down, Some(2));
-        assert_eq!(layout.option_rects[2].0, 1, "into the second group");
+        // Arrows stay within a group: Tab is what moves to the next one.
+        assert_eq!(step_row(&layout, start, 1), Some(1));
+        assert_eq!(step_row(&layout, Some(2), 1), Some(3));
+        assert_eq!(step_row(&layout, Some(2), -1), Some(2));
         assert_eq!(step_row(&layout, Some(4), 1), Some(4));
         assert_eq!(step_row(&layout, Some(0), -1), Some(0));
+        assert_eq!(next_group_row(&layout, &[1, 2], 1), Some(4));
+        assert_eq!(next_group_row(&layout, &[1, 2], 4), None);
         assert_eq!(row_of(&layout, 1, 2), Some(4));
 
         let empty = dialog_layout(&view("Allow", ""));
