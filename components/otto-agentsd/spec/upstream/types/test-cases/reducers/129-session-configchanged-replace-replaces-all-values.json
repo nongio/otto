@@ -1,0 +1,82 @@
+{
+  "description": "session/configChanged with replace replaces all config values",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test",
+    "status": 1,
+    "config": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "enum": [
+              "workspace",
+              "worktree"
+            ]
+          },
+          "baseBranch": {
+            "type": "string",
+            "title": "Base Branch",
+            "enum": [
+              "main",
+              "develop"
+            ]
+          }
+        }
+      },
+      "values": {
+        "target": "worktree",
+        "baseBranch": "main"
+      }
+    },
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/configChanged",
+      "config": {
+        "baseBranch": "develop"
+      },
+      "replace": true
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test",
+    "status": 1,
+    "config": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "enum": [
+              "workspace",
+              "worktree"
+            ]
+          },
+          "baseBranch": {
+            "type": "string",
+            "title": "Base Branch",
+            "enum": [
+              "main",
+              "develop"
+            ]
+          }
+        }
+      },
+      "values": {
+        "baseBranch": "develop"
+      }
+    },
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "description": "update steering message content via set with same ID",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "steeringMessage": {
+      "id": "sm-1",
+      "message": {
+        "text": "Original",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/pendingMessageSet",
+      "kind": "steering",
+      "id": "sm-1",
+      "message": {
+        "text": "Updated",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "steeringMessage": {
+      "id": "sm-1",
+      "message": {
+        "text": "Updated",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  }
+}

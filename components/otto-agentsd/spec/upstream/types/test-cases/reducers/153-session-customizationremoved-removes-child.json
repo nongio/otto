@@ -1,0 +1,64 @@
+{
+  "description": "session/customizationRemoved removes a single child",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "children": [
+          {
+            "type": "skill",
+            "id": "skill-1",
+            "uri": "https://plugins.example/a#skills/lint",
+            "name": "lint"
+          },
+          {
+            "type": "skill",
+            "id": "skill-2",
+            "uri": "https://plugins.example/a#skills/refactor",
+            "name": "refactor"
+          }
+        ]
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationRemoved",
+      "id": "skill-1"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "children": [
+          {
+            "type": "skill",
+            "id": "skill-2",
+            "uri": "https://plugins.example/a#skills/refactor",
+            "name": "refactor"
+          }
+        ]
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

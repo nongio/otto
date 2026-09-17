@@ -1,0 +1,54 @@
+{
+  "description": "session/chatAdded upserts an existing chat by resource",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [
+      {
+        "resource": "ahp-chat:/c1",
+        "title": "Chat 1",
+        "status": 1,
+        "modifiedAt": "1970-01-01T00:00:01.000Z",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "session/chatAdded",
+      "summary": {
+        "resource": "ahp-chat:/c1",
+        "title": "Chat 1 (renamed)",
+        "status": 8,
+        "modifiedAt": "1970-01-01T00:00:02.000Z",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [
+      {
+        "resource": "ahp-chat:/c1",
+        "title": "Chat 1 (renamed)",
+        "status": 8,
+        "modifiedAt": "1970-01-01T00:00:02.000Z",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    ]
+  }
+}

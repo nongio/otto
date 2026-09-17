@@ -1,0 +1,32 @@
+{
+  "description": "session/customizationToggled is no-op when customizations undefined",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationToggled",
+      "id": "plugin-a",
+      "enablement": [
+        {
+          "kind": "session",
+          "enabled": false
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [],
+    "chats": []
+  }
+}

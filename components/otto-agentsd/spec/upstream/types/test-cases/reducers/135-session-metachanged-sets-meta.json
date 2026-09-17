@@ -1,0 +1,42 @@
+{
+  "description": "session/metaChanged replaces _meta entirely",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "_meta": {
+      "git": {
+        "branch": "main"
+      }
+    },
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/metaChanged",
+      "_meta": {
+        "git": {
+          "branch": "feature"
+        },
+        "vscode.foo": 42
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "_meta": {
+      "git": {
+        "branch": "feature"
+      },
+      "vscode.foo": 42
+    },
+    "activeClients": [],
+    "chats": []
+  }
+}

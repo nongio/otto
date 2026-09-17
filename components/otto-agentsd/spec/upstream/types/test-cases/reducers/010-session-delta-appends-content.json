@@ -1,0 +1,71 @@
+{
+  "description": "session/delta appends content",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/responsePart",
+      "turnId": "turn-1",
+      "part": {
+        "kind": "markdown",
+        "id": "md-1",
+        "content": ""
+      }
+    },
+    {
+      "type": "chat/delta",
+      "turnId": "turn-1",
+      "partId": "md-1",
+      "content": "Hello "
+    },
+    {
+      "type": "chat/delta",
+      "turnId": "turn-1",
+      "partId": "md-1",
+      "content": "world"
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "markdown",
+          "id": "md-1",
+          "content": "Hello world"
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

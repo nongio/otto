@@ -1,0 +1,29 @@
+/**
+ * Resource-Watch Channel Actions — Mutations of an `ahp-resource-watch:`
+ * channel's state.
+ *
+ * @module channels-resource-watch/actions
+ */
+
+import { ActionType } from '../common/actions.js';
+import type { ResourceChange } from './state.js';
+
+// ─── Resource Watch Actions ──────────────────────────────────────────────────
+
+/**
+ * A batch of resource changes observed by the watcher.
+ *
+ * Watch events are coalesced into batches by the server to keep the
+ * action stream tractable; an empty `changes.items` list MUST NOT be
+ * dispatched. The reducer does not retain change history — these
+ * actions exist purely to deliver events to subscribers, who consume
+ * them directly off the action stream and apply their own logic.
+ *
+ * @category Resource Watch Actions
+ * @version 1
+ */
+export interface ResourceWatchChangedAction {
+  type: ActionType.ResourceWatchChanged;
+  /** The set of changes in this batch, wrapped for forward compatibility. */
+  changes: { items: ResourceChange[] };
+}

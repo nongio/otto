@@ -1,0 +1,117 @@
+{
+  "description": "chat/toolCallAuthRequired transitions a running MCP tool call to auth-required, then chat/toolCallAuthResolved returns it to running, and it completes normally: running -> auth-required -> running -> completed",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "toolName": "search",
+      "displayName": "Search Repo",
+      "contributor": {
+        "kind": "mcp",
+        "customizationId": "mcp-1"
+      }
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "invocationMessage": "Search: foo",
+      "toolInput": {
+        "uri": "file:///tool-inputs/tool-input.json"
+      },
+      "confirmed": "not-needed"
+    },
+    {
+      "type": "chat/toolCallAuthRequired",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "auth": {
+        "reason": "insufficientScope",
+        "resource": {
+          "resource": "https://mcp.example.com"
+        },
+        "requiredScopes": [
+          "repo:read"
+        ],
+        "description": "Needs repo:read"
+      }
+    },
+    {
+      "type": "chat/toolCallAuthResolved",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1"
+    },
+    {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-1",
+      "toolCallId": "tc-1",
+      "result": {
+        "success": true,
+        "pastTenseMessage": "Searched repo"
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "completed",
+            "toolCallId": "tc-1",
+            "toolName": "search",
+            "displayName": "Search Repo",
+            "intention": null,
+            "contributor": {
+              "kind": "mcp",
+              "customizationId": "mcp-1"
+            },
+            "_meta": null,
+            "invocationMessage": "Search: foo",
+            "toolInput": {
+              "uri": "file:///tool-inputs/tool-input.json"
+            },
+            "confirmed": "not-needed",
+            "success": true,
+            "pastTenseMessage": "Searched repo"
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

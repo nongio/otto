@@ -1,0 +1,23 @@
+{
+  "description": "resourceWatch/changed is a passthrough — reducer keeps state unchanged",
+  "reducer": "resourceWatch",
+  "initial": {
+    "root": "file:///workspace",
+    "recursive": true
+  },
+  "actions": [
+    {
+      "type": "resourceWatch/changed",
+      "changes": {
+        "items": [
+          { "uri": "file:///workspace/a.txt", "type": "added" },
+          { "uri": "file:///workspace/b.txt", "type": "updated" }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "root": "file:///workspace",
+    "recursive": true
+  }
+}

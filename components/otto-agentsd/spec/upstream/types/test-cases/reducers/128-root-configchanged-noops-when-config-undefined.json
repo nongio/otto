@@ -1,0 +1,18 @@
+{
+  "description": "root/configChanged noops when config undefined",
+  "reducer": "root",
+  "initial": {
+    "agents": []
+  },
+  "actions": [
+    {
+      "type": "root/configChanged",
+      "config": {
+        "theme": "dark"
+      }
+    }
+  ],
+  "expected": {
+    "agents": []
+  }
+}

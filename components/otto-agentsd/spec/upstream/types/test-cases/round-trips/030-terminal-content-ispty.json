@@ -1,0 +1,42 @@
+{
+  "name": "terminal-content-ispty",
+  "group": "A",
+  "description": "ActionEnvelope carries a terminal reference marked as non-PTY (isPty false), allowing clients to identify its backing before subscribing.",
+  "type": "ActionEnvelope",
+  "input": {
+    "channel": "ahp-chat:/s1/c1",
+    "action": {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-1",
+      "toolCallId": "tool-1",
+      "content": [
+        {
+          "type": "terminal",
+          "resource": "ahp-terminal:/s1/t1",
+          "title": "npm test",
+          "isPty": false
+        }
+      ]
+    },
+    "serverSeq": 10
+  },
+  "acceptableOutputs": [
+    {
+      "action": {
+        "content": [
+          {
+            "isPty": false,
+            "resource": "ahp-terminal:/s1/t1",
+            "title": "npm test",
+            "type": "terminal"
+          }
+        ],
+        "toolCallId": "tool-1",
+        "turnId": "turn-1",
+        "type": "chat/toolCallContentChanged"
+      },
+      "channel": "ahp-chat:/s1/c1",
+      "serverSeq": 10
+    }
+  ]
+}

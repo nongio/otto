@@ -1,0 +1,84 @@
+{
+  "description": "session/customizationToggled toggles a container by id",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A"
+      },
+      {
+        "type": "plugin",
+        "id": "plugin-b",
+        "uri": "https://plugins.example/b",
+        "name": "Plugin B"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationToggled",
+      "id": "plugin-a",
+      "enablement": [
+        {
+          "kind": "session",
+          "enabled": false
+        },
+        {
+          "kind": "workspace",
+          "uri": "file:///workspace",
+          "enabled": true
+        },
+        {
+          "kind": "global",
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A",
+        "enablement": [
+          {
+            "kind": "session",
+            "enabled": false
+          },
+          {
+            "kind": "workspace",
+            "uri": "file:///workspace",
+            "enabled": true
+          },
+          {
+            "kind": "global",
+            "enabled": true
+          }
+        ]
+      },
+      {
+        "type": "plugin",
+        "id": "plugin-b",
+        "uri": "https://plugins.example/b",
+        "name": "Plugin B"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

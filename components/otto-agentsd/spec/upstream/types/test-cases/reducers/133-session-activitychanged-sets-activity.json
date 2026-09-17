@@ -1,0 +1,27 @@
+{
+  "description": "session/activityChanged sets activity on summary",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/activityChanged",
+      "activity": "Running terminal command"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "activity": "Running terminal command",
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": []
+  }
+}

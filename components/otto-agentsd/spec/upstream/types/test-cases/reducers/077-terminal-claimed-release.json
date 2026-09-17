@@ -1,0 +1,40 @@
+{
+  "description": "terminal/claimed narrows session claim (detach from tool call)",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [],
+    "claim": {
+      "kind": "session",
+      "session": "copilot:/s1",
+      "turnId": "t1",
+      "toolCallId": "tc1",
+      "chat": "ahp-chat:/test-chat"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/claimed",
+      "claim": {
+        "kind": "session",
+        "session": "copilot:/s1",
+        "chat": "ahp-chat:/test-chat"
+      }
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [],
+    "claim": {
+      "kind": "session",
+      "session": "copilot:/s1",
+      "chat": "ahp-chat:/test-chat"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

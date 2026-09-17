@@ -1,0 +1,148 @@
+{
+  "description": "session input requests sync drafts, record a resolved inputRequest part in the active turn, and restore in-progress status after completion",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 1,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/turnStarted",
+      "turnId": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      }
+    },
+    {
+      "type": "chat/inputRequested",
+      "request": {
+        "id": "input-1",
+        "message": "Clarify requirements",
+        "questions": [
+          {
+            "id": "q1",
+            "kind": "single-select",
+            "message": "Which runtime?",
+            "options": [
+              {
+                "id": "node",
+                "label": "Node.js"
+              },
+              {
+                "id": "deno",
+                "label": "Deno"
+              }
+            ]
+          },
+          {
+            "id": "q2",
+            "kind": "text",
+            "message": "Anything else?"
+          }
+        ]
+      }
+    },
+    {
+      "type": "chat/inputAnswerChanged",
+      "requestId": "input-1",
+      "questionId": "q1",
+      "answer": {
+        "state": "draft",
+        "value": {
+          "kind": "selected",
+          "value": "node"
+        }
+      }
+    },
+    {
+      "type": "chat/inputAnswerChanged",
+      "requestId": "input-1",
+      "questionId": "q2",
+      "answer": {
+        "state": "draft",
+        "value": {
+          "kind": "text",
+          "value": "Keep it small."
+        }
+      }
+    },
+    {
+      "type": "chat/inputCompleted",
+      "requestId": "input-1",
+      "response": "accept"
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "inputRequest",
+          "request": {
+            "id": "input-1",
+            "message": "Clarify requirements",
+            "questions": [
+              {
+                "id": "q1",
+                "kind": "single-select",
+                "message": "Which runtime?",
+                "options": [
+                  {
+                    "id": "node",
+                    "label": "Node.js"
+                  },
+                  {
+                    "id": "deno",
+                    "label": "Deno"
+                  }
+                ]
+              },
+              {
+                "id": "q2",
+                "kind": "text",
+                "message": "Anything else?"
+              }
+            ],
+            "answers": {
+              "q1": {
+                "state": "draft",
+                "value": {
+                  "kind": "selected",
+                  "value": "node"
+                }
+              },
+              "q2": {
+                "state": "draft",
+                "value": {
+                  "kind": "text",
+                  "value": "Keep it small."
+                }
+              }
+            }
+          },
+          "response": "accept"
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:01.000Z"
+  }
+}

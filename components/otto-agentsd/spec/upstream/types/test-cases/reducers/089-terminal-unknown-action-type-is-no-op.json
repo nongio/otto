@@ -1,0 +1,35 @@
+{
+  "description": "terminal unknown action type is no-op",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [],
+    "cols": 80,
+    "rows": 24,
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/nonExistentAction"
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [],
+    "cols": 80,
+    "rows": 24,
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

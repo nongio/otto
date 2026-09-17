@@ -1,0 +1,54 @@
+{
+  "description": "root/configChanged merges into config values",
+  "reducer": "root",
+  "initial": {
+    "agents": [],
+    "config": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "theme": {
+            "type": "string",
+            "title": "Theme",
+            "enum": [
+              "light",
+              "dark"
+            ]
+          }
+        }
+      },
+      "values": {
+        "theme": "light"
+      }
+    }
+  },
+  "actions": [
+    {
+      "type": "root/configChanged",
+      "config": {
+        "theme": "dark"
+      }
+    }
+  ],
+  "expected": {
+    "agents": [],
+    "config": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "theme": {
+            "type": "string",
+            "title": "Theme",
+            "enum": [
+              "light",
+              "dark"
+            ]
+          }
+        }
+      },
+      "values": {
+        "theme": "dark"
+      }
+    }
+  }
+}

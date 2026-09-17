@@ -1,0 +1,59 @@
+{
+  "description": "session/customizationUpdated appends when id is unknown",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A"
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/customizationUpdated",
+      "customization": {
+        "type": "plugin",
+        "id": "plugin-new",
+        "uri": "https://plugins.example/new",
+        "name": "New Plugin",
+        "load": {
+          "kind": "loading"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "customizations": [
+      {
+        "type": "plugin",
+        "id": "plugin-a",
+        "uri": "https://plugins.example/a",
+        "name": "Plugin A"
+      },
+      {
+        "type": "plugin",
+        "id": "plugin-new",
+        "uri": "https://plugins.example/new",
+        "name": "New Plugin",
+        "load": {
+          "kind": "loading"
+        }
+      }
+    ],
+    "activeClients": [],
+    "chats": []
+  }
+}

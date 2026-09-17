@@ -182,6 +182,7 @@ members = [
     "components/otto-quickview",
     "components/otto-media-kit",
     "components/otto-msg",
+    "components/otto-agentsd",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",

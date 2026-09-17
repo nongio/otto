@@ -1,0 +1,36 @@
+{
+  "description": "session/activeClientRemoved is a no-op for an unknown client",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "vscode-1",
+        "tools": []
+      }
+    ],
+    "chats": []
+  },
+  "actions": [
+    {
+      "type": "session/activeClientRemoved",
+      "clientId": "unknown-client"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "creating",
+    "activeClients": [
+      {
+        "clientId": "vscode-1",
+        "tools": []
+      }
+    ],
+    "chats": []
+  }
+}

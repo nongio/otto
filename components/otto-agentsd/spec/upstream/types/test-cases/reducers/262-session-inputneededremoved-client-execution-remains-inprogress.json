@@ -1,0 +1,68 @@
+{
+  "description": "session/inputNeededRemoved clears InputNeeded once only a tool-client-execution entry remains",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 24,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "inputNeeded": [
+      {
+        "kind": "chatInput",
+        "id": "copilot:/test-session/chat-1#req-1",
+        "chat": "copilot:/test-session/chat-1",
+        "request": { "id": "req-1", "message": "Which environment?" }
+      },
+      {
+        "kind": "toolClientExecution",
+        "id": "copilot:/test-session/chat-1#call-9",
+        "chat": "copilot:/test-session/chat-1",
+        "turnId": "turn-1",
+        "clientId": "vscode-1",
+        "toolCall": {
+          "status": "running",
+          "toolCallId": "call-9",
+          "toolName": "run_tool",
+          "displayName": "Run Tool",
+          "invocationMessage": "Run the client tool",
+          "confirmed": "not-needed",
+          "contributor": { "kind": "client", "clientId": "vscode-1" }
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "session/inputNeededRemoved",
+      "id": "copilot:/test-session/chat-1#req-1"
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 8,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "inputNeeded": [
+      {
+        "kind": "toolClientExecution",
+        "id": "copilot:/test-session/chat-1#call-9",
+        "chat": "copilot:/test-session/chat-1",
+        "turnId": "turn-1",
+        "clientId": "vscode-1",
+        "toolCall": {
+          "status": "running",
+          "toolCallId": "call-9",
+          "toolName": "run_tool",
+          "displayName": "Run Tool",
+          "invocationMessage": "Run the client tool",
+          "confirmed": "not-needed",
+          "contributor": { "kind": "client", "clientId": "vscode-1" }
+        }
+      }
+    ]
+  }
+}

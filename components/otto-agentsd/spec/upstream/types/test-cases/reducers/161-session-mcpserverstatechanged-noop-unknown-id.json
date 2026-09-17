@@ -1,0 +1,53 @@
+{
+  "description": "session/mcpServerStateChanged is a no-op when no customization carries the targeted id",
+  "reducer": "session",
+  "initial": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "customizations": [
+      {
+        "type": "mcpServer",
+        "id": "mcp-1",
+        "uri": "file:///workspace/.mcp/servers.json",
+        "name": "Filesystem",
+        "state": {
+          "kind": "ready"
+        },
+        "channel": "mcp://filesystem"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "session/mcpServerStateChanged",
+      "id": "mcp-does-not-exist",
+      "state": {
+        "kind": "stopped"
+      }
+    }
+  ],
+  "expected": {
+    "provider": "copilot",
+    "title": "Test Session",
+    "status": 1,
+    "lifecycle": "ready",
+    "activeClients": [],
+    "chats": [],
+    "customizations": [
+      {
+        "type": "mcpServer",
+        "id": "mcp-1",
+        "uri": "file:///workspace/.mcp/servers.json",
+        "name": "Filesystem",
+        "state": {
+          "kind": "ready"
+        },
+        "channel": "mcp://filesystem"
+      }
+    ]
+  }
+}

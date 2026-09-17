@@ -1,0 +1,172 @@
+{
+  "description": "chat/toolCallComplete with a successful result (success: true) dispatched against an auth-required MCP tool call is a reducer no-op — the tool call remains auth-required (including its pre-existing _meta, which the ignored action's own _meta must not overwrite) and the session status stays InputNeeded, since a successful completion can only be reached by first resolving the auth challenge via chat/toolCallAuthResolved",
+  "reducer": "chat",
+  "initial": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 8,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  },
+  "actions": [
+    {
+      "type": "chat/toolCallStart",
+      "turnId": "turn-1",
+      "toolCallId": "tc-9",
+      "toolName": "search",
+      "displayName": "Search Repo",
+      "contributor": {
+        "kind": "mcp",
+        "customizationId": "mcp-1"
+      },
+      "_meta": {
+        "phase": "start"
+      }
+    },
+    {
+      "type": "chat/toolCallReady",
+      "turnId": "turn-1",
+      "toolCallId": "tc-9",
+      "invocationMessage": "Search: foo",
+      "toolInput": {
+        "uri": "file:///tool-inputs/tool-input.json"
+      },
+      "confirmationTitle": "Search repo",
+      "options": [
+        {
+          "id": "opt-1",
+          "label": "Approve",
+          "kind": "approve"
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallConfirmed",
+      "turnId": "turn-1",
+      "toolCallId": "tc-9",
+      "approved": true,
+      "confirmed": "user-action",
+      "selectedOptionId": "opt-1"
+    },
+    {
+      "type": "chat/toolCallContentChanged",
+      "turnId": "turn-1",
+      "toolCallId": "tc-9",
+      "content": [
+        {
+          "type": "text",
+          "text": "partial output"
+        }
+      ]
+    },
+    {
+      "type": "chat/toolCallAuthRequired",
+      "turnId": "turn-1",
+      "toolCallId": "tc-9",
+      "auth": {
+        "reason": "insufficientScope",
+        "resource": {
+          "resource": "https://mcp.example.com"
+        },
+        "requiredScopes": [
+          "repo:read"
+        ]
+      },
+      "_meta": {
+        "phase": "auth-required"
+      }
+    },
+    {
+      "type": "chat/toolCallComplete",
+      "turnId": "turn-1",
+      "toolCallId": "tc-9",
+      "result": {
+        "success": true,
+        "pastTenseMessage": "Searched repo",
+        "content": [
+          {
+            "type": "text",
+            "text": "should never appear"
+          }
+        ]
+      },
+      "_meta": {
+        "phase": "should-not-apply"
+      }
+    }
+  ],
+  "expected": {
+    "turns": [],
+    "activeTurn": {
+      "id": "turn-1",
+      "startedAt": "1970-01-01T00:00:01.000Z",
+      "message": {
+        "text": "Hello",
+        "origin": {
+          "kind": "user"
+        }
+      },
+      "responseParts": [
+        {
+          "kind": "toolCall",
+          "toolCall": {
+            "status": "auth-required",
+            "toolCallId": "tc-9",
+            "toolName": "search",
+            "displayName": "Search Repo",
+            "intention": null,
+            "contributor": {
+              "kind": "mcp",
+              "customizationId": "mcp-1"
+            },
+            "_meta": {
+              "phase": "auth-required"
+            },
+            "invocationMessage": "Search: foo",
+            "toolInput": {
+              "uri": "file:///tool-inputs/tool-input.json"
+            },
+            "confirmed": "user-action",
+            "selectedOption": {
+              "id": "opt-1",
+              "label": "Approve",
+              "kind": "approve"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "partial output"
+              }
+            ],
+            "auth": {
+              "reason": "insufficientScope",
+              "resource": {
+                "resource": "https://mcp.example.com"
+              },
+              "requiredScopes": [
+                "repo:read"
+              ]
+            }
+          }
+        }
+      ],
+      "usage": null
+    },
+    "resource": "copilot:/test-session",
+    "title": "Test Session",
+    "status": 24,
+    "modifiedAt": "1970-01-01T00:00:02.000Z"
+  }
+}

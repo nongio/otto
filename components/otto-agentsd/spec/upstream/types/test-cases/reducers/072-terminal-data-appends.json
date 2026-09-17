@@ -1,0 +1,46 @@
+{
+  "description": "terminal/data appends to content",
+  "reducer": "terminal",
+  "initial": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ "
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  },
+  "actions": [
+    {
+      "type": "terminal/data",
+      "data": "hello"
+    },
+    {
+      "type": "terminal/data",
+      "data": " world\r\n"
+    }
+  ],
+  "expected": {
+    "title": "bash",
+    "content": [
+      {
+        "type": "unclassified",
+        "value": "$ hello world\r\n"
+      }
+    ],
+    "claim": {
+      "kind": "client",
+      "clientId": "c1"
+    },
+    "lifecycle": {
+      "status": "running"
+    }
+  }
+}

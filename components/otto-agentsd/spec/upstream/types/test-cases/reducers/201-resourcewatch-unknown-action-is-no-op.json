@@ -1,0 +1,17 @@
+{
+  "description": "resourceWatch unknown action type is a no-op",
+  "reducer": "resourceWatch",
+  "initial": {
+    "root": "file:///workspace",
+    "recursive": false
+  },
+  "actions": [
+    {
+      "type": "resourceWatch/unknownAction"
+    }
+  ],
+  "expected": {
+    "root": "file:///workspace",
+    "recursive": false
+  }
+}
