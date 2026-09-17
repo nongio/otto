@@ -146,6 +146,9 @@ struct DialogPanel {
     /// The option row the arrow keys last moved to (an index into the
     /// layout's `option_rects`); `None` until they or a click move it.
     focus_row: Option<usize>,
+    /// Whether the arrow keys have been used since the panel opened or was
+    /// last clicked: the focus ring stays hidden until they are.
+    keyboard_nav: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1075,6 +1078,7 @@ impl IslandApp {
             scroll: 0.0,
             last_target: (0.0, 0.0, 0.0, 0.0),
             focus_row: None,
+            keyboard_nav: false,
         })
     }
 
@@ -1121,7 +1125,7 @@ impl IslandApp {
         let view = panel.view.clone();
         let scroll = panel.scroll;
         // The ring shows where the arrow keys are, only while they reach us.
-        let focus_row = has_keyboard
+        let focus_row = (has_keyboard && panel.keyboard_nav)
             .then(|| dialog::keyboard_row(&layout, &selected, panel.focus_row))
             .flatten();
         draw_content(&mut panel.surface, w, h, |canvas| match shape {
@@ -1202,6 +1206,7 @@ impl IslandApp {
                     *sel = option;
                 }
                 panel.focus_row = dialog::row_of(&layout, group, option);
+                panel.keyboard_nav = false;
                 self.render_dialog();
             }
             Some(DialogHit::Grant) => self.resolve_active_dialog(dialog::RESPONSE_GRANTED),
@@ -1244,6 +1249,15 @@ impl IslandApp {
         };
         let layout = dialog::dialog_layout(&panel.view);
         let current = dialog::keyboard_row(&layout, &panel.selected, panel.focus_row);
+        // The first navigation key only reveals the ring on the current
+        // option; the next ones move it.
+        if !panel.keyboard_nav {
+            panel.keyboard_nav = true;
+            if current.is_some() {
+                self.render_dialog();
+                return;
+            }
+        }
         let Some(row) = dialog::step_row(&layout, current, delta) else {
             return;
         };

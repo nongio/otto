@@ -241,10 +241,13 @@ A dialog presented with `modal = false` asks without taking over:
   the option rows of every group in order, stopping at the ends, selecting the
   option they land on and scrolling it into view; the row the keyboard is on
   gets a focus ring (accent stroke just outside the row), drawn only while the
-  panel holds the keyboard. The ring starts on the first group's selection.
+  panel holds the keyboard and only once a navigation key has been pressed.
+  The first such key reveals the ring on the current selection (the first
+  group's, to begin with) without moving it; later ones move it.
   **Enter** confirms (when there is a grant button), **Esc** denies.
-- Clicking an option or button shows the hand cursor over it, and moves the
-  focus ring to a clicked option.
+- Clicking an option or button shows the hand cursor over it. Clicking an
+  option moves the keyboard to it and hides the ring until a navigation key is
+  pressed again.
 - It **shrinks into a circle** — a Mini-sized island showing the dialog's icon,
   at the end of the island row, using the same springs an island moves and
   resizes with — when the user moves on:
