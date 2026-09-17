@@ -254,7 +254,8 @@ time: the page counter ("2 of 3") and a back button on the left and right of a
 row above the question, the question's own options below, and `[Skip][Next]`
 with **Next** becoming the grant label on the last page. `Enter`, the Next
 button, or a digit on a single-select question turns the page; `Left`, the back
-button, or `Shift+Tab` onto it goes back. The panel resizes to each page with
+button, or `Shift+Tab` onto it goes back; `Right` turns the page forward and
+stops on the last one, where answering stays Enter's. The panel resizes to each page with
 the usual spring. Tab stops are the page's options, then its buttons. Nothing
 is sent until the last page is confirmed, so paging is free.
 

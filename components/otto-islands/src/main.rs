@@ -1807,8 +1807,11 @@ impl App for IslandApp {
         // KP_ENTER = 96, UP = 103, DOWN = 108.
         match key {
             1 => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
-            // LEFT = 105: back a page.
+            // LEFT = 105 / RIGHT = 106: the pages, back and forward. Right
+            // stops on the last page: answering is Enter's, so it can't be
+            // walked into by holding an arrow.
             105 => self.turn_dialog_page(-1),
+            106 => self.turn_dialog_page(1),
             // Space on a multi-select option flips it.
             57 if focused_button.is_none() && self.toggle_focused_option() => {}
             103 => self.move_dialog_focus(-1),
