@@ -14,7 +14,10 @@ use smithay::{
     input::pointer::{AxisFrame, ButtonEvent, MotionEvent},
     reexports::wayland_server::{protocol::wl_pointer, Resource},
     utils::{IsAlive, Logical, Point, Serial, SERIAL_COUNTER as SCOUNTER},
-    wayland::{input_method::InputMethodSeat, shell::wlr_layer::Layer as WlrLayer},
+    wayland::{
+        input_method::InputMethodSeat,
+        shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
+    },
 };
 
 /// Check if a point (in surface-local logical coordinates) falls within the
@@ -332,18 +335,21 @@ impl<BackendData: Backend> Otto<BackendData> {
             // Nothing above took the keyboard. If a top-layer panel still holds
             // it from before the press, the user has clicked away from it:
             // give the keyboard back to the workspace so the panel receives
-            // wl_keyboard.leave (otto-bar closes its menus on that). Overlay
-            // surfaces are modal dialogs and keep it.
+            // wl_keyboard.leave (otto-bar closes its menus on that). An
+            // overlay surface with exclusive interactivity is a modal prompt
+            // and keeps it; an on-demand one (a non-modal island dialog, which
+            // shrinks on that leave) lets it go like a top-layer panel.
             if let Some(layer) = layer_focused_at_press {
                 let layer_id = layer.wl_surface().id();
                 let still_held = matches!(
                     keyboard.current_focus(),
                     Some(KeyboardFocusTarget::LayerSurface(ref held)) if *held == layer
                 );
-                let on_top_layer = self
-                    .layer_surfaces
-                    .get(&layer_id)
-                    .is_some_and(|s| s.wlr_layer() == WlrLayer::Top);
+                let on_top_layer = self.layer_surfaces.get(&layer_id).is_some_and(|s| {
+                    s.wlr_layer() == WlrLayer::Top
+                        || (s.wlr_layer() == WlrLayer::Overlay
+                            && s.keyboard_interactivity() != KeyboardInteractivity::Exclusive)
+                });
                 // A press on the panel itself is not a click away, even if it
                 // has meanwhile dropped its grab (otto-bar does, between
                 // menus) and so could not re-take the keyboard above.
