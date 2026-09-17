@@ -2077,14 +2077,18 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
             })
         })
         .collect();
-    let title = if questions.len() > 1 {
+    // The questions the dialog asks itself are headed by who is asking, not
+    // by a sentence about there being questions: the question is the heading.
+    // A request it can only hand to Ask still says what happened.
+    let headline = if questions.len() > 1 {
         format!("{agent} has some questions")
     } else {
         format!("{agent} has a question")
     };
     match choices.filter(|choices| !choices.is_empty()) {
         Some(choices) => Prompt {
-            title,
+            title: handle(agent),
+            handle_title: true,
             // One question a page says which page this is; a message that only
             // announces there are several questions would say it again.
             subtitle: if choices.len() > 1 {
@@ -2105,7 +2109,8 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
         // whole request one to answer in Ask. The dialog says what is being
         // asked, as a readable list.
         None => Prompt {
-            title,
+            title: headline,
+            handle_title: false,
             body: questions
                 .iter()
                 .zip(&texts)
@@ -2133,6 +2138,19 @@ pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
             choices: Vec::new(),
         },
     }
+}
+
+/// An agent's handle, as the dialog attributes a question to it: its name in
+/// lower case, without spaces, after an `@`.
+fn handle(agent: &str) -> String {
+    format!(
+        "@{}",
+        agent
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    )
 }
 
 /// An option as the dialog labels it: its label, and its description after
@@ -2451,7 +2469,8 @@ mod tests {
     fn a_lone_question_is_asked_in_its_own_words() {
         let request = ask_user_question(&[("Migration", LONG, false)]);
         let prompt = question_prompt("Claude", &request);
-        assert_eq!(prompt.title, "Claude has a question");
+        assert_eq!(prompt.title, "@claude");
+        assert!(prompt.handle_title);
         // The question is the group's label, not a header, and not repeated.
         assert_eq!(prompt.subtitle, "");
         let [choice] = &prompt.choices[..] else {
@@ -2482,7 +2501,9 @@ mod tests {
             ("Rollout", "Which environments should get it first?", false),
         ]);
         let prompt = question_prompt("Claude", &request);
-        assert_eq!(prompt.title, "Claude has some questions");
+        // Who is asking, small at the top; the questions are the headings.
+        assert_eq!(prompt.title, "@claude");
+        assert!(prompt.handle_title);
         // The pages say "1 of 2"; the message that only announces there are
         // several questions would say it again.
         assert_eq!(prompt.subtitle, "");
@@ -2524,6 +2545,9 @@ mod tests {
         request.questions = Some(questions);
         let prompt = question_prompt("Claude", &request);
         assert!(prompt.choices.is_empty());
+        // Nothing to ask here: the dialog says what happened instead.
+        assert_eq!(prompt.title, "Claude has some questions");
+        assert!(!prompt.handle_title);
         assert_eq!(prompt.grant, "");
         assert_eq!(prompt.open, "Open in Ask");
         let options = "\n\u{2022} Keep it \u{2014} Clients keep working; the table goes in the next release\
@@ -2626,6 +2650,7 @@ mod tests {
         ] {
             out.push_str(&format!("{key}\t{}\n", esc(value)));
         }
+        out.push_str(&format!("handle\t{}\n", u8::from(prompt.handle_title)));
         for (key, value) in crate::dialog::question_labels(&prompt) {
             out.push_str(&format!("label\t{key}\t{}\n", esc(&value)));
         }

@@ -110,6 +110,10 @@ pub struct QuestionStyle {
     pub multi_hint: String,
     /// The body reads as a left-aligned list rather than centred text.
     pub body_start: bool,
+    /// The title is the agent's handle ("@claude"), not a headline: it is
+    /// drawn small and muted at the top, and the question itself becomes the
+    /// panel's largest text. Permission dialogs keep the headline.
+    pub handle_title: bool,
 }
 
 /// What the user has picked: `selected[g]` is a single-select group's option
@@ -408,7 +412,12 @@ pub enum DialogHit {
     Deny,
     Open,
     Back,
-    Option { group: usize, option: usize },
+    /// A progress dot: go to the question it stands for.
+    Page(usize),
+    Option {
+        group: usize,
+        option: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -471,13 +480,20 @@ pub struct DialogLayout {
     /// `(group_idx, option_idx, row_rect)` for every option row, in content
     /// coordinates. A paged dialog lays out only its current page's group.
     pub option_rects: Vec<(usize, usize, Rect)>,
-    /// The back button in the page row, in content coordinates: from a paged
-    /// dialog's second page on, when it has a back label.
+    /// The back button, in content coordinates: from a paged dialog's second
+    /// page on, when it has a back label.
     pub back_rect: Option<Rect>,
+    /// One dot per question, in content coordinates, when there are several.
+    /// Each is a click target for the page it stands for.
+    pub dots: Vec<Rect>,
+    /// The page shown (`0` unless paged); `dots` says how many there are.
+    pub page: usize,
     /// What the grant button says: the next label on a page before the last.
     pub grant_text: String,
     // Internal draw anchors (content coords).
     icon_present: bool,
+    handle_title: bool,
+    /// The page counter, drawn beside the buttons in panel coordinates.
     page_counter: Option<TextBlock>,
     group_hints: Vec<TextBlock>,
     body_start: bool,
@@ -550,11 +566,26 @@ fn back_label(label: &str) -> String {
     format!("\u{2039} {label}")
 }
 
-/// Page row: the counter at the left, the back button at the right.
-const PAGE_ROW_H: f32 = 24.0;
-const PAGE_ROW_GAP: f32 = 6.0;
+/// The handle row at the top: a small icon and the agent's handle.
+const HANDLE_ROW_H: f32 = 18.0;
+const HANDLE_SIZE: f32 = 12.0;
+const HANDLE_ICON: f32 = 14.0;
+/// The back button, at the left of the handle row.
+const BACK_BTN_H: f32 = 20.0;
+const BACK_BTN_PAD_X: f32 = 8.0;
+/// Progress dots: one per question, under the handle.
+const DOT: f32 = 6.0;
+const DOT_GAP: f32 = 7.0;
+const DOT_ROW_H: f32 = 16.0;
+const DOT_ROW_GAP: f32 = 10.0;
+/// A dot's click target, centred on the dot itself.
+const DOT_HIT: f32 = 18.0;
+/// The page counter beside the buttons ("2 of 3"), and the column it takes.
 const PAGE_TEXT_SIZE: f32 = 11.0;
-const BACK_BTN_PAD_X: f32 = 10.0;
+const COUNTER_W: f32 = 40.0;
+/// The question a page asks, the largest text on a handle-titled panel.
+const QUESTION_SIZE: f32 = 15.0;
+const QUESTION_LINE_H: f32 = 20.0;
 
 /// Compute the panel layout for the given request view, showing `page` of a
 /// paged dialog (ignored otherwise).
@@ -565,22 +596,62 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     let text_max_w = w - PAD * 2.0;
     let mut y = PAD;
 
+    // A handle-titled panel says who is asking in one small line, with the
+    // icon beside it, and gives the room to the question itself. A headline
+    // panel (a permission grant) keeps the big icon and title.
+    let handle_title = view.style.handle_title;
     let icon_present = !view.icon.is_empty();
-    if icon_present {
+    let mut back_rect = None;
+    if icon_present && !handle_title {
         y += ICON + ICON_GAP;
     }
 
-    let title_lines = wrap(
-        &view.title,
-        &font(TITLE_SIZE, 700),
-        text_max_w,
-        TITLE_MAX_LINES,
-    );
+    let (title_font, title_line_h, title_max_lines) = if handle_title {
+        (font(HANDLE_SIZE, 600), HANDLE_ROW_H, 1)
+    } else {
+        (font(TITLE_SIZE, 700), TITLE_LINE_H, TITLE_MAX_LINES)
+    };
+    let title_max_w = if handle_title {
+        // Room for the icon beside it, and for the back button either side.
+        text_max_w - (HANDLE_ICON + 6.0) - BACK_BTN_H * 2.0
+    } else {
+        text_max_w
+    };
+    let title_lines = wrap(&view.title, &title_font, title_max_w, title_max_lines);
     let title = TextBlock {
         y,
         lines: title_lines,
     };
-    y += TITLE_LINE_H * title.lines.len().max(1) as f32 + TITLE_GAP;
+    if page > 0 && !view.style.back_label.is_empty() {
+        let tw = font(PAGE_TEXT_SIZE + 1.0, 600)
+            .measure_str(back_label(&view.style.back_label), None)
+            .0;
+        let bw = (tw + BACK_BTN_PAD_X * 2.0).min(text_max_w / 2.0);
+        // At the top-left corner, beside the handle (or over the headline's
+        // own top padding), so the page row it used to live in is free for
+        // the question.
+        back_rect = Some(Rect::from_xywh(
+            PAD,
+            PAD + (HANDLE_ROW_H - BACK_BTN_H).max(0.0) / 2.0,
+            bw,
+            BACK_BTN_H,
+        ));
+    }
+    y += title_line_h * title.lines.len().max(1) as f32 + TITLE_GAP;
+
+    // Progress: one dot per question, the current one accented. They stand in
+    // for the counter at the top; the counter itself sits by the buttons.
+    let mut dots = Vec::new();
+    if pages > 1 {
+        let row_w = pages as f32 * DOT + (pages - 1) as f32 * DOT_GAP;
+        let mut x = (w - row_w) / 2.0;
+        let cy = y + DOT_ROW_H / 2.0;
+        for _ in 0..pages {
+            dots.push(Rect::from_xywh(x, cy - DOT / 2.0, DOT, DOT));
+            x += DOT + DOT_GAP;
+        }
+        y += DOT_ROW_H + DOT_ROW_GAP;
+    }
 
     let text_block = |text: &str, weight: i32, max_lines: usize, gap: f32, y: &mut f32| {
         let lines = wrap(text, &font(TEXT_SIZE, weight), text_max_w, max_lines);
@@ -600,34 +671,6 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     );
     let body = text_block(&view.body, 400, BODY_MAX_LINES, BODY_GAP, &mut y);
 
-    // A paged dialog's page row: "2 of 3", and a way back.
-    let mut page_counter = None;
-    let mut back_rect = None;
-    if pages > 1 {
-        y += PAGE_ROW_GAP;
-        if !view.style.page_label.is_empty() {
-            let text = view
-                .style
-                .page_label
-                .replace("{current}", &(page + 1).to_string())
-                .replace("{total}", &pages.to_string());
-            page_counter = Some(TextBlock {
-                y: y + (PAGE_ROW_H - TEXT_LINE_H) / 2.0,
-                lines: vec![text],
-            });
-        }
-        if page > 0 && !view.style.back_label.is_empty() {
-            // Measured with the chevron the button draws, or the label is
-            // clipped to fit a width that never counted it.
-            let tw = font(PAGE_TEXT_SIZE + 1.0, 600)
-                .measure_str(back_label(&view.style.back_label), None)
-                .0;
-            let bw = (tw + BACK_BTN_PAD_X * 2.0).min(text_max_w / 2.0);
-            back_rect = Some(Rect::from_xywh(w - PAD - bw, y, bw, PAGE_ROW_H));
-        }
-        y += PAGE_ROW_H + PAGE_ROW_GAP;
-    }
-
     // Choice groups.
     let mut option_rects = Vec::new();
     let mut option_text = Vec::new();
@@ -641,12 +684,12 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         }
         let lines = wrap(
             &group.label,
-            &font(GROUP_LABEL_SIZE, 600),
+            &question_font(handle_title),
             text_max_w,
             GROUP_LABEL_MAX_LINES,
         );
         if !lines.is_empty() {
-            let h = TEXT_LINE_H * lines.len() as f32;
+            let h = question_line_h(handle_title) * lines.len() as f32;
             group_labels.push(TextBlock { y, lines });
             y += h + GROUP_LABEL_GAP;
         }
@@ -699,23 +742,40 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     let viewport = Rect::from_xywh(0.0, 0.0, w, height - footer_h);
 
     let mut y = viewport.bottom + 2.0;
-    let full_w = w - PAD * 2.0;
+    // With several questions the counter takes a column at the left of the
+    // button row, so it says where the page is next to the way on from it.
+    let mut page_counter = None;
+    let mut buttons_x = PAD;
+    let mut full_w = w - PAD * 2.0;
+    if pages > 1 && !view.style.page_label.is_empty() {
+        let text = view
+            .style
+            .page_label
+            .replace("{current}", &(page + 1).to_string())
+            .replace("{total}", &pages.to_string());
+        page_counter = Some(TextBlock {
+            y: y + (BTN_H - TEXT_LINE_H) / 2.0,
+            lines: vec![text],
+        });
+        buttons_x += COUNTER_W;
+        full_w -= COUNTER_W;
+    }
     let half_w = (full_w - BTN_GAP) / 2.0;
     let (deny_rect, grant_rect, mut open_rect) = if has_grant || has_open {
-        let deny = Rect::from_xywh(PAD, y, half_w, BTN_H);
-        let right = Rect::from_xywh(PAD + half_w + BTN_GAP, y, half_w, BTN_H);
+        let deny = Rect::from_xywh(buttons_x, y, half_w, BTN_H);
+        let right = Rect::from_xywh(buttons_x + half_w + BTN_GAP, y, half_w, BTN_H);
         if has_grant {
             (deny, Some(right), None)
         } else {
             (deny, None, Some(right))
         }
     } else {
-        (Rect::from_xywh(PAD, y, full_w, BTN_H), None, None)
+        (Rect::from_xywh(buttons_x, y, full_w, BTN_H), None, None)
     };
     y += BTN_H;
     if has_grant && has_open {
         y += OPEN_ROW_GAP;
-        open_rect = Some(Rect::from_xywh(PAD, y, full_w, OPEN_BTN_H));
+        open_rect = Some(Rect::from_xywh(PAD, y, w - PAD * 2.0, OPEN_BTN_H));
     }
 
     DialogLayout {
@@ -728,8 +788,11 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         open_rect,
         option_rects,
         back_rect,
+        dots,
+        page,
         grant_text,
         icon_present,
+        handle_title,
         page_counter,
         group_hints,
         body_start: view.style.body_start,
@@ -738,6 +801,24 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
         body,
         group_labels,
         option_text,
+    }
+}
+
+/// The question a group asks is the panel's largest text when the title is
+/// only a handle; under a headline title it stays a supporting label.
+fn question_font(handle_title: bool) -> skia_safe::Font {
+    if handle_title {
+        font(QUESTION_SIZE, 600)
+    } else {
+        font(GROUP_LABEL_SIZE, 600)
+    }
+}
+
+fn question_line_h(handle_title: bool) -> f32 {
+    if handle_title {
+        QUESTION_LINE_H
+    } else {
+        TEXT_LINE_H
     }
 }
 
@@ -774,6 +855,14 @@ pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32, scroll: f32) -> Option<
     let cy = ly + scroll.clamp(0.0, layout.max_scroll());
     if layout.back_rect.is_some_and(|r| in_rect(&r, lx, cy)) {
         return Some(DialogHit::Back);
+    }
+    // A dot goes back to the question it stands for. Forward is no jump: the
+    // questions in between have not been answered yet.
+    for (page, dot) in layout.dots.iter().enumerate() {
+        let pad = (DOT_HIT - DOT) / 2.0;
+        if in_rect(&dot.with_outset((pad, pad)), lx, cy) {
+            return Some(DialogHit::Page(page));
+        }
     }
     for (gi, oi, rect) in &layout.option_rects {
         if in_rect(rect, lx, cy) {
@@ -1109,21 +1198,65 @@ pub fn draw_dialog(
     canvas.clip_rect(layout.viewport, skia_safe::ClipOp::Intersect, true);
     canvas.translate((0.0, -scroll.clamp(0.0, layout.max_scroll())));
 
-    // Icon.
-    if layout.icon_present {
-        let ix = cx - ICON / 2.0;
-        draw_icon(canvas, &view.icon, ix, PAD, ICON);
+    if layout.handle_title {
+        // Who is asking, in one small line: the icon and the handle together,
+        // centred, so the question below is what the panel is about.
+        let handle = layout.title.lines.first().cloned().unwrap_or_default();
+        let f = font(HANDLE_SIZE, 600);
+        let tw = f.measure_str(&handle, None).0;
+        let icon_w = if layout.icon_present {
+            HANDLE_ICON + 6.0
+        } else {
+            0.0
+        };
+        let left = cx - (tw + icon_w) / 2.0;
+        let mid = layout.title.y + HANDLE_ROW_H / 2.0;
+        if layout.icon_present {
+            draw_icon(
+                canvas,
+                &view.icon,
+                left,
+                mid - HANDLE_ICON / 2.0,
+                HANDLE_ICON,
+            );
+        }
+        draw_lines(
+            canvas,
+            &[handle],
+            left + icon_w,
+            mid - HANDLE_ROW_H / 2.0,
+            HANDLE_ROW_H,
+            &f,
+            dim,
+        );
+    } else {
+        // Icon.
+        if layout.icon_present {
+            let ix = cx - ICON / 2.0;
+            draw_icon(canvas, &view.icon, ix, PAD, ICON);
+        }
+        draw_lines_centered(
+            canvas,
+            &layout.title.lines,
+            cx,
+            layout.title.y,
+            TITLE_LINE_H,
+            &font(TITLE_SIZE, 700),
+            text,
+        );
     }
 
-    draw_lines_centered(
-        canvas,
-        &layout.title.lines,
-        cx,
-        layout.title.y,
-        TITLE_LINE_H,
-        &font(TITLE_SIZE, 700),
-        text,
-    );
+    // Progress dots: how many questions there are, and which one this is.
+    for (page, dot) in layout.dots.iter().enumerate() {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(if page == layout.page {
+            accent
+        } else {
+            at_least_opaque(theme.fill_secondary, 0x80)
+        });
+        canvas.draw_circle((dot.center_x(), dot.center_y()), dot.width() / 2.0, &paint);
+    }
     if let Some(block) = &layout.subtitle {
         let f = font(TEXT_SIZE, 500);
         draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim);
@@ -1137,19 +1270,6 @@ pub fn draw_dialog(
         }
     }
 
-    // Page row: where in the questions this page is, and the way back.
-    let page_font = font(PAGE_TEXT_SIZE, 600);
-    if let Some(block) = &layout.page_counter {
-        draw_lines(
-            canvas,
-            &block.lines,
-            PAD,
-            block.y,
-            TEXT_LINE_H,
-            &page_font,
-            dim2,
-        );
-    }
     if let Some(rect) = &layout.back_rect {
         draw_button_sized(
             canvas,
@@ -1176,17 +1296,20 @@ pub fn draw_dialog(
         );
     }
 
-    // Group labels: the question each group answers, in full.
-    let group_font = font(GROUP_LABEL_SIZE, 600);
+    // The question each group answers, in full. Left-aligned, like the option
+    // rows under it: a wrapped question centred over a left-aligned list has
+    // no edge to read down.
+    let group_font = question_font(layout.handle_title);
+    let question_color = if layout.handle_title { text } else { dim };
     for block in &layout.group_labels {
         draw_lines(
             canvas,
             &block.lines,
             PAD,
             block.y,
-            TEXT_LINE_H,
+            question_line_h(layout.handle_title),
             &group_font,
-            dim,
+            question_color,
         );
     }
 
@@ -1307,6 +1430,19 @@ pub fn draw_dialog(
         canvas.draw_rect(
             Rect::from_xywh(0.0, layout.viewport.bottom - 0.5, w, 1.0),
             &line,
+        );
+    }
+
+    // The page counter, in its column beside the buttons.
+    if let Some(block) = &layout.page_counter {
+        draw_lines(
+            canvas,
+            &block.lines,
+            PAD,
+            block.y,
+            TEXT_LINE_H,
+            &font(PAGE_TEXT_SIZE, 600),
+            dim2,
         );
     }
 
@@ -1926,6 +2062,101 @@ mod tests {
         assert_eq!(picks.selected, [1, 2]);
     }
 
+    #[test]
+    fn progress_dots_stand_for_the_questions_and_go_back_to_them() {
+        let style = QuestionStyle {
+            handle_title: true,
+            ..paged_style()
+        };
+        let v = questions(
+            style,
+            vec![
+                group("a", "First?", &["One", "Two"]),
+                group("b", "Second?", &["Three"]),
+                group("c", "Third?", &["Four"]),
+            ],
+        );
+        let second = dialog_layout(&v, 1);
+        assert_eq!(second.dots.len(), 3, "one dot per question");
+        assert_eq!(second.page, 1, "the second is the current one");
+        // Centred as a row, in order, above the question.
+        let row_mid = (second.dots[0].left + second.dots[2].right) / 2.0;
+        assert!((row_mid - second.width / 2.0).abs() < 0.5);
+        assert!(second.dots[0].right < second.dots[1].left);
+        assert!(second.dots[2].bottom < second.group_labels[0].y);
+
+        // Each dot is its page's click target, with room around it to aim at.
+        for (page, dot) in second.dots.iter().enumerate() {
+            assert_eq!(
+                hit_test(&second, dot.center_x(), dot.center_y(), 0.0),
+                Some(DialogHit::Page(page))
+            );
+            assert!(dot.width() < DOT_HIT);
+        }
+
+        // One question: nothing to show progress through.
+        let one = questions(
+            QuestionStyle {
+                handle_title: true,
+                ..QuestionStyle::default()
+            },
+            vec![group("a", "First?", &["One"])],
+        );
+        let layout = dialog_layout(&one, 0);
+        assert!(layout.dots.is_empty() && layout.page_counter.is_none());
+    }
+
+    #[test]
+    fn the_counter_sits_beside_the_buttons() {
+        let v = questions(
+            paged_style(),
+            vec![
+                group("a", "First?", &["One", "Two"]),
+                group("b", "Second?", &["Three"]),
+            ],
+        );
+        let layout = dialog_layout(&v, 0);
+        let counter = layout.page_counter.as_ref().expect("counter");
+        assert_eq!(counter.lines, ["1 of 2"]);
+        // On the button row, at its left, with the buttons making room.
+        assert!(counter.y >= layout.viewport.bottom);
+        assert!(counter.y < layout.deny_rect.bottom);
+        assert!(layout.deny_rect.left >= PAD + COUNTER_W);
+        let grant = layout.grant_rect.expect("grant");
+        assert!(grant.right <= layout.width - PAD + 0.01);
+        // The open button keeps the full width under them.
+        assert_eq!(layout.open_rect.expect("open").left, PAD);
+
+        // Without paging the buttons span the panel as before.
+        let one = questions(QuestionStyle::default(), v.choices.clone());
+        let layout = dialog_layout(&one, 0);
+        assert!(layout.page_counter.is_none());
+        assert_eq!(layout.deny_rect.left, PAD);
+    }
+
+    #[test]
+    fn a_handle_title_makes_the_question_the_biggest_text() {
+        let choices = vec![group("a", "First?", &["One", "Two"])];
+        let handle = questions(
+            QuestionStyle {
+                handle_title: true,
+                ..QuestionStyle::default()
+            },
+            choices.clone(),
+        );
+        let headline = questions(QuestionStyle::default(), choices);
+        let handle = dialog_layout(&handle, 0);
+        let headline = dialog_layout(&headline, 0);
+        // The handle is one small line; the question takes the room instead.
+        assert!(handle.title.lines.len() == 1);
+        let handle_question = handle.option_rects[0].2.top - handle.group_labels[0].y;
+        let headline_question = headline.option_rects[0].2.top - headline.group_labels[0].y;
+        assert!(
+            handle_question > headline_question,
+            "{handle_question} vs {headline_question}"
+        );
+    }
+
     /// Parses otto-agentsd's `dump_prompt_for_render` output into a view.
     fn view_from_dump(dump: &str) -> DialogView {
         let mut v = view("", "");
@@ -1939,6 +2170,7 @@ mod tests {
                 ["body", t] => v.body = unesc(t),
                 ["icon", t] => v.icon = unesc(t),
                 ["grant", t] => v.grant_label = unesc(t),
+                ["handle", t] => v.style.handle_title = *t == "1",
                 ["deny", t] => v.deny_label = unesc(t),
                 ["open", t] => v.open_label = unesc(t),
                 ["group", id, multi, label] => v.choices.push(ChoiceGroup {
@@ -2029,5 +2261,26 @@ mod tests {
         let dump = std::fs::read_to_string(format!("{dir}/prompt.txt")).expect("prompt dump");
         let v = view_from_dump(&dump);
         render_png(&v, &format!("{dir}/{tag}.png"));
+
+        // The same set asking only its first question: no dots, no counter.
+        let mut one = v.clone();
+        one.choices.truncate(1);
+        one.style.paged = false;
+        render_png(&one, &format!("{dir}/{tag}-single.png"));
+
+        // A permission dialog, which keeps its headline title and big icon.
+        let access = DialogView {
+            title: "Claude wants to run a command".into(),
+            subtitle: "cargo test --all".into(),
+            body: "in ~/dev/otto".into(),
+            icon: "system-run".into(),
+            grant_label: "Allow".into(),
+            deny_label: "Reject".into(),
+            open_label: String::new(),
+            style: QuestionStyle::default(),
+            choices: Vec::new(),
+            ..v.clone()
+        };
+        render_png(&access, &format!("{dir}/{tag}-access.png"));
     }
 }

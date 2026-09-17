@@ -213,6 +213,7 @@ fn question_style(groups: usize, labels: &HashMap<String, String>) -> QuestionSt
         page_label: label("page"),
         multi_hint: label("multi-hint"),
         body_start: label("body-align") == "start",
+        handle_title: label("title-style") == "handle",
     }
 }
 
@@ -375,7 +376,10 @@ impl DialogService {
     /// `labels` (all optional): `next` — the grant button before the last
     /// page; `back` — a back button from the second page on; `page` — a page
     /// counter with `{current}` and `{total}`; `multi-hint` — a line under a
-    /// multi-select question; `body-align` — `start` for a left-aligned body.
+    /// multi-select question; `body-align` — `start` for a left-aligned body;
+    /// `title-style` — `handle` when the title is the asker's handle
+    /// ("@claude") rather than a headline, which makes the question itself the
+    /// panel's largest text.
     ///
     /// Returns `(response, results)` as `PresentQuestion` does, except that
     /// `results` has one `(group_id, option_id)` per picked option of a
@@ -508,9 +512,10 @@ mod tests {
         let labels = HashMap::from([
             ("next".to_owned(), "Next".to_owned()),
             ("body-align".to_owned(), "start".to_owned()),
+            ("title-style".to_owned(), "handle".to_owned()),
         ]);
         let style = question_style(groups.len(), &labels);
-        assert!(style.paged && style.body_start);
+        assert!(style.paged && style.body_start && style.handle_title);
         assert_eq!(style.next_label, "Next");
         assert!(!question_style(1, &labels).paged);
     }

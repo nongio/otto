@@ -1240,6 +1240,9 @@ impl IslandApp {
             }
             Some(DialogHit::Grant) => self.confirm_dialog_page(),
             Some(DialogHit::Back) => self.turn_dialog_page(-1),
+            // A dot goes back to its question; the ones ahead are not
+            // answered yet, so they are an indicator only.
+            Some(DialogHit::Page(page)) => self.show_dialog_page(page),
             Some(DialogHit::Deny) => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
             Some(DialogHit::Open) => self.resolve_active_dialog(dialog::RESPONSE_OPEN),
             // Click landed on the panel background — swallow it.
@@ -1400,11 +1403,25 @@ impl IslandApp {
     /// Show the page `delta` away, if there is one. The panel resizes to the
     /// new page with the same springs as any other resize.
     fn turn_dialog_page(&mut self, delta: i32) {
-        let Some(panel) = self.dialog.as_mut() else {
+        let Some(panel) = self.dialog.as_ref() else {
             return;
         };
         let pages = panel.view.pages() as i64;
-        let page = (panel.page as i64 + delta as i64).clamp(0, pages - 1) as usize;
+        self.set_dialog_page((panel.page as i64 + delta as i64).clamp(0, pages - 1) as usize);
+    }
+
+    /// Go back to `page`. Pages ahead have not been answered yet, so their
+    /// dots only say how many questions there are.
+    fn show_dialog_page(&mut self, page: usize) {
+        if self.dialog.as_ref().is_some_and(|p| page < p.page) {
+            self.set_dialog_page(page);
+        }
+    }
+
+    fn set_dialog_page(&mut self, page: usize) {
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
         if page == panel.page {
             return;
         }

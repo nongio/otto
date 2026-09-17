@@ -241,6 +241,7 @@ otherwise have to invent:
 | `page` | the page counter, with `{current}` and `{total}` |
 | `multi-hint` | a line under a multi-select question's label |
 | `body-align` | `start` for a left-aligned body (a list), else centred |
+| `title-style` | `handle` when the title is the asker's handle, not a headline |
 
 **Multi-select.** Its options are toggles, drawn as the same rows: a picked one
 takes the accent fill. A click, `Space` on the row the keyboard is on, or its
@@ -249,18 +250,38 @@ than moving on. `results` then carries one `(group_id, option_id)` per picked
 option, and none at all when the user picked nothing — which is an answer, not
 a refusal.
 
-**One question a page.** With more than one question the dialog shows one at a
-time: the page counter ("2 of 3") and a back button on the left and right of a
-row above the question, the question's own options below, and `[Skip][Next]`
-with **Next** becoming the grant label on the last page. `Enter`, the Next
-button, or a digit on a single-select question turns the page; `Left`, the back
-button, or `Shift+Tab` onto it goes back; `Right` turns the page forward and
-stops on the last one, where answering stays Enter's. The panel resizes to each page with
-the usual spring. Tab stops are the page's options, then its buttons. Nothing
-is sent until the last page is confirmed, so paging is free.
+**A handle, not a headline.** With `title-style: handle` the title is who is
+asking ("@claude"): one small muted line at the top, centred, with the dialog's
+icon shrunk to 14 points beside it instead of the 44-point icon above. The
+question a page asks then becomes the panel's largest text — 15pt semibold,
+primary colour, wrapped, **left-aligned** like the option rows under it, since a
+centred wrapped question over a left-aligned list leaves no edge to read down.
+Without the label (every `PresentAccess` dialog, and any caller that does not
+ask for it) the headline title and big centred icon stay exactly as they were.
 
-A single question looks exactly as `PresentQuestion` does; no counter, no back
-button, and the grant label throughout.
+**One question a page.** With more than one question the dialog shows one at a
+time:
+
+- **Progress dots** at the top, centred under the handle: one per question, the
+  current one in the accent colour, the rest in a muted fill. Each dot is a
+  click target (18 points, larger than the 6-point dot) for **going back** to
+  its question; dots ahead do nothing, since the questions between them have
+  not been answered yet. One question shows no dots.
+- **The page counter** ("2 of 3") sits at the left of the button row, in a
+  40-point column the buttons make room for, so it reads next to the way on
+  from the page. The open button keeps the full width on its own row below.
+- **The back button** ("‹ Back") is at the top-left corner, beside the handle,
+  from the second page on.
+- The buttons are `[Skip][Next]`, with **Next** becoming the grant label on the
+  last page. `Enter`, the Next button, or a digit on a single-select question
+  turns the page; `Left`, the back button, a dot, or `Shift+Tab` onto the back
+  button goes back; `Right` turns the page forward and stops on the last one,
+  where answering stays Enter's. The panel resizes to each page with the usual
+  spring. Tab stops are the page's options, then its buttons. Nothing is sent
+  until the last page is confirmed, so paging is free.
+
+A single question looks exactly as `PresentQuestion` does; no dots, no counter,
+no back button, and the grant label throughout.
 
 ### Text and height
 

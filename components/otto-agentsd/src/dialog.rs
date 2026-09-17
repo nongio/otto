@@ -47,6 +47,9 @@ pub struct Prompt {
     pub open: String,
     /// The dialog's icon name.
     pub icon: String,
+    /// The title is the asker's handle ("@claude"), not a headline: the
+    /// renderer then makes the question itself the largest text.
+    pub handle_title: bool,
     /// Groups of options, one picked from each, sent back with a grant.
     pub choices: Vec<Choice>,
 }
@@ -271,6 +274,9 @@ type WireQuestion = (
 /// multi-select hint, and how to set the body.
 pub(crate) fn question_labels(prompt: &Prompt) -> HashMap<String, String> {
     let mut labels = HashMap::from([("multi-hint".to_owned(), "Pick any that apply.".to_owned())]);
+    if prompt.handle_title {
+        labels.insert("title-style".to_owned(), "handle".to_owned());
+    }
     // A body of several lines is a list of what is being asked: it reads down
     // the left edge, not centred.
     if prompt.body.contains('\n') {
