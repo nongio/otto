@@ -184,6 +184,8 @@ whoever is actually in front of the user. The rule is in `host.rs`:
 3. **Nobody is subscribed**, or the last watcher closes: `escalate` sends the
    question to otto-islands through `org.otto.Dialog1.PresentQuestion`, the
    same Access-style panel the portal uses, with an extra **Open in Ask** button.
+   It is asked non-modal: the user can carry on elsewhere, and the panel shrinks
+   into a circle in the island row, still waiting, until clicked open again.
    A plain yes or no picks the narrowest matching option; Open in Ask starts
    `otto-ask --session <uri>` and leaves the question waiting in the chat. An
    older renderer without `PresentQuestion` gets `PresentAccess`, minus that
@@ -218,8 +220,11 @@ each `elicitation/create` into an AHP input request:
 - With nobody watching, the question escalates like a permission request. When
   every question is a single select, the dialog asks them as choice groups with
   an **Answer** button (a choice group needs a grant label, or the renderer
-  returns no picks); otherwise it only shows what is asked, with **Skip** and
-  **Open in Ask**. Skipping or dismissing declines; a dialog that can't be shown
+  returns no picks); otherwise it only shows what is asked, each question with
+  its options listed under it, with **Skip** and **Open in Ask**. Each group is
+  labelled with the question's own words — for a lone AskUserQuestion that is
+  the request's message, since the field carries only the short header — and
+  each option's description follows its label after a line break. Skipping or dismissing declines; a dialog that can't be shown
   leaves the question waiting in the chat.
 - Cancelling or ending the turn cancels its open questions, and a restarted
   session drops the ones its earlier agent was waiting on.

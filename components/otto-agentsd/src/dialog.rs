@@ -2,13 +2,17 @@
 //! an agent's question.
 //!
 //! Otto's dialog renderer, otto-islands, serves `org.otto.Dialog1` (see
-//! `specs/portal-access-dialog.md` in Otto): a modal island panel with grant,
+//! `specs/portal-access-dialog.md` in Otto): an island panel with grant,
 //! deny and "open in Ask" buttons and, optionally, groups of choices. What no
 //! client is watching the chat to answer is asked there: permission requests
 //! from agents configured with `permissions = "ask"`, and agents' questions.
 //! When a permission dialog cannot be shown the request is denied, so an agent
 //! is never allowed something nobody saw; a question that cannot be shown
 //! stays open in the chat.
+//!
+//! Dialogs are asked non-modal: an agent waiting is no reason to take the
+//! keyboard. The user can carry on elsewhere; the panel shrinks into a circle
+//! in the island row, still waiting, and opens again when clicked.
 
 use std::future::Future;
 use std::path::Path;
@@ -388,7 +392,7 @@ impl Prompter for Islands {
                     &prompt.grant,
                     &prompt.deny,
                     &prompt.open,
-                    true,
+                    false,
                     wire_choices(&prompt.choices),
                 )
                 .await;
@@ -414,7 +418,7 @@ impl Prompter for Islands {
                     &prompt.icon,
                     &prompt.grant,
                     &prompt.deny,
-                    true,
+                    false,
                     Vec::new(),
                 )
                 .await;

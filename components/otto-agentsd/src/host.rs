@@ -34,13 +34,13 @@ use ahp_types::common::{JsonObject, StringOrMarkdown};
 use ahp_types::errors::ahp_error_codes;
 use ahp_types::notifications::SessionAddedParams;
 use ahp_types::state::{
-    ChatInputAnswer, ChatInputAnswerValue, ChatInputAnswered, ChatInputQuestion, ChatInputRequest,
-    ChatInputResponseKind, ChatInputSelectedAnswerValue, ChatOrigin, ChatState, ChatSummary,
-    ConfirmationOption, ConfirmationOptionKind, ErrorInfo, ErrorResponsePart, MarkdownResponsePart,
-    Message, MessageAttachment, PendingMessageKind, ReasoningResponsePart, ResponsePart, RootState,
-    SessionChatInputRequest, SessionInputRequest, SessionLifecycle, SessionState, SessionStatus,
-    SessionSummary, Snapshot, SnapshotState, ToolCallCancellationReason,
-    ToolCallConfirmationReason, ToolCallResult,
+    ChatInputAnswer, ChatInputAnswerValue, ChatInputAnswered, ChatInputOption, ChatInputQuestion,
+    ChatInputRequest, ChatInputResponseKind, ChatInputSelectedAnswerValue, ChatOrigin, ChatState,
+    ChatSummary, ConfirmationOption, ConfirmationOptionKind, ErrorInfo, ErrorResponsePart,
+    MarkdownResponsePart, Message, MessageAttachment, PendingMessageKind, ReasoningResponsePart,
+    ResponsePart, RootState, SessionChatInputRequest, SessionInputRequest, SessionLifecycle,
+    SessionState, SessionStatus, SessionSummary, Snapshot, SnapshotState,
+    ToolCallCancellationReason, ToolCallConfirmationReason, ToolCallResult,
 };
 use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
 use serde::Serialize;
@@ -2014,18 +2014,42 @@ fn merged_answers(
 /// The dialog that asks `request`, made by the agent called `agent` in `cwd`.
 /// When every question is a single select, the dialog asks them itself;
 /// otherwise it can only say what is asked, and offer to open Ask.
+///
+/// Every question is shown in full: its own words, and each option's label
+/// with its description after a line break, which otto-islands draws under
+/// the label.
 pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRequest) -> Prompt {
     let questions: Vec<&ChatInputQuestion> = request.questions.iter().flatten().collect();
+    let message = request.message.as_deref().filter(|m| !m.trim().is_empty());
+    // What each question asks. Claude's AskUserQuestion puts a lone question's
+    // words in the request's message and leaves the field only its short
+    // header; the message is the question then.
+    let single = questions.len() == 1;
+    let asks = |question: &ChatInputQuestion| -> Option<String> {
+        let (title, text) = question_text(question)?;
+        match message {
+            Some(message) if single && title == Some(text) => Some(message.to_owned()),
+            _ => Some(text.to_owned()),
+        }
+    };
+    let texts: Vec<Option<String>> = questions.iter().map(|q| asks(q)).collect();
+    // The message stands on its own unless a question already says it.
+    let subtitle = message
+        .filter(|message| !texts.iter().flatten().any(|text| text == message))
+        .unwrap_or_default()
+        .to_owned();
+
     let choices: Option<Vec<Choice>> = questions
         .iter()
-        .map(|question| match question {
+        .zip(&texts)
+        .map(|(question, text)| match question {
             ChatInputQuestion::SingleSelect(select) if !select.options.is_empty() => Some(Choice {
                 id: select.id.clone(),
-                label: select.message.clone(),
+                label: text.clone().unwrap_or_default(),
                 options: select
                     .options
                     .iter()
-                    .map(|option| (option.id.clone(), option.label.clone()))
+                    .map(|option| (option.id.clone(), option_label(option)))
                     .collect(),
                 default: select
                     .options
@@ -2043,7 +2067,6 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
     } else {
         format!("{agent} has a question")
     };
-    let subtitle = request.message.clone().unwrap_or_default();
     match choices.filter(|choices| !choices.is_empty()) {
         Some(choices) => Prompt {
             title,
@@ -2059,10 +2082,23 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
             title,
             body: questions
                 .iter()
-                .filter_map(|question| question_message(question))
-                .filter(|message| *message != subtitle)
+                .zip(&texts)
+                .filter_map(|(question, text)| {
+                    let mut block = text.clone()?;
+                    for option in select_options(question) {
+                        let label = match option.description.as_deref() {
+                            Some(description) if !description.is_empty() => {
+                                format!("{} \u{2014} {description}", option.label)
+                            }
+                            _ => option.label.clone(),
+                        };
+                        block.push_str("\n\u{2022} ");
+                        block.push_str(&label);
+                    }
+                    Some(block)
+                })
                 .collect::<Vec<_>>()
-                .join("\n"),
+                .join("\n\n"),
             subtitle,
             grant: String::new(),
             deny: "Skip".into(),
@@ -2073,15 +2109,37 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
     }
 }
 
-fn question_message(question: &ChatInputQuestion) -> Option<&str> {
-    Some(match question {
-        ChatInputQuestion::Text(q) => &q.message,
-        ChatInputQuestion::Number(q) | ChatInputQuestion::Integer(q) => &q.message,
-        ChatInputQuestion::Boolean(q) => &q.message,
-        ChatInputQuestion::SingleSelect(q) => &q.message,
-        ChatInputQuestion::MultiSelect(q) => &q.message,
+/// An option as the dialog labels it: its label, and its description after
+/// a line break when it has one.
+fn option_label(option: &ChatInputOption) -> String {
+    match option.description.as_deref().map(str::trim) {
+        Some(description) if !description.is_empty() => {
+            format!("{}\n{description}", option.label)
+        }
+        _ => option.label.clone(),
+    }
+}
+
+/// A question's title, if any, and the words it asks.
+fn question_text(question: &ChatInputQuestion) -> Option<(Option<&str>, &str)> {
+    let (title, message) = match question {
+        ChatInputQuestion::Text(q) => (&q.title, &q.message),
+        ChatInputQuestion::Number(q) | ChatInputQuestion::Integer(q) => (&q.title, &q.message),
+        ChatInputQuestion::Boolean(q) => (&q.title, &q.message),
+        ChatInputQuestion::SingleSelect(q) => (&q.title, &q.message),
+        ChatInputQuestion::MultiSelect(q) => (&q.title, &q.message),
         ChatInputQuestion::Unknown(_) => return None,
-    })
+    };
+    Some((title.as_deref(), message))
+}
+
+/// The options of a select question; none for any other kind.
+fn select_options(question: &ChatInputQuestion) -> &[ChatInputOption] {
+    match question {
+        ChatInputQuestion::SingleSelect(q) => &q.options,
+        ChatInputQuestion::MultiSelect(q) => &q.options,
+        _ => &[],
+    }
 }
 
 /// A dialog's choices as submitted answers, by question id.
@@ -2290,6 +2348,128 @@ mod tests {
             timestamp.split('.').nth(1).map(str::len),
             Some(4),
             "{timestamp}"
+        );
+    }
+
+    /// What claude-agent-acp sends for AskUserQuestion: a lone question's
+    /// words in the message and only its header on the field; several
+    /// questions' words on their fields, under a generic message. Options
+    /// carry descriptions, and each question has its "Other" field.
+    fn ask_user_question(questions: &[(&str, &str, bool)]) -> ChatInputRequest {
+        let single = questions.len() == 1;
+        let mut properties = serde_json::Map::new();
+        for (index, (header, question, multi)) in questions.iter().enumerate() {
+            let options = json!([
+                { "const": "Keep it", "title": "Keep it",
+                  "description": "Clients keep working; the table goes in the next release" },
+                { "const": "Drop it", "title": "Drop it",
+                  "description": "Older clients have to sign in again" },
+                { "const": "Ask later", "title": "Ask later" },
+            ]);
+            let mut field = if *multi {
+                json!({ "type": "array", "title": header, "items": { "anyOf": options } })
+            } else {
+                json!({ "type": "string", "title": header, "oneOf": options })
+            };
+            if !single {
+                field["description"] = json!(question);
+            }
+            properties.insert(format!("question_{index}"), field);
+            properties.insert(
+                format!("question_{index}_custom"),
+                json!({
+                    "type": "string",
+                    "title": "Other",
+                    "description": "Type your own answer (optional).",
+                    "_meta": { "_askUserQuestionCustomAnswer": {
+                        "questionId": format!("question_{index}"), "isCustomAnswer": true } },
+                }),
+            );
+        }
+        let message = if single {
+            questions[0].1
+        } else {
+            "Please answer the following questions."
+        };
+        let schema = json!({ "type": "object", "properties": properties });
+        crate::elicitation::form("r1", message, &schema).request
+    }
+
+    const LONG: &str = "Should the migration keep the legacy session table until every \
+        client has upgraded, or drop it in this release and accept that clients older \
+        than three months will have to sign in again?";
+
+    #[test]
+    fn a_lone_question_is_asked_in_its_own_words() {
+        let request = ask_user_question(&[("Migration", LONG, false)]);
+        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        assert_eq!(prompt.title, "Claude has a question");
+        // The question is the group's label, not a header, and not repeated.
+        assert_eq!(prompt.subtitle, "");
+        assert_eq!(prompt.body, "in /srv/app");
+        let [choice] = &prompt.choices[..] else {
+            panic!("one choice group: {:?}", prompt.choices);
+        };
+        assert_eq!(choice.label, LONG);
+        assert_eq!(
+            choice.options,
+            [
+                (
+                    "Keep it".to_owned(),
+                    "Keep it\nClients keep working; the table goes in the next release".to_owned()
+                ),
+                (
+                    "Drop it".to_owned(),
+                    "Drop it\nOlder clients have to sign in again".to_owned()
+                ),
+                ("Ask later".to_owned(), "Ask later".to_owned()),
+            ]
+        );
+        assert_eq!(prompt.grant, "Answer");
+    }
+
+    #[test]
+    fn every_question_is_asked_when_there_are_several() {
+        let request = ask_user_question(&[
+            ("Migration", LONG, false),
+            ("Rollout", "Which environments should get it first?", false),
+        ]);
+        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        assert_eq!(prompt.title, "Claude has some questions");
+        assert_eq!(prompt.subtitle, "Please answer the following questions.");
+        let labels: Vec<&str> = prompt.choices.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, [LONG, "Which environments should get it first?"]);
+        assert!(prompt.choices.iter().all(|c| c.options.len() == 3));
+    }
+
+    #[test]
+    fn questions_the_dialog_cannot_ask_are_spelled_out_with_their_options() {
+        let request = ask_user_question(&[
+            ("Migration", LONG, false),
+            ("Rollout", "Which environments?", true),
+        ]);
+        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        assert!(prompt.choices.is_empty());
+        assert_eq!(prompt.grant, "");
+        assert_eq!(prompt.open, "Open in Ask");
+        let options = "\n\u{2022} Keep it \u{2014} Clients keep working; the table goes in the next release\
+            \n\u{2022} Drop it \u{2014} Older clients have to sign in again\
+            \n\u{2022} Ask later";
+        assert_eq!(
+            prompt.body,
+            format!("{LONG}{options}\n\nWhich environments?{options}")
+        );
+    }
+
+    #[test]
+    fn a_lone_multi_select_question_keeps_the_message_as_its_words() {
+        let request = ask_user_question(&[("Rollout", "Which environments?", true)]);
+        let prompt = question_prompt("Claude", std::path::Path::new("/"), &request);
+        assert_eq!(prompt.subtitle, "");
+        assert!(
+            prompt
+                .body
+                .starts_with("Which environments?\n\u{2022} Keep it")
         );
     }
 }
