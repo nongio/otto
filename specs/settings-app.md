@@ -159,7 +159,8 @@ setting. Today these are reconciled with a changed configuration:
   `input.xkb_options`) by replacing the seat's, which is sent to the clients
   holding keyboard focus;
 - `keyboard_repeat_delay` and `keyboard_repeat_rate`, pushed to the seat's
-  keyboard;
+  keyboard, and from there to every client — otto-kit applications repeat a
+  held key themselves at the delay and rate the compositor last sent;
 - `lock.auto_lock_timeout`, by re-arming the idle timer against the new value.
 
 A second group applies live with no reconciliation at all, because the code
