@@ -675,7 +675,6 @@ impl Host {
                 || "The agent".to_owned(),
                 |agent| agent.display_name.clone(),
             );
-        let cwd = session_cwd(&session.state);
         let Some(pending) = state
             .sessions
             .get_mut(session_uri)
@@ -692,7 +691,7 @@ impl Host {
             request_id,
             "no client is watching; asking in a dialog"
         );
-        let prompt = question_prompt(&agent, &cwd, &request);
+        let prompt = question_prompt(&agent, &request);
         let prompter = Arc::clone(&self.prompter);
         let host = Arc::downgrade(self);
         let (session_uri, request_id) = (session_uri.to_owned(), request_id.to_owned());
@@ -2022,7 +2021,7 @@ fn merged_answers(
 /// Every question is shown in full: its own words, and each option's label
 /// with its description after a line break, which otto-islands draws under
 /// the label.
-pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRequest) -> Prompt {
+pub fn question_prompt(agent: &str, request: &ChatInputRequest) -> Prompt {
     let questions: Vec<&ChatInputQuestion> = request.questions.iter().flatten().collect();
     let message = request.message.as_deref().filter(|m| !m.trim().is_empty());
     // What each question asks. Claude's AskUserQuestion puts a lone question's
@@ -2093,7 +2092,9 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
             } else {
                 subtitle
             },
-            body: format!("in {}", dialog::folder(cwd)),
+            // No folder line: where the agent runs says nothing about the
+            // question it asks. Permission prompts still carry it.
+            body: String::new(),
             grant: "Answer".into(),
             deny: "Skip".into(),
             open: dialog::OPEN_IN_ASK.into(),
@@ -2449,11 +2450,10 @@ mod tests {
     #[test]
     fn a_lone_question_is_asked_in_its_own_words() {
         let request = ask_user_question(&[("Migration", LONG, false)]);
-        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        let prompt = question_prompt("Claude", &request);
         assert_eq!(prompt.title, "Claude has a question");
         // The question is the group's label, not a header, and not repeated.
         assert_eq!(prompt.subtitle, "");
-        assert_eq!(prompt.body, "in /srv/app");
         let [choice] = &prompt.choices[..] else {
             panic!("one choice group: {:?}", prompt.choices);
         };
@@ -2481,7 +2481,7 @@ mod tests {
             ("Migration", LONG, false),
             ("Rollout", "Which environments should get it first?", false),
         ]);
-        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        let prompt = question_prompt("Claude", &request);
         assert_eq!(prompt.title, "Claude has some questions");
         // The pages say "1 of 2"; the message that only announces there are
         // several questions would say it again.
@@ -2497,7 +2497,7 @@ mod tests {
             ("Migration", LONG, false),
             ("Rollout", "Which environments?", true),
         ]);
-        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        let prompt = question_prompt("Claude", &request);
         let multi: Vec<bool> = prompt.choices.iter().map(|c| c.multi).collect();
         assert_eq!(multi, [false, true]);
         assert_eq!(prompt.grant, "Answer");
@@ -2522,7 +2522,7 @@ mod tests {
             },
         ));
         request.questions = Some(questions);
-        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        let prompt = question_prompt("Claude", &request);
         assert!(prompt.choices.is_empty());
         assert_eq!(prompt.grant, "");
         assert_eq!(prompt.open, "Open in Ask");
@@ -2540,7 +2540,7 @@ mod tests {
     #[test]
     fn a_lone_multi_select_question_is_asked_in_the_messages_words() {
         let request = ask_user_question(&[("Rollout", "Which environments?", true)]);
-        let prompt = question_prompt("Claude", std::path::Path::new("/"), &request);
+        let prompt = question_prompt("Claude", &request);
         let [choice] = &prompt.choices[..] else {
             panic!("one choice group: {:?}", prompt.choices);
         };
@@ -2608,11 +2608,7 @@ mod tests {
             .unwrap_or_else(|_| "/tmp/claude-1000/shots/prompt.txt".into());
         let request: ChatInputRequest =
             serde_json::from_str(&std::fs::read_to_string(input).unwrap()).unwrap();
-        let prompt = question_prompt(
-            "Claude",
-            std::path::Path::new("/home/me/dev/otto"),
-            &request,
-        );
+        let prompt = question_prompt("Claude", &request);
         let esc = |s: &str| {
             s.replace('\\', "\\\\")
                 .replace('\n', "\\n")
