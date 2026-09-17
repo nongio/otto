@@ -22,8 +22,9 @@ jobs:
   # components/otto-rdp does not need the compositor's headless suite, and a
   # change under src/ does not need otto-rdp's GStreamer bin rebuilt.
   #
-  # Anything shared (the lockfile, the workspace manifest, the toolchain, the
-  # UI toolkit every component links, this file) sets *every* flag — the safe
+  # Anything shared (the workspace manifest, the toolchain, the UI toolkit
+  # every component links, this file) sets *every* flag. A lockfile change
+  # sets the flags whose crates' dependency closures it touched — the safe
   # default is to run more, never less.
   changes:
     runs-on: ubuntu-24.04
@@ -47,6 +48,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          all=false
 
           # workflow_dispatch, a tag build, or a first push to a new branch has
           # no usable base to diff against: treat everything as changed.
@@ -55,6 +57,7 @@ jobs:
              || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
               echo "no diff base ($BASE_SHA); running everything"
               FILES='__all__'
+              all=true
           else
               FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
               echo "changed files:"
@@ -64,27 +67,50 @@ jobs:
           # Matches any path, so a missing base turns every filter on.
           if [ "$FILES" = '__all__' ]; then FILES=$(git ls-files); fi
 
-          matches() { echo "$FILES" | grep -qE "$1"; }
+          # A here-string, not `echo | grep -q`: grep -q exits on the first
+          # match, and under pipefail the SIGPIPE echo gets reads as no match.
+          matches() { grep -qE "$1" <<< "$FILES"; }
 
           # Nothing in the tree is unaffected by these.
-          SHARED='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml)$|^\.github/workflows/ci\.yml$'
+          SHARED='^(Cargo\.toml|rust-toolchain\.toml)$|^\.github/workflows/ci\.yml$'
+          # The lockfile is scoped per area by the dependency closures it
+          # records (scripts/ci-lock-scope.py), not treated as shared: adding
+          # a crate to the launcher should not rebuild the RDP bridge.
+          LOCK='^Cargo\.lock$'
           # The UI toolkit: linked by otto and by every component except the
           # RDP bridge and the portal backend, which are leaf crates (verified
           # with `cargo tree -p <crate> | grep otto-kit`).
           KIT='^components/otto-kit/'
-          COMPOSITOR='^(src|tests|protocols|resources)/|^otto_config.*\.toml$'
+          # resources/bin and resources/plugins are installed files that no
+          # crate reads; they only reach the packaging jobs. resources/locales
+          # counts as UI below: the catalogues are strings, which the locales
+          # job and the workspace unit tests cover, not the headless suites.
+          COMPOSITOR='^(src|tests|protocols)/|^resources/(?!bin/|plugins/|locales/)|^otto_config.*\.toml$'
           RDP='^components/otto-rdp/'
           PORTAL='^components/xdg-desktop-portal-otto/'
           # Every component except the two with their own filters above.
-          UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/'
+          UI='^components/(?!otto-rdp/|xdg-desktop-portal-otto/)|^sample-clients/|^resources/locales/'
           # The file browser and the two crates only it links (verified with
           # `cargo tree -p otto-files --depth 1`). Its unit tests are the
           # largest suite in the workspace, so they run only when it changed.
           BROWSER='^components/(otto-files|otto-quickview|otto-media-kit)/'
           PACKAGING='^PKGBUILD|^(Cargo\.toml)$|^(resources|scripts)/|^\.github/workflows/ci\.yml$'
 
+          matchesP() { grep -qP "$1" <<< "$FILES"; }
+
           shared=false; matches "$SHARED" && shared=true
           kit=false; matches "$KIT" && kit=true
+
+          lock_compositor=false; lock_rdp=false; lock_portal=false
+          lock_files=false; lock_ui=false
+          if matches "$LOCK" && ! $all && ! $shared \
+             && scope=$(python3 scripts/ci-lock-scope.py "$BASE_SHA" "$HEAD_SHA"); then
+              eval "$(echo "$scope" | sed 's/^/lock_/')"
+              echo "lockfile reaches: compositor=$lock_compositor rdp=$lock_rdp portal=$lock_portal files=$lock_files ui=$lock_ui"
+          elif matches "$LOCK"; then
+              # No base to diff, or the scope script failed: run everything.
+              shared=true
+          fi
 
           for name in compositor rdp portal; do
               case $name in
@@ -94,16 +120,17 @@ jobs:
                   rdp)        pat=$RDP;        extra=false ;;
                   portal)     pat=$PORTAL;     extra=false ;;
               esac
-              if $shared || $extra || matches "$pat"; then v=true; else v=false; fi
+              lock=lock_$name
+              if $shared || $extra || ${!lock} || matchesP "$pat"; then v=true; else v=false; fi
               echo "$name=$v" >> "$GITHUB_OUTPUT"
               eval "$name=$v"
           done
 
           # -P for the negative lookahead; plain -E cannot express it.
-          if $shared || $kit || echo "$FILES" | grep -qP "$UI"; then ui=true; else ui=false; fi
+          if $shared || $kit || $lock_ui || matchesP "$UI"; then ui=true; else ui=false; fi
           echo "ui=$ui" >> "$GITHUB_OUTPUT"
 
-          if $shared || $kit || matches "$BROWSER"; then files=true; else files=false; fi
+          if $shared || $kit || $lock_files || matches "$BROWSER"; then files=true; else files=false; fi
           echo "files=$files" >> "$GITHUB_OUTPUT"
 
           if matches "$PACKAGING"; then packaging=true; else packaging=false; fi
