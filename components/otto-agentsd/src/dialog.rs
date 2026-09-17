@@ -1,11 +1,14 @@
-//! Permission dialogs: asking the user whether an agent may use a tool.
+//! Dialogs: asking the user whether an agent may use a tool, or how to answer
+//! an agent's question.
 //!
 //! Otto's dialog renderer, otto-islands, serves `org.otto.Dialog1` (see
-//! `specs/portal-access-dialog.md` in Otto): an Access-style grant or deny
-//! prompt, shown as a modal island panel. Agents configured with
-//! `permissions = "ask"` have their requests shown there. When the dialog
-//! cannot be shown the request is denied, so an agent is never allowed
-//! something nobody saw.
+//! `specs/portal-access-dialog.md` in Otto): a modal island panel with grant,
+//! deny and "open in Ask" buttons and, optionally, groups of choices. What no
+//! client is watching the chat to answer is asked there: permission requests
+//! from agents configured with `permissions = "ask"`, and agents' questions.
+//! When a permission dialog cannot be shown the request is denied, so an agent
+//! is never allowed something nobody saw; a question that cannot be shown
+//! stays open in the chat.
 
 use std::future::Future;
 use std::path::Path;
@@ -19,8 +22,11 @@ use tokio::sync::OnceCell;
 
 use crate::agent::{Decision, Question, QuestionOption};
 
-/// What a permission dialog says.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The label of the button that hands a question to Ask.
+pub const OPEN_IN_ASK: &str = "Open in Ask";
+
+/// What a dialog says.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Prompt {
     /// Who wants to do what: "Claude wants to run a command".
     pub title: String,
@@ -28,17 +34,76 @@ pub struct Prompt {
     pub subtitle: String,
     /// Where: the session's folder.
     pub body: String,
-    /// The grant button, named after the agent's own option.
+    /// The grant button, named after the agent's own option. Empty hides it.
     pub grant: String,
     /// The deny button, likewise.
     pub deny: String,
+    /// The button that hands the question to Ask instead. Empty hides it.
+    pub open: String,
+    /// The dialog's icon name.
+    pub icon: String,
+    /// Groups of options, one picked from each, sent back with a grant.
+    pub choices: Vec<Choice>,
+}
+
+/// A group of options in a [`Prompt`], of which the user picks one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Choice {
+    pub id: String,
+    pub label: String,
+    /// `(id, label)` pairs, in order.
+    pub options: Vec<(String, String)>,
+    /// The option picked to begin with.
+    pub default: String,
+}
+
+/// How the user answered a [`Prompt`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// Granted, with the option picked in each choice group: `(group, option)`.
+    Granted(Vec<(String, String)>),
+    /// Denied, or skipped.
+    Denied,
+    /// The dialog went away without an answer.
+    Ended,
+    /// The user asked to answer in Ask instead.
+    Open,
+    /// No dialog could be shown.
+    Unavailable,
 }
 
 /// Puts a [`Prompt`] in front of the user.
 pub trait Prompter: Send + Sync {
-    /// Resolves to whether the user granted the request. Anything short of a
-    /// grant is `false`: a denial, a dismissed dialog, or no dialog at all.
-    fn ask(&self, prompt: Prompt) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
+    /// Resolves to what the user said.
+    fn ask(&self, prompt: Prompt) -> Pin<Box<dyn Future<Output = Reply> + Send + '_>>;
+
+    /// Opens the session at `session_uri` in Ask, for the user to answer there.
+    fn open(&self, session_uri: &str) {
+        open_in_ask(session_uri);
+    }
+}
+
+/// Starts `otto-ask --session <session_uri>` in a process group of its own,
+/// so it is not stopped along with this service.
+pub fn open_in_ask(session_uri: &str) {
+    let mut command = tokio::process::Command::new("otto-ask");
+    command
+        .arg("--session")
+        .arg(session_uri)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0);
+    match command.spawn() {
+        Ok(mut child) => {
+            tracing::info!(session_uri, "opening the session in Ask");
+            // Reaped once it exits, so it never lingers as a zombie.
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+        }
+        Err(err) => tracing::warn!(%err, session_uri, "could not start otto-ask"),
+    }
 }
 
 /// The dialog for `request`, made by the agent called `agent` in `cwd`.
@@ -66,6 +131,8 @@ pub fn prompt_for(agent: &str, cwd: &Path, request: &RequestPermissionRequest) -
         body: format!("in {}", folder(cwd)),
         grant: name(true),
         deny: name(false),
+        icon: "system-run".into(),
+        ..Prompt::default()
     }
 }
 
@@ -166,7 +233,7 @@ fn option(request: &RequestPermissionRequest, allow: bool) -> Option<usize> {
 }
 
 /// `cwd` for people: under the home folder as `~/…`.
-fn folder(cwd: &Path) -> String {
+pub fn folder(cwd: &Path) -> String {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     match home.as_deref().and_then(|home| cwd.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
@@ -202,6 +269,70 @@ trait Dialog {
         modal: bool,
         choices: Vec<WireChoice>,
     ) -> zbus::Result<(u32, Vec<(String, String)>)>;
+
+    /// Like `present_access`, with a button that hands the question elsewhere,
+    /// answered with `response` `3`. An empty `grant_label` or `open_label`
+    /// hides that button.
+    #[allow(clippy::too_many_arguments)]
+    async fn present_question(
+        &self,
+        app_id: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        icon: &str,
+        grant_label: &str,
+        deny_label: &str,
+        open_label: &str,
+        modal: bool,
+        choices: Vec<WireChoice>,
+    ) -> zbus::Result<(u32, Vec<(String, String)>)>;
+}
+
+/// The reply a dialog's `(response, results)` stands for.
+pub fn reply_from_wire(response: u32, results: Vec<(String, String)>) -> Reply {
+    match response {
+        0 => Reply::Granted(results),
+        1 => Reply::Denied,
+        3 => Reply::Open,
+        _ => Reply::Ended,
+    }
+}
+
+/// Whether `err` says the renderer lacks the method: an otto-islands from
+/// before `PresentQuestion`.
+fn unknown_method(err: &zbus::Error) -> bool {
+    match err {
+        zbus::Error::MethodError(name, _, _) => matches!(
+            name.as_str(),
+            "org.freedesktop.DBus.Error.UnknownMethod"
+                | "org.freedesktop.DBus.Error.UnknownInterface"
+        ),
+        zbus::Error::FDO(fdo) => matches!(
+            fdo.as_ref(),
+            zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::UnknownInterface(_)
+        ),
+        _ => false,
+    }
+}
+
+fn wire_choices(choices: &[Choice]) -> Vec<WireChoice> {
+    choices
+        .iter()
+        .map(|choice| {
+            let options = choice
+                .options
+                .iter()
+                .map(|(id, label)| (id.clone(), label.clone(), String::new()))
+                .collect();
+            (
+                choice.id.clone(),
+                choice.label.clone(),
+                options,
+                choice.default.clone(),
+            )
+        })
+        .collect()
 }
 
 /// Shows prompts through otto-islands, on the session bus.
@@ -218,9 +349,9 @@ impl Islands {
             .get_or_init(|| async {
                 zbus::Connection::session()
                     .await
-                    .inspect_err(|err| {
-                        tracing::warn!(%err, "no session bus; permission requests will be denied")
-                    })
+                    .inspect_err(
+                        |err| tracing::warn!(%err, "no session bus; no dialogs can be shown"),
+                    )
                     .ok()
             })
             .await
@@ -229,26 +360,53 @@ impl Islands {
 }
 
 impl Prompter for Islands {
-    fn ask(&self, prompt: Prompt) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+    fn ask(&self, prompt: Prompt) -> Pin<Box<dyn Future<Output = Reply> + Send + '_>> {
         Box::pin(async move {
             let Some(connection) = self.connection().await else {
-                return false;
+                return Reply::Unavailable;
             };
             let proxy = match DialogProxy::new(connection).await {
                 Ok(proxy) => proxy,
                 Err(err) => {
-                    tracing::warn!(%err, "no dialog renderer; denying the permission request");
-                    return false;
+                    tracing::warn!(%err, "no dialog renderer");
+                    return Reply::Unavailable;
                 }
             };
-            tracing::info!(title = %prompt.title, subtitle = %prompt.subtitle, "asking for permission");
+            tracing::info!(title = %prompt.title, subtitle = %prompt.subtitle, "asking in a dialog");
+            let answer = proxy
+                .present_question(
+                    "otto-agentsd",
+                    &prompt.title,
+                    &prompt.subtitle,
+                    &prompt.body,
+                    &prompt.icon,
+                    &prompt.grant,
+                    &prompt.deny,
+                    &prompt.open,
+                    true,
+                    wire_choices(&prompt.choices),
+                )
+                .await;
+            let err = match answer {
+                Ok((response, results)) => {
+                    tracing::info!(response, "dialog answered");
+                    return reply_from_wire(response, results);
+                }
+                Err(err) => err,
+            };
+            // A renderer from before questions can still ask a plain yes or
+            // no, only without the button that opens Ask.
+            if !unknown_method(&err) || !prompt.choices.is_empty() || prompt.grant.is_empty() {
+                tracing::warn!(%err, "could not show the dialog");
+                return Reply::Unavailable;
+            }
             let answer = proxy
                 .present_access(
                     "otto-agentsd",
                     &prompt.title,
                     &prompt.subtitle,
                     &prompt.body,
-                    "system-run",
+                    &prompt.icon,
                     &prompt.grant,
                     &prompt.deny,
                     true,
@@ -256,13 +414,16 @@ impl Prompter for Islands {
                 )
                 .await;
             match answer {
-                Ok((response, _)) => {
-                    tracing::info!(response, "permission dialog answered");
-                    response == 0
+                Ok((response, results)) => {
+                    tracing::info!(response, "dialog answered");
+                    match reply_from_wire(response, results) {
+                        Reply::Open => Reply::Ended,
+                        reply => reply,
+                    }
                 }
                 Err(err) => {
-                    tracing::warn!(%err, "could not show the permission dialog; denying");
-                    false
+                    tracing::warn!(%err, "could not show the dialog");
+                    Reply::Unavailable
                 }
             }
         })
@@ -317,6 +478,8 @@ mod tests {
                 body: "in /srv/project".into(),
                 grant: "Allow".into(),
                 deny: "Reject".into(),
+                icon: "system-run".into(),
+                ..Prompt::default()
             }
         );
     }

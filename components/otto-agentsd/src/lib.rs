@@ -9,6 +9,7 @@ pub mod agent;
 pub mod cli;
 pub mod config;
 pub mod dialog;
+pub mod elicitation;
 pub mod host;
 pub mod rpc;
 pub mod server;

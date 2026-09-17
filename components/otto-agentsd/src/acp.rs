@@ -9,10 +9,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, ContentBlock, InitializeRequest, LoadSessionRequest,
-    Meta, NewSessionRequest, PromptRequest, PromptResponse, RequestPermissionRequest,
-    RequestPermissionResponse, ResourceLink, ResumeSessionRequest, SessionId, SessionNotification,
-    SessionUpdate, SetSessionConfigOptionRequest, StopReason, TextContent, ToolCallStatus,
+    AgentCapabilities, CancelNotification, ClientCapabilities, ContentBlock,
+    CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
+    ElicitationCapabilities, ElicitationFormCapabilities, ElicitationMode, InitializeRequest,
+    LoadSessionRequest, Meta, NewSessionRequest, PromptRequest, PromptResponse,
+    RequestPermissionRequest, RequestPermissionResponse, ResourceLink, ResumeSessionRequest,
+    SessionId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, StopReason,
+    TextContent, ToolCallStatus,
 };
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo};
 use ahp_types::state::AgentInfo;
@@ -23,6 +26,7 @@ use crate::agent::{
 };
 use crate::config::{self, AgentConfig, PermissionPolicy, SkillDelivery};
 use crate::dialog;
+use crate::elicitation;
 use crate::skills::{self, Plugin};
 
 pub struct AcpBackend {
@@ -217,13 +221,58 @@ pub async fn run_session(
             },
             agent_client_protocol::on_receive_request!(),
         )
+        .on_receive_request(
+            {
+                let events = events.clone();
+                let current_turn = Arc::clone(&current_turn);
+                async move |request: CreateElicitationRequest,
+                            responder,
+                            connection: ConnectionTo<Agent>| {
+                    let decline = || CreateElicitationResponse::new(ElicitationAction::Decline);
+                    // Only forms are asked; a URL to open has nowhere to go.
+                    let ElicitationMode::Form(mode) = &request.mode else {
+                        return responder.respond(decline());
+                    };
+                    // A question outside a turn has nobody to answer it.
+                    let Some(turn_id) = lock(&current_turn).clone() else {
+                        return responder.respond(decline());
+                    };
+                    let schema = serde_json::to_value(&mode.requested_schema).unwrap_or_default();
+                    let id = uuid::Uuid::new_v4().to_string();
+                    let form = elicitation::form(&id, &request.message, &schema);
+                    let (reply, answer) = oneshot::channel();
+                    let asked = SessionEvent::InputRequested {
+                        turn_id,
+                        request: form.request.clone(),
+                        reply,
+                    };
+                    if events.send(asked).is_err() {
+                        return responder.respond(decline());
+                    }
+                    // Answered in a task of its own, like a permission request.
+                    connection.spawn(async move {
+                        let answer = answer.await.ok();
+                        responder.respond(elicitation::respond(&form, answer))
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
         .connect_with(transport, {
             let events = events.clone();
             let current_turn = Arc::clone(&current_turn);
             let ready = Arc::clone(&ready);
             async move |connection: ConnectionTo<Agent>| {
+                // Forms are what the chat can ask; declaring them is what
+                // turns Claude's AskUserQuestion on.
+                let capabilities = ClientCapabilities::new().elicitation(
+                    ElicitationCapabilities::new().form(ElicitationFormCapabilities::new()),
+                );
                 let initialized = connection
-                    .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                    .send_request(
+                        InitializeRequest::new(ProtocolVersion::V1)
+                            .client_capabilities(capabilities),
+                    )
                     .block_task()
                     .await?;
                 let session_id = open_session(

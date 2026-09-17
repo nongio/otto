@@ -4,9 +4,10 @@
 //! it hands a backend a command channel and an event channel, and turns the
 //! events it gets back into AHP actions.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ahp_types::state::AgentInfo;
+use ahp_types::state::{AgentInfo, ChatInputAnswer, ChatInputRequest, ChatInputResponseKind};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::dialog::Prompt;
@@ -72,6 +73,15 @@ pub enum SessionEvent {
         question: Question,
         reply: oneshot::Sender<Decision>,
     },
+    /// The agent asks the user something, such as Claude's AskUserQuestion or
+    /// an MCP server's form, and waits for the answer sent on `reply`.
+    /// Dropping `reply` cancels the question.
+    InputRequested {
+        turn_id: String,
+        /// The questions, as the chat shows them. The host keeps `id`.
+        request: ChatInputRequest,
+        reply: oneshot::Sender<InputAnswer>,
+    },
     /// A tool call the agent was given permission for has finished.
     ToolCallFinished {
         turn_id: String,
@@ -116,6 +126,23 @@ impl Decision {
         Self {
             approved: false,
             option_id: None,
+        }
+    }
+}
+
+/// The answer to a [`SessionEvent::InputRequested`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputAnswer {
+    pub response: ChatInputResponseKind,
+    /// The answers by question id; only submitted ones count.
+    pub answers: HashMap<String, ChatInputAnswer>,
+}
+
+impl InputAnswer {
+    pub fn decline() -> Self {
+        Self {
+            response: ChatInputResponseKind::Decline,
+            answers: HashMap::new(),
         }
     }
 }

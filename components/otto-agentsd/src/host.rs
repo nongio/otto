@@ -16,14 +16,15 @@ use ahp::reducers::{
     ReduceOutcome, apply_action_to_chat, apply_action_to_root, apply_action_to_session,
 };
 use ahp_types::actions::{
-    ActionEnvelope, ActionOrigin, ChatDeltaAction, ChatErrorAction,
-    ChatPendingMessageRemovedAction, ChatPendingMessageSetAction, ChatReasoningAction,
-    ChatResponsePartAction, ChatToolCallCompleteAction, ChatToolCallConfirmedAction,
-    ChatToolCallReadyAction, ChatToolCallStartAction, ChatTurnCancelledAction,
-    ChatTurnCompleteAction, ChatTurnStartedAction, PartialChatSummary,
-    RootActiveSessionsChangedAction, SessionChatAddedAction, SessionChatUpdatedAction,
-    SessionCreationFailedAction, SessionDefaultChatChangedAction, SessionMetaChangedAction,
-    SessionReadyAction, SessionTitleChangedAction, StateAction,
+    ActionEnvelope, ActionOrigin, ChatDeltaAction, ChatErrorAction, ChatInputAnswerChangedAction,
+    ChatInputCompletedAction, ChatInputRequestedAction, ChatPendingMessageRemovedAction,
+    ChatPendingMessageSetAction, ChatReasoningAction, ChatResponsePartAction,
+    ChatToolCallCompleteAction, ChatToolCallConfirmedAction, ChatToolCallReadyAction,
+    ChatToolCallStartAction, ChatTurnCancelledAction, ChatTurnCompleteAction,
+    ChatTurnStartedAction, PartialChatSummary, RootActiveSessionsChangedAction,
+    SessionChatAddedAction, SessionChatUpdatedAction, SessionCreationFailedAction,
+    SessionDefaultChatChangedAction, SessionInputNeededRemovedAction, SessionInputNeededSetAction,
+    SessionMetaChangedAction, SessionReadyAction, SessionTitleChangedAction, StateAction,
 };
 use ahp_types::commands::{
     CreateSessionParams, DispatchActionParams, Implementation, InitializeParams, InitializeResult,
@@ -33,9 +34,11 @@ use ahp_types::common::{JsonObject, StringOrMarkdown};
 use ahp_types::errors::ahp_error_codes;
 use ahp_types::notifications::SessionAddedParams;
 use ahp_types::state::{
-    ChatOrigin, ChatState, ChatSummary, ConfirmationOption, ConfirmationOptionKind, ErrorInfo,
-    ErrorResponsePart, MarkdownResponsePart, Message, MessageAttachment, PendingMessageKind,
-    ReasoningResponsePart, ResponsePart, RootState, SessionLifecycle, SessionState, SessionStatus,
+    ChatInputAnswer, ChatInputAnswerValue, ChatInputAnswered, ChatInputQuestion, ChatInputRequest,
+    ChatInputResponseKind, ChatInputSelectedAnswerValue, ChatOrigin, ChatState, ChatSummary,
+    ConfirmationOption, ConfirmationOptionKind, ErrorInfo, ErrorResponsePart, MarkdownResponsePart,
+    Message, MessageAttachment, PendingMessageKind, ReasoningResponsePart, ResponsePart, RootState,
+    SessionChatInputRequest, SessionInputRequest, SessionLifecycle, SessionState, SessionStatus,
     SessionSummary, Snapshot, SnapshotState, ToolCallCancellationReason,
     ToolCallConfirmationReason, ToolCallResult,
 };
@@ -46,10 +49,11 @@ use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::{
-    Attachment, Backend, Decision, Question, QuestionOption, SessionCommand, SessionEvent,
-    SessionSpec, TurnOutcome,
+    Attachment, Backend, Decision, InputAnswer, Question, QuestionOption, SessionCommand,
+    SessionEvent, SessionSpec, TurnOutcome,
 };
-use crate::dialog::{self, Prompt, Prompter};
+use crate::dialog::{self, Choice, Prompt, Prompter, Reply};
+use crate::elicitation;
 use crate::rpc::{self, RpcError};
 use crate::store::{SessionRecord, Store};
 use crate::uri;
@@ -139,6 +143,8 @@ struct Session {
     announced: (u32, String),
     /// The agent's permission questions waiting for an answer, by tool call id.
     questions: HashMap<String, Pending>,
+    /// The agent's input requests waiting for an answer, by request id.
+    inputs: HashMap<String, PendingInput>,
     /// Tool calls that were allowed and have not finished, with the text that
     /// names them.
     tools: HashMap<String, String>,
@@ -156,6 +162,15 @@ struct Pending {
     /// How the tool call is named in the chat.
     display: String,
     options: Vec<QuestionOption>,
+    /// Whether it has also been put to the user in a dialog.
+    escalated: bool,
+}
+
+/// An agent's question, open in the chat as an input request and mirrored in
+/// the session's `inputNeeded`.
+struct PendingInput {
+    turn_id: String,
+    reply: oneshot::Sender<InputAnswer>,
     /// Whether it has also been put to the user in a dialog.
     escalated: bool,
 }
@@ -405,6 +420,7 @@ impl Host {
             open_part: None,
             announced: (SessionStatus::Idle.bits(), String::new()),
             questions: HashMap::new(),
+            inputs: HashMap::new(),
             tools: HashMap::new(),
             activity: 0,
         };
@@ -485,6 +501,12 @@ impl Host {
             StateAction::ChatToolCallConfirmed(action) => {
                 state.check_confirmation(&session_uri, action)
             }
+            StateAction::ChatInputAnswerChanged(action) => {
+                state.check_answer(&session_uri, &channel, action)
+            }
+            StateAction::ChatInputCompleted(action) => {
+                state.check_completion(&session_uri, &channel, action)
+            }
             _ => Err("this host does not support this action yet"),
         };
         if let Err(reason) = accepted {
@@ -500,10 +522,20 @@ impl Host {
                 let turn_id = action.turn_id.clone();
                 let cancelled = StateAction::ChatTurnCancelled(action);
                 state.apply(&channel, cancelled, Some(origin));
+                state.drop_turn_requests(&session_uri, &turn_id);
                 state.send_command(&session_uri, SessionCommand::Cancel { turn_id });
             }
             StateAction::ChatToolCallConfirmed(action) => {
                 state.confirm(&session_uri, &channel, action, Some(origin))
+            }
+            StateAction::ChatInputAnswerChanged(action) => {
+                let request_id = action.request_id.clone();
+                let changed = StateAction::ChatInputAnswerChanged(action);
+                state.apply(&channel, changed, Some(origin));
+                state.mirror_input(&session_uri, &channel, &request_id);
+            }
+            StateAction::ChatInputCompleted(action) => {
+                state.complete_input(&session_uri, &channel, action, Some(origin))
             }
             queued => {
                 state.apply(&channel, queued, Some(origin));
@@ -551,6 +583,17 @@ impl Host {
                     self.escalate(&mut state, session_uri, &tool_call_id);
                 }
             }
+            SessionEvent::InputRequested {
+                turn_id,
+                request,
+                reply,
+            } => {
+                let request_id = request.id.clone();
+                let opened = state.open_input(session_uri, &chat_uri, turn_id, request, reply);
+                if opened && !state.watched(&chat_uri) {
+                    self.escalate_input(&mut state, session_uri, &request_id);
+                }
+            }
             SessionEvent::ToolCallFinished {
                 turn_id,
                 tool_call_id,
@@ -580,35 +623,139 @@ impl Host {
             tool_call_id,
             "no client is watching; asking in a dialog"
         );
-        let prompt = pending.prompt.clone();
+        let prompt = Prompt {
+            open: dialog::OPEN_IN_ASK.into(),
+            ..pending.prompt.clone()
+        };
         let prompter = Arc::clone(&self.prompter);
         let host = Arc::downgrade(self);
         let (session_uri, tool_call_id) = (session_uri.to_owned(), tool_call_id.to_owned());
         tokio::spawn(async move {
-            let granted = prompter.ask(prompt).await;
-            if let Some(host) = host.upgrade() {
-                host.lock()
-                    .answer_from_dialog(&session_uri, &tool_call_id, granted);
+            let reply = prompter.ask(prompt).await;
+            let Some(host) = host.upgrade() else {
+                return;
+            };
+            match reply {
+                Reply::Open => {
+                    host.lock().unescalate(&session_uri, &tool_call_id);
+                    prompter.open(&session_uri);
+                }
+                reply => {
+                    let granted = matches!(reply, Reply::Granted(_));
+                    host.lock()
+                        .answer_from_dialog(&session_uri, &tool_call_id, granted);
+                }
             }
+        });
+    }
+
+    /// Puts a pending input request to the user through the prompter, and
+    /// answers it with what they say there, unless a client answers it first.
+    /// Select questions are asked in the dialog itself; anything else can only
+    /// be answered in Ask, which the dialog offers to open.
+    fn escalate_input(
+        self: &Arc<Self>,
+        state: &mut HostState,
+        session_uri: &str,
+        request_id: &str,
+    ) {
+        let Some(session) = state.sessions.get(session_uri) else {
+            return;
+        };
+        let Some(request) = state.input_request(&session.chat, request_id).cloned() else {
+            return;
+        };
+        let agent = state
+            .root
+            .agents
+            .iter()
+            .find(|agent| agent.provider == session.state.provider)
+            .map_or_else(
+                || "The agent".to_owned(),
+                |agent| agent.display_name.clone(),
+            );
+        let cwd = session_cwd(&session.state);
+        let Some(pending) = state
+            .sessions
+            .get_mut(session_uri)
+            .and_then(|session| session.inputs.get_mut(request_id))
+        else {
+            return;
+        };
+        if pending.escalated {
+            return;
+        }
+        pending.escalated = true;
+        tracing::info!(
+            session_uri,
+            request_id,
+            "no client is watching; asking in a dialog"
+        );
+        let prompt = question_prompt(&agent, &cwd, &request);
+        let prompter = Arc::clone(&self.prompter);
+        let host = Arc::downgrade(self);
+        let (session_uri, request_id) = (session_uri.to_owned(), request_id.to_owned());
+        tokio::spawn(async move {
+            let reply = prompter.ask(prompt).await;
+            let Some(host) = host.upgrade() else {
+                return;
+            };
+            let (response, answers) = match reply {
+                Reply::Granted(selections) => (ChatInputResponseKind::Accept, selected(selections)),
+                // Skipped, or dismissed: the agent carries on without an
+                // answer, as it does when a permission dialog goes away.
+                Reply::Denied | Reply::Ended => (ChatInputResponseKind::Decline, HashMap::new()),
+                Reply::Open => {
+                    host.lock().unescalate_input(&session_uri, &request_id);
+                    prompter.open(&session_uri);
+                    return;
+                }
+                // The question stays in the chat, for a client to answer.
+                Reply::Unavailable => return,
+            };
+            let mut state = host.lock();
+            let Some(chat_uri) = state.sessions.get(&session_uri).map(|s| s.chat.clone()) else {
+                return;
+            };
+            let action = ChatInputCompletedAction {
+                request_id,
+                response,
+                answers: (!answers.is_empty()).then_some(answers),
+            };
+            state.complete_input(&session_uri, &chat_uri, action, None);
+            state.sync_summaries(&session_uri);
+            state.touch(&session_uri);
         });
     }
 
     /// Escalates every pending question that no client is watching any more.
     fn escalate_unwatched(self: &Arc<Self>, state: &mut HostState) {
-        let unwatched: Vec<(String, String)> = state
-            .sessions
-            .iter()
-            .filter(|(_, session)| !state.watched(&session.chat))
-            .flat_map(|(uri, session)| {
+        let mut questions = Vec::new();
+        let mut inputs = Vec::new();
+        for (uri, session) in &state.sessions {
+            if state.watched(&session.chat) {
+                continue;
+            }
+            questions.extend(
                 session
                     .questions
                     .iter()
                     .filter(|(_, pending)| !pending.escalated)
-                    .map(move |(id, _)| (uri.clone(), id.clone()))
-            })
-            .collect();
-        for (session_uri, tool_call_id) in unwatched {
+                    .map(|(id, _)| (uri.clone(), id.clone())),
+            );
+            inputs.extend(
+                session
+                    .inputs
+                    .iter()
+                    .filter(|(_, pending)| !pending.escalated)
+                    .map(|(id, _)| (uri.clone(), id.clone())),
+            );
+        }
+        for (session_uri, tool_call_id) in questions {
             self.escalate(state, &session_uri, &tool_call_id);
+        }
+        for (session_uri, request_id) in inputs {
+            self.escalate_input(state, &session_uri, &request_id);
         }
     }
 }
@@ -637,6 +784,16 @@ impl HostState {
                 state.lifecycle = SessionLifecycle::Ready;
                 state.creation_error = None;
             }
+            // The questions an earlier run was waiting on went with its agent.
+            for request in state.input_needed.clone().into_iter().flatten() {
+                if let SessionInputRequest::ChatInput(request) = request {
+                    let removed =
+                        StateAction::SessionInputNeededRemoved(SessionInputNeededRemovedAction {
+                            id: request.id,
+                        });
+                    apply_action_to_session(&mut state, &removed);
+                }
+            }
             // From today's configuration, which may name another terminal
             // than the one the session was saved with.
             state.meta = terminal_meta(self.backend.as_ref(), &state, agent_session.as_deref());
@@ -650,6 +807,7 @@ impl HostState {
                 agent_session,
                 open_part: None,
                 questions: HashMap::new(),
+                inputs: HashMap::new(),
                 tools: HashMap::new(),
                 activity: 0,
             };
@@ -802,7 +960,10 @@ impl HostState {
                     .as_ref()
                     .is_some_and(|queue| !queue.is_empty())
         });
-        !chat_busy && session.questions.is_empty() && session.tools.is_empty()
+        !chat_busy
+            && session.questions.is_empty()
+            && session.inputs.is_empty()
+            && session.tools.is_empty()
     }
 
     /// Records activity on the session, which restarts its idle countdown,
@@ -1026,6 +1187,243 @@ impl HostState {
         self.confirm(session_uri, &chat_uri, action, None);
         self.sync_summaries(session_uri);
         self.touch(session_uri);
+    }
+
+    /// Marks a permission question as no longer put to the user in a dialog,
+    /// so it is again when nobody watches it.
+    fn unescalate(&mut self, session_uri: &str, tool_call_id: &str) {
+        if let Some(pending) = self
+            .sessions
+            .get_mut(session_uri)
+            .and_then(|session| session.questions.get_mut(tool_call_id))
+        {
+            pending.escalated = false;
+        }
+    }
+
+    /// Like [`HostState::unescalate`], for an input request.
+    fn unescalate_input(&mut self, session_uri: &str, request_id: &str) {
+        if let Some(pending) = self
+            .sessions
+            .get_mut(session_uri)
+            .and_then(|session| session.inputs.get_mut(request_id))
+        {
+            pending.escalated = false;
+        }
+    }
+
+    /// The unresolved input request `request_id` in the chat's active turn,
+    /// with the answers given so far.
+    fn input_request(&self, chat_uri: &str, request_id: &str) -> Option<&ChatInputRequest> {
+        let turn = self.chats.get(chat_uri)?.active_turn.as_ref()?;
+        turn.response_parts.iter().find_map(|part| match part {
+            ResponsePart::InputRequest(input)
+                if input.response.is_none() && input.request.id == request_id =>
+            {
+                Some(&input.request)
+            }
+            _ => None,
+        })
+    }
+
+    /// Opens `request` in the chat's active turn and in the session's
+    /// `inputNeeded`. Returns whether it was opened: a request from outside
+    /// the active turn is declined at once.
+    fn open_input(
+        &mut self,
+        session_uri: &str,
+        chat_uri: &str,
+        turn_id: String,
+        request: ChatInputRequest,
+        reply: oneshot::Sender<InputAnswer>,
+    ) -> bool {
+        let in_turn = self
+            .chats
+            .get(chat_uri)
+            .and_then(|chat| chat.active_turn.as_ref())
+            .is_some_and(|turn| turn.id == turn_id);
+        let Some(session) = self.sessions.get_mut(session_uri) else {
+            return false;
+        };
+        if !in_turn || session.inputs.contains_key(&request.id) {
+            let _ = reply.send(InputAnswer::decline());
+            return false;
+        }
+        // Text the agent writes after the question goes below it.
+        session.open_part = None;
+        tracing::info!(
+            session_uri,
+            request_id = %request.id,
+            questions = request.questions.as_ref().map_or(0, Vec::len),
+            "the agent asks a question"
+        );
+        let request_id = request.id.clone();
+        session.inputs.insert(
+            request_id.clone(),
+            PendingInput {
+                turn_id,
+                reply,
+                escalated: false,
+            },
+        );
+        let requested = StateAction::ChatInputRequested(ChatInputRequestedAction { request });
+        self.apply(chat_uri, requested, None);
+        self.mirror_input(session_uri, chat_uri, &request_id);
+        true
+    }
+
+    /// Copies the input request, as the chat has it now, into the session's
+    /// `inputNeeded`, so a client watching only the session sees it too.
+    fn mirror_input(&mut self, session_uri: &str, chat_uri: &str, request_id: &str) {
+        let Some(request) = self.input_request(chat_uri, request_id).cloned() else {
+            return;
+        };
+        let set = StateAction::SessionInputNeededSet(Box::new(SessionInputNeededSetAction {
+            request: SessionInputRequest::ChatInput(SessionChatInputRequest {
+                id: request_id.to_owned(),
+                chat: chat_uri.to_owned(),
+                request,
+            }),
+        }));
+        self.apply(session_uri, set, None);
+    }
+
+    fn check_answer(
+        &self,
+        session_uri: &str,
+        chat_uri: &str,
+        action: &ChatInputAnswerChangedAction,
+    ) -> Result<(), &'static str> {
+        let request = self.pending_input(session_uri, chat_uri, &action.request_id)?;
+        let question = request
+            .questions
+            .iter()
+            .flatten()
+            .find(|question| elicitation::question_id(question) == Some(&action.question_id))
+            .ok_or("the input request has no such question")?;
+        match &action.answer {
+            Some(answer) if !elicitation::answer_fits(question, answer) => {
+                Err("the answer does not fit the question")
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn check_completion(
+        &self,
+        session_uri: &str,
+        chat_uri: &str,
+        action: &ChatInputCompletedAction,
+    ) -> Result<(), &'static str> {
+        let request = self.pending_input(session_uri, chat_uri, &action.request_id)?;
+        let answers = merged_answers(request, action.answers.as_ref());
+        for question in request.questions.iter().flatten() {
+            let Some(id) = elicitation::question_id(question) else {
+                continue;
+            };
+            if let Some(answer) = answers.get(id)
+                && !elicitation::answer_fits(question, answer)
+            {
+                return Err("an answer does not fit its question");
+            }
+            let submitted = matches!(answers.get(id), Some(ChatInputAnswer::Submitted(_)));
+            if action.response == ChatInputResponseKind::Accept
+                && elicitation::is_required(question)
+                && !submitted
+            {
+                return Err("a required question has no submitted answer");
+            }
+        }
+        Ok(())
+    }
+
+    /// The unresolved input request `request_id`, when the host is waiting on
+    /// it in the chat's active turn.
+    fn pending_input(
+        &self,
+        session_uri: &str,
+        chat_uri: &str,
+        request_id: &str,
+    ) -> Result<&ChatInputRequest, &'static str> {
+        let waiting = self
+            .sessions
+            .get(session_uri)
+            .is_some_and(|session| session.inputs.contains_key(request_id));
+        match self.input_request(chat_uri, request_id) {
+            Some(request) if waiting => Ok(request),
+            _ => Err("no input request with this id is waiting for an answer"),
+        }
+    }
+
+    /// Applies a completion and hands the answer to the agent. The first
+    /// answer wins: a request already answered is left alone.
+    fn complete_input(
+        &mut self,
+        session_uri: &str,
+        chat_uri: &str,
+        action: ChatInputCompletedAction,
+        origin: Option<ActionOrigin>,
+    ) {
+        let request_id = action.request_id.clone();
+        let Some(pending) = self
+            .sessions
+            .get_mut(session_uri)
+            .and_then(|session| session.inputs.remove(&request_id))
+        else {
+            return;
+        };
+        let answers = self
+            .input_request(chat_uri, &request_id)
+            .map(|request| merged_answers(request, action.answers.as_ref()))
+            .unwrap_or_default();
+        tracing::info!(
+            request_id,
+            response = ?action.response,
+            from_client = origin.is_some(),
+            "input request answered"
+        );
+        let answer = InputAnswer {
+            response: action.response,
+            answers,
+        };
+        self.apply(chat_uri, StateAction::ChatInputCompleted(action), origin);
+        let removed = StateAction::SessionInputNeededRemoved(SessionInputNeededRemovedAction {
+            id: request_id,
+        });
+        self.apply(session_uri, removed, None);
+        let _ = pending.reply.send(answer);
+    }
+
+    /// Lets go of the questions `turn_id` left unanswered: permission requests
+    /// are denied as their replies drop, and input requests cancelled.
+    fn drop_turn_requests(&mut self, session_uri: &str, turn_id: &str) {
+        let Some(session) = self.sessions.get_mut(session_uri) else {
+            return;
+        };
+        session
+            .questions
+            .retain(|_, pending| pending.turn_id != turn_id);
+        let dropped: Vec<String> = session
+            .inputs
+            .iter()
+            .filter(|(_, pending)| pending.turn_id == turn_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in dropped {
+            if let Some(pending) = self
+                .sessions
+                .get_mut(session_uri)
+                .and_then(|session| session.inputs.remove(&id))
+            {
+                let _ = pending.reply.send(InputAnswer {
+                    response: ChatInputResponseKind::Cancel,
+                    answers: HashMap::new(),
+                });
+            }
+            let removed =
+                StateAction::SessionInputNeededRemoved(SessionInputNeededRemovedAction { id });
+            self.apply(session_uri, removed, None);
+        }
     }
 
     /// Completes a tool call that was allowed, once the agent says it is done.
@@ -1502,13 +1900,11 @@ impl HostState {
         };
         if let Some(session) = self.sessions.get_mut(session_uri) {
             session.open_part = None;
-            // Questions the turn left unanswered are denied as their replies
-            // drop, and its tool calls end with it.
-            session
-                .questions
-                .retain(|_, pending| pending.turn_id != turn_id);
+            // Its tool calls end with it.
             session.tools.clear();
         }
+        // So do the questions it left unanswered.
+        self.drop_turn_requests(session_uri, &turn_id);
         let duration = millis_since(&started_at);
         let action = match outcome {
             TurnOutcome::Complete => StateAction::ChatTurnComplete(ChatTurnCompleteAction {
@@ -1597,6 +1993,112 @@ fn working_directory(dirs: Option<Vec<String>>) -> Result<PathBuf, RpcError> {
         )));
     }
     Ok(path)
+}
+
+/// The answers synced on `request`, overlaid with the ones a completion
+/// brings.
+fn merged_answers(
+    request: &ChatInputRequest,
+    completed: Option<&HashMap<String, ChatInputAnswer>>,
+) -> HashMap<String, ChatInputAnswer> {
+    let mut answers = request.answers.clone().unwrap_or_default();
+    answers.extend(
+        completed
+            .into_iter()
+            .flatten()
+            .map(|(k, v)| (k.clone(), v.clone())),
+    );
+    answers
+}
+
+/// The dialog that asks `request`, made by the agent called `agent` in `cwd`.
+/// When every question is a single select, the dialog asks them itself;
+/// otherwise it can only say what is asked, and offer to open Ask.
+pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRequest) -> Prompt {
+    let questions: Vec<&ChatInputQuestion> = request.questions.iter().flatten().collect();
+    let choices: Option<Vec<Choice>> = questions
+        .iter()
+        .map(|question| match question {
+            ChatInputQuestion::SingleSelect(select) if !select.options.is_empty() => Some(Choice {
+                id: select.id.clone(),
+                label: select.message.clone(),
+                options: select
+                    .options
+                    .iter()
+                    .map(|option| (option.id.clone(), option.label.clone()))
+                    .collect(),
+                default: select
+                    .options
+                    .iter()
+                    .find(|option| option.recommended == Some(true))
+                    .unwrap_or(&select.options[0])
+                    .id
+                    .clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    let title = if questions.len() > 1 {
+        format!("{agent} has some questions")
+    } else {
+        format!("{agent} has a question")
+    };
+    let subtitle = request.message.clone().unwrap_or_default();
+    match choices.filter(|choices| !choices.is_empty()) {
+        Some(choices) => Prompt {
+            title,
+            subtitle,
+            body: format!("in {}", dialog::folder(cwd)),
+            grant: "Answer".into(),
+            deny: "Skip".into(),
+            open: dialog::OPEN_IN_ASK.into(),
+            icon: "dialog-question".into(),
+            choices,
+        },
+        None => Prompt {
+            title,
+            body: questions
+                .iter()
+                .filter_map(|question| question_message(question))
+                .filter(|message| *message != subtitle)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            subtitle,
+            grant: String::new(),
+            deny: "Skip".into(),
+            open: dialog::OPEN_IN_ASK.into(),
+            icon: "dialog-question".into(),
+            choices: Vec::new(),
+        },
+    }
+}
+
+fn question_message(question: &ChatInputQuestion) -> Option<&str> {
+    Some(match question {
+        ChatInputQuestion::Text(q) => &q.message,
+        ChatInputQuestion::Number(q) | ChatInputQuestion::Integer(q) => &q.message,
+        ChatInputQuestion::Boolean(q) => &q.message,
+        ChatInputQuestion::SingleSelect(q) => &q.message,
+        ChatInputQuestion::MultiSelect(q) => &q.message,
+        ChatInputQuestion::Unknown(_) => return None,
+    })
+}
+
+/// A dialog's choices as submitted answers, by question id.
+fn selected(selections: Vec<(String, String)>) -> HashMap<String, ChatInputAnswer> {
+    selections
+        .into_iter()
+        .map(|(question, option)| {
+            let value = ChatInputAnswerValue::Selected(ChatInputSelectedAnswerValue {
+                value: option,
+                freeform_values: None,
+            });
+            (
+                question,
+                ChatInputAnswer::Submitted(ChatInputAnswered { value }),
+            )
+        })
+        .collect()
 }
 
 /// The session's folder as a path: its first working directory, or home.
