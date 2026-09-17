@@ -616,7 +616,7 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
 /// current centre x and height in logical points.
 pub fn animate_sling(surface: &otto_kit::SubsurfaceSurface, cx: f32, h: f32) {
     /// How long the shot takes, pull-back included.
-    const DURATION: f64 = 0.42;
+    const DURATION: f64 = 0.55;
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         if let Some(scene) = AppContext::surface_style_manager() {
             let qh = AppContext::queue_handle();
@@ -625,7 +625,7 @@ pub fn animate_sling(surface: &otto_kit::SubsurfaceSurface, cx: f32, h: f32) {
             // draw-back (the panel dips before it moves), then it accelerates
             // away without ever settling.
             let timing = scene.create_timing_function(qh, ());
-            timing.set_bezier(0.45, -0.45, 0.75, 0.0);
+            timing.set_bezier(0.0, -0.13, 0.81, -0.67);
 
             let anim = scene.begin_transaction(qh, ());
             anim.set_duration(DURATION);
