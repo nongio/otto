@@ -42,6 +42,11 @@ struct Args {
     /// Queue the prompt and exit without waiting, like Otto's launcher.
     #[arg(long)]
     queue: bool,
+    /// Queue the prompt on this existing session (`ahp-session:/…`) instead
+    /// of creating one, and exit. The session is left unwatched, so questions
+    /// the agent asks go to the desktop's dialog.
+    #[arg(long)]
+    session: Option<String>,
     prompt: String,
 }
 
@@ -67,6 +72,33 @@ async fn main() -> anyhow::Result<()> {
             vec![ROOT_RESOURCE_URI.into()],
         )
         .await?;
+
+    if let Some(session_uri) = &args.session {
+        let (result, _events) = client.subscribe(session_uri.clone()).await?;
+        let Some(SnapshotState::Session(session)) = result.snapshot.map(|s| s.state) else {
+            bail!("no such session: {session_uri}");
+        };
+        let chat = session.default_chat.context("the session has no chat")?;
+        let queued = StateAction::ChatPendingMessageSet(ChatPendingMessageSetAction {
+            kind: PendingMessageKind::Queued,
+            id: uuid::Uuid::new_v4().to_string(),
+            message: Message {
+                text: args.prompt,
+                origin: MessageOrigin {
+                    kind: MessageKind::User,
+                },
+                attachments: None,
+                model: None,
+                agent: None,
+                meta: None,
+            },
+        });
+        client.dispatch(chat, queued).await?;
+        client.ping().await?;
+        client.shutdown().await;
+        println!("{session_uri}");
+        return Ok(());
+    }
 
     let session_uri = format!("ahp-session:/{}", uuid::Uuid::new_v4());
     let mut params = json!({
