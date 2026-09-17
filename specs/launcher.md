@@ -39,7 +39,10 @@ than another launcher.
 exclusively: every keystroke belongs to it while it is up, including ones the
 previously focused window would have wanted. A card sits above centre, showing
 a query field and the first results. Anything given on the command line is the
-query it starts with, so a binding can open it already narrowed.
+query it starts with, so a binding can open it already narrowed. In ask and
+agents mode the card is centred on the output instead, and stays centred as the
+conversation above the field or the list of sessions under it grows. The card
+clips its panes, so neither log nor rows draw past its edge.
 
 **Modes.** A run offers applications, windows, or both, chosen when it starts.
 Applications is the default: the two bindings mean "launch something" and
@@ -69,8 +72,31 @@ sum. A comma is a decimal separator; when a number carries both a comma and a
 dot, the last of the two is the decimal separator and the other is grouping.
 The answer is written with whichever separator the question used.
 
-**Choosing.** Up/Down move the selection and wrap at both ends. Tab and
-Shift+Tab do the same. Page Up/Page Down move by a screenful. Ctrl+N and Ctrl+P
+**Naming a skill.** In ask mode the field is a request rather than a query, and
+the agent it goes to has skills — the desktop's own, and any the person
+installed — which the agent service publishes with the agent. A request that
+opens with `/` names one: while the first word is being typed and it is the
+start of a skill's name, the rest of that name is shown after the
+caret in the placeholder's colour, and Tab takes it and adds a space. The
+completion is a suggestion and nothing more — the request is sent as it reads,
+and an agent that makes nothing of the name still gets the words after it. It
+fires on the first word only, so an ordinary sentence never sprouts grey text,
+and where one skill's name is the start of another's the shorter one is
+offered, since the longer is a keystroke further on.
+
+**Reading an answer.** The agent's answer in the log is Markdown and is drawn
+as a document: headings, emphasis, lists, quotes, code and links take the
+toolkit's document typography, and the markup itself is not shown. Each
+request sits at the right of the log in a rounded gray bubble, in regular
+weight and the theme's text colour, wrapped inside the bubble and no wider
+than its words need. Everything else — attached files, tool calls, notes, the
+status — stays plain text. An answer still arriving is drawn as far as it has come, so
+an unclosed code fence reads as code until its end lands. Tables are drawn as
+code and images as their alt text, as in Quick View.
+
+**Choosing.** Up/Down move the selection and wrap at both ends. Tab takes the
+completion when one is being offered; otherwise Tab and Shift+Tab move the
+selection. Page Up/Page Down move by a screenful. Ctrl+N and Ctrl+P
 mirror Down and Up. The list scrolls to keep the selection visible; at most
 eight rows are shown at once. Enter acts on the selection. Escape closes the
 launcher without acting.
@@ -90,6 +116,13 @@ comes under the pointer is selected.
 The rows scroll on a surface of their own inside the card, and the selection's
 highlight slides on another beneath them: scrolling the list or moving the
 selection repaints neither the card nor the rows.
+
+**Painting.** The full-output parent surface draws nothing and is painted once
+per configure, never per frame: a commit of it tells the compositor the whole
+screen changed, and the dock and the bar were re-blurred under a card that never
+touches them. A card paint reports only the part of the buffer that changed — the
+field for a caret blink or a keystroke — and a pass with nothing changed commits
+no frame at all.
 
 The launcher takes pointer input over the card that is drawn — the query field,
 plus however many result rows are showing — and nowhere else. Its shadow is not
@@ -190,6 +223,17 @@ the list, keeping the selection on the same item where that item still exists.
   used knows nothing about what you want.
 - **Wrapping selection.** A list that stops at the end makes the user check
   where the end was.
+- **Names for the agent modes.** Ask mode (`--ask`) is **Ask**, the only new
+  product name. The list of agent tasks (`--agents`) is **Sessions**, the word
+  people who use agents already use; public text says "agent sessions" on first
+  mention, so it is not read as the login session. The flag stays `--agents`
+  because `--sessions` is one letter from `--session ID`. The launcher itself
+  stays a lower-case noun: one place with several modes, not a product. The
+  service behind both is "the agent service" in text, and its binary is
+  `otto-agentsd`, a user service. `otto-ask` and `otto-agents` are
+  aliases for `--ask` and `--agents`: symlinks the launcher recognises by the
+  name it was started under. In Files, the command palette's
+  command is **Ask…**; in the islands, a **permission request** has no name.
 
 ## Open Questions
 

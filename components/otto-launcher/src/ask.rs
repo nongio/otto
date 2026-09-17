@@ -518,6 +518,11 @@ impl Ask {
         true
     }
 
+    /// The URI of the session at `index` in the list.
+    pub fn session_at(&self, index: usize) -> Option<&str> {
+        self.sessions.get(index).map(|s| s.resource.as_str())
+    }
+
     /// Whether the service has said which sessions it has.
     pub fn sessions_listed(&self) -> bool {
         self.sessions_listed
