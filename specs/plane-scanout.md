@@ -396,11 +396,16 @@ Tier 2's mechanics:
   `windows_layer` and into the output's `promoted_plane` container. The
   windows plane stops drawing the window purely because it is no longer in
   that subtree — there is no hidden or blanked state to keep in sync, and
-  nothing to re-import on demotion. The container mirrors the current
-  workspace's `windows_layer` position, size and clipping, so the move is
-  geometrically a no-op. It is re-applied every frame, because other paths
-  (`raise_window_to_front` above all) reparent window layers without
-  knowing about promotion.
+  nothing to re-import on demotion. The container mirrors the
+  `windows_layer` position, size and clipping of the workspace that owns the
+  window, so the move is geometrically a no-op. It is re-applied every frame,
+  because other paths (`raise_window_to_front` above all) reparent window
+  layers without knowing about promotion.
+- Demotion puts the layer back under the owning workspace's `windows_layer`,
+  never simply the current one. Switching workspaces is itself a common
+  reason to demote, and by then the current workspace is the new one: the
+  window would otherwise land there, hidden behind that workspace's windows
+  and missing from its own.
 - The plane buffer is the subtree's own bounds — shadow safe area included —
   cropped to the output, and it is re-allocated whenever the window resizes.
   A resize drops every swapchain slot, so the resize must happen before the

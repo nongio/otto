@@ -5824,12 +5824,14 @@ impl Workspaces {
 
         match id {
             Some(id) => {
-                let Some(workspace) = ows.workspace_views.get(ows.current_workspace) else {
+                let Some(workspace) = Self::owning_workspace_view(ows, id) else {
                     return changed;
                 };
-                // Keep the container aligned with the workspace it is standing
-                // in for: `windows_layer` is offset by the workspace's index
-                // inside `windows_plane`, and both scroll together.
+                // Keep the container aligned with the workspace the window
+                // belongs to, which is not necessarily the current one while a
+                // workspace switch is under way: `windows_layer` is offset by
+                // the workspace's index inside `windows_plane`, and both scroll
+                // together.
                 let wl = &workspace.windows_layer;
                 let pos = wl.position();
                 if ows.promoted_plane.position() != pos {
@@ -5881,7 +5883,11 @@ impl Workspaces {
         let Some(view) = self.get_window_view(id) else {
             return;
         };
-        let Some(workspace) = ows.workspace_views.get(ows.current_workspace) else {
+        // Back into the workspace that owns the window, never simply the
+        // current one: demotion often happens *because* the user switched
+        // away, and parking the layer under the new workspace's container
+        // would show the window there, behind that workspace's windows.
+        let Some(workspace) = Self::owning_workspace_view(ows, id) else {
             return;
         };
         if let Err(e) = workspace.windows_layer.add_sublayer(&view.window_layer) {
@@ -5895,6 +5901,18 @@ impl Workspaces {
         // back on top of everything mapped while it was promoted, and stays
         // there. The workspace's own list is the stack.
         workspace.restack_windows();
+    }
+
+    /// The workspace on this output whose stack holds `id`, falling back to
+    /// the current workspace for a window not (or no longer) listed anywhere.
+    fn owning_workspace_view<'a>(
+        ows: &'a OutputWorkspaces,
+        id: &ObjectId,
+    ) -> Option<&'a Arc<WorkspaceView>> {
+        ows.workspace_views
+            .iter()
+            .find(|w| w.windows_list.read().unwrap().contains(id))
+            .or_else(|| ows.workspace_views.get(ows.current_workspace))
     }
 
     /// The window currently rendered into its own plane on `output_name`.
