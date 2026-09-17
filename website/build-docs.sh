@@ -155,7 +155,7 @@ declare -A PAGE_DESC=(
     [dev/otto-media-kit]="The crate behind video in Otto Files: an embeddable player, its GStreamer worker, the frame ring they share, and how it is contained."
     [dev/shell-dbus-api]="The wire contract for org.otto.Shell1: running window and tiling commands, reading the tree, and the events a status bar can subscribe to."
     [dev/xdg-specifications]="Every freedesktop and XDG standard Otto implements, what it covers, and where in the source each one lives."
-    [dev/agents]="How Otto runs coding agents: the otto-ahp service, the Agent Host and Agent Client protocols, the launcher as a client, and where a permission question goes."
+    [dev/agents]="How Otto runs coding agents: the otto-agentsd service, the Agent Host and Agent Client protocols, the launcher as a client, and where a permission question goes."
     [dev/accessibility]="How Otto exposes an AT-SPI tree through AccessKit, and the key grabs a screen reader needs from the compositor."
     [dev/debug-action-hook]="Trigger any builtin Otto shortcut action from a script through $OTTO_ACTION_FILE, for testing and automation."
 )

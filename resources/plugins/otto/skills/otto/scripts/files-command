@@ -4,6 +4,7 @@
 #   files-command new NAME      start a draft from the starter, print its path
 #   files-command edit NAME     start a draft from a published command
 #   files-command check NAME    run the draft's describe and check it prints JSON
+#   files-command review NAME   open the draft for the person to read
 #   files-command publish NAME  move the draft, executable, to where Files reads it
 #   files-command list          drafts and published commands
 #
@@ -24,7 +25,7 @@ die() {
 }
 
 usage() {
-    sed -n '2,8s/^# \{0,1\}//p' "$0" >&2
+    sed -n '2,9s/^# \{0,1\}//p' "$0" >&2
     exit 2
 }
 
@@ -69,6 +70,23 @@ case $command in
         printf '%s' "$out" | python3 -c 'import json, sys; json.load(sys.stdin)' 2>/dev/null ||
             die "describe did not print JSON and nothing else"
         echo "ok: describe prints JSON"
+        ;;
+    review)
+        [ $# -eq 1 ] || usage
+        valid_name "$1"
+        [ -f "$drafts/$1" ] || die "no draft called \"$1\""
+        # The person's own app for the file's type, detached so this returns
+        # while the window stays open; gedit when no app is set. `gio open`
+        # hands the file to that app, and never runs the script.
+        type=$(xdg-mime query filetype "$drafts/$1" 2>/dev/null || true)
+        if [ -n "$type" ] && [ -n "$(xdg-mime query default "$type" 2>/dev/null)" ]; then
+            setsid -f gio open "$drafts/$1" >/dev/null 2>&1
+        elif command -v gedit >/dev/null; then
+            setsid -f gedit "$drafts/$1" >/dev/null 2>&1
+        else
+            die "no app to open it with; the draft is at $drafts/$1"
+        fi
+        echo "opened $drafts/$1"
         ;;
     publish)
         [ $# -eq 1 ] || usage

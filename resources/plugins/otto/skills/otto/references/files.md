@@ -17,6 +17,7 @@ the starter. **Do not copy, move or `chmod` files yourself** — the
 | `<this skill>/scripts/files-command new NAME` | Starts a draft from the starter and prints its path |
 | `<this skill>/scripts/files-command edit NAME` | Starts a draft from a command already published |
 | `<this skill>/scripts/files-command check NAME` | Runs the draft's `describe` and checks it prints JSON |
+| `<this skill>/scripts/files-command review NAME` | Opens the draft in the person's own editor, to read |
 | `<this skill>/scripts/files-command publish NAME` | Moves the draft, executable, to where Files reads it |
 | `<this skill>/scripts/files-command list` | Shows drafts and published commands |
 
@@ -96,7 +97,20 @@ already exists — and check the script refuses instead of overwriting.
 
 **Never test on the person's real files.**
 
-## Step 6 — publish it
+## Step 6 — offer a review
+
+Ask: "The command is ready. Do you want to read it before I install it?"
+
+- **Yes** → run this, then wait until they say to go on or ask for changes:
+
+  ```sh
+  <this skill>/scripts/files-command review NAME
+  ```
+
+  If they ask for changes, make them in the draft and go back to Step 5.
+- **No** → go to Step 7.
+
+## Step 7 — publish it
 
 ```sh
 <this skill>/scripts/files-command publish NAME
