@@ -195,6 +195,9 @@ struct IslandApp {
     focus_pulse_until: Option<std::time::Instant>,
     /// Whether the pointer is on the shrunk dialog's circle, which then peeks.
     dialog_hovered: bool,
+    /// The dialog this app last answered and how, so its panel can leave with
+    /// the matching animation once the answer has gone out.
+    last_resolution: Option<(DialogId, u32)>,
     /// Whether a Shift key is down, so Tab can walk the dialog backwards.
     shift_held: bool,
     /// Center x of the circle a shrunk dialog sits in, at the end of the
@@ -225,6 +228,7 @@ impl IslandApp {
             keyboard_exclusive: false,
             focus_pulse_until: None,
             dialog_hovered: false,
+            last_resolution: None,
             shift_held: false,
             dialog_circle_x: LAYER_W as f32 / 2.0,
             dock_badges: DockBadges::new(),
@@ -1177,7 +1181,20 @@ impl IslandApp {
     }
 
     fn animate_dialog_out(&mut self, panel: DialogPanel) {
-        renderer::animate_dismiss(&panel.surface, 0.96);
+        // Answering (or handing it to Ask) slings the panel away; skipping,
+        // a withdrawn call, or a shrunk circle fades it.
+        let sent = matches!(
+            self.last_resolution.take(),
+            Some((id, response))
+                if id == panel.id
+                    && (response == dialog::RESPONSE_GRANTED || response == dialog::RESPONSE_OPEN)
+        );
+        if sent && !panel.presence.collapsed() {
+            let cx = panel.origin.0 + panel.layout_w / 2.0;
+            renderer::animate_sling(&panel.surface, cx, panel.layout_h);
+        } else {
+            renderer::animate_dismiss(&panel.surface, 0.96);
+        }
         self.defer_destroy(panel.surface);
     }
 
@@ -1398,6 +1415,7 @@ impl IslandApp {
         };
         let id = panel.id;
         tracing::info!(id, response, "dialog resolved");
+        self.last_resolution = Some((id, response));
         let mut state = self.state.lock().unwrap();
         state.resolve_dialog(id, DialogResponse { response, results });
     }

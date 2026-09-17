@@ -609,6 +609,36 @@ pub fn animate_enter_pop(surface: &otto_kit::SubsurfaceSurface, radius: f64) {
 }
 
 /// Dismiss animation: scale up to `scale` while fading out to opacity 0.
+/// Sling a panel out of the top of the screen, like an arrow off a bow: it
+/// draws back a little, then shoots up past the top edge, fully opaque. Used
+/// when a dialog is answered, so sending reads differently from cancelling
+/// (which fades, see [`animate_dismiss`]). `cx` and `h` are the panel's
+/// current centre x and height in logical points.
+pub fn animate_sling(surface: &otto_kit::SubsurfaceSurface, cx: f32, h: f32) {
+    /// How long the shot takes, pull-back included.
+    const DURATION: f64 = 0.42;
+    if let Some(scene_surface) = surface.base_surface().surface_style() {
+        if let Some(scene) = AppContext::surface_style_manager() {
+            let qh = AppContext::queue_handle();
+
+            // An ease-in "back" curve: the negative first control point is the
+            // draw-back (the panel dips before it moves), then it accelerates
+            // away without ever settling.
+            let timing = scene.create_timing_function(qh, ());
+            timing.set_bezier(0.45, -0.45, 0.75, 0.0);
+
+            let anim = scene.begin_transaction(qh, ());
+            anim.set_duration(DURATION);
+            anim.set_timing_function(&timing);
+
+            // Past the top edge by its full height, so nothing is left showing.
+            let out_y = -h / 2.0 - 24.0;
+            scene_surface.set_position(cx as f64 * buffer_scale(), out_y as f64 * buffer_scale());
+            anim.commit();
+        }
+    }
+}
+
 pub fn animate_dismiss(surface: &otto_kit::SubsurfaceSurface, scale: f64) {
     if let Some(scene_surface) = surface.base_surface().surface_style() {
         if let Some(scene) = AppContext::surface_style_manager() {

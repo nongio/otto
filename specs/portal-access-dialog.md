@@ -254,6 +254,9 @@ A dialog presented with `modal = false` asks without taking over:
     it), drawn only while the panel holds the keyboard and only once a
     navigation key has been pressed. The first such key reveals the ring on
     the current selection without moving it; later ones move it.
+- Leaving: an answered dialog (grant, or open in Ask) slings up out of the top
+  of the screen — a short draw-back, then it accelerates away, fully opaque.
+  A denied, withdrawn or replaced dialog, or one answered while shrunk, fades.
 - The dialog has no free-text field: a question that takes typed text (such as
   an agent's "Other" answer) is answered from the Ask window through **open**.
 - Clicking an option or button shows the hand cursor over it. Clicking an
