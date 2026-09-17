@@ -27,6 +27,13 @@ impl CacheKey {
 pub struct FontCache {
     font_mgr: FontMgr,
     cache: RefCell<std::collections::HashMap<CacheKey, Font>>,
+    /// The colour emoji face, looked up once: `None` until asked, then
+    /// `Some(None)` on a system without one.
+    emoji: RefCell<Option<Option<skia::Typeface>>>,
+    /// Shaper for emoji runs, created on first use.
+    shaper: RefCell<Option<skia::Shaper>>,
+    /// Shaped emoji runs by text and size, with their advance.
+    shaped: RefCell<std::collections::HashMap<(String, u32), std::rc::Rc<Shaped>>>,
 }
 
 impl FontCache {
@@ -34,6 +41,9 @@ impl FontCache {
         Self {
             font_mgr: FontMgr::new(),
             cache: RefCell::new(std::collections::HashMap::new()),
+            emoji: RefCell::new(None),
+            shaper: RefCell::new(None),
+            shaped: RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -93,6 +103,46 @@ impl FontCache {
         Some(found)
     }
 
+    /// The colour emoji face at `size`, if the system has one.
+    ///
+    /// Asked for by name rather than by character: fontconfig answers a
+    /// character query with the first face in the fallback list that has a
+    /// glyph for it, and icon fonts claim emoji code points — U+2705 came back
+    /// as Font Awesome, drawn as a monochrome pictogram or not at all.
+    fn emoji_font(&self, size: f32) -> Option<Font> {
+        let typeface = self
+            .emoji
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                [
+                    "Noto Color Emoji",
+                    "Twemoji",
+                    "JoyPixels",
+                    "Apple Color Emoji",
+                    "emoji",
+                ]
+                .iter()
+                .filter_map(|family| {
+                    self.font_mgr
+                        .match_family_style(family, FontStyle::normal())
+                })
+                .find(|face| face.unichar_to_glyph(0x1F600) != 0)
+                .or_else(|| {
+                    self.font_mgr.match_family_style_character(
+                        "",
+                        FontStyle::normal(),
+                        &["und-Zsye"],
+                        0x1F600,
+                    )
+                })
+            })
+            .clone()?;
+        let mut font = Font::from_typeface(typeface, size);
+        font.set_subpixel(true);
+        font.set_edging(skia::font::Edging::AntiAlias);
+        Some(font)
+    }
+
     /// This cache's own [`text_runs`].
     fn text_runs<'a>(&self, font: &Font, text: &'a str) -> Vec<TextRun<'a>> {
         // Almost every string the interface draws is ASCII, and every face it
@@ -103,43 +153,256 @@ impl FontCache {
             return vec![TextRun {
                 text,
                 font: font.clone(),
+                emoji: false,
             }];
         }
 
         let base = font.typeface();
-        let mut runs = Vec::new();
-        let mut start = 0;
-        let mut current: Option<Font> = None;
-        let mut open = false;
+        // Each piece is a byte range, the face that draws it (`None` being the
+        // face asked for) and whether it is an emoji sequence.
+        let mut pieces: Vec<(usize, usize, Option<Font>, bool)> = Vec::new();
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let (at, c) = chars[i];
+            let next = chars.get(i + 1).map(|&(_, n)| n);
 
-        for (i, c) in text.char_indices() {
+            if is_emoji_start(c, next) {
+                if let Some(emoji) = self
+                    .emoji_font(font.size())
+                    .filter(|e| e.typeface().unichar_to_glyph(c as skia::Unichar) != 0)
+                {
+                    let end = emoji_sequence_end(&chars, i);
+                    let end_byte = chars.get(end).map_or(text.len(), |&(b, _)| b);
+                    pieces.push((at, end_byte, Some(emoji), true));
+                    i = end;
+                    continue;
+                }
+            }
+
+            let end_byte = next.map_or(text.len(), |_| chars[i + 1].0);
             let covered = base.unichar_to_glyph(c as skia::Unichar) != 0;
             // Whitespace is blank in every face, so it stays in the run it
-            // follows rather than cutting one in two.
-            let wanted = if c.is_whitespace() && open {
-                current.clone()
-            } else if covered {
-                None
-            } else {
-                self.fallback(font, c)
+            // follows rather than cutting one in two — as long as that face
+            // has a glyph for it, or it draws as a box of its own.
+            let previous = pieces.last().filter(|p| !p.3).map(|p| p.2.clone());
+            let wanted = match previous {
+                Some(current)
+                    if c.is_whitespace()
+                        && current.as_ref().is_none_or(|f| {
+                            f.typeface().unichar_to_glyph(c as skia::Unichar) != 0
+                        }) =>
+                {
+                    current
+                }
+                _ if covered => None,
+                _ => self.fallback(font, c),
             };
-
-            if open && !same_face(&current, &wanted) {
-                runs.push(TextRun {
-                    text: &text[start..i],
-                    font: current.clone().unwrap_or_else(|| font.clone()),
-                });
-                start = i;
-            }
-            current = wanted;
-            open = true;
+            pieces.push((at, end_byte, wanted, false));
+            i += 1;
         }
 
-        runs.push(TextRun {
-            text: &text[start..],
-            font: current.unwrap_or_else(|| font.clone()),
-        });
+        let mut runs: Vec<TextRun<'a>> = Vec::new();
+        let mut open: Option<(usize, usize, Option<Font>, bool)> = None;
+        for piece in pieces {
+            match &mut open {
+                // Emoji sequences are kept whole but not merged with their
+                // neighbours in plain faces; adjacent emoji share one run.
+                Some(run) if run.3 == piece.3 && same_face(&run.2, &piece.2) => run.1 = piece.1,
+                _ => {
+                    if let Some((start, end, face, emoji)) = open.take() {
+                        runs.push(TextRun {
+                            text: &text[start..end],
+                            font: face.unwrap_or_else(|| font.clone()),
+                            emoji,
+                        });
+                    }
+                    open = Some(piece);
+                }
+            }
+        }
+        if let Some((start, end, face, emoji)) = open {
+            runs.push(TextRun {
+                text: &text[start..end],
+                font: face.unwrap_or_else(|| font.clone()),
+                emoji,
+            });
+        }
         runs
+    }
+
+    /// An emoji run shaped into a blob, with its advance.
+    ///
+    /// Shaped rather than drawn glyph by glyph: joiner sequences, skin tones,
+    /// keycaps and flags are ligatures in the emoji face, and without shaping
+    /// a family comes out as its members one by one and a flag as two
+    /// letters. All in one font run, for the reason the emoji palette gives —
+    /// the default iterators split a joiner from the emoji beside it.
+    fn shaped(&self, run: &TextRun) -> std::rc::Rc<Shaped> {
+        let key = (run.text.to_string(), run.font.size().to_bits());
+        if let Some(hit) = self.shaped.borrow().get(&key) {
+            return hit.clone();
+        }
+        let mut shaper = self.shaper.borrow_mut();
+        let shaper = shaper.get_or_insert_with(|| skia::Shaper::new(self.font_mgr.clone()));
+        let bytes = run.text.len();
+        let mut handler = Shaped::default();
+        let mut fonts = skia::Shaper::new_trivial_font_run_iterator(&run.font, bytes);
+        let mut bidi = skia::shapers::primitive::trivial_bidi_run_iterator(0, bytes);
+        let mut script = skia::shapers::primitive::trivial_script_run_iterator(0, bytes);
+        let mut language = skia::Shaper::new_trivial_language_run_iterator("und", bytes);
+        shaper.shape_with_iterators(
+            run.text,
+            &mut fonts,
+            &mut bidi,
+            &mut script,
+            &mut language,
+            f32::INFINITY,
+            &mut handler,
+        );
+        let shaped = std::rc::Rc::new(handler);
+        let mut cache = self.shaped.borrow_mut();
+        // Answers are streamed and re-laid out as they grow; keep the cache
+        // from growing with them.
+        if cache.len() > 512 {
+            cache.clear();
+        }
+        cache.insert(key, shaped.clone());
+        shaped
+    }
+}
+
+/// A run shaped into glyphs, positioned along a baseline at y = 0.
+#[derive(Default)]
+struct Shaped {
+    glyphs: Vec<skia::GlyphId>,
+    positions: Vec<skia::Point>,
+    advance: f32,
+    /// Where the run being received starts in `glyphs`.
+    start: usize,
+}
+
+impl skia::shaper::run_handler::RunHandler for Shaped {
+    fn begin_line(&mut self) {}
+    fn run_info(&mut self, _: &skia::shaper::run_handler::RunInfo) {}
+    fn commit_run_info(&mut self) {}
+    fn run_buffer(
+        &mut self,
+        info: &skia::shaper::run_handler::RunInfo,
+    ) -> skia::shaper::run_handler::Buffer<'_> {
+        self.start = self.glyphs.len();
+        let count = self.start + info.glyph_count;
+        self.glyphs.resize(count, 0);
+        self.positions.resize(count, skia::Point::default());
+        skia::shaper::run_handler::Buffer::new(
+            &mut self.glyphs[self.start..],
+            &mut self.positions[self.start..],
+            skia::Point::new(self.advance, 0.0),
+        )
+    }
+    fn commit_run_buffer(&mut self, info: &skia::shaper::run_handler::RunInfo) {
+        self.advance += info.advance.x;
+    }
+    fn commit_line(&mut self) {}
+}
+
+/// Whether `c` begins an emoji sequence: a character drawn as an emoji by
+/// default, or any character asking for emoji presentation with U+FE0F.
+fn is_emoji_start(c: char, next: Option<char>) -> bool {
+    if next == Some('\u{FE0F}') {
+        return true;
+    }
+    if next == Some('\u{FE0E}') {
+        return false;
+    }
+    let u = c as u32;
+    matches!(
+        u,
+        0x231A..=0x231B
+            | 0x23E9..=0x23EC
+            | 0x23F0
+            | 0x23F3
+            | 0x25FD..=0x25FE
+            | 0x2614..=0x2615
+            | 0x2648..=0x2653
+            | 0x267F
+            | 0x2693
+            | 0x26A1
+            | 0x26AA..=0x26AB
+            | 0x26BD..=0x26BE
+            | 0x26C4..=0x26C5
+            | 0x26CE
+            | 0x26D4
+            | 0x26EA
+            | 0x26F2..=0x26F3
+            | 0x26F5
+            | 0x26FA
+            | 0x26FD
+            | 0x2705
+            | 0x270A..=0x270B
+            | 0x2728
+            | 0x274C
+            | 0x274E
+            | 0x2753..=0x2755
+            | 0x2757
+            | 0x2795..=0x2797
+            | 0x27B0
+            | 0x27BF
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+            | 0x1F004
+            | 0x1F0CF
+            | 0x1F18E
+            | 0x1F191..=0x1F19A
+            | 0x1F1E6..=0x1F1FF
+            | 0x1F201
+            | 0x1F21A
+            | 0x1F22F
+            | 0x1F232..=0x1F236
+            | 0x1F238..=0x1F23A
+            | 0x1F250..=0x1F251
+            // Pictographs, emoticons, transport, supplemental symbols: the
+            // few text-default characters in these blocks are drawn as
+            // emoji too, which is what a reader of an answer expects.
+            | 0x1F300..=0x1F64F
+            | 0x1F680..=0x1F6FF
+            | 0x1F7E0..=0x1F7FF
+            | 0x1F900..=0x1F9FF
+            | 0x1FA70..=0x1FAFF
+    )
+}
+
+/// The index one past the emoji sequence that starts at `start`: its
+/// variation selector, skin tone, keycap mark, tag characters, a second
+/// regional indicator for a flag, and anything joined on with U+200D.
+fn emoji_sequence_end(chars: &[(usize, char)], start: usize) -> usize {
+    let regional = |c: char| (0x1F1E6..=0x1F1FF).contains(&(c as u32));
+    let mut i = start + 1;
+    if regional(chars[start].1) {
+        if chars.get(i).is_some_and(|&(_, c)| regional(c)) {
+            i += 1;
+        }
+        return i;
+    }
+    while let Some(&(_, c)) = chars.get(i) {
+        match c as u32 {
+            0xFE0F | 0x20E3 | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F => i += 1,
+            0x200D if i + 1 < chars.len() => i += 2,
+            _ => break,
+        }
+    }
+    i
+}
+
+impl FontCache {
+    /// How far `run` advances once drawn.
+    fn advance(&self, run: &TextRun) -> f32 {
+        if run.emoji {
+            self.shaped(run).advance
+        } else {
+            run.font.measure_str(run.text, None).0
+        }
     }
 }
 
@@ -308,6 +571,9 @@ pub fn get_font_with_fallback(family: &str, style: FontStyle, size: f32) -> Font
 pub struct TextRun<'a> {
     pub text: &'a str,
     pub font: Font,
+    /// An emoji sequence, drawn shaped in the colour emoji face — see
+    /// [`draw_runs`].
+    pub emoji: bool,
 }
 
 /// Split `text` into runs, each in the face that can draw it.
@@ -331,10 +597,13 @@ pub fn text_runs<'a>(font: &Font, text: &'a str) -> Vec<TextRun<'a>> {
 /// boxes for anything it lacks, which is not the width that reaches the
 /// screen.
 pub fn measure_runs(font: &Font, text: &str) -> f32 {
-    text_runs(font, text)
-        .iter()
-        .map(|run| run.font.measure_str(run.text, None).0)
-        .sum()
+    FONT_CACHE.with(|cache| {
+        cache
+            .text_runs(font, text)
+            .iter()
+            .map(|run| cache.advance(run))
+            .sum()
+    })
 }
 
 /// Draw `text` with its baseline starting at `origin`, run by run, and return
@@ -347,12 +616,26 @@ pub fn draw_runs(
     paint: &skia::Paint,
 ) -> f32 {
     let origin = origin.into();
-    let mut x = origin.x;
-    for run in text_runs(font, text) {
-        canvas.draw_str(run.text, skia::Point::new(x, origin.y), &run.font, paint);
-        x += run.font.measure_str(run.text, None).0;
-    }
-    x - origin.x
+    FONT_CACHE.with(|cache| {
+        let mut x = origin.x;
+        for run in cache.text_runs(font, text) {
+            if run.emoji {
+                let shaped = cache.shaped(&run);
+                canvas.draw_glyphs_at(
+                    &shaped.glyphs,
+                    shaped.positions.as_slice(),
+                    (x, origin.y),
+                    &run.font,
+                    paint,
+                );
+                x += shaped.advance;
+            } else {
+                canvas.draw_str(run.text, skia::Point::new(x, origin.y), &run.font, paint);
+                x += run.font.measure_str(run.text, None).0;
+            }
+        }
+        x - origin.x
+    })
 }
 
 /// Predefined text styles for a consistent design system
@@ -688,6 +971,99 @@ mod tests {
             measure_runs(&base, text) > 0.0,
             "the substituted face must give the text a width"
         );
+    }
+
+    /// Pixels in `text` drawn black on white that carry colour — the ink of
+    /// a colour emoji, which black text never has.
+    fn coloured_ink(text: &str) -> usize {
+        let base = styles::BODY.font();
+        let (w, h) = (240, 40);
+        let mut surface = skia::surfaces::raster_n32_premul((w, h)).unwrap();
+        surface.canvas().clear(skia::Color::WHITE);
+        let mut paint = skia::Paint::default();
+        paint.set_color(skia::Color::BLACK);
+        draw_runs(surface.canvas(), text, (2.0, 28.0), &base, &paint);
+        let image = surface.image_snapshot();
+        let info = skia::ImageInfo::new(
+            (w, h),
+            skia::ColorType::RGBA8888,
+            skia::AlphaType::Premul,
+            None,
+        );
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        assert!(image.read_pixels(
+            &info,
+            &mut pixels,
+            (w * 4) as usize,
+            (0, 0),
+            skia::image::CachingHint::Allow
+        ));
+        pixels
+            .chunks(4)
+            .filter(|p| {
+                let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+                (r - g).abs() > 40 || (g - b).abs() > 40 || (r - b).abs() > 40
+            })
+            .count()
+    }
+
+    fn has_emoji_face() -> bool {
+        FONT_CACHE.with(|cache| cache.emoji_font(16.0).is_some())
+    }
+
+    /// An agent's answer ending in `done ✅ 🎉` drew the check mark in an icon
+    /// font fontconfig offered first for U+2705, and the space after it as a
+    /// missing glyph: every emoji must come from the colour emoji face.
+    #[test]
+    fn emoji_are_drawn_in_colour() {
+        if !has_emoji_face() {
+            return;
+        }
+        let base = styles::BODY.font();
+        let text = "done \u{2705} \u{1F389}";
+        for run in text_runs(&base, text) {
+            let glyphs = run.font.str_to_glyphs_vec(run.text);
+            assert!(
+                !glyphs.contains(&0),
+                "{:?} has a missing glyph in {}",
+                run.text,
+                run.font.typeface().family_name()
+            );
+        }
+        for emoji in ["\u{2705}", "\u{1F389}", "\u{2764}\u{FE0F}"] {
+            assert!(
+                coloured_ink(emoji) > 20,
+                "{emoji:?} must be drawn in the colour emoji face"
+            );
+        }
+        assert_eq!(
+            text_runs(&base, text)
+                .iter()
+                .map(|run| run.text)
+                .collect::<String>(),
+            text
+        );
+    }
+
+    /// Joiner sequences and flags are ligatures in the emoji face: drawn
+    /// unshaped, a family is three people wide.
+    #[test]
+    fn emoji_sequences_are_shaped_as_one() {
+        if !has_emoji_face() {
+            return;
+        }
+        let base = styles::BODY.font();
+        let one = measure_runs(&base, "\u{1F468}");
+        let family = measure_runs(&base, "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}");
+        assert!(one > 0.0);
+        assert!(
+            family < one * 1.5,
+            "a family must shape into one glyph: {family} vs {one}"
+        );
+        let flag = measure_runs(&base, "\u{1F1EE}\u{1F1F9}");
+        assert!(flag < one * 1.5, "a flag must shape into one glyph");
+        let runs = text_runs(&base, "ok \u{1F44D}\u{1F3FD} ok");
+        assert_eq!(runs.iter().filter(|run| run.emoji).count(), 1);
     }
 
     /// A language names the regional face that draws its own Han shapes: the
