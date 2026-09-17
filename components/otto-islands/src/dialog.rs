@@ -10,6 +10,10 @@
 //! grant button is optional (hidden when its label is empty), and an optional
 //! *open* button hands the question off to another app (response `3`).
 //!
+//! Questions (`PresentQuestions`) add multi-select groups, answered with
+//! every option picked, and ask several questions one page at a time — see
+//! [`QuestionStyle`].
+//!
 //! A modal dialog holds the keyboard until it is answered. A non-modal one
 //! can be ignored: once the user moves on it shrinks into a circle in the
 //! island row, still pending, and a click opens it again — see [`Presence`].
@@ -71,14 +75,116 @@ pub struct ChoiceOption {
     pub icon: String,
 }
 
-/// A single-select group of options (e.g. "output" → list of connectors).
-#[derive(Clone, Debug)]
+/// A group of options (e.g. "output" → list of connectors). Single-select
+/// unless `multi`, in which case any number of its options can be picked.
+#[derive(Clone, Debug, Default)]
 pub struct ChoiceGroup {
     pub id: String,
     pub label: String,
     pub options: Vec<ChoiceOption>,
-    /// Index of the initially-selected option.
+    /// Index of the initially-selected option (for a multi-select group,
+    /// where the keyboard starts).
     pub default: usize,
+    /// Any number of options may be picked, each toggled on its own.
+    pub multi: bool,
+    /// For a multi-select group: the options picked to begin with.
+    pub picked: Vec<usize>,
+}
+
+/// The extras a `PresentQuestions` dialog carries over `PresentQuestion`.
+#[derive(Clone, Debug, Default)]
+pub struct QuestionStyle {
+    /// Several groups are asked one per page.
+    pub paged: bool,
+    /// The grant button's label on every page but the last. Empty uses the
+    /// grant label throughout.
+    pub next_label: String,
+    /// The back button's label, from the second page on. Empty hides it
+    /// (Left still goes back).
+    pub back_label: String,
+    /// The page counter, with `{current}` and `{total}` filled in. Empty
+    /// shows none.
+    pub page_label: String,
+    /// A line under a multi-select group's label ("Choose any"). Empty shows
+    /// none.
+    pub multi_hint: String,
+    /// The body reads as a left-aligned list rather than centred text.
+    pub body_start: bool,
+}
+
+/// What the user has picked: `selected[g]` is a single-select group's option
+/// (and a multi-select group's keyboard position); `picked[g][o]` whether a
+/// multi-select group's option `o` is on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Picks {
+    pub selected: Vec<usize>,
+    pub picked: Vec<Vec<bool>>,
+}
+
+impl Picks {
+    /// The picks a dialog opens with: each group's defaults.
+    pub fn new(choices: &[ChoiceGroup]) -> Self {
+        Self {
+            selected: choices.iter().map(|g| g.default).collect(),
+            picked: choices
+                .iter()
+                .map(|g| {
+                    (0..g.options.len())
+                        .map(|o| g.multi && g.picked.contains(&o))
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether option `option` of group `group` shows as chosen.
+    pub fn is_chosen(&self, choices: &[ChoiceGroup], group: usize, option: usize) -> bool {
+        match choices.get(group) {
+            Some(g) if g.multi => self
+                .picked
+                .get(group)
+                .and_then(|p| p.get(option))
+                .copied()
+                .unwrap_or(false),
+            Some(g) => self.selected.get(group).copied().unwrap_or(g.default) == option,
+            None => false,
+        }
+    }
+
+    /// Choose `option` in `group`: select it in a single-select group, flip it
+    /// in a multi-select one. Either way the keyboard moves onto it.
+    pub fn choose(&mut self, choices: &[ChoiceGroup], group: usize, option: usize) {
+        if let Some(sel) = self.selected.get_mut(group) {
+            *sel = option;
+        }
+        if choices.get(group).is_some_and(|g| g.multi) {
+            if let Some(on) = self.picked.get_mut(group).and_then(|p| p.get_mut(option)) {
+                *on = !*on;
+            }
+        }
+    }
+
+    /// The answer: `(group_id, option_id)` for a single-select group's option,
+    /// and one entry per picked option of a multi-select group (none when
+    /// nothing is picked).
+    pub fn results(&self, choices: &[ChoiceGroup]) -> Vec<(String, String)> {
+        let mut results = Vec::new();
+        for (gi, g) in choices.iter().enumerate() {
+            if g.multi {
+                for (oi, o) in g.options.iter().enumerate() {
+                    if self.is_chosen(choices, gi, oi) {
+                        results.push((g.id.clone(), o.id.clone()));
+                    }
+                }
+            } else {
+                let idx = self.selected.get(gi).copied().unwrap_or(g.default);
+                if let Some(o) = g.options.get(idx) {
+                    results.push((g.id.clone(), o.id.clone()));
+                }
+            }
+        }
+        results
+    }
 }
 
 /// The user's decision, returned to the caller.
@@ -122,6 +228,7 @@ pub struct DialogRequest {
     pub open_label: String,
     pub modal: bool,
     pub choices: Vec<ChoiceGroup>,
+    pub style: QuestionStyle,
     pub response_tx: Option<oneshot::Sender<DialogResponse>>,
 }
 
@@ -140,6 +247,7 @@ impl DialogRequest {
             open_label: self.open_label.clone(),
             modal: self.modal,
             choices: self.choices.clone(),
+            style: self.style.clone(),
         }
     }
 
@@ -165,6 +273,18 @@ pub struct DialogView {
     pub open_label: String,
     pub modal: bool,
     pub choices: Vec<ChoiceGroup>,
+    pub style: QuestionStyle,
+}
+
+impl DialogView {
+    /// How many pages the dialog has: one per group when paged, else one.
+    pub fn pages(&self) -> usize {
+        if self.style.paged {
+            self.choices.len().max(1)
+        } else {
+            1
+        }
+    }
 }
 
 /// How long a non-modal dialog nobody has touched stays open before it
@@ -287,6 +407,7 @@ pub enum DialogHit {
     Grant,
     Deny,
     Open,
+    Back,
     Option { group: usize, option: usize },
 }
 
@@ -326,7 +447,7 @@ const OPTION_ICON_X: f32 = BADGE_X + BADGE + 10.0;
 pub const MAX_SHORTCUTS: usize = 9;
 /// The tallest a panel gets. Past it the text and choices scroll under a
 /// fixed row of buttons, which always stay on screen.
-pub const DIALOG_MAX_H: f32 = 520.0;
+pub const DIALOG_MAX_H: f32 = 620.0;
 
 /// Computed geometry for a dialog panel, in panel-local coordinates
 /// (origin at the panel top-left, logical units).
@@ -348,10 +469,18 @@ pub struct DialogLayout {
     /// `None` when the open button is hidden (empty label).
     pub open_rect: Option<Rect>,
     /// `(group_idx, option_idx, row_rect)` for every option row, in content
-    /// coordinates.
+    /// coordinates. A paged dialog lays out only its current page's group.
     pub option_rects: Vec<(usize, usize, Rect)>,
+    /// The back button in the page row, in content coordinates: from a paged
+    /// dialog's second page on, when it has a back label.
+    pub back_rect: Option<Rect>,
+    /// What the grant button says: the next label on a page before the last.
+    pub grant_text: String,
     // Internal draw anchors (content coords).
     icon_present: bool,
+    page_counter: Option<TextBlock>,
+    group_hints: Vec<TextBlock>,
+    body_start: bool,
     title: TextBlock,
     subtitle: Option<TextBlock>,
     body: Option<TextBlock>,
@@ -416,8 +545,22 @@ fn wrap(text: &str, f: &skia_safe::Font, max_w: f32, max_lines: usize) -> Vec<St
     lines
 }
 
-/// Compute the panel layout for the given request view.
-pub fn dialog_layout(view: &DialogView) -> DialogLayout {
+/// The back button's label, with the chevron that points the way back.
+fn back_label(label: &str) -> String {
+    format!("\u{2039} {label}")
+}
+
+/// Page row: the counter at the left, the back button at the right.
+const PAGE_ROW_H: f32 = 24.0;
+const PAGE_ROW_GAP: f32 = 6.0;
+const PAGE_TEXT_SIZE: f32 = 11.0;
+const BACK_BTN_PAD_X: f32 = 10.0;
+
+/// Compute the panel layout for the given request view, showing `page` of a
+/// paged dialog (ignored otherwise).
+pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
+    let pages = view.pages();
+    let page = page.min(pages - 1);
     let w = DIALOG_W;
     let text_max_w = w - PAD * 2.0;
     let mut y = PAD;
@@ -457,14 +600,43 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
     );
     let body = text_block(&view.body, 400, BODY_MAX_LINES, BODY_GAP, &mut y);
 
+    // A paged dialog's page row: "2 of 3", and a way back.
+    let mut page_counter = None;
+    let mut back_rect = None;
+    if pages > 1 {
+        y += PAGE_ROW_GAP;
+        if !view.style.page_label.is_empty() {
+            let text = view
+                .style
+                .page_label
+                .replace("{current}", &(page + 1).to_string())
+                .replace("{total}", &pages.to_string());
+            page_counter = Some(TextBlock {
+                y: y + (PAGE_ROW_H - TEXT_LINE_H) / 2.0,
+                lines: vec![text],
+            });
+        }
+        if page > 0 && !view.style.back_label.is_empty() {
+            // Measured with the chevron the button draws, or the label is
+            // clipped to fit a width that never counted it.
+            let tw = font(PAGE_TEXT_SIZE + 1.0, 600)
+                .measure_str(back_label(&view.style.back_label), None)
+                .0;
+            let bw = (tw + BACK_BTN_PAD_X * 2.0).min(text_max_w / 2.0);
+            back_rect = Some(Rect::from_xywh(w - PAD - bw, y, bw, PAGE_ROW_H));
+        }
+        y += PAGE_ROW_H + PAGE_ROW_GAP;
+    }
+
     // Choice groups.
     let mut option_rects = Vec::new();
     let mut option_text = Vec::new();
     let mut group_labels = Vec::new();
+    let mut group_hints = Vec::new();
     let label_font = font(OPTION_LABEL_SIZE, 500);
     let desc_font = font(OPTION_DESC_SIZE, 400);
     for (gi, group) in view.choices.iter().enumerate() {
-        if group.options.is_empty() {
+        if group.options.is_empty() || (pages > 1 && gi != page) {
             continue;
         }
         let lines = wrap(
@@ -476,6 +648,17 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
         if !lines.is_empty() {
             let h = TEXT_LINE_H * lines.len() as f32;
             group_labels.push(TextBlock { y, lines });
+            y += h + GROUP_LABEL_GAP;
+        }
+        if group.multi && !view.style.multi_hint.is_empty() {
+            let lines = wrap(
+                &view.style.multi_hint,
+                &font(OPTION_DESC_SIZE, 400),
+                text_max_w,
+                2,
+            );
+            let h = OPTION_DESC_LINE_H * lines.len() as f32;
+            group_hints.push(TextBlock { y: y - 2.0, lines });
             y += h + GROUP_LABEL_GAP;
         }
         for (oi, opt) in group.options.iter().enumerate() {
@@ -500,7 +683,13 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
     // right of the main row. The open button is secondary: with a grant button
     // it gets a row of its own below; without one it takes the grant's slot,
     // drawn neutral so it never reads as the default.
-    let has_grant = !view.grant_label.is_empty();
+    let last_page = page + 1 == pages;
+    let grant_text = if !last_page && !view.style.next_label.is_empty() {
+        view.style.next_label.clone()
+    } else {
+        view.grant_label.clone()
+    };
+    let has_grant = !grant_text.is_empty();
     let has_open = !view.open_label.is_empty();
     let mut footer_h = 2.0 + BTN_H + PAD;
     if has_grant && has_open {
@@ -538,7 +727,12 @@ pub fn dialog_layout(view: &DialogView) -> DialogLayout {
         deny_rect,
         open_rect,
         option_rects,
+        back_rect,
+        grant_text,
         icon_present,
+        page_counter,
+        group_hints,
+        body_start: view.style.body_start,
         title,
         subtitle,
         body,
@@ -578,6 +772,9 @@ pub fn hit_test(layout: &DialogLayout, lx: f32, ly: f32, scroll: f32) -> Option<
         return None;
     }
     let cy = ly + scroll.clamp(0.0, layout.max_scroll());
+    if layout.back_rect.is_some_and(|r| in_rect(&r, lx, cy)) {
+        return Some(DialogHit::Back);
+    }
     for (gi, oi, rect) in &layout.option_rects {
         if in_rect(rect, lx, cy) {
             return Some(DialogHit::Option {
@@ -638,6 +835,7 @@ pub fn step_row(layout: &DialogLayout, current: Option<usize>, delta: i32) -> Op
 /// A button the keyboard can land on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialogButton {
+    Back,
     Deny,
     Grant,
     Open,
@@ -661,12 +859,17 @@ pub fn buttons(layout: &DialogLayout) -> Vec<DialogButton> {
     if layout.open_rect.is_some() {
         order.push(DialogButton::Open);
     }
+    if layout.back_rect.is_some() {
+        order.push(DialogButton::Back);
+    }
     order
 }
 
 /// Where `button` is drawn, when the layout shows it.
 pub fn button_rect(layout: &DialogLayout, button: DialogButton) -> Option<Rect> {
     match button {
+        // In content coordinates, unlike the rest: it scrolls with the page.
+        DialogButton::Back => layout.back_rect,
         DialogButton::Deny => Some(layout.deny_rect),
         DialogButton::Grant => layout.grant_rect,
         DialogButton::Open => layout.open_rect,
@@ -874,7 +1077,7 @@ fn draw_lines(
 pub fn draw_dialog(
     canvas: &Canvas,
     view: &DialogView,
-    selected: &[usize],
+    picks: &Picks,
     layout: &DialogLayout,
     scroll: f32,
     focus: Option<KeyboardTarget>,
@@ -927,7 +1130,50 @@ pub fn draw_dialog(
     }
     if let Some(block) = &layout.body {
         let f = font(TEXT_SIZE, 400);
-        draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim2);
+        if layout.body_start {
+            draw_lines(canvas, &block.lines, PAD, block.y, TEXT_LINE_H, &f, dim);
+        } else {
+            draw_lines_centered(canvas, &block.lines, cx, block.y, TEXT_LINE_H, &f, dim2);
+        }
+    }
+
+    // Page row: where in the questions this page is, and the way back.
+    let page_font = font(PAGE_TEXT_SIZE, 600);
+    if let Some(block) = &layout.page_counter {
+        draw_lines(
+            canvas,
+            &block.lines,
+            PAD,
+            block.y,
+            TEXT_LINE_H,
+            &page_font,
+            dim2,
+        );
+    }
+    if let Some(rect) = &layout.back_rect {
+        draw_button_sized(
+            canvas,
+            rect,
+            &back_label(&view.style.back_label),
+            theme.fill_secondary,
+            text,
+            PAGE_TEXT_SIZE + 1.0,
+        );
+        if focus == Some(KeyboardTarget::Button(DialogButton::Back)) {
+            draw_ring(canvas, *rect, BTN_RADIUS, accent);
+        }
+    }
+    let hint_font = font(OPTION_DESC_SIZE, 400);
+    for block in &layout.group_hints {
+        draw_lines(
+            canvas,
+            &block.lines,
+            PAD,
+            block.y,
+            OPTION_DESC_LINE_H,
+            &hint_font,
+            dim2,
+        );
     }
 
     // Group labels: the question each group answers, in full.
@@ -959,7 +1205,7 @@ pub fn draw_dialog(
         let Some(opt) = group.options.get(*oi) else {
             continue;
         };
-        let is_selected = selected.get(*gi).copied().unwrap_or(group.default) == *oi;
+        let is_selected = picks.is_chosen(&view.choices, *gi, *oi);
 
         let mut row_bg = Paint::default();
         row_bg.set_anti_alias(true);
@@ -1074,7 +1320,7 @@ pub fn draw_dialog(
     );
     // Grant button (accent) — the default action.
     if let Some(rect) = &layout.grant_rect {
-        draw_button(canvas, rect, &view.grant_label, accent, on_accent);
+        draw_button(canvas, rect, &layout.grant_text, accent, on_accent);
     }
     // Open button. Beside deny (no grant) it matches deny's neutral fill; on
     // its own row below grant/deny it is a borderless accent-text action, so
@@ -1087,7 +1333,10 @@ pub fn draw_dialog(
         }
     }
     // Focus ring on the button the keyboard is on.
-    if let Some(KeyboardTarget::Button(button)) = focus {
+    if let Some(KeyboardTarget::Button(button)) = focus.filter(|f| {
+        // The back button's ring is drawn with the page, as it scrolls.
+        *f != KeyboardTarget::Button(DialogButton::Back)
+    }) {
         if let Some(rect) = button_rect(layout, button) {
             let mut ring = Paint::default();
             ring.set_anti_alias(true);
@@ -1104,6 +1353,22 @@ pub fn draw_dialog(
 }
 
 fn draw_button(canvas: &Canvas, rect: &Rect, label: &str, bg: Color, text: Color) {
+    draw_button_sized(canvas, rect, label, bg, text, 13.0);
+}
+
+/// A focus ring just outside `rect`.
+fn draw_ring(canvas: &Canvas, rect: Rect, radius: f32, color: Color) {
+    let mut ring = Paint::default();
+    ring.set_anti_alias(true);
+    ring.set_color(color);
+    ring.set_style(skia_safe::paint::Style::Stroke);
+    ring.set_stroke_width(2.0);
+    let outer = rect.with_outset((FOCUS_RING_OUTSET, FOCUS_RING_OUTSET));
+    let r = radius + FOCUS_RING_OUTSET;
+    canvas.draw_rrect(RRect::new_rect_xy(outer, r, r), &ring);
+}
+
+fn draw_button_sized(canvas: &Canvas, rect: &Rect, label: &str, bg: Color, text: Color, size: f32) {
     let mut bg_paint = Paint::default();
     bg_paint.set_anti_alias(true);
     bg_paint.set_color(bg);
@@ -1114,8 +1379,8 @@ fn draw_button(canvas: &Canvas, rect: &Rect, label: &str, bg: Color, text: Color
         canvas,
         label,
         rect.center_x(),
-        rect.center_y() + 4.5,
-        &font(13.0, 600),
+        rect.center_y() + size * 0.35,
+        &font(size, 600),
         text,
         rect.width() - 16.0,
     );
@@ -1203,6 +1468,7 @@ mod tests {
             open_label: open.into(),
             modal: true,
             choices: Vec::new(),
+            style: QuestionStyle::default(),
         }
     }
 
@@ -1212,7 +1478,7 @@ mod tests {
 
     #[test]
     fn access_dialog_has_grant_and_deny_only() {
-        let layout = dialog_layout(&view("Allow", ""));
+        let layout = dialog_layout(&view("Allow", ""), 0);
         let grant = layout.grant_rect.expect("grant shown");
         assert!(layout.open_rect.is_none());
         assert!(grant.left > layout.deny_rect.right);
@@ -1224,7 +1490,7 @@ mod tests {
 
     #[test]
     fn empty_grant_label_hides_grant() {
-        let layout = dialog_layout(&view("", ""));
+        let layout = dialog_layout(&view("", ""), 0);
         assert!(layout.grant_rect.is_none());
         assert!(layout.open_rect.is_none());
         // Deny spans the row on its own.
@@ -1233,7 +1499,7 @@ mod tests {
 
     #[test]
     fn open_without_grant_takes_the_right_slot() {
-        let layout = dialog_layout(&view("", "Open in Ask"));
+        let layout = dialog_layout(&view("", "Open in Ask"), 0);
         assert!(layout.grant_rect.is_none());
         let open = layout.open_rect.expect("open shown");
         assert_eq!(open.top, layout.deny_rect.top);
@@ -1244,8 +1510,8 @@ mod tests {
 
     #[test]
     fn open_with_grant_gets_its_own_row_below() {
-        let two = dialog_layout(&view("Allow", ""));
-        let three = dialog_layout(&view("Allow", "Open in Ask"));
+        let two = dialog_layout(&view("Allow", ""), 0);
+        let three = dialog_layout(&view("Allow", "Open in Ask"), 0);
         let grant = three.grant_rect.expect("grant shown");
         let open = three.open_rect.expect("open shown");
         assert!(open.top >= grant.bottom);
@@ -1270,7 +1536,7 @@ mod tests {
                     icon: String::new(),
                 })
                 .collect(),
-            default: 0,
+            ..ChoiceGroup::default()
         }
     }
 
@@ -1284,11 +1550,11 @@ mod tests {
 
     #[test]
     fn long_text_wraps_instead_of_being_cut() {
-        let short = dialog_layout(&view("Answer", ""));
+        let short = dialog_layout(&view("Answer", ""), 0);
         let mut long = view("Answer", "");
         long.subtitle = LONG.into();
         long.body = "in ~/dev/otto\nsecond line".into();
-        let layout = dialog_layout(&long);
+        let layout = dialog_layout(&long, 0);
 
         let subtitle = layout.subtitle.as_ref().expect("subtitle laid out");
         assert!(subtitle.lines.len() > 1, "a long question wraps");
@@ -1310,7 +1576,7 @@ mod tests {
                 "Drop it",
             ],
         )];
-        let layout = dialog_layout(&v);
+        let layout = dialog_layout(&v, 0);
         assert_eq!(words(&layout.group_labels[0].lines.join(" ")), words(LONG));
 
         let (label, desc) = &layout.option_text[0];
@@ -1350,7 +1616,7 @@ mod tests {
                 )
             })
             .collect();
-        let layout = dialog_layout(&v);
+        let layout = dialog_layout(&v, 0);
         assert_eq!(layout.height, DIALOG_MAX_H);
         assert!(layout.max_scroll() > 0.0);
         assert_eq!(layout.option_rects.len(), 16);
@@ -1452,7 +1718,7 @@ mod tests {
     fn tab_walks_rows_then_buttons_and_wraps() {
         let mut v = view("Answer", "Open in Ask");
         v.choices = vec![group("a", "First?", &["One", "Two"])];
-        let layout = dialog_layout(&v);
+        let layout = dialog_layout(&v, 0);
         let sel = [1];
         let row = |r| Some(KeyboardTarget::Row(r));
         let button = |b| KeyboardTarget::Button(b);
@@ -1485,7 +1751,7 @@ mod tests {
             group("a", "First?", &["One", "Two"]),
             group("b", "Second?", &["Three", "Four"]),
         ];
-        let two = dialog_layout(&two);
+        let two = dialog_layout(&two, 0);
         assert!(has_several_groups(&two));
         assert_eq!(
             tab_step(&two, &[0, 1], row(0), false),
@@ -1493,7 +1759,7 @@ mod tests {
         );
 
         // No grant button and no options: Tab only visits deny and open.
-        let bare = dialog_layout(&view("", "Open in Ask"));
+        let bare = dialog_layout(&view("", "Open in Ask"), 0);
         assert_eq!(buttons(&bare), vec![DialogButton::Deny, DialogButton::Open]);
         assert_eq!(
             tab_step(&bare, &[], None, false),
@@ -1508,7 +1774,7 @@ mod tests {
             group("a", "First?", &["One", "Two"]),
             group("b", "Second?", &["Three", "Four", "Five"]),
         ];
-        let layout = dialog_layout(&v);
+        let layout = dialog_layout(&v, 0);
         // Starts on the first group's selection.
         let start = keyboard_row(&layout, &[1, 0], None);
         assert_eq!(start, Some(1));
@@ -1522,7 +1788,7 @@ mod tests {
         assert_eq!(next_group_row(&layout, &[1, 2], 4), None);
         assert_eq!(row_of(&layout, 1, 2), Some(4));
 
-        let empty = dialog_layout(&view("Allow", ""));
+        let empty = dialog_layout(&view("Allow", ""), 0);
         assert_eq!(keyboard_row(&empty, &[], None), None);
         assert_eq!(step_row(&empty, None, 1), None);
     }
@@ -1534,7 +1800,7 @@ mod tests {
         v.choices = (0..4)
             .map(|i| group(&format!("q{i}"), LONG, &["One", "Two", "Three", "Four"]))
             .collect();
-        let layout = dialog_layout(&v);
+        let layout = dialog_layout(&v, 0);
         assert!(layout.max_scroll() > 0.0);
         let last = layout.option_rects.len() - 1;
         let scroll = reveal(&layout, last, 0.0);
@@ -1547,5 +1813,221 @@ mod tests {
         assert!(first.top - up >= 0.0);
         // A row already in view doesn't move anything.
         assert_eq!(reveal(&layout, 0, 0.0), 0.0);
+    }
+
+    fn multi_group(id: &str, label: &str, options: &[&str], picked: &[usize]) -> ChoiceGroup {
+        ChoiceGroup {
+            multi: true,
+            picked: picked.to_vec(),
+            ..group(id, label, options)
+        }
+    }
+
+    fn questions(style: QuestionStyle, choices: Vec<ChoiceGroup>) -> DialogView {
+        DialogView {
+            choices,
+            style,
+            ..view("Answer", "Open in Ask")
+        }
+    }
+
+    fn paged_style() -> QuestionStyle {
+        QuestionStyle {
+            paged: true,
+            next_label: "Next".into(),
+            back_label: "Back".into(),
+            page_label: "{current} of {total}".into(),
+            multi_hint: "Pick any that apply.".into(),
+            ..QuestionStyle::default()
+        }
+    }
+
+    #[test]
+    fn several_questions_are_asked_a_page_each() {
+        let v = questions(
+            paged_style(),
+            vec![
+                group("a", "First?", &["One", "Two"]),
+                group("b", "Second?", &["Three", "Four", "Five"]),
+                multi_group("c", "Third?", &["Six", "Seven"], &[1]),
+            ],
+        );
+        assert_eq!(v.pages(), 3);
+
+        // Only the page's own question, and its own options.
+        let first = dialog_layout(&v, 0);
+        assert_eq!(first.group_labels[0].lines, ["First?"]);
+        assert_eq!(first.option_rects.len(), 2);
+        assert!(first.option_rects.iter().all(|(g, _, _)| *g == 0));
+        // Before the last page the grant button moves on instead of answering.
+        assert_eq!(first.grant_text, "Next");
+        assert_eq!(first.page_counter.as_ref().unwrap().lines, ["1 of 3"]);
+        assert!(first.back_rect.is_none(), "nothing to go back to");
+
+        let second = dialog_layout(&v, 1);
+        assert_eq!(second.option_rects.len(), 3);
+        assert!(second.option_rects.iter().all(|(g, _, _)| *g == 1));
+        let back = second.back_rect.expect("back button");
+        assert_eq!(
+            hit_test(&second, back.center_x(), back.center_y(), 0.0),
+            Some(DialogHit::Back)
+        );
+        assert_eq!(second.page_counter.as_ref().unwrap().lines, ["2 of 3"]);
+
+        let last = dialog_layout(&v, 2);
+        assert_eq!(last.grant_text, "Answer");
+        assert_eq!(last.group_hints[0].lines, ["Pick any that apply."]);
+        // Past the end shows the last page rather than an empty one.
+        assert_eq!(dialog_layout(&v, 9).page_counter.unwrap().lines, ["3 of 3"]);
+
+        // Unpaged, the same questions are one long page, with no counter.
+        let flat = questions(QuestionStyle::default(), v.choices.clone());
+        assert_eq!(flat.pages(), 1);
+        let layout = dialog_layout(&flat, 0);
+        assert_eq!(layout.option_rects.len(), 7);
+        assert!(layout.page_counter.is_none() && layout.back_rect.is_none());
+        assert_eq!(layout.grant_text, "Answer");
+    }
+
+    #[test]
+    fn multi_select_options_toggle_and_answer_together() {
+        let choices = vec![
+            group("a", "First?", &["One", "Two"]),
+            multi_group("b", "Second?", &["Three", "Four", "Five"], &[2]),
+        ];
+        let mut picks = Picks::new(&choices);
+        // The single-select group starts on its default, the multi-select one
+        // with the options it was given picked.
+        assert_eq!(picks.selected, [0, 0]);
+        assert!(picks.is_chosen(&choices, 0, 0) && !picks.is_chosen(&choices, 0, 1));
+        assert!(picks.is_chosen(&choices, 1, 2) && !picks.is_chosen(&choices, 1, 0));
+        assert_eq!(
+            picks.results(&choices),
+            [("a".into(), "a-0".into()), ("b".into(), "b-2".into())]
+        );
+
+        // Choosing in a single-select group moves the pick; in a multi-select
+        // one it flips that option and leaves the rest.
+        picks.choose(&choices, 0, 1);
+        picks.choose(&choices, 1, 0);
+        assert_eq!(
+            picks.results(&choices),
+            [
+                ("a".into(), "a-1".into()),
+                ("b".into(), "b-0".into()),
+                ("b".into(), "b-2".into())
+            ]
+        );
+        // Flipping the last pick off answers "none of them" for that question.
+        picks.choose(&choices, 1, 0);
+        picks.choose(&choices, 1, 2);
+        assert_eq!(picks.results(&choices), [("a".into(), "a-1".into())]);
+        // The keyboard is still on the option it last touched.
+        assert_eq!(picks.selected, [1, 2]);
+    }
+
+    /// Parses otto-agentsd's `dump_prompt_for_render` output into a view.
+    fn view_from_dump(dump: &str) -> DialogView {
+        let mut v = view("", "");
+        v.modal = false;
+        let unesc = |s: &str| s.replace("\\n", "\n").replace("\\\\", "\\");
+        for line in dump.lines() {
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields.as_slice() {
+                ["title", t] => v.title = unesc(t),
+                ["subtitle", t] => v.subtitle = unesc(t),
+                ["body", t] => v.body = unesc(t),
+                ["icon", t] => v.icon = unesc(t),
+                ["grant", t] => v.grant_label = unesc(t),
+                ["deny", t] => v.deny_label = unesc(t),
+                ["open", t] => v.open_label = unesc(t),
+                ["group", id, multi, label] => v.choices.push(ChoiceGroup {
+                    id: unesc(id),
+                    label: unesc(label),
+                    multi: *multi == "1",
+                    ..ChoiceGroup::default()
+                }),
+                ["label", key, value] => {
+                    let value = unesc(value);
+                    match *key {
+                        "next" => v.style.next_label = value,
+                        "back" => v.style.back_label = value,
+                        "page" => v.style.page_label = value,
+                        "multi-hint" => v.style.multi_hint = value,
+                        "body-align" => v.style.body_start = value == "start",
+                        _ => {}
+                    }
+                }
+                ["option", id, label] => {
+                    if let Some(group) = v.choices.last_mut() {
+                        group.options.push(ChoiceOption {
+                            id: unesc(id),
+                            label: unesc(label),
+                            icon: String::new(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        // As `question_style` decides it on the bus: several questions are
+        // asked a page each.
+        v.style.paged = v.choices.len() > 1;
+        v
+    }
+
+    /// Draws a dialog into a PNG at 2x over a flat panel colour.
+    fn render_png(v: &DialogView, path: &str) {
+        let mut picks = Picks::new(&v.choices);
+        // Show a multi-select question with a pick made, as it looks in use.
+        if let Some(g) = v.choices.iter().position(|g| g.multi) {
+            picks.choose(&v.choices, g, 1);
+        }
+        let layouts: Vec<DialogLayout> = (0..v.pages()).map(|p| dialog_layout(v, p)).collect();
+        let scale = 2.0;
+        let gap = 16.0;
+        let total_w: f32 = layouts.iter().map(|l| l.width + gap).sum();
+        let max_h = layouts.iter().map(|l| l.height).fold(0.0, f32::max);
+        let (w, h) = (
+            (total_w * scale).ceil() as i32,
+            (max_h * scale).ceil() as i32,
+        );
+        let mut surface = skia_safe::surfaces::raster_n32_premul((w, h)).expect("surface");
+        let canvas = surface.canvas();
+        canvas.clear(Color::from_rgb(0x60, 0x68, 0x70));
+        canvas.scale((scale, scale));
+        let material = opaque(otto_kit::AppContext::current_theme().material_medium);
+        for layout in &layouts {
+            let mut bg = Paint::default();
+            bg.set_color(material);
+            bg.set_anti_alias(true);
+            canvas.draw_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_wh(layout.width, layout.height),
+                    PANEL_RADIUS,
+                    PANEL_RADIUS,
+                ),
+                &bg,
+            );
+            draw_dialog(canvas, v, &picks, layout, 0.0, None);
+            canvas.translate((layout.width + gap, 0.0));
+        }
+        let image = surface.image_snapshot();
+        let data = image
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .expect("png");
+        std::fs::write(path, data.as_bytes()).expect("write png");
+    }
+
+    /// Renders `/tmp/claude-1000/shots/prompt.txt` (see otto-agentsd's
+    /// `dump_prompt_for_render`) to PNGs next to it, for looking at.
+    #[test]
+    #[ignore = "offscreen render for inspection"]
+    fn render_prompt_dump() {
+        let dir = std::env::var("OTTO_SHOTS").unwrap_or_else(|_| "/tmp/claude-1000/shots".into());
+        let tag = std::env::var("OTTO_SHOT_TAG").unwrap_or_else(|_| "dialog".into());
+        let dump = std::fs::read_to_string(format!("{dir}/prompt.txt")).expect("prompt dump");
+        let v = view_from_dump(&dump);
+        render_png(&v, &format!("{dir}/{tag}.png"));
     }
 }

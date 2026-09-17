@@ -127,8 +127,10 @@ struct DialogPanel {
     id: DialogId,
     surface: SubsurfaceSurface,
     view: DialogView,
-    /// Per choice-group selected option index.
-    selected: Vec<usize>,
+    /// What is picked in each choice group.
+    picks: dialog::Picks,
+    /// The page shown, when the dialog asks several questions a page each.
+    page: usize,
     /// Panel top-left in layer coordinates (for hit testing).
     origin: (f32, f32),
     /// Size of the shape on screen — the panel, or the circle it shrank
@@ -1072,14 +1074,15 @@ impl IslandApp {
         surface.draw(|canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
         });
-        let selected: Vec<usize> = view.choices.iter().map(|g| g.default).collect();
+        let picks = dialog::Picks::new(&view.choices);
         tracing::info!(id = view.id, app_id = %view.app_id, title = %view.title, modal = view.modal, "dialog shown");
         Some(DialogPanel {
             id: view.id,
             surface,
             presence: Presence::new(view.modal, std::time::Instant::now()),
             view,
-            selected,
+            picks,
+            page: 0,
             origin: (0.0, 0.0),
             layout_w: 0.0,
             layout_h: 0.0,
@@ -1104,7 +1107,7 @@ impl IslandApp {
             return;
         };
         let shape = panel.presence.shape(hovered);
-        let layout = dialog::dialog_layout(&panel.view);
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
         panel.scroll = panel.scroll.clamp(0.0, layout.max_scroll());
 
         let (w, h, cx, cy, radius) = match shrunk {
@@ -1131,7 +1134,8 @@ impl IslandApp {
             set_size_and_position(&panel.surface, w, h, cx, cy);
         }
 
-        let selected = panel.selected.clone();
+        let picks = panel.picks.clone();
+        let selected = picks.selected.clone();
         let view = panel.view.clone();
         let scroll = panel.scroll;
         // The ring shows where the arrow keys are, only while they reach us.
@@ -1149,7 +1153,7 @@ impl IslandApp {
             Shape::Peek => {
                 renderer::draw_pill(canvas, &view.icon, &view.title, dialog::text_color(), w, h)
             }
-            Shape::Panel => dialog::draw_dialog(canvas, &view, &selected, &layout, scroll, focus),
+            Shape::Panel => dialog::draw_dialog(canvas, &view, &picks, &layout, scroll, focus),
         });
 
         if !panel.entered {
@@ -1224,18 +1228,18 @@ impl IslandApp {
         }
         // The press gave the (on-demand) layer the keyboard.
         panel.presence.focus_gained();
-        let layout = dialog::dialog_layout(&panel.view);
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
         match dialog::hit_test(&layout, px - ox, py - oy, panel.scroll) {
             Some(DialogHit::Option { group, option }) => {
-                if let Some(sel) = panel.selected.get_mut(group) {
-                    *sel = option;
-                }
+                // A single-select option is selected; a multi-select one flips.
+                panel.picks.choose(&panel.view.choices, group, option);
                 panel.focus_row = dialog::row_of(&layout, group, option);
                 panel.keyboard_nav = false;
                 panel.focus_button = None;
                 self.render_dialog();
             }
-            Some(DialogHit::Grant) => self.resolve_active_dialog(dialog::RESPONSE_GRANTED),
+            Some(DialogHit::Grant) => self.confirm_dialog_page(),
+            Some(DialogHit::Back) => self.turn_dialog_page(-1),
             Some(DialogHit::Deny) => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
             Some(DialogHit::Open) => self.resolve_active_dialog(dialog::RESPONSE_OPEN),
             // Click landed on the panel background — swallow it.
@@ -1263,7 +1267,7 @@ impl IslandApp {
             return false;
         }
         let (ox, oy) = panel.origin;
-        let layout = dialog::dialog_layout(&panel.view);
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
         dialog::hit_test(&layout, px - ox, py - oy, panel.scroll).is_some()
     }
 
@@ -1273,8 +1277,8 @@ impl IslandApp {
         let Some(panel) = self.dialog.as_mut() else {
             return;
         };
-        let layout = dialog::dialog_layout(&panel.view);
-        let current = dialog::keyboard_row(&layout, &panel.selected, panel.focus_row);
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
+        let current = dialog::keyboard_row(&layout, &panel.picks.selected, panel.focus_row);
         // Up and Down belong to the options: from a button they come back to
         // the option the keyboard left.
         if panel.focus_button.take().is_some() && current.is_some() {
@@ -1294,7 +1298,7 @@ impl IslandApp {
             return;
         };
         let (group, option, _) = layout.option_rects[row];
-        if let Some(sel) = panel.selected.get_mut(group) {
+        if let Some(sel) = panel.picks.selected.get_mut(group) {
             *sel = option;
         }
         panel.focus_row = Some(row);
@@ -1308,10 +1312,10 @@ impl IslandApp {
         let Some(panel) = self.dialog.as_mut() else {
             return;
         };
-        let layout = dialog::dialog_layout(&panel.view);
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
         let current = match panel.focus_button {
             Some(button) => Some(dialog::KeyboardTarget::Button(button)),
-            None => dialog::keyboard_row(&layout, &panel.selected, panel.focus_row)
+            None => dialog::keyboard_row(&layout, &panel.picks.selected, panel.focus_row)
                 .map(dialog::KeyboardTarget::Row),
         };
         // Like the arrows, the first Tab only reveals where the keyboard is.
@@ -1322,10 +1326,10 @@ impl IslandApp {
                 return;
             }
         }
-        match dialog::tab_step(&layout, &panel.selected, current, backwards) {
+        match dialog::tab_step(&layout, &panel.picks.selected, current, backwards) {
             dialog::KeyboardTarget::Row(row) => {
                 let (group, option, _) = layout.option_rects[row];
-                if let Some(sel) = panel.selected.get_mut(group) {
+                if let Some(sel) = panel.picks.selected.get_mut(group) {
                     *sel = option;
                 }
                 panel.focus_row = Some(row);
@@ -1344,27 +1348,98 @@ impl IslandApp {
         let Some(panel) = self.dialog.as_mut() else {
             return;
         };
-        let layout = dialog::dialog_layout(&panel.view);
-        let Some(current) = dialog::keyboard_row(&layout, &panel.selected, panel.focus_row) else {
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
+        let Some(current) = dialog::keyboard_row(&layout, &panel.picks.selected, panel.focus_row)
+        else {
             return;
         };
         let group = layout.option_rects[current].0;
         let Some(row) = dialog::row_of(&layout, group, number - 1) else {
             return;
         };
-        if let Some(sel) = panel.selected.get_mut(group) {
-            *sel = number - 1;
-        }
+        panel.picks.choose(&panel.view.choices, group, number - 1);
         panel.focus_button = None;
+        // A multi-select question takes several picks: the digit only flips
+        // the one option, and the keyboard stays.
+        if panel.view.choices.get(group).is_some_and(|g| g.multi) {
+            panel.focus_row = Some(row);
+            panel.keyboard_nav = true;
+            panel.scroll = dialog::reveal(&layout, row, panel.scroll);
+            self.render_dialog();
+            return;
+        }
+        // One question a page: the digit answers this page and moves on.
+        if panel.view.pages() > 1 {
+            self.confirm_dialog_page();
+            return;
+        }
         if !dialog::has_several_groups(&layout) && !panel.view.grant_label.is_empty() {
             self.resolve_active_dialog(dialog::RESPONSE_GRANTED);
             return;
         }
-        let next = dialog::next_group_row(&layout, &panel.selected, row).unwrap_or(row);
+        let next = dialog::next_group_row(&layout, &panel.picks.selected, row).unwrap_or(row);
         panel.focus_row = Some(next);
         panel.keyboard_nav = true;
         panel.scroll = dialog::reveal(&layout, next, panel.scroll);
         self.render_dialog();
+    }
+
+    /// The grant button (or Enter) on the page shown: the next page, or on the
+    /// last one the answer.
+    fn confirm_dialog_page(&mut self) {
+        let Some(panel) = self.dialog.as_ref() else {
+            return;
+        };
+        if panel.page + 1 < panel.view.pages() {
+            self.turn_dialog_page(1);
+        } else if !panel.view.grant_label.is_empty() {
+            self.resolve_active_dialog(dialog::RESPONSE_GRANTED);
+        }
+    }
+
+    /// Show the page `delta` away, if there is one. The panel resizes to the
+    /// new page with the same springs as any other resize.
+    fn turn_dialog_page(&mut self, delta: i32) {
+        let Some(panel) = self.dialog.as_mut() else {
+            return;
+        };
+        let pages = panel.view.pages() as i64;
+        let page = (panel.page as i64 + delta as i64).clamp(0, pages - 1) as usize;
+        if page == panel.page {
+            return;
+        }
+        panel.page = page;
+        panel.scroll = 0.0;
+        panel.focus_row = None;
+        // The keyboard lands on the new page's options, not a button.
+        panel.focus_button = None;
+        self.render_dialog();
+        let size_changed = self.update_layer_size();
+        self.update_input_region(size_changed);
+    }
+
+    /// Space on a multi-select option flips it. Returns whether it did.
+    fn toggle_focused_option(&mut self) -> bool {
+        let Some(panel) = self.dialog.as_mut() else {
+            return false;
+        };
+        if panel.focus_button.is_some() {
+            return false;
+        }
+        let layout = dialog::dialog_layout(&panel.view, panel.page);
+        let Some(row) = dialog::keyboard_row(&layout, &panel.picks.selected, panel.focus_row)
+        else {
+            return false;
+        };
+        let (group, option, _) = layout.option_rects[row];
+        if !panel.view.choices.get(group).is_some_and(|g| g.multi) {
+            return false;
+        }
+        panel.picks.choose(&panel.view.choices, group, option);
+        panel.focus_row = Some(row);
+        panel.keyboard_nav = true;
+        self.render_dialog();
+        true
     }
 
     /// Whether (px, py) is on the open dialog panel.
@@ -1384,7 +1459,7 @@ impl IslandApp {
         let Some(panel) = self.dialog.as_mut() else {
             return;
         };
-        let max = dialog::dialog_layout(&panel.view).max_scroll();
+        let max = dialog::dialog_layout(&panel.view, panel.page).max_scroll();
         let scroll = (panel.scroll + delta).clamp(0.0, max);
         if scroll != panel.scroll {
             panel.scroll = scroll;
@@ -1400,16 +1475,7 @@ impl IslandApp {
         };
         // Only a confirmation carries selections; deny and open return none.
         let results: Vec<(String, String)> = if response == dialog::RESPONSE_GRANTED {
-            panel
-                .view
-                .choices
-                .iter()
-                .enumerate()
-                .filter_map(|(gi, g)| {
-                    let idx = panel.selected.get(gi).copied().unwrap_or(g.default);
-                    g.options.get(idx).map(|o| (g.id.clone(), o.id.clone()))
-                })
-                .collect()
+            panel.picks.results(&panel.view.choices)
         } else {
             Vec::new()
         };
@@ -1741,6 +1807,10 @@ impl App for IslandApp {
         // KP_ENTER = 96, UP = 103, DOWN = 108.
         match key {
             1 => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
+            // LEFT = 105: back a page.
+            105 => self.turn_dialog_page(-1),
+            // Space on a multi-select option flips it.
+            57 if focused_button.is_none() && self.toggle_focused_option() => {}
             103 => self.move_dialog_focus(-1),
             108 => self.move_dialog_focus(1),
             15 => self.tab_dialog_focus(self.shift_held),
@@ -1751,13 +1821,14 @@ impl App for IslandApp {
             75..=77 => self.quick_answer(key as usize - 75 + 4),
             79..=81 => self.quick_answer(key as usize - 79 + 1),
             // Enter or Space presses the button the keyboard is on.
-            28 | 96 | 57 if focused_button.is_some() => {
-                self.resolve_active_dialog(match focused_button {
-                    Some(dialog::DialogButton::Grant) => dialog::RESPONSE_GRANTED,
-                    Some(dialog::DialogButton::Open) => dialog::RESPONSE_OPEN,
-                    _ => dialog::RESPONSE_DENIED,
-                })
-            }
+            28 | 96 | 57 if focused_button.is_some() => match focused_button {
+                Some(dialog::DialogButton::Grant) => self.confirm_dialog_page(),
+                Some(dialog::DialogButton::Back) => self.turn_dialog_page(-1),
+                Some(dialog::DialogButton::Open) => {
+                    self.resolve_active_dialog(dialog::RESPONSE_OPEN)
+                }
+                _ => self.resolve_active_dialog(dialog::RESPONSE_DENIED),
+            },
             // Otherwise Enter confirms, when there is a grant button to confirm
             // with; it never triggers the open button.
             28 | 96
@@ -1766,7 +1837,7 @@ impl App for IslandApp {
                     .as_ref()
                     .is_some_and(|p| !p.view.grant_label.is_empty()) =>
             {
-                self.resolve_active_dialog(dialog::RESPONSE_GRANTED)
+                self.confirm_dialog_page()
             }
             _ => {}
         }

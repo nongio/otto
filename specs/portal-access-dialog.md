@@ -213,12 +213,60 @@ Responses:
 
 `PresentAccess` never returns `3`.
 
+### Several questions and multi-select (`PresentQuestions`)
+
+`org.otto.Dialog1.PresentQuestions` is the question dialog for a whole set of
+questions. It takes `PresentQuestion`'s arguments with a `labels` map after
+`open_label`, and its choice groups carry a `multi` flag:
+
+```
+PresentQuestions(app_id s, title s, subtitle s, body s, icon s,
+                 grant_label s, deny_label s, open_label s,
+                 labels a{ss}, modal b,
+                 questions a(ssba(sss)as)) -> (response u, results a(ss))
+```
+
+A question is `(id, label, multi, options, default_option_ids)`, with options
+`(option_id, option_label, option_icon)` exactly as in `PresentQuestion`. A
+single-select question starts on the first of its defaults; a multi-select one
+starts with all of them picked.
+
+`labels` (every key optional) lets the caller name what the renderer would
+otherwise have to invent:
+
+| key | meaning |
+| --- | --- |
+| `next` | the grant button's label on every page but the last |
+| `back` | the back button's label, from the second page on |
+| `page` | the page counter, with `{current}` and `{total}` |
+| `multi-hint` | a line under a multi-select question's label |
+| `body-align` | `start` for a left-aligned body (a list), else centred |
+
+**Multi-select.** Its options are toggles, drawn as the same rows: a picked one
+takes the accent fill. A click, `Space` on the row the keyboard is on, or its
+digit flips one option and leaves the rest; the keyboard moves onto it rather
+than moving on. `results` then carries one `(group_id, option_id)` per picked
+option, and none at all when the user picked nothing — which is an answer, not
+a refusal.
+
+**One question a page.** With more than one question the dialog shows one at a
+time: the page counter ("2 of 3") and a back button on the left and right of a
+row above the question, the question's own options below, and `[Skip][Next]`
+with **Next** becoming the grant label on the last page. `Enter`, the Next
+button, or a digit on a single-select question turns the page; `Left`, the back
+button, or `Shift+Tab` onto it goes back. The panel resizes to each page with
+the usual spring. Tab stops are the page's options, then its buttons. Nothing
+is sent until the last page is confirmed, so paging is free.
+
+A single question looks exactly as `PresentQuestion` does; no counter, no back
+button, and the grant label throughout.
+
 ### Text and height
 
 Nothing the caller sends is cut off. The title, subtitle, body, each group's
 label (for a question, the question itself) and each option's label and
 description wrap to the panel's width, keeping the caller's own line breaks.
-The panel grows to fit, up to 520 points tall. Past that, the text and choices
+The panel grows to fit, up to 620 points tall. Past that, the text and choices
 scroll (pointer wheel or touchpad over the panel) under the button row, which
 stays put; a hairline marks the edge. Only button labels are ellipsised.
 Line caps bound pathological input (title 3 lines, subtitle 12, body 40, group

@@ -14,6 +14,7 @@
 //! keyboard. The user can carry on elsewhere; the panel shrinks into a circle
 //! in the island row, still waiting, and opens again when clicked.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
@@ -55,10 +56,16 @@ pub struct Prompt {
 pub struct Choice {
     pub id: String,
     pub label: String,
-    /// `(id, label)` pairs, in order.
+    /// `(id, label)` pairs, in order. A label carries the option's
+    /// description after a line break.
     pub options: Vec<(String, String)>,
     /// The option picked to begin with.
     pub default: String,
+    /// Any number of options can be picked, not just one.
+    pub multi: bool,
+    /// The options the agent recommends: what a multi-select question starts
+    /// with picked.
+    pub recommended: Vec<String>,
 }
 
 /// How the user answered a [`Prompt`].
@@ -250,6 +257,89 @@ pub fn folder(cwd: &Path) -> String {
 /// `(group_id, group_label, [(option_id, option_label, option_icon)], default_option_id)`.
 type WireChoice = (String, String, Vec<(String, String, String)>, String);
 
+/// A question as `org.otto.Dialog1.PresentQuestions` takes it:
+/// `(id, label, multi, [(option_id, option_label, option_icon)], default_option_ids)`.
+type WireQuestion = (
+    String,
+    String,
+    bool,
+    Vec<(String, String, String)>,
+    Vec<String>,
+);
+
+/// The labels `PresentQuestions` reads beyond the buttons: paging, the
+/// multi-select hint, and how to set the body.
+pub(crate) fn question_labels(prompt: &Prompt) -> HashMap<String, String> {
+    let mut labels = HashMap::from([("multi-hint".to_owned(), "Pick any that apply.".to_owned())]);
+    // A body of several lines is a list of what is being asked: it reads down
+    // the left edge, not centred.
+    if prompt.body.contains('\n') {
+        labels.insert("body-align".to_owned(), "start".to_owned());
+    }
+    if prompt.choices.len() > 1 {
+        labels.extend([
+            ("next".to_owned(), "Next".to_owned()),
+            ("back".to_owned(), "Back".to_owned()),
+            ("page".to_owned(), "{current} of {total}".to_owned()),
+        ]);
+    }
+    labels
+}
+
+fn wire_questions(choices: &[Choice]) -> Vec<WireQuestion> {
+    choices
+        .iter()
+        .map(|choice| {
+            let options = choice
+                .options
+                .iter()
+                .map(|(id, label)| (id.clone(), label.clone(), String::new()))
+                .collect();
+            let defaults = if choice.multi {
+                choice.recommended.clone()
+            } else {
+                vec![choice.default.clone()]
+            };
+            (
+                choice.id.clone(),
+                choice.label.clone(),
+                choice.multi,
+                options,
+                defaults,
+            )
+        })
+        .collect()
+}
+
+/// What the dialog says when the renderer is too old for `PresentQuestions`:
+/// the same prompt without its multi-select questions, which it cannot ask.
+/// Those questions are spelled out in the body instead, and with nothing left
+/// to answer there is no grant button — only Skip and Open in Ask.
+fn without_multi_select(prompt: &Prompt) -> Prompt {
+    if !prompt.choices.iter().any(|choice| choice.multi) {
+        return prompt.clone();
+    }
+    let body = prompt
+        .choices
+        .iter()
+        .map(|choice| {
+            let mut block = choice.label.clone();
+            for (_, label) in &choice.options {
+                block.push_str("\n\u{2022} ");
+                block.push_str(&label.replace('\n', " \u{2014} "));
+            }
+            block
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Prompt {
+        body,
+        grant: String::new(),
+        choices: Vec::new(),
+        ..prompt.clone()
+    }
+}
+
 #[zbus::proxy(
     interface = "org.otto.Dialog1",
     default_service = "org.otto.Island",
@@ -277,6 +367,24 @@ trait Dialog {
     /// Like `present_access`, with a button that hands the question elsewhere,
     /// answered with `response` `3`. An empty `grant_label` or `open_label`
     /// hides that button.
+    /// Like `present_question`, with multi-select questions and one question
+    /// a page. `results` carries an entry per picked option.
+    #[allow(clippy::too_many_arguments)]
+    async fn present_questions(
+        &self,
+        app_id: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        icon: &str,
+        grant_label: &str,
+        deny_label: &str,
+        open_label: &str,
+        labels: HashMap<String, String>,
+        modal: bool,
+        questions: Vec<WireQuestion>,
+    ) -> zbus::Result<(u32, Vec<(String, String)>)>;
+
     #[allow(clippy::too_many_arguments)]
     async fn present_question(
         &self,
@@ -382,6 +490,36 @@ impl Prompter for Islands {
                 }
             };
             tracing::info!(title = %prompt.title, subtitle = %prompt.subtitle, "asking in a dialog");
+            let answer = proxy
+                .present_questions(
+                    "otto-agentsd",
+                    &prompt.title,
+                    &prompt.subtitle,
+                    &prompt.body,
+                    &prompt.icon,
+                    &prompt.grant,
+                    &prompt.deny,
+                    &prompt.open,
+                    question_labels(&prompt),
+                    false,
+                    wire_questions(&prompt.choices),
+                )
+                .await;
+            let err = match answer {
+                Ok((response, results)) => {
+                    tracing::info!(response, "dialog answered");
+                    return reply_from_wire(response, results);
+                }
+                Err(err) if unknown_method(&err) => err,
+                Err(err) => {
+                    tracing::warn!(%err, "could not show the dialog");
+                    return Reply::Unavailable;
+                }
+            };
+            tracing::info!(%err, "renderer without PresentQuestions; asking the old way");
+            // A renderer from before multi-select can still ask the rest; what
+            // it cannot ask is spelled out instead.
+            let prompt = without_multi_select(&prompt);
             let answer = proxy
                 .present_question(
                     "otto-agentsd",
@@ -514,5 +652,98 @@ mod tests {
         assert_eq!(selected(&answer(&request, true)).as_deref(), Some("go"));
         assert_eq!(selected(&answer(&request, false)), None);
         assert_eq!(prompt_for("A", Path::new("/"), &request).deny, "");
+    }
+
+    fn choice(id: &str, multi: bool) -> Choice {
+        Choice {
+            id: id.into(),
+            label: format!("{id}?"),
+            options: vec![
+                ("one".into(), "One\nThe first".into()),
+                ("two".into(), "Two".into()),
+            ],
+            default: "one".into(),
+            multi,
+            recommended: if multi {
+                vec!["two".into()]
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    #[test]
+    fn questions_go_on_the_wire_with_their_kind_and_defaults() {
+        let questions = wire_questions(&[choice("a", false), choice("b", true)]);
+        assert_eq!(questions[0].0, "a");
+        assert!(!questions[0].2);
+        assert_eq!(questions[0].4, ["one"], "a single select starts on one");
+        assert!(questions[1].2);
+        assert_eq!(
+            questions[1].4,
+            ["two"],
+            "a multi select starts on its recommended"
+        );
+        assert_eq!(
+            questions[0].3[0],
+            ("one".to_owned(), "One\nThe first".to_owned(), String::new())
+        );
+    }
+
+    #[test]
+    fn paging_labels_come_with_several_questions() {
+        let one = Prompt {
+            choices: vec![choice("a", false)],
+            ..Prompt::default()
+        };
+        let labels = question_labels(&one);
+        assert!(!labels.contains_key("next") && !labels.contains_key("page"));
+        assert_eq!(
+            labels.get("multi-hint").map(String::as_str),
+            Some("Pick any that apply.")
+        );
+        assert!(
+            !labels.contains_key("body-align"),
+            "a one-line body stays centred"
+        );
+
+        let several = Prompt {
+            choices: vec![choice("a", false), choice("b", true)],
+            body: "First?\n\u{2022} One".into(),
+            ..Prompt::default()
+        };
+        let labels = question_labels(&several);
+        assert_eq!(labels.get("next").map(String::as_str), Some("Next"));
+        assert_eq!(labels.get("back").map(String::as_str), Some("Back"));
+        assert_eq!(
+            labels.get("page").map(String::as_str),
+            Some("{current} of {total}")
+        );
+        assert_eq!(labels.get("body-align").map(String::as_str), Some("start"));
+    }
+
+    #[test]
+    fn an_old_renderer_is_told_what_it_cannot_ask() {
+        let single_only = Prompt {
+            choices: vec![choice("a", false)],
+            grant: "Answer".into(),
+            ..Prompt::default()
+        };
+        assert_eq!(without_multi_select(&single_only), single_only);
+
+        let with_multi = Prompt {
+            choices: vec![choice("a", false), choice("b", true)],
+            grant: "Answer".into(),
+            deny: "Skip".into(),
+            ..Prompt::default()
+        };
+        let asked = without_multi_select(&with_multi);
+        assert!(asked.choices.is_empty(), "nothing it can ask is left");
+        assert_eq!(asked.grant, "", "so there is nothing to answer with");
+        assert_eq!(asked.deny, "Skip");
+        assert_eq!(
+            asked.body,
+            "a?\n\u{2022} One \u{2014} The first\n\u{2022} Two\n\nb?\n\u{2022} One \u{2014} The first\n\u{2022} Two"
+        );
     }
 }

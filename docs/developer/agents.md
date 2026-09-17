@@ -218,13 +218,19 @@ each `elicitation/create` into an AHP input request:
   host checks each answer fits its question and that an accept answers every
   required one; the answers go back to the agent under the field names.
 - With nobody watching, the question escalates like a permission request. When
-  every question is a single select, the dialog asks them as choice groups with
-  an **Answer** button (a choice group needs a grant label, or the renderer
-  returns no picks); otherwise it only shows what is asked, each question with
-  its options listed under it, with **Skip** and **Open in Ask**. Each group is
-  labelled with the question's own words — for a lone AskUserQuestion that is
-  the request's message, since the field carries only the short header — and
-  each option's description follows its label after a line break. Skipping or dismissing declines; a dialog that can't be shown
+  every question is a select — single or multi — the dialog asks them itself
+  through `org.otto.Dialog1.PresentQuestions`, with an **Answer** button; several
+  questions are asked one page at a time ("2 of 3", **Next**, **Back**), and a
+  multi-select question's options are toggles. A question of any other kind
+  (free text, a number) makes the whole request one to answer in Ask: the dialog
+  then only lists what is being asked, with **Skip** and **Open in Ask**. Each
+  group is labelled with the question's own words — for a lone AskUserQuestion
+  that is the request's message, since the field carries only the short header —
+  and each option's description follows its label after a line break.
+- The picks come back as one answer per question: the option chosen for a
+  single select, every picked option for a multi select (an empty list when
+  none were picked). A renderer too old for `PresentQuestions` is asked the old
+  way, with the multi-select questions spelled out instead of asked. Skipping or dismissing declines; a dialog that can't be shown
   leaves the question waiting in the chat.
 - Cancelling or ending the turn cancels its open questions, and a restarted
   session drops the ones its earlier agent was waiting on.

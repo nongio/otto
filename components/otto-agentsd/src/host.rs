@@ -35,12 +35,13 @@ use ahp_types::errors::ahp_error_codes;
 use ahp_types::notifications::SessionAddedParams;
 use ahp_types::state::{
     ChatInputAnswer, ChatInputAnswerValue, ChatInputAnswered, ChatInputOption, ChatInputQuestion,
-    ChatInputRequest, ChatInputResponseKind, ChatInputSelectedAnswerValue, ChatOrigin, ChatState,
-    ChatSummary, ConfirmationOption, ConfirmationOptionKind, ErrorInfo, ErrorResponsePart,
-    MarkdownResponsePart, Message, MessageAttachment, PendingMessageKind, ReasoningResponsePart,
-    ResponsePart, RootState, SessionChatInputRequest, SessionInputRequest, SessionLifecycle,
-    SessionState, SessionStatus, SessionSummary, Snapshot, SnapshotState,
-    ToolCallCancellationReason, ToolCallConfirmationReason, ToolCallResult,
+    ChatInputRequest, ChatInputResponseKind, ChatInputSelectedAnswerValue,
+    ChatInputSelectedManyAnswerValue, ChatOrigin, ChatState, ChatSummary, ConfirmationOption,
+    ConfirmationOptionKind, ErrorInfo, ErrorResponsePart, MarkdownResponsePart, Message,
+    MessageAttachment, PendingMessageKind, ReasoningResponsePart, ResponsePart, RootState,
+    SessionChatInputRequest, SessionInputRequest, SessionLifecycle, SessionState, SessionStatus,
+    SessionSummary, Snapshot, SnapshotState, ToolCallCancellationReason,
+    ToolCallConfirmationReason, ToolCallResult,
 };
 use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
 use serde::Serialize;
@@ -701,7 +702,10 @@ impl Host {
                 return;
             };
             let (response, answers) = match reply {
-                Reply::Granted(selections) => (ChatInputResponseKind::Accept, selected(selections)),
+                Reply::Granted(selections) => (
+                    ChatInputResponseKind::Accept,
+                    selected(&request, selections),
+                ),
                 // Skipped, or dismissed: the agent carries on without an
                 // answer, as it does when a permission dialog goes away.
                 Reply::Denied | Reply::Ended => (ChatInputResponseKind::Decline, HashMap::new()),
@@ -2039,27 +2043,39 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
         .unwrap_or_default()
         .to_owned();
 
+    // Every select question the dialog can ask itself; `None` as soon as one
+    // question is of a kind it cannot (free text, a number).
     let choices: Option<Vec<Choice>> = questions
         .iter()
         .zip(&texts)
-        .map(|(question, text)| match question {
-            ChatInputQuestion::SingleSelect(select) if !select.options.is_empty() => Some(Choice {
-                id: select.id.clone(),
+        .map(|(question, text)| {
+            let (multi, options) = match question {
+                ChatInputQuestion::SingleSelect(select) => (false, &select.options),
+                ChatInputQuestion::MultiSelect(select) => (true, &select.options),
+                _ => return None,
+            };
+            if options.is_empty() {
+                return None;
+            }
+            let recommended: Vec<String> = options
+                .iter()
+                .filter(|option| option.recommended == Some(true))
+                .map(|option| option.id.clone())
+                .collect();
+            Some(Choice {
+                id: elicitation::question_id(question)?.to_owned(),
                 label: text.clone().unwrap_or_default(),
-                options: select
-                    .options
+                multi,
+                options: options
                     .iter()
                     .map(|option| (option.id.clone(), option_label(option)))
                     .collect(),
-                default: select
-                    .options
-                    .iter()
-                    .find(|option| option.recommended == Some(true))
-                    .unwrap_or(&select.options[0])
-                    .id
-                    .clone(),
-            }),
-            _ => None,
+                default: recommended
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| options[0].id.clone()),
+                recommended,
+            })
         })
         .collect();
     let title = if questions.len() > 1 {
@@ -2070,7 +2086,13 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
     match choices.filter(|choices| !choices.is_empty()) {
         Some(choices) => Prompt {
             title,
-            subtitle,
+            // One question a page says which page this is; a message that only
+            // announces there are several questions would say it again.
+            subtitle: if choices.len() > 1 {
+                String::new()
+            } else {
+                subtitle
+            },
             body: format!("in {}", dialog::folder(cwd)),
             grant: "Answer".into(),
             deny: "Skip".into(),
@@ -2078,6 +2100,9 @@ pub fn question_prompt(agent: &str, cwd: &std::path::Path, request: &ChatInputRe
             icon: "dialog-question".into(),
             choices,
         },
+        // A question the dialog cannot ask — free text, a number — makes the
+        // whole request one to answer in Ask. The dialog says what is being
+        // asked, as a readable list.
         None => Prompt {
             title,
             body: questions
@@ -2143,20 +2168,42 @@ fn select_options(question: &ChatInputQuestion) -> &[ChatInputOption] {
 }
 
 /// A dialog's choices as submitted answers, by question id.
-fn selected(selections: Vec<(String, String)>) -> HashMap<String, ChatInputAnswer> {
-    selections
-        .into_iter()
-        .map(|(question, option)| {
-            let value = ChatInputAnswerValue::Selected(ChatInputSelectedAnswerValue {
-                value: option,
-                freeform_values: None,
-            });
-            (
-                question,
-                ChatInputAnswer::Submitted(ChatInputAnswered { value }),
-            )
-        })
-        .collect()
+/// A dialog's picks as submitted answers, by question id: one option for a
+/// single-select question, every picked option for a multi-select one — which
+/// is answered even when nothing was picked, since picking none is an answer.
+fn selected(
+    request: &ChatInputRequest,
+    selections: Vec<(String, String)>,
+) -> HashMap<String, ChatInputAnswer> {
+    let submitted = |value| ChatInputAnswer::Submitted(ChatInputAnswered { value });
+    let mut answers = HashMap::new();
+    for question in request.questions.iter().flatten() {
+        let Some(id) = elicitation::question_id(question) else {
+            continue;
+        };
+        let picked: Vec<String> = selections
+            .iter()
+            .filter(|(q, _)| q == id)
+            .map(|(_, option)| option.clone())
+            .collect();
+        let value = match question {
+            ChatInputQuestion::MultiSelect(_) => {
+                ChatInputAnswerValue::SelectedMany(ChatInputSelectedManyAnswerValue {
+                    value: picked,
+                    freeform_values: None,
+                })
+            }
+            _ => match picked.into_iter().next() {
+                Some(option) => ChatInputAnswerValue::Selected(ChatInputSelectedAnswerValue {
+                    value: option,
+                    freeform_values: None,
+                }),
+                None => continue,
+            },
+        };
+        answers.insert(id.to_owned(), submitted(value));
+    }
+    answers
 }
 
 /// The session's folder as a path: its first working directory, or home.
@@ -2436,18 +2483,45 @@ mod tests {
         ]);
         let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
         assert_eq!(prompt.title, "Claude has some questions");
-        assert_eq!(prompt.subtitle, "Please answer the following questions.");
+        // The pages say "1 of 2"; the message that only announces there are
+        // several questions would say it again.
+        assert_eq!(prompt.subtitle, "");
         let labels: Vec<&str> = prompt.choices.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, [LONG, "Which environments should get it first?"]);
         assert!(prompt.choices.iter().all(|c| c.options.len() == 3));
     }
 
     #[test]
-    fn questions_the_dialog_cannot_ask_are_spelled_out_with_their_options() {
+    fn multi_select_questions_are_asked_as_their_own_groups() {
         let request = ask_user_question(&[
             ("Migration", LONG, false),
             ("Rollout", "Which environments?", true),
         ]);
+        let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
+        let multi: Vec<bool> = prompt.choices.iter().map(|c| c.multi).collect();
+        assert_eq!(multi, [false, true]);
+        assert_eq!(prompt.grant, "Answer");
+        assert_eq!(prompt.choices[1].label, "Which environments?");
+        assert_eq!(prompt.choices[1].options.len(), 3);
+    }
+
+    #[test]
+    fn a_question_of_another_kind_is_spelled_out_with_every_option() {
+        let mut request = ask_user_question(&[("Migration", LONG, false)]);
+        let mut questions = request.questions.take().unwrap();
+        questions.push(ChatInputQuestion::Text(
+            ahp_types::state::ChatInputTextQuestion {
+                id: "name".into(),
+                title: None,
+                message: "What should it be called?".into(),
+                required: None,
+                format: None,
+                min: None,
+                max: None,
+                default_value: None,
+            },
+        ));
+        request.questions = Some(questions);
         let prompt = question_prompt("Claude", std::path::Path::new("/srv/app"), &request);
         assert!(prompt.choices.is_empty());
         assert_eq!(prompt.grant, "");
@@ -2455,21 +2529,121 @@ mod tests {
         let options = "\n\u{2022} Keep it \u{2014} Clients keep working; the table goes in the next release\
             \n\u{2022} Drop it \u{2014} Older clients have to sign in again\
             \n\u{2022} Ask later";
+        // Two questions now, so the field's own words are its header — the
+        // message's words belong to a question asked on its own.
         assert_eq!(
             prompt.body,
-            format!("{LONG}{options}\n\nWhich environments?{options}")
+            format!("Migration{options}\n\nWhat should it be called?")
         );
     }
 
     #[test]
-    fn a_lone_multi_select_question_keeps_the_message_as_its_words() {
+    fn a_lone_multi_select_question_is_asked_in_the_messages_words() {
         let request = ask_user_question(&[("Rollout", "Which environments?", true)]);
         let prompt = question_prompt("Claude", std::path::Path::new("/"), &request);
+        let [choice] = &prompt.choices[..] else {
+            panic!("one choice group: {:?}", prompt.choices);
+        };
+        assert!(choice.multi);
+        assert_eq!(choice.label, "Which environments?");
+        // A lone question keeps its message as its words, so nothing repeats.
         assert_eq!(prompt.subtitle, "");
-        assert!(
-            prompt
-                .body
-                .starts_with("Which environments?\n\u{2022} Keep it")
+    }
+
+    #[test]
+    fn picks_come_back_as_one_answer_per_question() {
+        let request = ask_user_question(&[
+            ("Migration", LONG, false),
+            ("Rollout", "Which environments?", true),
+        ]);
+        let picks = vec![
+            ("question_0".to_owned(), "Drop it".to_owned()),
+            ("question_1".to_owned(), "Keep it".to_owned()),
+            ("question_1".to_owned(), "Ask later".to_owned()),
+        ];
+        let answers = selected(&request, picks);
+        let value = |id: &str| match answers.get(id) {
+            Some(ChatInputAnswer::Submitted(answered)) => answered.value.clone(),
+            other => panic!("no answer for {id}: {other:?}"),
+        };
+        assert!(matches!(
+            value("question_0"),
+            ChatInputAnswerValue::Selected(selected) if selected.value == "Drop it"
+        ));
+        assert!(matches!(
+            value("question_1"),
+            ChatInputAnswerValue::SelectedMany(many) if many.value == ["Keep it", "Ask later"]
+        ));
+
+        // Picking nothing in a multi-select question is still an answer; a
+        // single-select question with no pick is simply unanswered.
+        let answers = selected(&request, Vec::new());
+        assert!(!answers.contains_key("question_0"));
+        assert!(matches!(
+            value_of(&answers, "question_1"),
+            Some(ChatInputAnswerValue::SelectedMany(many)) if many.value.is_empty()
+        ));
+    }
+
+    fn value_of(
+        answers: &HashMap<String, ChatInputAnswer>,
+        id: &str,
+    ) -> Option<ChatInputAnswerValue> {
+        match answers.get(id) {
+            Some(ChatInputAnswer::Submitted(answered)) => Some(answered.value.clone()),
+            _ => None,
+        }
+    }
+
+    /// Writes the dialog for the request at `$OTTO_QUESTIONS_JSON` (default
+    /// `/tmp/claude-1000/three_questions.json`) to `$OTTO_PROMPT_DUMP`
+    /// (default `/tmp/claude-1000/shots/prompt.txt`), for otto-islands'
+    /// `render_prompt_dump` to draw. A tab-separated line per field.
+    #[test]
+    #[ignore = "writes a file for the offscreen dialog render"]
+    fn dump_prompt_for_render() {
+        let input = std::env::var("OTTO_QUESTIONS_JSON")
+            .unwrap_or_else(|_| "/tmp/claude-1000/three_questions.json".into());
+        let output = std::env::var("OTTO_PROMPT_DUMP")
+            .unwrap_or_else(|_| "/tmp/claude-1000/shots/prompt.txt".into());
+        let request: ChatInputRequest =
+            serde_json::from_str(&std::fs::read_to_string(input).unwrap()).unwrap();
+        let prompt = question_prompt(
+            "Claude",
+            std::path::Path::new("/home/me/dev/otto"),
+            &request,
         );
+        let esc = |s: &str| {
+            s.replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\t', " ")
+        };
+        let mut out = String::new();
+        for (key, value) in [
+            ("title", &prompt.title),
+            ("subtitle", &prompt.subtitle),
+            ("body", &prompt.body),
+            ("icon", &prompt.icon),
+            ("grant", &prompt.grant),
+            ("deny", &prompt.deny),
+            ("open", &prompt.open),
+        ] {
+            out.push_str(&format!("{key}\t{}\n", esc(value)));
+        }
+        for (key, value) in crate::dialog::question_labels(&prompt) {
+            out.push_str(&format!("label\t{key}\t{}\n", esc(&value)));
+        }
+        for choice in &prompt.choices {
+            out.push_str(&format!(
+                "group\t{}\t{}\t{}\n",
+                esc(&choice.id),
+                u8::from(choice.multi),
+                esc(&choice.label)
+            ));
+            for (id, label) in &choice.options {
+                out.push_str(&format!("option\t{}\t{}\n", esc(id), esc(label)));
+            }
+        }
+        std::fs::write(output, out).unwrap();
     }
 }

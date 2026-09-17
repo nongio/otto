@@ -1,9 +1,11 @@
 use otto_kit::AppContext;
+use std::collections::HashMap;
 use tokio::sync::oneshot;
+
 use zbus::interface;
 
 use crate::activity::Priority;
-use crate::dialog::{ChoiceGroup, ChoiceOption, DialogRequest, RESPONSE_ENDED};
+use crate::dialog::{ChoiceGroup, ChoiceOption, DialogRequest, QuestionStyle, RESPONSE_ENDED};
 use crate::state::SharedState;
 
 pub const DBUS_NAME: &str = "org.otto.Island";
@@ -100,6 +102,18 @@ impl IslandService {
 /// `(group_id, group_label, [(option_id, option_label, option_icon)], default_option_id)`.
 type WireChoice = (String, String, Vec<(String, String, String)>, String);
 
+/// A question as `PresentQuestions` takes it:
+/// `(group_id, label, multi, [(option_id, option_label, option_icon)], default_option_ids)`.
+/// A single-select question starts on its first default; a multi-select one
+/// starts with every default picked.
+type WireQuestion = (
+    String,
+    String,
+    bool,
+    Vec<(String, String, String)>,
+    Vec<String>,
+);
+
 /// `org.otto.Dialog1` — an Access-style permission/choice dialog service.
 ///
 /// Mirrors `org.freedesktop.impl.portal.Access` semantics so `otto-portal` can
@@ -149,9 +163,57 @@ fn choice_groups(choices: Vec<WireChoice>) -> Vec<ChoiceGroup> {
                 label,
                 options,
                 default,
+                ..ChoiceGroup::default()
             })
         })
         .collect()
+}
+
+/// Convert `PresentQuestions` questions into the dialog model, dropping
+/// questions with no options.
+fn question_groups(questions: Vec<WireQuestion>) -> Vec<ChoiceGroup> {
+    questions
+        .into_iter()
+        .filter_map(|(id, label, multi, opts, defaults)| {
+            let options: Vec<ChoiceOption> = opts
+                .into_iter()
+                .map(|(id, label, icon)| ChoiceOption { id, label, icon })
+                .collect();
+            if options.is_empty() {
+                return None;
+            }
+            let picked: Vec<usize> = defaults
+                .iter()
+                .filter_map(|d| options.iter().position(|o| o.id == *d))
+                .collect();
+            let default = if multi {
+                0
+            } else {
+                picked.first().copied().unwrap_or(0)
+            };
+            Some(ChoiceGroup {
+                id,
+                label,
+                options,
+                default,
+                multi,
+                picked: if multi { picked } else { Vec::new() },
+            })
+        })
+        .collect()
+}
+
+/// The `PresentQuestions` labels a dialog reads, from its `labels` map.
+fn question_style(groups: usize, labels: &HashMap<String, String>) -> QuestionStyle {
+    let label = |key: &str| labels.get(key).cloned().unwrap_or_default();
+    QuestionStyle {
+        paged: groups > 1,
+        next_label: label("next"),
+        back_label: label("back"),
+        page_label: label("page"),
+        multi_hint: label("multi-hint"),
+        body_start: label("body-align") == "start",
+    }
 }
 
 impl DialogService {
@@ -168,10 +230,9 @@ impl DialogService {
         deny_label: &str,
         open_label: &str,
         modal: bool,
-        choices: Vec<WireChoice>,
+        groups: Vec<ChoiceGroup>,
+        style: QuestionStyle,
     ) -> (u32, Vec<(String, String)>) {
-        let groups = choice_groups(choices);
-
         let grant_label = if !grant_label.is_empty() || kind == DialogKind::Question {
             grant_label.to_string()
         } else if groups.is_empty() {
@@ -202,6 +263,7 @@ impl DialogService {
             open_label,
             modal,
             choices: groups,
+            style,
             response_tx: Some(tx),
         };
 
@@ -255,7 +317,8 @@ impl DialogService {
             deny_label,
             "",
             modal,
-            choices,
+            choice_groups(choices),
+            QuestionStyle::default(),
         )
         .await
     }
@@ -296,7 +359,57 @@ impl DialogService {
             deny_label,
             open_label,
             modal,
-            choices,
+            choice_groups(choices),
+            QuestionStyle::default(),
+        )
+        .await
+    }
+
+    /// Present questions: the `PresentQuestion` dialog, with multi-select
+    /// questions and several questions asked a page at a time.
+    ///
+    /// `questions`: `(group_id, label, multi, options, default_option_ids)`,
+    /// options as in `PresentQuestion`. An option label may carry a
+    /// description after its first line break.
+    ///
+    /// `labels` (all optional): `next` — the grant button before the last
+    /// page; `back` — a back button from the second page on; `page` — a page
+    /// counter with `{current}` and `{total}`; `multi-hint` — a line under a
+    /// multi-select question; `body-align` — `start` for a left-aligned body.
+    ///
+    /// Returns `(response, results)` as `PresentQuestion` does, except that
+    /// `results` has one `(group_id, option_id)` per picked option of a
+    /// multi-select question (none when nothing is picked).
+    #[allow(clippy::too_many_arguments)]
+    async fn present_questions(
+        &self,
+        app_id: &str,
+        title: &str,
+        subtitle: &str,
+        body: &str,
+        icon: &str,
+        grant_label: &str,
+        deny_label: &str,
+        open_label: &str,
+        labels: HashMap<String, String>,
+        modal: bool,
+        questions: Vec<WireQuestion>,
+    ) -> (u32, Vec<(String, String)>) {
+        let groups = question_groups(questions);
+        let style = question_style(groups.len(), &labels);
+        self.present(
+            DialogKind::Question,
+            app_id,
+            title,
+            subtitle,
+            body,
+            icon,
+            grant_label,
+            deny_label,
+            open_label,
+            modal,
+            groups,
+            style,
         )
         .await
     }
@@ -362,5 +475,43 @@ mod tests {
             args("PresentQuestion"),
             "s s s s s s s s b a(ssa(sss)s) u a(ss)"
         );
+        assert_eq!(
+            args("PresentQuestions"),
+            "s s s s s s s s a{ss} b a(ssba(sss)as) u a(ss)"
+        );
+    }
+
+    #[test]
+    fn questions_carry_multi_select_defaults_and_paging() {
+        let groups = question_groups(vec![
+            (
+                "q0".into(),
+                "Role?".into(),
+                false,
+                vec![opt("a"), opt("b")],
+                vec!["b".into()],
+            ),
+            (
+                "q1".into(),
+                "Pains?".into(),
+                true,
+                vec![opt("x"), opt("y"), opt("z")],
+                vec!["x".into(), "z".into(), "missing".into()],
+            ),
+            ("q2".into(), "Empty".into(), true, Vec::new(), Vec::new()),
+        ]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!((groups[0].multi, groups[0].default), (false, 1));
+        assert!(groups[1].multi);
+        assert_eq!(groups[1].picked, [0, 2]);
+
+        let labels = HashMap::from([
+            ("next".to_owned(), "Next".to_owned()),
+            ("body-align".to_owned(), "start".to_owned()),
+        ]);
+        let style = question_style(groups.len(), &labels);
+        assert!(style.paged && style.body_start);
+        assert_eq!(style.next_label, "Next");
+        assert!(!question_style(1, &labels).paged);
     }
 }
