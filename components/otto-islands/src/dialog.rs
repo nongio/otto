@@ -35,7 +35,7 @@ pub type DialogId = u64;
 // Geometry constants (logical units — same space the canvas draws in)
 // ---------------------------------------------------------------------------
 
-pub const DIALOG_W: f32 = 320.0;
+pub const DIALOG_W: f32 = 360.0;
 
 // ---------------------------------------------------------------------------
 // Spacing
@@ -68,9 +68,13 @@ const GAP_DOTS_QUESTION: f32 = 8.0;
 /// The agent's own message about the question, tucked under it.
 const GAP_QUESTION_CONTEXT: f32 = 6.0;
 /// The air around the choices: the same above the first row as below the
-/// last, so the list sits evenly between what asks and what answers. The page
-/// counter is centred in the lower band.
+/// last, so the list sits evenly between what asks and what answers. With
+/// several questions the page counter sits at the bottom of that lower band,
+/// a caption on the list rather than a label over the buttons.
 const GAP_CHOICES: f32 = 24.0;
+/// Under the counter, before the buttons: its own air, so the caption does
+/// not crowd what it sits over.
+const GAP_COUNTER_BUTTONS: f32 = 18.0;
 /// Between option rows, which are one list.
 const OPTION_GAP: f32 = 8.0;
 /// Between the button row and the open button's row under it.
@@ -890,6 +894,9 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
     // in it rather than adding a step of its own.
     let counter_row = pages > 1;
     let mut footer_h = GAP_CHOICES + BTN_H + PAD_BOTTOM;
+    if counter_row {
+        footer_h += COUNTER_LINE_H + GAP_COUNTER_BUTTONS;
+    }
     if has_grant && has_open {
         footer_h += OPEN_ROW_GAP + OPEN_BTN_H;
     }
@@ -913,11 +920,12 @@ pub fn dialog_layout(view: &DialogView, page: usize) -> DialogLayout {
                 .replace("{current}", &(page + 1).to_string())
                 .replace("{total}", &pages.to_string())
         };
-        // Centred in the band between the last option and the buttons.
+        // At the foot of the choices' own air, with its own gap under it.
         page_counter = Some(TextBlock {
-            y: y - (GAP_CHOICES + COUNTER_LINE_H) / 2.0,
+            y,
             lines: vec![text],
         });
+        y += COUNTER_LINE_H + GAP_COUNTER_BUTTONS;
     }
     let full_w = w - PAD * 2.0;
     let buttons_x = PAD;
@@ -2295,21 +2303,22 @@ mod tests {
         let first = layout.option_rects[0].2;
         let last = layout.option_rects.last().unwrap().2;
         let above = gap(context_bottom, first.top);
-        let below = gap(last.bottom, layout.deny_rect.top);
+        // With a counter the choices' lower air ends at it, not at the
+        // buttons; the single-question case below asserts the plain equality.
+        let below = gap(last.bottom, layout.page_counter.as_ref().unwrap().y);
         assert_eq!(above, GAP_CHOICES);
         assert_eq!(above, below, "the choices sit evenly between the two");
 
-        // Rows are one list, and the counter floats in the lower band rather
-        // than taking a step of its own.
+        // Rows are one list, and the counter closes their air rather than
+        // sitting on the buttons.
         assert_eq!(gap(first.bottom, layout.option_rects[1].2.top), OPTION_GAP);
         let counter = layout.page_counter.as_ref().expect("counter");
-        assert!(counter.y > last.bottom);
-        assert!(counter.y + COUNTER_LINE_H < layout.deny_rect.top);
-        let over = counter.y - last.bottom;
-        let under = layout.deny_rect.top - (counter.y + COUNTER_LINE_H);
-        assert!(
-            (over - under).abs() < 1.0,
-            "centred in the band: {over} over, {under} under"
+        // The counter closes the choices' own air, then has a gap of its own
+        // before the buttons.
+        assert_eq!(gap(last.bottom, counter.y), GAP_CHOICES);
+        assert_eq!(
+            gap(counter.y + COUNTER_LINE_H, layout.deny_rect.top),
+            GAP_COUNTER_BUTTONS
         );
 
         // The buttons keep the full width, with the open row and the panel's

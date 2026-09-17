@@ -311,11 +311,11 @@ time:
   click target (18 points, larger than the 6-point dot) for **going back** to
   its question; dots ahead do nothing, since the questions between them have
   not been answered yet. One question shows no dots.
-- **The page counter** ("2 of 3") floats centred in the band between the last
-  option and the buttons, as a caption on the page rather than a label on a
-  button. It takes no room of its own, so it cannot unbalance the choices (see
-  below), and it is shown whenever there is more than one question. The buttons
-  keep the full width under it.
+- **The page counter** ("2 of 3") closes the choices' own air, one line under
+  the last option, as a caption on the page rather than a label on a button.
+  It then has a gap of its own before the buttons, so it crowds neither. It is
+  shown whenever there is more than one question, and the buttons keep the
+  full width under it.
 - **The back button** is at the top-left corner, beside the handle, from the
   second page on. Its label is the word alone ("Back"); the chevron pointing
   back is drawn, not part of the string.
