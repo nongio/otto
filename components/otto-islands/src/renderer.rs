@@ -625,7 +625,7 @@ pub fn animate_sling(surface: &otto_kit::SubsurfaceSurface, cx: f32, h: f32) {
             // draw-back (the panel dips before it moves), then it accelerates
             // away without ever settling.
             let timing = scene.create_timing_function(qh, ());
-            timing.set_bezier(0.0, -0.13, 0.81, -0.67);
+            timing.set_bezier(0.0, -0.13, 1.0, -1.1);
 
             let anim = scene.begin_transaction(qh, ());
             anim.set_duration(DURATION);
