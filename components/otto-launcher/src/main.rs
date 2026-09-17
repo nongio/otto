@@ -867,14 +867,16 @@ impl Launcher {
                     if self.input.value().trim().is_empty() {
                         otto_kit::t!("launcher-agents-none")
                     } else {
-                        "No results"
+                        otto_kit::t!("launcher-no-results")
                     }
                 })
             }
             Some(ask) => ask
                 .unreachable()
                 .map(|_| otto_kit::t!("launcher-ask-unreachable")),
-            None => (!self.input.value().trim().is_empty()).then_some("No results"),
+            None => {
+                (!self.input.value().trim().is_empty()).then(|| otto_kit::t!("launcher-no-results"))
+            }
         };
         let count = self.rows.len();
         // The log is empty until there is something to show: a conversation,
