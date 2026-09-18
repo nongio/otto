@@ -416,6 +416,14 @@ from the measured lines rather than from a nominal row height. Page Up/Down keep
 meaning what they mean everywhere else — move the host's selection — because
 only paged content claims them.
 
+A link keeps its destination. The worker carries it in the payload beside the
+link's text, and the layout can say which link is under a point, so a host that
+has somewhere to send a URL has one to send. Quick View itself opens nothing: it
+neither fetches a destination nor checks it, and a host that acts on one decides
+for itself which schemes it is willing to hand on — the text came out of a file
+the user has not read yet. A reference-style link whose reference the parser
+cannot resolve is drawn as a link with no destination.
+
 ### PDF, and the external rasteriser seam
 
 PDF is rendered in v1 by **exec'ing an existing rasteriser inside the decode

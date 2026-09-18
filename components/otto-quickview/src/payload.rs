@@ -145,6 +145,11 @@ fn put_spans(out: &mut Vec<u8>, spans: &[Span]) {
     for span in spans {
         put_str(out, &span.text);
         out.push(span.style.to_bits());
+        // Where a link goes, as a string that is empty when it goes nowhere.
+        // Always written, even for text that is not a link: a field that is
+        // there or not depending on a flag is how a reader and a writer come
+        // to disagree.
+        put_str(out, span.href.as_deref().unwrap_or(""));
     }
 }
 
@@ -328,9 +333,13 @@ impl<'a> Cursor<'a> {
         let count = self.len()?;
         let mut spans = Vec::with_capacity(count.min(64));
         for _ in 0..count {
+            let text = self.string()?;
+            let style = SpanStyle::from_bits(self.u8()?);
+            let href = self.string()?;
             spans.push(Span {
-                text: self.string()?,
-                style: SpanStyle::from_bits(self.u8()?),
+                text,
+                style,
+                href: (!href.is_empty()).then(|| href.into()),
             });
         }
         Some(spans)
@@ -545,6 +554,25 @@ mod tests {
                 }],
                 hero: Some(pixels),
                 icon: vec!["audio-mpeg".into(), "audio-x-generic".into()],
+            },
+            PreviewPayload::Document {
+                blocks: vec![
+                    Block::Heading {
+                        level: 2,
+                        spans: vec![Span::plain("Notes")],
+                    },
+                    // A link's destination has to survive the worker: it is
+                    // the one thing in a document the host can act on, and it
+                    // is read in a process that cannot act on anything.
+                    Block::Paragraph {
+                        spans: vec![
+                            Span::plain("see "),
+                            Span::link("the spec", "https://example.com/a"),
+                        ],
+                    },
+                    Block::Rule,
+                ],
+                truncated: false,
             },
             unavailable("no decoder"),
             with_icon(unavailable("no decoder"), vec!["video-x-generic".into()]),
