@@ -1180,6 +1180,9 @@ quickview-megapixels = { $count } メガピクセル
 # comma-separated list of package names — pdftoppm's package and so on — and
 # is not translated. Wraps to two lines if it has to.
 quickview-pdf-install-rasteriser = ページを表示するには次のいずれかをインストール：{ $packages }
+# パネルのタイトル帯の隅に出る、PDF の何ページ目かの表示。
+# $page と $pages は整数。幅がとても狭いので数文字に収める。
+quickview-page-of = { $page } / { $pages }
 
 
 ## Quick View — listings
