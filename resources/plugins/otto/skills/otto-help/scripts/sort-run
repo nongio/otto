@@ -1,0 +1,44 @@
+#!/bin/sh
+# Run a sorting plan one step at a time, pausing between steps so the person
+# can follow each window as it moves.
+#
+#   sort-run <seconds> '<command>' '<command>' …
+#
+# Each command is an otto-msg command string, exactly as it would be typed.
+# A step that fails stops the run: half a plan applied is easier to finish by
+# hand than a plan that carried on after the thing it depended on failed.
+#
+# The pause is what makes sorting watchable. Sent in one go, otto-msg applies
+# every move within a frame and the windows simply teleport; at a third of a
+# second each the person sees where things went and can stop you.
+set -eu
+
+if [ "$#" -lt 2 ]; then
+    echo "usage: sort-run <seconds> '<command>' ['<command>' …]" >&2
+    exit 2
+fi
+
+delay=$1
+shift
+
+case $delay in
+    '' | *[!0-9.]* | *.*.*)
+        echo "sort-run: the delay must be a number of seconds, such as 0.4" >&2
+        exit 2
+        ;;
+esac
+
+step=0
+total=$#
+for command in "$@"; do
+    step=$((step + 1))
+    if ! out=$(otto-msg "$command" 2>&1); then
+        echo "step $step of $total failed: $command" >&2
+        [ -n "$out" ] && echo "$out" >&2
+        exit 1
+    fi
+    printf '%s/%s  %s\n' "$step" "$total" "$command"
+    [ "$step" -lt "$total" ] && sleep "$delay"
+done
+
+echo "done: $total steps"

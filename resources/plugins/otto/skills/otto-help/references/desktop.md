@@ -138,12 +138,55 @@ otto-msg -t get_outputs -r        # every monitor
 otto-msg -t get_tree -r           # every window
 ```
 
-`-r` gives one line, which is what you want in a pipe. What is focused:
+`-r` gives one line, which is what you want in a pipe. `get_tree` is the whole
+nested tree, not a list — to answer "what is open?" pipe it through `jq`.
+
+**The open windows**, one per line, the focused one marked:
+
+```sh
+otto-msg -t get_tree -r | jq -r '.. | objects
+    | select(.layout == "none" and .name != null)
+    | "\(.app_id // .window_properties.class // "?")\t\(.name)\(if .focused then "  <- focused" else "" end)"'
+```
+
+Three things about the tree decide that expression, and getting any of them
+wrong loses windows:
+
+- A **window is a leaf**: `layout` is `"none"`. Everything else — the root,
+  an output, a workspace, a split — is a container.
+- A **floating window hangs off `floating_nodes`**, not `nodes`, which is why
+  the recursive `..` is there rather than a walk down `nodes`.
+- An **X11 window has no `app_id`**; it carries `window_properties.class`
+  instead. Without that fallback it does not appear at all.
+
+**What is focused**, on its own:
 
 ```sh
 otto-msg -t get_tree -r | jq -r '.. | objects
     | select(.focused == true and .layout == "none") | .name'
 ```
+
+There is no other way to list windows. `wlrctl`, `lswt`, `swaymsg` and the
+rest are not Otto's and may not be installed; if you find yourself reaching
+for one, the answer is the command above.
+
+**To focus one particular window**, put a criteria in front of `focus`:
+
+```sh
+otto-msg '[app_id="google-chrome"] focus'
+otto-msg '[title="Inbox"] focus'
+otto-msg '[app_id="foot" title="build"] focus'
+```
+
+The match is a **case-insensitive substring**, so `chrome` finds
+`google-chrome`. `class` and `instance` are accepted as the X11 spellings of
+`app_id`. Both fields together must match. It switches workspace to reach the
+window, and unlike the directional `focus` it does not need a tiling
+workspace. Several matches take the first — narrow the criteria to reach the
+others. Nothing matching is an error, not a silent no-op.
+
+This is the only way to focus a window by name. `wlrctl`, `lswt` and
+`swaymsg` are not Otto's and may not be installed.
 
 ### Then move things
 
@@ -153,12 +196,14 @@ otto-msg 'move container to workspace 3; workspace 3'
 
 | Command | What it does |
 |---|---|
+| `[app_id="…"] focus` | focus that window wherever it is, switching workspace to reach it |
 | `focus left\|right\|up\|down` | move focus to the neighbouring tile |
 | `focus parent` / `focus child` | out to the surrounding container, and back in |
 | `focus mode_toggle\|floating\|tiling` | between the floating windows and the tiled ones |
 | `move left\|right\|up\|down` | move the focused tile through the layout |
 | `move container to workspace <n>` | send the focused window to workspace `<n>` |
 | `workspace <n\|next\|prev>` | switch workspace; `<n>` is made if it is not there |
+| `rename workspace [<n>] to <name>` | name the focused workspace, or number `<n>`, making it if it is not there |
 | `split h\|v\|toggle` | which way the *next* window splits the focused cell |
 | `layout splith\|splitv\|toggle split` | turn the container the focused cell is in |
 | `resize grow\|shrink width\|height <n> [px\|ppt]` | resize the focused tile |
@@ -166,17 +211,21 @@ otto-msg 'move container to workspace 3; workspace 3'
 | `fullscreen` | fullscreen the focused window |
 | `kill` | close the focused window |
 | `tiling toggle\|enable\|disable` | tiling on this workspace |
+| `expose [show\|hide\|toggle]` | the window overview; bare `expose` toggles |
 | `gaps inner\|outer <n> [current\|all]` | the gaps |
 
 Most of these need a **tiling workspace**: `otto-msg tiling enable` first. On a
 floating workspace they say so rather than doing something surprising.
 
 Workspaces are made and never destroyed — `otto-msg workspace 7` leaves seven
-of them. Gaps are per workspace unless the command ends in `all`.
+of them. Sorting a pile of windows into named workspaces is its own page:
+[sort-desktop.md](sort-desktop.md). Gaps are per workspace unless the command ends in `all`.
 
 `layout tabbed`, `layout stacking`, `resize set` and moving a window to another
 monitor are understood but not built yet, and say so. Criteria
-(`[app_id="…"]`), marks and `for_window` rules are not parsed at all.
+marks and `for_window` rules are not parsed at all. A criteria
+(`[app_id="…"]`) is read, but only in front of `focus`; on anything else it
+says so rather than acting on the focused window instead.
 
 ## Rules
 
