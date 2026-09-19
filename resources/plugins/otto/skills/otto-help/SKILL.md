@@ -16,8 +16,9 @@ not read the others.
 | Doing something on the desktop now: opening Files, the emoji picker, Settings, a folder or a file; telling the person something; asking the island a question; looking at or moving windows, workspaces and monitors | [references/desktop.md](references/desktop.md) |
 | A new command for Otto Files' command palette (`Ctrl+P`, right-click menu), or one that does not show up | [references/files.md](references/files.md) |
 
-If the request fits none of them, this skill does not cover it. Say so rather than
-guessing at Otto's commands.
+If the request fits none of them, the pages have no Otto command for it. That is
+not a refusal: do the ordinary thing instead — read the folder, open the file,
+run the usual tool — and say plainly that it is not part of Otto.
 
 ## The full guides
 
@@ -45,8 +46,13 @@ click.
    question form) and give two to four plain-worded options. The person cannot
    see the settings, so a guess is theirs to undo. For a broad request, walk
    them through it one question at a time; the page you read has the wizards.
-2. **Do not improvise commands.** Every command you need is written out in the
-   pages, ready to copy. If it is not there, it does not exist.
+2. **Otto's commands are written down; ordinary ones you may still run.** Every
+   command that drives Otto is written out in the pages, ready to copy. If an
+   Otto command is not there, it does not exist, and you say so rather than
+   inventing one. Everything else on the person's machine — listing a folder,
+   reading a file, opening it in the right app — is yours to do. They are
+   sitting at the desktop and approve each command before it runs, so try, and
+   let them decline.
 3. **Do not change anything the person did not ask for.**
 4. **Do not run `otto --probe`.** It takes over the session.
 
