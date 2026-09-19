@@ -33,7 +33,7 @@ check() {
 
 echo "== binaries =="
 for b in otto otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp otto-agentsd; do
+         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp otto-agents; do
     check "/usr/bin/$b" exec
 done
 check /usr/libexec/xdg-desktop-portal-otto exec
@@ -54,8 +54,8 @@ check /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.servic
 check /usr/lib/systemd/user/xdg-desktop-portal-otto.service
 
 echo "== agent service =="
-check /usr/lib/systemd/user/otto-agentsd.service
-for a in otto-ask otto-agents; do
+check /usr/lib/systemd/user/otto-agents.service
+for a in otto-ask; do
     if [[ "$(readlink "/usr/bin/$a")" == otto-launcher ]]; then
         echo "  ok  /usr/bin/$a -> otto-launcher"
     else
@@ -73,10 +73,14 @@ echo "== agent skills =="
 # not ship it yet.
 if [[ "$flavour" == arch ]]; then
     check /usr/share/otto/plugins/otto/.claude-plugin/plugin.json
-    check /usr/share/otto/plugins/otto/skills/otto/SKILL.md
-    check /usr/share/otto/plugins/otto/skills/otto/references/configure.md
-    check /usr/share/otto/plugins/otto/skills/otto/references/files/starter exec
-    check /usr/share/otto/plugins/otto/skills/otto/scripts/files-command exec
+    check /usr/share/otto/plugins/otto/agents/otto.md
+    check /usr/share/otto/plugins/otto/skills/otto-help/SKILL.md
+    check /usr/share/otto/plugins/otto/skills/otto-help/references/configure.md
+    # The user guides travel with the skill; the agent reads them and links them.
+    check /usr/share/otto/plugins/otto/skills/otto-help/references/docs/dock.md
+    check /usr/share/otto/plugins/otto/skills/otto-help/references/desktop.md
+    check /usr/share/otto/plugins/otto/skills/otto-help/references/files/starter exec
+    check /usr/share/otto/plugins/otto/skills/otto-help/scripts/files-command exec
 else
     echo "  (not packaged for $flavour, skipped)"
 fi
@@ -170,7 +174,7 @@ else
 for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-lock \
          /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-msg \
          /usr/bin/otto-quickview /usr/bin/otto-media-worker \
-         /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agentsd \
+         /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agents \
          /usr/libexec/xdg-desktop-portal-otto; do
     [[ -x "$b" ]] || continue   # already reported missing above
     # `version \`GLIBC_2.44' not found` is the foreign-glibc case above, not a
@@ -202,7 +206,7 @@ else
 # to prove the install is runnable without a seat, a GPU or a compositor.
 "/usr/bin/otto" --version || { echo "otto --version failed"; fail=1; }
 for b in otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp otto-agentsd; do
+         otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg otto-greeter otto-rdp otto-agents; do
     [[ -x "/usr/bin/$b" ]] || continue
     # Not every component parses --version; a component that instead prints
     # usage and exits non-zero has still loaded successfully. Only a loader

@@ -34,6 +34,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
         // Every event, whatever it turns into: auto-lock measures idleness
         // from the last one (`lock.auto_lock_timeout`).
         self.note_input_activity();
+        self.note_press(&event);
         match event {
             InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
                 KeyAction::ScaleUp => {
@@ -234,6 +235,7 @@ impl Otto<UdevData> {
         // Every event, whatever it turns into: auto-lock measures idleness
         // from the last one (`lock.auto_lock_timeout`).
         self.note_input_activity();
+        self.note_press(&event);
         match event {
             InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
                 #[cfg(feature = "udev")]

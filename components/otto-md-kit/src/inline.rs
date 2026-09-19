@@ -85,6 +85,34 @@ pub fn inline(text: &str) -> Vec<Span> {
             }
         }
 
+        // A bare `https://example.com`, with no markup around it at all —
+        // how most links are actually written, so it has to be a link here
+        // or it is one nowhere.
+        if (ch == 'h' || ch == 'w') && autolink_starts_at(&chars, at) {
+            if let Some(end) = autolink_end(&chars, at) {
+                let body: String = chars[at..end].iter().collect();
+                // `www.example.com` names no scheme, so it gets the one a
+                // host can act on; the text keeps what was written.
+                let target = match body.strip_prefix("www.") {
+                    Some(_) => format!("https://{body}"),
+                    None => body.clone(),
+                };
+                if let Some(href) = destination(&target) {
+                    push(&mut current, &mut spans, style);
+                    spans.push(Span {
+                        text: body,
+                        style: SpanStyle {
+                            link: true,
+                            ..style
+                        },
+                        href: Some(Arc::from(href.as_str())),
+                    });
+                    at = end;
+                    continue;
+                }
+            }
+        }
+
         // `<https://example.com>` — an autolink, shown as itself.
         if ch == '<' {
             if let Some(end) = chars[at..].iter().position(|c| *c == '>') {
@@ -219,6 +247,65 @@ fn link_at(chars: &[char], at: usize) -> Option<(String, Option<String>, usize)>
     }
 }
 
+/// Whether a bare link can start at `at`, by what comes before it.
+///
+/// A URL has to start a word: without this, the tail of `see-https://a` or of
+/// a path would each become a link of their own.
+fn autolink_starts_at(chars: &[char], at: usize) -> bool {
+    let scheme = chars[at..].iter().collect::<String>();
+    if !(scheme.starts_with("https://")
+        || scheme.starts_with("http://")
+        || scheme.starts_with("www."))
+    {
+        return false;
+    }
+    match at.checked_sub(1).map(|before| chars[before]) {
+        None => true,
+        Some(before) => !before.is_alphanumeric() && !matches!(before, '/' | '.' | ':' | '@' | '-'),
+    }
+}
+
+/// Where the bare link starting at `at` ends.
+///
+/// It runs to the first space, and then gives back the punctuation that ends
+/// the sentence rather than the URL — the trailing full stop of `see
+/// https://example.com.`, and a closing bracket that has no opener inside the
+/// link, as in `(https://example.com)`.
+fn autolink_end(chars: &[char], at: usize) -> Option<usize> {
+    let prefix = if chars[at..].starts_with(&['w', 'w', 'w', '.']) {
+        "www.".len()
+    } else if chars[at..].starts_with(&['h', 't', 't', 'p', 's']) {
+        "https://".len()
+    } else {
+        "http://".len()
+    };
+    let mut end = at + prefix;
+    while end < chars.len() && !chars[end].is_whitespace() && chars[end] != '<' {
+        end += 1;
+    }
+    while end > at + prefix {
+        let last = chars[end - 1];
+        if matches!(
+            last,
+            '?' | '!' | '.' | ',' | ':' | ';' | '*' | '_' | '~' | '\'' | '"'
+        ) {
+            end -= 1;
+            continue;
+        }
+        if last == ')' {
+            let opened = chars[at..end].iter().filter(|c| **c == '(').count();
+            let closed = chars[at..end].iter().filter(|c| **c == ')').count();
+            if closed > opened {
+                end -= 1;
+                continue;
+            }
+        }
+        break;
+    }
+    // Nothing but the scheme is not a link, it is the word `https`.
+    (end > at + prefix).then_some(end)
+}
+
 /// A link destination as the source wrote it, or `None` when there is nothing
 /// a host could act on.
 ///
@@ -283,6 +370,70 @@ mod tests {
         let code = spans.iter().find(|span| span.style.code).expect("code run");
         assert_eq!(code.text, "a * b");
         assert!(spans.iter().all(|span| !span.style.italic));
+    }
+
+    #[test]
+    fn a_bare_url_is_a_link() {
+        let spans = inline("the notes are at https://example.com/a now");
+        let link = spans.iter().find(|span| span.style.link).expect("a link");
+        assert_eq!(link.text, "https://example.com/a");
+        assert_eq!(link.href.as_deref(), Some("https://example.com/a"));
+        assert_eq!(
+            text_of(&spans),
+            "the notes are at https://example.com/a now"
+        );
+    }
+
+    #[test]
+    fn a_bare_url_gives_back_the_punctuation_that_ends_the_sentence() {
+        for (line, expected) in [
+            ("see https://example.com/a.", "https://example.com/a"),
+            ("see (https://example.com/a)", "https://example.com/a"),
+            ("see https://example.com/a(b)", "https://example.com/a(b)"),
+            ("see https://example.com/a?", "https://example.com/a"),
+        ] {
+            let spans = inline(line);
+            let link = spans.iter().find(|span| span.style.link).expect("a link");
+            assert_eq!(link.text, expected, "in {line}");
+            assert_eq!(text_of(&spans), line, "in {line}");
+        }
+    }
+
+    #[test]
+    fn a_bare_www_host_gets_a_scheme_to_open() {
+        let spans = inline("www.example.com has it");
+        let link = spans.iter().find(|span| span.style.link).expect("a link");
+        assert_eq!(link.text, "www.example.com");
+        assert_eq!(link.href.as_deref(), Some("https://www.example.com"));
+    }
+
+    #[test]
+    fn a_url_that_is_already_marked_up_is_not_linked_twice() {
+        let spans = inline("[the spec](https://example.com/a) and <https://example.com/b>");
+        let links: Vec<&Span> = spans.iter().filter(|span| span.style.link).collect();
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].text, "the spec");
+        assert_eq!(links[1].text, "https://example.com/b");
+    }
+
+    #[test]
+    fn a_url_in_a_code_span_stays_text() {
+        let spans = inline("run `curl https://example.com/a`");
+        assert!(spans.iter().all(|span| !span.style.link));
+    }
+
+    #[test]
+    fn a_word_that_only_looks_like_a_url_is_not_one() {
+        for line in [
+            "https:// on its own",
+            "say https not http",
+            "a-https://x.test",
+        ] {
+            let spans = inline(line);
+            assert_eq!(text_of(&spans), line);
+        }
+        let spans = inline("https:// on its own");
+        assert!(spans.iter().all(|span| !span.style.link));
     }
 
     #[test]

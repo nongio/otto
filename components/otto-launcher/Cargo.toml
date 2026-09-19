@@ -19,13 +19,14 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 freedesktop-desktop-entry = "0.7.5"
 shell-words = "1.1"
-# Ask mode hands requests to otto-agentsd, the agent service, over the Agent Host
-# Protocol. Plain `ws://` to a local service, so no TLS stack.
+# Ask mode hands requests to otto-agents, the agent service, over the Agent
+# Host Protocol. otto-agents-client carries the transport, the socket's
+# whereabouts and the URI spellings, so both ends cannot drift apart.
 ahp = "=0.9.0"
 ahp-types = "=0.9.0"
-ahp-ws = { version = "=0.9.0", default-features = false }
+otto-agents-client = { path = "../otto-agents-client" }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 
 
@@ -35,3 +36,7 @@ features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The picture the ask log draws is a real file on disk; the test needs one.
+tempfile = "3"

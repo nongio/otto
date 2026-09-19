@@ -21,9 +21,12 @@ use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
 use otto_kit::focus::FocusId;
+use otto_kit::frosted::Frosted;
+use otto_kit::preview::document;
 use otto_kit::protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity};
 use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
+use otto_kit::CursorShape;
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
 use skia_safe::Rect;
 use smithay_client_toolkit::compositor::Region;
@@ -39,7 +42,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 use otto_launcher::apps::Apps;
 use otto_launcher::ask::{attached_text, Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
+use otto_launcher::input;
 use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
+use otto_launcher::selection::{self, Caret, Selection, Span};
 use otto_launcher::source::{rank, Item, Origin, Source};
 use otto_launcher::view::{
     field_style, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H, LOG_W,
@@ -67,7 +72,7 @@ const SCALE_IN: Duration = Duration::from_millis(340);
 
 /// How long after a change of state the card's changes of size spring. Long
 /// enough for what the new state shows — a session's conversation, the list
-/// of sessions — to come back from otto-agentsd and spring in too.
+/// of sessions — to come back from otto-agents and spring in too.
 const SPRING_WINDOW: Duration = Duration::from_millis(400);
 const FADE_OUT: Duration = Duration::from_millis(90);
 const SCALE_OUT: Duration = Duration::from_millis(110);
@@ -79,9 +84,11 @@ const BOUNCE: f64 = 0.35;
 /// When the launcher may stop — the longest thing the exit is waiting on.
 const CLOSE: Duration = Duration::from_millis(120);
 
-/// How long closing may wait on an ask request still on its way to otto-agentsd.
+/// How long closing may wait on an ask request still on its way to otto-agents.
 /// Past this the service is not answering, and the launcher goes anyway.
 const HAND_OFF_GRACE: Duration = Duration::from_secs(3);
+/// How long the card stays to say the session is going to its terminal.
+const HANDOVER_LINGER: Duration = Duration::from_millis(1400);
 
 /// How small the card is before it arrives, and again once it has gone. Near
 /// enough to full size that it reads as a swell rather than a zoom.
@@ -148,6 +155,9 @@ struct Launcher {
     /// When the closing animation will have finished, and the launcher can
     /// stop. Input is ignored from the moment this is set.
     closing_at: Option<Instant>,
+    /// When the card closes after saying that the session went to its
+    /// terminal.
+    linger_until: Option<Instant>,
 
     dirty: bool,
     painted_at: Option<Instant>,
@@ -157,7 +167,7 @@ struct Launcher {
     settle_until: Option<Instant>,
     last_tick: Instant,
 
-    /// Ask mode's connection to otto-agentsd, and the request once it is made.
+    /// Ask mode's connection to otto-agents, and the request once it is made.
     ask: Option<Ask>,
     /// The ask log, laid out for the card.
     log: Vec<LogLine>,
@@ -172,6 +182,31 @@ struct Launcher {
     log_revision: u64,
     /// The log pane still has a scroll in hand.
     log_busy: bool,
+    /// Every piece of text in the log, as painted, so it can be selected.
+    log_spans: Vec<Span>,
+    /// What is selected in the log, when anything is.
+    log_selection: Option<Selection>,
+    /// The selection as boxes to paint, kept beside it so a scroll or a
+    /// repaint does not measure the text again.
+    selection_rects: Vec<Rect>,
+    /// A selection being dragged out: where the drag took hold of the text.
+    selecting: Option<Caret>,
+    /// The cursor last asked for over the log — text over its words, a hand
+    /// over a code block's copy button — so it is only asked for when it
+    /// changes.
+    log_cursor: CursorShape,
+    /// The code block the pointer is over, as the log line holding its answer
+    /// and the block within it, so its copy button is shown.
+    code_hover: Option<(usize, document::CodeHit)>,
+    /// A link pressed in the log, and where it was pressed, so a release that
+    /// did not turn into a drag opens it.
+    link_press: Option<(std::sync::Arc<str>, f32, f32)>,
+    /// The code block last copied, until the pointer leaves it, so its button
+    /// can say so.
+    code_copied: Option<(usize, usize)>,
+    /// The last press in the log — when, where, and how many presses have run
+    /// together — so a second picks a word and a third the line.
+    last_press: Option<(u32, f32, f32, u32)>,
     /// The tool call id of the agent's question the rows answer, so a new
     /// question can start from its default answer.
     asked: Option<String>,
@@ -186,12 +221,18 @@ struct Launcher {
     /// Down has listed the agents under the field, to send the first request
     /// to another than the default.
     choosing_agent: bool,
+    /// The agent picked from that list, by its row, until the first request
+    /// settles the session's agent. `None` means the default one.
+    picked_agent: Option<usize>,
     /// Until when the card's changes of size spring, as the card does on
     /// opening, instead of snapping; see [`Launcher::spring`].
     spring_until: Option<Instant>,
     /// Where the field sat down the card at the last resize: how much log was
     /// above it.
     log_top: f32,
+    /// The agent's frosted material the card wears, when the agent it shows
+    /// has one; see [`Launcher::card_tint`].
+    card_tint: Option<Frosted>,
 }
 
 /// The query field's identity for assistive technologies.
@@ -214,9 +255,9 @@ enum Scope {
     Everything,
     Apps,
     Windows,
-    /// What is typed is a request for an agent, handed to otto-agentsd.
+    /// What is typed is a request for an agent, handed to otto-agents.
     Ask,
-    /// The agent sessions otto-agentsd has, to pick one and carry it on in ask
+    /// The agent sessions otto-agents has, to pick one and carry it on in ask
     /// mode.
     Agents,
 }
@@ -322,6 +363,7 @@ impl Launcher {
             engaged: false,
             opened: false,
             closing_at: None,
+            linger_until: None,
             dirty: true,
             painted_at: None,
             parent_painted: false,
@@ -334,13 +376,24 @@ impl Launcher {
             log_pane: None,
             log_revision: 0,
             log_busy: false,
+            log_spans: Vec::new(),
+            log_selection: None,
+            selection_rects: Vec::new(),
+            selecting: None,
+            log_cursor: CursorShape::Default,
+            code_hover: None,
+            link_press: None,
+            code_copied: None,
+            last_press: None,
             asked: None,
             picking: scope == Scope::Agents,
             opened_session: None,
             return_to: None,
             choosing_agent: false,
+            picked_agent: None,
             spring_until: None,
             log_top: 0.0,
+            card_tint: None,
         }
     }
 
@@ -379,8 +432,13 @@ impl Launcher {
         if let Some(ask) = self.ask.as_ref() {
             let mut returned = false;
             let question = ask.question();
+            // What the agent asked the person, when no permission question
+            // comes first: its rows are the answers to the question at hand.
+            let input = question.is_none().then(|| ask.input_key()).flatten();
             self.rows = if question.is_some() {
                 ask.question_rows(ASK_ROWS)
+            } else if input.is_some() {
+                ask.input_rows(ASK_ROWS)
             } else if self.picking {
                 let rows = ask.session_rows(ASK_ROWS, self.input.value());
                 if let Some(resource) = self.return_to.as_deref() {
@@ -401,13 +459,34 @@ impl Launcher {
             } else {
                 ask.agent_rows(ASK_ROWS)
             };
-            if question.is_none() && !self.picking {
+            if question.is_none() && input.is_none() && !self.picking {
                 self.rows.extend(ask.attachment_rows(ATTACHMENT_ROWS));
             }
-            let asked = question.as_ref().map(|q| q.tool_call_id.clone());
+            let asked = question
+                .as_ref()
+                .map(|q| q.tool_call_id.clone())
+                .or_else(|| input.clone());
             if asked != self.asked {
-                // A new question offers its narrowest allowing answer first.
-                self.selected = question.as_ref().map_or(0, |q| q.default_choice());
+                // A new question offers its narrowest allowing answer first;
+                // one the agent asked the person, the answer already given,
+                // or the one it suggests.
+                self.selected = match question.as_ref() {
+                    Some(question) => question.default_choice(),
+                    None => ask.input_default_row(),
+                };
+                if input.is_some() {
+                    if let Some(text) = ask.input_prefill() {
+                        self.input.set_value(text);
+                    }
+                }
+                match ask.input_placeholder().filter(|_| input.is_some()) {
+                    Some(placeholder) => self.input.state.placeholder = placeholder.to_string(),
+                    None if ask.running() && !self.picking => {
+                        self.input.state.placeholder =
+                            otto_kit::t!("launcher-search-ask-more").to_string()
+                    }
+                    None => {}
+                }
                 self.asked = asked;
             }
             self.selected = self.selected.min(self.rows.len().saturating_sub(1));
@@ -563,9 +642,21 @@ impl Launcher {
         }
         pane.set_hidden(false);
         pane.set_viewport(viewport);
+        let copy = self.code_hover.map(|(line, hit)| {
+            (
+                line,
+                document::CopyButton {
+                    block: hit.block,
+                    hovered: hit.on_button,
+                    copied: self.code_copied == Some((line, hit.block)),
+                },
+            )
+        });
         let content = LogRows {
             palette,
             lines: &self.log,
+            selection: &self.selection_rects,
+            copy,
             revision: self.log_revision,
         };
         self.log_busy = pane.update(&content, &AppContext::current_theme());
@@ -588,11 +679,23 @@ impl Launcher {
             self.resume_selected();
             return;
         }
+        if self.choosing_agent {
+            // The list is open: Return takes the agent it highlights, and the
+            // request goes to it once it is written.
+            self.pick_agent();
+            return;
+        }
         if self.ask.is_some() {
             // With nothing typed, Return answers the agent's question when it
             // asked one; otherwise it sends what is typed.
-            if self.asked_question() && self.input.value().trim().is_empty() {
+            let empty = self.input.value().trim().is_empty();
+            if self.asked_question() && empty {
                 self.answer_selected();
+            } else if self.asking_input() && empty {
+                self.answer_input(Some(self.selected));
+            } else if self.asking_input() && self.ask.as_ref().is_some_and(Ask::input_takes_text) {
+                // What is typed answers the question, when it takes words.
+                self.answer_input(None);
             } else {
                 self.send_ask();
             }
@@ -618,12 +721,92 @@ impl Launcher {
     /// Whether a request has been made, and the card is its log.
     /// Whether an agent can still be picked: ask mode, more than one agent,
     /// nothing asked yet, and no session being picked or question answered.
-    /// The agent the next request would go to: the row picked in the agent
-    /// list, if one is picked.
+    /// The agent the next request would go to: the one highlighted while the
+    /// list is open, or the one picked from it; `None` for the default.
     fn chosen_agent(&self) -> Option<usize> {
-        self.selected_origin()
+        if self.choosing_agent {
+            return self
+                .selected_origin()
+                .filter(|origin| origin.source == ASK_ROWS)
+                .map(|origin| origin.index);
+        }
+        self.picked_agent
+    }
+
+    /// Take the highlighted agent and put the list away. The field says whose
+    /// it is from here, so the choice is still on screen once the list is
+    /// gone, and the next request goes to it.
+    fn pick_agent(&mut self) {
+        let Some(index) = self
+            .selected_origin()
             .filter(|origin| origin.source == ASK_ROWS)
             .map(|origin| origin.index)
+        else {
+            return;
+        };
+        self.picked_agent = Some(index);
+        self.choosing_agent = false;
+        self.selected = 0;
+        self.spring();
+        self.refresh_composer_placeholder();
+        self.refilter();
+    }
+
+    /// What the empty field says while a request is being written: the agent
+    /// it would go to — the one picked from the list, or the first, which is
+    /// the default. Until the agents arrive it names the mode instead.
+    fn composer_placeholder(&self) -> String {
+        let name = self
+            .ask
+            .as_ref()
+            .and_then(|ask| ask.agent_display_name(self.picked_agent.unwrap_or(0)));
+        match name {
+            Some(agent) => otto_kit::t_owned!("launcher-search-ask-agent", agent = agent),
+            None => Scope::Ask.placeholder().to_string(),
+        }
+    }
+
+    /// Say whose the request is in the empty field, now that the agent it
+    /// would go to has changed — one picked from the list, or the agents
+    /// arriving from the service, which is when the default gets its name.
+    fn refresh_composer_placeholder(&mut self) {
+        let composing = !self.picking
+            && self.ask.as_ref().is_some_and(|ask| {
+                !ask.running() && ask.question().is_none() && ask.input().is_none()
+            });
+        if !composing {
+            return;
+        }
+        let placeholder = self.composer_placeholder();
+        if self.input.state.placeholder != placeholder {
+            self.input.state.placeholder = placeholder;
+            self.dirty = true;
+        }
+    }
+
+    /// The material the card should wear now: the agent's, when the card is
+    /// a conversation with, or a request to, an agent that has a colour. The
+    /// list of sessions is nobody's in particular, and neither is a card
+    /// without an agent behind it, so both keep the plain material.
+    fn card_tint(&self) -> Option<Frosted> {
+        if self.picking {
+            return None;
+        }
+        let ask = self.ask.as_ref()?;
+        Frosted::from_name(ask.colour(self.chosen_agent())?)
+    }
+
+    /// Recolour the card when the agent it shows has changed: another one
+    /// picked in the list, a session opened, or the list gone back to.
+    fn refresh_card_tint(&mut self) {
+        let tint = self.card_tint();
+        if tint == self.card_tint {
+            return;
+        }
+        self.card_tint = tint;
+        if let Some(card) = self.card.as_ref() {
+            apply_card_colour(card, tint);
+        }
     }
 
     /// Offer the rest of the skill name being typed, in grey after the caret.
@@ -633,7 +816,7 @@ impl Launcher {
         let ghost = self
             .ask
             .as_ref()
-            .filter(|ask| !self.picking && ask.question().is_none())
+            .filter(|ask| !self.picking && ask.question().is_none() && ask.input().is_none())
             .and_then(|ask| ask.completion(self.input.value(), agent))
             .unwrap_or_default();
         if self.input.state.ghost != ghost {
@@ -673,6 +856,12 @@ impl Launcher {
         self.ask
             .as_ref()
             .is_some_and(|ask| ask.question().is_some())
+    }
+
+    /// Whether the agent asked the person something, and the rows are the
+    /// answers to the question at hand.
+    fn asking_input(&self) -> bool {
+        !self.asked_question() && self.ask.as_ref().is_some_and(|ask| ask.input().is_some())
     }
 
     /// Whether the row at `index` is an attached file.
@@ -717,6 +906,17 @@ impl Launcher {
         let Some(index) = self.selected_origin().map(|origin| origin.index) else {
             return;
         };
+        // A session that is open in a terminal is carried on there: its
+        // terminal comes to the front in place of the conversation.
+        let in_terminal = self
+            .ask
+            .as_ref()
+            .and_then(|ask| ask.terminal_at(index))
+            .is_some_and(|terminal| terminal.focus());
+        if in_terminal {
+            self.close();
+            return;
+        }
         self.opened_session = self
             .ask
             .as_ref()
@@ -736,6 +936,8 @@ impl Launcher {
         self.input.state.placeholder = otto_kit::t!("launcher-search-ask-more").to_string();
         self.rows.clear();
         self.selected = 0;
+        self.choosing_agent = false;
+        self.picked_agent = None;
         self.log_following = true;
         self.refilter();
         self.relayout_log();
@@ -743,9 +945,33 @@ impl Launcher {
 
     /// Spring the card's changes of size for a moment, as it springs open: the
     /// launcher is changing state, and what the new state shows may take a
-    /// round trip to otto-agentsd to arrive.
+    /// round trip to otto-agents to arrive.
     fn spring(&mut self) {
         self.spring_until = Some(Instant::now() + SPRING_WINDOW);
+    }
+
+    /// Leave whatever is on screen for a fresh request, as the counterpart of
+    /// [`Launcher::back_to_sessions`]. What is left behind costs nothing: the
+    /// service owns the session, and it is in the list to come back to.
+    fn new_session(&mut self) {
+        self.spring();
+        self.ask = Some(Ask::open());
+        self.picking = false;
+        self.opened_session = None;
+        self.return_to = None;
+        self.input.set_value("");
+        self.input.state.placeholder = Scope::Ask.placeholder().to_string();
+        self.selected = 0;
+        self.asked = None;
+        self.choosing_agent = false;
+        self.picked_agent = None;
+        self.log.clear();
+        self.log_text.clear();
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.log_following = true;
+        self.refresh_composer_placeholder();
+        self.refilter();
+        self.relayout_log();
     }
 
     /// Leave the session for the list of sessions, as a back button would.
@@ -765,6 +991,7 @@ impl Launcher {
         self.selected = 0;
         self.asked = None;
         self.choosing_agent = false;
+        self.picked_agent = None;
         self.log.clear();
         self.log_text.clear();
         self.log_revision = self.log_revision.wrapping_add(1);
@@ -793,6 +1020,7 @@ impl Launcher {
             self.input.state.placeholder = otto_kit::t!("launcher-search-ask-more").to_string();
             self.selected = 0;
             self.choosing_agent = false;
+            self.picked_agent = None;
         }
         // The attached files went with the request, into the log.
         self.refilter();
@@ -810,6 +1038,30 @@ impl Launcher {
             self.refilter();
             self.relayout_log();
         }
+    }
+
+    /// Answer the question the agent asked: with the row at `row`, or with
+    /// what is typed when `row` is `None`.
+    fn answer_input(&mut self, row: Option<usize>) {
+        let typed = self.input.value().to_string();
+        let Some(ask) = self.ask.as_mut() else {
+            return;
+        };
+        let answered = match row {
+            Some(row) => ask.choose_input(row, &typed),
+            None => ask.answer_input(&typed),
+        };
+        if answered.took_text {
+            self.input.set_value("");
+        }
+        self.log_following = true;
+        self.refilter();
+        if answered.opened {
+            // The link is open; what is left is saying so.
+            self.selected = self.ask.as_ref().map_or(0, Ask::input_default_row);
+            self.list_revision = self.list_revision.wrapping_add(1);
+        }
+        self.relayout_log();
     }
 
     /// Lay the log out again from the conversation.
@@ -835,36 +1087,189 @@ impl Launcher {
             .iter()
             .map(|entry| entry.steps.iter().map(Step::text).collect())
             .collect();
+        let inputs: Vec<Vec<Vec<(String, ask_log::Style)>>> = transcript
+            .entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .inputs
+                    .iter()
+                    .map(|request| ask.input_lines(request))
+                    .collect()
+            })
+            .collect();
         let blocks: Vec<Block> = transcript
             .entries
             .iter()
             .zip(&notes)
             .zip(&steps)
             .zip(&attached)
-            .map(|(((entry, note), steps), attached)| Block {
+            .zip(&inputs)
+            .map(|((((entry, note), steps), attached), inputs)| Block {
                 prompt: &entry.prompt,
                 attachments: attached.as_deref(),
                 answer: &entry.answer,
                 steps,
+                inputs,
                 question: entry
                     .question
                     .as_ref()
                     .map(|question| (question.title.as_str(), question.detail.as_str())),
+                action: entry
+                    .question
+                    .as_ref()
+                    .map(|question| question.action.as_slice())
+                    .unwrap_or(&[]),
                 note: note.as_deref(),
             })
             .collect();
+        // The status closes the log; the agent and its mode sit under it.
         let status = transcript.status.as_ref().map(Status::text);
-        self.log = lay_out(&blocks, status.as_deref(), LOG_W, |text, style| {
-            palette.measure_log(text, style)
-        });
+        let footer = ask.mode_line();
+        let status = match (status, footer) {
+            (Some(status), Some(footer)) => Some(format!("{status}\n{footer}")),
+            (status, footer) => status.or(footer),
+        };
+        self.log = lay_out(
+            &blocks,
+            status.as_deref(),
+            LOG_W,
+            |text, style| palette.measure_log(text, style),
+            |path| palette.picture_size(path),
+        );
         self.log_text = self
             .log
             .iter()
             .map(LogLine::text)
             .collect::<Vec<_>>()
             .join("\n");
+        // What can be selected, rebuilt with the lines it belongs to. A
+        // selection whose text has since been laid out differently — the log
+        // was cleared, or a request withdrawn — is dropped rather than left
+        // highlighting whatever now sits at those coordinates.
+        self.log_spans = palette.log_spans(&self.log);
+        match self.log_selection {
+            Some(selection) if selection.fits(&self.log_spans) => {
+                // The words may have been laid out somewhere else — the card
+                // is a different width, or a line above re-wrapped — so the
+                // highlight is measured again against where they are now.
+                self.selection_rects = selection::rects(&self.log_spans, selection);
+            }
+            Some(_) => {
+                self.log_selection = None;
+                self.selection_rects.clear();
+            }
+            None => {}
+        }
         self.log_revision = self.log_revision.wrapping_add(1);
         self.dirty = true;
+    }
+
+    /// Select `selection` in the log — or nothing, with `None` — and repaint
+    /// what changed.
+    fn set_log_selection(&mut self, selection: Option<Selection>) {
+        let selection = selection.filter(|selection| !selection.is_empty());
+        let same = match (self.log_selection, selection) {
+            (Some(before), Some(now)) => before.range() == now.range(),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.selection_rects = selection
+            .map(|selection| selection::rects(&self.log_spans, selection))
+            .unwrap_or_default();
+        self.log_selection = selection;
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.dirty = true;
+    }
+
+    /// What is selected in the log, as text.
+    fn selected_log_text(&self) -> Option<String> {
+        let selection = self.log_selection?;
+        let text = selection::text(&self.log_spans, selection);
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Where a point on the card is in the log's own content coordinates,
+    /// when the log is showing and the point is over it.
+    fn log_point(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        let palette = self.palette.as_ref()?;
+        let pane = self.log_pane.as_ref()?;
+        let viewport = palette.log_rect();
+        let inside = (viewport.left..viewport.right).contains(&x)
+            && (viewport.top..viewport.bottom).contains(&y);
+        if viewport.height() <= 0.0 || !inside {
+            return None;
+        }
+        Some((x - viewport.left, y - viewport.top + pane.offset()))
+    }
+
+    /// The same, for a drag that has left the log: the point is pulled back
+    /// inside the pane, so a selection dragged past the last line keeps
+    /// running to the end of it rather than stopping.
+    fn log_point_clamped(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        let palette = self.palette.as_ref()?;
+        let pane = self.log_pane.as_ref()?;
+        let viewport = palette.log_rect();
+        if viewport.height() <= 0.0 {
+            return None;
+        }
+        let x = x.clamp(viewport.left, viewport.right);
+        let y = y.clamp(viewport.top, viewport.bottom);
+        Some((x - viewport.left, y - viewport.top + pane.offset()))
+    }
+
+    /// Note which code block the pointer is over, at `point` in the log's
+    /// content coordinates, and repaint if that changed: the block under the
+    /// pointer shows its copy button, and a copied block stops saying so once
+    /// the pointer leaves it.
+    fn hover_code(&mut self, point: Option<(f32, f32)>) {
+        let hover = point.and_then(|point| {
+            self.palette
+                .as_ref()
+                .and_then(|palette| palette.code_at(&self.log, point))
+        });
+        if hover == self.code_hover {
+            return;
+        }
+        let same_block = |a: Option<(usize, document::CodeHit)>,
+                          b: Option<(usize, document::CodeHit)>| {
+            a.map(|(line, hit)| (line, hit.block)) == b.map(|(line, hit)| (line, hit.block))
+        };
+        if !same_block(hover, self.code_hover) {
+            self.code_copied = None;
+        }
+        self.code_hover = hover;
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.dirty = true;
+    }
+
+    /// The link under `point` in the log's content coordinates, if the
+    /// pointer is over one at all.
+    fn link_at(&self, point: Option<(f32, f32)>) -> Option<&str> {
+        let point = point?;
+        self.palette.as_ref()?.link_at(&self.log, point)
+    }
+
+    /// How many presses have run together at this spot: a second within the
+    /// double-press time picks out a word, a third the whole line.
+    fn press_count(&mut self, time: u32, x: f32, y: f32) -> u32 {
+        const DOUBLE_PRESS_MS: u32 = 400;
+        const SLOP: f32 = 4.0;
+        let count = match self.last_press {
+            Some((last, last_x, last_y, count))
+                if time.saturating_sub(last) <= DOUBLE_PRESS_MS
+                    && (x - last_x).abs() <= SLOP
+                    && (y - last_y).abs() <= SLOP =>
+            {
+                count + 1
+            }
+            _ => 1,
+        };
+        self.last_press = Some((time, x, y, count));
+        count
     }
 
     /// Scroll the log by `delta` points, from the keyboard.
@@ -1208,6 +1613,10 @@ impl ScrollContent for Rows<'_> {
 struct LogRows<'a> {
     palette: &'a Palette,
     lines: &'a [LogLine],
+    /// What is selected, as the boxes to paint behind the words.
+    selection: &'a [Rect],
+    /// The copy button to show on a code block, if the pointer is over one.
+    copy: Option<(usize, document::CopyButton)>,
     revision: u64,
 }
 
@@ -1221,7 +1630,23 @@ impl ScrollContent for LogRows<'_> {
     }
 
     fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
-        self.palette.paint_log(canvas, band, self.lines);
+        self.palette
+            .paint_log(canvas, band, self.lines, self.selection, self.copy);
+    }
+}
+
+/// Put `text` on the clipboard, so that it is still there afterwards.
+///
+/// The offer is made here first, which is what makes a paste work while the
+/// launcher is still up. But a Wayland selection dies with the client that
+/// made it, and the launcher is one keystroke from closing — so `wl-copy`,
+/// which forks and stays to serve the offer, is handed the same text and
+/// takes the selection over. Without it the copy still works until the
+/// launcher goes, which is better than refusing to copy at all.
+fn copy_to_clipboard(text: &str, serial: u32) {
+    clipboard::set_text(text, serial);
+    if let Err(err) = std::process::Command::new("wl-copy").arg(text).spawn() {
+        tracing::debug!(%err, "wl-copy is not available: the copy lasts as long as the launcher");
     }
 }
 
@@ -1281,29 +1706,35 @@ fn at_least_opaque(colour: skia_safe::Color, min_alpha: u8) -> skia_safe::Color 
 }
 
 /// The card's frost colour, which is the one part of the material that follows
-/// the colour scheme. Split out of `apply_card_material` so a theme that lands
-/// after the card exists can be applied without also rewinding the entrance
-/// state that function sets.
-fn apply_card_colour(card: &SubsurfaceSurface) {
+/// the colour scheme — and the agent, when the card is an agent's and the
+/// agent has a `tint`. Split out of `apply_card_material` so a theme or a tint
+/// that lands after the card exists can be applied without also rewinding the
+/// entrance state that function sets.
+fn apply_card_colour(card: &SubsurfaceSurface, tint: Option<Frosted>) {
     let Some(style) = card.base_surface().surface_style() else {
         tracing::warn!("no otto-surface-style; the card will not be frosted");
         return;
     };
-    // `material_popup` is the token the bar's menus use — the launcher is the
-    // same kind of thing, floating over whatever happens to be behind it. It is
-    // taken up to at least `CARD_MIN_ALPHA` on top of that: the card is large
-    // and full of small text, and a busy desktop showing through it costs more
-    // legibility than the frost gives back.
-    // Nearly opaque while the desktop's frosting is off.
-    let min_alpha = if otto_kit::frosting::enabled() {
-        CARD_MIN_ALPHA
-    } else {
-        CARD_UNFROSTED_MIN_ALPHA
+    let colour = match tint {
+        // An agent's material, as designed: the same family as the rest of
+        // the chrome, carrying the agent's hue. The text reads the same on it.
+        Some(tint) => tint.material(dark()),
+        None => {
+            // `material_popup` is the token the bar's menus use — the launcher
+            // is the same kind of thing, floating over whatever happens to be
+            // behind it. It is taken up to at least `CARD_MIN_ALPHA` on top of
+            // that: the card is large and full of small text, and a busy
+            // desktop showing through it costs more legibility than the frost
+            // gives back. Nearly opaque while the desktop's frosting is off.
+            let min_alpha = if otto_kit::frosting::enabled() {
+                CARD_MIN_ALPHA
+            } else {
+                CARD_UNFROSTED_MIN_ALPHA
+            };
+            at_least_opaque(AppContext::current_theme().material_popup, min_alpha)
+        }
     };
-    let colour = skia_safe::Color4f::from(at_least_opaque(
-        AppContext::current_theme().material_popup,
-        min_alpha,
-    ));
+    let colour = skia_safe::Color4f::from(colour);
     style.set_background_color(
         colour.r as f64,
         colour.g as f64,
@@ -1320,8 +1751,8 @@ fn apply_card_colour(card: &SubsurfaceSurface) {
 /// declares what it wants to look like and paints its text on top of the
 /// result. `material_medium` is the same token the bar's menus use, so the
 /// launcher reads as the same kind of surface as the rest of the desktop.
-fn apply_card_material(card: &SubsurfaceSurface) {
-    apply_card_colour(card);
+fn apply_card_material(card: &SubsurfaceSurface, tint: Option<Frosted>) {
+    apply_card_colour(card, tint);
     let Some(style) = card.base_surface().surface_style() else {
         return;
     };
@@ -1402,7 +1833,7 @@ impl App for Launcher {
             CARD_W as i32,
             MAX_CARD_H as i32,
         )?;
-        apply_card_material(&card);
+        apply_card_material(&card, self.card_tint);
 
         tracing::debug!(ms = since_start(), "card surface created");
         let Some(engine) = AppContext::layers_renderer(|renderer| renderer.engine().clone()) else {
@@ -1467,7 +1898,7 @@ impl App for Launcher {
             palette.set_dark(dark);
         }
         if let Some(card) = self.card.as_ref() {
-            apply_card_colour(card);
+            apply_card_colour(card, self.card_tint);
         }
         // The rows' text is coloured from the scheme too.
         self.list_revision = self.list_revision.wrapping_add(1);
@@ -1490,7 +1921,10 @@ impl App for Launcher {
             }
             _ => {}
         }
-        if state != wl_keyboard::KeyState::Pressed || self.closing_at.is_some() {
+        if state != wl_keyboard::KeyState::Pressed
+            || self.closing_at.is_some()
+            || self.linger_until.is_some()
+        {
             return;
         }
         self.engaged = true;
@@ -1511,6 +1945,17 @@ impl App for Launcher {
                 && !modifiers.alt
                 && matches!(event.keysym, Keysym::c | Keysym::C));
 
+        // Left with nothing typed goes back a question, while the agent asks
+        // several and one is behind.
+        if event.keysym == Keysym::Left
+            && self.input.value().is_empty()
+            && self.ask.as_mut().is_some_and(Ask::input_back)
+        {
+            self.refilter();
+            self.relayout_log();
+            return;
+        }
+
         // Left with nothing typed goes back from a session to the list of
         // sessions. Not while a request is still on its way to the service,
         // which leaving would lose.
@@ -1525,17 +1970,102 @@ impl App for Launcher {
             return;
         }
 
+        // Ctrl+L or Cmd+L is the one key for both directions: from a request
+        // or a conversation it shows the list of sessions, and from the list
+        // it starts a fresh request. Not while a request is still on its way
+        // to the service, which leaving would lose.
+        let list_key = control == Some('l')
+            || (modifiers.logo
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && matches!(event.keysym, Keysym::l | Keysym::L));
+        if list_key && self.ask.as_ref().is_some_and(|ask| !ask.handing_off()) {
+            if self.picking {
+                self.new_session();
+            } else {
+                self.back_to_sessions();
+            }
+            return;
+        }
+
+        // Right with nothing typed opens the highlighted session, the way
+        // Left left it: the two keys walk in and out of a conversation.
+        if event.keysym == Keysym::Right
+            && self.picking
+            && self.input.value().is_empty()
+            && self
+                .selected_origin()
+                .is_some_and(|origin| origin.source == ASK_ROWS)
+        {
+            self.resume_selected();
+            return;
+        }
+
         // Ctrl+O takes the session up in a terminal, in the agent's own
         // interface, and the launcher goes: the terminal has the keyboard now.
         // The session being followed, or the one highlighted in the list.
         if control == Some('o') {
             if let Some(terminal) = self.selected_terminal() {
+                // One terminal per session: a second would be a second agent
+                // writing the same history. The one that is open comes to the
+                // front instead.
+                if terminal.already_open() {
+                    terminal.focus();
+                    self.close();
+                    return;
+                }
                 match terminal.open() {
-                    Ok(()) => self.close(),
+                    Ok(()) => {
+                        // The terminal's agent writes the history from here;
+                        // the service lets go of its own once it is idle.
+                        let index = self
+                            .picking
+                            .then(|| self.selected_origin())
+                            .flatten()
+                            .filter(|origin| origin.source == ASK_ROWS)
+                            .map(|origin| origin.index);
+                        if let Some(ask) = self.ask.as_mut() {
+                            ask.release(index);
+                        }
+                        // From the conversation the log says so first; the
+                        // list just goes.
+                        if index.is_none() && self.ask_running() {
+                            self.linger_until = Some(Instant::now() + HANDOVER_LINGER);
+                            self.dirty = true;
+                        } else {
+                            self.close();
+                        }
+                    }
                     Err(err) => tracing::warn!(%err, "could not open the session in a terminal"),
                 }
                 return;
             }
+        }
+
+        // Text picked out of the log is what Ctrl+C or Cmd+C copies, before
+        // the key means anything else: the log is read far more often than a
+        // turn is stopped, and a selection on screen says which was meant.
+        if stop_key {
+            if let Some(text) = self.selected_log_text() {
+                copy_to_clipboard(&text, serial);
+                return;
+            }
+        }
+
+        // In the list of sessions, Ctrl+Backspace or Cmd+Backspace removes the
+        // highlighted session for good; Delete with the same modifier too.
+        let delete_key = matches!(event.keysym, Keysym::BackSpace | Keysym::Delete)
+            && (modifiers.ctrl || modifiers.logo)
+            && !modifiers.alt;
+        if delete_key && self.picking {
+            let index = self
+                .selected_origin()
+                .filter(|origin| origin.source == ASK_ROWS)
+                .map(|origin| origin.index);
+            if let (Some(index), Some(ask)) = (index, self.ask.as_mut()) {
+                ask.delete_at(index);
+            }
+            return;
         }
 
         // In the list of sessions, Ctrl+C or Cmd+C with nothing selected to
@@ -1562,7 +2092,7 @@ impl App for Launcher {
                 .palette
                 .as_ref()
                 .map_or(0.0, |palette| palette.log_rect().height());
-            let answering = self.asked_question();
+            let answering = self.asked_question() || self.asking_input();
             let scroll = match (event.keysym, control) {
                 (Keysym::Up, _) if !answering => Some(-LOG_LINE_H * 3.0),
                 (Keysym::Down, _) if !answering => Some(LOG_LINE_H * 3.0),
@@ -1580,10 +2110,25 @@ impl App for Launcher {
                 }
                 return;
             }
+            // Shift+Tab switches the agent's mode, as it does in the agents'
+            // own interfaces, unless the rows under the field are answers to
+            // walk through.
+            let back_tab =
+                event.keysym == Keysym::ISO_Left_Tab || (event.keysym == Keysym::Tab && self.shift);
+            if back_tab && !answering && self.ask.as_mut().is_some_and(Ask::cycle_mode) {
+                return;
+            }
         }
 
         match (event.keysym, control) {
             (Keysym::Escape, _) => {
+                // Escape lets go of what was picked out of the log first, so
+                // a selection made by accident is not also a reason to lose
+                // the conversation.
+                if self.log_selection.is_some() {
+                    self.set_log_selection(None);
+                    return;
+                }
                 self.close();
                 return;
             }
@@ -1599,7 +2144,7 @@ impl App for Launcher {
             {
                 self.choosing_agent = true;
                 self.spring();
-                self.selected = 0;
+                self.selected = self.picked_agent.unwrap_or(0);
                 self.refilter();
                 return;
             }
@@ -1646,6 +2191,13 @@ impl App for Launcher {
                 return;
             }
             (_, Some('a')) => {
+                // With nothing typed, there is nothing in the field to select
+                // all of, and what is on screen is the conversation: Ctrl+A
+                // takes the whole log, ready to be copied.
+                if self.input.value().is_empty() && !self.log_spans.is_empty() {
+                    self.set_log_selection(selection::everything(&self.log_spans));
+                    return;
+                }
                 self.input
                     .on_key(TextInputKey::SelectAll, KeyMods::default());
                 self.dirty = true;
@@ -1663,7 +2215,7 @@ impl App for Launcher {
                 if let TextInputResponse::Clipboard(text) =
                     self.input.on_key(key, KeyMods::default())
                 {
-                    clipboard::set_text(&text, serial);
+                    copy_to_clipboard(&text, serial);
                 }
                 if cut {
                     self.refilter();
@@ -1782,6 +2334,18 @@ impl App for Launcher {
                 }
             }
             match event.kind {
+                // A selection being dragged out follows the pointer wherever
+                // it goes, on the card or off it.
+                PointerEventKind::Motion { .. } if self.selecting.is_some() => {
+                    let (Some(anchor), Some(point)) =
+                        (self.selecting, self.log_point_clamped(x, y))
+                    else {
+                        continue;
+                    };
+                    if let Some(focus) = selection::nearest_caret(&self.log_spans, point) {
+                        self.set_log_selection(Some(Selection { anchor, focus }));
+                    }
+                }
                 // The highlight is the list pane's, so following the pointer
                 // repaints nothing.
                 PointerEventKind::Motion { .. } if on_card => {
@@ -1794,6 +2358,29 @@ impl App for Launcher {
                     }
                     if let Some(row) = self.list_row_at(x, y) {
                         self.selected = row;
+                    }
+                    let point = self.log_point(x, y);
+                    self.hover_code(point);
+                    // Over the log's words the pointer says so, because
+                    // nothing else about painted text does; over a copy
+                    // button it is a hand. Only when it changes: motion
+                    // arrives far too often to ask the compositor for the
+                    // same cursor every time.
+                    let on_button = self.code_hover.is_some_and(|(_, hit)| hit.on_button);
+                    let over_link = self.link_at(point).is_some();
+                    let over_text = point
+                        .and_then(|point| selection::caret_at(&self.log_spans, point))
+                        .is_some();
+                    let cursor = if on_button || over_link {
+                        CursorShape::Pointer
+                    } else if over_text {
+                        CursorShape::Text
+                    } else {
+                        CursorShape::Default
+                    };
+                    if cursor != self.log_cursor {
+                        self.log_cursor = cursor;
+                        AppContext::set_cursor_shape(cursor);
                     }
                 }
                 // A wheel or a touchpad over the card scrolls the list, and
@@ -1838,10 +2425,72 @@ impl App for Launcher {
                         self.close();
                         return;
                     }
-                    // The field and the log are the card's handle.
+                    // A press on a code block's copy button copies the block
+                    // and nothing else: not a selection, since the press is
+                    // over the block's words too.
+                    if let Some((line, hit)) = self.code_hover.filter(|(_, hit)| hit.on_button) {
+                        if let PointerEventKind::Press { serial, .. } = event.kind {
+                            if let Some(text) = Palette::code_text(&self.log, line, hit.block) {
+                                copy_to_clipboard(&text, serial);
+                                self.code_copied = Some((line, hit.block));
+                                self.log_revision = self.log_revision.wrapping_add(1);
+                                self.dirty = true;
+                            }
+                        }
+                        continue;
+                    }
+                    // A press on a link is remembered rather than followed:
+                    // the words of a link are words like any other until the
+                    // release says whether they were read or clicked.
+                    self.link_press = self
+                        .link_at(self.log_point(x, y))
+                        .map(|href| (std::sync::Arc::from(href), x, y));
+                    // A press on the log's words starts a selection: the
+                    // conversation is there to be read, and read means
+                    // copied. A second press takes the word under it, a
+                    // third the line.
+                    let caret = self
+                        .log_point(x, y)
+                        .and_then(|point| selection::caret_at(&self.log_spans, point));
+                    if let Some(caret) = caret {
+                        let time = match event.kind {
+                            PointerEventKind::Press { time, .. } => time,
+                            _ => 0,
+                        };
+                        let selection = match self.press_count(time, x, y) {
+                            1 => Selection::at(caret),
+                            2 => selection::word_at(&self.log_spans, caret),
+                            _ => selection::line_at(&self.log_spans, caret),
+                        };
+                        self.selecting = Some(selection.anchor);
+                        self.set_log_selection(Some(selection));
+                        continue;
+                    }
+                    // Anywhere else puts the selection down again.
+                    self.set_log_selection(None);
+                    // The field and the log's background are the card's
+                    // handle.
                     if self.palette.as_ref().is_some_and(|p| p.drags_at(y)) {
                         self.dragging = Some((x, y));
                     }
+                }
+                PointerEventKind::Release { .. } if self.link_press.is_some() => {
+                    self.selecting = None;
+                    // A press and a release in the same spot is a click; one
+                    // that travelled was a selection being dragged out over a
+                    // link, and opening it would be the last thing wanted.
+                    const SLOP: f32 = 4.0;
+                    if let Some((href, from_x, from_y)) = self.link_press.take() {
+                        if (x - from_x).abs() <= SLOP && (y - from_y).abs() <= SLOP {
+                            self.set_log_selection(None);
+                            if let Err(err) = input::open_link(&href) {
+                                tracing::warn!(%err, "could not open the link");
+                            }
+                        }
+                    }
+                }
+                PointerEventKind::Release { .. } if self.selecting.is_some() => {
+                    self.selecting = None;
                 }
                 PointerEventKind::Release { .. } if on_card => {
                     if let Some(row) = self.list_row_at(x, y) {
@@ -1854,6 +2503,8 @@ impl App for Launcher {
                         // A click on an answer answers, whatever is typed.
                         if self.asked_question() {
                             self.answer_selected();
+                        } else if self.asking_input() {
+                            self.answer_input(Some(row));
                         } else {
                             self.activate();
                         }
@@ -1861,6 +2512,10 @@ impl App for Launcher {
                     }
                 }
                 PointerEventKind::Leave { .. } => {
+                    self.selecting = None;
+                    self.link_press = None;
+                    self.log_cursor = CursorShape::Default;
+                    self.hover_code(None);
                     if let Some(list) = self.list.as_mut() {
                         list.pointer_leave();
                     }
@@ -1978,9 +2633,16 @@ impl App for Launcher {
     }
 
     fn on_update(&mut self, _ctx: &AppContext) {
+        if self
+            .linger_until
+            .is_some_and(|until| Instant::now() >= until)
+        {
+            self.linger_until = None;
+            self.close();
+        }
         // The card has gone; nothing is left to do but stop.
         if let Some(at) = self.closing_at {
-            // A request still on its way to otto-agentsd would go with the
+            // A request still on its way to otto-agents would go with the
             // launcher, so the card goes but the process waits for it.
             if let Some(ask) = self.ask.as_mut() {
                 ask.pump();
@@ -2010,6 +2672,8 @@ impl App for Launcher {
             Some((true, false)) => self.reload(),
             _ => {}
         }
+        self.refresh_card_tint();
+        self.refresh_composer_placeholder();
 
         let mut changed = false;
         for source in self.sources.iter_mut() {
@@ -2130,7 +2794,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "usage: otto-launcher [--apps|--windows|--all|--ask|--agents] \
                      [--file PATH]... [--session ID] [query]\n\
-                     otto-ask and otto-agents open in --ask and --agents mode"
+                     otto-ask opens in --ask mode"
                 );
                 return Ok(());
             }
@@ -2146,12 +2810,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// The mode an alias starts in: `otto-ask` and `otto-agents` are symlinks to
-/// the launcher, standing for `--ask` and `--agents`.
+/// The mode an alias starts in: `otto-ask` is a symlink to the launcher,
+/// standing for `--ask`. The session list is `otto-launcher --agents`; the
+/// name `otto-agents` is left for the service.
 fn scope_for_program(program: &str) -> Option<Scope> {
     match std::path::Path::new(program).file_name()?.to_str()? {
         "otto-ask" => Some(Scope::Ask),
-        "otto-agents" => Some(Scope::Agents),
         _ => None,
     }
 }
@@ -2163,7 +2827,7 @@ mod program_name_tests {
     #[test]
     fn aliases_pick_their_mode() {
         assert!(scope_for_program("/usr/bin/otto-ask") == Some(Scope::Ask));
-        assert!(scope_for_program("otto-agents") == Some(Scope::Agents));
+        assert!(scope_for_program("otto-agents").is_none());
         assert!(scope_for_program("/usr/bin/otto-launcher").is_none());
     }
 }

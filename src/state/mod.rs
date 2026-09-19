@@ -204,6 +204,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// When the user last did anything. Auto-lock (`lock.auto_lock_timeout`)
     /// measures idleness from here — see `Otto::note_input_activity`.
     pub lock_last_activity: std::time::Instant,
+    /// When the user last pressed a key or button or touched the screen.
+    /// Activation tokens requested shortly after count as user-initiated —
+    /// see `xdg_activation_handler`.
+    pub last_press: Option<std::time::Instant>,
     /// The auto-lock timer's event source, kept so that changing the timeout
     /// can drop the old one: the timer holds its interval, so re-arming is the
     /// only way to follow a new `lock.auto_lock_timeout`. `None` while
@@ -1001,6 +1005,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             lock_last_spawn: None,
             lock_shade_until: None,
             lock_last_activity: std::time::Instant::now(),
+            last_press: None,
             auto_lock_timer,
             output_manager_state,
             primary_selection_state,

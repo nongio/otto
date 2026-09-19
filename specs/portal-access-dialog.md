@@ -62,12 +62,16 @@ A request carries:
 - `parent_window` — opaque parent handle (may be empty).
 - `title`, `subtitle`, `body` — text. `title` is required; the others optional.
 - `icon` — themed icon name or empty.
-- `modal` — whether the dialog grabs input until answered (default true).
+- `modal` — whether the dialog grabs input until answered (default true). A
+  non-modal dialog can be ignored — see [Non-modal dialogs](#non-modal-dialogs).
+  otto-agents asks non-modal; portal and screencast callers ask modal.
 - `grant_label`, `deny_label` — confirm/cancel button text (defaults:
   "Allow" / "Deny", or "OK" / "Cancel" when there are no choices to grant).
 - `choices` — zero or more choice groups. Each group has an `id`, a `label`, a
   list of options `(option_id, option_label, option_icon)`, and an optional
-  `default` option_id. A group with options renders as a single-select list; a
+  `default` option_id. An option label may carry a description after its first
+  line break (`"Postgres\nRelational, battle-tested"`); the renderer draws it
+  smaller, under the label. A group with options renders as a single-select list; a
   group with no options renders as a boolean toggle (matching Access
   semantics where an empty choice list means a checkbox).
 
@@ -90,6 +94,9 @@ A request carries:
 4. Renderer presents the dialog:
    - If `modal`, it takes exclusive keyboard focus on an on-top layer and must
      not be occluded or click-through while pending (anti-spoofing).
+   - If not `modal`, it takes the keyboard on arrival without grabbing it,
+     catches clicks only on itself, and can shrink out of the way without
+     answering.
    - It shows title/subtitle/body/icon and any choice groups as interactive
      controls, plus grant and deny actions.
    - Default selections are pre-highlighted.
@@ -160,13 +167,239 @@ Stages 1–3 implemented (compiling; runtime verification pending):
 - **otto-islands** renders dialogs via `org.otto.Dialog1` at `/org/otto/Dialog`
   (`present_access(app_id, title, subtitle, body, icon, grant_label,
   deny_label, modal, choices) → (response, results)`), a typed superset of
-  Access. Panel is a modal dropdown below the island bar.
+  Access. Panel is a dropdown below the island bar, modal or not per `modal`.
+  It also serves `present_question(app_id, title, subtitle, body, icon,
+  grant_label, deny_label, open_label, modal, choices) → (response, results)`
+  (bus signature `ssssssssba(ssa(sss)s)` → `ua(ss)`) — see
+  [Questions](#questions-presentquestion).
 - **otto-portal** exposes `org.freedesktop.impl.portal.Access` (`AccessDialog`)
   and brokers to the renderer, translating `a{sv}` options/results ↔ the typed
   call. Denies if no renderer is reachable.
 - **Screencast** `SelectSources` prompts via the renderer (consent + output
   choice); the `~/.config/otto/screencast-output` override now only *skips* the
   prompt for headless/testing.
+
+### Questions (`PresentQuestion`)
+
+`org.otto.Dialog1.PresentQuestion` is the same dialog for questions another
+app can answer at more length — otto-agents uses it so an agent's question can
+be picked up in otto-ask. It takes the `PresentAccess` arguments with one more,
+`open_label`, after `deny_label`, and shares the implementation: choices,
+defaults, modality, queueing and withdrawal behave identically.
+
+Button rules:
+
+- An empty `grant_label` **hides** the grant button (unlike `PresentAccess`,
+  where it falls back to "Allow"/"Continue"). Enter then does nothing.
+- An empty `deny_label` falls back to "Deny", as in `PresentAccess`.
+- An empty `open_label` hides the open button; a non-empty one adds it.
+
+Layout — the grant button is always the default (accent, right of the main
+row, confirmed by Enter); the open button never is:
+
+- grant + deny: `[deny][grant]`, as `PresentAccess`.
+- grant + deny + open: `[deny][grant]`, then a full-width open button on its
+  own row below, drawn borderless with accent-coloured text.
+- deny + open: `[deny][open]`, both in the neutral fill.
+- deny only: one full-width deny button.
+
+Responses:
+
+- `0` confirmed — `results` carries the selected option per choice group.
+- `1` cancelled, denied, dismissed, or Escape.
+- `2` ended without an answer (caller withdrew, renderer went away).
+- `3` the open button was pressed — `results` is empty and the dialog closes.
+  Opening the other app is the caller's job.
+
+`PresentAccess` never returns `3`.
+
+### Several questions and multi-select (`PresentQuestions`)
+
+`org.otto.Dialog1.PresentQuestions` is the question dialog for a whole set of
+questions. It takes `PresentQuestion`'s arguments with a `labels` map after
+`open_label`, and its choice groups carry a `multi` flag:
+
+```
+PresentQuestions(app_id s, title s, subtitle s, body s, icon s,
+                 grant_label s, deny_label s, open_label s,
+                 labels a{ss}, modal b,
+                 questions a(ssba(sss)as)) -> (response u, results a(ss))
+```
+
+A question is `(id, label, multi, options, default_option_ids)`, with options
+`(option_id, option_label, option_icon)` exactly as in `PresentQuestion`. A
+single-select question starts on the first of its defaults; a multi-select one
+starts with all of them picked.
+
+**The words are the dialog's.** A caller sends the questions; how to get
+through them — answer, skip, next, back, the page counter, the multi-select
+hint — belongs to otto-islands, which localises it from Otto's own catalogues
+(`islands-dialog-answer`, `-skip`, `-next`, `-back`, `-page`, `-multi-hint`).
+So an empty `grant_label` becomes "Answer" (and stays empty, hiding the button,
+when there is nothing to answer) and an empty `deny_label` becomes "Skip", not
+"Deny" — not answering a question is skipping it. Only `open_label` is the
+caller's: nothing else knows whether there is anywhere to open the question.
+
+`labels` (every key optional) overrides those words, for a caller with better
+ones, and carries the two hints that are presentation rather than words:
+
+| key | meaning |
+| --- | --- |
+| `next` | the grant button's label on every page but the last |
+| `back` | the back button's label, from the second page on |
+| `page` | the page counter, with `{current}` and `{total}` |
+| `multi-hint` | a line under a multi-select question's label |
+| `body-align` | `start` for a left-aligned body (a list), else centred |
+| `title-style` | `handle` when the title is the asker's handle, not a headline |
+
+**Multi-select.** Its options are toggles, drawn as the same rows: a picked one
+takes the accent fill. A click, `Space` on the row the keyboard is on, or its
+digit flips one option and leaves the rest; the keyboard moves onto it rather
+than moving on. `results` then carries one `(group_id, option_id)` per picked
+option, and none at all when the user picked nothing — which is an answer, not
+a refusal.
+
+**A handle, not a headline.** With `title-style: handle` the panel is stacked
+so that the question is what it is about:
+
+- the icon on its own line at the top, centred, at 28 points — smaller than a
+  permission dialog's 44, big enough to read as a mark rather than a glyph;
+- the title under it, centred: who is asking ("@claude"), one small muted line;
+- the progress dots under that — but a step below the handle and tight above
+  the question, because they count the questions rather than head the panel;
+- then the question. It is the panel's largest text — 15pt semibold, primary
+  colour, wrapped, **left-aligned** like the option rows, since a centred
+  wrapped question over a left-aligned list leaves no edge to read down.
+
+### Spacing
+
+One scale — 4, 6, 8, 10, 12, 16, 20, 24 — with things that belong together set
+tight and one step between the groups they make. Every vertical gap comes from
+a named constant in one block at the top of otto-islands' `dialog.rs`, and a
+test asserts the layout's own gaps against them, so the rhythm cannot drift.
+
+A question panel reads as two groups and a list:
+
+| band | points |
+| --- | --- |
+| panel padding | 20 sides, 20 top, 16 bottom |
+| mark → handle | 6 |
+| handle → dots | 20 |
+| dots → question | 8 |
+| question → its context line | 6 |
+| question block → first option | 24 |
+| between option rows | 8 |
+| last option → buttons | 24 |
+| buttons → open row | 10 |
+
+The two 24s are one rule, not two numbers: **the choices sit evenly between
+the question that asks and the buttons that answer**, with the counter floating
+in the lower band. A permission dialog keeps its own headline stack (icon 12,
+title 6, subtitle 4) and the same 24 above its buttons.
+
+An asker's own `subtitle` is kept as context under the question, on the first
+page only, left-aligned and muted — never rewritten, and never repeated per
+page. Without `title-style: handle` (every `PresentAccess` dialog, and any
+caller that does not ask for it) the headline title, big centred icon and
+centred subtitle stay exactly as they were.
+
+**One question a page.** With more than one question the dialog shows one at a
+time:
+
+- **Progress dots** at the top, centred under the handle: one per question, the
+  current one in the accent colour, the rest in a muted fill. Each dot is a
+  click target (18 points, larger than the 6-point dot) for **going back** to
+  its question; dots ahead do nothing, since the questions between them have
+  not been answered yet. One question shows no dots.
+- **The page counter** ("2 of 3") sits close under the last option, as a
+  caption on the list rather than a label on a button, with a wider gap of its
+  own before the buttons. It is
+  shown whenever there is more than one question, and the buttons keep the
+  full width under it.
+- **The back button** is at the top-left corner, beside the handle, from the
+  second page on. Its label is the word alone ("Back"); the chevron pointing
+  back is drawn, not part of the string.
+- The buttons are `[Skip][Next]`, with **Next** becoming the grant label on the
+  last page. `Enter`, the Next button, or a digit on a single-select question
+  turns the page; `Left`, the back button, a dot, or `Shift+Tab` onto the back
+  button goes back; `Right` turns the page forward and stops on the last one,
+  where answering stays Enter's. The panel resizes to each page with the usual
+  spring. Tab stops are the page's options, then its buttons. Nothing is sent
+  until the last page is confirmed, so paging is free.
+
+A single question looks exactly as `PresentQuestion` does; no dots, no counter,
+no back button, and the grant label throughout.
+
+### Text and height
+
+Nothing the caller sends is cut off. The title, subtitle, body, each group's
+label (for a question, the question itself) and each option's label and
+description wrap to the panel's width, keeping the caller's own line breaks.
+The panel grows to fit, up to 620 points tall. Past that, the text and choices
+scroll (pointer wheel or touchpad over the panel) under the button row, which
+stays put; a hairline marks the edge. Only button labels are ellipsised.
+Line caps bound pathological input (title 3 lines, subtitle 12, body 40, group
+label 12, option label 3, description 4); text past a cap ends in an ellipsis.
+
+### Non-modal dialogs
+
+A dialog presented with `modal = false` asks without taking over:
+
+- It opens as the usual panel below the island bar and its input region covers
+  only the panel: clicks beside it reach whatever is behind.
+- It **takes the keyboard** as it opens, so it can be answered straight away.
+  The island layer switches to *exclusive* keyboard interactivity just long
+  enough for the compositor to focus it (Otto focuses an overlay surface when
+  it switches to exclusive), then back to *on-demand* — once it has the focus,
+  or after 400 ms if the focus never comes (a locked session). The focus stays;
+  nothing is grabbed. The same happens when it opens again from its circle.
+  Notification islands never take the keyboard.
+- Keys while it holds the keyboard:
+  - **Tab** / **Shift+Tab** rotate through the stops, wrapping around: each
+    question's options as one stop, then deny, grant and open. Tab lands on a
+    question's selected option.
+  - **Up** / **Down** move within the focused question's options, stopping at
+    its first and last, selecting the option they land on and scrolling it
+    into view.
+  - **1**–**9** (top row or keypad) pick that option of the focused question.
+    Each option row shows its digit in a badge on its left (the first nine per
+    question). With a single question and a grant button, the digit answers
+    the dialog at once; with several, it moves on to the next question.
+  - **Enter** (or **Space**) presses the focused button; with no button
+    focused, **Enter** confirms (when there is a grant button). **Esc** denies.
+  - The focused option or button gets a focus ring (accent stroke just outside
+    it), drawn only while the panel holds the keyboard and only once a
+    navigation key has been pressed. The first such key reveals the ring on
+    the current selection without moving it; later ones move it.
+- Leaving: an answered dialog (grant, or open in Ask) slings up out of the top
+  of the screen — a short draw-back, then it accelerates away, fully opaque.
+  A denied, withdrawn or replaced dialog, or one answered while shrunk, fades.
+- The dialog has no free-text field: a question that takes typed text (such as
+  an agent's "Other" answer) is answered from the Ask window through **open**.
+- Clicking an option or button shows the hand cursor over it. Clicking an
+  option moves the keyboard to it and hides the ring until a navigation key is
+  pressed again.
+- It **shrinks into a circle** — a Mini-sized island showing the dialog's icon,
+  at the end of the island row, using the same springs an island moves and
+  resizes with — when the user moves on:
+  - the keyboard focus leaves (a click on another window, or on the desktop:
+    the compositor hands the keyboard back from an on-demand overlay surface the
+    same way it does from a top-layer panel), or
+  - it never got the keyboard and 12 seconds pass without the pointer on it
+    (the pointer resting on the panel, or scrolling it, restarts the count).
+- Hovering the circle **peeks**: it grows to the Compact island pill — icon and
+  the dialog's title — as a hovered island does, with the hand cursor, and
+  shrinks back when the pointer leaves. The row makes room for it.
+- Shrinking is **not an answer**: the D-Bus call stays pending, and queued
+  dialogs behind it keep waiting. Clicking the circle (or its peek) opens the
+  panel again, with the keyboard, and it then only shrinks on focus loss.
+- While shrunk, keys do nothing, even if the island layer holds the keyboard
+  for a notification.
+- A non-modal dialog does not claim the modal-overlay treatment below, so it is
+  not shown over a fullscreen window. Its brief exclusive request while taking
+  the keyboard does count as a modal overlay for that moment.
+
+A modal dialog never shrinks.
 
 ## Resolved decisions
 

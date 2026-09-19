@@ -360,6 +360,32 @@ mod tiling_tree_tests {
 
     #[test]
     #[serial]
+    fn leaving_tiling_mode_keeps_the_space_stacked_like_the_scene() {
+        // Whichever tile has focus, the space (which picks the window scanned
+        // out on a plane of its own) must end up in the order the scene draws
+        // the windows in — otherwise the plane goes to a window drawn *under*
+        // another one and scans its buffer out on top of it.
+        for focus in ["tile-a", "tile-b"] {
+            let (handle, _windows) = setup(&["tile-a", "tile-b"]);
+            handle.toggle_tiling();
+            handle.settle(600);
+            handle.focus_window(focus);
+            handle.settle(300);
+
+            handle.toggle_tiling();
+            handle.settle(600);
+
+            assert_eq!(
+                handle.space_stack_titles(),
+                handle.window_stack_titles(),
+                "space and scene disagree after leaving tiling with {focus} focused"
+            );
+            handle.stop();
+        }
+    }
+
+    #[test]
+    #[serial]
     fn leaving_tiling_mode_restores_the_floating_rects() {
         let (handle, windows) = setup(&["tile-a", "tile-b"]);
         handle.move_window("tile-a", 120, 90);

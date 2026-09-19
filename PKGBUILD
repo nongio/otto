@@ -1,14 +1,14 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-bin
-pkgver=1.3.0
+pkgver=1.4.0
 # Cargo's version (names the release tarball) and the git tag. They differ
 # from pkgver for a prerelease: '-' is illegal in pkgver, and pacman sorts
 # a '~' suffix *after* the plain version rather than before it.
-_ver=1.3.0
-_tag=v1.3.0
+_ver=1.4.0
+_tag=v1.4.0
 pkgrel=1
-pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
+pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 url="https://github.com/nongio/otto"
 license=("MIT")
 arch=("x86_64")
@@ -41,10 +41,9 @@ package() {
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
     install -Dm755 target/release/otto-quickview "$pkgdir/usr/bin/otto-quickview"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
-    install -Dm755 target/release/otto-agentsd "$pkgdir/usr/bin/otto-agentsd"
+    install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
     # Aliases: the launcher opens in ask or agents mode under these names.
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"
-    ln -s otto-launcher "$pkgdir/usr/bin/otto-agents"
     # Quick View's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
@@ -105,14 +104,15 @@ UNIT
     fi
     install -Dm644 "$_unit" "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
     # The agent service, off until the user enables it:
-    # systemctl --user enable --now otto-agentsd
-    install -Dm644 components/otto-agentsd/otto-agentsd.service "$pkgdir/usr/lib/systemd/user/otto-agentsd.service"
+    # systemctl --user enable --now otto-agents
+    install -Dm644 components/otto-agents/otto-agents.service "$pkgdir/usr/lib/systemd/user/otto-agents.service"
 
-    # Agent skills. One plugin directory — `.claude-plugin/plugin.json` and a
-    # `skills/` tree — that an agent running on this desktop reads when it is
-    # asked to configure Otto or to extend Files. Installed whole rather than
-    # file by file, so a skill gaining a reference page needs no packaging
-    # change, and by mode, so an executable example script stays executable.
+    # Agent skills. One plugin directory — `.claude-plugin/plugin.json`, a
+    # `skills/` tree and an `agents/` file — that an agent running on this
+    # desktop reads when it is asked to configure Otto or to extend Files.
+    # Installed whole rather than file by file, so a skill gaining a reference
+    # page or the plugin gaining an agent needs no packaging change, and by
+    # mode, so an executable example script stays executable.
     _plugins="resources/plugins/otto"
     [ -d "$_plugins" ] || { echo "missing $_plugins" >&2; return 1; }
     while IFS= read -r _file; do

@@ -253,6 +253,25 @@ impl IslandState {
         self.dialogs.first().map(|d| d.view())
     }
 
+    /// Takes down the dialog the caller named `cookie`, answering it as ended:
+    /// what it was asking about has been settled somewhere else, so leaving
+    /// the panel up would collect an answer nobody is waiting for. Returns
+    /// whether one was found.
+    pub fn withdraw_dialog(&mut self, app_id: &str, cookie: &str) -> bool {
+        if cookie.is_empty() {
+            return false;
+        }
+        let found = self
+            .dialogs
+            .iter()
+            .find(|d| d.cookie == cookie && d.app_id == app_id)
+            .map(|d| d.id);
+        match found {
+            Some(id) => self.resolve_dialog(id, DialogResponse::ended()),
+            None => false,
+        }
+    }
+
     /// Deliver a decision for dialog `id` and remove it from the queue.
     /// Returns true if a dialog with that id was found.
     pub fn resolve_dialog(&mut self, id: DialogId, response: DialogResponse) -> bool {

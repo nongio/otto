@@ -1,6 +1,6 @@
 {
   "name": "otto",
-  "description": "Skills for using and configuring the Otto desktop.",
+  "description": "Skills and an agent for using and configuring the Otto desktop.",
   "version": "1.0.0",
   "author": {
     "name": "Otto",

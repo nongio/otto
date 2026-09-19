@@ -169,6 +169,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Catalogues carry every en-GB key
         run: python3 scripts/check-locales.py
+      - name: The otto-help skill ships the current user guides
+        run: scripts/sync-skill-docs.sh --check
   
   # One job rather than several: every step shares a single target directory,
   # so splitting them apart would pay for the compositor's dependency graph
@@ -229,6 +231,13 @@ jobs:
         timeout-minutes: 15
         if: needs.changes.outputs.files == 'true'
         run: cargo test --locked --lib -p otto-files
+      - name: Run agent service tests
+        timeout-minutes: 15
+        # The workspace step above is --lib, so the agent service's integration
+        # tests — the protocol handshake, the spec pin, permissions and
+        # escalation — need a target-wide run of their own.
+        if: needs.changes.outputs.ui == 'true'
+        run: cargo test --locked -p otto-agents
       - name: Run headless integration tests
         timeout-minutes: 15
         if: needs.changes.outputs.compositor == 'true'
@@ -282,7 +291,7 @@ jobs:
       - name: System dependencies
         run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
       - name: Build workspace binaries
-        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-emoji -p otto-quickview -p otto-media-kit -p otto-msg -p otto-agentsd
+        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-emoji -p otto-quickview -p otto-media-kit -p otto-msg -p otto-agents
       - name: Upload workspace binaries
         uses: actions/upload-artifact@v4
         with:
@@ -302,7 +311,7 @@ jobs:
             target/release/otto-quickview
             target/release/otto-media-worker
             target/release/otto-msg
-            target/release/otto-agentsd
+            target/release/otto-agents
           retention-days: 1
 
   build-deb:

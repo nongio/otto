@@ -92,6 +92,38 @@ impl Windows {
     }
 }
 
+/// Brings forward the first window whose app id or title holds `needle`, and
+/// says whether there was one. This is how a session's terminal is found: its
+/// window is told apart by the agent's id for the session, which the terminal
+/// command can put in the window's class or title.
+pub fn focus_matching(needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let Some(windows) = Windows::connect(0, false) else {
+        return false;
+    };
+    let Some(seat) = windows.registry.seat.as_ref() else {
+        return false;
+    };
+    let Some(toplevel) = windows
+        .registry
+        .toplevels
+        .values()
+        .find(|toplevel| toplevel.app_id.contains(needle) || toplevel.title.contains(needle))
+    else {
+        return false;
+    };
+    let Some(handle) = toplevel.handle.as_ref() else {
+        return false;
+    };
+    if toplevel.minimized {
+        handle.unset_minimized();
+    }
+    handle.activate(seat);
+    windows.connection.flush().is_ok()
+}
+
 impl Source for Windows {
     fn label(&self) -> &'static str {
         otto_kit::t!("launcher-badge-window")

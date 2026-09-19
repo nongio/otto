@@ -880,6 +880,9 @@ launcher-search-windows = Cerca finestre…
 launcher-no-results = Nessun risultato
 # Ask mode: what is typed is a request for an AI agent, not a search.
 launcher-search-ask = Chiedi a un agente…
+# Ask mode, with an agent picked from the list: the empty field says whose
+# request it is. { $agent } is the agent's name.
+launcher-search-ask-agent = Chiedi a @{ $agent }…
 # Ask mode, once a request has been sent: the empty field takes the next one.
 launcher-search-ask-more = Fai un’altra domanda…
 # Agents mode: what is typed narrows the list of agent sessions to pick one
@@ -898,6 +901,15 @@ launcher-agents-none = Ancora nessuna sessione degli agenti
 launcher-ask-attached = Allegati: { $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = Apertura della sessione…
+launcher-ask-loading = Caricamento della conversazione…
+# The session is going to its terminal window.
+launcher-ask-handing-over = Prosegue nel terminale…
+launcher-ask-handing-over-busy = Al termine di quanto è in corso, prosegue nel terminale…
+# The terminal window's title, as the dock shows it.
+launcher-ask-window-title = Ask: @{ $agent }: { $title }
+launcher-ask-window-title-agent = Ask: @{ $agent }
+launcher-ask-window-title-plain = Ask: { $title }
+launcher-ask-window-title-bare = Ask
 # Ask mode: the last line of the log above the field, saying what the agent is
 # doing now.
 launcher-ask-starting = Avvio di { $agent }…
@@ -906,6 +918,11 @@ launcher-ask-thinking = Ragionamento…
 launcher-ask-working = In corso…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = In attesa di una risposta qui sotto
+# Ask mode: the line under the status naming the agent and the mode it is in,
+# such as "Claude · Accept edits". { $mode } is the mode's name, as the agent
+# gives it. The second form is used when the agent has more than one mode.
+launcher-ask-mode = { $agent } · { $mode }
+launcher-ask-mode-hint = { $agent } · { $mode } · Shift+Tab per cambiare
 # Ask mode: a tool call the agent made, in the log. { $tool } is the command or
 # file, as the agent names it.
 launcher-ask-step-running = ▸ { $tool }
@@ -918,12 +935,77 @@ launcher-ask-cancelled = Annullata
 launcher-ask-failed = Non riuscita: { $error }
 # Ask mode, when the agent service is not running to take a request.
 launcher-ask-unreachable = Il servizio degli agenti non è in esecuzione
+# Ask mode: the agent asked the person something (a choice, a value, a link to
+# open). The rows under the field are the answers; these are their labels.
+launcher-input-yes = Sì
+launcher-input-no = No
+launcher-input-continue = Continua
+launcher-input-skip = Salta questa
+launcher-input-decline = Non rispondere
+launcher-input-open-link = Apri il link
+# Sends a request that only asked to open a link.
+launcher-input-done = Fine
+launcher-input-send = Invia risposte
+# Beside an option the agent suggests.
+launcher-input-suggested = Suggerita
+# What the empty field says while it takes the answer.
+launcher-input-type-answer = La tua risposta…
+launcher-input-type-number = Un numero…
+launcher-input-type-other = Oppure una risposta tua…
+# In the log, above a question when the agent asked several.
+launcher-input-progress = Domanda { $current } di { $total }
+# In the log, a question already answered, and its answer.
+launcher-input-answer = { $question }: { $answer }
+launcher-input-skipped = Saltata
+# In the log, under a request nobody answered the usual way.
+launcher-input-declined = Rifiutata
+launcher-input-dismissed = Ignorata
+launcher-input-unanswered = Senza risposta
+# In the log, under a question, when the answer typed can’t be taken.
+launcher-input-error-empty = Serve una risposta
+launcher-input-error-number = Serve un numero
+launcher-input-error-integer = Serve un numero intero
+launcher-input-error-min = Almeno { $min }
+launcher-input-error-max = Al massimo { $max }
+launcher-input-error-short = Caratteri: almeno { $min }
+launcher-input-error-long = Caratteri: al massimo { $max }
+launcher-input-error-pick-min = Scelte: almeno { $min }
+launcher-input-error-pick-max = Scelte: al massimo { $max }
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.
 launcher-badge-app = App
 launcher-badge-window = Finestra
 launcher-badge-calc = Calc
+
+
+## Agent service
+
+## The dialog otto-agents puts up when an agent asks to use a tool. The
+## sentence is composed by the service and drawn by the islands.
+
+# { $agent } is the agent's name; { $action } one of the phrases below.
+agents-permission-title = { $agent } vuole { $action }
+# What the tool does, by kind. Each completes "{ $agent } wants to …".
+agents-permission-read = leggere un file
+agents-permission-edit = modificare un file
+agents-permission-delete = eliminare un file
+agents-permission-move = spostare un file
+agents-permission-search = cercare
+agents-permission-execute = eseguire un comando
+agents-permission-fetch = recuperare contenuti dal web
+agents-permission-switch-mode = cambiare il suo funzionamento
+agents-permission-tool = usare uno strumento
+# The dialog's body: the session's folder, as ~/… when it is under home.
+agents-permission-in-folder = in { $folder }
+# The dialog's own words for the answer buttons, chosen by the option's kind
+# rather than the agent's label, which the agent could word misleadingly.
+agents-permission-allow = Consenti
+agents-permission-allow-always = Consenti sempre
+agents-permission-reject = Rifiuta
+agents-permission-reject-always = Non consentire mai
+# The button that hands the question to the Ask window instead.
+agents-permission-open-in-ask = Apri in Ask
 
 
 ## Emoji picker
@@ -1348,6 +1430,32 @@ islands-dialog-allow = Consenti
 islands-dialog-continue = Continua
 # Refuses the request.
 islands-dialog-deny = Nega
+
+
+## Islands — agents' questions
+##
+## An agent (Claude, say) asking the person something: one question a page,
+## with the options as rows beneath it. The dialog owns these words, not the
+## agent — only the question and its options come from the agent itself.
+## Buttons sit side by side and narrow: one word each.
+
+# Sends the answers back to the agent, on the last (or only) question.
+islands-dialog-answer = Rispondi
+# Leaves every question unanswered and lets the agent carry on without them.
+islands-dialog-skip = Salta
+# Goes on to the next question, keeping what has been picked so far. Shown in
+# the place of "Answer" until the last question.
+islands-dialog-next = Avanti
+# Goes back to the question before. A small button at the top-left corner; the
+# chevron pointing back is drawn, so the word alone belongs here.
+islands-dialog-back = Indietro
+# Which question of how many this is: a caption on its own line between the
+# options and the buttons, shown whenever there is more than one question.
+islands-dialog-page = { $current } di { $total }
+# Under a question that takes any number of answers, where the rows are
+# toggles rather than a single choice. No full stop: it is a hint, not a
+# sentence of instructions.
+islands-dialog-multi-hint = Più risposte possibili
 
 
 ## Accessibility

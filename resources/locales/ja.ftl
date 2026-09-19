@@ -848,6 +848,9 @@ launcher-search-windows = ウインドウを検索…
 launcher-no-results = 結果なし
 # Ask mode: what is typed is a request for an AI agent, not a search.
 launcher-search-ask = エージェントに質問…
+# Ask mode, with an agent picked from the list: the empty field says whose
+# request it is. { $agent } is the agent's name.
+launcher-search-ask-agent = @{ $agent } に質問…
 # Ask mode, once a request has been sent: the empty field takes the next one.
 launcher-search-ask-more = 続けて質問…
 # Agents mode: what is typed narrows the list of agent sessions to pick one
@@ -866,6 +869,15 @@ launcher-agents-none = エージェントセッションはまだありません
 launcher-ask-attached = 添付：{ $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = セッションを開いています…
+launcher-ask-loading = 会話を読み込んでいます…
+# The session is going to its terminal window.
+launcher-ask-handing-over = ターミナルで続けます…
+launcher-ask-handing-over-busy = 実行中の処理を終えてから、ターミナルで続けます…
+# The terminal window's title, as the dock shows it.
+launcher-ask-window-title = Ask：@{ $agent }：{ $title }
+launcher-ask-window-title-agent = Ask：@{ $agent }
+launcher-ask-window-title-plain = Ask：{ $title }
+launcher-ask-window-title-bare = Ask
 # Ask mode: the last line of the log above the field, saying what the agent is
 # doing now.
 launcher-ask-starting = { $agent } を起動しています…
@@ -874,6 +886,11 @@ launcher-ask-thinking = 考えています…
 launcher-ask-working = 作業しています…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = 下での回答を待っています
+# Ask mode: the line under the status naming the agent and the mode it is in,
+# such as "Claude · Accept edits". { $mode } is the mode's name, as the agent
+# gives it. The second form is used when the agent has more than one mode.
+launcher-ask-mode = { $agent } · { $mode }
+launcher-ask-mode-hint = { $agent } · { $mode } · Shift+Tab で切り替え
 # Ask mode: a tool call the agent made, in the log. { $tool } is the command or
 # file, as the agent names it.
 launcher-ask-step-running = ▸ { $tool }
@@ -886,12 +903,77 @@ launcher-ask-cancelled = キャンセル済み
 launcher-ask-failed = 失敗：{ $error }
 # Ask mode, when the agent service is not running to take a request.
 launcher-ask-unreachable = エージェントサービスが実行されていません
+# Ask mode: the agent asked the person something (a choice, a value, a link to
+# open). The rows under the field are the answers; these are their labels.
+launcher-input-yes = はい
+launcher-input-no = いいえ
+launcher-input-continue = 続ける
+launcher-input-skip = この質問をスキップ
+launcher-input-decline = 回答しない
+launcher-input-open-link = リンクを開く
+# Sends a request that only asked to open a link.
+launcher-input-done = 完了
+launcher-input-send = 回答を送信
+# Beside an option the agent suggests.
+launcher-input-suggested = おすすめ
+# What the empty field says while it takes the answer.
+launcher-input-type-answer = 回答…
+launcher-input-type-number = 数値…
+launcher-input-type-other = または自分で回答…
+# In the log, above a question when the agent asked several.
+launcher-input-progress = 質問 { $current }/{ $total }
+# In the log, a question already answered, and its answer.
+launcher-input-answer = { $question }：{ $answer }
+launcher-input-skipped = スキップ済み
+# In the log, under a request nobody answered the usual way.
+launcher-input-declined = 回答を辞退
+launcher-input-dismissed = 閉じられました
+launcher-input-unanswered = 未回答
+# In the log, under a question, when the answer typed can’t be taken.
+launcher-input-error-empty = 回答が必要です
+launcher-input-error-number = 数値である必要があります
+launcher-input-error-integer = 整数である必要があります
+launcher-input-error-min = { $min } 以上である必要があります
+launcher-input-error-max = { $max } 以下である必要があります
+launcher-input-error-short = { $min } 文字以上必要です
+launcher-input-error-long = { $max } 文字までです
+launcher-input-error-pick-min = { $min } 個以上の選択が必要です
+launcher-input-error-pick-max = 選択できるのは { $max } 個までです
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.
 launcher-badge-app = App
 launcher-badge-window = ウインドウ
 launcher-badge-calc = 計算
+
+
+## Agent service
+
+## The dialog otto-agents puts up when an agent asks to use a tool. The
+## sentence is composed by the service and drawn by the islands.
+
+# { $agent } is the agent's name; { $action } one of the phrases below.
+agents-permission-title = { $agent } が{ $action }を求めています
+# What the tool does, by kind. Each completes "{ $agent } wants to …".
+agents-permission-read = ファイルの読み取り
+agents-permission-edit = ファイルの編集
+agents-permission-delete = ファイルの削除
+agents-permission-move = ファイルの移動
+agents-permission-search = 検索
+agents-permission-execute = コマンドの実行
+agents-permission-fetch = ウェブからの取得
+agents-permission-switch-mode = 動作の変更
+agents-permission-tool = ツールの使用
+# The dialog's body: the session's folder, as ~/… when it is under home.
+agents-permission-in-folder = { $folder } 内
+# The dialog's own words for the answer buttons, chosen by the option's kind
+# rather than the agent's label, which the agent could word misleadingly.
+agents-permission-allow = 許可
+agents-permission-allow-always = 常に許可
+agents-permission-reject = 拒否
+agents-permission-reject-always = 許可しない
+# The button that hands the question to the Ask window instead.
+agents-permission-open-in-ask = Ask で開く
 
 
 ## Emoji picker
@@ -1315,6 +1397,32 @@ islands-dialog-allow = 許可
 islands-dialog-continue = 続ける
 # Refuses the request.
 islands-dialog-deny = 拒否
+
+
+## Islands — agents' questions
+##
+## An agent (Claude, say) asking the person something: one question a page,
+## with the options as rows beneath it. The dialog owns these words, not the
+## agent — only the question and its options come from the agent itself.
+## Buttons sit side by side and narrow: one word each.
+
+# Sends the answers back to the agent, on the last (or only) question.
+islands-dialog-answer = 回答
+# Leaves every question unanswered and lets the agent carry on without them.
+islands-dialog-skip = スキップ
+# Goes on to the next question, keeping what has been picked so far. Shown in
+# the place of "Answer" until the last question.
+islands-dialog-next = 次へ
+# Goes back to the question before. A small button at the top-left corner; the
+# chevron pointing back is drawn, so the word alone belongs here.
+islands-dialog-back = 戻る
+# Which question of how many this is: a caption on its own line between the
+# options and the buttons, shown whenever there is more than one question.
+islands-dialog-page = { $current } / { $total }
+# Under a question that takes any number of answers, where the rows are
+# toggles rather than a single choice. No full stop: it is a hint, not a
+# sentence of instructions.
+islands-dialog-multi-hint = 該当するものをすべて選択
 
 
 ## Accessibility

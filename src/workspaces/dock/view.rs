@@ -3412,6 +3412,39 @@ mod tests {
     /// re-render moves them: switching the desktop from light to dark used to
     /// leave the dock painted in the light palette until the session was
     /// restarted.
+    /// The usable zone reserves the band the dock rests in, whatever the dock
+    /// is doing right now: exposé, fullscreen and the app switcher slide it
+    /// away, and a tiling relayout that runs meanwhile must still leave room
+    /// for it (`Workspaces::get_dock_geometry`). That rest position is the bar
+    /// bounds minus the view layer's own offset — NOT minus its
+    /// `render_position`, which is where the layout put the bar on screen.
+    #[test]
+    #[serial]
+    fn a_slid_away_dock_still_rests_in_the_same_band() {
+        let rt = runtime();
+        let _guard = rt.enter();
+        let (engine, dock) = dock_at(DockPosition::Bottom);
+
+        let shown = dock.bar_layer.render_bounds_transformed();
+        assert_eq!(
+            dock.view_layer.position(),
+            layers::types::Point { x: 0.0, y: 0.0 },
+            "a shown dock has slid nowhere"
+        );
+
+        dock.hide(None);
+        settle(&engine);
+
+        let slide = dock.view_layer.position();
+        assert!(slide.y > 0.0, "a hidden bottom dock slides down off screen");
+        let hidden = dock.bar_layer.render_bounds_transformed();
+        assert_eq!(
+            (hidden.x() - slide.x, hidden.y() - slide.y),
+            (shown.x(), shown.y()),
+            "taking the slide off a hidden dock gives the band it rests in"
+        );
+    }
+
     #[test]
     #[serial]
     fn the_dock_repaints_itself_in_the_new_colour_scheme() {
