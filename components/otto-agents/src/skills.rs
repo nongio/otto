@@ -851,7 +851,10 @@ mod tests {
         assert_eq!(pruned, vec![renamed.clone()], "only the stale one");
         assert!(!renamed.exists() && !renamed.is_symlink(), "it is gone");
         assert!(live.exists(), "a live link is kept");
-        assert!(mine.is_symlink(), "a dangling link of someone else's is kept");
+        assert!(
+            mine.is_symlink(),
+            "a dangling link of someone else's is kept"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&links).unwrap();

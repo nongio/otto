@@ -23,8 +23,8 @@
 //! and a yellow written at the same midpoint of their channels are not seen as
 //! the same brightness, and a light orange built that way comes out looking
 //! tanned next to a light green. The light materials are the colour of that
-//! hue whose *relative luminance* is [`LIGHT_LUMINANCE`], so the row reads as
-//! one weight of surface all the way across.
+//! hue whose *relative luminance* is 0.86, so the row reads as one weight of
+//! surface all the way across.
 //!
 //! The blur is the compositor's, and so is the tint: a surface hands its
 //! material to `otto_surface_style_v1` as a background colour and paints its
@@ -41,13 +41,12 @@ const ALPHA: u8 = 0x80;
 /// of them carries, in the sense the contrast standards use.
 ///
 /// High, because these are surfaces for dark text to sit on. Chroma is capped
-/// a little short of the most a hue could carry at this luminance
-/// ([`LIGHT_SATURATION`]) — the yellows and limes reach it long before the
-/// blues do, and left uncapped they turn to neon while the rest stay pastel.
+/// at 0.85 of the most a hue could carry at this luminance — the yellows and
+/// limes reach it long before the blues do, and left uncapped they turn to
+/// neon while the rest stay pastel. The tables below are written out at those
+/// values; this is what the test levels them against.
+#[cfg(test)]
 const LIGHT_LUMINANCE: f32 = 0.86;
-
-/// How much of that chroma the light materials take. See [`LIGHT_LUMINANCE`].
-const LIGHT_SATURATION: f32 = 0.85;
 
 /// The named frosted materials, twelve hues round the wheel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -149,8 +148,8 @@ impl Frosted {
         }
     }
 
-    /// The light scheme: each hue at [`LIGHT_LUMINANCE`], at
-    /// [`LIGHT_SATURATION`] of the chroma it can carry there.
+    /// The light scheme: each hue at a relative luminance of 0.86, at 0.85 of
+    /// the chroma it can carry there.
     const fn light_rgb(self) -> (u8, u8, u8) {
         match self {
             Frosted::Red => (0xFD, 0xEB, 0xE9),

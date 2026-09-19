@@ -981,6 +981,12 @@ agents-permission-switch-mode = die Arbeitsweise ändern
 agents-permission-tool = ein Werkzeug verwenden
 # The dialog's body: the session's folder, as ~/… when it is under home.
 agents-permission-in-folder = in { $folder }
+# The dialog's own words for the answer buttons, chosen by the option's kind
+# rather than the agent's label, which the agent could word misleadingly.
+agents-permission-allow = Erlauben
+agents-permission-allow-always = Immer erlauben
+agents-permission-reject = Ablehnen
+agents-permission-reject-always = Nie erlauben
 # The button that hands the question to the Ask window instead.
 agents-permission-open-in-ask = In Ask öffnen
 

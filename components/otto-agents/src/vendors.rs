@@ -632,7 +632,9 @@ mod tests {
         let soul = home.root.join(".hermes/profiles/otto/SOUL.md");
         std::fs::write(
             &soul,
-            format!("<!-- {LEGACY_MARKER} /usr/share/otto/x.md; edits are overwritten -->\n\nold\n"),
+            format!(
+                "<!-- {LEGACY_MARKER} /usr/share/otto/x.md; edits are overwritten -->\n\nold\n"
+            ),
         )
         .unwrap();
 

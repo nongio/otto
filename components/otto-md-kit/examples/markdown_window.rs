@@ -162,7 +162,9 @@ impl App for MarkdownWindow {
             // the closure paints the document at its own coordinates, and
             // `visible` says which band of it is worth painting.
             scroll.render(canvas, &theme, |canvas, visible| {
-                document::draw_scrolled(canvas, visible, lines, visible.top, &theme);
+                // No copy button: this example does not follow the pointer over
+                // the document's code blocks.
+                document::draw_scrolled(canvas, visible, lines, visible.top, &theme, None);
             });
         });
 
