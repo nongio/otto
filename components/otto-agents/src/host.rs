@@ -169,6 +169,11 @@ struct Session {
     /// Counts the session's events and commands, so an idle countdown can
     /// tell whether anything happened while it ran.
     activity: u64,
+    /// The agent has a history for the session: it has been given a turn, or
+    /// the session has been handed to a terminal, whose agent writes turns
+    /// this service never sees. It is what tells the command that resumes a
+    /// session from the one that starts it; see [`crate::config::enter_command`].
+    written: bool,
     /// The session is handed to its terminal: the agent is stopped as soon
     /// as it has nothing left to do, so the terminal's agent is the only
     /// writer of the history. Set by `releaseSession`.
@@ -470,6 +475,7 @@ impl Host {
             inputs: HashMap::new(),
             tools: HashMap::new(),
             activity: 0,
+            written: false,
             releasing: false,
         };
         state.sessions.insert(uri.clone(), session);
@@ -973,6 +979,7 @@ impl HostState {
                 agent_session,
                 session: mut state,
                 chat,
+                written: record_written,
                 ..
             } = record;
             if self.sessions.contains_key(&resource) || self.chats.contains_key(&chat.resource) {
@@ -999,11 +1006,20 @@ impl HostState {
             // last advertised stay, so a client can show them before the
             // agent is started again; a load still on the way went with the
             // earlier run.
-            let terminal = terminal_meta(self.backend.as_ref(), &state, agent_session.as_deref());
+            // The stored turns are dropped, so the record's own flag is what
+            // says whether the agent has a history for the session.
+            let written = record_written || !chat.turns.is_empty();
+            let terminal = terminal_meta(
+                self.backend.as_ref(),
+                &state,
+                agent_session.as_deref(),
+                written,
+            );
             state.meta = with_otto_meta(state.meta.take(), "loading", None);
             state.meta = with_otto_meta(state.meta.take(), "terminal", terminal);
             let chat_uri = chat.resource.clone();
             let session = Session {
+                written,
                 announced: (chat.status, state.title.clone()),
                 state,
                 created_at,
@@ -1059,12 +1075,14 @@ impl HostState {
                 // session list needs to draw a row.
                 chat.turns = Vec::new();
                 chat.turns_next_cursor = None;
+                let written = session.written;
                 Some(SessionRecord::new(
                     uri,
                     session.created_at.clone(),
                     session.agent_session.clone(),
                     session.state.clone(),
                     chat,
+                    written,
                 ))
             })
             .collect()
@@ -1127,6 +1145,7 @@ impl HostState {
                 self.backend.as_ref(),
                 &session.state,
                 session.agent_session.as_deref(),
+                session.written,
             );
             let meta = with_otto_meta(session.state.meta.clone(), "terminal", terminal);
             if meta != session.state.meta {
@@ -1138,6 +1157,40 @@ impl HostState {
         if !ready {
             let ready = StateAction::SessionReady(SessionReadyAction {});
             self.apply(session_uri, ready, None);
+        }
+    }
+
+    /// The agent now has a history for the session, so it is entered the way
+    /// a written session is; see [`crate::config::enter_command`].
+    fn mark_written(&mut self, session_uri: &str) {
+        let Some(session) = self.sessions.get_mut(session_uri) else {
+            return;
+        };
+        if std::mem::replace(&mut session.written, true) {
+            return;
+        }
+        self.refresh_terminal_meta(session_uri);
+        self.mark_unsaved(session_uri);
+    }
+
+    /// Rewrites the session's `otto.terminal` from what it knows now: the
+    /// command that enters an unwritten session differs from the one that
+    /// resumes a written one.
+    fn refresh_terminal_meta(&mut self, session_uri: &str) {
+        let Some(session) = self.sessions.get(session_uri) else {
+            return;
+        };
+        let terminal = terminal_meta(
+            self.backend.as_ref(),
+            &session.state,
+            session.agent_session.as_deref(),
+            session.written,
+        );
+        let meta = with_otto_meta(session.state.meta.clone(), "terminal", terminal);
+        if meta != session.state.meta {
+            let changed = StateAction::SessionMetaChanged(SessionMetaChangedAction { meta });
+            self.apply(session_uri, changed, None);
+            self.mark_unsaved(session_uri);
         }
     }
 
@@ -1246,6 +1299,10 @@ impl HostState {
             ));
         };
         session.releasing = true;
+        // From here the terminal's agent writes the history, and this service
+        // never sees those turns: the session is entered as a written one
+        // whatever it looked like when it was handed over.
+        self.mark_written(&uri);
         self.release_if_idle(&uri);
         Ok(Value::Null)
     }
@@ -1921,6 +1978,7 @@ impl HostState {
             attachments: attachments(&action.message),
         };
         self.apply(&chat_uri, StateAction::ChatTurnStarted(action), origin);
+        self.mark_written(session_uri);
         self.send_command(session_uri, prompt);
     }
 
@@ -2330,6 +2388,9 @@ impl HostState {
     fn rebuild_chat(&mut self, chat_uri: &str, turns: Vec<HistoryTurn>) {
         if turns.is_empty() {
             return;
+        }
+        if let Some(session_uri) = self.chat_sessions.get(chat_uri).cloned() {
+            self.mark_written(&session_uri);
         }
         let loaded: Vec<Turn> = turns.into_iter().map(history_turn).collect();
         tracing::info!(
@@ -2841,12 +2902,17 @@ fn terminal_meta(
     backend: &dyn Backend,
     state: &SessionState,
     agent_session: Option<&str>,
+    written: bool,
 ) -> Option<Value> {
     let cwd = session_cwd(state);
     let agent_session = agent_session?;
-    let command = backend.terminal(&state.provider, agent_session, &cwd)?;
+    let enter = backend.enter(&state.provider, agent_session, &cwd, written)?;
+    let command = backend.terminal(&state.provider, agent_session, &cwd, written);
     Some(json!({
         "command": command,
+        // The same command with no terminal around it, for a client that is
+        // already in one: `otto-agents new`.
+        "enter": enter,
         "cwd": cwd.to_string_lossy(),
         // The agent's id for the session, which is how a client tells
         // that a terminal already has it open.

@@ -1,9 +1,12 @@
 //! Terminal views of the host: `otto-agents sessions`, `otto-agents show`,
-//! and the `otto-agents plugins` pair that puts the desktop's skills and its
-//! agent where each harness looks for them.
+//! the `otto-agents new` and `otto-agents enter` pair that puts a session in
+//! the terminal it is asked from, and the `otto-agents plugins` pair that
+//! puts the desktop's skills and its agent where each harness looks for them.
 
 use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
+use std::time::Duration;
 
 use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, ClientConfig, SubscriptionEvent};
@@ -17,13 +20,17 @@ use anyhow::{Context, bail};
 use serde_json::json;
 
 use crate::skills::{self, AgentFile, Entry, Installed, LinkState, Plugin};
-use otto_agents_client::session::{self, session_id};
+use otto_agents_client::session::{self, SESSION_SCHEME, session_id};
 
 use crate::uri;
 use crate::vendors::{self, Done, Home, State, Target, Vendor, first_sentence};
 use crate::xdg::tilde;
 
 const SHORT_ID_LEN: usize = 8;
+
+/// How long `otto-agents new` waits for the agent to start before giving up.
+/// Long enough for a harness that fetches itself with `npx` on a cold cache.
+const ENTER_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub async fn list_sessions(url: &str) -> anyhow::Result<()> {
     let client = connect(url).await?;
@@ -122,6 +129,163 @@ pub async fn show_session(url: &str, session: Option<&str>, follow: bool) -> any
     out.flush()?;
     client.shutdown().await;
     Ok(())
+}
+
+/// `otto-agents new`: creates a session with `agent` in `cwd` and enters it
+/// in this terminal, in the agent's own interface. The session is the
+/// desktop's — it shows up in Ask and in the session list — and the terminal
+/// is the one writing its history from here on.
+pub async fn new_session(url: &str, agent: Option<&str>, cwd: Option<&Path>) -> anyhow::Result<()> {
+    let client = connect(url).await?;
+    let cwd = match cwd {
+        Some(cwd) => cwd.to_path_buf(),
+        None => std::env::current_dir().context("this terminal has no working directory")?,
+    };
+    let provider = resolve_agent(&client, agent).await?;
+    let session = format!("{SESSION_SCHEME}{}", uuid::Uuid::new_v4());
+    let mut params = json!({
+        "channel": session,
+        "workingDirectories": [uri::from_path(&cwd)],
+    });
+    if let Some(provider) = &provider {
+        params["provider"] = json!(provider);
+    }
+    client
+        .request::<_, serde_json::Value>("createSession", params)
+        .await
+        .context("the service would not create the session")?;
+    enter_session(client, &session).await
+}
+
+/// `otto-agents enter`: takes up a session that is already there in this
+/// terminal.
+pub async fn enter(url: &str, session: Option<&str>) -> anyhow::Result<()> {
+    let client = connect(url).await?;
+    let sessions = fetch_sessions(&client).await?;
+    let resource = find_session(&sessions, session)?.resource.clone();
+    enter_session(client, &resource).await
+}
+
+/// Waits for the agent to say how it is entered, hands the session over so
+/// that only the terminal writes its history, and becomes the agent: this
+/// replaces the process, so it does not return on success.
+async fn enter_session(client: Client, session: &str) -> anyhow::Result<()> {
+    let command = terminal_entry(&client, session).await?;
+    // The service lets go of its own agent once it is idle, so the terminal's
+    // is the only one writing. What is said here comes back on `session/load`
+    // the next time the session is opened in Ask.
+    let released: Result<serde_json::Value, _> = client
+        .request("releaseSession", json!({ "channel": session }))
+        .await;
+    if let Err(err) = released {
+        tracing::warn!(%err, session, "the service would not hand the session over");
+    }
+    client.shutdown().await;
+
+    let (program, args) = command
+        .command
+        .split_first()
+        .context("the agent's enter command is empty")?;
+    let err = std::process::Command::new(program)
+        .args(args)
+        .current_dir(&command.cwd)
+        .exec();
+    Err(anyhow::Error::new(err).context(format!("could not run {program}")))
+}
+
+/// How a session is entered, as the service says under `otto.terminal`.
+struct Enter {
+    command: Vec<String>,
+    cwd: std::path::PathBuf,
+}
+
+/// The session's enter command, waiting for it while the agent starts: it is
+/// known only once the agent has given the session an id of its own.
+async fn terminal_entry(client: &Client, session: &str) -> anyhow::Result<Enter> {
+    let (subscribed, mut events) = client.subscribe(session.to_owned()).await?;
+    let Some(SnapshotState::Session(state)) = subscribed.snapshot.map(|s| s.state) else {
+        bail!("the service sent no session");
+    };
+    if let Some(entry) = entry_from_meta(state.meta.as_ref()) {
+        return Ok(entry);
+    }
+    let waited = tokio::time::timeout(ENTER_TIMEOUT, async {
+        while let Some(event) = events.recv().await {
+            let SubscriptionEvent::Action(envelope) = event else {
+                continue;
+            };
+            if envelope.rejection_reason.is_some() {
+                continue;
+            }
+            match &envelope.action {
+                StateAction::SessionMetaChanged(changed) => {
+                    if let Some(entry) = entry_from_meta(changed.meta.as_ref()) {
+                        return Ok(entry);
+                    }
+                }
+                StateAction::SessionCreationFailed(failed) => {
+                    bail!("the agent did not start: {}", failed.error.message)
+                }
+                _ => {}
+            }
+        }
+        bail!("the service closed the connection")
+    })
+    .await;
+    match waited {
+        Ok(entry) => entry,
+        Err(_) => bail!(
+            "the agent did not say how to enter it within {} seconds; \
+             `otto-agents doctor` says what is wrong",
+            ENTER_TIMEOUT.as_secs()
+        ),
+    }
+}
+
+/// The `enter` command and folder of `otto.terminal`, once the service has
+/// written them.
+fn entry_from_meta(meta: Option<&serde_json::Map<String, serde_json::Value>>) -> Option<Enter> {
+    let terminal = meta?.get("otto")?.get("terminal")?;
+    let command = terminal
+        .get("enter")?
+        .as_array()?
+        .iter()
+        .map(|arg| Some(arg.as_str()?.to_owned()))
+        .collect::<Option<Vec<_>>>()?;
+    let cwd = std::path::PathBuf::from(terminal.get("cwd")?.as_str()?);
+    (!command.is_empty()).then_some(Enter { command, cwd })
+}
+
+/// The provider id `agent` names — its id, or the name it is shown under,
+/// either way ignoring case. `None` leaves the service its default agent.
+async fn resolve_agent(client: &Client, agent: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(agent) = agent else {
+        return Ok(None);
+    };
+    let (subscribed, _events) = client.subscribe(ROOT_RESOURCE_URI.to_owned()).await?;
+    let Some(SnapshotState::Root(root)) = subscribed.snapshot.map(|s| s.state) else {
+        bail!("the service sent no agents");
+    };
+    let found = root
+        .agents
+        .iter()
+        .find(|info| info.provider.eq_ignore_ascii_case(agent))
+        .or_else(|| {
+            root.agents
+                .iter()
+                .find(|info| info.display_name.eq_ignore_ascii_case(agent))
+        });
+    match found {
+        Some(info) => Ok(Some(info.provider.clone())),
+        None => bail!(
+            "no agent called {agent:?}. The service has: {}",
+            root.agents
+                .iter()
+                .map(|info| format!("{} ({})", info.provider, info.display_name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// `otto-agents plugins install`: links every discovered skill into `dir`,

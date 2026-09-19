@@ -42,7 +42,7 @@ use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styl
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
-use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, IMAGE_PAD};
+use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, FOOTER_H, IMAGE_PAD};
 use crate::selection::Span;
 use crate::source::{Activity, Item};
 
@@ -94,13 +94,38 @@ const LOG_TOP_PAD: f32 = 20.0;
 
 /// Height of one line of plain text in the ask log.
 pub const LOG_LINE_H: f32 = crate::log::LINE_H;
-/// Size of the ask log's text.
-const LOG_TEXT: f32 = 14.0;
+/// Size of the ask log's text: what the person asked and what the agent
+/// answered, both sides of it. The answer is laid out by the toolkit's
+/// document, which is told this size too, so one side of the conversation is
+/// never quietly smaller than the other.
+pub const LOG_TEXT: f32 = 14.0;
+
+/// The prose style of an answer: the toolkit's body, at the log's size.
+pub fn log_body() -> otto_kit::typography::TextStyle {
+    otto_kit::typography::TextStyle {
+        size: LOG_TEXT,
+        ..styles::BODY
+    }
+}
+/// Size of a note in the ask log — a tool call, a status line. Smaller than
+/// the conversation, so what the agent said outranks what it is doing.
+const LOG_NOTE_TEXT: f32 = 11.5;
 /// Space either side of the ask log's text.
 const LOG_INSET: f32 = 20.0;
 
 /// Corner radius of a request's bubble; a one-line request is a pill.
 const BUBBLE_RADIUS: f32 = 16.0;
+
+/// Room either side of the mode's name inside its pill.
+const PILL_PAD_X: f32 = 7.0;
+/// How tall the mode's pill is.
+const PILL_H: f32 = 16.0;
+/// Space between the footer's pieces: the agent, its mode, the hint.
+const FOOTER_GAP: f32 = 7.0;
+/// Corner radius of the fill under a group of tool calls the pointer is on.
+const STEPS_RADIUS: f32 = 6.0;
+/// Room around that fill, so the words are not against its edge.
+const STEPS_PAD: f32 = 4.0;
 
 /// How rounded a picture in the log is: the corner every other surface in
 /// the card wears.
@@ -546,10 +571,11 @@ impl Palette {
             Style::Prompt => Weight::SEMI_BOLD,
             Style::Request | Style::Answer | Style::Note => Weight::NORMAL,
         };
-        self.font(
-            LOG_TEXT,
-            FontStyle::new(weight, Width::NORMAL, Slant::Upright),
-        )
+        let size = match style {
+            Style::Note => LOG_NOTE_TEXT,
+            Style::Request | Style::Prompt | Style::Answer => LOG_TEXT,
+        };
+        self.font(size, FontStyle::new(weight, Width::NORMAL, Slant::Upright))
     }
 
     /// Every piece of text in the ask log, in reading order, with the box it
@@ -568,7 +594,7 @@ impl Palette {
                     let font = self.log_font(*style);
                     let width = measure_runs(&font, text);
                     spans.push(Span {
-                        rect: Rect::from_xywh(LOG_INSET, line.top, width, LOG_LINE_H),
+                        rect: Rect::from_xywh(LOG_INSET, line.top, width, line.height),
                         text: text.clone(),
                         font,
                         line: row,
@@ -615,12 +641,58 @@ impl Palette {
                         row += 1;
                     }
                 }
-                // A picture has no words to select over, but it is a line of
-                // the log all the same, so the numbering carries on past it.
-                Kind::Image { .. } => row += 1,
+                Kind::Steps { lines: words, .. } => {
+                    let font = self.log_font(Style::Note);
+                    let height = Style::Note.line_h();
+                    for (index, words) in words.iter().enumerate() {
+                        spans.push(Span {
+                            rect: Rect::from_xywh(
+                                LOG_INSET,
+                                line.top + index as f32 * height,
+                                measure_runs(&font, words),
+                                height,
+                            ),
+                            text: words.clone(),
+                            font: font.clone(),
+                            line: row,
+                        });
+                        row += 1;
+                    }
+                }
+                // Neither a picture nor the footer has words to select over —
+                // the footer is the card talking about itself, not the
+                // conversation — but each is a line of the log all the same,
+                // so the numbering carries on past it.
+                Kind::Image { .. } | Kind::Footer { .. } => row += 1,
             }
         }
         spans
+    }
+
+    /// The group of tool calls under `point` in the ask log, as the log line
+    /// holding it and the request it belongs to. `point` is in the log's
+    /// content coordinates.
+    pub fn steps_at(&self, lines: &[Line], point: (f32, f32)) -> Option<(usize, usize)> {
+        lines.iter().enumerate().find_map(|(index, line)| {
+            let Kind::Steps { block, .. } = &line.kind else {
+                return None;
+            };
+            let rect = Self::steps_rect(line);
+            let (x, y) = point;
+            (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)
+                .then_some((index, *block))
+        })
+    }
+
+    /// What a group of tool calls answers the pointer over: its words and the
+    /// padding the fill is drawn in.
+    fn steps_rect(line: &Line) -> Rect {
+        Rect::from_xywh(
+            LOG_INSET - STEPS_PAD,
+            line.top - STEPS_PAD / 2.0,
+            LOG_W + STEPS_PAD * 2.0,
+            line.height + STEPS_PAD,
+        )
     }
 
     /// The code block under `point` in the ask log, as the log line holding
@@ -661,7 +733,9 @@ impl Palette {
 
     /// Paint the lines of the ask log that fall inside `band`, in the list's
     /// content coordinates. `copy` is the copy button to show on a code
-    /// block, as the log line holding its answer and the button.
+    /// block, as the log line holding its answer and the button. `steps` is
+    /// the log line of the group of tool calls the pointer is on, which is
+    /// drawn as something to click.
     pub fn paint_log(
         &self,
         canvas: &Canvas,
@@ -669,8 +743,10 @@ impl Palette {
         lines: &[Line],
         selection: &[Rect],
         copy: Option<(usize, document::CopyButton)>,
+        steps: Option<usize>,
     ) {
         let prompt_font = self.log_font(Style::Prompt);
+        let note_font = self.log_font(Style::Note);
         let font = self.log_font(Style::Answer);
         let mut text = Paint::new(Color4f::from(self.title_color()), None);
         text.set_anti_alias(true);
@@ -704,11 +780,11 @@ impl Palette {
             match &line.kind {
                 Kind::Text { text: words, .. } if words.is_empty() => {}
                 Kind::Text { text: words, style } => {
-                    let baseline = line.top + LOG_LINE_H * 0.72;
+                    let baseline = line.top + line.height * 0.72;
                     let (font, paint) = match style {
                         Style::Prompt => (&prompt_font, &text),
                         Style::Request | Style::Answer => (&font, &text),
-                        Style::Note => (&font, &dim),
+                        Style::Note => (&note_font, &dim),
                     };
                     draw_runs(canvas, words, (LOG_INSET, baseline), font, paint);
                 }
@@ -737,6 +813,47 @@ impl Palette {
                         );
                     }
                 }
+                Kind::Steps { lines: words, .. } => {
+                    // Under the pointer the group takes a fill: painted text
+                    // says nothing about being clickable on its own, and the
+                    // cursor alone is only found by the person already there.
+                    if steps == Some(index) {
+                        let mut fill = Paint::new(Color4f::from(theme.fill_secondary), None);
+                        fill.set_anti_alias(true);
+                        canvas.draw_round_rect(
+                            Self::steps_rect(line),
+                            STEPS_RADIUS,
+                            STEPS_RADIUS,
+                            &fill,
+                        );
+                    }
+                    let height = Style::Note.line_h();
+                    for (row, words) in words.iter().enumerate() {
+                        let baseline = line.top + row as f32 * height + height * 0.72;
+                        draw_runs(canvas, words, (LOG_INSET, baseline), &note_font, &dim);
+                    }
+                }
+                Kind::Footer { agent, mode, hint } => {
+                    let baseline = line.top + FOOTER_H * 0.68;
+                    let mut x = LOG_INSET;
+                    draw_runs(canvas, agent, (x, baseline), &note_font, &dim);
+                    x += measure_runs(&note_font, agent) + FOOTER_GAP;
+
+                    // The mode is the one thing here that can be changed, so
+                    // it is the one thing wearing a control's shape.
+                    let width = measure_runs(&note_font, mode) + PILL_PAD_X * 2.0;
+                    let pill =
+                        Rect::from_xywh(x, line.top + (FOOTER_H - PILL_H) / 2.0, width, PILL_H);
+                    let mut fill = Paint::new(Color4f::from(theme.fill_secondary), None);
+                    fill.set_anti_alias(true);
+                    canvas.draw_round_rect(pill, PILL_H / 2.0, PILL_H / 2.0, &fill);
+                    draw_runs(canvas, mode, (x + PILL_PAD_X, baseline), &note_font, &text);
+                    x += width + FOOTER_GAP;
+
+                    if let Some(hint) = hint {
+                        draw_runs(canvas, hint, (x, baseline), &note_font, &dim);
+                    }
+                }
                 Kind::Document(doc) => {
                     let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
                     let copy = copy
@@ -756,7 +873,7 @@ impl Palette {
                         // its place rather than a hole in the log.
                         let baseline = line.top + LOG_LINE_H * 0.72;
                         let words = format!("picture: {label}");
-                        draw_runs(canvas, &words, (LOG_INSET, baseline), &font, &dim);
+                        draw_runs(canvas, &words, (LOG_INSET, baseline), &note_font, &dim);
                         continue;
                     };
                     let box_ = Rect::from_xywh(LOG_INSET, line.top + IMAGE_PAD, *width, *height);
@@ -1139,7 +1256,7 @@ mod tests {
             "the notes are at https://example.com/a now",
             otto_md_kit::MAX_BLOCKS,
         );
-        let doc = otto_kit::preview::document::wrap(&blocks, LOG_W);
+        let doc = otto_kit::preview::document::wrap_at(&blocks, LOG_W, log_body());
         let run = doc
             .iter()
             .flat_map(|line| line.runs.iter().map(move |run| (line, run)))
@@ -1223,6 +1340,8 @@ mod tests {
             attachments: None,
             answer: &answer,
             steps: &steps,
+            steps_expanded: false,
+
             inputs: &[],
             question: None,
             action: &[],
@@ -1231,6 +1350,7 @@ mod tests {
         let lines = crate::log::lay_out(
             &blocks,
             Some("Working…"),
+            None,
             LOG_W,
             |text, style| palette.measure_log(text, style),
             |path| palette.picture_size(path),
@@ -1298,6 +1418,8 @@ mod tests {
             attachments: None,
             answer: &answer,
             steps: &[],
+            steps_expanded: false,
+
             inputs: &[],
             question: None,
             action: &[],
@@ -1305,6 +1427,7 @@ mod tests {
         }];
         let lines = crate::log::lay_out(
             &blocks,
+            None,
             None,
             LOG_W,
             |text, style| palette.measure_log(text, style),

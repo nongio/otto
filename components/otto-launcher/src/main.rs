@@ -198,6 +198,12 @@ struct Launcher {
     /// The code block the pointer is over, as the log line holding its answer
     /// and the block within it, so its copy button is shown.
     code_hover: Option<(usize, document::CodeHit)>,
+    /// The group of tool calls the pointer is over, as its log line, so it
+    /// can say it is something to click.
+    steps_hover: Option<usize>,
+    /// The requests whose tool calls have been opened, by their place in the
+    /// transcript. Everything else shows its last call and an ellipsis.
+    steps_open: std::collections::HashSet<usize>,
     /// A link pressed in the log, and where it was pressed, so a release that
     /// did not turn into a drag opens it.
     link_press: Option<(std::sync::Arc<str>, f32, f32)>,
@@ -382,6 +388,8 @@ impl Launcher {
             selecting: None,
             log_cursor: CursorShape::Default,
             code_hover: None,
+            steps_hover: None,
+            steps_open: std::collections::HashSet::new(),
             link_press: None,
             code_copied: None,
             last_press: None,
@@ -557,6 +565,8 @@ impl Launcher {
         // Wrapping, because a list that stops at the end makes someone check
         // where the end was.
         self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
+        // The field names whoever is highlighted while the agents are listed.
+        self.refresh_composer_placeholder();
         // The keyboard has the selection now, wherever the pointer is.
         self.follow_pointer = false;
         self.scroll_to_selection();
@@ -592,7 +602,12 @@ impl Launcher {
             let rows = RowLayout::new(ROW_H, self.row_count());
             let hovered = self.list.as_ref().and_then(ScrollPane::hovered);
             if let Some(row) = hovered.and_then(|point| rows.index_at(point.y)) {
-                self.selected = row;
+                if self.selected != row {
+                    self.selected = row;
+                    // The pointer moves the highlight as the arrows do, so
+                    // the field follows it the same way.
+                    self.refresh_composer_placeholder();
+                }
             }
         }
         // An attached file is not something to pick, so it is never shown
@@ -657,6 +672,7 @@ impl Launcher {
             lines: &self.log,
             selection: &self.selection_rects,
             copy,
+            steps: self.steps_hover,
             revision: self.log_revision,
         };
         self.log_busy = pane.update(&content, &AppContext::current_theme());
@@ -753,13 +769,22 @@ impl Launcher {
     }
 
     /// What the empty field says while a request is being written: the agent
-    /// it would go to — the one picked from the list, or the first, which is
-    /// the default. Until the agents arrive it names the mode instead.
+    /// it would go to — the one the list highlights while it is open, so the
+    /// field follows the arrow keys rather than waiting for Return, otherwise
+    /// the one picked from it, or the first, which is the default. Until the
+    /// agents arrive it names the mode instead.
     fn composer_placeholder(&self) -> String {
+        let highlighted = self
+            .choosing_agent
+            .then(|| self.selected_origin())
+            .flatten()
+            .filter(|origin| origin.source == ASK_ROWS)
+            .map(|origin| origin.index);
+        let index = highlighted.or(self.picked_agent).unwrap_or(0);
         let name = self
             .ask
             .as_ref()
-            .and_then(|ask| ask.agent_display_name(self.picked_agent.unwrap_or(0)));
+            .and_then(|ask| ask.agent_display_name(index));
         match name {
             Some(agent) => otto_kit::t_owned!("launcher-search-ask-agent", agent = agent),
             None => Scope::Ask.placeholder().to_string(),
@@ -967,6 +992,9 @@ impl Launcher {
         self.picked_agent = None;
         self.log.clear();
         self.log_text.clear();
+        // The open groups are the old conversation's, by its numbering.
+        self.steps_open.clear();
+        self.steps_hover = None;
         self.log_revision = self.log_revision.wrapping_add(1);
         self.log_following = true;
         self.refresh_composer_placeholder();
@@ -994,6 +1022,9 @@ impl Launcher {
         self.picked_agent = None;
         self.log.clear();
         self.log_text.clear();
+        // The open groups are the old conversation's, by its numbering.
+        self.steps_open.clear();
+        self.steps_hover = None;
         self.log_revision = self.log_revision.wrapping_add(1);
         self.log_following = true;
         self.refilter();
@@ -1101,38 +1132,44 @@ impl Launcher {
         let blocks: Vec<Block> = transcript
             .entries
             .iter()
+            .enumerate()
             .zip(&notes)
             .zip(&steps)
             .zip(&attached)
             .zip(&inputs)
-            .map(|((((entry, note), steps), attached), inputs)| Block {
-                prompt: &entry.prompt,
-                attachments: attached.as_deref(),
-                answer: &entry.answer,
-                steps,
-                inputs,
-                question: entry
-                    .question
-                    .as_ref()
-                    .map(|question| (question.title.as_str(), question.detail.as_str())),
-                action: entry
-                    .question
-                    .as_ref()
-                    .map(|question| question.action.as_slice())
-                    .unwrap_or(&[]),
-                note: note.as_deref(),
-            })
+            .map(
+                |(((((index, entry), note), steps), attached), inputs)| Block {
+                    prompt: &entry.prompt,
+                    attachments: attached.as_deref(),
+                    answer: &entry.answer,
+                    steps,
+                    steps_expanded: self.steps_open.contains(&index),
+                    inputs,
+                    question: entry
+                        .question
+                        .as_ref()
+                        .map(|question| (question.title.as_str(), question.detail.as_str())),
+                    action: entry
+                        .question
+                        .as_ref()
+                        .map(|question| question.action.as_slice())
+                        .unwrap_or(&[]),
+                    note: note.as_deref(),
+                },
+            )
             .collect();
         // The status closes the log; the agent and its mode sit under it.
         let status = transcript.status.as_ref().map(Status::text);
-        let footer = ask.mode_line();
-        let status = match (status, footer) {
-            (Some(status), Some(footer)) => Some(format!("{status}\n{footer}")),
-            (status, footer) => status.or(footer),
-        };
+        let mode = ask.mode_line();
+        let footer = mode.as_ref().map(|mode| ask_log::Footer {
+            agent: &mode.agent,
+            mode: &mode.mode,
+            hint: mode.hint.as_deref(),
+        });
         self.log = lay_out(
             &blocks,
             status.as_deref(),
+            footer,
             LOG_W,
             |text, style| palette.measure_log(text, style),
             |path| palette.picture_size(path),
@@ -1248,6 +1285,24 @@ impl Launcher {
 
     /// The link under `point` in the log's content coordinates, if the
     /// pointer is over one at all.
+    /// Follow the pointer over a group of tool calls, so the one under it is
+    /// drawn as something that can be opened.
+    fn hover_steps(&mut self, point: Option<(f32, f32)>) {
+        let hover = point
+            .and_then(|point| {
+                self.palette
+                    .as_ref()
+                    .and_then(|palette| palette.steps_at(&self.log, point))
+            })
+            .map(|(line, _)| line);
+        if hover == self.steps_hover {
+            return;
+        }
+        self.steps_hover = hover;
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.dirty = true;
+    }
+
     fn link_at(&self, point: Option<(f32, f32)>) -> Option<&str> {
         let point = point?;
         self.palette.as_ref()?.link_at(&self.log, point)
@@ -1618,6 +1673,8 @@ struct LogRows<'a> {
     /// The copy button to show on a code block, if the pointer is over one.
     copy: Option<(usize, document::CopyButton)>,
     revision: u64,
+    /// The log line of the group of tool calls under the pointer.
+    steps: Option<usize>,
 }
 
 impl ScrollContent for LogRows<'_> {
@@ -1630,8 +1687,14 @@ impl ScrollContent for LogRows<'_> {
     }
 
     fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
-        self.palette
-            .paint_log(canvas, band, self.lines, self.selection, self.copy);
+        self.palette.paint_log(
+            canvas,
+            band,
+            self.lines,
+            self.selection,
+            self.copy,
+            self.steps,
+        );
     }
 }
 
@@ -2146,12 +2209,14 @@ impl App for Launcher {
                 self.spring();
                 self.selected = self.picked_agent.unwrap_or(0);
                 self.refilter();
+                self.refresh_composer_placeholder();
                 return;
             }
             (Keysym::Up, _) | (_, Some('p')) if self.choosing_agent && self.selected == 0 => {
                 self.choosing_agent = false;
                 self.spring();
                 self.refilter();
+                self.refresh_composer_placeholder();
                 return;
             }
             (Keysym::Down, _) | (_, Some('n')) => {
@@ -2361,6 +2426,7 @@ impl App for Launcher {
                     }
                     let point = self.log_point(x, y);
                     self.hover_code(point);
+                    self.hover_steps(point);
                     // Over the log's words the pointer says so, because
                     // nothing else about painted text does; over a copy
                     // button it is a hand. Only when it changes: motion
@@ -2368,10 +2434,11 @@ impl App for Launcher {
                     // same cursor every time.
                     let on_button = self.code_hover.is_some_and(|(_, hit)| hit.on_button);
                     let over_link = self.link_at(point).is_some();
+                    let over_steps = self.steps_hover.is_some();
                     let over_text = point
                         .and_then(|point| selection::caret_at(&self.log_spans, point))
                         .is_some();
-                    let cursor = if on_button || over_link {
+                    let cursor = if on_button || over_link || over_steps {
                         CursorShape::Pointer
                     } else if over_text {
                         CursorShape::Text
@@ -2437,6 +2504,21 @@ impl App for Launcher {
                                 self.dirty = true;
                             }
                         }
+                        continue;
+                    }
+                    // A press on a group of tool calls opens or closes it,
+                    // and is not also the start of a selection over the words
+                    // it is on.
+                    if let Some((_, block)) = self.log_point(x, y).and_then(|point| {
+                        self.palette
+                            .as_ref()
+                            .and_then(|palette| palette.steps_at(&self.log, point))
+                    }) {
+                        if !self.steps_open.remove(&block) {
+                            self.steps_open.insert(block);
+                        }
+                        self.set_log_selection(None);
+                        self.relayout_log();
                         continue;
                     }
                     // A press on a link is remembered rather than followed:
@@ -2516,6 +2598,7 @@ impl App for Launcher {
                     self.link_press = None;
                     self.log_cursor = CursorShape::Default;
                     self.hover_code(None);
+                    self.hover_steps(None);
                     if let Some(list) = self.list.as_mut() {
                         list.pointer_leave();
                     }

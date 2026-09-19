@@ -1015,8 +1015,17 @@ struct FilesApp {
 /// would be describing a different file as far as the reader is concerned. A
 /// directory has no size worth showing — the listing does not count children
 /// either — so it gets two lines rather than three.
-fn preview_info(entry: &Entry) -> Vec<String> {
+///
+/// A picture gets one line the listing cannot give it: how large it actually
+/// is, and for an animation how long a loop runs. That comes from `decoded`
+/// rather than from the file's name or its bytes here, because the decoder is
+/// the only thing that has read the picture — which is also why the line
+/// appears when the decode lands rather than with the rest.
+fn preview_info(entry: &Entry, decoded: Option<&otto_kit::preview::Preview>) -> Vec<String> {
     let mut info = vec![entry.kind_label().to_string()];
+    if let Some(line) = decoded.and_then(picture_info) {
+        info.push(line);
+    }
     if let Some(size) = entry.size.filter(|_| !entry.is_dir) {
         info.push(model::format_size(size));
     }
@@ -1024,6 +1033,53 @@ fn preview_info(entry: &Entry) -> Vec<String> {
         info.push(model::format_time(modified));
     }
     info
+}
+
+/// The picture's own line: its size in pixels, and the length of one loop
+/// when it is an animation. `None` for everything that is not a picture.
+///
+/// The *source's* size, not the decode's: a preview is decoded at the size it
+/// will be shown, and "450 × 281" would describe this column rather than the
+/// file.
+fn picture_info(decoded: &otto_kit::preview::Preview) -> Option<String> {
+    let pixels = match decoded {
+        otto_kit::preview::Preview::Pixels { pixels, .. } => pixels,
+        otto_kit::preview::Preview::Card { hero, .. } => hero.as_ref()?,
+        _ => return None,
+    };
+    if pixels.intrinsic_width == 0 || pixels.intrinsic_height == 0 {
+        return None;
+    }
+    let (width, height) = (
+        pixels.intrinsic_width as f64,
+        pixels.intrinsic_height as f64,
+    );
+    if !pixels.is_animated() {
+        return Some(otto_kit::t_owned!(
+            "files-preview-dimensions",
+            width = width,
+            height = height
+        ));
+    }
+    let loop_length: std::time::Duration =
+        (0..pixels.frames()).map(|frame| pixels.delay(frame)).sum();
+    Some(otto_kit::t_owned!(
+        "files-preview-animation",
+        width = width,
+        height = height,
+        duration = clock(loop_length)
+    ))
+}
+
+/// A duration as minutes and seconds, the way the video transport writes one.
+fn clock(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
 }
 
 /// The desktop entry this window belongs to, which is also its `app_id`.
@@ -1230,3 +1286,61 @@ mod search_tests;
 
 #[cfg(test)]
 mod path_bar_tests;
+
+#[cfg(test)]
+mod picture_info_tests {
+    use super::*;
+
+    use otto_kit::preview::{Pixels, Preview};
+
+    fn picture(frame_delays: Vec<u32>) -> Preview {
+        Preview::Pixels {
+            pixels: Pixels {
+                width: 450,
+                height: 281,
+                intrinsic_width: 900,
+                intrinsic_height: 563,
+                data: Vec::new(),
+                frame_delays,
+            },
+            pages: 1,
+            page: 1,
+        }
+    }
+
+    #[test]
+    fn a_picture_is_described_by_the_file_not_by_the_decode() {
+        otto_kit::i18n::init(&["en-GB".to_string()]);
+        // The source's size, although the decode is half of it.
+        assert_eq!(
+            picture_info(&picture(Vec::new())).as_deref(),
+            Some("900 × 563")
+        );
+
+        // A pixel count is not a quantity of anything: it is written plainly,
+        // without the grouping a number in a sentence would get.
+        let mut wide = picture(Vec::new());
+        if let Preview::Pixels { pixels, .. } = &mut wide {
+            pixels.intrinsic_width = 1920;
+            pixels.intrinsic_height = 1080;
+        }
+        assert_eq!(picture_info(&wide).as_deref(), Some("1920 × 1080"));
+    }
+
+    #[test]
+    fn an_animation_also_says_how_long_a_loop_runs() {
+        otto_kit::i18n::init(&["en-GB".to_string()]);
+        let looping = picture(vec![100; 25]);
+        assert_eq!(picture_info(&looping).as_deref(), Some("900 × 563 · 0:02"));
+    }
+
+    #[test]
+    fn what_is_not_a_picture_has_no_line() {
+        let text = Preview::Text {
+            lines: vec!["fn main() {}".into()],
+            truncated: false,
+            language: "rust".into(),
+        };
+        assert!(picture_info(&text).is_none());
+    }
+}

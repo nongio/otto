@@ -370,7 +370,7 @@ command syntax from a script: `focus left|right|up|down|parent|child`,
 `move …`, `move container to workspace <n>`, `workspace <n>`, `split h|v`,
 `layout splith|splitv|tabbed|stacking|toggle`,
 `resize grow|shrink width|height <n>`, `floating toggle`, `fullscreen`,
-`kill`, `gaps inner|outer <n>`. The same interface reports the tree, the workspaces and the outputs in
+`kill`, `gaps inner|outer <n>`, `rename workspace [<n>] to <name>`, `expose [show|hide|toggle]`. The same interface reports the tree, the workspaces and the outputs in
 i3's shape, so a bar or a script written against i3 or sway keeps working
 after a rename. Key bindings never use that syntax: a binding names an action.
 

@@ -4,6 +4,8 @@ The dock is Otto's task manager, pinned to one edge of the primary monitor —
 the bottom by default, or either side. Unlike the top bar and the dynamic
 island, it is part of the compositor — there is nothing to start.
 
+![The dock at the bottom of the screen: pinned application icons, a divider, and the wastebasket](images/dock.jpg)
+
 ## What it shows
 
 Four groups, in order along the dock (left to right, or top to bottom on a

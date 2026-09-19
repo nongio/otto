@@ -102,6 +102,11 @@ impl Browser {
         }
     }
 
+    /// The decode the preview column is showing, if one has landed.
+    pub(super) fn decoded_preview(&self) -> Option<&otto_kit::preview::Preview> {
+        self.preview.as_ref().and_then(|p| p.decoded.as_ref())
+    }
+
     /// The preview column's picture, where it is on screen right now — if
     /// there is one, and `(x, y)` is on it.
     ///
@@ -115,7 +120,7 @@ impl Browser {
         let (width, height) = (self.size.0, self.content_h());
         let panel =
             view::preview_pane_rect(self.columns.len(), height, self.pan.offset(), self.miller_w);
-        let lines = preview_info(&self.selected_entry()?).len();
+        let lines = preview_info(&self.selected_entry()?, self.decoded_preview()).len();
         let stage = view::preview_stage_rect(panel, lines);
         // Clipped to the file area: the stack is panned, so a preview column
         // half off the left of the window must not be grabbable under the
@@ -140,11 +145,11 @@ impl Browser {
         let data = view::PreviewData {
             name: entry.name.as_str(),
             icon_chain: entry.icon_chain(),
-            decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
+            decoded: self.decoded_preview(),
             video: None,
             video_on_surface: false,
             first_row: 0,
-            info: preview_info(&entry),
+            info: preview_info(&entry, self.decoded_preview()),
         };
         Some(view::preview_drag_picture(
             &data,
@@ -302,7 +307,8 @@ impl Browser {
             self.pan.offset(),
             self.miller_w,
         );
-        let stage = view::preview_stage_rect(pane, preview_info(&entry).len());
+        let stage =
+            view::preview_stage_rect(pane, preview_info(&entry, self.decoded_preview()).len());
         let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
             return false;
         };

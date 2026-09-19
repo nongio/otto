@@ -455,3 +455,124 @@ async fn set_mode_on_an_agent_without_modes_is_refused() {
     };
     assert_eq!(err.code, json_rpc_error_codes::INVALID_PARAMS);
 }
+
+/// A backend whose one agent is entered one way before it has written a
+/// history and another after, as Claude is (`--session-id` then `--resume`).
+struct EnteredBackend;
+
+impl Backend for EnteredBackend {
+    fn agents(&self) -> Vec<AgentInfo> {
+        vec![agent_info("entered", "Entered", "Opens in a terminal")]
+    }
+
+    fn start(
+        &self,
+        _spec: SessionSpec,
+        mut commands: mpsc::UnboundedReceiver<SessionCommand>,
+        events: mpsc::UnboundedSender<SessionEvent>,
+    ) {
+        tokio::spawn(async move {
+            let _ = events.send(SessionEvent::Ready {
+                agent_session: Some("agent-1".into()),
+            });
+            while let Some(command) = commands.recv().await {
+                if let SessionCommand::Prompt { turn_id, .. } = command {
+                    let _ = events.send(SessionEvent::TurnEnded {
+                        turn_id,
+                        outcome: TurnOutcome::Complete,
+                    });
+                }
+            }
+        });
+    }
+
+    fn terminal(
+        &self,
+        _provider: &str,
+        agent_session: &str,
+        _cwd: &std::path::Path,
+        written: bool,
+    ) -> Option<Vec<String>> {
+        let mut command = vec!["term".to_owned(), "-e".to_owned()];
+        command.extend(self.enter(_provider, agent_session, _cwd, written)?);
+        Some(command)
+    }
+
+    fn enter(
+        &self,
+        _provider: &str,
+        agent_session: &str,
+        _cwd: &std::path::Path,
+        written: bool,
+    ) -> Option<Vec<String>> {
+        let flag = if written { "--resume" } else { "--session-id" };
+        Some(vec![
+            "agent".to_owned(),
+            flag.to_owned(),
+            agent_session.to_owned(),
+        ])
+    }
+}
+
+fn enter_of(state: &SessionState) -> Option<&Value> {
+    state
+        .meta
+        .as_ref()?
+        .get("otto")?
+        .get("terminal")?
+        .get("enter")
+}
+
+/// The command that enters a session is the agent's own, and it changes once
+/// the session has a history: `otto-agents new` creates a session and enters
+/// it before anything has been said in it.
+#[tokio::test]
+async fn a_session_is_entered_one_way_before_it_has_a_history_and_another_after() {
+    let client = serving(Arc::new(EnteredBackend)).await.client;
+    let uri = new_session_uri();
+    client
+        .request::<_, Value>(
+            "createSession",
+            json!({ "channel": uri, "provider": "entered", "workingDirectories": [temp_dir_uri()] }),
+        )
+        .await
+        .expect("createSession");
+
+    let (result, mut events) = client.subscribe(uri.clone()).await.expect("subscribe");
+    let Some(SnapshotState::Session(session)) = result.snapshot.map(|s| s.state) else {
+        panic!("expected a session snapshot");
+    };
+    let mut session: SessionState = *session;
+    while session.lifecycle != SessionLifecycle::Ready || enter_of(&session).is_none() {
+        let envelope = next_envelope(&mut events).await;
+        apply_action_to_session(&mut session, &envelope.action);
+    }
+    assert_eq!(
+        enter_of(&session).expect("otto.terminal.enter"),
+        &json!(["agent", "--session-id", "agent-1"]),
+        "a session with nothing in it cannot be resumed by id"
+    );
+    let terminal = session.meta.as_ref().unwrap()["otto"]["terminal"]["command"].clone();
+    assert_eq!(
+        terminal,
+        json!(["term", "-e", "agent", "--session-id", "agent-1"]),
+        "and the terminal runs the same command"
+    );
+
+    let chat_uri = session.default_chat.clone().expect("a default chat");
+    let (_, _chat_events) = client.subscribe(chat_uri.clone()).await.expect("subscribe");
+    client
+        .dispatch(chat_uri, turn_started("turn-1", "hello"))
+        .await
+        .expect("dispatch a turn");
+
+    while enter_of(&session) == Some(&json!(["agent", "--session-id", "agent-1"])) {
+        let envelope = next_envelope(&mut events).await;
+        apply_action_to_session(&mut session, &envelope.action);
+    }
+    assert_eq!(
+        enter_of(&session).expect("otto.terminal.enter"),
+        &json!(["agent", "--resume", "agent-1"]),
+        "once the agent has written the session, it is resumed"
+    );
+}

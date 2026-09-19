@@ -742,6 +742,7 @@ mod preview_tests {
                     intrinsic_width: 800,
                     intrinsic_height: 600,
                     data: Vec::new(),
+                    frame_delays: Vec::new(),
                 },
                 pages: 12,
                 page: 3,

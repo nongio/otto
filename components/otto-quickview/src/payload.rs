@@ -16,11 +16,16 @@ use std::io::{self, Write};
 pub use otto_kit::preview::{Fact, Pixels, Preview as PreviewPayload, Row};
 
 /// Wire magic. Bumped if the encoding below ever changes shape.
-const MAGIC: &[u8; 4] = b"OQV2";
+const MAGIC: &[u8; 4] = b"OQV3";
 
 /// Ceiling on any single length field. A corrupt worker must not be able to
 /// make the parent allocate a gigabyte because a length byte flipped.
 const MAX_LEN: u32 = 512 * 1024 * 1024;
+
+/// Ceiling on an animation's frame count, applied before the delays are
+/// allocated for. Well past what any animation a preview would play has, and
+/// far short of what a flipped length byte could ask for.
+pub const MAX_FRAMES: u32 = 4096;
 
 /// Nothing could be shown, and why.
 pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
@@ -124,6 +129,10 @@ fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
     put_u32(out, pixels.height);
     put_u32(out, pixels.intrinsic_width);
     put_u32(out, pixels.intrinsic_height);
+    put_u32(out, pixels.frame_delays.len() as u32);
+    for delay in &pixels.frame_delays {
+        put_u32(out, *delay);
+    }
     put_u32(out, pixels.data.len() as u32);
     out.extend_from_slice(&pixels.data);
 }
@@ -268,12 +277,22 @@ impl<'a> Cursor<'a> {
         let height = self.u32()?;
         let intrinsic_width = self.u32()?;
         let intrinsic_height = self.u32()?;
+        let delay_count = self.u32()?;
+        if delay_count > MAX_FRAMES {
+            return None;
+        }
+        let mut frame_delays = Vec::with_capacity(delay_count as usize);
+        for _ in 0..delay_count {
+            frame_delays.push(self.u32()?);
+        }
         let count = self.len()?;
-        // The buffer must be exactly the size the dimensions imply, or the
-        // drawing side would read past the end of it.
+        // The buffer must be exactly the size the dimensions imply, for as
+        // many frames as there are delays, or the drawing side would read
+        // past the end of it.
         let expected = (width as usize)
             .checked_mul(height as usize)?
-            .checked_mul(4)?;
+            .checked_mul(4)?
+            .checked_mul(frame_delays.len().max(1))?;
         if count != expected {
             return None;
         }
@@ -283,6 +302,7 @@ impl<'a> Cursor<'a> {
             intrinsic_width,
             intrinsic_height,
             data: self.take(count)?.to_vec(),
+            frame_delays,
         })
     }
 }
@@ -379,12 +399,26 @@ mod tests {
             intrinsic_width: 8,
             intrinsic_height: 8,
             data: vec![0xAB; 16],
+            frame_delays: Vec::new(),
+        };
+        let animation = Pixels {
+            width: 2,
+            height: 2,
+            intrinsic_width: 2,
+            intrinsic_height: 2,
+            data: vec![0xCD; 48],
+            frame_delays: vec![40, 40, 200],
         };
         let cases = vec![
             PreviewPayload::Pixels {
                 pixels: pixels.clone(),
                 pages: 3,
                 page: 2,
+            },
+            PreviewPayload::Pixels {
+                pixels: animation,
+                pages: 1,
+                page: 1,
             },
             PreviewPayload::Text {
                 lines: vec!["fn main() {".into(), "}".into()],
@@ -463,7 +497,9 @@ mod tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
         bytes.push(1);
-        for value in [4u32, 4, 4, 4, 8] {
+        // width, height, intrinsic size, no frame delays, then a length that
+        // is not width * height * 4.
+        for value in [4u32, 4, 4, 4, 0, 8] {
             put_u32(&mut bytes, value);
         }
         bytes.extend_from_slice(&[0; 8]);

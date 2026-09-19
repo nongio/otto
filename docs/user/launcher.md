@@ -3,6 +3,8 @@
 `otto-launcher` is a keyboard-driven overlay for starting applications and
 jumping to windows: press a key, type a few letters, press Enter.
 
+![The launcher opening over the desktop, filtering to Otto Settings as the word is typed, then opening it](images/launcher.gif)
+
 > **First version.** It does applications, windows and arithmetic well; it is
 > built so other kinds of result can be added later, and those are not there
 > yet.

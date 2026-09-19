@@ -17,6 +17,9 @@ use crate::ask::Said;
 /// Height of one line of plain text in the log.
 pub const LINE_H: f32 = 21.0;
 
+/// Height of one line of a note, which is set smaller than the conversation.
+pub const NOTE_LINE_H: f32 = 17.0;
+
 /// Space above and below an answer, so a heading does not sit on the request.
 const ANSWER_PAD: f32 = 6.0;
 
@@ -40,6 +43,13 @@ pub const BUBBLE_PAD_Y: f32 = 6.0;
 /// Space under a request's bubble, so what answers it does not touch it.
 pub const BUBBLE_GAP: f32 = 6.0;
 
+/// Height of the footer, which needs a little more than a note line so the
+/// mode's pill is not pressed against the lines either side of it.
+pub const FOOTER_H: f32 = 22.0;
+
+/// What a collapsed group of tool calls ends with, saying there are more.
+pub const ELLIPSIS: &str = " …";
+
 /// How a line of plain text is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -52,6 +62,17 @@ pub enum Style {
     /// Dimmed: a tool call, what became of a request, or what the agent is
     /// doing now.
     Note,
+}
+
+impl Style {
+    /// How tall one line of this style is. A note is smaller than the words
+    /// it annotates, so the conversation stays the largest thing in the log.
+    pub const fn line_h(self) -> f32 {
+        match self {
+            Style::Note => NOTE_LINE_H,
+            Style::Request | Style::Prompt | Style::Answer => LINE_H,
+        }
+    }
 }
 
 /// What a line of the log holds.
@@ -70,6 +91,22 @@ pub enum Kind {
     /// An answer, wrapped as a document. Its lines' tops are relative to the
     /// answer's own top.
     Document(Vec<document::Line>),
+    /// The tool calls of one request, grouped into one thing to click.
+    /// Collapsed this is the last call with an [`ELLIPSIS`]; expanded it is
+    /// every call, in order. `block` is the request the calls belong to,
+    /// which is what a click toggles.
+    Steps {
+        block: usize,
+        lines: Vec<String>,
+        expanded: bool,
+    },
+    /// The agent and its mode, closing the log: who is answering, the mode as
+    /// a pill, and how to change it.
+    Footer {
+        agent: String,
+        mode: String,
+        hint: Option<String>,
+    },
     /// A picture the agent sent, scaled into `width` by `height` at the left of
     /// the log, with [`IMAGE_PAD`] above and below it. A picture whose file
     /// cannot be read is a line of its own words instead, so this is only ever
@@ -98,6 +135,15 @@ impl Line {
     pub fn text(&self) -> String {
         match &self.kind {
             Kind::Text { text, .. } | Kind::Bubble { text, .. } => text.clone(),
+            Kind::Steps { lines, .. } => lines.join("\n"),
+            Kind::Footer { agent, mode, hint } => {
+                let mut said = format!("{agent} · {mode}");
+                if let Some(hint) = hint {
+                    said.push_str(" · ");
+                    said.push_str(hint);
+                }
+                said
+            }
             Kind::Image { label, .. } => format!("picture: {label}"),
             Kind::Document(lines) => lines
                 .iter()
@@ -125,6 +171,8 @@ pub struct Block<'a> {
     pub answer: &'a [Said],
     /// The tool calls the agent made, already allowed or refused.
     pub steps: &'a [String],
+    /// Whether the tool calls are open. Closed, they are one line.
+    pub steps_expanded: bool,
     /// What the agent asked the person, each request as its lines: open ones
     /// with their question, settled ones with their answers.
     pub inputs: &'a [Vec<(String, Style)>],
@@ -138,10 +186,18 @@ pub struct Block<'a> {
     pub note: Option<&'a str>,
 }
 
+/// The agent and its mode, closing the log.
+pub struct Footer<'a> {
+    pub agent: &'a str,
+    pub mode: &'a str,
+    /// How to change the mode, when there is another to change to.
+    pub hint: Option<&'a str>,
+}
+
 /// Wraps the conversation into lines no wider than `width`: each request and
 /// its attachments, then its answer, tool calls, question and note, a blank
 /// line apart from the next request. The log closes with `status`, what the
-/// agent is doing now, one note line per line of it.
+/// agent is doing now, one note line per line of it, and then `footer`.
 ///
 /// `measure` gives the width of a piece of plain text in a line's style.
 /// `picture` gives a picture file's own size in pixels, and `None` for one that
@@ -149,6 +205,7 @@ pub struct Block<'a> {
 pub fn lay_out(
     blocks: &[Block],
     status: Option<&str>,
+    footer: Option<Footer>,
     width: f32,
     measure: impl Fn(&str, Style) -> f32,
     picture: impl Fn(&Path) -> Option<(f32, f32)>,
@@ -156,7 +213,7 @@ pub fn lay_out(
     let mut lines = Vec::new();
     let push = |lines: &mut Vec<Line>, text: &str, style: Style| {
         for text in wrap(text, width, |piece| measure(piece, style)) {
-            place(lines, LINE_H, Kind::Text { text, style });
+            place(lines, style.line_h(), Kind::Text { text, style });
         }
     };
     for (index, block) in blocks.iter().enumerate() {
@@ -182,9 +239,14 @@ pub fn lay_out(
                 },
             }
         }
-        for step in block.steps {
-            push(&mut lines, step, Style::Note);
-        }
+        steps(
+            &mut lines,
+            index,
+            block.steps,
+            block.steps_expanded,
+            width,
+            &measure,
+        );
         for input in block.inputs.iter().filter(|input| !input.is_empty()) {
             blank(&mut lines);
             for (text, style) in input {
@@ -213,7 +275,83 @@ pub fn lay_out(
             push(&mut lines, line, Style::Note);
         }
     }
+    if let Some(footer) = footer {
+        if !lines.is_empty() {
+            blank(&mut lines);
+        }
+        place(
+            &mut lines,
+            FOOTER_H,
+            Kind::Footer {
+                agent: footer.agent.to_string(),
+                mode: footer.mode.to_string(),
+                hint: footer.hint.map(str::to_string),
+            },
+        );
+    }
     lines
+}
+
+/// The tool calls of request `block`, as one thing that can be opened.
+///
+/// Closed, a run of calls is the last of them and an ellipsis: the ones above
+/// it are how the agent got there, and a conversation should not be mostly
+/// the agent's working. One call on its own is that call, plainly — there is
+/// nothing to open.
+fn steps(
+    lines: &mut Vec<Line>,
+    block: usize,
+    steps: &[String],
+    expanded: bool,
+    width: f32,
+    measure: &impl Fn(&str, Style) -> f32,
+) {
+    let note = |text: &str, width: f32| wrap(text, width, |piece| measure(piece, Style::Note));
+    // One call is not a group: it is already the only thing there is to see,
+    // and a line that opens onto itself is a cheat.
+    if let [only] = steps {
+        for text in note(only, width) {
+            place(
+                lines,
+                Style::Note.line_h(),
+                Kind::Text {
+                    text,
+                    style: Style::Note,
+                },
+            );
+        }
+        return;
+    }
+    let mut wrapped = Vec::new();
+    match steps {
+        [] => return,
+        _ if expanded => {
+            for step in steps {
+                wrapped.extend(note(step, width));
+            }
+        }
+        _ => {
+            let last = steps.last().map(String::as_str).unwrap_or_default();
+            wrapped = note(last, width - measure(ELLIPSIS, Style::Note));
+            match wrapped.last_mut() {
+                Some(line) => line.push_str(ELLIPSIS),
+                None => wrapped.push(ELLIPSIS.trim_start().to_string()),
+            }
+        }
+    }
+    if wrapped.is_empty() {
+        return;
+    }
+    let height = wrapped.len() as f32 * Style::Note.line_h();
+    place(
+        lines,
+        height,
+        Kind::Steps {
+            block,
+            lines: wrapped,
+            expanded,
+        },
+    );
 }
 
 /// A request in its bubble, wrapped inside the bubble's padding and no wider
@@ -229,7 +367,7 @@ fn bubble(lines: &mut Vec<Line>, text: &str, width: f32, measure: &impl Fn(&str,
         .iter()
         .map(|line| measure(line, Style::Request))
         .fold(0.0, f32::max);
-    let height = wrapped.len() as f32 * LINE_H + BUBBLE_PAD_Y * 2.0 + BUBBLE_GAP;
+    let height = wrapped.len() as f32 * Style::Request.line_h() + BUBBLE_PAD_Y * 2.0 + BUBBLE_GAP;
     place(
         lines,
         height,
@@ -249,7 +387,7 @@ fn answer(lines: &mut Vec<Line>, markdown: &str, width: f32) {
         return;
     }
     let (blocks, _) = otto_md_kit::parse_capped(markdown, otto_md_kit::MAX_BLOCKS);
-    let mut wrapped = document::wrap(&blocks, width);
+    let mut wrapped = document::wrap_at(&blocks, width, crate::view::log_body());
     let Some(height) = wrapped.last().map(|line| line.top + line.height) else {
         return;
     };
@@ -382,7 +520,8 @@ mod tests {
             .map(|line| match &line.kind {
                 Kind::Text { text, style } => (text.clone(), Some(*style)),
                 Kind::Bubble { text, .. } => (text.clone(), Some(Style::Request)),
-                Kind::Document(_) | Kind::Image { .. } => (line.text(), None),
+                Kind::Steps { .. } => (line.text(), Some(Style::Note)),
+                Kind::Document(_) | Kind::Image { .. } | Kind::Footer { .. } => (line.text(), None),
             })
             .collect()
     }
@@ -426,6 +565,7 @@ mod tests {
             attachments: None,
             answer,
             steps: &[],
+            steps_expanded: false,
             inputs: &[],
             question: None,
             action: &[],
@@ -442,6 +582,7 @@ mod tests {
         let lines = lay_out(
             &blocks,
             Some("Working…"),
+            None,
             20.0,
             |text, _| chars(text),
             no_pictures,
@@ -469,12 +610,21 @@ mod tests {
             attachments: None,
             answer: words("Sure"),
             steps: &steps,
+            steps_expanded: false,
+
             inputs: &[],
             question: Some(("Claude wants to run a command", "rm -rf build")),
             action: &action,
             note: None,
         }];
-        let lines = lay_out(&blocks, None, 40.0, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            40.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
         assert_eq!(
             styled(&lines),
             [
@@ -502,10 +652,19 @@ mod tests {
         ];
         let blocks = [Block {
             steps: &steps,
+            steps_expanded: false,
+
             inputs: &inputs,
             ..block("set it up", words(""), None)
         }];
-        let lines = lay_out(&blocks, None, 40.0, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            40.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
         assert_eq!(
             styled(&lines),
             [
@@ -526,7 +685,14 @@ mod tests {
             attachments: Some("Attached: notes.md"),
             ..block("summarise", words("Done"), None)
         }];
-        let lines = lay_out(&blocks, None, 40.0, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            40.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
         assert_eq!(
             styled(&lines),
             [
@@ -546,6 +712,7 @@ mod tests {
         }];
         let lines = lay_out(
             &blocks,
+            None,
             None,
             5.0,
             |text, style| match style {
@@ -569,7 +736,14 @@ mod tests {
     fn an_answer_is_read_as_markdown_and_lines_stack() {
         let answer = "# Plan\n\n- one\n- two\n\n```\ncargo build\n```\n";
         let blocks = [block("go", words(answer), Some("Done"))];
-        let lines = lay_out(&blocks, None, 400.0, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            400.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
         let Kind::Document(doc) = &lines[1].kind else {
             panic!("the answer is a document");
         };
@@ -579,14 +753,122 @@ mod tests {
         for pair in lines.windows(2) {
             assert_eq!(pair[1].top, pair[0].top + pair[0].height);
         }
-        assert_eq!(length(&lines), lines[2].top + LINE_H);
+        // The note closing the block is a note-sized line.
+        assert_eq!(lines[2].height, NOTE_LINE_H);
+        assert_eq!(length(&lines), lines[2].top + NOTE_LINE_H);
+    }
+
+    /// A block with `steps` tool calls on it, open or closed.
+    fn with_steps<'a>(steps: &'a [String], expanded: bool) -> Block<'a> {
+        Block {
+            prompt: "go",
+            attachments: None,
+            answer: words(""),
+            steps,
+            steps_expanded: expanded,
+            inputs: &[],
+            question: None,
+            action: &[],
+            note: None,
+        }
+    }
+
+    fn calls(texts: &[&str]) -> Vec<String> {
+        texts.iter().map(|text| text.to_string()).collect()
+    }
+
+    #[test]
+    fn a_run_of_tool_calls_closes_to_its_last_one() {
+        let steps = calls(&["one", "two", "three"]);
+        let lines = lay_out(
+            &[with_steps(&steps, false)],
+            None,
+            None,
+            400.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
+        let Kind::Steps { lines: shown, .. } = &lines[1].kind else {
+            panic!("the calls are a group");
+        };
+        assert_eq!(shown, &[format!("three{ELLIPSIS}")]);
+        assert_eq!(lines[1].height, Style::Note.line_h());
+    }
+
+    #[test]
+    fn an_open_run_of_tool_calls_is_all_of_them() {
+        let steps = calls(&["one", "two", "three"]);
+        let lines = lay_out(
+            &[with_steps(&steps, true)],
+            None,
+            None,
+            400.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
+        let Kind::Steps {
+            lines: shown,
+            block,
+            expanded,
+        } = &lines[1].kind
+        else {
+            panic!("the calls are a group");
+        };
+        assert_eq!(shown, &steps);
+        assert_eq!((*block, *expanded), (0, true));
+        assert_eq!(lines[1].height, Style::Note.line_h() * 3.0);
+    }
+
+    #[test]
+    fn one_tool_call_is_a_line_and_not_a_group() {
+        let steps = calls(&["only"]);
+        let lines = lay_out(
+            &[with_steps(&steps, false)],
+            None,
+            None,
+            400.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
+        assert_eq!(styled(&lines)[1], text("only", Style::Note));
+    }
+
+    #[test]
+    fn the_footer_closes_the_log_as_its_own_line() {
+        let footer = Footer {
+            agent: "@Otto",
+            mode: "Accept edits",
+            hint: Some("(Shift+Tab to switch)"),
+        };
+        let lines = lay_out(
+            &[block("go", words(""), None)],
+            None,
+            Some(footer),
+            400.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
+        let last = lines.last().expect("the footer is a line");
+        let Kind::Footer { agent, mode, hint } = &last.kind else {
+            panic!("the log closes with the footer");
+        };
+        assert_eq!((agent.as_str(), mode.as_str()), ("@Otto", "Accept edits"));
+        assert_eq!(hint.as_deref(), Some("(Shift+Tab to switch)"));
+        assert_eq!(last.height, FOOTER_H);
     }
 
     #[test]
     fn a_request_wraps_inside_its_bubble_and_fits_its_words() {
         let blocks = [block("aaaa bb", words(""), None)];
         let width = 4.0 + BUBBLE_PAD_X * 2.0;
-        let lines = lay_out(&blocks, None, width, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            width,
+            |text, _| chars(text),
+            no_pictures,
+        );
         let Kind::Bubble {
             lines: wrapped,
             width: bubble,
@@ -604,6 +886,7 @@ mod tests {
 
         let lines = lay_out(
             &[block("bb", words(""), None)],
+            None,
             None,
             400.0,
             |text, _| chars(text),
@@ -625,6 +908,7 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            None,
             200.0,
             |text, _| chars(text),
             |_| Some((400.0, 300.0)),
@@ -639,6 +923,7 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            None,
             200.0,
             |text, _| chars(text),
             |_| Some((40.0, 30.0)),
@@ -651,6 +936,7 @@ mod tests {
         // A picture taller than it is wide is capped by its height.
         let lines = lay_out(
             &blocks,
+            None,
             None,
             400.0,
             |text, _| chars(text),
@@ -668,7 +954,14 @@ mod tests {
     #[test]
     fn a_picture_that_cannot_be_read_is_its_name() {
         let blocks = [block("draw", shows("/tmp/gone.png", "mock up"), None)];
-        let lines = lay_out(&blocks, None, 200.0, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            200.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
         assert_eq!(
             styled(&lines),
             [
@@ -697,6 +990,7 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            None,
             200.0,
             |text, _| chars(text),
             |_| Some((100.0, 50.0)),
@@ -715,7 +1009,14 @@ mod tests {
     #[test]
     fn an_answer_not_started_takes_no_room() {
         let blocks = [block("go", words(""), None)];
-        let lines = lay_out(&blocks, None, 400.0, |text, _| chars(text), no_pictures);
+        let lines = lay_out(
+            &blocks,
+            None,
+            None,
+            400.0,
+            |text, _| chars(text),
+            no_pictures,
+        );
         assert_eq!(styled(&lines), [text("go", Style::Request)]);
     }
 }

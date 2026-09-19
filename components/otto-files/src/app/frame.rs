@@ -158,12 +158,12 @@ impl Browser {
         let preview = preview_entry.map(|entry| view::PreviewData {
             name: entry.name.as_str(),
             icon_chain: entry.icon_chain(),
-            decoded: self.preview.as_ref().and_then(|p| p.decoded.as_ref()),
+            decoded: self.decoded_preview(),
             video: self.preview.as_ref().and_then(|p| p.video.as_ref()),
             // The player is on its own subsurface, over the column.
             video_on_surface: true,
             first_row: 0,
-            info: preview_info(entry),
+            info: preview_info(entry, self.decoded_preview()),
         });
 
         view::Frame {

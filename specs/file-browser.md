@@ -360,6 +360,15 @@ them, and whatever is left over is the preview's — so the name and the facts s
 on the same line whatever the file is, instead of riding up and down with the
 size of the thing above them.
 
+**The facts are the listing's, plus the picture's own.** Kind, size and date
+are the same three the list view's columns show, in the same words: a preview
+that described the file differently from the row it grew out of would be
+describing a different file as far as the reader is concerned. A picture adds
+one line the listing cannot give it — how large the image actually is, and for
+an animation how long one loop runs. It is the *source's* size, not the
+decode's, and it appears when the decode lands, because the decoder is the only
+thing that has read the picture.
+
 **Everything is cropped to fit.** The name and each fact are truncated with an
 ellipsis to the column's width, and the stage above them is clipped, so no
 preview can draw over the caption or out of the column. This is not left to the
