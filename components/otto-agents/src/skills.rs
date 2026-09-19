@@ -550,6 +550,40 @@ pub struct Installed {
 /// [`LinkState::Taken`]: it is the person's, or another tool's, and not ours
 /// to replace. Linking again is a no-op, so this is safe to run after every
 /// upgrade.
+/// Links in `dir` that point into a plugin search path at something no longer
+/// there — what a renamed or dropped skill leaves behind. They are ours to
+/// remove: the target is gone, so nothing can be reading them, and a harness
+/// scanning the directory would otherwise see a skill that cannot be read.
+/// A dangling link pointing anywhere else is somebody else's and is kept.
+pub fn prune(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    prune_in(dir, &search_paths())
+}
+
+/// [`prune`] against an explicit set of search paths.
+pub fn prune_in(dir: &Path, roots: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+    let mut pruned = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(pruned),
+        Err(err) => return Err(err),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if !path.is_symlink() || path.exists() {
+            continue;
+        }
+        let Ok(target) = std::fs::read_link(&path) else {
+            continue;
+        };
+        if roots.iter().any(|root| target.starts_with(root)) {
+            std::fs::remove_file(&path)?;
+            pruned.push(path);
+        }
+    }
+    pruned.sort();
+    Ok(pruned)
+}
+
 pub fn install(plugins: &[Plugin], dir: &Path) -> io::Result<Vec<Installed>> {
     std::fs::create_dir_all(dir)?;
     status(plugins, dir)
@@ -794,6 +828,33 @@ mod tests {
 
         std::fs::remove_dir_all(&user).unwrap();
         std::fs::remove_dir_all(&system).unwrap();
+    }
+
+    /// A renamed skill leaves a link pointing at a path the upgrade removed.
+    /// Nothing else revisits it, so `install` prunes it first.
+    #[test]
+    fn a_link_to_a_skill_that_is_gone_is_pruned() {
+        let root = temp();
+        let links = temp();
+        let plugins = root.join("otto").join("skills");
+        std::fs::create_dir_all(plugins.join("otto-help")).unwrap();
+
+        let live = links.join("otto-help");
+        let renamed = links.join("otto");
+        let mine = links.join("something-else");
+        std::os::unix::fs::symlink(plugins.join("otto-help"), &live).unwrap();
+        std::os::unix::fs::symlink(plugins.join("otto"), &renamed).unwrap();
+        std::os::unix::fs::symlink(Path::new("/nowhere/of/mine"), &mine).unwrap();
+
+        let pruned = prune_in(&links, std::slice::from_ref(&root)).unwrap();
+
+        assert_eq!(pruned, vec![renamed.clone()], "only the stale one");
+        assert!(!renamed.exists() && !renamed.is_symlink(), "it is gone");
+        assert!(live.exists(), "a live link is kept");
+        assert!(mine.is_symlink(), "a dangling link of someone else's is kept");
+
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&links).unwrap();
     }
 
     #[test]

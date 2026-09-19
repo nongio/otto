@@ -139,6 +139,16 @@ pub fn install_plugins(
     let mut out = String::new();
     if only.is_none() {
         let dir = skills_dir(dir)?;
+        // Before linking: a skill that was renamed upstream leaves a link
+        // behind pointing at a path the upgrade removed.
+        for stale in skills::prune(&dir)
+            .with_context(|| format!("could not tidy {}", dir.display()))?
+        {
+            out.push_str(&format!(
+                "removed {}: the skill it pointed at is gone\n",
+                tilde(&stale, Some(&home.root))
+            ));
+        }
         let installed = skills::install(&plugins, &dir)
             .with_context(|| format!("could not link skills into {}", dir.display()))?;
         out.push_str(&render_installed(

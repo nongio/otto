@@ -67,6 +67,16 @@ use crate::skills::AgentFile;
 /// What every rendered file says about itself, followed by the source path.
 pub const MARKER: &str = "rendered by otto-agents from";
 
+/// The marker written while the service was called `otto-agentsd`. A file
+/// carrying it is still ours, so an upgrade rewrites it rather than mistaking
+/// it for the person's own and leaving their agent on stale instructions.
+pub const LEGACY_MARKER: &str = "rendered by otto-agentsd from";
+
+/// Whether a rendered file is one of ours, under either marker.
+fn ours(text: &str) -> bool {
+    text.contains(MARKER) || text.contains(LEGACY_MARKER)
+}
+
 /// A harness the agent is rendered for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Vendor {
@@ -419,7 +429,7 @@ fn state_of(rendered: &Rendered) -> State {
     match std::fs::read_to_string(&rendered.path) {
         Err(_) if !rendered.path.exists() => State::Absent,
         Err(_) => State::Taken,
-        Ok(text) if !text.contains(MARKER) => State::Taken,
+        Ok(text) if !ours(&text) => State::Taken,
         Ok(text) if text == rendered.text => State::Current,
         Ok(_) => State::Stale,
     }
@@ -610,6 +620,28 @@ mod tests {
                 })
         }));
         assert!(read(&soul).ends_with("- No emoji.\n"));
+    }
+
+    /// The service was once called `otto-agentsd` and wrote that name into
+    /// every file it rendered. An upgrade must still recognise its own work,
+    /// or it leaves every existing user on the instructions they had.
+    #[test]
+    fn a_file_rendered_under_the_old_name_is_still_ours() {
+        let (_dir, home) = home_with_harnesses();
+        let agent = agent(&home.root);
+        let soul = home.root.join(".hermes/profiles/otto/SOUL.md");
+        std::fs::write(
+            &soul,
+            format!("<!-- {LEGACY_MARKER} /usr/share/otto/x.md; edits are overwritten -->\n\nold\n"),
+        )
+        .unwrap();
+
+        let installed = install(&[&agent], &home, None).unwrap();
+        let target = installed.iter().find(|t| t.path == soul).unwrap();
+
+        assert_ne!(target.state, State::Taken, "ours, under the old marker");
+        assert_eq!(target.done, Some(Done::Updated));
+        assert!(read(&soul).contains(MARKER), "rewritten under the new one");
     }
 
     #[test]
