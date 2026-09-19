@@ -636,6 +636,18 @@ impl Palette {
         })
     }
 
+    /// The link under `point` in the ask log, as its destination. `point` is
+    /// in the log's content coordinates, as for [`Palette::code_at`].
+    pub fn link_at<'a>(&self, lines: &'a [Line], point: (f32, f32)) -> Option<&'a str> {
+        lines.iter().find_map(|line| {
+            let Kind::Document(doc) = &line.kind else {
+                return None;
+            };
+            let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
+            document::link_at_scrolled(content, doc, 0.0, point)
+        })
+    }
+
     /// The text of the `block`th code block of the answer on log line `line`.
     pub fn code_text(lines: &[Line], line: usize, block: usize) -> Option<String> {
         let Kind::Document(doc) = &lines.get(line)?.kind else {
@@ -1116,6 +1128,47 @@ mod tests {
         assert!(centred(&palette), "the tallest log");
         let (_, y, _, height) = palette.input_rect();
         assert!(y >= 0 && y + height <= 1080, "the card stays on the output");
+    }
+
+    /// An agent that shares a link writes it bare, so the log has to find one
+    /// under the pointer — a link that cannot be clicked is not a link.
+    #[test]
+    fn a_bare_link_in_the_log_is_under_the_pointer() {
+        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
+        let (blocks, _) = otto_md_kit::parse_capped(
+            "the notes are at https://example.com/a now",
+            otto_md_kit::MAX_BLOCKS,
+        );
+        let doc = otto_kit::preview::document::wrap(&blocks, LOG_W);
+        let run = doc
+            .iter()
+            .flat_map(|line| line.runs.iter().map(move |run| (line, run)))
+            .find(|(_, run)| run.style.link)
+            .expect("the bare link is a link");
+        let (text_line, run) = run;
+        let height = doc
+            .last()
+            .map(|line| line.top + line.height)
+            .expect("a laid-out answer");
+        let lines = vec![Line {
+            top: 0.0,
+            height,
+            kind: Kind::Document(doc.clone()),
+        }];
+
+        let point = (
+            LOG_INSET + run.x + run.width / 2.0,
+            text_line.top + text_line.height / 2.0,
+        );
+        assert_eq!(
+            palette.link_at(&lines, point),
+            Some("https://example.com/a")
+        );
+        assert_eq!(
+            palette.link_at(&lines, (LOG_INSET + 1.0, point.1)),
+            None,
+            "the words before the link go nowhere"
+        );
     }
 
     /// The card is dragged by its field or its log, and never off the output.

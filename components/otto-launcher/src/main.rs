@@ -42,6 +42,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 use otto_launcher::apps::Apps;
 use otto_launcher::ask::{attached_text, Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
+use otto_launcher::input;
 use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
 use otto_launcher::selection::{self, Caret, Selection, Span};
 use otto_launcher::source::{rank, Item, Origin, Source};
@@ -197,6 +198,9 @@ struct Launcher {
     /// The code block the pointer is over, as the log line holding its answer
     /// and the block within it, so its copy button is shown.
     code_hover: Option<(usize, document::CodeHit)>,
+    /// A link pressed in the log, and where it was pressed, so a release that
+    /// did not turn into a drag opens it.
+    link_press: Option<(std::sync::Arc<str>, f32, f32)>,
     /// The code block last copied, until the pointer leaves it, so its button
     /// can say so.
     code_copied: Option<(usize, usize)>,
@@ -378,6 +382,7 @@ impl Launcher {
             selecting: None,
             log_cursor: CursorShape::Default,
             code_hover: None,
+            link_press: None,
             code_copied: None,
             last_press: None,
             asked: None,
@@ -1239,6 +1244,13 @@ impl Launcher {
         self.code_hover = hover;
         self.log_revision = self.log_revision.wrapping_add(1);
         self.dirty = true;
+    }
+
+    /// The link under `point` in the log's content coordinates, if the
+    /// pointer is over one at all.
+    fn link_at(&self, point: Option<(f32, f32)>) -> Option<&str> {
+        let point = point?;
+        self.palette.as_ref()?.link_at(&self.log, point)
     }
 
     /// How many presses have run together at this spot: a second within the
@@ -2355,10 +2367,11 @@ impl App for Launcher {
                     // arrives far too often to ask the compositor for the
                     // same cursor every time.
                     let on_button = self.code_hover.is_some_and(|(_, hit)| hit.on_button);
+                    let over_link = self.link_at(point).is_some();
                     let over_text = point
                         .and_then(|point| selection::caret_at(&self.log_spans, point))
                         .is_some();
-                    let cursor = if on_button {
+                    let cursor = if on_button || over_link {
                         CursorShape::Pointer
                     } else if over_text {
                         CursorShape::Text
@@ -2426,6 +2439,12 @@ impl App for Launcher {
                         }
                         continue;
                     }
+                    // A press on a link is remembered rather than followed:
+                    // the words of a link are words like any other until the
+                    // release says whether they were read or clicked.
+                    self.link_press = self
+                        .link_at(self.log_point(x, y))
+                        .map(|href| (std::sync::Arc::from(href), x, y));
                     // A press on the log's words starts a selection: the
                     // conversation is there to be read, and read means
                     // copied. A second press takes the word under it, a
@@ -2455,6 +2474,21 @@ impl App for Launcher {
                         self.dragging = Some((x, y));
                     }
                 }
+                PointerEventKind::Release { .. } if self.link_press.is_some() => {
+                    self.selecting = None;
+                    // A press and a release in the same spot is a click; one
+                    // that travelled was a selection being dragged out over a
+                    // link, and opening it would be the last thing wanted.
+                    const SLOP: f32 = 4.0;
+                    if let Some((href, from_x, from_y)) = self.link_press.take() {
+                        if (x - from_x).abs() <= SLOP && (y - from_y).abs() <= SLOP {
+                            self.set_log_selection(None);
+                            if let Err(err) = input::open_link(&href) {
+                                tracing::warn!(%err, "could not open the link");
+                            }
+                        }
+                    }
+                }
                 PointerEventKind::Release { .. } if self.selecting.is_some() => {
                     self.selecting = None;
                 }
@@ -2479,6 +2513,7 @@ impl App for Launcher {
                 }
                 PointerEventKind::Leave { .. } => {
                     self.selecting = None;
+                    self.link_press = None;
                     self.log_cursor = CursorShape::Default;
                     self.hover_code(None);
                     if let Some(list) = self.list.as_mut() {

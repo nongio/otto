@@ -206,6 +206,15 @@ breaks, and the gaps a layout leaves inside a line, such as after a list's
 bullet, come out as spaces. The card is still moved by dragging the field or
 the log's background; its words are text now, not a handle.
 
+**Opening a link.** Agents mostly write a URL bare rather than as `[a
+link](…)`, so the log treats a bare `https://`, `http://` or `www.` address as
+a link like any other: it is drawn as one, the pointer is a hand over it, and
+a click opens it in the browser. The sentence's own punctuation is not part of
+the address — a trailing full stop, or the bracket around `(https://…)`, stays
+text. A link's words are still words: a press on one starts a selection as
+anywhere else, and only a release in the same spot opens it, so a link caught
+in the middle of a drag is selected rather than followed.
+
 **Copying a code block.** A code block in an answer is usually there to be
 run, so it can be taken whole without selecting it. While the pointer is over
 a block, a copy button sits in its top-right corner, over the code, and the
