@@ -81,7 +81,8 @@ most recently focused first, and animates into its cell. On leaving, every
 window returns to the floating rectangle it had before it was tiled; a window
 that has no such rectangle — it was opened while the workspace was tiled — keeps
 the geometry its last cell gave it, moved to avoid landing exactly on top of
-another window.
+another window. The windows keep the stacking order they had as tiles, so the
+focused one comes out on top.
 
 **Scope.** The mode, and the tree that goes with it, belong to one workspace on
 one output. Moving a window to another workspace removes it from the source

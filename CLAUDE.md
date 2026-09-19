@@ -168,4 +168,4 @@ Two tiers:
 
 Key developer docs: `rendering.md`, `render_loop.md`, `wayland.md`, `screenshare.md`, `expose.md`, `dock-design.md`, `surface-style-protocol.md`.
 
-Review and documentation guidelines: `.github/instructions/review.instructions.md`, `.github/instructions/documentation.instructions.md`.
+Review guidelines: `.github/instructions/review.instructions.md` — before merging anything, run the `otto-reviewer` agent (`.claude/agents/otto-reviewer.md`).

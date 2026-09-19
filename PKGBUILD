@@ -41,10 +41,9 @@ package() {
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
     install -Dm755 target/release/otto-quickview "$pkgdir/usr/bin/otto-quickview"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
-    install -Dm755 target/release/otto-agentsd "$pkgdir/usr/bin/otto-agentsd"
+    install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
     # Aliases: the launcher opens in ask or agents mode under these names.
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"
-    ln -s otto-launcher "$pkgdir/usr/bin/otto-agents"
     # Quick View's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
@@ -105,14 +104,15 @@ UNIT
     fi
     install -Dm644 "$_unit" "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
     # The agent service, off until the user enables it:
-    # systemctl --user enable --now otto-agentsd
-    install -Dm644 components/otto-agentsd/otto-agentsd.service "$pkgdir/usr/lib/systemd/user/otto-agentsd.service"
+    # systemctl --user enable --now otto-agents
+    install -Dm644 components/otto-agents/otto-agents.service "$pkgdir/usr/lib/systemd/user/otto-agents.service"
 
-    # Agent skills. One plugin directory — `.claude-plugin/plugin.json` and a
-    # `skills/` tree — that an agent running on this desktop reads when it is
-    # asked to configure Otto or to extend Files. Installed whole rather than
-    # file by file, so a skill gaining a reference page needs no packaging
-    # change, and by mode, so an executable example script stays executable.
+    # Agent skills. One plugin directory — `.claude-plugin/plugin.json`, a
+    # `skills/` tree and an `agents/` file — that an agent running on this
+    # desktop reads when it is asked to configure Otto or to extend Files.
+    # Installed whole rather than file by file, so a skill gaining a reference
+    # page or the plugin gaining an agent needs no packaging change, and by
+    # mode, so an executable example script stays executable.
     _plugins="resources/plugins/otto"
     [ -d "$_plugins" ] || { echo "missing $_plugins" >&2; return 1; }
     while IFS= read -r _file; do

@@ -37,7 +37,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 for b in otto otto-bar otto-islands otto-lock otto-greeter otto-rdp \
          otto-settings otto-files otto-launcher otto-emoji otto-quickview otto-media-worker otto-msg \
-         otto-agentsd xdg-desktop-portal-otto; do
+         otto-agents xdg-desktop-portal-otto; do
     install -Dm755 "target/release/$b" "$tmpdir/$PKGDIR/target/release/$b"
 done
 
@@ -67,7 +67,7 @@ for f in otto.portal \
     install -Dm644 "components/xdg-desktop-portal-otto/$f" \
         "$tmpdir/$PKGDIR/components/xdg-desktop-portal-otto/$f"
 done
-install -Dm644 components/otto-agentsd/otto-agentsd.service "$tmpdir/$PKGDIR/components/otto-agentsd/otto-agentsd.service"
+install -Dm644 components/otto-agents/otto-agents.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
 

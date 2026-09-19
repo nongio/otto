@@ -1,0 +1,264 @@
+# Files
+
+`otto-files` is Otto's file manager — browse the filesystem, open things, move
+them around, and preview a file without opening it at all.
+
+> **First version.** Files is new and aims to be genuinely useful for everyday
+> browsing, but it is not finished. What is missing is listed at the bottom of
+> this page rather than left for you to discover.
+
+## Opening it
+
+Launch **Files** from the Dock or the launcher, or run `otto-files`. It also
+serves the file-chooser portal, so "Open" and "Save as" in a sandboxed
+application land here. "Open Containing Folder" in a browser or editor does not
+yet — that goes through `org.freedesktop.FileManager1`, which Files does not
+implement.
+
+`Ctrl+N` opens a new window at your home directory. To open a specific folder
+in a new window, hold `Ctrl` and double-click it.
+
+## The three views
+
+| View | Key | What it is for |
+|------|-----|----------------|
+| List | `Ctrl+1` | One row per entry, with size and date |
+| Icon | `Ctrl+2` | A grid of large icons and thumbnails |
+| Column | `Ctrl+3` | Miller columns — each folder opens a pane to the right, with a preview column at the end |
+
+Pictures, PDFs and videos show a thumbnail instead of a generic type icon.
+Files reads the shared thumbnail cache that other file managers write, so
+folders another manager has already been through come up with pictures
+immediately. Files does not write to that cache yet, so thumbnails it makes for
+itself are not reused elsewhere.
+
+## Getting around
+
+| Key | Where it goes |
+|-----|---------------|
+| `Backspace` or `Alt+↑` | Up one folder |
+| `Alt+←` / `Alt+→` | Back and forward, through where you have been |
+| `Alt+Home` | Your home folder |
+| `Ctrl+L` | Type a path (see below) |
+| `Ctrl+O`, or double-click | Open the entry at the cursor |
+| `←` `→` `↑` `↓` | Move the cursor; `Right` descends into a folder |
+
+Back and forward are also the two arrows in the header, and each half dims
+when there is nowhere for it to go.
+
+### The command palette
+
+`Ctrl+P` opens a panel where you type a few letters to find and run any
+command in the window, without needing its menu or shortcut. It also has
+commands the menus don't: selecting by pattern, renaming many files from one
+pattern, and commands added by your own scripts. See
+[Command Palette](files-command-palette.md) and
+[Custom Commands in Files](files-custom-commands.md).
+
+### Typing a path
+
+`Ctrl+L` turns the title into a text field holding the folder you are in.
+Type or paste a path and press `Return` to go there; `Escape`, or a second
+`Ctrl+L`, puts the title back and leaves you where you were.
+
+- `Tab` **completes** against the folder being typed — to the one match, or as
+  far as every match agrees — and adds the `/` for you, so you can walk down a
+  tree without reaching for it. Hidden files are only offered once you have
+  typed the leading dot.
+- `~` is your home folder, a path starting with `/` is taken as it reads, and
+  anything else is relative to the folder on screen — so a bare folder name is
+  enough.
+- A path to a **file** opens the folder holding it with the file selected,
+  which is what pasting one out of a terminal usually means.
+- A path that is not there leaves the field up, with the reason under it, so
+  you can correct it rather than type the whole thing again.
+
+### Type-ahead and the sidebar
+
+- **Type a few letters** to jump to the first entry whose name starts with
+  them. This selects, it does not filter — the whole folder stays on screen.
+  The typed text expires after about a second, and repeating one letter cycles
+  through the entries beginning with it.
+- **The sidebar** holds Recent, your home, and whichever of desktop,
+  documents, downloads, music, pictures and videos you actually have. See
+  [Changing what is in the sidebar](#changing-what-is-in-the-sidebar).
+
+### Changing what is in the sidebar
+
+The sidebar works out of the box and needs no setting up. If you want your own
+folders in it, or fewer of the standard ones, make
+`~/.config/otto/files.toml`:
+
+```toml
+[sidebar]
+# Standard rows to leave out. Any of: recent, home, desktop, documents,
+# downloads, music, pictures, videos.
+hide = ["music", "videos"]
+
+# Your own folders, added under the standard ones.
+[[sidebar.places]]
+path = "~/dev/otto"
+label = "Otto"          # optional — the folder's own name is used otherwise
+icon = "folder-code"    # optional — a plain folder is used otherwise
+
+[[sidebar.places]]
+path = "/mnt/archive"
+```
+
+Paths may start with `~` or `$HOME`. A folder that is not there is left out
+rather than shown as a row leading nowhere, so a moved disk costs you that one
+row and nothing else. `icon` is an icon name from your theme; if the theme has
+no such icon you get a plain folder.
+
+The file is read when a window opens, so open a new one to see a change. If it
+contains a mistake, Files says so in its log and carries on with the standard
+sidebar — you will not lose the sidebar over a stray bracket.
+
+## Finding files
+
+`Ctrl+F` opens a search field under the header. Type what you are looking for
+and press `Return` — searching happens when you ask for it, not on every
+keystroke, so you can finish the word first.
+
+Two buttons beside the field say how wide to look:
+
+- **This folder** — the folder you pressed `Ctrl+F` in, and everything inside
+  it. This includes subfolders: it is a search of the folder, not a filter over
+  the rows you can already see.
+- **Everywhere** — your whole home directory.
+
+Switching between them re-runs the same query, so you can start narrow and
+widen without retyping.
+
+Results are an ordinary listing of real files. Space previews one, `Return`
+opens it, and opening a *folder* takes you to it. The strip along the bottom
+says where the selected file actually lives, and clicking any folder in that
+trail goes there. `Down` moves into the results and hands the keyboard to
+them, so `Space` previews rather than typing a space; `Ctrl+F` puts the caret
+back in the query. `Escape` puts back the folder you started in, and Back and
+Forward step out of a search and into it again.
+
+### Search needs the file indexer
+
+Search and the **Recent** listing both come from the desktop's file index,
+`localsearch`. It is not installed with Otto — an indexer that reads your whole
+home directory should be something you choose — so if you want either feature:
+
+```sh
+sudo pacman -S localsearch
+```
+
+It starts on demand and indexes in the background; `localsearch status` says
+how far it has got. Nothing else needs configuring: Otto sets the session
+variable the indexer's service requires, so it starts on your next login after
+installing it. (If you would rather not log out, `systemctl --user
+set-environment XDG_SESSION_CLASS=user` does the same thing for the session you
+are in.)
+
+Until it is running, Files says **File indexing is off** where a result count
+would go, rather than showing an empty listing — "nothing found" and "nothing
+was able to look" are different answers, and the second one should not send you
+hunting for a file that is sitting on your disk.
+
+Searching *inside* files — matching contents rather than names — is not built
+yet.
+
+## Selecting
+
+Click selects, `Ctrl+click` adds, `Shift+click` extends. In icon view, dragging
+from empty space sweeps a rubber band over the grid and takes everything it
+touches; hold `Ctrl` or `Shift` while you drag and it adds to what was already
+selected. Clicking empty space selects nothing.
+
+## Working with files
+
+| Key | Action |
+|-----|--------|
+| `Return` or `F2` | Rename, inline, with the extension left out of the selection |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
+| `Delete`, `Ctrl+Delete`, `Ctrl+Backspace` | Move to trash (in the Trash window, delete permanently — it asks first) |
+| `Ctrl+Z` | Undo the last operation |
+| `Ctrl+I` | Show info for the selection |
+| `Space` | Quick view (see below) |
+| `Escape` | Cancel a rename, else clear the selection |
+
+Copy, move and trash run in the background, with progress and a cancel that
+leaves nothing half-written: every copy is written under a temporary name and
+renamed into place only when it is complete. When a destination file already
+exists you get Replace, Skip or Keep Both, with "apply to all remaining".
+Folders merge rather than being replaced.
+
+Undo goes 32 operations deep for the current session and covers moves, copies,
+renames, new folders and trashing. Permanent deletion is not undoable, and the
+undo entry says so rather than quietly disappearing.
+
+**Drag and drop** works within a window, between windows, and in and out of
+other applications — dragging a picture into a browser upload field or a chat
+window does what you expect.
+
+## Quick view
+
+Select something and press `Space`. A panel grows out of the row showing the
+file itself: pictures, text and code, PDFs, a listing for a folder, and — for
+audio and video — the tags, dimensions and duration read from the file's header
+rather than the whole file. There is no playback yet.
+Arrow keys move to the next file and the preview follows, `Space` closes it,
+and `Escape` closes it before it clears your selection.
+
+While the panel is up it owns the pointer: the wheel scrolls a text preview, a
+pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum
+and springy ends. Files never decodes a file itself — the bytes are parsed in a
+separate sandboxed process, and only a validated result is drawn.
+
+## Opening and saving in other applications
+
+The same code is the desktop's file picker, through the XDG Desktop Portal. When
+Firefox or Chrome asks you to pick a file to upload, or to save a page, you get
+this window rather than a GTK dialog. Save mode gives you a name field with the
+proposed name's stem preselected, refuses a name that is not a single file name,
+and asks before replacing an existing file. The picker never creates the file —
+the application does that once you accept.
+
+## Trash
+
+Move to trash follows the freedesktop trash specification: the file goes to
+`~/.local/share/Trash/`, with a record of where it came from and when. Files on
+another filesystem than your home directory are trashed by copying them into
+the trash directory and removing the original, since a rename cannot cross
+filesystems. The original is unlinked only once the copy is fully written.
+
+### The Trash window
+
+Trash is an application of its own, in the dock and the applications list. It
+is the same program as Files behind a different window — `otto-files --trash`
+if you are launching it by hand, or `otto-files trash:///`, the URI the rest of
+the desktop uses — showing one flat listing of everything you have thrown away,
+with an **Original Location** column saying where each item came from. Otto
+registers as the handler for `trash:///`, so `xdg-open trash:///` and anything
+else asking the desktop for the trash lands here.
+
+| Action | What it does |
+|--------|--------------|
+| **Put Back** | Returns the selection to where it came from. If the folder it lived in has since been deleted, it is recreated; if something else has taken the name, the item stays in the Trash and says so |
+| **Empty Trash** | Deletes everything, after asking |
+| `Delete` | Deletes the selection permanently, after asking. There is nowhere further to send it, so this is what the key means here |
+| Dropping files on the window | Throws them away, the same as Move to Trash |
+
+`Ctrl+Z` in the Files window undoes a delete the same way Put Back does — they
+are the same operation reached from two places.
+
+Items in the Trash cannot be opened, renamed, copied or pasted into. Put one
+back first and it is an ordinary file again. Trashed *folders* can be opened,
+so you can look inside before deciding.
+
+## Not there yet
+
+- Tabs, split views, and persisted column widths.
+- Network and virtual filesystems — `smb://`, `sftp://`, MTP. Local paths only.
+- Mounting, unmounting and ejecting devices. Mounted volumes do not appear in
+  the sidebar either — it lists Recent, your home directory, the XDG user
+  folders and whatever you have added yourself, and you reach anything else by
+  typing the path with `Ctrl+L`.
+- Searching file contents, batch rename, archive browsing, tags and labels.
+- `Shift+Delete` (delete permanently) is deliberately inert for now.
+- Writing to the shared thumbnail cache.

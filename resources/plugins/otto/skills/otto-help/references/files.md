@@ -22,8 +22,15 @@ the starter. **Do not copy, move or `chmod` files yourself** — the
 | `<this skill>/scripts/files-command list` | Shows drafts and published commands |
 
 `<this skill>` is the folder this skill's `SKILL.md` is in; write it as an
-absolute path. A draft lives in `~/.local/state/otto/files-drafts/`, where
-Files never looks, so a half-finished command never appears in a window.
+absolute path.
+
+`check` and running a draft by hand (Step 5) run a script you wrote, so unlike
+the rest they are not pre-approved: the harness will ask the person first. That
+is deliberate. Expect the prompt, and say what you are about to run and why
+rather than treating it as a failure.
+
+A draft lives in `~/.local/state/otto/files-drafts/`, where Files never looks,
+so a half-finished command never appears in a window.
 
 ## Step 1 — ask three questions
 
