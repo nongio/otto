@@ -36,6 +36,25 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // `--recognise <path>…` reads the words out of pictures and remembers
+    // them, then exits: the background pass's work asked for directly, so a
+    // folder can be made searchable — and Get Info given an answer — without
+    // opening a window on it and waiting for the pass to get there.
+    if let Some(at) = std::env::args().position(|a| a == "--recognise") {
+        let paths: Vec<PathBuf> = std::env::args_os()
+            .skip(at + 1)
+            .map(PathBuf::from)
+            .collect();
+        if paths.is_empty() {
+            eprintln!("usage: otto-files --recognise <picture or folder>…");
+            std::process::exit(2);
+        }
+        if !otto_files::app::recognise_paths(&paths) {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     // `--picker` is how the bus activates us: no window until a request
     // arrives, and the process outlives each one so a run of picks shares a
     // warm icon and thumbnail cache.

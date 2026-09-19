@@ -18,8 +18,10 @@
 //! the same geometry, so they cannot drift.
 
 pub mod document;
+pub mod selection;
 
 pub use document::{Block, Span, SpanStyle};
+pub use selection::{draw_selection, selection_text, word_at, word_near, WordSelection};
 
 use skia_safe::{Canvas, Color, Contains, Image, Paint, Rect};
 
@@ -38,6 +40,47 @@ pub struct Pixels {
     pub intrinsic_width: u32,
     pub intrinsic_height: u32,
     pub data: Vec<u8>,
+    /// Text recognised in the picture, in reading order, with boxes in the
+    /// coordinates of `data`. Empty when nothing was recognised or no
+    /// recogniser ran; a picture with words draws exactly like one without
+    /// until a selection is made.
+    pub words: Vec<Word>,
+}
+
+/// One recognised word: where it is on the decoded picture and what it says.
+///
+/// `block`, `paragraph` and `line` are the recogniser's reading-order
+/// groups, so a drag across words selects text in the order it reads rather
+/// than the order the pointer swept it, and copying puts breaks where the
+/// recogniser saw them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    /// What the recogniser read, with no tab or newline in it.
+    pub text: String,
+    /// The word's box, in the coordinates of the decoded picture.
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+    /// 0–100, the recogniser's confidence in `text`.
+    pub confidence: u8,
+    /// The recogniser's reading-order groups, outermost first. A recogniser
+    /// that reports none of them puts every word in the same one.
+    pub block: u32,
+    pub paragraph: u32,
+    pub line: u32,
+}
+
+impl Word {
+    /// The word's box as a rect, in decoded-picture coordinates.
+    pub fn rect(&self) -> Rect {
+        Rect::from_xywh(
+            self.left as f32,
+            self.top as f32,
+            self.width as f32,
+            self.height as f32,
+        )
+    }
 }
 
 impl Pixels {
@@ -933,6 +976,7 @@ mod tests {
             intrinsic_width: width,
             intrinsic_height: height,
             data: vec![0; (width * height * 4) as usize],
+            words: Vec::new(),
         }
     }
 
@@ -1316,6 +1360,7 @@ mod tests {
             intrinsic_width: 2000,
             intrinsic_height: 2000,
             data: vec![0; 500 * 500 * 4],
+            words: Vec::new(),
         };
         assert_eq!(scaled.native_scale(), 4.0);
     }

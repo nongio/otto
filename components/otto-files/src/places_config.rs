@@ -96,6 +96,52 @@ pub struct SidebarConfig {
     pub extra: Vec<Custom>,
 }
 
+/// The `[quickview]` section: text recognition in pictures.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct QuickviewConfig {
+    /// Whether text in pictures is recognised for selection and Find.
+    #[serde(default = "yes")]
+    pub recognise_text: bool,
+    /// The recogniser to run instead of tesseract: a command line that
+    /// reads a PNG on stdin and writes hOCR to stdout, with `{languages}`
+    /// where the languages go. Empty means the default.
+    #[serde(default)]
+    pub recogniser: String,
+}
+
+// A missing section means on, the same as a missing key.
+impl Default for QuickviewConfig {
+    fn default() -> Self {
+        Self {
+            recognise_text: true,
+            recogniser: String::new(),
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Read the `[quickview]` section of `~/.config/otto/files.toml`, or the
+/// defaults when there is none.
+pub fn quickview() -> QuickviewConfig {
+    #[derive(Deserialize, Default)]
+    struct Only {
+        #[serde(default)]
+        quickview: QuickviewConfig,
+    }
+    let Some(path) = config_path() else {
+        return QuickviewConfig::default();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return QuickviewConfig::default();
+    };
+    toml::from_str::<Only>(&text)
+        .map(|file| file.quickview)
+        .unwrap_or_default()
+}
+
 impl SidebarConfig {
     /// Read `~/.config/otto/files.toml`, if it is there.
     pub fn load() -> Self {

@@ -46,13 +46,14 @@
 #![allow(clippy::needless_doctest_main)]
 
 pub mod decode;
+pub mod ocr;
 pub mod opening;
 pub mod payload;
 pub mod sandbox;
 pub mod spawn;
 pub mod uri;
 
-pub use otto_kit::preview::{Fact, Pixels, Preview, PreviewLayout, Row};
+pub use otto_kit::preview::{Fact, Pixels, Preview, PreviewLayout, Row, Word};
 pub use spawn::{decode_path, open, Opened};
 
 /// Run the sandboxed decode worker if this process was started as one.

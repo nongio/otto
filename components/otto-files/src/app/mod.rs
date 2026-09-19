@@ -1,6 +1,6 @@
 use crate::{
-    command, model, palette, pane_surfaces, perf, picker, quickview, remembered, rename, scene,
-    scripts, thumbcache, thumbnails, view,
+    command, model, ocrcache, palette, pane_surfaces, perf, picker, quickview, remembered, rename,
+    scene, scripts, thumbcache, thumbnails, view,
 };
 
 use std::cell::RefCell;
@@ -48,6 +48,7 @@ mod listing;
 mod listing_pointer;
 mod menus;
 mod navigation;
+mod ocr;
 mod opening;
 mod palette_session;
 mod picking;
@@ -60,6 +61,9 @@ mod renaming;
 mod scroll;
 mod searching;
 mod selection;
+
+/// Reading text out of pictures from the command line, with no window.
+pub use ocr::recognise_paths;
 
 /// What a drag carries: the picture to draw, the size of the surface it needs,
 /// and where inside that surface the grab happened.
@@ -366,6 +370,25 @@ struct Browser {
     /// slow PDF must not land on top of a file the user moved off three keys
     /// ago.
     quickview_generation: u64,
+    /// Whether the recogniser is running on the previewed picture. Keeps
+    /// the frame loop alive so the words paint when they land.
+    quickview_recognising: bool,
+    /// Whether the cursor is the text beam because the pointer is over a
+    /// recognised word on the panel. Tracked so the shape is set on the
+    /// crossing rather than on every motion event.
+    quickview_text_cursor: bool,
+    /// Pictures the background recognition pass has already considered in
+    /// this window, whatever it decided.
+    ocr_seen: std::collections::HashSet<PathBuf>,
+    /// Pictures somebody asked to have read, in the order they were asked
+    /// for. Drained ahead of the background pass's own scan and read whatever
+    /// is already remembered about them: the command exists because the
+    /// remembered answer is the one that is wrong.
+    ocr_queue: std::collections::VecDeque<PathBuf>,
+    /// The pictures a recogniser is on right now. A set rather than a flag
+    /// because the panel's own recognition and the background pass can
+    /// overlap, and one of them finishing must not speak for the other.
+    ocr_reading: std::collections::HashSet<PathBuf>,
     /// The cursor moved on its own — a delete landing its selection on the
     /// survivor — rather than through an arrow key. Quick View follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
@@ -417,6 +440,10 @@ struct Browser {
     info: Option<model::FileInfo>,
     /// Why the last permission change was refused, if it was.
     info_error: Option<String>,
+    /// What the panel says about the words in the picture it is showing.
+    /// Held rather than read at draw time: the answer comes off the disk, and
+    /// it only changes when a recogniser starts or finishes.
+    info_text: Option<ocrcache::Status>,
     /// Pointer is over the panel's close dot, so its × glyph reveals — the
     /// same hover behaviour as the window's own traffic lights.
     info_close_hovered: bool,
@@ -751,6 +778,10 @@ struct PreviewPaneState {
     /// follows the selection, and a video that started playing on every
     /// arrow key would be a column that talks.
     video: Option<quickview::Video>,
+    /// What the caption says about the words in the picture. Held rather than
+    /// read while drawing: the answer comes off the disk, and the caption is
+    /// rebuilt every frame.
+    text: Option<ocrcache::Status>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
@@ -1015,13 +1046,19 @@ struct FilesApp {
 /// would be describing a different file as far as the reader is concerned. A
 /// directory has no size worth showing — the listing does not count children
 /// either — so it gets two lines rather than three.
-fn preview_info(entry: &Entry) -> Vec<String> {
+fn preview_info(entry: &Entry, text: Option<ocrcache::Status>) -> Vec<String> {
     let mut info = vec![entry.kind_label().to_string()];
     if let Some(size) = entry.size.filter(|_| !entry.is_dir) {
         info.push(model::format_size(size));
     }
     if let Some(modified) = entry.modified {
         info.push(model::format_time(modified));
+    }
+    // Last, under the dates: a picture always has this line once there is a
+    // recogniser to read it, so the caption keeps its height as the answer
+    // changes and the picture above it does not jump.
+    if let Some(text) = text {
+        info.push(view::describe_text_status(text));
     }
     info
 }

@@ -25,6 +25,17 @@ use crate::sandbox::{self, FILE_FD};
 /// common case is served from the thumbnail cache long before this matters.
 const DEADLINE: Duration = Duration::from_secs(8);
 
+/// The deadline when the worker is also recognising text: the recogniser
+/// takes seconds on a dense screenshot, and killing it halfway loses the
+/// picture along with the words.
+const OCR_DEADLINE: Duration = Duration::from_secs(25);
+
+/// The CPU time a recognising worker is given, in seconds. The wall-clock
+/// deadlines above are what normally ends a run; this is the backstop for a
+/// recogniser that burns cores without answering, and it is inherited across
+/// the exec, so it bounds the engine as well as the worker.
+const OCR_CPU_SECONDS: u64 = 30;
+
 /// A file opened for preview, with what we learned by opening it.
 ///
 /// The metadata is carried because the thumbnail cache needs it and the parent
@@ -104,7 +115,12 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         }
     };
 
-    let budget = request.budget;
+    let mut budget = request.budget;
+    if request.ocr {
+        // The worker encodes the picture for the recogniser and waits on it,
+        // so it must outlive the engine it started.
+        budget.cpu_seconds = budget.cpu_seconds.max(OCR_CPU_SECONDS);
+    }
     // The child receives the file on a fixed descriptor and nothing else.
     let file_fd = opened.file.into_raw_fd();
 
@@ -121,6 +137,16 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         .arg(format!("{:.4}", request.zoom))
         .arg("--name")
         .arg(&request.name)
+        .arg("--mime")
+        .arg(&request.mime)
+        .arg("--languages")
+        .arg(&request.languages)
+        .arg("--recogniser")
+        .arg(&request.recogniser);
+    if request.ocr {
+        command.arg("--ocr");
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -137,6 +163,10 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         // facts. With the environment cleared it would otherwise fall back to
         // English while the rest of the desktop is not.
         .env("LANGUAGE", otto_kit::i18n::current_locale());
+    // Where the recogniser's language packs are, when the session says so.
+    if let Some(prefix) = std::env::var_os("TESSDATA_PREFIX") {
+        command.env("TESSDATA_PREFIX", prefix);
+    }
 
     // SAFETY: runs in the forked child between `fork` and `exec`. Everything
     // called here is either async-signal-safe or is a raw syscall wrapper.
@@ -194,7 +224,8 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         let _ = sender.send(result);
     });
 
-    let payload = match receiver.recv_timeout(DEADLINE) {
+    let deadline = if request.ocr { OCR_DEADLINE } else { DEADLINE };
+    let payload = match receiver.recv_timeout(deadline) {
         Ok(Ok(bytes)) => payload::decode(&bytes).unwrap_or_else(|| {
             payload::unavailable(otto_kit::t_owned!("quickview-error-previewer-unreadable"))
         }),

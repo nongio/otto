@@ -14,13 +14,16 @@ impl Browser {
         let Some(entry) = self.selected_entry() else {
             return;
         };
-        self.info = Some(model::read_info(&entry.path));
+        let info = model::read_info(&entry.path);
+        self.info_text = self.text_status(&info.path);
+        self.info = Some(info);
         self.info_error = None;
         self.info_dirty = true;
     }
 
     pub(super) fn close_info(&mut self) {
         self.info = None;
+        self.info_text = None;
         self.info_error = None;
         self.info_close_hovered = false;
         self.info_dirty = true;
@@ -41,7 +44,9 @@ impl Browser {
                 // Re-read rather than assuming: the filesystem may have applied
                 // something other than what was asked (a mount's umask, an
                 // acl), and the sheet must show what is true.
-                self.info = Some(model::read_info(&path));
+                let info = model::read_info(&path);
+                self.info_text = self.text_status(&info.path);
+                self.info = Some(info);
                 self.info_error = None;
             }
             Err(reason) => self.info_error = Some(reason),

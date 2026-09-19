@@ -54,6 +54,21 @@ pub struct Budget {
     /// How many bytes a decoder may read from the file. Metadata-only
     /// previewers stop long before this.
     pub max_read: u64,
+    /// The `nice` value the worker runs at — absolute, not an increment on
+    /// the caller's. `0` means "leave it alone": the worker keeps whatever
+    /// priority the desktop itself has, which is what an interactive preview
+    /// wants, because somebody is waiting for it.
+    ///
+    /// Work nobody asked for — recognising the text in pictures the user has
+    /// not opened, say — sets it higher, so it takes the cores that are going
+    /// spare and steps aside the moment the scheduler has to choose between
+    /// it and a preview. Inherited across `exec` and by children, so a
+    /// recogniser the worker runs is niced with it.
+    ///
+    /// Only ever raised. Lowering one's own priority back down needs
+    /// privilege an unprivileged desktop process does not have, so a value
+    /// below the caller's own is not attempted.
+    pub nice: i32,
 }
 
 impl Default for Budget {
@@ -62,6 +77,7 @@ impl Default for Budget {
             address_space: 1024 * 1024 * 1024,
             cpu_seconds: 10,
             max_read: 512 * 1024 * 1024,
+            nice: 0,
         }
     }
 }
@@ -103,6 +119,14 @@ pub unsafe fn apply(budget: Budget) -> io::Result<()> {
     // No core dump: a crashed previewer would otherwise write the contents of
     // the file it was parsing into the filesystem.
     set_limit(libc::RLIMIT_CORE, 0)?;
+
+    // Down the run queue, for work nobody is waiting on. Advisory: lowering
+    // the priority of one's own process is always permitted, and a kernel
+    // that refused would only mean the pass competes on equal terms, which is
+    // where it was before.
+    if budget.nice > 0 {
+        libc::setpriority(libc::PRIO_PROCESS, 0, budget.nice);
+    }
 
     // Network namespace last, and advisory. It needs either privilege or
     // unprivileged-userns support, and a kernel that refuses is not a reason to

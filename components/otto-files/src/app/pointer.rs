@@ -127,6 +127,7 @@ impl FilesApp {
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         browser.quickview_focus(point, panel);
                         browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
+                        browser.sync_quickview_cursor(point, panel);
                         if browser.quickview_close_hovered != over
                             || browser.quickview_expand_hovered != over_expand
                         {
@@ -138,6 +139,7 @@ impl FilesApp {
                     PointerEventKind::Leave { .. } => {
                         browser.quickview_focus = None;
                         browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
+                        browser.reset_quickview_cursor();
                         if browser.quickview_close_hovered || browser.quickview_expand_hovered {
                             browser.quickview_close_hovered = false;
                             browser.quickview_expand_hovered = false;

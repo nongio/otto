@@ -156,6 +156,7 @@ the palette adds no new capability.
 | Go | Go to Place | choice of sidebar places |
 | Go | Open | — (acts on the cursor entry) |
 | File | Get Info | — |
+| File | Run text recognition | — (pictures only, and only with a recogniser installed) |
 | File | Rename | new name (pre-filled with the current one, whole) |
 | File | New Folder | name, optional; empty means the default name |
 | File | Move to Trash | — |

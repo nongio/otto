@@ -442,6 +442,16 @@ files-folder-open-failed = Nie można otworzyć tego folderu: { $error }
 
 files-info-where = Położenie
 files-info-kind = Rodzaj
+files-info-text = Tekst
+files-info-text-reading = Odczytywanie…
+files-info-text-words =
+    { $count ->
+        [one] { $count } słowo
+        [few] { $count } słowa
+       *[many] { $count } słów
+    }
+files-info-text-none = Brak tekstu
+files-info-text-unread = Jeszcze nieodczytany
 files-info-modified = Zmodyfikowano
 files-info-created = Utworzono
 files-info-accessed = Ostatni dostęp
@@ -592,6 +602,8 @@ files-command-show-hidden = Pokaż ukryte pliki
 files-command-hide-hidden = Ukryj ukryte pliki
 files-command-quick-look = Szybki podgląd
 files-command-search = Szukaj
+files-command-recognise-text = Uruchom rozpoznawanie tekstu
+files-recognise-no-pictures = Nie ma tu tekstu do odczytania
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.

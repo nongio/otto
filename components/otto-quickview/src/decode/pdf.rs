@@ -21,7 +21,7 @@ use skia_safe::{Codec, Data};
 use crate::payload;
 use crate::payload::{Fact, PreviewPayload};
 
-use super::{human_size, Request};
+use super::{human_size, on_path, Request};
 
 /// A rasteriser, and how to ask it for one page as a PNG on stdout.
 struct Rasteriser {
@@ -156,11 +156,24 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
 
     match rasterise(rasteriser, &bytes, page, width) {
         Some(png) => match decode_png(&png) {
-            Some(pixels) => PreviewPayload::Pixels {
-                pixels,
-                pages,
-                page,
-            },
+            Some(mut pixels) => {
+                // The rasteriser hands back pixels, whatever the document
+                // had in it, so a page is recognised like any other picture.
+                // Reading a PDF's own text layer instead would be exact and
+                // free, and is later work.
+                if request.ocr {
+                    pixels.words = crate::ocr::recognise(
+                        &pixels,
+                        request.recogniser_command(),
+                        &request.languages,
+                    );
+                }
+                PreviewPayload::Pixels {
+                    pixels,
+                    pages,
+                    page,
+                }
+            }
             None => payload::unavailable(otto_kit::t_owned!("quickview-error-page-readback")),
         },
         None => no_rasteriser(file, &bytes, request, pages),
@@ -217,22 +230,6 @@ fn decode_png(png: &[u8]) -> Option<crate::payload::Pixels> {
     let dimensions = codec.dimensions();
     let image = codec.get_image(info, None).ok()?;
     super::image::to_pixels(&image, dimensions)
-}
-
-/// Is this command on `PATH`?
-///
-/// Resolved by hand rather than by spawning something: the worker has a tight
-/// descriptor budget and no reason to fork twice per lookup.
-fn on_path(command: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|directory| {
-        let candidate = directory.join(command);
-        // Existence is enough; if it is not executable the spawn fails and the
-        // next rasteriser is tried.
-        candidate.is_file()
-    })
 }
 
 /// Page count, read out of the document's own structure.

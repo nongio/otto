@@ -804,6 +804,7 @@ mod preview_tests {
                     intrinsic_width: 800,
                     intrinsic_height: 600,
                     data: Vec::new(),
+                    words: Vec::new(),
                 },
                 pages: 12,
                 page: 3,
