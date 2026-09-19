@@ -277,9 +277,14 @@ pub struct Session {
     /// itself does not carry one — a decoded image knows nothing about where
     /// it came from — so the host puts it here when it opens the session.
     pub name: String,
-    /// Scroll offset into a listing or a text preview. The host owns it, as it
-    /// owns every other piece of interaction state.
+    /// Where in the content the panel is: the scroll offset into a listing or
+    /// a text preview, and the frame of an animated image, which the toolkit
+    /// reads the same way — it is which part of the content is on screen.
+    /// The host owns it, as it owns every other piece of interaction state.
     pub first_row: usize,
+    /// When the frame now showing went up, for an animation. Only read while
+    /// the preview is one.
+    frame_shown_at: Instant,
     /// How far an image preview is zoomed in, and how far it has been dragged
     /// about while it is. Lives here rather than in the toolkit for the same
     /// reason `first_row` does: the drawing half is canvas-pure and holds no
@@ -328,6 +333,7 @@ impl Session {
             preview,
             name,
             first_row: 0,
+            frame_shown_at: Instant::now(),
             // Fit, whatever the last file was left at. A zoom belongs to the
             // picture it was made on, not to the panel.
             zoom: Zoom::FIT,
@@ -339,6 +345,43 @@ impl Session {
             expanded: false,
             loading: false,
         }
+    }
+
+    /// The animation this preview is, if it is one.
+    fn animation(&self) -> Option<&Pixels> {
+        match &self.preview {
+            Preview::Pixels { pixels, .. } if pixels.is_animated() => Some(pixels),
+            _ => None,
+        }
+    }
+
+    /// Whether the panel has an animation running — a GIF, an animated WEBP.
+    /// The host needs a steady clock while it does, since nothing else is
+    /// going to ask for the next frame.
+    pub fn frames_running(&self) -> bool {
+        self.animation().is_some()
+    }
+
+    /// Show the next frame if the one up has had its time. Returns whether
+    /// the picture changed.
+    ///
+    /// An animation loops for as long as the preview is open: a GIF says how
+    /// many times it would like to repeat, and a preview is looked at for as
+    /// long as it is looked at — stopping partway through would leave the
+    /// panel on whatever frame the author happened to end on.
+    pub fn tick_animation(&mut self) -> bool {
+        let Some(pixels) = self.animation() else {
+            return false;
+        };
+        if self.frame_shown_at.elapsed() < pixels.delay(self.first_row) {
+            return false;
+        }
+        // Counted up and wrapped when it is read, so a long-open preview
+        // never needs the count reset and the frame after the last is the
+        // first again.
+        self.first_row = (self.first_row + 1) % pixels.frames();
+        self.frame_shown_at = Instant::now();
+        true
     }
 
     /// Fill the space, or go back to the usual share of it.
@@ -865,6 +908,7 @@ mod tests {
                     intrinsic_width: width,
                     intrinsic_height: height,
                     data: vec![0; (width * height * 4) as usize],
+                    frame_delays: Vec::new(),
                 },
                 pages: 1,
                 page: 1,
@@ -873,6 +917,52 @@ mod tests {
             Rect::new_empty(),
             Instant::now(),
         )
+    }
+
+    /// A three-frame animation whose frames are as short as a delay may be
+    /// before it is taken as unset, so the test's own waiting is brief.
+    fn animated_session() -> Session {
+        Session::new(
+            Preview::Pixels {
+                pixels: Pixels {
+                    width: 2,
+                    height: 2,
+                    intrinsic_width: 2,
+                    intrinsic_height: 2,
+                    data: vec![0; 2 * 2 * 4 * 3],
+                    frame_delays: vec![Pixels::MIN_DELAY_MS; 3],
+                },
+                pages: 1,
+                page: 1,
+            },
+            "loop.gif".into(),
+            Rect::new_empty(),
+            Instant::now(),
+        )
+    }
+
+    #[test]
+    fn an_animation_runs_and_starts_over() {
+        let mut session = animated_session();
+        assert!(session.frames_running());
+        // Nothing moves before the frame has had its time.
+        assert!(!session.tick_animation());
+        assert_eq!(session.first_row, 0);
+
+        let frame = std::time::Duration::from_millis(Pixels::MIN_DELAY_MS as u64);
+        for expected in [1, 2, 0] {
+            std::thread::sleep(frame + std::time::Duration::from_millis(5));
+            assert!(session.tick_animation(), "the frame was due");
+            assert_eq!(session.first_row, expected);
+        }
+    }
+
+    #[test]
+    fn a_still_picture_has_no_clock_to_run() {
+        let mut session = image_session(100, 100);
+        assert!(!session.frames_running());
+        assert!(!session.tick_animation());
+        assert_eq!(session.first_row, 0);
     }
 
     fn text_session() -> Session {

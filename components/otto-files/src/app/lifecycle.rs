@@ -495,6 +495,7 @@ impl App for FilesApp {
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
                 | browser.quickview_animating()
+                | browser.tick_quickview_animation()
                 | browser.tick_quickview_exit()
                 | browser.tick_open_pulse();
             // The docked preview column follows the selection wherever it
@@ -646,6 +647,9 @@ impl App for FilesApp {
         let browser = self.state.lock().unwrap();
         let animating = browser.scroll_animating()
             || browser.quickview_animating()
+            // An animated preview has a frame due on its own clock, with
+            // nothing else on screen moving to ask for one.
+            || browser.quickview_frames_running()
             || browser.opening.is_some()
             // The panel materials' fade runs on this client's own engine, and
             // an engine only advances when it is ticked.

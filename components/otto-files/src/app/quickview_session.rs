@@ -282,6 +282,25 @@ impl Browser {
         moved
     }
 
+    /// Advance an animated preview — a GIF, an animated WEBP — to the frame
+    /// its clock has reached. Returns whether the picture changed.
+    pub(super) fn tick_quickview_animation(&mut self) -> bool {
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let moved = session.tick_animation();
+        self.dirty |= moved;
+        moved
+    }
+
+    /// Whether the open preview is an animation, which needs the steady clock
+    /// for as long as it is open.
+    pub(super) fn quickview_frames_running(&self) -> bool {
+        self.quickview
+            .as_ref()
+            .is_some_and(quickview::Session::frames_running)
+    }
+
     /// Whether the open preview's pan still has frames to run.
     pub(super) fn quickview_pan_animating(&self) -> bool {
         self.quickview

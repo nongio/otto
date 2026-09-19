@@ -232,6 +232,12 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
             if *pages > 1 {
                 println!("  page      {page} of {pages}");
             }
+            if pixels.is_animated() {
+                let total: u64 = (0..pixels.frames())
+                    .map(|index| pixels.delay(index).as_millis() as u64)
+                    .sum();
+                println!("  animation {} frames, {total} ms a loop", pixels.frames());
+            }
             println!("  buffer    {} bytes", pixels.data.len());
         }
         PreviewPayload::Text {

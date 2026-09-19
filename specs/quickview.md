@@ -347,7 +347,7 @@ the table is arranged around not compromising them.
 
 | Type | v1 | Needs |
 |---|---|---|
-| **Image** — PNG, JPEG, WEBP, GIF (first frame), BMP, ICO | Full: scaled decode, zoom to 1:1 and beyond, pan | Skia's own codecs, already linked |
+| **Image** — PNG, JPEG, WEBP, GIF, BMP, ICO | Full: scaled decode, zoom to 1:1 and beyond, pan. An animated GIF or WEBP plays, and loops | Skia's own codecs, already linked |
 | **Image** — SVG | Full, re-rendered at each zoom level, so it stays sharp | Skia's own SVG module — `skia-safe` is already built with `features = ["svg"]` |
 | **PDF** | Full: rendered pages, page navigation, zoom | An external rasteriser, exec'd — see below |
 | **Text and source code** | Full: monospace layout, line numbers, encoding sniff, wrap toggle. No syntax highlighting in v1 | Nothing |
@@ -554,7 +554,14 @@ type:
 - `Pixels` — premultiplied RGBA at a stated size, with an optional intrinsic
   size for zoom, and an optional page count. Zoom is measured against the
   fitted rect rather than this intrinsic size; the intrinsic size says how far
-  a decode can be zoomed before it starts inventing detail.
+  a decode can be zoomed before it starts inventing detail. An animation — a
+  GIF, an animated WEBP — is the same payload with its frames stacked in the
+  buffer and a delay for each; a still picture is one frame and no delays, so
+  everything that draws a picture is unchanged by animations existing. The
+  host runs the clock and loops for as long as the preview is open. A still
+  picture is never drawn larger than it is; an animation may be, up to the
+  source's own size, since its frames are shrunk to fit the strip's budget
+  rather than because the file is small.
 - `Text` — bounded, validated UTF-8 with optional style spans.
 - `Rows` — a table (archive entries, directory listing): name, size, date, an
   icon key.

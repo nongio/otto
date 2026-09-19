@@ -29,6 +29,12 @@ use crate::theme::Theme;
 use crate::typography::{styles, TextStyle};
 
 /// Decoded pixels: premultiplied RGBA, tightly packed.
+///
+/// One picture, or an animation — a GIF, an animated WEBP — held as its
+/// frames stacked in `data`, all the same size, in order. A still image is
+/// the same thing with one frame and no delays, so everything that draws a
+/// picture keeps working without knowing animations exist; only a host that
+/// wants to *play* one asks [`Pixels::frames`] how many there are.
 #[derive(Debug, Clone)]
 pub struct Pixels {
     pub width: u32,
@@ -37,7 +43,12 @@ pub struct Pixels {
     /// than `width`/`height` for a scaled decode.
     pub intrinsic_width: u32,
     pub intrinsic_height: u32,
+    /// Every frame, one after another. Frame `i` starts at
+    /// `i * width * height * 4`.
     pub data: Vec<u8>,
+    /// How long each frame is shown, in milliseconds. Empty for a still
+    /// image, which is what all but the animated decoders produce.
+    pub frame_delays: Vec<u32>,
 }
 
 impl Pixels {
@@ -49,9 +60,48 @@ impl Pixels {
         self.intrinsic_width as f32 / self.width as f32
     }
 
-    /// Wrap the buffer as a Skia image. Copies once, because the image outlives
-    /// the borrow in every caller here.
-    pub fn to_image(&self) -> Option<Image> {
+    /// How many frames this holds. At least one: a still picture is an
+    /// animation of length one that nobody has to treat as one.
+    pub fn frames(&self) -> usize {
+        self.frame_delays.len().max(1)
+    }
+
+    /// Whether this is worth running a clock for.
+    pub fn is_animated(&self) -> bool {
+        self.frames() > 1
+    }
+
+    /// How long frame `index` is shown.
+    ///
+    /// A GIF may ask for no delay at all, which every browser has read as
+    /// "the author meant the default" since the format's first decade —
+    /// honouring a 0 ms frame literally would spin an animation past what
+    /// anyone can see. Anything below [`Self::MIN_DELAY_MS`] is treated as
+    /// [`Self::DEFAULT_DELAY_MS`], which is what that convention amounts to.
+    pub fn delay(&self, index: usize) -> std::time::Duration {
+        let frames = self.frames();
+        let millis = self
+            .frame_delays
+            .get(index % frames)
+            .copied()
+            .unwrap_or(Self::DEFAULT_DELAY_MS);
+        let millis = if millis < Self::MIN_DELAY_MS {
+            Self::DEFAULT_DELAY_MS
+        } else {
+            millis
+        };
+        std::time::Duration::from_millis(millis as u64)
+    }
+
+    /// Below this a frame delay is taken as unset rather than as a request.
+    pub const MIN_DELAY_MS: u32 = 20;
+    /// What an unset delay means, by the convention every GIF renderer shares.
+    pub const DEFAULT_DELAY_MS: u32 = 100;
+
+    /// Wrap one frame as a Skia image, wrapping round for an index past the
+    /// end so a host's frame counter never has to be clamped. Copies once,
+    /// because the image outlives the borrow in every caller here.
+    pub fn frame_image(&self, index: usize) -> Option<Image> {
         if self.width == 0 || self.height == 0 {
             return None;
         }
@@ -62,12 +112,20 @@ impl Pixels {
             None,
         );
         let row_bytes = self.width as usize * 4;
+        let frame_bytes = row_bytes.checked_mul(self.height as usize)?;
         // A buffer that contradicts its dimensions must not be wrapped: Skia
         // would read past the end of it.
-        if self.data.len() != row_bytes * self.height as usize {
+        if self.data.len() != frame_bytes.checked_mul(self.frames())? {
             return None;
         }
-        skia_safe::images::raster_from_data(&info, skia_safe::Data::new_copy(&self.data), row_bytes)
+        let start = frame_bytes * (index % self.frames());
+        let frame = self.data.get(start..start + frame_bytes)?;
+        skia_safe::images::raster_from_data(&info, skia_safe::Data::new_copy(frame), row_bytes)
+    }
+
+    /// The first frame — the whole picture, for a still image.
+    pub fn to_image(&self) -> Option<Image> {
+        self.frame_image(0)
     }
 }
 
@@ -302,7 +360,12 @@ pub fn clamp_zoom(bounds: Rect, preview: &Preview, zoom: Zoom) -> Zoom {
         return Zoom::FIT;
     };
     let inner = inner_of(bounds, preview);
-    let fitted = fit(inner, pixels.width as f32, pixels.height as f32);
+    let fitted = fit_up_to(
+        inner,
+        pixels.width as f32,
+        pixels.height as f32,
+        max_scale(pixels),
+    );
     let scale = if zoom.scale <= Zoom::SNAP {
         1.0
     } else {
@@ -378,6 +441,25 @@ fn zoomed(inner: Rect, fitted: Rect, zoom: Zoom) -> Rect {
     Rect::from_ltrb(cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0)
 }
 
+/// How far a decode of `pixels` may be blown back up to fill its box.
+///
+/// A still picture is decoded at the size it will be shown, so this is 1.0
+/// and a small file stays small: a 48-pixel icon stretched across the panel
+/// would be a worse preview than an honest little picture.
+///
+/// An animation is the exception. Its frames are shrunk to bring the whole
+/// strip inside the budget — because the file is *long*, not because it is
+/// small — so drawing them at their own size would show a large GIF as a
+/// postage stamp. It may grow back to the size the file actually is, and no
+/// further.
+fn max_scale(pixels: &Pixels) -> f32 {
+    if pixels.is_animated() {
+        pixels.native_scale().max(1.0)
+    } else {
+        1.0
+    }
+}
+
 /// Where the content will be drawn, computed without drawing it.
 ///
 /// `zoom` applies to images only; pass [`Zoom::FIT`] for a host that does not
@@ -389,7 +471,12 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
 
     match preview {
         Preview::Pixels { pixels, .. } => {
-            let fitted = fit(inner, pixels.width as f32, pixels.height as f32);
+            let fitted = fit_up_to(
+                inner,
+                pixels.width as f32,
+                pixels.height as f32,
+                max_scale(pixels),
+            );
             let zoom = clamp_zoom(bounds, preview, zoom);
             PreviewLayout {
                 bounds,
@@ -441,12 +528,19 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
 /// centred. Content smaller than the box is centred rather than upscaled —
 /// blowing up a 16×16 icon to fill a window makes it look broken.
 fn fit(bounds: Rect, width: f32, height: f32) -> Rect {
+    fit_up_to(bounds, width, height, 1.0)
+}
+
+/// [`fit`], but allowed to grow the content up to `max_scale` times its own
+/// size. Anything above 1.0 is drawing pixels the decode does not have, so
+/// only a caller that knows the decode is smaller than the file asks for it.
+fn fit_up_to(bounds: Rect, width: f32, height: f32, max_scale: f32) -> Rect {
     if width <= 0.0 || height <= 0.0 {
         return bounds;
     }
     let scale = (bounds.width() / width)
         .min(bounds.height() / height)
-        .min(1.0);
+        .min(max_scale.max(1.0));
     let (w, h) = (width * scale, height * scale);
     let cx = bounds.center_x();
     let cy = bounds.center_y();
@@ -459,8 +553,10 @@ fn fit(bounds: Rect, width: f32, height: f32) -> Rect {
 
 /// Paint a preview into `bounds`.
 ///
-/// `first_row` scrolls listings and text; the caller owns that offset, as it
-/// owns every other piece of interaction state.
+/// `first_row` says where in the content the host is: the scroll offset for
+/// a listing or a text preview, and the frame for an animated image, which
+/// is the same thing — which part of the content is on screen. The caller
+/// owns it, as it owns every other piece of interaction state.
 ///
 /// `zoom` magnifies an image and drags it about; it is ignored by everything
 /// else. A host with no zoom gesture passes [`Zoom::FIT`] and gets exactly
@@ -481,7 +577,7 @@ pub fn draw(
 ) {
     let geometry = layout(bounds, preview, first_row, zoom);
     match preview {
-        Preview::Pixels { pixels, .. } => draw_pixels(canvas, &geometry, pixels, theme),
+        Preview::Pixels { pixels, .. } => draw_pixels(canvas, &geometry, pixels, first_row, theme),
         Preview::Text { lines, .. } => draw_text(canvas, &geometry, lines, first_row, theme),
         Preview::Rows { rows, .. } => {
             draw_rows(canvas, &geometry, rows, first_row, theme, resolve_icon)
@@ -509,8 +605,16 @@ pub fn draw(
     }
 }
 
-fn draw_pixels(canvas: &Canvas, geometry: &PreviewLayout, pixels: &Pixels, theme: &Theme) {
-    let Some(image) = pixels.to_image() else {
+fn draw_pixels(
+    canvas: &Canvas,
+    geometry: &PreviewLayout,
+    pixels: &Pixels,
+    frame: usize,
+    theme: &Theme,
+) {
+    // Wrapping round is [`Pixels::frame_image`]'s job, so a host that counts
+    // frames up for as long as a preview is open never has to wrap it.
+    let Some(image) = pixels.frame_image(frame) else {
         return draw_unavailable(
             canvas,
             geometry,
@@ -891,6 +995,7 @@ mod tests {
             intrinsic_width: width,
             intrinsic_height: height,
             data: vec![0; (width * height * 4) as usize],
+            frame_delays: Vec::new(),
         }
     }
 
@@ -1266,6 +1371,94 @@ mod tests {
         );
     }
 
+    /// Three frames, each a flat value, so a frame can be told from its
+    /// neighbours by one byte.
+    fn animation() -> Pixels {
+        let frame = |value: u8| vec![value; 2 * 2 * 4];
+        Pixels {
+            width: 2,
+            height: 2,
+            intrinsic_width: 2,
+            intrinsic_height: 2,
+            data: [frame(1), frame(2), frame(3)].concat(),
+            frame_delays: vec![0, 50, 5],
+        }
+    }
+
+    #[test]
+    fn a_frame_is_read_out_of_the_strip_and_the_count_wraps() {
+        let strip = animation();
+        assert_eq!(strip.frames(), 3);
+        assert!(strip.is_animated());
+        // Each frame is its own picture, and asking past the end comes back
+        // round to the start rather than failing.
+        for (index, expected) in [(0, 1), (1, 2), (2, 3), (3, 1), (7, 2)] {
+            let image = strip.frame_image(index).expect("frame");
+            assert_eq!(image.dimensions(), skia_safe::ISize::new(2, 2));
+            let start = (index % 3) * 16;
+            assert_eq!(strip.data[start], expected, "frame {index}");
+        }
+        // A still picture is one frame and nothing to run.
+        assert!(!pixels(4, 4).is_animated());
+        assert_eq!(pixels(4, 4).frames(), 1);
+    }
+
+    #[test]
+    fn an_animation_shrunk_to_fit_the_budget_still_fills_its_box() {
+        // What the decoder produces for a long GIF: frames far smaller than
+        // the file, because there are many of them.
+        let mut strip = animation();
+        strip.intrinsic_width = 900;
+        strip.intrinsic_height = 900;
+        let preview = Preview::Pixels {
+            pixels: strip.clone(),
+            pages: 1,
+            page: 1,
+        };
+        let box_rect = Rect::from_xywh(0.0, 0.0, 400.0, 400.0);
+        let content = layout(box_rect, &preview, 0, Zoom::FIT).content;
+        let inner = layout(box_rect, &preview, 0, Zoom::FIT).inner;
+        assert_eq!(content.width(), inner.width(), "{content:?}");
+
+        // A still picture of the same decoded size is still drawn small: it
+        // is small because the file is, and stretching it would invent
+        // detail the decode never had.
+        let mut still = strip;
+        still.frame_delays.clear();
+        still.data.truncate(2 * 2 * 4);
+        let preview = Preview::Pixels {
+            pixels: still,
+            pages: 1,
+            page: 1,
+        };
+        assert_eq!(
+            layout(box_rect, &preview, 0, Zoom::FIT).content.width(),
+            2.0
+        );
+    }
+
+    #[test]
+    fn a_delay_below_the_floor_means_the_default() {
+        let strip = animation();
+        // 0 ms and 5 ms are what an author writes when they mean "whatever
+        // the default is"; 50 ms is a request and is honoured.
+        assert_eq!(strip.delay(0).as_millis(), Pixels::DEFAULT_DELAY_MS as u128);
+        assert_eq!(strip.delay(1).as_millis(), 50);
+        assert_eq!(strip.delay(2).as_millis(), Pixels::DEFAULT_DELAY_MS as u128);
+        // And the index wraps here too, so a host's counter never has to.
+        assert_eq!(strip.delay(4).as_millis(), 50);
+    }
+
+    #[test]
+    fn a_strip_that_contradicts_its_frame_count_is_refused() {
+        let mut short = animation();
+        short.data.truncate(16 * 2);
+        assert!(
+            short.frame_image(0).is_none(),
+            "must not wrap a strip missing a frame"
+        );
+    }
+
     #[test]
     fn native_scale_reports_the_headroom_a_scaled_decode_left() {
         let scaled = Pixels {
@@ -1274,6 +1467,7 @@ mod tests {
             intrinsic_width: 2000,
             intrinsic_height: 2000,
             data: vec![0; 500 * 500 * 4],
+            frame_delays: Vec::new(),
         };
         assert_eq!(scaled.native_scale(), 4.0);
     }
