@@ -65,6 +65,7 @@ and Otto has not built it. Commands that parse and are refused at run time
 | `move left\|right\|up\|down` | moves the focused tile through the tree |
 | `move container to workspace <n>` | also `move to workspace <n>`, `move window to workspace number <n>` |
 | `workspace <n\|next\|prev>` | `<n>` is created on demand |
+| `rename workspace [<n>] to <name>` | the name is the rest of the command; surrounding quotes are dropped. Persisted to the config, as the selector's rename is |
 | `split h\|v\|toggle` | arms the axis the next window splits along |
 | `layout splith\|splitv\|toggle split` | turns the focused cell's container |
 | `resize grow\|shrink width\|height <n> [px\|ppt] [or <n> ppt]` | a bare figure is `ppt`; the `or` fallback is accepted and dropped |
@@ -78,7 +79,8 @@ and Otto has not built it. Commands that parse and are refused at run time
 **Not implemented yet**, and refused by name rather than ignored:
 `layout tabbed`, `layout stacking`, `layout toggle all`, `resize set`,
 `split none`,
-`fullscreen global`, `move … to output`, per-edge `gaps`, workspaces by name,
+`fullscreen global`, `move … to output`, per-edge `gaps`, addressing a
+workspace by name (`workspace Music`, `rename workspace Music to Code`),
 `workspace back_and_forth`. Criteria (`[app_id="…"] …`), marks, binding modes,
 `scratchpad`, `assign` and `for_window` are not parsed at all.
 

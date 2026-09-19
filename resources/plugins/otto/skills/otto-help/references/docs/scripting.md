@@ -22,12 +22,14 @@ string, separated by `;`.
 
 | Command | What it does |
 |---------|--------------|
+| `[app_id="…"] focus` | focus the window the criteria names, wherever it is; see below |
 | `focus left\|right\|up\|down` | move focus to the neighbouring tile; never wraps |
 | `focus parent` / `focus child` | move focus up to the surrounding container, and back down |
 | `focus mode_toggle\|floating\|tiling` | move focus between the floating windows and the tiled ones |
 | `move left\|right\|up\|down` | move the focused tile through the tree |
 | `move container to workspace <n>` | send the focused window to workspace `<n>`, creating it if needed |
 | `workspace <n\|next\|prev>` | switch workspace; `<n>` is created if it does not exist |
+| `rename workspace [<n>] to <name>` | name the focused workspace, or workspace `<n>`; the name sticks |
 | `split h\|v\|toggle` | decide which way the *next* window splits the focused cell |
 | `layout splith\|splitv\|toggle split` | turn the container the focused cell sits in |
 | `resize grow\|shrink width\|height <n> [px\|ppt]` | resize the focused tile; a bare number means percent |
@@ -35,11 +37,44 @@ string, separated by `;`.
 | `fullscreen [toggle]` | fullscreen the focused window |
 | `kill` | close the focused window |
 | `tiling toggle\|enable\|disable` | turn the current workspace's tiling on or off |
+| `expose [show\|hide\|toggle]` | the window overview, as `Ctrl+Up` opens it |
 | `gaps inner\|outer <n> [current\|all]` | set the gaps |
+
+`rename workspace` is the exception to the numbering: the name is the rest of
+the command, spaces and all, so `rename workspace to Deep Work` needs no
+quotes (though quotes are allowed, and dropped). The name is written to your
+config as the workspace selector writes it, so it is there again next login.
 
 Most of these need a **tiling workspace** — `tiling enable` first, or bind
 `TilingToggle` to a key. On a floating workspace they say so rather than doing
-something surprising.
+something surprising. The exception is `[app_id="…"] focus`, which works
+anywhere.
+
+## Focusing a window by name
+
+Put a criteria in front of `focus` to reach one particular window, wherever it
+is:
+
+```sh
+otto-msg '[app_id="google-chrome"] focus'
+otto-msg '[title="Inbox"] focus'
+otto-msg '[app_id="foot" title="build"] focus'
+```
+
+| | |
+|---|---|
+| `app_id` | The Wayland app id. `class` and `instance` are accepted as the X11 spellings. |
+| `title` | The window title. |
+
+The match is a **case-insensitive substring**, not i3's regex — `chrome` finds
+`google-chrome`. Give both fields and both must match. Otto switches workspace
+to reach the window. When several match it takes the first, so narrow the
+criteria to reach the others; when none match it says so rather than doing
+nothing quietly.
+
+A criteria only goes in front of `focus`. On any other command Otto refuses it
+rather than acting on the focused window instead, which is the kind of mistake
+that closes the wrong thing.
 
 **Workspaces are created, never destroyed.** `otto-msg workspace 7` gives you
 seven workspaces. Unlike i3, Otto does not delete one when its last window
@@ -54,8 +89,8 @@ forgets every per-workspace tweak.
 Some i3 commands are understood but not built yet, and say so instead of
 quietly doing nothing: `layout tabbed`, `layout stacking`, `resize set`, and
 moving a window to another output.
-Criteria (`[app_id="…"]`), marks, binding modes and `for_window` rules are not
-parsed at all.
+Marks, binding modes and `for_window` rules are not parsed at all, and a
+criteria works only in front of `focus`.
 
 ## Reading what is on screen
 

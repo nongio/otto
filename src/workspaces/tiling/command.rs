@@ -105,12 +105,53 @@ pub enum Command {
     Kill,
     /// `tiling toggle|enable|disable`
     Tiling(Toggle),
+    /// `expose [show|hide|toggle]` — the window overview, as `Ctrl+Up` opens
+    /// it. Bare `expose` toggles.
+    Expose(Toggle),
     /// `gaps inner|outer <n> [current|all]`
     Gaps {
         scope: GapScope,
         target: GapTarget,
         amount: i32,
     },
+    /// `[app_id="…"] focus` — focus the one window a criteria matches,
+    /// wherever it is, switching workspace to reach it.
+    FocusWindow(Criteria),
+    /// `rename workspace [<n>] to <name>` — name the focused workspace, or
+    /// the numbered one on the focused output.
+    RenameWorkspace {
+        /// The workspace to name, 1-based. `None` is the focused one.
+        number: Option<usize>,
+        name: String,
+    },
+}
+
+/// i3's `[app_id="…" title="…"]`, the window matcher that prefixes a command.
+///
+/// Matching is a case-insensitive substring test, not i3's regex: it covers
+/// what a person means by "focus Chrome" without pulling in a regex engine.
+/// An empty criteria matches nothing, so `[] focus` cannot focus at random.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Criteria {
+    /// Wayland `app_id`, or an X11 window's class.
+    pub app_id: Option<String>,
+    /// The window title.
+    pub title: Option<String>,
+}
+
+impl Criteria {
+    /// Whether this matches a window with the given `app_id` and title. Every
+    /// field that is set must match; a criteria with no fields matches nothing.
+    pub fn matches(&self, app_id: &str, title: &str) -> bool {
+        if self.app_id.is_none() && self.title.is_none() {
+            return false;
+        }
+        let holds = |want: &Option<String>, have: &str| match want {
+            None => true,
+            Some(want) => have.to_lowercase().contains(&want.to_lowercase()),
+        };
+        holds(&self.app_id, app_id) && holds(&self.title, title)
+    }
 }
 
 /// A command that could not be parsed, or that Otto does not implement yet.
@@ -137,16 +178,100 @@ impl std::error::Error for ParseError {}
 pub fn parse(text: &str) -> Result<Vec<Command>, ParseError> {
     let mut out = Vec::new();
     for (offset, segment) in split_commands(text) {
-        let tokens = tokenize(segment, offset);
+        let (criteria, rest, rest_offset) = split_criteria(segment, offset)?;
+        let tokens = tokenize(rest, rest_offset);
         if tokens.is_empty() {
+            if criteria.is_some() {
+                return Err(unsupported(offset, "a criteria with no command"));
+            }
+            continue;
+        }
+        // Only `focus` reads a criteria so far, and bare `focus` is not a
+        // command on its own, so this is settled before `parse_one` sees it.
+        // Anything else would look as if it had been aimed at the matching
+        // window while acting on the focused one, so it is refused rather
+        // than quietly misfiring.
+        if let Some(criteria) = criteria {
+            match tokens.as_slice() {
+                [(_, "focus")] => out.push(Command::FocusWindow(criteria)),
+                _ => {
+                    let what = tokens
+                        .iter()
+                        .map(|(_, word)| *word)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    return Err(unsupported(offset, &format!("a criteria with `{what}`")));
+                }
+            }
             continue;
         }
         out.push(parse_one(&mut Cursor::new(
             &tokens,
-            offset + segment.len(),
+            rest_offset + rest.len(),
         ))?);
     }
     Ok(out)
+}
+
+/// Split a leading `[app_id="…" title="…"]` off a segment, returning it with
+/// the rest of the segment and where that rest starts.
+fn split_criteria(
+    segment: &str,
+    offset: usize,
+) -> Result<(Option<Criteria>, &str, usize), ParseError> {
+    let lead = segment.len() - segment.trim_start().len();
+    let trimmed = &segment[lead..];
+    if !trimmed.starts_with('[') {
+        return Ok((None, segment, offset));
+    }
+    let Some(end) = trimmed.find(']') else {
+        return Err(unsupported(offset + lead, "a criteria with no closing `]`"));
+    };
+    let mut criteria = Criteria::default();
+    for (key, value) in criteria_pairs(&trimmed[1..end]) {
+        let field = match key {
+            // `class` and `instance` are what an X11 window answers to; both
+            // land on the same place a Wayland `app_id` does.
+            "app_id" | "class" | "instance" => &mut criteria.app_id,
+            "title" | "name" => &mut criteria.title,
+            other => {
+                return Err(unsupported(
+                    offset + lead,
+                    &format!("the criteria `{other}`"),
+                ))
+            }
+        };
+        *field = Some(value);
+    }
+    let rest = &trimmed[end + 1..];
+    Ok((Some(criteria), rest, offset + lead + end + 1))
+}
+
+/// `key="value"` pairs inside a criteria, quotes optional, spaces allowed
+/// inside quotes. A pair with no `=` is skipped rather than failing: i3 reads
+/// a bare word as a title match, which nothing here relies on.
+fn criteria_pairs(inner: &str) -> Vec<(&str, String)> {
+    let mut out = Vec::new();
+    let mut rest = inner.trim();
+    while !rest.is_empty() {
+        let Some(eq) = rest.find('=') else { break };
+        let key = rest[..eq].trim();
+        let after = rest[eq + 1..].trim_start();
+        let (value, next) = if let Some(body) = after.strip_prefix('"') {
+            match body.find('"') {
+                Some(close) => (body[..close].to_owned(), &body[close + 1..]),
+                None => (body.to_owned(), ""),
+            }
+        } else {
+            let end = after.find(char::is_whitespace).unwrap_or(after.len());
+            (after[..end].to_owned(), &after[end..])
+        };
+        if !key.is_empty() {
+            out.push((key, value));
+        }
+        rest = next.trim_start();
+    }
+    out
 }
 
 /// Split on `;`, keeping each segment's byte offset in the original string.
@@ -224,6 +349,20 @@ impl<'a> Cursor<'a> {
     fn is_done(&self) -> bool {
         self.at >= self.tokens.len()
     }
+
+    /// Consume everything left as one string, words separated by single
+    /// spaces. A workspace name is the rest of the command in i3 too, so it
+    /// may hold spaces without quoting; a quoted name loses its quotes.
+    fn take_rest(&mut self) -> String {
+        let words: Vec<&str> = std::iter::from_fn(|| self.next().map(|(_, word)| word)).collect();
+        let joined = words.join(" ");
+        for quote in ['"', '\''] {
+            if joined.len() >= 2 && joined.starts_with(quote) && joined.ends_with(quote) {
+                return joined[1..joined.len() - 1].to_string();
+            }
+        }
+        joined
+    }
 }
 
 /// `Unknown/invalid command 'x'` — the shape `swaymsg` prints.
@@ -265,7 +404,9 @@ fn parse_one(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         "fullscreen" => parse_fullscreen(cursor, offset)?,
         "kill" => Command::Kill,
         "tiling" => Command::Tiling(parse_toggle(cursor, "tiling")?),
+        "expose" => Command::Expose(parse_expose_arg(cursor)?),
         "gaps" => parse_gaps(cursor)?,
+        "rename" => parse_rename(cursor)?,
         other => return Err(unknown(offset, other)),
     };
     if !cursor.is_done() {
@@ -392,6 +533,52 @@ fn parse_workspace(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
             _ => Err(invalid(word_offset, "workspace", "<n>|next|prev")),
         },
     }
+}
+
+/// `rename workspace to <name>`, and `rename workspace <n> to <name>` for a
+/// workspace that is not the focused one.
+///
+/// i3 names the workspace to rename (`rename workspace old to new`), because
+/// there a name is the address. Otto addresses a workspace by number, and a
+/// number is what goes here.
+fn parse_rename(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
+    let offset = cursor.offset();
+    match cursor.next() {
+        Some((_, "workspace")) => {}
+        _ => return Err(invalid(offset, "rename", "'workspace [<n>] to <name>'")),
+    }
+    // i3 allows `workspace number 3`; the word is noise here too.
+    if cursor.peek() == Some("number") {
+        cursor.next();
+    }
+    let mut number = None;
+    if let Some(word) = cursor.peek() {
+        if word != "to" {
+            let n_offset = cursor.offset();
+            cursor.next();
+            match word.parse::<usize>() {
+                Ok(n) if n >= 1 => number = Some(n),
+                _ => {
+                    return Err(invalid(
+                        n_offset,
+                        "rename workspace",
+                        "a workspace number from 1, or 'to'",
+                    ))
+                }
+            }
+        }
+    }
+    let to_offset = cursor.offset();
+    match cursor.next() {
+        Some((_, "to")) => {}
+        _ => return Err(invalid(to_offset, "rename workspace", "'to <name>'")),
+    }
+    let name_offset = cursor.offset();
+    let name = cursor.take_rest();
+    if name.is_empty() {
+        return Err(invalid(name_offset, "rename workspace", "a name"));
+    }
+    Ok(Command::RenameWorkspace { number, name })
 }
 
 fn parse_split_arg(cursor: &mut Cursor<'_>) -> Result<AxisArg, ParseError> {
@@ -534,6 +721,28 @@ fn parse_toggle(cursor: &mut Cursor<'_>, command: &str) -> Result<Toggle, ParseE
     }
 }
 
+/// `expose [show|hide|toggle]`. Exposé is something you show or hide rather
+/// than something you enable, so it takes its own words; `on` and `off` are
+/// read too, for a script that spells the other toggles that way.
+fn parse_expose_arg(cursor: &mut Cursor<'_>) -> Result<Toggle, ParseError> {
+    let offset = cursor.offset();
+    match cursor.peek() {
+        None | Some("toggle") => {
+            cursor.next();
+            Ok(Toggle::Toggle)
+        }
+        Some("show") | Some("on") => {
+            cursor.next();
+            Ok(Toggle::Enable)
+        }
+        Some("hide") | Some("off") => {
+            cursor.next();
+            Ok(Toggle::Disable)
+        }
+        Some(_) => Err(invalid(offset, "expose", "show|hide|toggle")),
+    }
+}
+
 fn parse_gaps(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
     let offset = cursor.offset();
     let scope = match cursor.next() {
@@ -605,6 +814,73 @@ mod tests {
 
     fn error(text: &str) -> ParseError {
         parse(text).expect_err(text)
+    }
+
+    fn rename(number: Option<usize>, name: &str) -> Command {
+        Command::RenameWorkspace {
+            number,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn rename_names_the_focused_workspace() {
+        assert_eq!(one("rename workspace to Music"), rename(None, "Music"));
+    }
+
+    #[test]
+    fn rename_takes_a_workspace_number() {
+        assert_eq!(one("rename workspace 3 to Code"), rename(Some(3), "Code"));
+        // i3's `number` filler word, as `workspace number 3` takes it.
+        assert_eq!(
+            one("rename workspace number 3 to Code"),
+            rename(Some(3), "Code")
+        );
+    }
+
+    #[test]
+    fn a_workspace_name_is_the_rest_of_the_command() {
+        assert_eq!(
+            one("rename workspace to Deep Work"),
+            rename(None, "Deep Work")
+        );
+        // Quoting it is how an i3 user writes it, and the quotes are not
+        // part of the name.
+        assert_eq!(
+            one("rename workspace to \"Deep Work\""),
+            rename(None, "Deep Work")
+        );
+        // A name is one command's worth: `;` still separates commands.
+        assert_eq!(
+            parse("rename workspace to Music; workspace 2").unwrap(),
+            vec![
+                rename(None, "Music"),
+                Command::Workspace(WorkspaceTarget::Number(2))
+            ]
+        );
+    }
+
+    #[test]
+    fn expose_shows_hides_and_toggles() {
+        assert_eq!(one("expose"), Command::Expose(Toggle::Toggle));
+        assert_eq!(one("expose toggle"), Command::Expose(Toggle::Toggle));
+        assert_eq!(one("expose show"), Command::Expose(Toggle::Enable));
+        assert_eq!(one("expose hide"), Command::Expose(Toggle::Disable));
+        // Spelled the way the other toggles are, for a script that mixes them.
+        assert_eq!(one("expose on"), Command::Expose(Toggle::Enable));
+        assert_eq!(one("expose off"), Command::Expose(Toggle::Disable));
+        assert!(error("expose please").message.contains("show|hide|toggle"));
+    }
+
+    #[test]
+    fn rename_needs_a_workspace_a_destination_and_a_name() {
+        assert!(error("rename").message.contains("expected"));
+        assert!(error("rename output to Left").message.contains("expected"));
+        assert!(error("rename workspace Music").message.contains("expected"));
+        assert!(error("rename workspace to").message.contains("a name"));
+        assert!(error("rename workspace 0 to Music")
+            .message
+            .contains("from 1"));
     }
 
     #[test]
@@ -810,6 +1086,80 @@ mod tests {
         let error = error("focus left up");
         assert_eq!(error.offset, 11);
         assert_eq!(error.message, "Unknown/invalid command 'up'");
+    }
+
+    #[test]
+    fn a_criteria_focuses_the_window_it_names() {
+        assert_eq!(
+            parse(r#"[app_id="firefox"] focus"#).unwrap(),
+            vec![Command::FocusWindow(Criteria {
+                app_id: Some("firefox".into()),
+                title: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn a_criteria_reads_titles_spaces_quotes_and_x11_class() {
+        let only = |text: &str| match parse(text).unwrap().remove(0) {
+            Command::FocusWindow(criteria) => criteria,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            only(r#"[title="Two Words"] focus"#).title.unwrap(),
+            "Two Words"
+        );
+        // `class` is the X11 spelling and lands where app_id does.
+        assert_eq!(only(r#"[class="Emacs"] focus"#).app_id.unwrap(), "Emacs");
+        // Quotes are optional, and both fields may be given at once.
+        let both = only(r#"[app_id=foot title="build"] focus"#);
+        assert_eq!(both.app_id.unwrap(), "foot");
+        assert_eq!(both.title.unwrap(), "build");
+        // A criteria rides through `;` like any other command.
+        assert_eq!(
+            parse(r#"workspace 2; [app_id="foot"] focus"#)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn matching_is_case_insensitive_substring_and_never_matches_nothing() {
+        let chrome = Criteria {
+            app_id: Some("chrome".into()),
+            title: None,
+        };
+        assert!(chrome.matches("google-chrome", "anything"));
+        assert!(chrome.matches("Google-Chrome", ""));
+        assert!(!chrome.matches("firefox", "chrome is in the title"));
+        // Both fields set means both must hold.
+        let narrow = Criteria {
+            app_id: Some("foot".into()),
+            title: Some("build".into()),
+        };
+        assert!(narrow.matches("foot", "build — make"));
+        assert!(!narrow.matches("foot", "editing"));
+        // An empty criteria must not focus something at random.
+        assert!(!Criteria::default().matches("foot", "anything"));
+    }
+
+    #[test]
+    fn a_criteria_on_anything_but_focus_is_refused() {
+        for text in [r#"[app_id="foot"] kill"#, r#"[app_id="foot"] move left"#] {
+            let error = error(text);
+            assert!(
+                error.message.contains("does not support"),
+                "{text}: {}",
+                error.message
+            );
+        }
+        assert!(error(r#"[app_id="foot"]"#)
+            .message
+            .contains("does not support"));
+        assert!(error(r#"[app_id="foot" focus"#)
+            .message
+            .contains("does not support"));
     }
 
     #[test]

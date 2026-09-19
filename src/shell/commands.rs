@@ -20,7 +20,7 @@ use smithay::wayland::shell::xdg::XdgShellHandler;
 use crate::config::Config;
 use crate::state::{Backend, Otto};
 use crate::workspaces::tiling::command::{
-    self, Amount, AxisArg, Command, GapScope, GapTarget, Toggle, WorkspaceTarget,
+    self, Amount, AxisArg, Command, Criteria, GapScope, GapTarget, Toggle, WorkspaceTarget,
 };
 use crate::workspaces::tiling::tree::{Axis, NodeId};
 use crate::workspaces::tiling::{layout, Gaps, Rect};
@@ -81,11 +81,88 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 Ok(())
             }
             Command::Tiling(toggle) => self.command_tiling(toggle),
+            Command::Expose(toggle) => self.command_expose(toggle),
             Command::Gaps {
                 scope,
                 target,
                 amount,
             } => self.command_gaps(scope, target, amount),
+            Command::FocusWindow(criteria) => self.command_focus_window(&criteria),
+            Command::RenameWorkspace { number, name } => {
+                self.command_rename_workspace(number, name)
+            }
+        }
+    }
+
+    /// `expose [show|hide|toggle]`: the window overview, the same state
+    /// `Ctrl+Up` puts the desktop in. Show and hide are idempotent — asking
+    /// for what is already on screen is not an error, so a script does not
+    /// have to read the state first.
+    fn command_expose(&mut self, toggle: Toggle) -> CommandResult {
+        let showing = self.workspaces.get_show_all();
+        let wanted = match toggle {
+            Toggle::Toggle => !showing,
+            Toggle::Enable => true,
+            Toggle::Disable => false,
+        };
+        if wanted != showing {
+            self.handle_expose_show_all();
+        }
+        Ok(())
+    }
+
+    /// `rename workspace [<n>] to <name>`: name a workspace on the focused
+    /// output, the same way renaming it from the selector does — the name is
+    /// written to the config straight away, so it survives the session.
+    ///
+    /// A number past the end creates the workspaces up to it, as `workspace
+    /// <n>` does, so a script can name a workspace it is about to fill.
+    fn command_rename_workspace(&mut self, number: Option<usize>, name: String) -> CommandResult {
+        let Some(output) = self.workspaces.focused_output().cloned() else {
+            return Err("no output has focus".to_string());
+        };
+        let output_name = output.name();
+        let position = match number {
+            Some(number) => self.ensure_workspace(&output, number)?,
+            None => self
+                .workspaces
+                .output_workspaces
+                .get(&output_name)
+                .map(|ows| ows.current_workspace)
+                .ok_or_else(|| format!("{output_name} has no workspaces"))?,
+        };
+        // `rename_workspace` takes the workspace's own index, which is not
+        // its position on the output once there is more than one output.
+        let index = self
+            .workspaces
+            .output_workspaces
+            .get(&output_name)
+            .and_then(|ows| ows.workspace_views.get(position))
+            .map(|workspace| workspace.index)
+            .ok_or_else(|| format!("{output_name} has no workspace {}", position + 1))?;
+        self.workspaces
+            .rename_workspace(&output_name, index, Some(name));
+        Ok(())
+    }
+
+    /// `[app_id="…"] focus`: focus the window a criteria matches, switching
+    /// to its workspace to get there.
+    ///
+    /// Several matches take the first in window order rather than guessing;
+    /// a narrower criteria is the way to reach the others.
+    fn command_focus_window(&mut self, criteria: &Criteria) -> CommandResult {
+        let found = self
+            .workspaces
+            .windows_map
+            .values()
+            .find(|window| criteria.matches(&window.xdg_app_id(), &window.xdg_title()))
+            .map(|window| window.id());
+        match found {
+            Some(id) => {
+                self.activate_window(&id);
+                Ok(())
+            }
+            None => Err("no window matches".to_string()),
         }
     }
 
