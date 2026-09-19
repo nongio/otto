@@ -46,7 +46,26 @@ pub struct Request {
     pub mime: String,
     /// The file's display name. Used only in card titles; never for dispatch.
     pub name: String,
+    /// Recognise text in a picture and send the words with the pixels. Costs
+    /// an exec of the system's recogniser inside the worker, so the parent
+    /// sets it only when no cached words exist for the file.
+    pub ocr: bool,
+    /// The recogniser's languages, as its `-l` argument spells them
+    /// (`ita+eng`). Computed by the parent, which knows the locale and can
+    /// look at which language packs are installed.
+    pub languages: String,
+    /// The recogniser to exec, as a command line with `{languages}` where
+    /// the languages go. Empty means the default, tesseract.
+    pub recogniser: String,
     pub budget: Budget,
+}
+
+impl Request {
+    /// The recogniser command line to run: the configured one, else the
+    /// default.
+    pub fn recogniser_command(&self) -> &str {
+        crate::ocr::command_or_default(&self.recogniser)
+    }
 }
 
 impl Default for Request {
@@ -58,6 +77,9 @@ impl Default for Request {
             zoom: 1.0,
             mime: String::new(),
             name: String::new(),
+            ocr: false,
+            languages: "eng".into(),
+            recogniser: String::new(),
             budget: Budget::default(),
         }
     }
@@ -262,6 +284,9 @@ pub fn parse_request(arguments: &[String]) -> Request {
             "--zoom" => request.zoom = value().parse().unwrap_or(request.zoom),
             "--name" => request.name = value(),
             "--mime" => request.mime = value(),
+            "--ocr" => request.ocr = true,
+            "--languages" => request.languages = value(),
+            "--recogniser" => request.recogniser = value(),
             _ => {}
         }
     }
@@ -275,6 +300,22 @@ pub(crate) fn read_capped(file: &mut File, cap: u64) -> std::io::Result<Vec<u8>>
     let mut bytes = Vec::new();
     file.take(cap).read_to_end(&mut bytes)?;
     Ok(bytes)
+}
+
+/// Is this command on `PATH`?
+///
+/// Resolved by hand rather than by spawning something: the worker has a tight
+/// descriptor budget and no reason to fork twice per lookup.
+pub(crate) fn on_path(command: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|directory| {
+        let candidate = directory.join(command);
+        // Existence is enough; if it is not executable the spawn fails and the
+        // caller falls back.
+        candidate.is_file()
+    })
 }
 
 /// Human-readable byte count, for the facts on a card.
@@ -302,6 +343,20 @@ pub(crate) fn human_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_recogniser_flags_parse() {
+        let request = parse_request(&[
+            "--ocr".to_string(),
+            "--languages".to_string(),
+            "ita+eng".to_string(),
+        ]);
+        assert!(request.ocr);
+        assert_eq!(request.languages, "ita+eng");
+        let request = parse_request(&[]);
+        assert!(!request.ocr);
+        assert_eq!(request.languages, "eng");
+    }
 
     #[test]
     fn human_size_reads_naturally() {

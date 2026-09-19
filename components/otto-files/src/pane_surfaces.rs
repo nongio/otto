@@ -1252,9 +1252,39 @@ fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> 
         // invisible to the key, and the panel never repaints out of its
         // waiting state.
         ^ if session.loading { LOADING_KEY } else { 0 }
+        // Words landing on a picture, and a selection moving over them,
+        // change what is drawn without moving anything else the key sees.
+        ^ session.words_epoch.rotate_left(23)
+        ^ hash_selection(session).rotate_left(41)
         // A video changes what is drawn on every frame and every tick of its
         // clock, with nothing else about the panel moving.
         ^ session.video_key()
+        // The working badge breathes while the recogniser reads the picture,
+        // and nothing else about the panel moves for as long as it takes.
+        ^ hash_recognising(session).rotate_left(11)
+}
+
+/// The working badge's breath, as a key contribution: the phase quantised to
+/// the frames it is actually drawn in, so the panel repaints while the
+/// recogniser runs and stops the moment it does. `0` when nothing is running,
+/// which is also what a panel with no recogniser on it contributes.
+fn hash_recognising(session: &quickview::Session) -> u64 {
+    const STEPS_PER_SECOND: f32 = 25.0;
+    match session.recognising_phase() {
+        Some(phase) => (phase * STEPS_PER_SECOND) as u64 + 1,
+        None => 0,
+    }
+}
+
+/// Which words are selected on the panel's picture, as a key contribution.
+fn hash_selection(session: &quickview::Session) -> u64 {
+    match session.selection {
+        Some(selection) => {
+            let range = selection.range();
+            ((*range.start() as u64 + 1) << 32) | (*range.end() as u64 + 1)
+        }
+        None => 0,
+    }
 }
 
 /// The content key's contribution for a panel that is still waiting for its
@@ -1317,6 +1347,47 @@ fn hash_rect(rect: Rect) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The working badge breathes, and nothing else about the panel moves
+    /// while it does. Without the phase in the key the cached picture replays
+    /// and the badge is a still glyph for the whole wait.
+    #[test]
+    fn a_running_recogniser_moves_the_panel_key() {
+        let resting = quickview::panel_rect(1100.0, 700.0);
+        let anchor = Rect::new_empty();
+        let opened_at = std::time::Instant::now();
+        let generation = 7;
+
+        let mut session = quickview::Session::new(
+            otto_kit::preview::Preview::Text {
+                lines: vec!["hello".into()],
+                truncated: false,
+                language: String::new(),
+            },
+            "shot.png".into(),
+            anchor,
+            opened_at,
+        );
+        let idle = quickview_key(resting, generation, &session);
+
+        // Started two frames ago, and started now: two different keys, so the
+        // panel is redrawn between them.
+        session.start_recognising(std::time::Instant::now());
+        let running = quickview_key(resting, generation, &session);
+        assert_ne!(idle, running, "a running recogniser does not move the key");
+
+        session
+            .start_recognising(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        assert_ne!(
+            running,
+            quickview_key(resting, generation, &session),
+            "the badge's breath does not move the key"
+        );
+
+        // And it stops moving the moment the recogniser does.
+        session.stop_recognising();
+        assert_eq!(idle, quickview_key(resting, generation, &session));
+    }
 
     /// The panel repaints only when its key changes, and the decode landing
     /// changes nothing else: same file, same request, same rect, same zoom.

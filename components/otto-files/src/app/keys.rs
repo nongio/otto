@@ -460,12 +460,18 @@ impl FilesApp {
                 }
                 // Select-all only means something when the request asked for
                 // more than one file.
+                // With a picture up, select-all takes its words first; a
+                // picture without any hands the key back to the listing.
+                Keysym::a if ctrl && browser.select_all_quickview_words() => {}
                 Keysym::a if ctrl => {
                     let multiple = browser.picker.as_ref().is_none_or(|p| p.request.multiple);
                     if multiple {
                         browser.select_all();
                     }
                 }
+                // Words selected on a previewed picture are copied as text,
+                // in either host: copying text is not file management.
+                Keysym::c if ctrl && browser.copy_quickview_selection(serial) => {}
                 // Cut, copy and paste are file management: browser only.
                 Keysym::c if ctrl && browser.picker.is_none() => {
                     browser.copy_selection(false, serial)
@@ -493,6 +499,8 @@ impl FilesApp {
                     // as everything else that is up.
                     if browser.info.is_some() {
                         browser.close_info();
+                    } else if browser.clear_quickview_selection() {
+                        // A stray drag does not cost the preview.
                     } else if browser.searching {
                         // The field can be closed with results still up. That
                         // is still a search, and Escape's job is to put back

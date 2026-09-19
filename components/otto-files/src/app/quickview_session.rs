@@ -1,6 +1,7 @@
 //! Quick View: opening, following, zooming, panning and closing the panel.
 
 use super::*;
+use otto_kit::preview::Word;
 
 impl Browser {
     /// The rect Quick View grows its panel from, for the active column.
@@ -148,6 +149,117 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Attach words recognised after the picture was shown, unless the user
+    /// has moved on since. The picture on screen is the same decode the words
+    /// were made on, so they land on it directly.
+    pub(super) fn finish_quickview_words(&mut self, generation: u64, words: Vec<Word>) {
+        if generation != self.quickview_generation {
+            return;
+        }
+        self.quickview_recognising = false;
+        if let Some(session) = self.quickview.as_mut() {
+            tracing::debug!(words = words.len(), name = %session.name, "recognised");
+            session.attach_words(words);
+            self.dirty = true;
+        }
+    }
+
+    /// The recogniser finished without words to attach. The badge goes away
+    /// with it: there is nothing on this picture to select, and a badge that
+    /// stayed would promise otherwise.
+    pub(super) fn finish_quickview_recognising(&mut self, generation: u64) {
+        if generation == self.quickview_generation {
+            self.quickview_recognising = false;
+            if let Some(session) = self.quickview.as_mut() {
+                tracing::debug!(name = %session.name, "no text recognised");
+                session.stop_recognising();
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// The recogniser has started on the picture that is up, so the panel can
+    /// say so.
+    pub(super) fn start_quickview_recognising(&mut self, generation: u64) {
+        if generation != self.quickview_generation {
+            return;
+        }
+        self.quickview_recognising = true;
+        if let Some(session) = self.quickview.as_mut() {
+            tracing::debug!(name = %session.name, "recognising");
+            session.start_recognising(std::time::Instant::now());
+            self.dirty = true;
+        }
+    }
+
+    /// Copy the words selected on the previewed picture. Returns whether
+    /// there were any — when there were not, the shortcut goes on meaning
+    /// what it means to the listing.
+    pub(super) fn copy_quickview_selection(&mut self, serial: u32) -> bool {
+        let Some(text) = self
+            .quickview
+            .as_ref()
+            .and_then(quickview::Session::selected_text)
+        else {
+            return false;
+        };
+        clipboard::set_text(&text, serial);
+        true
+    }
+
+    /// Select every recognised word on the previewed picture. Returns whether
+    /// there were any.
+    pub(super) fn select_all_quickview_words(&mut self) -> bool {
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let selected = session.select_all_words();
+        self.dirty |= selected;
+        selected
+    }
+
+    /// Drop the word selection on the previewed picture. Returns whether
+    /// there was one — Escape takes that turn before it closes the panel.
+    pub(super) fn clear_quickview_selection(&mut self) -> bool {
+        let Some(session) = self.quickview.as_mut() else {
+            return false;
+        };
+        let cleared = session.clear_selection();
+        self.dirty |= cleared;
+        cleared
+    }
+
+    /// Whether the pointer at `point` is over a recognised word, so the
+    /// cursor can say the picture has text to select.
+    pub(super) fn quickview_over_word(&self, point: skia_safe::Point, panel: Rect) -> bool {
+        let content = view::quickview_content_rect(panel);
+        self.quickview
+            .as_ref()
+            .is_some_and(|session| session.word_at(point.x, point.y, content).is_some())
+    }
+
+    /// Show the text beam over a word and the arrow elsewhere, changing the
+    /// shape only when the pointer crosses between the two.
+    pub(super) fn sync_quickview_cursor(&mut self, point: skia_safe::Point, panel: Rect) {
+        let over_word = self.quickview_over_word(point, panel);
+        if over_word != self.quickview_text_cursor {
+            self.quickview_text_cursor = over_word;
+            AppContext::set_cursor_shape(if over_word {
+                CursorShape::Text
+            } else {
+                CursorShape::Default
+            });
+        }
+    }
+
+    /// The pointer left the panel: back to the arrow if it was the beam.
+    pub(super) fn reset_quickview_cursor(&mut self) {
+        if self.quickview_text_cursor {
+            self.quickview_text_cursor = false;
+            AppContext::set_cursor_shape(CursorShape::Default);
+        }
+    }
+
     /// Expand the open panel to fill its display, or bring it back.
     pub(super) fn toggle_quickview_expand(&mut self) {
         if let Some(session) = self.quickview.as_mut() {
@@ -272,18 +384,27 @@ impl Browser {
         let (handled, moved) = match kind {
             QuickviewPointer::Press => {
                 let hit = session.pan_pointer_down(point.x, point.y, content);
-                (hit, hit)
+                // Not on a bar: a press on a word starts selecting, and a
+                // press anywhere else on the picture clears a selection.
+                let selected = !hit && session.select_pointer_down(point.x, point.y, content);
+                (hit || session.selecting, hit || selected)
             }
             QuickviewPointer::Motion => {
-                (false, session.pan_pointer_move(point.x, point.y, content))
+                let panned = session.pan_pointer_move(point.x, point.y, content);
+                let selected = session.select_pointer_move(point.x, point.y, content);
+                (false, panned || selected)
             }
             QuickviewPointer::Release => {
                 session.pan_pointer_up();
+                session.select_pointer_up();
                 (false, false)
             }
             QuickviewPointer::Leave => {
                 session.pan_pointer_up();
                 session.pan_pointer_leave();
+                // A drag that leaves the panel keeps its selection: what was
+                // reached is kept, and the button coming up outside ends it.
+                session.select_pointer_up();
                 (false, false)
             }
         };
@@ -337,6 +458,7 @@ impl Browser {
         // cannot re-open a panel the user has already dismissed.
         self.quickview_generation += 1;
         self.quickview_pending = false;
+        self.quickview_recognising = false;
         // Where the file is *now*, not where it was when the panel opened: the
         // selection may have arrow-keyed on, or the list scrolled, and the
         // point of the exit is to say which file this was.

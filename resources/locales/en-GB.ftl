@@ -349,6 +349,10 @@ files-command-show-hidden = Show Hidden Files
 files-command-hide-hidden = Hide Hidden Files
 files-command-quick-look = Quick Look
 files-command-search = Search
+# The palette command that reads a picture's words again, and what it says
+# when it was aimed at something that is not a picture.
+files-command-recognise-text = Run text recognition
+files-recognise-no-pictures = Nothing here to read text from
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.
@@ -539,6 +543,19 @@ files-folder-open-failed = This folder could not be opened: { $error }
 
 files-info-where = Where
 files-info-kind = Kind
+# What the recogniser has made of a picture, in Get Info. The field name
+# shares the narrow left column with the other names; keep it short. The
+# values are what goes beside it: reading now, what was found, or that
+# nothing has looked yet.
+files-info-text = Text
+files-info-text-reading = Reading…
+files-info-text-words =
+    { $count ->
+        [one] { $count } word
+       *[other] { $count } words
+    }
+files-info-text-none = No text
+files-info-text-unread = Not read yet
 files-info-modified = Modified
 files-info-created = Created
 files-info-accessed = Accessed

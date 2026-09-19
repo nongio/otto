@@ -100,11 +100,22 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
     // full-size copy in the browser for as long as the thumbnail lives.
     let fit = fit_within(scaled, target);
     match to_pixels_at(&image, intrinsic, fit) {
-        Some(pixels) => PreviewPayload::Pixels {
-            pixels,
-            pages: 1,
-            page: 1,
-        },
+        Some(mut pixels) => {
+            // Recognised at the decoded size, so the boxes are in the
+            // coordinates of the pixels that go down the pipe with them.
+            if request.ocr {
+                pixels.words = crate::ocr::recognise(
+                    &pixels,
+                    request.recogniser_command(),
+                    &request.languages,
+                );
+            }
+            PreviewPayload::Pixels {
+                pixels,
+                pages: 1,
+                page: 1,
+            }
+        }
         None => payload::unavailable(otto_kit::t_owned!("quickview-error-image-readback")),
     }
 }
@@ -200,6 +211,7 @@ fn animation(codec: &mut Codec, intrinsic: ISize, target: ISize) -> Option<Previ
             intrinsic_height: intrinsic.height.max(0) as u32,
             data,
             frame_delays: delays,
+            words: Vec::new(),
         },
         pages: 1,
         page: 1,
@@ -414,6 +426,7 @@ fn to_pixels_at(image: &skia_safe::Image, intrinsic: ISize, size: ISize) -> Opti
         intrinsic_height: intrinsic.height.max(0) as u32,
         data,
         frame_delays: Vec::new(),
+        words: Vec::new(),
     })
 }
 

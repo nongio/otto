@@ -215,6 +215,80 @@ pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum
 and springy ends. Files never decodes a file itself — the bytes are parsed in a
 separate sandboxed process, and only a validated result is drawn.
 
+### Text in pictures
+
+With `tesseract` installed, the words in a picture — a screenshot, a photo of
+a sign, a scanned page — can be selected and copied. The picture comes up
+first, with a small badge in the panel's bottom right corner: it pulses while
+the text is being read, settles into a text mark once the words are there, and
+disappears if the picture turns out to have no text in it. From the moment the
+text mark appears the pointer turns into a text cursor over any word. Drag
+over words to select them — the selection follows reading order, not the shape
+of the drag — `Ctrl+C` copies the text with line breaks where
+the picture has them, `Ctrl+A` selects every word, and `Escape` drops the
+selection before it closes the panel. Zooming in keeps the selection on the
+same words. The languages used are your locale's and English, whichever
+packs are installed; there is nothing to configure.
+
+Install it from your distribution: `tesseract` plus a language pack such as
+`tesseract-data-eng` (Arch), `tesseract-ocr-eng` (Debian, Ubuntu) or
+`tesseract-langpack-eng` (Fedora). If you read in something other than
+English, install your language's pack as well — swap the `eng` at the end
+for its three-letter code, `deu` for German, `fra` for French, `jpn` for
+Japanese. Without tesseract, pictures preview as before and nothing says
+otherwise.
+
+What was read is remembered in `~/.cache/otto/ocr/`, never in the picture
+itself, so a picture is recognised once. Install a language pack later, or
+name a different recogniser, and the pictures in the folder on screen are
+read again with it, a few at a time in the background. Entries for pictures
+you have not touched in 90 days are dropped; the only cost is reading them
+again. Find searches it too: a word that
+appears in a screenshot you have looked at lists that screenshot, even when
+file indexing is off. Pictures in the folder on screen are recognised in the
+background while the window is idle, so Find can answer for pictures you have
+not opened.
+
+The preview column says where a picture has got to on its last caption line,
+and Get Info says the same thing: **Text** reads *Reading…*
+while the words are being found, then how many there are, or *No text* when
+there turned out to be none. *Not read yet* means nothing has looked at that
+one yet.
+
+To read one again at once — when the words came out wrong, or to avoid
+waiting for the background to get to it — select it and run **Run text
+recognition** from the command palette.
+
+To read a whole folder now rather than waiting for the window to get to it:
+
+```sh
+otto-files --recognise ~/Pictures/Screenshots
+```
+
+It prints a line per picture and remembers what it found, the same as the
+window would.
+
+To turn recognition off, in `~/.config/otto/files.toml`:
+
+```toml
+[quickview]
+recognise_text = false
+```
+
+Words already remembered are still shown and searched.
+
+Any other recogniser works in tesseract's place, as long as it reads a PNG
+on standard input and writes [hOCR](http://kba.cloud/hocr-spec/) on standard
+output — which tesseract, kraken, ocropus and most wrappers around the
+neural engines do. Name it in the same section of that file;
+`{languages}` is replaced with the language list, which is also in the
+`OCR_LANGUAGES` variable:
+
+```toml
+[quickview]
+recogniser = "kraken -i /dev/stdin /dev/stdout ocr -h"
+```
+
 ## Opening and saving in other applications
 
 The same code is the desktop's file picker, through the XDG Desktop Portal. When

@@ -58,7 +58,9 @@ one file descriptor and no network.
   the sandbox exists to solve.
 - Remote or virtual locations. `file://` only — no network fetch, ever, by any
   part of the system.
-- A second thumbnail cache, a content index, or full-text search.
+- A second thumbnail cache. Text recognised in pictures is cached and searched
+  under the bounded terms of [quickview-ocr.md](./quickview-ocr.md); nothing
+  else is indexed.
 - A preview process, a preview service, or a preview daemon. There is no bus
   name and nothing to activate.
 

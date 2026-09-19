@@ -15,11 +15,11 @@ use std::io::{self, Write};
 
 pub use otto_kit::preview::{
     document::{Block, Span, SpanStyle},
-    Fact, Pixels, Preview as PreviewPayload, Row,
+    Fact, Pixels, Preview as PreviewPayload, Row, Word,
 };
 
 /// Wire magic. Bumped if the encoding below ever changes shape.
-const MAGIC: &[u8; 4] = b"OQV3";
+const MAGIC: &[u8; 4] = b"OQV4";
 
 /// Ceiling on any single length field. A corrupt worker must not be able to
 /// make the parent allocate a gigabyte because a length byte flipped.
@@ -29,6 +29,15 @@ const MAX_LEN: u32 = 512 * 1024 * 1024;
 /// allocated for. Well past what any animation a preview would play has, and
 /// far short of what a flipped length byte could ask for.
 pub const MAX_FRAMES: u32 = 4096;
+
+/// The most words a picture may carry over the wire. The recogniser keeps
+/// the most confident ones under the same bound, so a payload that exceeds
+/// it did not come from the recogniser.
+pub const MAX_WORDS: usize = 4096;
+
+/// The longest a single word's text may be. A recognised word is a token,
+/// not a line; anything longer is a corrupt length, not a word.
+const MAX_WORD_TEXT: usize = 256;
 
 /// Nothing could be shown, and why.
 pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
@@ -138,6 +147,24 @@ fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
     }
     put_u32(out, pixels.data.len() as u32);
     out.extend_from_slice(&pixels.data);
+    put_words(out, &pixels.words);
+}
+
+/// The words on a picture, after its pixels. Written for every picture,
+/// empty or not, so the reader never has to guess whether a list follows.
+fn put_words(out: &mut Vec<u8>, words: &[Word]) {
+    put_u32(out, words.len() as u32);
+    for word in words {
+        put_str(out, &word.text);
+        put_u32(out, word.left);
+        put_u32(out, word.top);
+        put_u32(out, word.width);
+        put_u32(out, word.height);
+        out.push(word.confidence);
+        put_u32(out, word.block);
+        put_u32(out, word.paragraph);
+        put_u32(out, word.line);
+    }
 }
 
 fn put_spans(out: &mut Vec<u8>, spans: &[Span]) {
@@ -394,14 +421,43 @@ impl<'a> Cursor<'a> {
         if count != expected {
             return None;
         }
+        let data = self.take(count)?.to_vec();
+        let words = self.words()?;
         Some(Pixels {
             width,
             height,
             intrinsic_width,
             intrinsic_height,
-            data: self.take(count)?.to_vec(),
+            data,
             frame_delays,
+            words,
         })
+    }
+
+    fn words(&mut self) -> Option<Vec<Word>> {
+        let count = self.len()?;
+        if count > MAX_WORDS {
+            return None;
+        }
+        let mut words = Vec::with_capacity(count);
+        for _ in 0..count {
+            let text = self.string()?;
+            if text.len() > MAX_WORD_TEXT {
+                return None;
+            }
+            words.push(Word {
+                text,
+                left: self.u32()?,
+                top: self.u32()?,
+                width: self.u32()?,
+                height: self.u32()?,
+                confidence: self.u8()?,
+                block: self.u32()?,
+                paragraph: self.u32()?,
+                line: self.u32()?,
+            });
+        }
+        Some(words)
     }
 }
 
@@ -509,6 +565,7 @@ mod tests {
             intrinsic_height: 8,
             data: vec![0xAB; 16],
             frame_delays: Vec::new(),
+            words: Vec::new(),
         };
         let animation = Pixels {
             width: 2,
@@ -517,6 +574,34 @@ mod tests {
             intrinsic_height: 2,
             data: vec![0xCD; 48],
             frame_delays: vec![40, 40, 200],
+            words: Vec::new(),
+        };
+        let with_words = Pixels {
+            words: vec![
+                Word {
+                    text: "Hello".into(),
+                    left: 21,
+                    top: 41,
+                    width: 54,
+                    height: 19,
+                    confidence: 89,
+                    block: 1,
+                    paragraph: 1,
+                    line: 1,
+                },
+                Word {
+                    text: "Otto".into(),
+                    left: 82,
+                    top: 44,
+                    width: 45,
+                    height: 16,
+                    confidence: 92,
+                    block: 1,
+                    paragraph: 1,
+                    line: 2,
+                },
+            ],
+            ..pixels.clone()
         };
         let cases = vec![
             PreviewPayload::Pixels {
@@ -526,6 +611,11 @@ mod tests {
             },
             PreviewPayload::Pixels {
                 pixels: animation,
+                pages: 1,
+                page: 1,
+            },
+            PreviewPayload::Pixels {
+                pixels: with_words,
                 pages: 1,
                 page: 1,
             },
@@ -616,6 +706,48 @@ mod tests {
             assert!(decode(&good[..cut]).is_none());
         }
         assert!(decode(b"XXXX\x01").is_none());
+
+        // The same for a picture with words: a list cut off mid-word is not
+        // a shorter list, it is no payload.
+        let with_words = PreviewPayload::Pixels {
+            pixels: Pixels {
+                width: 1,
+                height: 1,
+                intrinsic_width: 1,
+                intrinsic_height: 1,
+                data: vec![0; 4],
+                frame_delays: Vec::new(),
+                words: vec![Word {
+                    text: "x".into(),
+                    left: 0,
+                    top: 0,
+                    width: 1,
+                    height: 1,
+                    confidence: 70,
+                    block: 1,
+                    paragraph: 1,
+                    line: 1,
+                }],
+            },
+            pages: 1,
+            page: 1,
+        };
+        let good = encode(&with_words);
+        for cut in 0..good.len() {
+            assert!(decode(&good[..cut]).is_none());
+        }
+
+        // A word count past the bound is refused before anything is
+        // allocated for it.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.push(1);
+        for value in [1u32, 1, 1, 1, 4] {
+            put_u32(&mut bytes, value);
+        }
+        bytes.extend_from_slice(&[0; 4]);
+        put_u32(&mut bytes, MAX_WORDS as u32 + 1);
+        assert!(decode(&bytes).is_none());
     }
 
     #[test]
@@ -631,6 +763,7 @@ mod tests {
             put_u32(&mut bytes, value);
         }
         bytes.extend_from_slice(&[0; 8]);
+        put_u32(&mut bytes, 0);
         put_u32(&mut bytes, 1);
         put_u32(&mut bytes, 1);
         assert!(decode(&bytes).is_none());

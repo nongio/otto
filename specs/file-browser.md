@@ -56,7 +56,9 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
   nothing about the user's files between runs. See Non-Goals in
   [launcher.md](./launcher.md) — the same reasoning applies. Consulting an
   index the desktop already keeps is a different thing and is in scope; see
-  *Recent and Find*.
+  *Recent and Find*. The one exception is text recognised in pictures the
+  person has looked at, kept in Otto's cache under the bounded terms of
+  [quickview-ocr.md](./quickview-ocr.md).
 - A scripting or plugin interface.
 - Being configurable by theme file. It follows the desktop's colour scheme and
   icon theme.
@@ -170,8 +172,11 @@ The defaults stand on their own and need no configuration: Recent, home, and
 whichever XDG user directories actually exist. A directory that is not there is
 not listed — a row leading nowhere is worse than its absence.
 
-`~/.config/otto/files.toml` adds the two things defaults cannot know: the
-folders this person works in, and which built-in rows they never touch.
+`~/.config/otto/files.toml` holds the browser's settings. Its `[sidebar]`
+section adds the two things defaults cannot know: the folders this person
+works in, and which built-in rows they never touch. Its `[quickview]` section
+is text recognition's, and belongs to
+[quickview-ocr.md](./quickview-ocr.md).
 
 ```toml
 [sidebar]

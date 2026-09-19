@@ -205,6 +205,7 @@ impl Browser {
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                     self.quickview_focus(point, panel);
                     self.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
+                    self.sync_quickview_cursor(point, panel);
                     if self.quickview_close_hovered != over_close
                         || self.quickview_expand_hovered != over_expand
                     {
@@ -216,6 +217,7 @@ impl Browser {
                 PointerEventKind::Leave { .. } => {
                     self.quickview_focus = None;
                     self.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
+                    self.reset_quickview_cursor();
                     if self.quickview_close_hovered || self.quickview_expand_hovered {
                         self.quickview_close_hovered = false;
                         self.quickview_expand_hovered = false;

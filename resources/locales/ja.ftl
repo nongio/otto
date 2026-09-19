@@ -427,6 +427,11 @@ files-folder-open-failed = このフォルダを開けませんでした：{ $er
 
 files-info-where = 場所
 files-info-kind = 種類
+files-info-text = テキスト
+files-info-text-reading = 読み取り中…
+files-info-text-words = { $count } 語
+files-info-text-none = テキストなし
+files-info-text-unread = 未読み取り
 files-info-modified = 変更日
 files-info-created = 作成日
 files-info-accessed = アクセス日
@@ -560,6 +565,8 @@ files-command-show-hidden = 隠しファイルを表示
 files-command-hide-hidden = 隠しファイルを非表示
 files-command-quick-look = クイックルック
 files-command-search = 検索
+files-command-recognise-text = テキスト認識を実行
+files-recognise-no-pictures = 読み取るテキストがありません
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.

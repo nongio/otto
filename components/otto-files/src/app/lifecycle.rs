@@ -481,7 +481,15 @@ impl App for FilesApp {
             }
         }
 
-        let (repaint, preview_target, scrolled_only, scroll_on_surfaces, scroll_area, thumb_jobs) = {
+        let (
+            repaint,
+            preview_target,
+            scrolled_only,
+            scroll_on_surfaces,
+            scroll_area,
+            thumb_jobs,
+            ocr_job,
+        ) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
             // Momentum, the overscroll bounce and the scrollbar's fade all
@@ -510,6 +518,9 @@ impl App for FilesApp {
             // switch of view mode — has already happened by the time this
             // runs.
             let thumb_jobs = browser.sync_thumbnails();
+            // And, with nothing else to do, a picture whose text is not yet
+            // known to Find.
+            let ocr_job = browser.sync_recognition();
             let listing = std::mem::take(&mut browser.listing_dirty);
             let quiet = !changed && !browser.dirty && !animating && preview_target.is_none();
             let scrolled_only = scrolled && quiet;
@@ -532,8 +543,12 @@ impl App for FilesApp {
                 scroll_on_surfaces,
                 scroll_area,
                 thumb_jobs,
+                ocr_job,
             )
         };
+        if let Some(job) = ocr_job {
+            self.start_recognition(job);
+        }
         if let Some((path, generation)) = preview_target {
             self.start_preview(path, generation);
         }

@@ -446,6 +446,16 @@ files-folder-open-failed = Не вдалося відкрити цю папку:
 
 files-info-where = Розташування
 files-info-kind = Тип
+files-info-text = Текст
+files-info-text-reading = Розпізнається…
+files-info-text-words =
+    { $count ->
+        [one] { $count } слово
+        [few] { $count } слова
+       *[many] { $count } слів
+    }
+files-info-text-none = Тексту немає
+files-info-text-unread = Ще не розпізнано
 files-info-modified = Змінено
 files-info-created = Створено
 files-info-accessed = Відкрито
@@ -585,6 +595,8 @@ files-command-show-hidden = Показати приховані файли
 files-command-hide-hidden = Сховати приховані файли
 files-command-quick-look = Швидкий перегляд
 files-command-search = Пошук
+files-command-recognise-text = Розпізнати текст
+files-recognise-no-pictures = Тут немає чого розпізнавати
 
 # Нередагований префікс, який поле палітри носить, поки вводиться аргумент.
 # Після нього додаються двокрапка і пробіл.

@@ -19,7 +19,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
-use otto_kit::preview::{Pixels, Preview, Zoom};
+use otto_kit::preview::{self, Pixels, Preview, Word, WordSelection, Zoom};
 use otto_media_kit::transport::TransportHit;
 use otto_media_kit::{Frame, Options, Playback, Player, State};
 use otto_quickview::decode::Request;
@@ -324,6 +324,20 @@ pub struct Session {
     /// nothing the key can see: the card sits on "Opening preview…" until
     /// something else moves it.
     pub loading: bool,
+    /// The words selected on a picture, when some are. Indices into the
+    /// preview's words; the toolkit turns them into text and highlights.
+    pub selection: Option<WordSelection>,
+    /// Whether a press on a word is still down, extending the selection as
+    /// the pointer moves.
+    pub selecting: bool,
+    /// Bumped when words land on the picture after it was drawn, so the
+    /// panel's content key sees that there is now something to select.
+    pub words_epoch: u64,
+    /// When the recogniser was started on this picture, while it is still
+    /// running. The badge in the panel's corner reads it: the picture is up
+    /// before its words are, and a reader who cannot see that something is
+    /// still coming reads "no text here" instead of "not yet".
+    pub recognising_since: Option<Instant>,
 }
 
 impl Session {
@@ -344,6 +358,10 @@ impl Session {
             video: None,
             expanded: false,
             loading: false,
+            selection: None,
+            selecting: false,
+            words_epoch: 0,
+            recognising_since: None,
         }
     }
 
@@ -435,6 +453,9 @@ impl Session {
         let preview = waiting_preview(&name, is_dir);
         Self {
             loading: true,
+            selection: None,
+            selecting: false,
+            words_epoch: 0,
             ..Self::new(preview, name, anchor, opened_at)
         }
     }
@@ -456,6 +477,120 @@ impl Session {
         };
         *self = Self::waiting(name, is_dir, anchor, opened_at);
         self.expanded = expanded;
+    }
+
+    /// The words on the picture, if it is one with any.
+    pub fn words(&self) -> &[Word] {
+        match &self.preview {
+            Preview::Pixels { pixels, .. } => &pixels.words,
+            _ => &[],
+        }
+    }
+
+    /// Words recognised after the picture was shown. Ignored when the
+    /// preview is not a picture any more; a selection that was somehow made
+    /// on the old words is dropped with them.
+    pub fn attach_words(&mut self, words: Vec<Word>) {
+        if let Preview::Pixels { pixels, .. } = &mut self.preview {
+            pixels.words = words;
+            self.selection = None;
+            self.selecting = false;
+            self.words_epoch = self.words_epoch.wrapping_add(1);
+        }
+        self.recognising_since = None;
+    }
+
+    /// Say that the recogniser is running on this picture, from `now`.
+    pub fn start_recognising(&mut self, now: Instant) {
+        self.recognising_since = Some(now);
+    }
+
+    /// Say that it has stopped, with nothing to attach.
+    pub fn stop_recognising(&mut self) {
+        self.recognising_since = None;
+    }
+
+    /// How long the recogniser has been running, in seconds; `None` when it
+    /// is not. What the badge animates on, and what puts a moving panel in
+    /// the content key while it moves.
+    pub fn recognising_phase(&self) -> Option<f32> {
+        self.recognising_since
+            .map(|since| since.elapsed().as_secs_f32())
+    }
+
+    /// The word under a panel point, in the picture as it is drawn in
+    /// `content`.
+    pub fn word_at(&self, x: f32, y: f32, content: Rect) -> Option<usize> {
+        if self.words().is_empty() {
+            return None;
+        }
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        preview::word_at(&layout, &self.preview, x, y)
+    }
+
+    /// A press over the picture: on a word it starts a selection and is
+    /// taken; anywhere else it clears one and is not. Returns whether the
+    /// press was on a word.
+    pub fn select_pointer_down(&mut self, x: f32, y: f32, content: Rect) -> bool {
+        let had = self.selection.take().is_some();
+        self.selecting = false;
+        match self.word_at(x, y, content) {
+            Some(index) => {
+                self.selection = Some(WordSelection::word(index));
+                self.selecting = true;
+                true
+            }
+            None => had,
+        }
+    }
+
+    /// The pointer moved with a selection being dragged. Returns whether the
+    /// selection changed.
+    pub fn select_pointer_move(&mut self, x: f32, y: f32, content: Rect) -> bool {
+        if !self.selecting {
+            return false;
+        }
+        let Some(mut selection) = self.selection else {
+            return false;
+        };
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        let Some(head) = preview::word_near(&layout, &self.preview, x, y) else {
+            return false;
+        };
+        if head == selection.head {
+            return false;
+        }
+        selection.head = head;
+        self.selection = Some(selection);
+        true
+    }
+
+    /// The button came up: the selection stays, the drag ends.
+    pub fn select_pointer_up(&mut self) {
+        self.selecting = false;
+    }
+
+    /// Select every word on the picture. Returns whether there were any.
+    pub fn select_all_words(&mut self) -> bool {
+        let count = self.words().len();
+        if count == 0 {
+            return false;
+        }
+        self.selection = Some(WordSelection::new(0, count - 1));
+        true
+    }
+
+    /// Drop the selection. Returns whether there was one.
+    pub fn clear_selection(&mut self) -> bool {
+        self.selecting = false;
+        self.selection.take().is_some()
+    }
+
+    /// The selected words as text, or `None` with nothing selected.
+    pub fn selected_text(&self) -> Option<String> {
+        let selection = self.selection?;
+        let text = preview::selection_text(self.words(), selection);
+        (!text.is_empty()).then_some(text)
     }
 
     /// How far into the entrance the panel is, 0 → 1.
@@ -896,6 +1031,127 @@ pub fn decode(path: &Path, panel: Rect, scale: f32, page: u32) -> Preview {
     otto_quickview::decode_path(path, &request)
 }
 
+/// The size a picture is decoded at for `panel`, so a second decode of the
+/// same file lands on the same pixels as the first.
+pub fn decode_size(panel: Rect, scale: f32) -> (u32, u32) {
+    (
+        ((panel.width() * scale * 2.0) as u32).clamp(64, 4096),
+        ((panel.height() * scale * 2.0) as u32).clamp(64, 4096),
+    )
+}
+
+/// Who is waiting for a recognition, which decides whose CPU it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Priority {
+    /// The panel is up and the badge is breathing: the user is watching.
+    Interactive,
+    /// The pass over the folder, which nobody asked for. Runs down the queue
+    /// so it fills idle cores and yields to an interactive one the moment the
+    /// scheduler has to choose.
+    Background,
+}
+
+impl Priority {
+    /// The `nice` value a worker at this priority runs at.
+    fn nice(self) -> i32 {
+        match self {
+            // Whatever the app itself runs at: the panel is up and the badge
+            // is breathing, so this is as urgent as anything else the window
+            // is doing.
+            Priority::Interactive => 0,
+            // Enough to lose every contest with the desktop without being so
+            // far down that a machine with something else running never
+            // finishes the pass.
+            Priority::Background => 10,
+        }
+    }
+}
+
+/// Recognise the text in a picture with `recogniser` — a command line, see
+/// `otto_quickview::ocr` — at the size [`decode`] shows it, and remember
+/// it. Returns the words in the coordinates of that decode, or
+/// `None` when the file is not a picture or nothing could be recognised
+/// (in which case nothing is remembered either, so a transient failure is
+/// retried next time).
+///
+/// Costs a second sandboxed decode of the file with the recogniser run
+/// inside it. Blocks; never on the UI thread.
+pub fn recognise(
+    path: &Path,
+    panel: Rect,
+    scale: f32,
+    page: u32,
+    recogniser: &str,
+    priority: Priority,
+) -> Option<Vec<Word>> {
+    let (width, height) = decode_size(panel, scale);
+    let request = Request {
+        page: page.max(1),
+        width,
+        height,
+        ocr: true,
+        languages: otto_quickview::ocr::languages(),
+        recogniser: recogniser.to_string(),
+        name: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        budget: otto_quickview::sandbox::Budget {
+            nice: priority.nice(),
+            ..Default::default()
+        },
+        ..Request::default()
+    };
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    match otto_quickview::decode_path(path, &request) {
+        Preview::Pixels { pixels, .. } => {
+            if let Err(err) = crate::ocrcache::store(
+                path,
+                page,
+                modified,
+                &request.languages,
+                request.recogniser_command(),
+                (pixels.width, pixels.height),
+                &pixels.words,
+            ) {
+                tracing::debug!(path = %path.display(), %err, "could not remember recognised text");
+            }
+            Some(pixels.words)
+        }
+        _ => None,
+    }
+}
+
+/// Words already remembered for `path`, scaled to the decode `panel` gets.
+pub fn remembered_words(path: &Path, panel: Rect, scale: f32, page: u32) -> Option<Vec<Word>> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let entry = crate::ocrcache::lookup(path, page, modified)?;
+    // The decode is fitted inside the requested box at the picture's own
+    // aspect, so it has the entry's aspect too; scaling by width alone would
+    // do, but both are recorded and both are used.
+    let (width, height) = fitted_size((entry.width, entry.height), decode_size(panel, scale));
+    Some(crate::ocrcache::scale_words(
+        &entry.words,
+        (entry.width, entry.height),
+        (width, height),
+    ))
+}
+
+/// The size a `source`-shaped picture comes out at when decoded to fit in
+/// `target`, never upscaled.
+fn fitted_size(source: (u32, u32), target: (u32, u32)) -> (u32, u32) {
+    if source.0 == 0 || source.1 == 0 {
+        return source;
+    }
+    let scale = (target.0 as f32 / source.0 as f32)
+        .min(target.1 as f32 / source.1 as f32)
+        .min(1.0);
+    (
+        ((source.0 as f32 * scale).round() as u32).max(1),
+        ((source.1 as f32 * scale).round() as u32).max(1),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,6 +1187,67 @@ mod tests {
         assert!(!session.expanded);
     }
 
+    #[test]
+    fn dragging_over_words_selects_them_in_reading_order_and_copies_as_text() {
+        let word = |text: &str, left: u32, top: u32, line: u32| Word {
+            text: text.into(),
+            left,
+            top,
+            width: 40,
+            height: 16,
+            confidence: 90,
+            block: 1,
+            paragraph: 1,
+            line,
+        };
+        let mut session = image_session(400, 120);
+        session.attach_words(vec![
+            word("Hello", 20, 40, 1),
+            word("Otto", 80, 40, 1),
+            word("42", 140, 40, 1),
+            word("Next", 20, 80, 2),
+        ]);
+        assert_eq!(session.words_epoch, 1);
+        // Words landing end the wait, whoever set it going.
+        assert!(session.recognising_phase().is_none());
+        // Drawn one-to-one: a 400×120 picture in a 400×120 box.
+        let content = Rect::from_wh(400.0, 120.0);
+        let layout = preview::layout(content, &session.preview, 0, session.zoom);
+        let at = |x: f32, y: f32| {
+            (
+                layout.content.left + x * layout.content.width() / 400.0,
+                layout.content.top + y * layout.content.height() / 120.0,
+            )
+        };
+
+        // A press on a gap clears and takes nothing.
+        let (x, y) = at(200.0, 10.0);
+        assert!(!session.select_pointer_down(x, y, content));
+        assert!(session.selection.is_none());
+
+        // Press on "Otto", drag to below "Next", release.
+        let (x, y) = at(90.0, 48.0);
+        assert!(session.select_pointer_down(x, y, content));
+        let (x, y) = at(300.0, 110.0);
+        assert!(session.select_pointer_move(x, y, content));
+        session.select_pointer_up();
+        assert_eq!(session.selected_text().as_deref(), Some("Otto 42\nNext"));
+
+        // Backwards drag reads forwards.
+        let (x, y) = at(30.0, 88.0);
+        assert!(session.select_pointer_down(x, y, content));
+        let (x, y) = at(25.0, 48.0);
+        assert!(session.select_pointer_move(x, y, content));
+        assert_eq!(
+            session.selected_text().as_deref(),
+            Some("Hello Otto 42\nNext")
+        );
+
+        assert!(session.select_all_words());
+        assert!(session.clear_selection());
+        assert!(session.selected_text().is_none());
+    }
+
     fn image_session(width: u32, height: u32) -> Session {
         Session::new(
             Preview::Pixels {
@@ -941,6 +1258,7 @@ mod tests {
                     intrinsic_height: height,
                     data: vec![0; (width * height * 4) as usize],
                     frame_delays: Vec::new(),
+                    words: Vec::new(),
                 },
                 pages: 1,
                 page: 1,
@@ -963,6 +1281,7 @@ mod tests {
                     intrinsic_height: 2,
                     data: vec![0; 2 * 2 * 4 * 3],
                     frame_delays: vec![Pixels::MIN_DELAY_MS; 3],
+                    words: Vec::new(),
                 },
                 pages: 1,
                 page: 1,
@@ -1026,13 +1345,13 @@ mod tests {
     }
 
     fn document_session() -> Session {
-        use otto_kit::preview::{Block, Span, SpanStyle};
+        use otto_kit::preview::{Block, Span};
 
         let paragraph = |n: usize| Block::Paragraph {
-            spans: vec![Span {
-                text: format!("Paragraph {n}. {}", "Words that wrap. ".repeat(20)),
-                style: SpanStyle::default(),
-            }],
+            spans: vec![Span::plain(format!(
+                "Paragraph {n}. {}",
+                "Words that wrap. ".repeat(20)
+            ))],
         };
         Session::new(
             Preview::Document {
@@ -1341,5 +1660,31 @@ mod tests {
         );
         assert!(start.width() < resting.width(), "{start:?}");
         assert!(start.width() > resting.width() * 0.9, "{start:?}");
+    }
+
+    #[test]
+    fn the_panel_says_the_recogniser_is_running_until_it_is_not() {
+        let mut session = image_session(400, 120);
+        // Nothing running, nothing to say.
+        assert!(session.recognising_phase().is_none());
+
+        session.start_recognising(Instant::now());
+        assert!(session.recognising_phase().is_some());
+
+        // Finishing with nothing found puts the badge away rather than
+        // leaving it promising text that is not there.
+        session.stop_recognising();
+        assert!(session.recognising_phase().is_none());
+        assert!(session.words().is_empty());
+    }
+
+    /// The pass over the folder runs below whatever the desktop is doing; a
+    /// preview somebody is waiting for runs alongside it. Both at the same
+    /// priority is the case this exists to prevent — two recognisers sharing
+    /// the cores while the badge breathes.
+    #[test]
+    fn work_nobody_asked_for_runs_below_work_somebody_did() {
+        assert_eq!(Priority::Interactive.nice(), 0);
+        assert!(Priority::Background.nice() > Priority::Interactive.nice());
     }
 }

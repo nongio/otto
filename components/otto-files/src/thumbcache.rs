@@ -146,7 +146,13 @@ pub fn uri_for(path: &Path) -> String {
 
 /// The file name a thumbnail of `path` has, in any size directory.
 pub fn thumbnail_name(path: &Path) -> String {
-    format!("{}.png", hex(&md5(uri_for(path).as_bytes())))
+    format!("{}.png", key_for(path))
+}
+
+/// The cache key for `path`: the lowercase hex MD5 of its URI. Shared with
+/// every other per-file cache Otto keeps, so one keying rule serves them all.
+pub fn key_for(path: &Path) -> String {
+    hex(&md5(uri_for(path).as_bytes()))
 }
 
 /// Where a thumbnail of `path` would live at `size`. Says nothing about

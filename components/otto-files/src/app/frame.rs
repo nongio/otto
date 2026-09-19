@@ -163,7 +163,11 @@ impl Browser {
             // The player is on its own subsurface, over the column.
             video_on_surface: true,
             first_row: 0,
-            info: preview_info(entry, self.decoded_preview()),
+            info: preview_info(
+                entry,
+                self.decoded_preview(),
+                self.preview.as_ref().and_then(|pane| pane.text),
+            ),
         });
 
         view::Frame {
