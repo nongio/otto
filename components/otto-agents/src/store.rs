@@ -36,6 +36,12 @@ pub struct SessionRecord {
     pub session: SessionState,
     /// The session's one chat.
     pub chat: ChatState,
+    /// Whether the agent has a history for the session. The turns are not
+    /// stored — they are the agent's, and come back on `session/load` — so
+    /// this is what is left of them, and it is what decides how the session
+    /// is entered in a terminal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub written: bool,
 }
 
 impl SessionRecord {
@@ -45,6 +51,7 @@ impl SessionRecord {
         agent_session: Option<String>,
         session: SessionState,
         chat: ChatState,
+        written: bool,
     ) -> Self {
         Self {
             version: VERSION,
@@ -53,6 +60,7 @@ impl SessionRecord {
             agent_session,
             session,
             chat,
+            written,
         }
     }
 }
@@ -241,6 +249,7 @@ mod tests {
             None,
             new_session_state("echo", "file:///tmp"),
             new_chat_state(&format!("ahp-chat:/{id}"), now),
+            false,
         )
     }
 

@@ -182,9 +182,26 @@ impl Backend for AcpBackend {
         ));
     }
 
-    fn terminal(&self, provider: &str, agent_session: &str, cwd: &Path) -> Option<Vec<String>> {
+    fn terminal(
+        &self,
+        provider: &str,
+        agent_session: &str,
+        cwd: &Path,
+        written: bool,
+    ) -> Option<Vec<String>> {
         let agent = self.agents.iter().find(|agent| agent.id == provider)?;
-        config::terminal_command(&self.terminal, agent, agent_session, cwd)
+        config::terminal_command(&self.terminal, agent, agent_session, cwd, written)
+    }
+
+    fn enter(
+        &self,
+        provider: &str,
+        agent_session: &str,
+        cwd: &Path,
+        written: bool,
+    ) -> Option<Vec<String>> {
+        let agent = self.agents.iter().find(|agent| agent.id == provider)?;
+        config::enter_command(agent, agent_session, cwd, written)
     }
 }
 

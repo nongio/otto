@@ -131,7 +131,7 @@ through the protocol.
 | `images.rs` | Pictures agents send, written to a cache so they travel as URIs |
 | `config.rs` | `agents.toml`: which agents exist, their models and permissions |
 | `store.rs` | Sessions on disk, so they survive a restart |
-| `cli.rs` | `otto-agents sessions` and `otto-agents show`, for the terminal |
+| `cli.rs` | `otto-agents sessions`, `show`, `new` and `enter`, for the terminal |
 
 **One lock, one sequence.** Every mutation goes through `Host::lock`, which
 reduces the action with the same `ahp::reducers` the clients use, stamps it with
@@ -318,11 +318,31 @@ name), which otto-agents passes to the agent as ACP `resource_link` blocks. The
 agent reads the files with its own tools. Other attachment kinds are dropped
 with a warning.
 
-**Entering a terminal.** When `agents.toml` configures a `terminal` and the
-agent has an `enter` command, otto-agents publishes the joined command, the
-folder and the agent's id for the session in the session's `_meta` as
-`otto.terminal`. Ctrl+O in the launcher spawns it in a process group of its own
-and closes the card, handing the session to the agent's own interface.
+**Entering a terminal.** When the agent has an `enter` command, otto-agents
+publishes it, the folder and the agent's id for the session in the session's
+`_meta` as `otto.terminal`: `enter` is the command on its own, and `command`
+the same wrapped in the configured `terminal`, or `null` when there is none.
+Ctrl+O in the launcher spawns `command` in a process group of its own and
+closes the card, handing the session to the agent's own interface.
+
+A harness enters a session it has never written differently from one it has:
+Claude takes `--session-id <id>` for the first and `--resume <id>` for the
+second, and refuses the wrong one either way. So an agent has two commands —
+`enter` and `enter_new` — and the service publishes whichever fits, swapping
+`enter_new` for `enter` as soon as the session has a history. It counts as
+written once the agent has been given a turn, once a replayed history comes
+back on `session/load`, and once the session has been handed to a terminal,
+whose turns this service never sees. The turns themselves are not stored, so
+the flag is, and it outlives a restart.
+
+**From a terminal.** `otto-agents new [agent]` creates a session — with the
+agent named by its id or the name it is shown under, in the folder the command
+was run from — waits for the agent to give it an id, hands it over the same way
+Ctrl+O does, and `exec`s the enter command in place: the terminal becomes the
+agent's own interface. `otto-agents enter [session]` does the same for a
+session that is already there. Both are the other direction of the same
+handover, and what is said in them is in Ask the next time the session is
+opened.
 
 A session has one terminal. The launcher looks for a process that names the
 agent's id on its command line and has a controlling terminal — the agent
@@ -637,6 +657,7 @@ mode = "acceptEdits"                     # optional; one of the agent's own mode
 permissions = "ask"                      # or "allow"; "deny" is the default
 folder = "~/dev"                         # optional; where this agent's sessions start
 enter = ["claude", "--resume", "{session}"]
+enter_new = ["claude", "--session-id", "{session}"] # how a session with no history yet is entered
 skills = "claude"                        # "claude" or false (the default)
 agent = "otto"                           # optional; a plugin agent to run as (needs skills = "claude")
 colour = "orange"                        # optional; `color` works too

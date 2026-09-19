@@ -63,6 +63,15 @@ pub struct AgentConfig {
     /// `["claude", "--resume", "{session}"]`. Empty when the agent has none.
     #[serde(default)]
     pub enter: Vec<String>,
+    /// The same, for a session the agent has not written a history for yet:
+    /// `otto-agents new` creates the session and enters it before anything is
+    /// said in it, and a harness that resumes by id refuses one it has never
+    /// seen. Claude takes `["claude", "--session-id", "{session}"]` here and
+    /// `--resume` in `enter`; the two are exclusive, so the service offers
+    /// this one only until the session has a turn. Empty falls back to
+    /// [`AgentConfig::enter`].
+    #[serde(default)]
+    pub enter_new: Vec<String>,
     /// How the desktop's skills reach this agent — see [`crate::skills`]. Off
     /// by default. `skills = "claude"` is for Claude, which loads them as its
     /// own plugin; every other agent finds them in `~/.agents/skills` after
@@ -246,26 +255,58 @@ impl Config {
     }
 }
 
+/// The command that enters `agent_session` of `agent` in the terminal it is
+/// already in, when the agent has one. `written` says whether the agent has a
+/// history for the session: an unwritten one takes
+/// [`AgentConfig::enter_new`], since resuming by an id the harness has never
+/// seen fails.
+pub fn enter_command(
+    agent: &AgentConfig,
+    agent_session: &str,
+    cwd: &Path,
+    written: bool,
+) -> Option<Vec<String>> {
+    let enter = match (written, agent.enter_new.is_empty()) {
+        (false, false) => &agent.enter_new,
+        _ => &agent.enter,
+    };
+    if enter.is_empty() {
+        return None;
+    }
+    let cwd = cwd.to_string_lossy();
+    Some(
+        enter
+            .iter()
+            .map(|arg| {
+                arg.replace("{session}", agent_session)
+                    .replace("{cwd}", &cwd)
+            })
+            .collect(),
+    )
+}
+
 /// The command that opens `agent_session` of `agent` in `terminal`, in `cwd`,
-/// when both a terminal and the agent's `enter` command are configured.
+/// when both a terminal and the agent's enter command are configured.
 pub fn terminal_command(
     terminal: &[String],
     agent: &AgentConfig,
     agent_session: &str,
     cwd: &Path,
+    written: bool,
 ) -> Option<Vec<String>> {
-    if terminal.is_empty() || agent.enter.is_empty() {
+    if terminal.is_empty() {
         return None;
     }
+    let enter = enter_command(agent, agent_session, cwd, written)?;
     let cwd = cwd.to_string_lossy();
     Some(
         terminal
             .iter()
-            .chain(&agent.enter)
             .map(|arg| {
                 arg.replace("{session}", agent_session)
                     .replace("{cwd}", &cwd)
             })
+            .chain(enter)
             .collect(),
     )
 }
@@ -363,6 +404,10 @@ impl AgentConfig {
             agent: None,
             permissions: PermissionPolicy::Deny,
             enter: vec!["claude".into(), "--resume".into(), "{session}".into()],
+            // A session with nothing in it yet has no history to resume, and
+            // Claude refuses an id it has never seen; `--session-id` takes
+            // the one the service made for it.
+            enter_new: vec!["claude".into(), "--session-id".into(), "{session}".into()],
             skills: SkillDelivery::Claude,
             colour: None,
             folder: None,
@@ -476,7 +521,7 @@ mod tests {
         .unwrap();
         let cwd = Path::new("/home/me");
         assert_eq!(
-            terminal_command(&config.terminal, &config.agents[0], "abc", cwd),
+            terminal_command(&config.terminal, &config.agents[0], "abc", cwd, true),
             Some(
                 [
                     "ghostty",
@@ -491,14 +536,60 @@ mod tests {
             )
         );
         assert_eq!(
-            terminal_command(&config.terminal, &config.agents[1], "abc", cwd),
+            terminal_command(&config.terminal, &config.agents[1], "abc", cwd, true),
             None,
             "an agent without a resume command has nothing to open"
         );
         assert_eq!(
-            terminal_command(&[], &config.agents[0], "abc", cwd),
+            terminal_command(&[], &config.agents[0], "abc", cwd, true),
             None,
             "nor does a missing terminal"
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_history_is_entered_with_the_agents_new_command() {
+        let config = parse(
+            r#"
+            terminal = ["ghostty", "-e"]
+
+            [[agents]]
+            id = "claude"
+            name = "Claude"
+            command = "claude-agent-acp"
+            enter = ["claude", "--resume", "{session}"]
+            enter_new = ["claude", "--session-id", "{session}"]
+
+            [[agents]]
+            id = "plain"
+            name = "Plain"
+            command = "plain-acp"
+            enter = ["plain", "--resume", "{session}"]
+            "#,
+        )
+        .unwrap();
+        let cwd = Path::new("/home/me");
+        assert_eq!(
+            enter_command(&config.agents[0], "abc", cwd, false),
+            Some(["claude", "--session-id", "abc"].map(String::from).to_vec()),
+            "an unwritten session cannot be resumed by id"
+        );
+        assert_eq!(
+            enter_command(&config.agents[0], "abc", cwd, true),
+            Some(["claude", "--resume", "abc"].map(String::from).to_vec())
+        );
+        assert_eq!(
+            enter_command(&config.agents[1], "abc", cwd, false),
+            Some(["plain", "--resume", "abc"].map(String::from).to_vec()),
+            "without one of its own, an agent is entered the one way it has"
+        );
+        assert_eq!(
+            terminal_command(&config.terminal, &config.agents[0], "abc", cwd, false),
+            Some(
+                ["ghostty", "-e", "claude", "--session-id", "abc"]
+                    .map(String::from)
+                    .to_vec()
+            )
         );
     }
 

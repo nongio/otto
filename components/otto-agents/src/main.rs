@@ -40,6 +40,30 @@ enum Command {
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
     },
+    /// Start a session with an agent and enter it in this terminal, in the
+    /// agent's own interface. The session is the desktop's: it shows up in
+    /// Ask, and what is said here is there the next time it is opened.
+    New {
+        /// The agent, by its id in `agents.toml` or the name it is shown
+        /// under. Defaults to the service's first agent.
+        agent: Option<String>,
+        /// The folder the session works in. Defaults to this one.
+        #[arg(long, short = 'C')]
+        cwd: Option<PathBuf>,
+        /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
+        #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
+        url: String,
+    },
+    /// Take up a session that is already there in this terminal, in the
+    /// agent's own interface. The terminal writes its history from then on.
+    Enter {
+        /// Session id, or the start of one, as listed by `otto-agents sessions`.
+        /// Defaults to the most recent session.
+        session: Option<String>,
+        /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
+        #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
+        url: String,
+    },
     /// Check the things that stop Ask working, and say which one is wrong.
     Doctor {
         /// Agent configuration file. Defaults to Otto's config files.
@@ -144,6 +168,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Forget { session, all, url } => {
             cli::forget_sessions(&url, session.as_deref(), all).await
         }
+        Command::New { agent, cwd, url } => {
+            cli::new_session(&url, agent.as_deref(), cwd.as_deref()).await
+        }
+        Command::Enter { session, url } => cli::enter(&url, session.as_deref()).await,
         Command::Doctor { config, url } => cli::doctor(&url, config.as_deref()).await,
         Command::Show {
             session,

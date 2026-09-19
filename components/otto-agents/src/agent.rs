@@ -289,9 +289,29 @@ pub trait Backend: Send + Sync + 'static {
     );
 
     /// The command that opens `agent_session`, the agent's own id for a
-    /// session of `provider`, in a terminal in `cwd`. `None` when there is no
-    /// way to, which is the default.
-    fn terminal(&self, _provider: &str, _agent_session: &str, _cwd: &Path) -> Option<Vec<String>> {
+    /// session of `provider`, in a terminal in `cwd`. `written` says whether
+    /// the agent has a history for the session; a harness enters one it has
+    /// not written yet its own way. `None` when there is no way to, which is
+    /// the default.
+    fn terminal(
+        &self,
+        _provider: &str,
+        _agent_session: &str,
+        _cwd: &Path,
+        _written: bool,
+    ) -> Option<Vec<String>> {
+        None
+    }
+
+    /// The same command without a terminal around it: what `otto-agents new`
+    /// and `otto-agents enter` run in the terminal they are already in.
+    fn enter(
+        &self,
+        _provider: &str,
+        _agent_session: &str,
+        _cwd: &Path,
+        _written: bool,
+    ) -> Option<Vec<String>> {
         None
     }
 }

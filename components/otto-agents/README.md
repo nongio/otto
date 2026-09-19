@@ -15,6 +15,8 @@ cargo run -p otto-agents --example ask -- "summarise the README"
 cargo run -p otto-agents -- sessions                   # ID, status, agent, age, folder, title
 cargo run -p otto-agents -- show                       # transcript of the newest session
 cargo run -p otto-agents -- show 1a2b --follow         # a session by id prefix, streaming until done
+cargo run -p otto-agents -- new otto                   # start a session with an agent and enter it in this terminal
+cargo run -p otto-agents -- enter 1a2b                 # take a session up in this terminal, in the agent's interface
 cargo run -p otto-agents -- plugins install            # link Otto's skills into ~/.agents/skills, render its agent per harness
 cargo run -p otto-agents -- plugins status             # what was found, and where each harness's copy stands
 ```
