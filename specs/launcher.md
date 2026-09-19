@@ -44,12 +44,55 @@ agents mode the card is centred on the output instead, and stays centred as the
 conversation above the field or the list of sessions under it grows. The card
 clips its panes, so neither log nor rows draw past its edge.
 
+**The agent's material.** An agent with a `colour` in `agents.toml` has a
+frosted material of its own, and the card wears it whenever it is that agent's:
+the composer before the first request (following the agent picked in the list,
+or the default), and the conversation once there is one, including a session
+opened from the list once the service says whose it is. The list of sessions,
+an agent without a colour, and the launcher's other modes keep the plain
+material. Only the frost colour changes: the text is coloured from the scheme
+as before, and reads the same on every material.
+
+**The agent's mode.** An agent has modes of its own — Claude's Manual, Accept
+edits, Plan and Auto, Codex's read-only, agent and full access — and the
+service publishes them in the session's `_meta` as `otto.modes`. Once a
+conversation is open and the agent has said, the last line of the log names
+the agent and the mode it is in, under the status: "Claude · Accept edits",
+with "Shift+Tab to switch" added when there is more than one. Shift+Tab steps
+to the next mode in the agent's order, round the end, and sends `setMode`; the
+line changes when the agent has switched, as the service reports it, not
+before, and a refused switch leaves it as it was. While the rows under the
+field are answers to a question, Shift+Tab walks them instead. An agent
+without modes shows no line. The mode is only known once the session opens,
+so the composer's agent list carries none.
+
 **Session status.** In agents mode each session row has a small dot where an
 icon would go: the theme's accent while the session is working, its yellow
 while it waits for input, and its faint text colour (`text_tertiary`) when it
 is idle or stopped (a failed session included — the subtitle says it failed).
 The colours come from the theme, so the dot follows the user's accent and the
 colour scheme.
+
+**In and out of a session.** With nothing typed, Left leaves a conversation
+for the list of sessions, and Right opens the highlighted session again; Enter
+opens it too. The two arrows walk the same step in both directions, so the
+list is never a dead end. Ctrl+L or Cmd+L is the same step without the empty
+field: from a request being written or a conversation it shows the list, and
+from the list it starts a fresh request, whatever is typed. Neither key is
+taken while a request is still on its way to the service, which leaving would
+lose.
+
+**Choosing the agent.** The empty field names the agent the request would go
+to — "Ask @Otto…" — from the start: the default agent is the first the service
+lists, so it is what the field says until another is picked, and the card
+wears that agent's material. Until the agents arrive the field names the mode
+instead. The list itself stays out of the way: Down opens it under the field,
+on the agent the field names, and Up from the first row puts it away again.
+Return takes the highlighted agent and closes the list without sending, so the
+choice is on screen with the list gone. The first request settles the
+session's agent, and the field goes back to asking for a follow-up. A single
+agent is no choice at all, and is never listed, but the field still names
+it.
 
 **Modes.** A run offers applications, windows, or both, chosen when it starts.
 Applications is the default: the two bindings mean "launch something" and
@@ -91,6 +134,42 @@ fires on the first word only, so an ordinary sentence never sprouts grey text,
 and where one skill's name is the start of another's the shorter one is
 offered, since the longer is a keystroke further on.
 
+**Allowing a tool.** When the agent asks permission to use a tool, the log
+shows who wants to do what and the tool call itself, and under it what the
+call would touch as the service reported it: the file, and an edit to it as
+`-` and `+` lines, cut to a dozen lines with an ellipsis. The rows under the
+field are the agent's options in the agent's order, starting on the one the
+service picked (the narrowest allow, or a refusal when the agent asked for no
+to be the default); only when the service names none does the launcher fall
+back to the narrowest allow itself. Cancelling the turn withdraws the
+question rather than refusing it.
+
+**Answering the agent.** When the agent asks the person something — a choice,
+a value, a link to open (an input request in its turn) — and no permission
+question comes first, the launcher asks the request's questions one at a time.
+The log shows the request's message and link, the answers given so far as
+"question: answer" lines, "Question n of m" when there are several, and the
+question at hand in full, with why the last answer was not taken under it. The
+rows are the answers: the options of a single- or multi-select question (a
+suggested one says so, and starts selected), Yes and No for a boolean,
+Continue for text, numbers and multi-select, Skip this one for a question that
+is not required, and Don't answer on every question, which declines the whole
+request. Typing answers a text or number question, and stands in for an option
+when the question takes an answer of its own; numbers and lengths are checked
+before anything is sent, and Enter on an empty field of an optional question
+skips it. Picking in a multi-select question ticks and unticks. Left with
+nothing typed goes back a question.
+
+Every answer is shared as it is given (`chat/inputAnswerChanged`) — drafts
+while ticking, submitted or skipped once a question is settled — and the last
+one sends the request (`chat/inputCompleted`) with every answer, unless a
+required question further up is still open, which the launcher returns to. A
+request with no questions offers Open the link (web links only; any other
+scheme is shown and never opened) and Done. Answers given elsewhere show here
+as they arrive, and a request settled on another client or refused by the
+service falls back to what the chat says. Once settled, a request collapses to
+its answers, or to Declined, Dismissed or Not answered.
+
 **Reading an answer.** The agent's answer in the log is Markdown and is drawn
 as a document: headings, emphasis, lists, quotes, code and links take the
 toolkit's document typography, and the markup itself is not shown. Each
@@ -99,7 +178,50 @@ weight and the theme's text colour, wrapped inside the bubble and no wider
 than its words need. Everything else — attached files, tool calls, notes, the
 status — stays plain text. An answer still arriving is drawn as far as it has come, so
 an unclosed code fence reads as code until its end lands. Tables are drawn as
-code and images as their alt text, as in Quick View.
+code, and an image written in the Markdown itself is drawn as its alt text, as
+in Quick View.
+
+**Pictures the agent sends.** An agent can answer with a picture rather than a
+description of one — a screenshot it read, an image a tool returned — and the log
+draws it. A picture
+sits where the agent sent it, between what was said before it and what comes
+after, so a diagram stays with the paragraph that introduces it. It is drawn at
+the left of the log, as wide as the log and no taller than 320 points, keeping
+its own proportions and never enlarged past its own size; it wears the card's
+corner radius and a hairline edge, so a picture the colour of the card still
+reads as one. A picture has no words in it: the selection passes over it, and a
+screen reader is told its name. A picture whose file cannot be read — the
+service keeps them in a cache it trims — is its name in the log's dimmed text
+instead, so the answer still says something was there.
+
+**Selecting what the log says.** The conversation can be picked up and copied.
+Pressing on a word in the log starts a selection and dragging extends it,
+across lines and through an answer's own formatting; a second press takes the
+word under it, a third the line. The selection is painted as the accent behind
+the words, faint enough to read through. Ctrl+C or Cmd+C copies it — before the
+same key means stop the turn, because a selection on screen says which was
+meant — and Ctrl+A with nothing typed selects the whole log. Escape puts the
+selection down before it closes the launcher. Copied text keeps the log's line
+breaks, and the gaps a layout leaves inside a line, such as after a list's
+bullet, come out as spaces. The card is still moved by dragging the field or
+the log's background; its words are text now, not a handle.
+
+**Copying a code block.** A code block in an answer is usually there to be
+run, so it can be taken whole without selecting it. While the pointer is over
+a block, a copy button sits in its top-right corner, over the code, and the
+pointer is a hand on it; a press puts the block's lines on the clipboard, with
+their own line breaks, and the button shows a tick until the pointer leaves
+the block. The button is only there on hover: one on every block would make
+an answer full of snippets look like a toolbar. A press on it does not start
+a selection, and leaves any selection alone.
+
+The log is painted rather than laid out as widgets, so what can be selected is
+described separately: one box per run of text, in reading order, rebuilt
+whenever the log is laid out again. Those boxes have to agree with what was
+painted — the same fonts, the same positions — or the highlight sits off the
+words. An answer grows at its end, so a selection made while it is still
+arriving survives the rest of it; one whose text has since been laid out
+differently is dropped rather than left highlighting whatever now sits there.
 
 **Choosing.** Up/Down move the selection and wrap at both ends. Tab takes the
 completion when one is being offered; otherwise Tab and Shift+Tab move the
@@ -114,7 +236,9 @@ Ctrl+W, and clearing the query with Ctrl+U. Ctrl+C, Ctrl+X and Ctrl+V copy, cut
 and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
 
-**Pointer.** Moving the pointer over a row selects it. Releasing over a row acts
+**Pointer.** Over the log's words the pointer is a text cursor, because
+nothing else about painted text says it can be picked up. Moving the pointer
+over a row selects it. Releasing over a row acts
 on it. The row under the pointer must be the row that highlights. A wheel or a
 touchpad over the card scrolls the list — a touchpad with momentum and a
 stretch past either end, a notched wheel a step at a time — and the row that
@@ -197,7 +321,12 @@ the list, keeping the selection on the same item where that item still exists.
   installed are skipped rather than shown.
 - An answer cannot be put on the clipboard by the launcher itself: a Wayland
   selection dies with the client that offered it, and the launcher exits as soon
-  as the answer is taken. Something that outlives it has to own the offer.
+  as the answer is taken. Something that outlives it has to own the offer —
+  `wl-copy`, which forks and stays to serve it. Everything the launcher copies,
+  from the log or from the field, is offered here *and* handed to `wl-copy`: the
+  first is what makes a paste work while the launcher is still up, the second is
+  what makes it work afterwards. Without `wl-copy` installed, a copy lasts only
+  as long as the launcher does.
 - If the compositor does not offer foreign-toplevel management, the launcher
   runs with applications only.
 
@@ -237,9 +366,9 @@ the list, keeping the selection on the same item where that item still exists.
   because `--sessions` is one letter from `--session ID`. The launcher itself
   stays a lower-case noun: one place with several modes, not a product. The
   service behind both is "the agent service" in text, and its binary is
-  `otto-agentsd`, a user service. `otto-ask` and `otto-agents` are
-  aliases for `--ask` and `--agents`: symlinks the launcher recognises by the
-  name it was started under. In Files, the command palette's
+  `otto-agents`, a user service. `otto-ask` is an alias for `--ask`: a symlink
+  the launcher recognises by the name it was started under. `--agents` has no
+  alias — that name belongs to the service. In Files, the command palette's
   command is **Ask…**; in the islands, a **permission request** has no name.
 
 ## Open Questions

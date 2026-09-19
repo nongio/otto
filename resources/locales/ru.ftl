@@ -898,6 +898,9 @@ launcher-search-windows = Поиск окон…
 launcher-no-results = Нет результатов
 # Ask mode: what is typed is a request for an AI agent, not a search.
 launcher-search-ask = Спросить агента…
+# Ask mode, with an agent picked from the list: the empty field says whose
+# request it is. { $agent } is the agent's name.
+launcher-search-ask-agent = Спросить @{ $agent }…
 # Ask mode, once a request has been sent: the empty field takes the next one.
 launcher-search-ask-more = Задать ещё вопрос…
 # Agents mode: what is typed narrows the list of agent sessions to pick one
@@ -916,6 +919,15 @@ launcher-agents-none = Сеансов агентов пока нет
 launcher-ask-attached = Вложения: { $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = Открытие сеанса…
+launcher-ask-loading = Загрузка беседы…
+# The session is going to its terminal window.
+launcher-ask-handing-over = Продолжение в терминале…
+launcher-ask-handing-over-busy = По завершении текущей работы — продолжение в терминале…
+# The terminal window's title, as the dock shows it.
+launcher-ask-window-title = Ask: @{ $agent }: { $title }
+launcher-ask-window-title-agent = Ask: @{ $agent }
+launcher-ask-window-title-plain = Ask: { $title }
+launcher-ask-window-title-bare = Ask
 # Ask mode: the last line of the log above the field, saying what the agent is
 # doing now.
 launcher-ask-starting = Запуск: { $agent }…
@@ -924,6 +936,11 @@ launcher-ask-thinking = Думает…
 launcher-ask-working = Работает…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = Ждёт ответа ниже
+# Ask mode: the line under the status naming the agent and the mode it is in,
+# such as "Claude · Accept edits". { $mode } is the mode's name, as the agent
+# gives it. The second form is used when the agent has more than one mode.
+launcher-ask-mode = { $agent } · { $mode }
+launcher-ask-mode-hint = { $agent } · { $mode } · Shift+Tab — переключение
 # Ask mode: a tool call the agent made, in the log. { $tool } is the command or
 # file, as the agent names it.
 launcher-ask-step-running = ▸ { $tool }
@@ -936,12 +953,81 @@ launcher-ask-cancelled = Отменено
 launcher-ask-failed = Ошибка: { $error }
 # Ask mode, when the agent service is not running to take a request.
 launcher-ask-unreachable = Служба агентов не запущена
+# Ask mode: the agent asked the person something (a choice, a value, a link to
+# open). The rows under the field are the answers; these are their labels.
+launcher-input-yes = Да
+launcher-input-no = Нет
+launcher-input-continue = Продолжить
+launcher-input-skip = Пропустить вопрос
+launcher-input-decline = Не отвечать
+launcher-input-open-link = Открыть ссылку
+# Sends a request that only asked to open a link.
+launcher-input-done = Готово
+launcher-input-send = Отправить ответы
+# Beside an option the agent suggests.
+launcher-input-suggested = Рекомендуется
+# What the empty field says while it takes the answer.
+launcher-input-type-answer = Ответ…
+launcher-input-type-number = Число…
+launcher-input-type-other = Или свой ответ…
+# In the log, above a question when the agent asked several.
+launcher-input-progress = Вопрос { $current } из { $total }
+# In the log, a question already answered, and its answer.
+launcher-input-answer = { $question }: { $answer }
+launcher-input-skipped = Пропущено
+# In the log, under a request nobody answered the usual way.
+launcher-input-declined = Отклонено
+launcher-input-dismissed = Закрыто
+launcher-input-unanswered = Нет ответа
+# In the log, under a question, when the answer typed can’t be taken.
+launcher-input-error-empty = Нужен ответ
+launcher-input-error-number = Нужно число
+launcher-input-error-integer = Нужно целое число
+launcher-input-error-min = Должно быть не меньше { $min }
+launcher-input-error-max = Должно быть не больше { $max }
+launcher-input-error-short = { $min ->
+        [one] Нужно не меньше { $min } символа
+        [few] Нужно не меньше { $min } символов
+        [many] Нужно не меньше { $min } символов
+       *[other] Нужно не меньше { $min } символа
+    }
+launcher-input-error-long = { $max ->
+        [one] Не больше { $max } символа
+        [few] Не больше { $max } символов
+        [many] Не больше { $max } символов
+       *[other] Не больше { $max } символа
+    }
+launcher-input-error-pick-min = Нужно выбрать не меньше { $min }
+launcher-input-error-pick-max = Можно выбрать не больше { $max }
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.
 launcher-badge-app = Приложение
 launcher-badge-window = Окно
 launcher-badge-calc = Калькулятор
+
+
+## Agent service
+
+## The dialog otto-agents puts up when an agent asks to use a tool. The
+## sentence is composed by the service and drawn by the islands.
+
+# { $agent } is the agent's name; { $action } one of the phrases below.
+agents-permission-title = { $agent } хочет { $action }
+# What the tool does, by kind. Each completes "{ $agent } wants to …".
+agents-permission-read = прочитать файл
+agents-permission-edit = изменить файл
+agents-permission-delete = удалить файл
+agents-permission-move = переместить файл
+agents-permission-search = выполнить поиск
+agents-permission-execute = выполнить команду
+agents-permission-fetch = получить данные из интернета
+agents-permission-switch-mode = изменить принцип работы
+agents-permission-tool = использовать инструмент
+# The dialog's body: the session's folder, as ~/… when it is under home.
+agents-permission-in-folder = в { $folder }
+# The button that hands the question to the Ask window instead.
+agents-permission-open-in-ask = Открыть в Ask
 
 
 ## Emoji picker
@@ -1377,6 +1463,32 @@ islands-dialog-allow = Разрешить
 islands-dialog-continue = Продолжить
 # Refuses the request.
 islands-dialog-deny = Запретить
+
+
+## Islands — agents' questions
+##
+## An agent (Claude, say) asking the person something: one question a page,
+## with the options as rows beneath it. The dialog owns these words, not the
+## agent — only the question and its options come from the agent itself.
+## Buttons sit side by side and narrow: one word each.
+
+# Sends the answers back to the agent, on the last (or only) question.
+islands-dialog-answer = Ответить
+# Leaves every question unanswered and lets the agent carry on without them.
+islands-dialog-skip = Пропустить
+# Goes on to the next question, keeping what has been picked so far. Shown in
+# the place of "Answer" until the last question.
+islands-dialog-next = Далее
+# Goes back to the question before. A small button at the top-left corner; the
+# chevron pointing back is drawn, so the word alone belongs here.
+islands-dialog-back = Назад
+# Which question of how many this is: a caption on its own line between the
+# options and the buttons, shown whenever there is more than one question.
+islands-dialog-page = { $current } из { $total }
+# Under a question that takes any number of answers, where the rows are
+# toggles rather than a single choice. No full stop: it is a hint, not a
+# sentence of instructions.
+islands-dialog-multi-hint = Выберите все подходящие
 
 
 ## Accessibility

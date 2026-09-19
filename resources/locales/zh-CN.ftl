@@ -851,6 +851,9 @@ launcher-search-windows = 搜索窗口…
 launcher-no-results = 无结果
 # Ask mode: what is typed is a request for an AI agent, not a search.
 launcher-search-ask = 询问智能体…
+# Ask mode, with an agent picked from the list: the empty field says whose
+# request it is. { $agent } is the agent's name.
+launcher-search-ask-agent = 询问 @{ $agent }…
 # Ask mode, once a request has been sent: the empty field takes the next one.
 launcher-search-ask-more = 继续提问…
 # Agents mode: what is typed narrows the list of agent sessions to pick one
@@ -869,6 +872,15 @@ launcher-agents-none = 尚无智能体会话
 launcher-ask-attached = 附件：{ $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = 正在打开会话…
+launcher-ask-loading = 正在加载对话…
+# The session is going to its terminal window.
+launcher-ask-handing-over = 正在终端中继续…
+launcher-ask-handing-over-busy = 完成当前工作后在终端中继续…
+# The terminal window's title, as the dock shows it.
+launcher-ask-window-title = Ask：@{ $agent }：{ $title }
+launcher-ask-window-title-agent = Ask：@{ $agent }
+launcher-ask-window-title-plain = Ask：{ $title }
+launcher-ask-window-title-bare = Ask
 # Ask mode: the last line of the log above the field, saying what the agent is
 # doing now.
 launcher-ask-starting = 正在启动 { $agent }…
@@ -877,6 +889,11 @@ launcher-ask-thinking = 正在思考…
 launcher-ask-working = 正在工作…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = 正在等待在下方作答
+# Ask mode: the line under the status naming the agent and the mode it is in,
+# such as "Claude · Accept edits". { $mode } is the mode's name, as the agent
+# gives it. The second form is used when the agent has more than one mode.
+launcher-ask-mode = { $agent } · { $mode }
+launcher-ask-mode-hint = { $agent } · { $mode } · Shift+Tab 切换
 # Ask mode: a tool call the agent made, in the log. { $tool } is the command or
 # file, as the agent names it.
 launcher-ask-step-running = ▸ { $tool }
@@ -889,12 +906,71 @@ launcher-ask-cancelled = 已取消
 launcher-ask-failed = 失败：{ $error }
 # Ask mode, when the agent service is not running to take a request.
 launcher-ask-unreachable = 智能体服务未运行
+# Ask mode: the agent asked the person something (a choice, a value, a link to
+# open). The rows under the field are the answers; these are their labels.
+launcher-input-yes = 是
+launcher-input-no = 否
+launcher-input-continue = 继续
+launcher-input-skip = 跳过此问题
+launcher-input-decline = 不回答
+launcher-input-open-link = 打开链接
+# Sends a request that only asked to open a link.
+launcher-input-done = 完成
+launcher-input-send = 发送回答
+# Beside an option the agent suggests.
+launcher-input-suggested = 建议
+# What the empty field says while it takes the answer.
+launcher-input-type-answer = 回答…
+launcher-input-type-number = 数字…
+launcher-input-type-other = 或自己回答…
+# In the log, above a question when the agent asked several.
+launcher-input-progress = 问题 { $current }/{ $total }
+# In the log, a question already answered, and its answer.
+launcher-input-answer = { $question }：{ $answer }
+launcher-input-skipped = 已跳过
+# In the log, under a request nobody answered the usual way.
+launcher-input-declined = 已拒绝回答
+launcher-input-dismissed = 已关闭
+launcher-input-unanswered = 未回答
+# In the log, under a question, when the answer typed can’t be taken.
+launcher-input-error-empty = 此问题需要回答
+launcher-input-error-number = 需要是数字
+launcher-input-error-integer = 需要是整数
+launcher-input-error-min = 不能小于 { $min }
+launcher-input-error-max = 不能大于 { $max }
+launcher-input-error-short = 至少需要 { $min } 个字符
+launcher-input-error-long = 最多 { $max } 个字符
+launcher-input-error-pick-min = 至少需要选择 { $min } 项
+launcher-input-error-pick-max = 最多可选择 { $max } 项
 
 # The badge on a result row, saying what kind of thing it is. Very short —
 # it sits in a small pill beside the result.
 launcher-badge-app = 应用
 launcher-badge-window = 窗口
 launcher-badge-calc = 计算器
+
+
+## Agent service
+
+## The dialog otto-agents puts up when an agent asks to use a tool. The
+## sentence is composed by the service and drawn by the islands.
+
+# { $agent } is the agent's name; { $action } one of the phrases below.
+agents-permission-title = { $agent } 请求{ $action }
+# What the tool does, by kind. Each completes "{ $agent } wants to …".
+agents-permission-read = 读取文件
+agents-permission-edit = 编辑文件
+agents-permission-delete = 删除文件
+agents-permission-move = 移动文件
+agents-permission-search = 搜索
+agents-permission-execute = 运行命令
+agents-permission-fetch = 从网络获取内容
+agents-permission-switch-mode = 更改工作方式
+agents-permission-tool = 使用工具
+# The dialog's body: the session's folder, as ~/… when it is under home.
+agents-permission-in-folder = 在 { $folder } 中
+# The button that hands the question to the Ask window instead.
+agents-permission-open-in-ask = 在 Ask 中打开
 
 
 ## Emoji picker
@@ -1318,6 +1394,32 @@ islands-dialog-allow = 允许
 islands-dialog-continue = 继续
 # Refuses the request.
 islands-dialog-deny = 拒绝
+
+
+## Islands — agents' questions
+##
+## An agent (Claude, say) asking the person something: one question a page,
+## with the options as rows beneath it. The dialog owns these words, not the
+## agent — only the question and its options come from the agent itself.
+## Buttons sit side by side and narrow: one word each.
+
+# Sends the answers back to the agent, on the last (or only) question.
+islands-dialog-answer = 回答
+# Leaves every question unanswered and lets the agent carry on without them.
+islands-dialog-skip = 跳过
+# Goes on to the next question, keeping what has been picked so far. Shown in
+# the place of "Answer" until the last question.
+islands-dialog-next = 下一步
+# Goes back to the question before. A small button at the top-left corner; the
+# chevron pointing back is drawn, so the word alone belongs here.
+islands-dialog-back = 上一步
+# Which question of how many this is: a caption on its own line between the
+# options and the buttons, shown whenever there is more than one question.
+islands-dialog-page = { $current } / { $total }
+# Under a question that takes any number of answers, where the rows are
+# toggles rather than a single choice. No full stop: it is a hint, not a
+# sentence of instructions.
+islands-dialog-multi-hint = 可多选
 
 
 ## Accessibility

@@ -104,10 +104,16 @@ pub struct TitlebarMaterial {
 }
 
 impl TitlebarMaterial {
+    // The tints sit a little above the top bar's own material
+    // (`Theme::material_medium`, 0x7A light / 0x83 dark): the titlebar is
+    // chrome of the same family, a touch more solid because it carries a
+    // title and controls over arbitrary window content. Raising them until
+    // the bar reads as opaque loses the material — don't.
+
     /// Light material for the focused window
     pub fn light_active() -> Self {
         Self {
-            tint: Color::from_argb(0xE4, 0xEC, 0xEC, 0xEE),
+            tint: Color::from_argb(0x94, 0xEC, 0xEC, 0xEE),
             backdrop_blur: 0.0,
             gradient: 0.5,
             top_highlight: Some(Color::from_argb(0x99, 0xFF, 0xFF, 0xFF)),
@@ -119,7 +125,7 @@ impl TitlebarMaterial {
     /// the depth cue that says "not this one".
     pub fn light_inactive() -> Self {
         Self {
-            tint: Color::from_argb(0xDC, 0xF4, 0xF4, 0xF6),
+            tint: Color::from_argb(0x8C, 0xF4, 0xF4, 0xF6),
             gradient: 0.2,
             top_highlight: Some(Color::from_argb(0x55, 0xFF, 0xFF, 0xFF)),
             bottom_shade: Some(Color::from_argb(0x14, 0x00, 0x00, 0x00)),
@@ -129,7 +135,7 @@ impl TitlebarMaterial {
 
     pub fn dark_active() -> Self {
         Self {
-            tint: Color::from_argb(0xE6, 0x32, 0x34, 0x3A),
+            tint: Color::from_argb(0x9B, 0x32, 0x34, 0x3A),
             backdrop_blur: 0.0,
             gradient: 0.5,
             top_highlight: Some(Color::from_argb(0x40, 0xFF, 0xFF, 0xFF)),
@@ -139,7 +145,7 @@ impl TitlebarMaterial {
 
     pub fn dark_inactive() -> Self {
         Self {
-            tint: Color::from_argb(0xDE, 0x2A, 0x2C, 0x31),
+            tint: Color::from_argb(0x93, 0x2A, 0x2C, 0x31),
             gradient: 0.2,
             top_highlight: Some(Color::from_argb(0x22, 0xFF, 0xFF, 0xFF)),
             bottom_shade: Some(Color::from_argb(0x4D, 0x00, 0x00, 0x00)),

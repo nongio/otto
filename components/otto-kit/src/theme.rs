@@ -1,3 +1,4 @@
+use crate::frosted::Frosted;
 use skia_safe::Color;
 
 /// System color scheme preference, matching XDG `org.freedesktop.appearance color-scheme`.
@@ -228,6 +229,81 @@ impl Theme {
 
             hairline: Color::from_argb(0x14, 0xFF, 0xFF, 0xFF),
         }
+    }
+
+    /// Whether this is a dark palette.
+    ///
+    /// Read off the popup material rather than stored: a `Theme` is passed
+    /// around and re-tinted by value, and a flag beside the colours is one
+    /// more thing that can disagree with them.
+    pub fn is_dark(&self) -> bool {
+        self.material_popup.r() < 0x80
+    }
+
+    /// One of the tinted frosted materials, in this theme's scheme. See
+    /// [`crate::frosted`].
+    pub fn frosted(&self, frosted: Frosted) -> Color {
+        frosted.material(self.is_dark())
+    }
+
+    /// The frosted red material.
+    pub fn frosted_red(&self) -> Color {
+        self.frosted(Frosted::Red)
+    }
+
+    /// The frosted orange material.
+    pub fn frosted_orange(&self) -> Color {
+        self.frosted(Frosted::Orange)
+    }
+
+    /// The frosted amber material.
+    pub fn frosted_amber(&self) -> Color {
+        self.frosted(Frosted::Amber)
+    }
+
+    /// The frosted yellow material.
+    pub fn frosted_yellow(&self) -> Color {
+        self.frosted(Frosted::Yellow)
+    }
+
+    /// The frosted lime material.
+    pub fn frosted_lime(&self) -> Color {
+        self.frosted(Frosted::Lime)
+    }
+
+    /// The frosted green material.
+    pub fn frosted_green(&self) -> Color {
+        self.frosted(Frosted::Green)
+    }
+
+    /// The frosted teal material.
+    pub fn frosted_teal(&self) -> Color {
+        self.frosted(Frosted::Teal)
+    }
+
+    /// The frosted cyan material.
+    pub fn frosted_cyan(&self) -> Color {
+        self.frosted(Frosted::Cyan)
+    }
+
+    /// The frosted blue material.
+    pub fn frosted_blue(&self) -> Color {
+        self.frosted(Frosted::Blue)
+    }
+
+    /// The frosted indigo material.
+    pub fn frosted_indigo(&self) -> Color {
+        self.frosted(Frosted::Indigo)
+    }
+
+    /// The frosted violet material.
+    pub fn frosted_violet(&self) -> Color {
+        self.frosted(Frosted::Violet)
+    }
+
+    /// The frosted magenta material.
+    pub fn frosted_magenta(&self) -> Color {
+        self.frosted(Frosted::Magenta)
     }
 
     /// Return the appropriate theme for the given color scheme.

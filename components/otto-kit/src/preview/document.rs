@@ -18,7 +18,9 @@
 
 use std::sync::Arc;
 
+use crate::components::icon::Icon;
 use crate::typography::{draw_runs, measure_runs};
+use crate::Renderable;
 use skia_safe::{Canvas, Color, Font, Paint, Rect};
 
 use crate::theme::Theme;
@@ -150,6 +152,11 @@ const QUOTE_INSET: f32 = 14.0;
 /// Padding inside a code block's tinted panel.
 const CODE_PAD: f32 = 8.0;
 const CODE_RADIUS: f32 = 6.0;
+/// The copy button in a code block's top-right corner: its square, the icon
+/// inside it, and how far it sits in from the panel's edges.
+const COPY_BUTTON: f32 = 22.0;
+const COPY_ICON: f32 = 14.0;
+const COPY_INSET: f32 = 4.0;
 
 /// A run of text, measured and placed on a line.
 #[derive(Debug, Clone)]
@@ -190,6 +197,108 @@ pub struct Line {
     pub height: f32,
     pub runs: Vec<Run>,
     decoration: Decoration,
+}
+
+/// One code block, as laid out: where its panel is and what it says.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodeBlock {
+    /// Top edge of the panel, in the space [`wrap`] laid the lines out in.
+    pub top: f32,
+    pub height: f32,
+    /// The block's lines, joined with newlines — what a copy of it should be.
+    pub text: String,
+}
+
+impl CodeBlock {
+    /// The copy button's square, in the same space as `top`, for a document
+    /// `width` wide.
+    pub fn copy_button(&self, width: f32) -> Rect {
+        Rect::from_xywh(
+            width - COPY_INSET - COPY_BUTTON,
+            self.top + COPY_INSET,
+            COPY_BUTTON,
+            COPY_BUTTON,
+        )
+    }
+}
+
+/// The code blocks in `lines`, in order, read back off the layout.
+///
+/// A block is the run of code lines from the one that opens the panel to the
+/// one that closes it — the same grouping the drawing paints as one panel.
+pub fn code_blocks(lines: &[Line]) -> Vec<CodeBlock> {
+    let mut blocks = Vec::new();
+    let mut open: Option<(f32, Vec<&str>)> = None;
+    for line in lines {
+        let Decoration::Code { first, last } = line.decoration else {
+            continue;
+        };
+        if first {
+            open = Some((line.top, Vec::new()));
+        }
+        if let Some((top, text)) = open.as_mut() {
+            text.push(line.runs.first().map_or("", |run| run.text.as_str()));
+            if last {
+                blocks.push(CodeBlock {
+                    top: *top,
+                    height: line.top + line.height - *top,
+                    text: text.join("\n"),
+                });
+                open = None;
+            }
+        }
+    }
+    blocks
+}
+
+/// The code block under a point of the content box, and whether the point is
+/// on its copy button — the hit-test for the button [`draw_scrolled`] shows.
+///
+/// `point` and `offset` are as for [`link_at_scrolled`]. `block` indexes
+/// [`code_blocks`].
+pub fn code_at(content: Rect, lines: &[Line], offset: f32, point: (f32, f32)) -> Option<CodeHit> {
+    let (x, y) = point;
+    if x < content.left || x >= content.right || y < content.top || y >= content.bottom {
+        return None;
+    }
+    let x = x - content.left;
+    let y = y - content.top + offset;
+    code_blocks(lines)
+        .into_iter()
+        .enumerate()
+        .find(|(_, block)| y >= block.top && y < block.top + block.height)
+        .map(|(index, block)| CodeHit {
+            block: index,
+            on_button: {
+                let button = block.copy_button(content.width());
+                x >= button.left && x < button.right && y >= button.top && y < button.bottom
+            },
+        })
+}
+
+/// What [`code_at`] found under the pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodeHit {
+    /// Which block, as [`code_blocks`] counts them.
+    pub block: usize,
+    /// The pointer is on the block's copy button, not just on the block.
+    pub on_button: bool,
+}
+
+/// The copy button to show while the pointer is over a code block.
+///
+/// It appears on hover rather than always: a button on every block would make
+/// a document of snippets look like a toolbar, and the block is the affordance
+/// — the pointer over it is what asks for the button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopyButton {
+    /// Which block, as [`code_blocks`] counts them.
+    pub block: usize,
+    /// The pointer is on the button itself, so it is drawn raised.
+    pub hovered: bool,
+    /// The block has just been copied: the button shows a tick instead, until
+    /// the pointer leaves the block.
+    pub copied: bool,
 }
 
 /// Wrap `blocks` to `width`, in the order they will be drawn.
@@ -512,6 +621,15 @@ fn font_for(base: TextStyle, span: SpanStyle) -> Font {
 // Drawing
 // ---------------------------------------------------------------------------
 
+impl Run {
+    /// The font this run is drawn in, for a host that has to measure inside
+    /// it — where a caret falls in a line of an answer, say. The run's own
+    /// style is folded in here, so the measurement matches what was painted.
+    pub fn font(&self) -> Font {
+        font_for(self.base, self.style)
+    }
+}
+
 impl Line {
     /// The link under `x`, in the space [`wrap`] laid this line out in.
     ///
@@ -566,7 +684,7 @@ pub fn link_at_scrolled(
 /// [`ScrollView`](crate::components::scroll::ScrollView) does, calls
 /// [`draw_scrolled`] instead. They are the same function.
 pub fn draw(canvas: &Canvas, content: Rect, lines: &[Line], first: usize, theme: &Theme) {
-    draw_scrolled(canvas, content, lines, top_of(lines, first), theme);
+    draw_scrolled(canvas, content, lines, top_of(lines, first), theme, None);
 }
 
 /// The document position drawn at the top of the content box, for a host
@@ -581,7 +699,18 @@ fn top_of(lines: &[Line], first: usize) -> f32 {
 /// `offset` is measured in the space [`wrap`] laid the lines out in, where the
 /// document starts at zero — which is exactly the offset a scroll view holds,
 /// so a host can hand one straight over.
-pub fn draw_scrolled(canvas: &Canvas, content: Rect, lines: &[Line], offset: f32, theme: &Theme) {
+///
+/// `copy` is the copy button to draw on one code block, when the pointer is
+/// over it; a host finds it with [`code_at`] and hands it back here so the
+/// button is painted where it will be hit.
+pub fn draw_scrolled(
+    canvas: &Canvas,
+    content: Rect,
+    lines: &[Line],
+    offset: f32,
+    theme: &Theme,
+    copy: Option<CopyButton>,
+) {
     let origin = offset;
 
     canvas.save();
@@ -676,7 +805,42 @@ pub fn draw_scrolled(canvas: &Canvas, content: Rect, lines: &[Line], offset: f32
             }
         }
     }
+
+    // The button goes down last, over the code it sits on: a long line runs
+    // under it rather than the other way round, since the line is clipped by
+    // the panel anyway and the button is what the pointer came for.
+    if let Some(copy) = copy {
+        if let Some(block) = code_blocks(lines).get(copy.block) {
+            draw_copy_button(canvas, block.copy_button(content.width()), copy, theme);
+        }
+    }
     canvas.restore();
+}
+
+/// The copy button, in document space, on a code block's panel.
+fn draw_copy_button(canvas: &Canvas, button: Rect, copy: CopyButton, theme: &Theme) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    // Raised when the pointer is on it, otherwise the panel's own wash so it
+    // reads as part of the block rather than as a second control.
+    paint.set_color(if copy.hovered {
+        theme.fill_primary
+    } else {
+        theme.fill_secondary
+    });
+    canvas.draw_round_rect(button, 5.0, 5.0, &paint);
+    let icon = if copy.copied { "check" } else { "copy" };
+    let inset = (COPY_BUTTON - COPY_ICON) / 2.0;
+    Icon::new(icon)
+        .at(button.left + inset, button.top + inset)
+        .with_size(COPY_ICON)
+        .with_color(if copy.copied {
+            theme.accent
+        } else {
+            theme.text_secondary
+        })
+        .build()
+        .render(canvas);
 }
 
 fn colour(run: &Run, theme: &Theme) -> Color {
@@ -848,6 +1012,74 @@ mod tests {
         let lines = wrap(&[Block::Code { lines: source }], 40.0);
         // Narrow box, but code is never wrapped: five lines in, five out.
         assert_eq!(lines.len(), 5);
+    }
+
+    #[test]
+    fn a_code_block_is_read_back_whole_and_its_button_is_hit() {
+        let blocks = vec![
+            paragraph("before"),
+            Block::Code {
+                lines: vec!["fn main() {".into(), "}".into()],
+            },
+            paragraph("after"),
+            Block::Code {
+                lines: vec!["second".into()],
+            },
+        ];
+        let lines = wrap(&blocks, 300.0);
+        let code = code_blocks(&lines);
+        assert_eq!(code.len(), 2);
+        assert_eq!(code[0].text, "fn main() {\n}");
+        assert_eq!(code[1].text, "second");
+        // The panel spans both of its lines and nothing else.
+        let panel_lines: Vec<&Line> = lines
+            .iter()
+            .filter(|line| matches!(line.decoration, Decoration::Code { .. }))
+            .collect();
+        assert_eq!(code[0].top, panel_lines[0].top);
+        assert_eq!(
+            code[0].top + code[0].height,
+            panel_lines[1].top + panel_lines[1].height
+        );
+
+        let content = Rect::from_xywh(10.0, 20.0, 300.0, 400.0);
+        let button = code[0].copy_button(content.width());
+        let on_button = (
+            content.left + button.center_x(),
+            content.top + button.center_y(),
+        );
+        assert_eq!(
+            code_at(content, &lines, 0.0, on_button),
+            Some(CodeHit {
+                block: 0,
+                on_button: true
+            })
+        );
+        // On the block but off the button: the block still answers.
+        let on_code = (content.left + 2.0, content.top + code[0].top + 2.0);
+        assert_eq!(
+            code_at(content, &lines, 0.0, on_code),
+            Some(CodeHit {
+                block: 0,
+                on_button: false
+            })
+        );
+        // Prose is not code.
+        assert_eq!(
+            code_at(
+                content,
+                &lines,
+                0.0,
+                (content.left + 2.0, content.top + 1.0)
+            ),
+            None
+        );
+        // Scrolled so the second block sits where the first was.
+        let scrolled = code[1].top - code[0].top;
+        assert_eq!(
+            code_at(content, &lines, scrolled, on_button).map(|hit| hit.block),
+            Some(1)
+        );
     }
 
     #[test]

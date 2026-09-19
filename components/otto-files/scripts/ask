@@ -4,7 +4,7 @@
 A sample script for Otto Files' command palette. Copy it to
 ~/.config/otto/files-scripts/ and it shows up as "Ask…" whenever something is
 selected. Return opens the launcher in ask mode with the selection attached to
-the request, for an agent run by otto-agentsd. The protocol is described at the
+the request, for an agent run by otto-agents. The protocol is described at the
 top of components/otto-files/src/scripts.rs.
 
     ask describe        what this script offers, once, at startup

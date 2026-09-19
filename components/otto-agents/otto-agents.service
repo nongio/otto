@@ -1,0 +1,19 @@
+[Unit]
+Description=Otto agent service
+Documentation=https://nongio.github.io/otto/developer/agents/
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/otto-agents serve
+Restart=on-failure
+# Agents run as children of the service and work anywhere under the home and
+# runtime directories; the rest of the system is read-only to them.
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+ProtectSystem=strict
+ReadWritePaths=%h %t
+
+[Install]
+WantedBy=graphical-session.target

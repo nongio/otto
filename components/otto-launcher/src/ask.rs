@@ -1,7 +1,7 @@
 //! Asking an agent.
 //!
 //! In ask mode, what is typed is a request for an agent rather than a search.
-//! Return hands it to otto-agentsd, the agent service, and the launcher becomes a
+//! Return hands it to otto-agents, the agent service, and the launcher becomes a
 //! conversation: the log above the field shows each request and its answer,
 //! and the field takes the next request, which queues behind whatever the
 //! agent is doing.
@@ -11,6 +11,12 @@
 //! as rows under the field. Because the launcher is watching the chat, the
 //! service leaves the question to it; closing the launcher hands the question
 //! to a dialog instead.
+//!
+//! When the agent asks the person something — a choice, a value, a link to
+//! open — the request sits in the chat as an input request, and the launcher
+//! asks its questions one at a time, with the answers as rows and the field
+//! taking typed ones. Drafts and answers are shared as they are given, so a
+//! request answered somewhere else closes here too; see [`crate::input`].
 //!
 //! Files handed to the launcher go with the next request, as attachments that
 //! point the agent at them. And instead of starting a session, the launcher
@@ -29,6 +35,7 @@
 //! nothing: the service already owns the requests, and the session carries on
 //! without anyone watching.
 
+use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -39,26 +46,69 @@ use std::time::Duration;
 use ahp::reducers::apply_action_to_chat;
 use ahp::{Client, ClientConfig, SubscriptionEvent};
 use ahp_types::actions::{
-    ChatPendingMessageSetAction, ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
+    ChatInputAnswerChangedAction, ChatInputCompletedAction, ChatPendingMessageSetAction,
+    ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
 };
 use ahp_types::commands::ListSessionsResult;
 use ahp_types::common::StringOrMarkdown;
 use ahp_types::state::{
-    AgentInfo, ChatState, ChildCustomization, ConfirmationOptionKind, Customization, Message,
-    MessageAttachment, MessageKind, MessageOrigin, MessageResourceAttachment, PendingMessageKind,
-    ResponsePart, SessionStatus, SessionSummary, SnapshotState, ToolCallConfirmationReason,
-    ToolCallState, TurnState,
+    AgentInfo, ChatInputAnswer, ChatInputResponseKind, ChatState, ChildCustomization,
+    ConfirmationOptionKind, Customization, Message, MessageAttachment, MessageKind, MessageOrigin,
+    MessageResourceAttachment, PendingMessageKind, ResponsePart, SessionStatus, SessionSummary,
+    SnapshotState, ToolCallConfirmationReason, ToolCallState, ToolInput, TurnState,
 };
 use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
+use otto_agents_client::default_url;
+use otto_agents_client::session::{self, SESSION_SCHEME};
+use otto_agents_client::uri::{from_path as file_uri, to_path as path_from_uri};
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
 
+use crate::input::{self, Change, InputRequest, Outcome};
+use crate::log::Style;
 use crate::source::{Activity, Item, Origin};
 
-/// Where otto-agentsd listens unless `OTTO_AGENTS_URL` says otherwise.
-const DEFAULT_URL: &str = "ws://127.0.0.1:4800";
+/// The folder a session starts in when neither the agent nor anyone else
+/// names one: a scratch folder of Ask's own, `$XDG_STATE_HOME/otto/ask`.
+///
+/// The folder is the reach the agent is given — everything under it is
+/// something it can read, and a permission policy only covers what it thinks
+/// to ask about — so the fallback is somewhere with nothing in it rather than
+/// the home folder and everything in that. Desktop requests need no folder:
+/// those go through the settings service and the skill tree. An agent that
+/// should start somewhere else says so with `folder` in `agents.toml`, which
+/// arrives as `otto.folders.<id>`.
+fn default_folder() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| home.as_ref().map(|home| home.join(".local/state")));
+    let Some(folder) = state.map(|state| state.join("otto/ask")) else {
+        return PathBuf::from("/");
+    };
+    // The service refuses a folder that is not there, so it is made here.
+    if let Err(err) = std::fs::create_dir_all(&folder) {
+        tracing::warn!(%err, folder = %folder.display(), "could not make the scratch folder");
+        return home.unwrap_or_else(|| PathBuf::from("/"));
+    }
+    folder
+}
 
-const SESSION_SCHEME: &str = "ahp-session:/";
+/// Where each agent's sessions start, from the root state's `_meta`:
+/// `otto.folders` maps provider ids to file URIs, as `agents.toml` set them.
+fn folders_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<String, PathBuf> {
+    meta.and_then(|meta| meta.get("otto")?.get("folders")?.as_object())
+        .map(|folders| {
+            folders
+                .iter()
+                .filter_map(|(provider, uri)| {
+                    Some((provider.clone(), path_from_uri(uri.as_str()?)?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Connecting is one round trip to a local service. Past this, the service is
 /// not answering, and saying so beats a launcher that looks like it is.
@@ -71,12 +121,22 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 enum Update {
     /// The agents the service offers.
     Agents(Vec<AgentInfo>),
+    /// The frosted material each coloured agent wears, by provider id, as the
+    /// root state's `_meta` says under `otto.colours`.
+    Colours(HashMap<String, String>),
+    /// The agent of the followed session, by provider id.
+    Provider(String),
     /// The sessions the service has, most recently changed first.
     Sessions(Vec<SessionSummary>),
     /// The service could not be reached.
     Unreachable(String),
     /// How to open the followed session in a terminal, as the service says.
     Terminal(Option<Terminal>),
+    /// Whether the session's history is still on its way from the agent.
+    Loading(bool),
+    /// The agent's modes and the one it is in, as the service says in the
+    /// session's `_meta`; `None` for an agent without any.
+    Modes(Option<Modes>),
     /// The session's chat, as it stood when the launcher subscribed to it.
     Chat(Box<ChatState>),
     /// A change to that chat.
@@ -85,6 +145,9 @@ enum Update {
     HandedOff,
     /// A request, or the session behind them, failed.
     Failed(String),
+    /// The service refused a change to the input request with this id: it
+    /// was settled elsewhere first, or the answers did not do.
+    InputRefused(String),
 }
 
 /// What the launcher asks of the connection thread.
@@ -108,12 +171,38 @@ enum Command {
     Stop {
         session: String,
     },
+    /// Remove the session `session`, a URI, for good.
+    Delete {
+        session: String,
+    },
+    /// Hand the session to its terminal: `session` is a URI from the list,
+    /// or `None` for the open one.
+    Release {
+        session: Option<String>,
+    },
+    /// Switch the open session's agent to the mode `mode_id`, one of those
+    /// it advertised.
+    SetMode {
+        mode_id: String,
+    },
     /// An answer to the agent's question.
     Confirm {
         turn_id: String,
         tool_call_id: String,
         approved: bool,
         option_id: String,
+    },
+    /// An answer to one of the questions of an input request, draft or final.
+    InputAnswer {
+        request_id: String,
+        question_id: String,
+        answer: ChatInputAnswer,
+    },
+    /// An input request answered, declined or dismissed.
+    InputComplete {
+        request_id: String,
+        response: ChatInputResponseKind,
+        answers: Option<HashMap<String, ChatInputAnswer>>,
     },
 }
 
@@ -133,11 +222,21 @@ pub enum Status {
     Waiting,
     /// The session failed, and nothing more will come.
     Failed(String),
+    /// The session is going to its terminal. `busy` while a turn has to
+    /// finish first.
+    HandingOver { busy: bool },
+    /// The conversation is on its way from the agent.
+    Loading,
 }
 
 impl Status {
     pub fn text(&self) -> String {
         match self {
+            Status::Loading => otto_kit::t_owned!("launcher-ask-loading"),
+            Status::HandingOver { busy: false } => otto_kit::t_owned!("launcher-ask-handing-over"),
+            Status::HandingOver { busy: true } => {
+                otto_kit::t_owned!("launcher-ask-handing-over-busy")
+            }
             Status::Opening => otto_kit::t_owned!("launcher-ask-opening"),
             Status::Starting(Some(agent)) => {
                 otto_kit::t_owned!("launcher-ask-starting", agent = agent.as_str())
@@ -211,9 +310,18 @@ pub struct Question {
     pub title: String,
     /// The tool call itself: the command, the file.
     pub detail: String,
+    /// What the tool call would touch, as lines under the detail: the file,
+    /// and the edit to it as `-`/`+` lines. Cut short past [`ACTION_LINES`].
+    pub action: Vec<String>,
+    /// The answer to start on, when the service says which.
+    pub default_id: Option<String>,
     /// The agent's answers, in its order.
     pub choices: Vec<Choice>,
 }
+
+/// How many lines of what a tool call would touch the log shows before
+/// cutting it short with an ellipsis.
+pub const ACTION_LINES: usize = 12;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Choice {
@@ -224,14 +332,60 @@ pub struct Choice {
 }
 
 impl Question {
-    /// The choice to offer first: the narrowest one that allows, since the
-    /// agent lists "always" before "once".
+    /// The choice to offer first: the one the service picked, and failing
+    /// that the narrowest one that allows, since the agent lists "always"
+    /// before "once".
     pub fn default_choice(&self) -> usize {
-        self.choices
-            .iter()
-            .rposition(|choice| choice.approve)
+        self.default_id
+            .as_deref()
+            .and_then(|id| self.choices.iter().position(|choice| choice.id == id))
+            .or_else(|| self.choices.iter().rposition(|choice| choice.approve))
             .unwrap_or(0)
     }
+}
+
+/// What a tool call would touch, as the log shows it: the file it names,
+/// then each edit as its old lines with `-` and its new ones with `+`. The
+/// service sends `tool_input` as JSON with `path` and `rawInput`, and `edits`
+/// as a list of `{path, oldText, newText}`; anything shaped otherwise is
+/// left out rather than guessed at. Kept to [`ACTION_LINES`] lines, the last
+/// an ellipsis when there was more.
+pub fn action_lines(tool_input: Option<&ToolInput>, edits: Option<&Value>) -> Vec<String> {
+    let mut lines = Vec::new();
+    let input = match tool_input {
+        Some(ToolInput::Inline(text)) => serde_json::from_str::<Value>(text).ok(),
+        _ => None,
+    };
+    let path_of = |value: &Value| {
+        value
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(path) = input.as_ref().and_then(path_of) {
+        lines.push(path);
+    }
+    for edit in edits.and_then(Value::as_array).into_iter().flatten() {
+        if let Some(path) = path_of(edit).filter(|path| !lines.contains(path)) {
+            lines.push(path);
+        }
+        let text = |key: &str| {
+            edit.get(key)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .lines()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        lines.extend(text("oldText").into_iter().map(|line| format!("- {line}")));
+        lines.extend(text("newText").into_iter().map(|line| format!("+ {line}")));
+    }
+    if lines.len() > ACTION_LINES {
+        lines.truncate(ACTION_LINES - 1);
+        lines.push("\u{2026}".to_owned());
+    }
+    lines
 }
 
 /// A skill an agent has, as the service published it.
@@ -257,22 +411,76 @@ pub fn attached_text(attachments: &[String]) -> Option<String> {
         .then(|| otto_kit::t_owned!("launcher-ask-attached", files = attachments.join(", ")))
 }
 
-/// One request and what came of it.
+/// A piece of what the agent answered.
+///
+/// An answer is mostly Markdown, and the pieces of it that arrive one after
+/// another read as one document. A picture breaks it in two: what was said
+/// before it, the picture, then the rest — so a diagram sits where the agent put
+/// it rather than at the end.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Said {
+    /// Markdown, as [`otto_md_kit`] reads it.
+    Text(String),
+    /// A picture the agent sent, as the file the service keeps it in.
+    Image(Picture),
+}
+
+/// A picture in an answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picture {
+    pub path: PathBuf,
+    /// What it is called, for a screen reader and for when it cannot be drawn:
+    /// the file's name without the digest the service appends to it.
+    pub label: String,
+}
+
+impl Picture {
+    /// The picture at `uri`, when it is a local file the launcher can read.
+    ///
+    /// The service writes pictures under its own cache and names them
+    /// `<label>-<digest>.<extension>`; the digest is how the same picture stays
+    /// one file, and is not something to show anyone.
+    fn at(uri: &str, content_type: Option<&str>) -> Option<Self> {
+        let path = path_from_uri(uri)?;
+        if !content_type.is_none_or(|kind| kind.starts_with("image/")) {
+            return None;
+        }
+        let stem = path.file_stem()?.to_string_lossy();
+        let label = match stem.rsplit_once('-') {
+            Some((label, digest)) if is_digest(digest) && !label.is_empty() => {
+                label.replace('-', " ")
+            }
+            _ => stem.into_owned(),
+        };
+        Some(Self { path, label })
+    }
+}
+
+/// Whether `text` is the hexadecimal digest the service appends to a picture's
+/// name, rather than part of what the picture is called.
+fn is_digest(text: &str) -> bool {
+    text.len() == 16 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// One request and what came of it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub prompt: String,
     /// The names of the files that went with the request.
     pub attachments: Vec<String>,
-    pub answer: String,
+    /// What the agent answered, in the order it said it.
+    pub answer: Vec<Said>,
     /// The tool calls that were allowed or refused, in order.
     pub steps: Vec<Step>,
     /// The agent's question, while it waits for an answer.
     pub question: Option<Question>,
+    /// What the agent asked the person in the turn, open or settled, in order.
+    pub inputs: Vec<InputRequest>,
     pub note: Option<Note>,
 }
 
 /// The conversation so far, oldest first, and what the agent is doing now.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Transcript {
     pub entries: Vec<Entry>,
     /// `None` when the agent has nothing in hand.
@@ -286,12 +494,48 @@ impl Transcript {
             .iter()
             .find_map(|entry| entry.question.as_ref())
     }
+
+    /// The first input request still waiting for an answer.
+    pub fn input(&self) -> Option<&InputRequest> {
+        self.entries
+            .iter()
+            .flat_map(|entry| &entry.inputs)
+            .find(|request| request.is_open())
+    }
+}
+
+/// Input requests as answered from the launcher, ahead of the service saying
+/// so.
+#[derive(Default)]
+struct Inputs {
+    /// Answers given here, by request and question id, until the chat carries
+    /// them.
+    answers: HashMap<String, HashMap<String, ChatInputAnswer>>,
+    /// Requests settled here, and how.
+    completed: Vec<(String, ChatInputResponseKind)>,
+    /// The question being asked, when it is not the first unanswered one:
+    /// the person went back, or on past one answered elsewhere.
+    cursor: Option<(String, usize)>,
+    /// Why the last answer to a request was not taken.
+    invalid: Option<(String, String)>,
+}
+
+/// What answering an input request did, for the launcher to follow up on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InputAnswered {
+    /// What was typed went into the answer, so the field can empty.
+    pub took_text: bool,
+    /// The request's link was opened.
+    pub opened: bool,
 }
 
 /// The requests made so far.
 struct Run {
     /// The agent's name, for the status line while it starts.
     agent: Option<String>,
+    /// The agent's provider id: the one the request went to, or the one the
+    /// service says an opened session belongs to.
+    provider: Option<String>,
     /// Every request sent, in order. An opened session's earlier requests
     /// come first, once its chat arrives.
     sent: Vec<Request>,
@@ -300,21 +544,137 @@ struct Run {
     /// Questions answered from the launcher, hidden before the service says so.
     answered: Vec<String>,
     chat: Option<ChatState>,
+    inputs: Inputs,
     failure: Option<String>,
     /// Whether the session was already there, opened rather than created.
     resumed: bool,
     /// How to open the session in a terminal, once the service says.
     terminal: Option<Terminal>,
+    /// The history is on its way from the agent: the chat is not all there
+    /// is to show yet.
+    loading: bool,
+    /// The agent's modes, once the service says; `None` for an agent
+    /// without any, or before its session opened.
+    modes: Option<Modes>,
+}
+
+/// The modes an agent can run in — its own permission and sandboxing presets,
+/// such as Claude's "Accept edits" — and the one it is in, as otto-agents
+/// publishes them in the session's `_meta` under `otto.modes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Modes {
+    /// The id of the current mode.
+    pub current: String,
+    /// The agent's list, in its order.
+    pub available: Vec<ModeInfo>,
+}
+
+/// One of an agent's modes, as it describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModeInfo {
+    pub id: String,
+    pub name: String,
+}
+
+impl Modes {
+    /// What the current mode is called, falling back to its id when the
+    /// agent's list does not have it.
+    pub fn current_name(&self) -> &str {
+        self.available
+            .iter()
+            .find(|mode| mode.id == self.current)
+            .map_or(self.current.as_str(), |mode| mode.name.as_str())
+    }
+
+    /// The mode after the current one in the agent's list, round the end;
+    /// `None` when there is nothing to switch to.
+    pub fn next(&self) -> Option<&ModeInfo> {
+        if self.available.len() < 2 {
+            return None;
+        }
+        let at = self
+            .available
+            .iter()
+            .position(|mode| mode.id == self.current)
+            .map_or(0, |at| (at + 1) % self.available.len());
+        self.available.get(at)
+    }
+}
+
+/// The agent's modes, as the service says in the session's `_meta`.
+fn modes_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> Option<Modes> {
+    let modes = meta?.get("otto")?.get("modes")?;
+    let current = modes.get("current")?.as_str()?.to_owned();
+    let available = modes
+        .get("available")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mode| {
+            let id = mode.get("id")?.as_str()?.to_owned();
+            let name = mode
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or_else(|| id.clone(), str::to_owned);
+            Some(ModeInfo { id, name })
+        })
+        .collect();
+    Some(Modes { current, available })
+}
+
+impl Run {
+    /// Drop what the launcher holds about input requests once the chat has
+    /// caught up: answers the chat now carries, and anything about a request
+    /// no longer open — settled here, in a dialog or on another client.
+    fn forget_settled_inputs(&mut self) {
+        let Some(chat) = self.chat.as_ref() else {
+            return;
+        };
+        let open: Vec<InputRequest> = chat
+            .active_turn
+            .iter()
+            .flat_map(|turn| input_requests(&turn.response_parts, true))
+            .filter(InputRequest::is_open)
+            .collect();
+        let find = |id: &str| open.iter().find(|request| request.id == id);
+        let inputs = &mut self.inputs;
+        inputs.answers.retain(|id, answers| {
+            let Some(request) = find(id) else {
+                return false;
+            };
+            answers.retain(|question, answer| request.answers.get(question) != Some(answer));
+            !answers.is_empty()
+        });
+        inputs.completed.retain(|(id, _)| find(id).is_some());
+        if inputs
+            .cursor
+            .as_ref()
+            .is_some_and(|(id, _)| find(id).is_none())
+        {
+            inputs.cursor = None;
+        }
+        if inputs
+            .invalid
+            .as_ref()
+            .is_some_and(|(id, _)| find(id).is_none())
+        {
+            inputs.invalid = None;
+        }
+    }
 }
 
 /// A command that opens the session in a terminal, with the agent's own
-/// interface: otto-agentsd publishes it in the session's `_meta`, under
+/// interface: otto-agents publishes it in the session's `_meta`, under
 /// `otto.terminal`, once the agent's id for the session is known and a
 /// terminal is configured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Terminal {
     pub command: Vec<String>,
     pub cwd: PathBuf,
+    /// The agent's id for the session, when the service says it.
+    pub session: Option<String>,
+    /// What the window is called, standing in for `{title}` in the command.
+    pub title: String,
 }
 
 impl Terminal {
@@ -330,7 +690,58 @@ impl Terminal {
             return None;
         }
         let cwd = PathBuf::from(terminal.get("cwd")?.as_str()?);
-        Some(Self { command, cwd })
+        let session = terminal
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        Some(Self {
+            command,
+            cwd,
+            session,
+            title: String::new(),
+        })
+    }
+
+    /// Brings the terminal that has the session open to the front, when there
+    /// is one and its window can be told apart. Says whether it did.
+    pub fn focus(&self) -> bool {
+        self.already_open()
+            && self
+                .session
+                .as_deref()
+                .is_some_and(crate::windows::focus_matching)
+    }
+
+    /// Whether a terminal already has the session open: some process names
+    /// the agent's id for it on its command line and has a controlling
+    /// terminal. The agent otto-agents runs names the id too, but talks over
+    /// pipes and has none.
+    pub fn already_open(&self) -> bool {
+        let Some(session) = self.session.as_deref().filter(|id| !id.is_empty()) else {
+            return false;
+        };
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            let Ok(cmdline) = std::fs::read(path.join("cmdline")) else {
+                return false;
+            };
+            if !String::from_utf8_lossy(&cmdline).contains(session) {
+                return false;
+            }
+            // Field 7 of `stat` is the controlling terminal, 0 for none. The
+            // fields are counted after the command's closing parenthesis, as
+            // the command itself may hold spaces.
+            std::fs::read_to_string(path.join("stat"))
+                .ok()
+                .and_then(|stat| {
+                    let rest = stat.rsplit_once(')')?.1;
+                    rest.split_whitespace().nth(4)?.parse::<i64>().ok()
+                })
+                .is_some_and(|tty| tty != 0)
+        })
     }
 
     /// Start the terminal in a process group of its own, so it outlives the
@@ -344,7 +755,7 @@ impl Terminal {
             .split_first()
             .ok_or_else(|| std::io::Error::other("the terminal command is empty"))?;
         Command::new(program)
-            .args(args)
+            .args(args.iter().map(|arg| arg.replace("{title}", &self.title)))
             .current_dir(&self.cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -355,28 +766,73 @@ impl Terminal {
     }
 }
 
+/// The material each coloured agent wears, from the root state's `_meta`:
+/// `otto.colours` maps provider ids to the names otto-kit's `Frosted` takes.
+fn colours_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<String, String> {
+    meta.and_then(|meta| meta.get("otto")?.get("colours")?.as_object())
+        .map(|colours| {
+            colours
+                .iter()
+                .filter_map(|(provider, name)| Some((provider.clone(), name.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether the service says, in the session's `_meta`, that the history is
+/// still on its way from the agent.
+fn loading_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> bool {
+    meta.and_then(|meta| meta.get("otto")?.get("loading")?.as_bool())
+        .unwrap_or(false)
+}
+
+/// What a session's terminal window is called: the feature, the agent, and
+/// what the session is about, cut to a length a dock label can show.
+fn window_title(agent: Option<&str>, title: &str) -> String {
+    const MOST: usize = 60;
+    let mut title: String = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.chars().count() > MOST {
+        title = title.chars().take(MOST - 1).collect::<String>() + "…";
+    }
+    match (agent, title.is_empty()) {
+        (Some(agent), false) => otto_kit::t_owned!(
+            "launcher-ask-window-title",
+            agent = agent,
+            title = title.as_str()
+        ),
+        (Some(agent), true) => otto_kit::t_owned!("launcher-ask-window-title-agent", agent = agent),
+        (None, false) => {
+            otto_kit::t_owned!("launcher-ask-window-title-plain", title = title.as_str())
+        }
+        (None, true) => otto_kit::t_owned!("launcher-ask-window-title-bare"),
+    }
+}
+
 pub struct Ask {
     commands: async_mpsc::UnboundedSender<Command>,
     updates: mpsc::Receiver<Update>,
     wake: UnixStream,
     agents: Vec<AgentInfo>,
+    /// The material each coloured agent wears, by provider id.
+    colours: HashMap<String, String>,
     /// The service's sessions, as they stood when the launcher connected.
     sessions: Vec<SessionSummary>,
     sessions_listed: bool,
     /// The files that go with the next request.
     attachments: Vec<PathBuf>,
+    /// The open session is going to its terminal; `Some(true)` while a turn
+    /// has to finish first.
+    handing_over: Option<bool>,
     unreachable: Option<String>,
     run: Option<Run>,
 }
 
 impl Ask {
-    /// Connect to otto-agentsd in the background. Sessions are created in `$HOME`.
+    /// Connect to otto-agents in the background, with sessions created in
+    /// [`default_folder`].
     pub fn open() -> Self {
-        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-        let folder = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
-        Self::connect(url, folder)
+        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
+        Self::connect(url, default_folder())
     }
 
     pub fn connect(url: String, folder: PathBuf) -> Self {
@@ -394,7 +850,7 @@ impl Ask {
         };
 
         std::thread::Builder::new()
-            .name("otto-agentsd".into())
+            .name("otto-agents".into())
             .spawn(move || {
                 let runtime = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -408,16 +864,18 @@ impl Ask {
                 };
                 runtime.block_on(serve(&url, &folder, command_rx, &reporter));
             })
-            .expect("cannot start the otto-agentsd connection thread");
+            .expect("cannot start the otto-agents connection thread");
 
         Self {
             commands,
             updates,
             wake,
             agents: Vec::new(),
+            colours: HashMap::new(),
             sessions: Vec::new(),
             sessions_listed: false,
             attachments: Vec::new(),
+            handing_over: None,
             unreachable: None,
             run: None,
         }
@@ -469,15 +927,28 @@ impl Ask {
 
     /// How to open the session in a terminal, once there is a session and the
     /// service has said.
-    pub fn terminal(&self) -> Option<&Terminal> {
-        self.run.as_ref()?.terminal.as_ref()
+    pub fn terminal(&self) -> Option<Terminal> {
+        let run = self.run.as_ref()?;
+        let mut terminal = run.terminal.clone()?;
+        let title = run
+            .chat
+            .as_ref()
+            .map(requests)
+            .and_then(|requests| requests.first().map(|request| request.prompt.clone()))
+            .or_else(|| run.sent.first().map(|request| request.prompt.clone()))
+            .unwrap_or_default();
+        terminal.title = window_title(run.agent.as_deref(), &title);
+        Some(terminal)
     }
 
     /// How to open the session at `index` in the list in a terminal, from the
     /// `_meta` the catalogue carries. `None` while the service has not said —
     /// the agent's id for a session it has just started, say.
     pub fn terminal_at(&self, index: usize) -> Option<Terminal> {
-        Terminal::from_meta(self.sessions.get(index)?.meta.as_ref())
+        let session = self.sessions.get(index)?;
+        let mut terminal = Terminal::from_meta(session.meta.as_ref())?;
+        terminal.title = window_title(self.agent_name(&session.provider), &session.title);
+        Some(terminal)
     }
 
     /// What the agent whose provider id is `provider` is called.
@@ -497,13 +968,17 @@ impl Ask {
         }
         self.run = Some(Run {
             agent: None,
+            provider: None,
             sent: Vec::new(),
             handed_off: 0,
             answered: Vec::new(),
             chat: None,
+            inputs: Inputs::default(),
             failure: self.unreachable.clone(),
             resumed: true,
             terminal: None,
+            loading: false,
+            modes: None,
         });
         let _ = self.commands.send(Command::Resume {
             session: session.to_string(),
@@ -587,9 +1062,25 @@ impl Ask {
     fn apply(&mut self, update: Update) {
         match update {
             Update::Agents(agents) => self.agents = agents,
+            Update::Colours(colours) => self.colours = colours,
+            Update::Provider(provider) => {
+                if let Some(run) = self.run.as_mut() {
+                    run.provider = Some(provider);
+                }
+            }
             Update::Terminal(terminal) => {
                 if let Some(run) = self.run.as_mut() {
                     run.terminal = terminal;
+                }
+            }
+            Update::Loading(loading) => {
+                if let Some(run) = self.run.as_mut() {
+                    run.loading = loading;
+                }
+            }
+            Update::Modes(modes) => {
+                if let Some(run) = self.run.as_mut() {
+                    run.modes = modes;
                 }
             }
             Update::Sessions(sessions) => {
@@ -597,7 +1088,7 @@ impl Ask {
                 self.sessions_listed = true;
             }
             Update::Unreachable(error) => {
-                tracing::warn!(%error, "otto-agentsd is unreachable");
+                tracing::warn!(%error, "otto-agents is unreachable");
                 match self.run.as_mut() {
                     Some(run) => run.failure = Some(error),
                     None => self.unreachable = Some(error),
@@ -613,18 +1104,30 @@ impl Ask {
                         run.sent.splice(0..0, earlier);
                     }
                     run.chat = Some(*chat);
+                    run.forget_settled_inputs();
                 }
             }
             Update::Action(action) => {
-                if let Some(chat) = self.run.as_mut().and_then(|run| run.chat.as_mut()) {
-                    apply_action_to_chat(chat, &action);
+                if let Some(run) = self.run.as_mut() {
+                    if let Some(chat) = run.chat.as_mut() {
+                        apply_action_to_chat(chat, &action);
+                        run.forget_settled_inputs();
+                    }
+                }
+            }
+            Update::InputRefused(request_id) => {
+                // Whatever the chat says about the request is the truth: shown
+                // settled if it was, asked again if it was not.
+                if let Some(run) = self.run.as_mut() {
+                    run.inputs.answers.remove(&request_id);
+                    run.inputs.completed.retain(|(id, _)| *id != request_id);
                 }
             }
             Update::HandedOff => {
                 if let Some(run) = self.run.as_mut() {
                     run.handed_off += 1;
                 }
-                tracing::info!("request handed to otto-agentsd");
+                tracing::info!("request handed to otto-agents");
             }
             Update::Failed(error) => {
                 tracing::error!(%error, "the request failed");
@@ -653,6 +1156,13 @@ impl Ask {
                 origin: Origin { source, index },
             })
             .collect()
+    }
+
+    /// What the agent in row `index` of [`Ask::agent_rows`] is called.
+    pub fn agent_display_name(&self, index: usize) -> Option<&str> {
+        self.agents
+            .get(index)
+            .map(|agent| agent.display_name.as_str())
     }
 
     /// The skills the agent has, as the service published them: the desktop's
@@ -771,6 +1281,180 @@ impl Ask {
             .is_ok()
     }
 
+    /// The input request waiting for an answer from the launcher, with the
+    /// answers given here over the chat's, and the question to ask now —
+    /// `None` once no question is left and the request is ready to send.
+    pub fn input(&self) -> Option<(InputRequest, Option<usize>)> {
+        let request = self.transcript()?.input()?.clone();
+        let current = self.input_current(&request);
+        Some((request, current))
+    }
+
+    fn input_current(&self, request: &InputRequest) -> Option<usize> {
+        match self.run.as_ref().and_then(|run| run.inputs.cursor.as_ref()) {
+            Some((id, index)) if *id == request.id && *index < request.fields.len() => Some(*index),
+            _ => request.first_unsettled(),
+        }
+    }
+
+    /// Names the question being asked, so the launcher can tell when it moves
+    /// on to another.
+    pub fn input_key(&self) -> Option<String> {
+        self.input()
+            .map(|(request, current)| format!("input:{}:{current:?}", request.id))
+    }
+
+    /// The answers to the question being asked, as rows.
+    pub fn input_rows(&self, source: usize) -> Vec<Item> {
+        let Some((request, current)) = self.input() else {
+            return Vec::new();
+        };
+        request
+            .rows(current)
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let (title, subtitle) = request.row_text(row, current);
+                Item {
+                    title,
+                    subtitle,
+                    icon: None,
+                    activity: None,
+                    search_terms: Vec::new(),
+                    origin: Origin { source, index },
+                }
+            })
+            .collect()
+    }
+
+    /// The row to start from on the question being asked.
+    pub fn input_default_row(&self) -> usize {
+        self.input()
+            .map_or(0, |(request, current)| request.default_row(current))
+    }
+
+    /// What the field starts with on the question being asked.
+    pub fn input_prefill(&self) -> Option<String> {
+        let (request, current) = self.input()?;
+        request.prefill(current)
+    }
+
+    /// What the empty field says on the question being asked.
+    pub fn input_placeholder(&self) -> Option<&'static str> {
+        let (request, current) = self.input()?;
+        request.placeholder(current)
+    }
+
+    /// Whether typing answers the question being asked.
+    pub fn input_takes_text(&self) -> bool {
+        self.input().is_some_and(|(request, current)| {
+            current
+                .and_then(|index| request.fields.get(index))
+                .is_some_and(input::Field::takes_text)
+        })
+    }
+
+    /// What the log says about `request`, one of the transcript's.
+    pub fn input_lines(&self, request: &InputRequest) -> Vec<(String, Style)> {
+        let invalid = self
+            .run
+            .as_ref()
+            .and_then(|run| run.inputs.invalid.as_ref())
+            .filter(|(id, _)| *id == request.id)
+            .map(|(_, text)| text.as_str());
+        request.lines(self.input_current(request), invalid)
+    }
+
+    /// Choose the row at `index` on the question being asked, with `typed` in
+    /// the field.
+    pub fn choose_input(&mut self, index: usize, typed: &str) -> InputAnswered {
+        let Some((request, current)) = self.input() else {
+            return InputAnswered::default();
+        };
+        let Some(row) = request.rows(current).get(index).copied() else {
+            return InputAnswered::default();
+        };
+        let step = request.choose(row, current, typed);
+        self.take_input_step(&request, step)
+    }
+
+    /// Answer the question being asked with what is typed.
+    pub fn answer_input(&mut self, typed: &str) -> InputAnswered {
+        let Some((request, current)) = self.input() else {
+            return InputAnswered::default();
+        };
+        let step = request.answer_text(current, typed);
+        self.take_input_step(&request, step)
+    }
+
+    /// Go back to the question before the one being asked. Returns whether
+    /// there was one.
+    pub fn input_back(&mut self) -> bool {
+        let Some((request, current)) = self.input() else {
+            return false;
+        };
+        let previous = match current {
+            Some(0) => return false,
+            Some(index) => index - 1,
+            None if request.fields.is_empty() => return false,
+            None => request.fields.len() - 1,
+        };
+        if let Some(run) = self.run.as_mut() {
+            run.inputs.cursor = Some((request.id.clone(), previous));
+            run.inputs.invalid = None;
+        }
+        true
+    }
+
+    fn take_input_step(&mut self, request: &InputRequest, step: input::Step) -> InputAnswered {
+        let Some(run) = self.run.as_mut() else {
+            return InputAnswered::default();
+        };
+        let mut answered = InputAnswered {
+            took_text: step.took_text,
+            opened: false,
+        };
+        if let Some(url) = step.open.as_deref() {
+            match input::open_link(url) {
+                Ok(()) => answered.opened = true,
+                Err(err) => tracing::warn!(%err, "could not open the link"),
+            }
+        }
+        run.inputs.invalid = step
+            .invalid
+            .map(|invalid| (request.id.clone(), invalid.text()));
+        run.inputs.cursor = step.next.map(|next| (request.id.clone(), next));
+        for change in step.changes {
+            let command = match change {
+                Change::Answer {
+                    question_id,
+                    answer,
+                } => {
+                    run.inputs
+                        .answers
+                        .entry(request.id.clone())
+                        .or_default()
+                        .insert(question_id.clone(), answer.clone());
+                    Command::InputAnswer {
+                        request_id: request.id.clone(),
+                        question_id,
+                        answer,
+                    }
+                }
+                Change::Complete { response, answers } => {
+                    run.inputs.completed.push((request.id.clone(), response));
+                    Command::InputComplete {
+                        request_id: request.id.clone(),
+                        response,
+                        answers,
+                    }
+                }
+            };
+            let _ = self.commands.send(command);
+        }
+        answered
+    }
+
     /// Why the service cannot be asked anything, before a request is made.
     pub fn unreachable(&self) -> Option<&str> {
         self.unreachable.as_deref()
@@ -797,15 +1481,19 @@ impl Ask {
                     .or_else(|| self.agents.first());
                 self.run = Some(Run {
                     agent: chosen.map(|agent| agent.display_name.clone()),
+                    provider: chosen.map(|agent| agent.provider.clone()),
                     sent: vec![request],
                     handed_off: 0,
                     answered: Vec::new(),
                     chat: None,
+                    inputs: Inputs::default(),
                     // An unreachable service fails the request at once, rather
                     // than leaving it to look as if it is starting.
                     failure: self.unreachable.clone(),
                     resumed: false,
                     terminal: None,
+                    loading: false,
+                    modes: None,
                 });
                 chosen.map(|agent| agent.provider.clone())
             }
@@ -817,9 +1505,67 @@ impl Ask {
         });
     }
 
+    /// The name of the frosted material the card wears: the running session's
+    /// agent's, once there is one, and before that the agent the request
+    /// would go to — the row at `agent` in the agent list, or the default.
+    /// `None` for an agent without a colour, which is the plain material.
+    pub fn colour(&self, agent: Option<usize>) -> Option<&str> {
+        let provider = match self.run.as_ref() {
+            Some(run) => run.provider.as_deref()?,
+            None => agent
+                .and_then(|index| self.agents.get(index))
+                .or_else(|| self.agents.first())?
+                .provider
+                .as_str(),
+        };
+        self.colours.get(provider).map(String::as_str)
+    }
+
     /// Whether a request has been made, and the launcher is showing the log.
     pub fn running(&self) -> bool {
         self.run.is_some()
+    }
+
+    /// The line under the status naming the agent and the mode it is in,
+    /// such as "Claude · Accept edits", with how to switch when the agent has
+    /// more than one mode. `None` until the session's agent has said.
+    pub fn mode_line(&self) -> Option<String> {
+        let run = self.run.as_ref()?;
+        let modes = run.modes.as_ref()?;
+        let agent = run
+            .agent
+            .clone()
+            .or_else(|| {
+                run.provider
+                    .as_deref()
+                    .map(|provider| self.agent_name(provider).unwrap_or(provider).to_owned())
+            })
+            .unwrap_or_default();
+        let mode = modes.current_name();
+        Some(if modes.next().is_some() {
+            otto_kit::t_owned!("launcher-ask-mode-hint", agent = agent, mode = mode)
+        } else {
+            otto_kit::t_owned!("launcher-ask-mode", agent = agent, mode = mode)
+        })
+    }
+
+    /// Switch the agent to the next of its modes. The line changes once the
+    /// agent has, as the service reports it. Returns whether there was a
+    /// mode to switch to.
+    pub fn cycle_mode(&mut self) -> bool {
+        let Some(next) = self
+            .run
+            .as_ref()
+            .and_then(|run| run.modes.as_ref())
+            .and_then(Modes::next)
+        else {
+            return false;
+        };
+        self.commands
+            .send(Command::SetMode {
+                mode_id: next.id.clone(),
+            })
+            .is_ok()
     }
 
     /// Whether a request is still on its way to the service, and closing now
@@ -849,6 +1595,45 @@ impl Ask {
 
     /// Stop the turn of the session at `index` in the list. Returns whether it
     /// had one going, as far as the list knows.
+    /// Tells the service the session is going to its terminal: the one at
+    /// `index` in the list, or the open one. The service stops its own agent
+    /// once it is idle, so the terminal's is the only one writing.
+    pub fn release(&mut self, index: Option<usize>) -> bool {
+        let session = match index {
+            Some(index) => match self.sessions.get(index) {
+                Some(session) => Some(session.resource.clone()),
+                None => return false,
+            },
+            None => {
+                let busy = self.run.as_ref().is_some_and(|run| {
+                    run.chat.as_ref().is_some_and(|chat| {
+                        chat.active_turn.is_some()
+                            || chat
+                                .queued_messages
+                                .as_ref()
+                                .is_some_and(|queue| !queue.is_empty())
+                    }) || self.handing_off()
+                });
+                self.handing_over = Some(busy);
+                None
+            }
+        };
+        self.commands.send(Command::Release { session }).is_ok()
+    }
+
+    /// Removes the session at `index` in the list for good. The list is
+    /// asked for again once the service has done it.
+    pub fn delete_at(&mut self, index: usize) -> bool {
+        let Some(session) = self.sessions.get(index) else {
+            return false;
+        };
+        self.commands
+            .send(Command::Delete {
+                session: session.resource.clone(),
+            })
+            .is_ok()
+    }
+
     pub fn stop_at(&mut self, index: usize) -> bool {
         let Some(session) = self.sessions.get(index) else {
             return false;
@@ -878,6 +1663,41 @@ impl Ask {
         );
         if run.resumed && run.chat.is_none() && run.failure.is_none() {
             transcript.status = Some(Status::Opening);
+        }
+        let turn_running = run
+            .chat
+            .as_ref()
+            .is_some_and(|chat| chat.active_turn.is_some());
+        if run.loading && !turn_running && run.failure.is_none() {
+            transcript.status = Some(Status::Loading);
+        }
+        if let Some(busy) = self.handing_over {
+            transcript.status = Some(Status::HandingOver { busy });
+        }
+        // Answers given here show before the service carries them.
+        for request in transcript
+            .entries
+            .iter_mut()
+            .flat_map(|entry| entry.inputs.iter_mut())
+            .filter(|request| request.is_open())
+        {
+            if let Some(answers) = run.inputs.answers.get(&request.id) {
+                request.answers.extend(answers.clone());
+            }
+            let completed = run
+                .inputs
+                .completed
+                .iter()
+                .find(|(id, _)| *id == request.id);
+            if let Some((_, response)) = completed {
+                request.outcome = Outcome::Responded(*response);
+            }
+        }
+        if transcript.status == Some(Status::Waiting)
+            && transcript.question().is_none()
+            && transcript.input().is_none()
+        {
+            transcript.status = Some(Status::Working);
         }
         Some(transcript)
     }
@@ -982,54 +1802,12 @@ fn home_relative(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-/// The path a `file://` URI names, undoing its percent-encoding.
-fn path_from_uri(uri: &str) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-    let encoded = uri.strip_prefix("file://")?.as_bytes();
-    let mut bytes = Vec::with_capacity(encoded.len());
-    let mut index = 0;
-    while index < encoded.len() {
-        let hex = encoded
-            .get(index + 1..index + 3)
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match (encoded[index], hex) {
-            (b'%', Some(byte)) => {
-                bytes.push(byte);
-                index += 3;
-            }
-            (byte, _) => {
-                bytes.push(byte);
-                index += 1;
-            }
-        }
-    }
-    Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
-}
-
 /// Picks the session `query` names: its URI, its id, or the start of its id.
 fn find_session<'a>(
     sessions: &'a [SessionSummary],
     query: &str,
 ) -> Result<&'a SessionSummary, String> {
-    let id = query.strip_prefix(SESSION_SCHEME).unwrap_or(query);
-    let matches: Vec<&SessionSummary> = sessions
-        .iter()
-        .filter(|session| {
-            session
-                .resource
-                .strip_prefix(SESSION_SCHEME)
-                .is_some_and(|candidate| !id.is_empty() && candidate.starts_with(id))
-        })
-        .collect();
-    match matches.as_slice() {
-        [session] => Ok(session),
-        [] => Err(format!("no session matches `{query}`")),
-        many => Err(format!(
-            "`{query}` matches {} sessions; give more of the id",
-            many.len()
-        )),
-    }
+    session::find(sessions, Some(query)).map_err(|err| err.to_string())
 }
 
 /// Works out the conversation from the chat, and from the requests sent that
@@ -1067,6 +1845,7 @@ fn transcript(
                 answer: answer(&turn.response_parts),
                 steps,
                 question: None,
+                inputs: input_requests(&turn.response_parts, false),
                 note,
             });
         }
@@ -1074,13 +1853,16 @@ fn transcript(
             let (steps, question) = tool_calls(&turn.id, &turn.response_parts);
             let question = question.filter(|question| !answered.contains(&question.tool_call_id));
             let thinking = matches!(turn.response_parts.last(), Some(ResponsePart::Reasoning(_)));
-            status = Some(if question.is_some() {
-                Status::Waiting
-            } else if thinking {
-                Status::Thinking
-            } else {
-                Status::Working
-            });
+            let inputs = input_requests(&turn.response_parts, true);
+            status = Some(
+                if question.is_some() || inputs.iter().any(InputRequest::is_open) {
+                    Status::Waiting
+                } else if thinking {
+                    Status::Thinking
+                } else {
+                    Status::Working
+                },
+            );
             let Request {
                 prompt,
                 attachments,
@@ -1091,6 +1873,7 @@ fn transcript(
                 answer: answer(&turn.response_parts),
                 steps,
                 question,
+                inputs,
                 note: None,
             });
         }
@@ -1120,9 +1903,10 @@ fn transcript(
         entries.push(Entry {
             prompt: request.prompt,
             attachments: request.attachments,
-            answer: String::new(),
+            answer: Vec::new(),
             steps: Vec::new(),
             question: None,
+            inputs: Vec::new(),
             note,
         });
     }
@@ -1133,17 +1917,38 @@ fn transcript(
     Transcript { entries, status }
 }
 
-/// The answer in `parts`: its markdown, without the reasoning.
-fn answer(parts: &[ResponsePart]) -> String {
-    parts
-        .iter()
-        .filter_map(|part| match part {
-            ResponsePart::Markdown(markdown) => Some(markdown.content.trim()),
-            _ => None,
-        })
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+/// The answer in `parts`, in order: the Markdown the agent wrote and the
+/// pictures it sent, without the reasoning.
+///
+/// Markdown parts that follow one another are one piece, joined as paragraphs
+/// are, so wrapping and headings read across the chunks the agent streamed.
+fn answer(parts: &[ResponsePart]) -> Vec<Said> {
+    let mut answer: Vec<Said> = Vec::new();
+    for part in parts {
+        match part {
+            ResponsePart::Markdown(markdown) => {
+                let text = markdown.content.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                match answer.last_mut() {
+                    Some(Said::Text(said)) => {
+                        said.push_str("\n\n");
+                        said.push_str(text);
+                    }
+                    _ => answer.push(Said::Text(text.to_owned())),
+                }
+            }
+            ResponsePart::ContentRef(resource) => {
+                if let Some(picture) = Picture::at(&resource.uri, resource.content_type.as_deref())
+                {
+                    answer.push(Said::Image(picture));
+                }
+            }
+            _ => {}
+        }
+    }
+    answer
 }
 
 /// The tool calls in the turn `turn_id`'s `parts`: those already decided, and
@@ -1170,6 +1975,12 @@ fn tool_calls(turn_id: &str, parts: &[ResponsePart]) -> (Vec<Step>, Option<Quest
                         .map(plain)
                         .unwrap_or_else(|| pending.display_name.clone()),
                     detail: plain(&pending.invocation_message),
+                    action: action_lines(pending.tool_input.as_ref(), pending.edits.as_ref()),
+                    default_id: pending
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get("otto")?.get("defaultOption")?.as_str())
+                        .map(str::to_owned),
                     choices: pending
                         .options
                         .iter()
@@ -1200,6 +2011,43 @@ fn tool_calls(turn_id: &str, parts: &[ResponsePart]) -> (Vec<Step>, Option<Quest
         }
     }
     (steps, question)
+}
+
+/// The input requests in `parts`, in order. `active` says whether the turn is
+/// still running, which is the only time one can be answered.
+fn input_requests(parts: &[ResponsePart], active: bool) -> Vec<InputRequest> {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            ResponsePart::InputRequest(request) => Some(InputRequest::from_part(request, active)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The action that carries an answer to an input request, or its completion.
+fn input_action(command: Command) -> Option<StateAction> {
+    Some(match command {
+        Command::InputAnswer {
+            request_id,
+            question_id,
+            answer,
+        } => StateAction::ChatInputAnswerChanged(ChatInputAnswerChangedAction {
+            request_id,
+            question_id,
+            answer: Some(answer),
+        }),
+        Command::InputComplete {
+            request_id,
+            response,
+            answers,
+        } => StateAction::ChatInputCompleted(ChatInputCompletedAction {
+            request_id,
+            response,
+            answers,
+        }),
+        _ => return None,
+    })
 }
 
 fn plain(text: &StringOrMarkdown) -> String {
@@ -1247,21 +2095,25 @@ async fn serve(
     let client = match tokio::time::timeout(TIMEOUT, connect(url)).await {
         Ok(Ok(client)) => client,
         Ok(Err(err)) => {
-            reporter.send(Update::Unreachable(format!("otto-agentsd at {url}: {err}")));
+            reporter.send(Update::Unreachable(format!("otto-agents at {url}: {err}")));
             return;
         }
         Err(_) => {
             reporter.send(Update::Unreachable(format!(
-                "otto-agentsd at {url} did not answer"
+                "otto-agents at {url} did not answer"
             )));
             return;
         }
     };
 
+    // Where each agent wants its sessions, which beats the fallback folder.
+    let mut folders: HashMap<String, PathBuf> = HashMap::new();
     match client.subscribe(ROOT_RESOURCE_URI.to_string()).await {
         Ok((subscribed, _root)) => {
             if let Some(SnapshotState::Root(root)) = subscribed.snapshot.map(|s| s.state) {
+                folders = folders_from_meta(root.meta.as_ref());
                 reporter.send(Update::Agents(root.agents));
+                reporter.send(Update::Colours(colours_from_meta(root.meta.as_ref())));
             }
         }
         Err(err) => tracing::warn!(%err, "could not list the agents"),
@@ -1278,14 +2130,37 @@ async fn serve(
                 provider,
                 attachments,
             }) => {
+                let chosen = provider
+                    .as_deref()
+                    .and_then(|provider| folders.get(provider))
+                    .map_or(folder, PathBuf::as_path);
                 let handed =
-                    hand_off(&client, &prompt, &attachments, provider, folder, reporter).await;
+                    hand_off(&client, &prompt, &attachments, provider, chosen, reporter).await;
                 if handed.is_ok() {
                     reporter.send(Update::HandedOff);
                 }
                 break handed;
             }
             Some(Command::Resume { session }) => break resume(&client, &session, reporter).await,
+            Some(Command::Release {
+                session: Some(session),
+            }) => {
+                release(&client, &session).await;
+                continue;
+            }
+            Some(Command::Delete { session }) => {
+                let disposed: Result<Value, _> = client
+                    .request("disposeSession", json!({ "channel": session }))
+                    .await;
+                if let Err(err) = disposed {
+                    tracing::warn!(%err, %session, "could not remove the session");
+                }
+                match list_sessions(&client).await {
+                    Ok(sessions) => reporter.send(Update::Sessions(sessions)),
+                    Err(err) => tracing::warn!(%err, "could not list the sessions"),
+                }
+                continue;
+            }
             Some(Command::Stop { session }) => {
                 if let Err(err) = stop(&client, &session).await {
                     tracing::warn!(%err, %session, "could not stop the session");
@@ -1316,7 +2191,18 @@ async fn serve(
                 let Some(command) = command else { break };
                 let action = match command {
                     // The session is open already, and the list is gone.
-                    Command::Resume { .. } | Command::Stop { .. } => continue,
+                    Command::Resume { .. } | Command::Stop { .. } | Command::Delete { .. } => {
+                        continue
+                    }
+                    Command::Release { session } => {
+                        let session = session.as_deref().unwrap_or_else(|| session_events.uri()).to_owned();
+                        release(&client, &session).await;
+                        continue;
+                    }
+                    Command::SetMode { mode_id } => {
+                        set_mode(&client, session_events.uri(), &mode_id).await;
+                        continue;
+                    }
                     Command::Ask { prompt, attachments, .. } => {
                         match queue(&client, &chat_uri, &prompt, &attachments).await {
                             Ok(()) => reporter.send(Update::HandedOff),
@@ -1345,6 +2231,12 @@ async fn serve(
                             selected_option_id: Some(option_id),
                         })
                     }
+                    command @ (Command::InputAnswer { .. } | Command::InputComplete { .. }) => {
+                        match input_action(command) {
+                            Some(action) => action,
+                            None => continue,
+                        }
+                    }
                 };
                 if let Err(err) = client.dispatch(chat_uri.clone(), action).await {
                     reporter.send(Update::Failed(err.to_string()));
@@ -1357,12 +2249,14 @@ async fn serve(
                     }
                     StateAction::SessionMetaChanged(changed) => {
                         reporter.send(Update::Terminal(Terminal::from_meta(changed.meta.as_ref())));
+                        reporter.send(Update::Loading(loading_from_meta(changed.meta.as_ref())));
+                        reporter.send(Update::Modes(modes_from_meta(changed.meta.as_ref())));
                     }
                     _ => {}
                 },
                 Some(_) => {}
                 None => {
-                    reporter.send(Update::Failed("otto-agentsd closed the connection".into()));
+                    reporter.send(Update::Failed("otto-agents closed the connection".into()));
                     break;
                 }
             },
@@ -1376,12 +2270,27 @@ async fn serve(
                     {
                         tracing::info!(%reason, "the answer came too late")
                     }
-                    Some(reason) => reporter.send(Update::Failed(reason)),
+                    // The same goes for an input request: settled elsewhere,
+                    // or refused, the chat says where it stands.
+                    Some(reason) => match &envelope.action {
+                        StateAction::ChatInputAnswerChanged(ChatInputAnswerChangedAction {
+                            request_id,
+                            ..
+                        })
+                        | StateAction::ChatInputCompleted(ChatInputCompletedAction {
+                            request_id,
+                            ..
+                        }) => {
+                            tracing::info!(%reason, %request_id, "the answer was refused");
+                            reporter.send(Update::InputRefused(request_id.clone()));
+                        }
+                        _ => reporter.send(Update::Failed(reason)),
+                    },
                     None => reporter.send(Update::Action(Box::new(envelope.action))),
                 },
                 Some(_) => {}
                 None => {
-                    reporter.send(Update::Failed("otto-agentsd closed the connection".into()));
+                    reporter.send(Update::Failed("otto-agents closed the connection".into()));
                     break;
                 }
             },
@@ -1391,7 +2300,7 @@ async fn serve(
 }
 
 async fn connect(url: &str) -> Result<Client, BoxError> {
-    let transport = ahp_ws::WebSocketTransport::connect(url).await?;
+    let transport = otto_agents_client::connect(url).await?;
     let client = Client::connect(transport, ClientConfig::default()).await?;
     client
         .initialize(
@@ -1454,7 +2363,10 @@ async fn follow(
     let (subscribed, session_events) = client.subscribe(session.clone()).await?;
     let chat_uri = match subscribed.snapshot.map(|snapshot| snapshot.state) {
         Some(SnapshotState::Session(state)) => {
+            reporter.send(Update::Provider(state.provider.clone()));
             reporter.send(Update::Terminal(Terminal::from_meta(state.meta.as_ref())));
+            reporter.send(Update::Loading(loading_from_meta(state.meta.as_ref())));
+            reporter.send(Update::Modes(modes_from_meta(state.meta.as_ref())));
             state.default_chat.ok_or("the session has no chat")?
         }
         _ => return Err("the service sent no session".into()),
@@ -1472,6 +2384,30 @@ async fn follow(
 }
 
 /// Cancels the active turn of `session`, if it has one, without following it.
+/// Hands `session` to its terminal, so the service lets go of its agent once
+/// the agent is idle. Failing is logged and nothing more: the terminal opens
+/// either way, and the idle timeout gets there in the end.
+async fn release(client: &Client, session: &str) {
+    let released: Result<Value, _> = client
+        .request("releaseSession", json!({ "channel": session }))
+        .await;
+    if let Err(err) = released {
+        tracing::warn!(%err, %session, "could not hand the session to its terminal");
+    }
+}
+
+/// Asks the service to switch `session`'s agent to the mode `mode_id`. A
+/// refusal is logged and nothing more: the line shows the mode the agent is
+/// in, which the agent's own answer moves.
+async fn set_mode(client: &Client, session: &str, mode_id: &str) {
+    let switched: Result<Value, _> = client
+        .request("setMode", json!({ "session": session, "modeId": mode_id }))
+        .await;
+    if let Err(err) = switched {
+        tracing::warn!(%err, %session, %mode_id, "could not switch the agent's mode");
+    }
+}
+
 async fn stop(client: &Client, session: &str) -> Result<(), BoxError> {
     let (subscribed, _events) = client.subscribe(session.to_string()).await?;
     let chat_uri = match subscribed.snapshot.map(|snapshot| snapshot.state) {
@@ -1557,21 +2493,6 @@ fn attachment(file: &Path) -> MessageAttachment {
     })
 }
 
-/// `path` as a `file://` URI, percent-encoding everything but unreserved
-/// characters and slashes.
-fn file_uri(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for &byte in path.as_os_str().as_encoded_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                uri.push(byte as char)
-            }
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    uri
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1630,6 +2551,17 @@ mod tests {
         })
     }
 
+    /// A picture in an answer, as the service puts it there: a `contentRef` at
+    /// the file it wrote.
+    fn picture(name: &str) -> ResponsePart {
+        ResponsePart::ContentRef(ahp_types::state::ResourceResponsePart {
+            uri: file_uri(&PathBuf::from(format!("/tmp/otto/{name}"))),
+            size_hint: Some(64),
+            content_type: Some("image/png".into()),
+            nonce: None,
+        })
+    }
+
     fn reasoning(content: &str) -> ResponsePart {
         ResponsePart::Reasoning(ReasoningResponsePart {
             id: content.into(),
@@ -1671,6 +2603,82 @@ mod tests {
                 ]),
             }),
         }))
+    }
+
+    #[test]
+    fn the_service_says_which_answer_to_start_on() {
+        let mut question = Question {
+            turn_id: "t".into(),
+            tool_call_id: "c".into(),
+            title: String::new(),
+            detail: String::new(),
+            action: Vec::new(),
+            default_id: Some("reject".into()),
+            choices: ["allow_always", "allow", "reject"]
+                .iter()
+                .map(|id| Choice {
+                    id: (*id).into(),
+                    label: (*id).into(),
+                    approve: id.starts_with("allow"),
+                })
+                .collect(),
+        };
+        assert_eq!(question.default_choice(), 2, "the service's pick");
+        question.default_id = Some("no-such".into());
+        assert_eq!(question.default_choice(), 1, "an unknown pick falls back");
+        question.default_id = None;
+        assert_eq!(question.default_choice(), 1);
+
+        // And it travels in the pending state's `_meta`.
+        let ResponsePart::ToolCall(mut call) = asking("call-1") else {
+            unreachable!()
+        };
+        if let ToolCallState::PendingConfirmation(pending) = &mut call.tool_call {
+            pending.meta = Some(
+                json!({ "otto": { "defaultOption": "reject" } })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            );
+        }
+        let (_, question) = tool_calls("t", &[ResponsePart::ToolCall(call)]);
+        assert_eq!(question.unwrap().default_choice(), 2);
+    }
+
+    #[test]
+    fn what_the_tool_would_touch_is_shown_in_lines() {
+        let input = ToolInput::Inline(
+            json!({ "path": "/srv/a.rs", "rawInput": { "file_path": "/srv/a.rs" } }).to_string(),
+        );
+        let edits = json!([
+            { "path": "/srv/a.rs", "oldText": "one\ntwo", "newText": "uno\ndue" },
+            { "path": "/srv/b.rs", "oldText": null, "newText": "new" },
+        ]);
+        assert_eq!(
+            action_lines(Some(&input), Some(&edits)),
+            [
+                "/srv/a.rs",
+                "- one",
+                "- two",
+                "+ uno",
+                "+ due",
+                "/srv/b.rs",
+                "+ new"
+            ]
+        );
+        // Only the file, without an edit.
+        assert_eq!(action_lines(Some(&input), None), ["/srv/a.rs"]);
+        // Nothing usable, nothing shown.
+        assert!(action_lines(Some(&ToolInput::Inline("not json".into())), None).is_empty());
+        assert!(action_lines(None, Some(&json!({ "path": 1 }))).is_empty());
+
+        // A long edit is cut short.
+        let long: String = (0..30).map(|n| format!("line {n}\n")).collect();
+        let edits = json!([{ "path": "/srv/c.rs", "newText": long }]);
+        let lines = action_lines(None, Some(&edits));
+        assert_eq!(lines.len(), ACTION_LINES);
+        assert_eq!(lines.last().map(String::as_str), Some("\u{2026}"));
+        assert_eq!(lines[ACTION_LINES - 2], "+ line 9");
     }
 
     fn refused(tool_call_id: &str) -> ResponsePart {
@@ -1742,13 +2750,31 @@ mod tests {
         chat
     }
 
+    /// Everything an entry's answer says, as one string: what a test asserting
+    /// on the words of an answer wants, whatever pieces it arrived in.
+    fn said(entry: &Entry) -> String {
+        entry
+            .answer
+            .iter()
+            .filter_map(|said| match said {
+                Said::Text(text) => Some(text.as_str()),
+                Said::Image(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     fn entry(prompt: &str, answer: &str, note: Option<Note>) -> Entry {
         Entry {
             prompt: prompt.into(),
             attachments: Vec::new(),
-            answer: answer.into(),
+            answer: match answer.is_empty() {
+                true => Vec::new(),
+                false => vec![Said::Text(answer.to_owned())],
+            },
             steps: Vec::new(),
             question: None,
+            inputs: Vec::new(),
             note,
         }
     }
@@ -1780,6 +2806,57 @@ mod tests {
             transcript(Some(&chat), &hi, &[], None, Some("Claude")),
             starting
         );
+    }
+
+    /// A picture sits where the agent sent it, so a diagram stays with the
+    /// paragraph that introduces it rather than falling to the end.
+    #[test]
+    fn a_picture_takes_its_place_in_the_answer() {
+        let parts = vec![
+            markdown("here:"),
+            picture("mock-up-0123456789abcdef.png"),
+            markdown("and"),
+            markdown("that is all"),
+        ];
+        let chat = with_ended(empty_chat(), "draw", TurnState::Complete, parts);
+        let transcript = transcript(Some(&chat), &sent(&["draw"]), &[], None, None);
+        let answer = &transcript.entries[0].answer;
+        assert_eq!(answer.len(), 3, "{answer:?}");
+        assert_eq!(answer[0], Said::Text("here:".into()));
+        let Said::Image(picture) = &answer[1] else {
+            panic!("the picture is in the middle: {answer:?}");
+        };
+        assert_eq!(
+            picture.path,
+            PathBuf::from("/tmp/otto/mock-up-0123456789abcdef.png")
+        );
+        // The digest the service appends is how the file stays one file; it is
+        // not what the picture is called.
+        assert_eq!(picture.label, "mock up");
+        // The two pieces of Markdown after it read as one document.
+        assert_eq!(answer[2], Said::Text("and\n\nthat is all".into()));
+    }
+
+    /// What is pointed at has to be a picture on this machine. Anything else is
+    /// context for the agent, and drawing a frame for it would be a lie.
+    #[test]
+    fn a_reference_that_is_not_a_local_picture_is_not_shown() {
+        let not_a_picture = ResponsePart::ContentRef(ahp_types::state::ResourceResponsePart {
+            uri: file_uri(&PathBuf::from("/tmp/otto/notes.md")),
+            size_hint: None,
+            content_type: Some("text/markdown".into()),
+            nonce: None,
+        });
+        let elsewhere = ResponsePart::ContentRef(ahp_types::state::ResourceResponsePart {
+            uri: "https://example.invalid/shot.png".into(),
+            size_hint: None,
+            content_type: Some("image/png".into()),
+            nonce: None,
+        });
+        let parts = vec![markdown("see"), not_a_picture, elsewhere];
+        let chat = with_ended(empty_chat(), "look", TurnState::Complete, parts);
+        let transcript = transcript(Some(&chat), &sent(&["look"]), &[], None, None);
+        assert_eq!(transcript.entries[0].answer, [Said::Text("see".into())]);
     }
 
     #[test]
@@ -1839,11 +2916,57 @@ mod tests {
         let labels: Vec<&str> = question.choices.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, ["Always Allow", "Allow", "Reject"]);
         assert_eq!(question.default_choice(), 1);
+        assert!(question.action.is_empty());
 
         // Answered here, it is not offered again while the service catches up.
         let answered = transcript(Some(&chat), &prompts, &["call-1".into()], None, None);
         assert!(answered.question().is_none());
         assert_eq!(answered.status, Some(Status::Working));
+    }
+
+    fn input_request(response: Option<&str>) -> ResponsePart {
+        let mut part = json!({
+            "kind": "inputRequest",
+            "request": {
+                "id": "req-1",
+                "questions": [
+                    { "kind": "boolean", "id": "tests", "message": "Write tests?", "required": true }
+                ]
+            }
+        });
+        if let Some(response) = response {
+            part["response"] = json!(response);
+        }
+        serde_json::from_value(part).expect("an input request part")
+    }
+
+    #[test]
+    fn an_open_input_request_waits_and_an_ended_turn_leaves_it_unanswered() {
+        let prompts = sent(&["set it up"]);
+        let chat = with_active(empty_chat(), "set it up", vec![input_request(None)]);
+        let waiting = of(Some(&chat), &prompts);
+        assert_eq!(waiting.status, Some(Status::Waiting));
+        let request = waiting.input().expect("an open input request");
+        assert_eq!(request.id, "req-1");
+
+        let chat = with_active(
+            empty_chat(),
+            "set it up",
+            vec![input_request(Some("accept"))],
+        );
+        let answered = of(Some(&chat), &prompts);
+        assert!(answered.input().is_none());
+        assert_eq!(answered.status, Some(Status::Working));
+
+        let chat = with_ended(
+            empty_chat(),
+            "set it up",
+            TurnState::Complete,
+            vec![input_request(None)],
+        );
+        let ended = of(Some(&chat), &prompts);
+        assert!(ended.input().is_none());
+        assert_eq!(ended.entries[0].inputs[0].outcome, Outcome::Unanswered);
     }
 
     #[test]
@@ -1897,7 +3020,7 @@ mod tests {
         attachment(Path::new(file))
     }
 
-    /// An agent publishing `skills` as a plugin's children, the way otto-agentsd
+    /// An agent publishing `skills` as a plugin's children, the way otto-agents
     /// publishes the desktop's own.
     fn agent_with_skills(provider: &str, skills: &[&str]) -> AgentInfo {
         use ahp_types::state::{PluginCustomization, SkillCustomization};
@@ -2002,6 +3125,27 @@ mod tests {
         assert_eq!(ask.completion("/co", None).as_deref(), Some("nfigure-otto"));
     }
 
+    /// The agent picked from the list is the one the field names: the row
+    /// and the name come from the same list, in the same order.
+    #[test]
+    fn a_picked_row_names_its_agent() {
+        let mut ask = offline();
+        ask.apply(Update::Agents(vec![
+            agent_with_skills("claude", &[]),
+            agent_with_skills("hermes", &[]),
+        ]));
+
+        let rows = ask.agent_rows(0);
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(
+                ask.agent_display_name(row.origin.index),
+                Some(row.title.as_str())
+            );
+        }
+        assert_eq!(ask.agent_display_name(2), None);
+    }
+
     /// One name being another's prefix: the shorter completion is the one
     /// that is never wrong to accept.
     #[test]
@@ -2042,8 +3186,27 @@ mod tests {
         assert!(entries[1].attachments.is_empty());
     }
 
-    /// otto-agentsd says how to open a session in a terminal in the session's
+    /// otto-agents says how to open a session in a terminal in the session's
     /// `_meta`; anything short of a command and a folder is no way to.
+    #[test]
+    fn a_terminal_is_open_only_when_a_process_with_a_tty_names_the_session() {
+        let terminal = |session: Option<&str>| Terminal {
+            command: vec!["true".into()],
+            cwd: PathBuf::from("/"),
+            session: session.map(str::to_owned),
+            title: String::new(),
+        };
+        assert!(
+            !terminal(Some("no-process-names-this-0f3c1e")).already_open(),
+            "an id on nobody's command line"
+        );
+        assert!(!terminal(None).already_open(), "no id to look for");
+        assert!(
+            !terminal(Some("")).already_open(),
+            "an empty id matches everything"
+        );
+    }
+
     #[test]
     fn a_session_says_how_to_open_it_in_a_terminal() {
         let meta = |value: Value| value.as_object().cloned();
@@ -2051,6 +3214,7 @@ mod tests {
             "otto": { "terminal": {
                 "command": ["ghostty", "-e", "claude", "--resume", "abc"],
                 "cwd": "/home/me",
+                "session": "abc",
             }}
         }));
         assert_eq!(
@@ -2060,6 +3224,8 @@ mod tests {
                     .map(String::from)
                     .to_vec(),
                 cwd: PathBuf::from("/home/me"),
+                session: Some("abc".into()),
+                title: String::new(),
             })
         );
 
@@ -2168,6 +3334,71 @@ mod tests {
         assert!(title("").is_err());
     }
 
+    /// Each agent's own folder, as `folder` in `agents.toml` set it and the
+    /// root state published it. An agent naming none is the client's to place.
+    #[test]
+    fn each_agent_can_start_in_its_own_folder() {
+        let root_meta = serde_json::from_value(json!({
+            "otto": {
+                "folders": {
+                    "claude": "file:///home/me/dev",
+                    "codex": "file:///home/me/My%20Projects",
+                    // Not a path, so not a folder: it would otherwise be
+                    // taken as one relative to nothing.
+                    "hermes": "file://relative/dir",
+                }
+            }
+        }))
+        .expect("the root's meta");
+        let folders = folders_from_meta(Some(&root_meta));
+
+        assert_eq!(folders.get("claude"), Some(&PathBuf::from("/home/me/dev")));
+        assert_eq!(
+            folders.get("codex"),
+            Some(&PathBuf::from("/home/me/My Projects")),
+            "percent-encoding undone"
+        );
+        assert_eq!(folders.get("hermes"), None);
+        assert_eq!(folders.get("pi"), None, "no folder of its own");
+        assert!(folders_from_meta(None).is_empty());
+    }
+
+    /// The card's material follows the agent: the one picked before a request,
+    /// the one the request went to after, and the one an opened session
+    /// belongs to. Agents without a colour, and services that publish none,
+    /// leave the card on the plain material.
+    #[test]
+    fn the_material_follows_the_agent() {
+        let mut ask = offline();
+        ask.apply(Update::Agents(vec![
+            agent_with_skills("claude", &[]),
+            agent_with_skills("hermes", &[]),
+            agent_with_skills("pi", &[]),
+        ]));
+        assert_eq!(ask.colour(None), None, "no colours published yet");
+
+        let root_meta = serde_json::from_value(json!({
+            "otto": { "colours": { "claude": "orange", "hermes": "violet" } }
+        }))
+        .expect("the root's meta");
+        ask.apply(Update::Colours(colours_from_meta(Some(&root_meta))));
+        assert_eq!(ask.colour(None), Some("orange"), "the default agent's");
+        assert_eq!(ask.colour(Some(1)), Some("violet"), "the picked agent's");
+        assert_eq!(ask.colour(Some(2)), None, "pi has no colour");
+
+        ask.send("hello", Some(1));
+        assert_eq!(ask.colour(Some(0)), Some("violet"), "settled once sent");
+
+        let mut ask = offline();
+        ask.apply(Update::Colours(colours_from_meta(Some(&root_meta))));
+        ask.resume("ahp-session:/abc");
+        assert_eq!(ask.colour(None), None, "unknown until the service says");
+        ask.apply(Update::Provider("claude".into()));
+        assert_eq!(ask.colour(None), Some("orange"));
+
+        assert!(colours_from_meta(None).is_empty());
+    }
+
     #[test]
     fn a_listed_session_carries_the_terminal_the_catalogue_gave_it() {
         let mut ask = offline();
@@ -2182,6 +3413,9 @@ mod tests {
             Some(Terminal {
                 command: vec!["ghostty".into(), "-e".into(), "claude".into()],
                 cwd: PathBuf::from("/home/me"),
+                // A service that says no id still opens the session.
+                session: None,
+                title: "Ask: Fix the build".into(),
             })
         );
         // A session the service has said nothing about opens nowhere.
@@ -2233,12 +3467,12 @@ mod tests {
         false
     }
 
-    /// Against a live service: `otto-agentsd serve --echo`, with `OTTO_AGENTS_URL`
+    /// Against a live service: `otto-agents serve --echo`, with `OTTO_AGENTS_URL`
     /// pointing at it when it is not on the default port.
     #[test]
-    #[ignore = "needs a running `otto-agentsd serve --echo`"]
+    #[ignore = "needs a running `otto-agents serve --echo`"]
     fn follows_a_conversation_to_its_answers() {
-        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| DEFAULT_URL.into());
+        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
         let mut ask = Ask::connect(url, std::env::temp_dir());
 
         assert!(pump_until(&mut ask, |ask| !ask.agents.is_empty()));
@@ -2252,7 +3486,7 @@ mod tests {
                 ask.transcript().is_some_and(|t| {
                     t.status.is_none()
                         && t.entries.len() == count
-                        && t.entries[count - 1].answer.contains(word)
+                        && said(&t.entries[count - 1]).contains(word)
                 })
             }
         };
@@ -2262,20 +3496,20 @@ mod tests {
         let done = pump_until(&mut ask, answered(2, "again"));
         let transcript = ask.transcript();
         assert!(done, "the conversation never finished: {transcript:?}");
-        assert!(transcript.unwrap().entries[0].answer.contains("launcher"));
+        assert!(said(&transcript.unwrap().entries[0]).contains("launcher"));
         assert!(!ask.handing_off());
     }
 
     /// Against a live service, like the test above.
     #[test]
-    #[ignore = "needs a running `otto-agentsd serve --echo`"]
+    #[ignore = "needs a running `otto-agents serve --echo`"]
     fn opens_a_session_with_its_attachments_and_carries_it_on() {
-        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| DEFAULT_URL.into());
+        let url = std::env::var("OTTO_AGENTS_URL").unwrap_or_else(|_| default_url());
         let mut first = Ask::connect(url.clone(), std::env::temp_dir());
         first.attach([PathBuf::from("/tmp/notes.md")]);
         first.send("resume me", None);
         assert!(pump_until(&mut first, |ask| ask.transcript().is_some_and(
-            |t| t.status.is_none() && t.entries[0].answer.contains("resume")
+            |t| t.status.is_none() && said(&t.entries[0]).contains("resume")
         )));
         drop(first);
 
@@ -2295,7 +3529,7 @@ mod tests {
             ask.transcript().is_some_and(|t| {
                 t.status.is_none()
                     && t.entries.len() == 2
-                    && t.entries[1].answer.contains("carried")
+                    && said(&t.entries[1]).contains("carried")
             })
         });
         assert!(done, "{:?}", second.transcript());

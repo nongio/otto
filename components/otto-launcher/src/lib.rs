@@ -4,7 +4,9 @@
 pub mod apps;
 pub mod ask;
 pub mod calc;
+pub mod input;
 pub mod log;
+pub mod selection;
 pub mod source;
 pub mod view;
 pub mod windows;

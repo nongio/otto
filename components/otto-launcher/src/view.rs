@@ -28,6 +28,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use layers::prelude::*;
@@ -41,7 +42,8 @@ use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styl
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
-use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y};
+use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, IMAGE_PAD};
+use crate::selection::Span;
 use crate::source::{Activity, Item};
 
 /// Width of the card. Wide enough for a window title and its application, and
@@ -99,6 +101,10 @@ const LOG_INSET: f32 = 20.0;
 
 /// Corner radius of a request's bubble; a one-line request is a pill.
 const BUBBLE_RADIUS: f32 = 16.0;
+
+/// How rounded a picture in the log is: the corner every other surface in
+/// the card wears.
+const IMAGE_RADIUS: f32 = 8.0;
 /// How wide a line of the ask log may run.
 pub const LOG_W: f32 = CARD_W - LOG_INSET * 2.0;
 
@@ -200,6 +206,10 @@ pub struct Palette {
     /// make typing feel slow. Behind a cell because painting a band only
     /// borrows the palette.
     icons: RefCell<HashMap<String, Option<Image>>>,
+    /// Pictures the agent sent, decoded once. Kept beside the icons and for the
+    /// same reason: the log is laid out again on every chunk of an answer, and
+    /// each pass asks every picture how large it is.
+    pictures: RefCell<HashMap<PathBuf, Option<Image>>>,
     dark: bool,
 }
 
@@ -251,6 +261,7 @@ impl Palette {
             centered: false,
             moved: (0.0, 0.0),
             icons: RefCell::new(HashMap::new()),
+            pictures: RefCell::new(HashMap::new()),
             dark,
         };
         palette.style();
@@ -499,6 +510,32 @@ impl Palette {
         };
     }
 
+    /// How large the picture at `path` is, in its own pixels, for the log to
+    /// scale into the card. `None` when there is no reading it — the file is
+    /// gone, or it is not a picture — and the log says its name instead.
+    pub fn picture_size(&self, path: &Path) -> Option<(f32, f32)> {
+        let image = self.picture(path)?;
+        Some((image.width() as f32, image.height() as f32))
+    }
+
+    /// The picture at `path`, decoded once and kept.
+    ///
+    /// Decoded eagerly into raster pixels: `Image::from_encoded` is lazy, and a
+    /// picture left lazy is decoded again on every band the log paints.
+    fn picture(&self, path: &Path) -> Option<Image> {
+        if let Some(cached) = self.pictures.borrow().get(path) {
+            return cached.clone();
+        }
+        let decoded = std::fs::read(path)
+            .ok()
+            .and_then(|bytes| Image::from_encoded(skia_safe::Data::new_copy(&bytes)))
+            .and_then(|image| image.make_raster_image(None, None));
+        self.pictures
+            .borrow_mut()
+            .insert(path.to_path_buf(), decoded.clone());
+        decoded
+    }
+
     /// How wide `text` is in the ask log, drawn in `style`.
     pub fn measure_log(&self, text: &str, style: Style) -> f32 {
         measure_runs(&self.log_font(style), text)
@@ -515,9 +552,112 @@ impl Palette {
         )
     }
 
+    /// Every piece of text in the ask log, in reading order, with the box it
+    /// is painted in — what [`crate::selection`] selects over.
+    ///
+    /// This walks the log exactly as [`Palette::paint_log`] does, because a
+    /// highlight that does not sit on the words is worse than no highlight at
+    /// all: the two have to agree about where each line was put.
+    pub fn log_spans(&self, lines: &[Line]) -> Vec<Span> {
+        let plain = self.log_font(Style::Answer);
+        let mut spans = Vec::new();
+        let mut row = 0usize;
+        for line in lines {
+            match &line.kind {
+                Kind::Text { text, style } => {
+                    let font = self.log_font(*style);
+                    let width = measure_runs(&font, text);
+                    spans.push(Span {
+                        rect: Rect::from_xywh(LOG_INSET, line.top, width, LOG_LINE_H),
+                        text: text.clone(),
+                        font,
+                        line: row,
+                    });
+                    row += 1;
+                }
+                Kind::Bubble {
+                    lines: words,
+                    width,
+                    ..
+                } => {
+                    let left = LOG_INSET + LOG_W - width + BUBBLE_PAD_X;
+                    for (index, words) in words.iter().enumerate() {
+                        let top = line.top + BUBBLE_PAD_Y + index as f32 * LOG_LINE_H;
+                        spans.push(Span {
+                            rect: Rect::from_xywh(
+                                left,
+                                top,
+                                measure_runs(&plain, words),
+                                LOG_LINE_H,
+                            ),
+                            text: words.clone(),
+                            font: plain.clone(),
+                            line: row,
+                        });
+                        row += 1;
+                    }
+                }
+                Kind::Document(doc) => {
+                    for text_line in doc {
+                        for run in &text_line.runs {
+                            spans.push(Span {
+                                rect: Rect::from_xywh(
+                                    LOG_INSET + run.x,
+                                    line.top + text_line.top,
+                                    run.width,
+                                    text_line.height,
+                                ),
+                                text: run.text.clone(),
+                                font: run.font(),
+                                line: row,
+                            });
+                        }
+                        row += 1;
+                    }
+                }
+                // A picture has no words to select over, but it is a line of
+                // the log all the same, so the numbering carries on past it.
+                Kind::Image { .. } => row += 1,
+            }
+        }
+        spans
+    }
+
+    /// The code block under `point` in the ask log, as the log line holding
+    /// the answer and the block within it, and whether the point is on the
+    /// block's copy button. `point` is in the log's content coordinates.
+    pub fn code_at(&self, lines: &[Line], point: (f32, f32)) -> Option<(usize, document::CodeHit)> {
+        lines.iter().enumerate().find_map(|(index, line)| {
+            let Kind::Document(doc) = &line.kind else {
+                return None;
+            };
+            let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
+            document::code_at(content, doc, 0.0, point).map(|hit| (index, hit))
+        })
+    }
+
+    /// The text of the `block`th code block of the answer on log line `line`.
+    pub fn code_text(lines: &[Line], line: usize, block: usize) -> Option<String> {
+        let Kind::Document(doc) = &lines.get(line)?.kind else {
+            return None;
+        };
+        document::code_blocks(doc)
+            .into_iter()
+            .nth(block)
+            .map(|block| block.text)
+    }
+
     /// Paint the lines of the ask log that fall inside `band`, in the list's
-    /// content coordinates.
-    pub fn paint_log(&self, canvas: &Canvas, band: Rect, lines: &[Line]) {
+    /// content coordinates. `copy` is the copy button to show on a code
+    /// block, as the log line holding its answer and the button.
+    pub fn paint_log(
+        &self,
+        canvas: &Canvas,
+        band: Rect,
+        lines: &[Line],
+        selection: &[Rect],
+        copy: Option<(usize, document::CopyButton)>,
+    ) {
         let prompt_font = self.log_font(Style::Prompt);
         let font = self.log_font(Style::Answer);
         let mut text = Paint::new(Color4f::from(self.title_color()), None);
@@ -532,10 +672,20 @@ impl Palette {
         };
         let mut request = Paint::new(Color4f::from(theme.text_primary), None);
         request.set_anti_alias(true);
+
+        // The highlight goes down first, so the words sit on top of it.
+        let mut highlight = Paint::new(Color4f::from(selection_color(&theme)), None);
+        highlight.set_anti_alias(true);
+        for rect in selection {
+            if rect.bottom < band.top || rect.top > band.bottom {
+                continue;
+            }
+            canvas.draw_round_rect(*rect, 2.0, 2.0, &highlight);
+        }
         let mut bubble_fill = Paint::new(Color4f::from(theme.fill_secondary), None);
         bubble_fill.set_anti_alias(true);
 
-        for line in lines {
+        for (index, line) in lines.iter().enumerate() {
             if line.top + line.height < band.top || line.top > band.bottom {
                 continue;
             }
@@ -577,7 +727,53 @@ impl Palette {
                 }
                 Kind::Document(doc) => {
                     let content = Rect::from_xywh(LOG_INSET, line.top, LOG_W, line.height);
-                    document::draw_scrolled(canvas, content, doc, 0.0, &theme);
+                    let copy = copy
+                        .filter(|(on_line, _)| *on_line == index)
+                        .map(|(_, button)| button);
+                    document::draw_scrolled(canvas, content, doc, 0.0, &theme, copy);
+                }
+                Kind::Image {
+                    path,
+                    label,
+                    width,
+                    height,
+                } => {
+                    let Some(image) = self.picture(path) else {
+                        // The layout only makes a picture line for a file it
+                        // could read; if it has gone since, its name goes in
+                        // its place rather than a hole in the log.
+                        let baseline = line.top + LOG_LINE_H * 0.72;
+                        let words = format!("picture: {label}");
+                        draw_runs(canvas, &words, (LOG_INSET, baseline), &font, &dim);
+                        continue;
+                    };
+                    let box_ = Rect::from_xywh(LOG_INSET, line.top + IMAGE_PAD, *width, *height);
+                    let radius = IMAGE_RADIUS.min(box_.height() / 2.0);
+                    canvas.save();
+                    // Rounded like every other surface in the card, and clipped
+                    // rather than drawn rounded: the picture's own edge pixels
+                    // must not bleed past the corner.
+                    canvas.clip_rrect(
+                        skia_safe::RRect::new_rect_xy(box_, radius, radius),
+                        None,
+                        true,
+                    );
+                    let source = (image.width(), image.height());
+                    canvas.draw_image_rect_with_sampling_options(
+                        &image,
+                        None,
+                        box_,
+                        otto_kit::utils::icon_sampling(source, (*width, *height)),
+                        &Paint::default(),
+                    );
+                    canvas.restore();
+                    // A hairline border, so a picture that is nearly the colour
+                    // of the card still reads as a picture.
+                    let mut edge = Paint::new(Color4f::from(theme.hairline), None);
+                    edge.set_anti_alias(true);
+                    edge.set_style(skia_safe::paint::Style::Stroke);
+                    edge.set_stroke_width(1.0);
+                    canvas.draw_round_rect(box_, radius, radius, &edge);
                 }
             }
         }
@@ -843,6 +1039,13 @@ pub fn field_style(dark: bool) -> TextInputStyle {
     style
 }
 
+/// What selected text in the log sits on: the accent, faint enough to read
+/// through.
+fn selection_color(theme: &Theme) -> Color {
+    let accent = theme.accent;
+    Color::from_argb(90, accent.r(), accent.g(), accent.b())
+}
+
 fn lay_color(color: Color) -> LayerColor {
     LayerColor::new_rgba255(color.r(), color.g(), color.b(), color.a())
 }
@@ -949,6 +1152,139 @@ mod tests {
             "and back off the edge at once"
         );
     }
+
+    /// Selecting text in the log is hit-testing against the boxes this file
+    /// says each piece of text was painted in, so those boxes have to hold
+    /// every kind of line the log draws — a request in its bubble, an answer
+    /// laid out as a document, a tool call, the status — and be where the
+    /// words are.
+    #[test]
+    fn every_kind_of_line_in_the_log_can_be_pointed_at() {
+        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
+        let steps = ["✓ ls".to_string()];
+        let answer = [crate::ask::Said::Text(
+            "Run `cargo build` first\n\n- then the tests".to_owned(),
+        )];
+        let blocks = [crate::log::Block {
+            prompt: "how do I build it",
+            attachments: None,
+            answer: &answer,
+            steps: &steps,
+            inputs: &[],
+            question: None,
+            action: &[],
+            note: None,
+        }];
+        let lines = crate::log::lay_out(
+            &blocks,
+            Some("Working…"),
+            LOG_W,
+            |text, style| palette.measure_log(text, style),
+            |path| palette.picture_size(path),
+        );
+        let spans = palette.log_spans(&lines);
+        // All of it, copied, reads as the conversation does on screen: the
+        // request, the answer with its code and its list, the tool call and
+        // the status, each on its own line.
+        let all = crate::selection::everything(&spans).expect("something to select");
+        assert_eq!(
+            crate::selection::text(&spans, all),
+            "how do I build it\nRun cargo build first\n• then the tests\n✓ ls\n\nWorking…"
+        );
+
+        let length = crate::log::length(&lines);
+        for span in &spans {
+            assert!(
+                span.rect.left >= 0.0 && span.rect.right <= CARD_W + 0.5,
+                "{:?} is drawn off the card",
+                span.text
+            );
+            assert!(
+                span.rect.top >= 0.0 && span.rect.bottom <= length + 0.5,
+                "{:?} is drawn outside the log",
+                span.text
+            );
+        }
+        // Reading order: a span never starts above the one before it.
+        for pair in spans.windows(2) {
+            assert!(pair[1].rect.top >= pair[0].rect.top - 0.5);
+        }
+        // And a press in the middle of a span lands in that span.
+        let request = spans
+            .iter()
+            .position(|span| span.text.contains("how do I build it"))
+            .expect("the request is there");
+        let rect = spans[request].rect;
+        let caret =
+            crate::selection::caret_at(&spans, (rect.left + rect.width() / 2.0, rect.center_y()))
+                .expect("a press on the words selects them");
+        assert_eq!(caret.span, request);
+        assert!(caret.byte > 0 && caret.byte < spans[request].text.len());
+    }
+
+    /// A picture has no words in it, but it is still a line of the log. The
+    /// spans on either side of it have to keep the line numbers they would have
+    /// had, or copying an answer with a picture in it puts the words in the
+    /// wrong order.
+    #[test]
+    fn a_picture_keeps_its_line_without_adding_a_span() {
+        let dir = tempfile::tempdir().expect("a temporary folder");
+        let path = dir.path().join("shot.png");
+        std::fs::write(&path, PIXEL_PNG).expect("written");
+        let palette = Palette::new(Engine::create(CARD_W, MAX_CARD_H), None, true);
+        let answer = [
+            crate::ask::Said::Text("here:".to_owned()),
+            crate::ask::Said::Image(crate::ask::Picture {
+                path: path.clone(),
+                label: "shot".to_owned(),
+            }),
+            crate::ask::Said::Text("that is all".to_owned()),
+        ];
+        let blocks = [crate::log::Block {
+            prompt: "draw",
+            attachments: None,
+            answer: &answer,
+            steps: &[],
+            inputs: &[],
+            question: None,
+            action: &[],
+            note: None,
+        }];
+        let lines = crate::log::lay_out(
+            &blocks,
+            None,
+            LOG_W,
+            |text, style| palette.measure_log(text, style),
+            |path| palette.picture_size(path),
+        );
+        assert!(
+            matches!(lines[2].kind, Kind::Image { .. }),
+            "the picture is laid out: {:?}",
+            lines[2].kind
+        );
+
+        let spans = palette.log_spans(&lines);
+        let all = crate::selection::everything(&spans).expect("something to select");
+        // The picture has nothing to copy, so it contributes no line of its
+        // own — but it takes a line number, which is what keeps the words after
+        // it from being run onto the words before it.
+        assert_eq!(
+            crate::selection::text(&spans, all),
+            "draw\nhere:\nthat is all"
+        );
+        let mut rows: Vec<usize> = spans.iter().map(|span| span.line).collect();
+        rows.dedup();
+        assert_eq!(rows, [0, 1, 3], "the picture is line 2");
+    }
+
+    /// A one-pixel PNG, so the decoder has something real to read.
+    const PIXEL_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xfc,
+        0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0xab, 0xce, 0x36, 0x89, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
 
     #[test]
     fn the_input_rect_is_the_card_that_is_drawn() {
