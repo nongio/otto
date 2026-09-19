@@ -76,6 +76,7 @@ versions: useful day to day, still filling in.
 | Page | What it covers |
 |------|----------------|
 | [Troubleshooting](troubleshooting.md) | Logs, common failures, and how to report a bug |
+| [Credits](credits.md) | The wallpapers, icons and fonts in Otto's screenshots, and who they belong to |
 
 Questions and feedback are welcome on [Discord](https://discord.gg/AdXkrYKuz) or in the Matrix room
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).

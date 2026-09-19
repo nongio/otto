@@ -55,6 +55,7 @@ declare -A PAGE_TITLE=(
     [screen-sharing]="Screen Sharing in Otto - Portal, OBS, Browsers"
     [remote-desktop]="Remote Desktop for Otto - RDP and Virtual Outputs"
     [troubleshooting]="Troubleshooting Otto - Logs and Common Failures"
+    [credits]="Credits - Wallpapers, Icons and Fonts in Otto's Screenshots"
     [dev/readme]="Otto Developer Guide - Architecture Overview"
     [dev/project-structure]="Otto Project Structure - Crates and Building"
     [dev/rendering]="Otto Rendering Pipeline - Scene Graph to Skia"
@@ -126,6 +127,7 @@ declare -A PAGE_DESC=(
     [screen-sharing]="Share your screen from Otto: xdg-desktop-portal setup, capture in browsers and OBS, AirPlay, and taking screenshots."
     [remote-desktop]="Serve an Otto session over RDP with otto-rdp, create virtual outputs, and connect from Windows, macOS or mobile clients."
     [troubleshooting]="Find Otto's logs, diagnose the most common startup and rendering failures, and gather what a useful bug report needs."
+    [credits]="Who made the wallpapers, icons and fonts you see in Otto's screenshots, and the licences they are used under."
     [dev/readme]="How Otto is built: Smithay for Wayland, Skia for drawing, and a retained lay-rs scene graph - plus where to start reading the source."
     [dev/project-structure]="Where everything lives in the Otto repository, what each Cargo feature flag turns on, and how to build the workspace."
     [dev/rendering]="How Otto turns its scene graph into render elements, draws them with Skia, and submits finished frames to the display."
@@ -233,6 +235,7 @@ USER_FILES=(
     "user/accessibility.md"
     "user/scripting.md"
     "user/troubleshooting.md"
+    "user/credits.md"
 )
 
 echo "Building User Guide..."
@@ -284,7 +287,9 @@ if [ -d "$IMAGE_SRC" ]; then
     mkdir -p "$SCRIPT_DIR/assets/images"
     # Screenshots are JPEG: as PNGs these were 1-2 MB each, which is the
     # page's largest paint and its slowest one.
-    cp "$IMAGE_SRC"/*.jpg "$IMAGE_SRC"/*.png "$SCRIPT_DIR/assets/images/" 2>/dev/null
+    # .gif is here for the short screen recordings the guide embeds: an <img>
+    # plays them on the site and on GitHub, where a <video> plays on neither.
+    cp "$IMAGE_SRC"/*.jpg "$IMAGE_SRC"/*.png "$IMAGE_SRC"/*.gif "$SCRIPT_DIR/assets/images/" 2>/dev/null
 fi
 
 # ============================================

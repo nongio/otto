@@ -4,6 +4,8 @@
 the screen. It is Otto's notification daemon, live-activity display and
 permission-dialog surface, all in one morphing element.
 
+![A notification from the island at the top of the screen, reading "Render finished", with a Close button](images/island-notification.jpg)
+
 ## What is Otto islands?
 
 It is a separate program, not part of the compositor. The configuration Otto

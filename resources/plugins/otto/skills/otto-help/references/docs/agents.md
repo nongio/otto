@@ -4,6 +4,8 @@ Ask puts a coding agent behind a text field on the desktop. You type a request,
 the agent works in a folder, and Otto shows what it is doing — and stops to ask
 you when it needs permission or has a question.
 
+![Ask answering a question about moving windows between workspaces, then offering a list of workspaces to choose from](images/ask.gif)
+
 Otto does not ship an agent of its own. It runs the ones you already have
 installed and logged in, and answers as **Otto** whichever one is underneath.
 
@@ -32,6 +34,10 @@ installed and logged in, and answers as **Otto** whichever one is underneath.
    request, and `Ctrl+O` continues the session in a terminal.
    `otto-launcher --agents` opens straight on the list of sessions you have
    going.
+
+   ![The Ask field listing four configured agents, the highlight moving down them, and the field changing to the one picked](images/ask-agents.gif)
+
+![An answer in the Ask panel: two paragraphs about the dock, a link to the documentation, and the skill it loaded to answer](images/ask-answer.jpg)
 
 Agents are configured in `~/.config/otto/agents.toml`, one `[[agents]]` block
 each. See [Configuration](configuration.md) for where that sits. Two settings
@@ -100,6 +106,12 @@ A few notes on the awkward cells:
   choices in it, and Otto waits. One that cannot just writes the question into
   the conversation and carries on guessing, so you only see it when you look.
   Codex needs its plan mode for this, which Otto turns on for you.
+
+  You do not have to keep Ask open waiting for it. Close the window and the
+  request carries on; when the agent needs you, the question arrives on the
+  island, with the same choices and a way back into the conversation.
+
+  ![A request typed into Ask, the window closed, and the question arriving later on the island with three choices and a Send button](images/ask-island.gif)
 - **Modes** are the agent's own presets for what it may do without asking, and
   every agent names them differently. `Shift+Tab` in Ask walks through
   whichever ones it offers; an agent that offers none simply has one behaviour.
