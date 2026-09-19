@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version = "1.87.0"
-description = "A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions."
+description = "A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 repository.workspace = true
 
 [dependencies]

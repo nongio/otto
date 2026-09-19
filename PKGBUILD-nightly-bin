@@ -3,7 +3,7 @@
 pkgname=otto-nightly-bin
 pkgver=1.0.0rc1.r1.9783956
 pkgrel=1
-pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail, inspired by familiar macOS interactions. (nightly build)"
+pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail. (nightly build)"
 url="https://github.com/nongio/otto"
 license=("MIT")
 arch=("x86_64")
