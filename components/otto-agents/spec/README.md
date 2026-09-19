@@ -5,8 +5,18 @@
 pinned in [`upstream.env`](upstream.env). **Do not edit it by hand.**
 `scripts/sync-spec.sh` overwrites it; `scripts/sync-spec.sh --check` fails if it has
 drifted from the pinned ref. That check needs network access, so it is a local and
-release-time step rather than a CI one — what CI guards is the version, through
-`tests/spec_pin.rs`.
+release-time step rather than a CI one.
+
+What CI guards, in the `ahp-conformance` job and never gated on changed paths:
+
+- **the version**, through `tests/spec_pin.rs` — the vendored spec and the
+  `ahp-types` crate the server compiles against name the same protocol version;
+- **the behaviour**, through `tests/conformance.rs` — every case in
+  `upstream/types/test-cases/` runs against the types and reducers this service
+  is built on. The reducer corpus is compared on the state a run of actions
+  lands on; the round-trip corpus is compared exactly, `null` and absent being
+  different, bar whole-number floats, which upstream's own Rust harness
+  normalises because Rust holds the spec's `number` as `f64`.
 
 | Path | Upstream source | Use it for |
 |---|---|---|

@@ -171,6 +171,30 @@ jobs:
         run: python3 scripts/check-locales.py
       - name: The otto-help skill ships the current user guides
         run: scripts/sync-skill-docs.sh --check
+
+  # A check of its own, never gated: Otto claims to implement the Agent Host
+  # Protocol, and this is the evidence for that claim. It runs the corpora
+  # upstream ships for the purpose — every reducer case and every wire
+  # round-trip in spec/upstream/types/test-cases — against the types and
+  # reducers the service is built on. otto-agents is pure Rust with no system
+  # libraries, so it needs none of the compositor's build dependencies and
+  # does not wait behind them.
+  ahp-conformance:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+      - name: Cargo cache (registry + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ahp-conformance
+          cache-on-failure: true
+      - name: The vendored spec and the AHP crates agree
+        run: cargo test --locked -p otto-agents --test spec_pin
+      - name: The AHP conformance corpora pass
+        run: cargo test --locked -p otto-agents --test conformance
   
   # One job rather than several: every step shares a single target directory,
   # so splitting them apart would pay for the compositor's dependency graph
