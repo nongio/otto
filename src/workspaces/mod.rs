@@ -3491,28 +3491,31 @@ impl Workspaces {
 
     /// Return the actual rendered geometry of the dock in logical coordinates
     pub fn get_dock_geometry(&self) -> Rectangle<i32, smithay::utils::Logical> {
-        if self.dock.alive() {
-            let bounds = self.dock.bar_layer.render_bounds_transformed();
-            let scale = Config::with(|c| c.screen_scale) as f32;
-            let x = (bounds.x() / scale) as i32;
-            let y = (bounds.y() / scale) as i32;
-            let w = (bounds.width() / scale).ceil() as i32;
-            let h = (bounds.height() / scale).ceil() as i32;
-            // Grow the rect 2pt towards the screen interior so windows keep a
-            // sliver of clearance from the dock's inner edge.
-            match self.dock.position() {
-                crate::config::DockPosition::Bottom => {
-                    Rectangle::new((x, y - 2).into(), (w, h).into())
-                }
-                crate::config::DockPosition::Left => {
-                    Rectangle::new((x, y).into(), (w + 2, h).into())
-                }
-                crate::config::DockPosition::Right => {
-                    Rectangle::new((x - 2, y).into(), (w + 2, h).into())
-                }
+        // Where the dock sits at rest, not where it is right now: exposé,
+        // fullscreen and the switcher slide it off screen for a while, and
+        // a tiling relayout that runs meanwhile (a window dragged out of
+        // exposé to another workspace) must still leave room for it when
+        // it comes back. The slide is the view layer's offset, which is
+        // (0, 0) at rest — see `DockView::show`.
+        let bounds = self.dock.bar_layer.render_bounds_transformed();
+        // `position`, the layer's own offset, NOT `render_position`, which is
+        // where the layout put it on screen — subtracting that moved the band
+        // to the top of the output, and a rect that size is thrown away as
+        // implausible, so the dock reserved nothing at all.
+        let slide = self.dock.view_layer.position();
+        let scale = Config::with(|c| c.screen_scale) as f32;
+        let x = ((bounds.x() - slide.x) / scale) as i32;
+        let y = ((bounds.y() - slide.y) / scale) as i32;
+        let w = (bounds.width() / scale).ceil() as i32;
+        let h = (bounds.height() / scale).ceil() as i32;
+        // Grow the rect 2pt towards the screen interior so windows keep a
+        // sliver of clearance from the dock's inner edge.
+        match self.dock.position() {
+            crate::config::DockPosition::Bottom => Rectangle::new((x, y - 2).into(), (w, h).into()),
+            crate::config::DockPosition::Left => Rectangle::new((x, y).into(), (w + 2, h).into()),
+            crate::config::DockPosition::Right => {
+                Rectangle::new((x - 2, y).into(), (w + 2, h).into())
             }
-        } else {
-            Rectangle::new((0, 0).into(), (0, 0).into())
         }
     }
 

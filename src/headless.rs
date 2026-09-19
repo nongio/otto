@@ -689,6 +689,21 @@ impl HeadlessHandle {
         })
     }
 
+    /// Titles of the current workspace's windows in its smithay space, bottom
+    /// first. The space is what the plane picker walks, so it has to agree
+    /// with [`Self::window_stack_titles`], the order the scene draws in.
+    pub fn space_stack_titles(&self) -> Vec<String> {
+        self.query(|state| {
+            let Some(ows) = state.workspaces.output_workspaces.get(OUTPUT_NAME) else {
+                return Vec::new();
+            };
+            ows.spaces
+                .get(ows.current_workspace)
+                .map(|space| space.elements().map(|w| w.xdg_title()).collect())
+                .unwrap_or_default()
+        })
+    }
+
     /// Title of the topmost non-minimized window on the current workspace.
     pub fn top_window_title(&self) -> Option<String> {
         self.query(|state| {

@@ -463,6 +463,19 @@ impl<BackendData: Backend> Otto<BackendData> {
             if let Some((output, position)) = record.clone() {
                 self.workspaces.persist_workspace_entry(&output, position);
             }
+            // Restored bottom-to-top in the workspace's stack. Each restore
+            // re-maps the window, which raises it in the space but leaves the
+            // scene order alone, so tree order would leave the space topped by
+            // whichever leaf came last — often not the focused one. The plane
+            // picker reads the space: it would scan that window's buffer out
+            // above the one drawn over it, with its decorations left behind.
+            let stack: Vec<ObjectId> = workspace
+                .windows_list
+                .read()
+                .map(|list| list.clone())
+                .unwrap_or_default();
+            let mut leaves = leaves;
+            leaves.sort_by_key(|id| stack.iter().position(|w| w == id));
             for id in leaves {
                 let Some(window) = self.workspaces.windows_map.get(&id).cloned() else {
                     continue;
