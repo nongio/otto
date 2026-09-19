@@ -346,6 +346,9 @@ files-search-no-columns = 結果に表示できる列はありません。
 # "nothing was able to look".
 files-search-unavailable = ファイルのインデックス作成はオフです
 
+files-preview-dimensions = { $width } × { $height }
+files-preview-animation = { $width } × { $height } · { $duration }
+
 files-column-name = 名前
 files-column-size = サイズ
 files-column-kind = 種類
@@ -886,11 +889,12 @@ launcher-ask-thinking = 考えています…
 launcher-ask-working = 作業しています…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = 下での回答を待っています
-# Ask mode: the line under the status naming the agent and the mode it is in,
-# such as "Claude · Accept edits". { $mode } is the mode's name, as the agent
-# gives it. The second form is used when the agent has more than one mode.
-launcher-ask-mode = { $agent } · { $mode }
-launcher-ask-mode-hint = { $agent } · { $mode } · Shift+Tab で切り替え
+# Ask mode: the line under the status naming the agent and the mode it is in.
+# The agent is shown as a handle, like "@Claude"; the mode's name follows in a
+# pill of its own, and the hint after it, only when the agent has more than one
+# mode. Keep the hint's brackets: they hold it apart from the mode.
+launcher-ask-agent = @{ $agent }
+launcher-ask-mode-hint = (Shift+Tab で切り替え)
 # Ask mode: a tool call the agent made, in the log. { $tool } is the command or
 # file, as the agent names it.
 launcher-ask-step-running = ▸ { $tool }

@@ -301,12 +301,22 @@ pub struct CopyButton {
     pub copied: bool,
 }
 
-/// Wrap `blocks` to `width`, in the order they will be drawn.
+/// Wrap `blocks` to `width`, in the order they will be drawn, with prose at
+/// the toolkit's body size.
 ///
 /// Every line is laid out, not just the visible ones: the count is what the
 /// host scrolls against, and a document is bounded by the decoder long before
 /// measuring all of it costs anything.
 pub fn wrap(blocks: &[Block], width: f32) -> Vec<Line> {
+    wrap_at(blocks, width, styles::BODY)
+}
+
+/// Wrap `blocks` to `width` with `body` as the prose style, for a host that
+/// sets its text at a size of its own — a document dropped into a
+/// conversation has to read at the size of the conversation, not at the
+/// toolkit's default, or one side of it is quietly smaller than the other.
+/// Headings keep their own sizes.
+pub fn wrap_at(blocks: &[Block], width: f32, body: TextStyle) -> Vec<Line> {
     let width = width.max(1.0);
     let mut lines: Vec<Line> = Vec::new();
     let mut y = 0.0f32;
@@ -331,7 +341,7 @@ pub fn wrap(blocks: &[Block], width: f32) -> Vec<Line> {
                 y += BLOCK_GAP;
             }
             Block::Code { lines: source } => {
-                let base = mono();
+                let base = mono(body);
                 let height = base.size * LEADING;
                 for (row, text) in source.iter().enumerate() {
                     let font = font_for(base, SpanStyle::default());
@@ -391,7 +401,7 @@ pub fn wrap(blocks: &[Block], width: f32) -> Vec<Line> {
                     &mut lines,
                     &mut y,
                     spans,
-                    styles::BODY,
+                    body,
                     0.0,
                     0.0,
                     width,
@@ -405,7 +415,7 @@ pub fn wrap(blocks: &[Block], width: f32) -> Vec<Line> {
                     &mut lines,
                     &mut y,
                     spans,
-                    styles::BODY,
+                    body,
                     QUOTE_INSET,
                     0.0,
                     width,
@@ -424,7 +434,7 @@ pub fn wrap(blocks: &[Block], width: f32) -> Vec<Line> {
                     &mut lines,
                     &mut y,
                     spans,
-                    styles::BODY,
+                    body,
                     left + MARKER,
                     left,
                     width,
@@ -576,10 +586,11 @@ fn heading_style(level: u8) -> TextStyle {
     }
 }
 
-/// A monospaced style for code, derived from the body style so it tracks the
-/// theme's sizing rather than hardcoding a second scale.
-fn mono() -> TextStyle {
-    let mut style = styles::FOOTNOTE;
+/// A monospaced style for code: the body style in a monospaced family, so
+/// code reads at the size of the prose around it and tracks the theme's
+/// sizing rather than hardcoding a second scale.
+fn mono(body: TextStyle) -> TextStyle {
+    let mut style = body;
     style.family = "monospace";
     style
 }
@@ -594,7 +605,7 @@ fn font_for(base: TextStyle, span: SpanStyle) -> Font {
     use skia_safe::font_style::{Slant, Weight, Width};
 
     let (family, size) = if span.code {
-        (mono().family, base.size * 0.94)
+        (mono(base).family, base.size)
     } else {
         (base.family, base.size)
     };

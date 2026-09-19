@@ -576,6 +576,16 @@ pub struct ModeInfo {
     pub name: String,
 }
 
+/// The agent and its mode, closing the ask log.
+pub struct ModeLine {
+    /// The agent's name as it is shown: an @ and what it is called.
+    pub agent: String,
+    /// The mode it is in, which the footer draws as a pill.
+    pub mode: String,
+    /// How to change the mode, when there is another to change to.
+    pub hint: Option<String>,
+}
+
 impl Modes {
     /// What the current mode is called, falling back to its id when the
     /// agent's list does not have it.
@@ -1529,7 +1539,10 @@ impl Ask {
     /// The line under the status naming the agent and the mode it is in,
     /// such as "Claude · Accept edits", with how to switch when the agent has
     /// more than one mode. `None` until the session's agent has said.
-    pub fn mode_line(&self) -> Option<String> {
+    /// The agent and its mode, as the log's footer draws them: the agent's
+    /// name, the mode on its own, and how to change it when it can be
+    /// changed.
+    pub fn mode_line(&self) -> Option<ModeLine> {
         let run = self.run.as_ref()?;
         let modes = run.modes.as_ref()?;
         let agent = run
@@ -1541,11 +1554,13 @@ impl Ask {
                     .map(|provider| self.agent_name(provider).unwrap_or(provider).to_owned())
             })
             .unwrap_or_default();
-        let mode = modes.current_name();
-        Some(if modes.next().is_some() {
-            otto_kit::t_owned!("launcher-ask-mode-hint", agent = agent, mode = mode)
-        } else {
-            otto_kit::t_owned!("launcher-ask-mode", agent = agent, mode = mode)
+        Some(ModeLine {
+            agent: otto_kit::t_owned!("launcher-ask-agent", agent = agent),
+            mode: modes.current_name().to_string(),
+            hint: modes
+                .next()
+                .is_some()
+                .then(|| otto_kit::t_owned!("launcher-ask-mode-hint")),
         })
     }
 

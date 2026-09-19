@@ -57,8 +57,10 @@ as before, and reads the same on every material.
 edits, Plan and Auto, Codex's read-only, agent and full access — and the
 service publishes them in the session's `_meta` as `otto.modes`. Once a
 conversation is open and the agent has said, the last line of the log names
-the agent and the mode it is in, under the status: "Claude · Accept edits",
-with "Shift+Tab to switch" added when there is more than one. Shift+Tab steps
+the agent and the mode it is in, under the status: the agent as a handle,
+"@Claude", then the mode in a pill, because the mode is the one thing on that
+line that can be changed and so the one thing wearing a control's shape, then
+"(Shift+Tab to switch)" when there is more than one. Shift+Tab steps
 to the next mode in the agent's order, round the end, and sends `setMode`; the
 line changes when the agent has switched, as the service reports it, not
 before, and a refused switch leaves it as it was. While the rows under the
@@ -88,8 +90,11 @@ lists, so it is what the field says until another is picked, and the card
 wears that agent's material. Until the agents arrive the field names the mode
 instead. The list itself stays out of the way: Down opens it under the field,
 on the agent the field names, and Up from the first row puts it away again.
+While it is open the field names whoever is highlighted, by arrow key or by
+pointer, so the choice is legible before it is made rather than only after.
 Return takes the highlighted agent and closes the list without sending, so the
-choice is on screen with the list gone. The first request settles the
+choice is on screen with the list gone; leaving the list without picking
+leaves the field naming the agent it named before. The first request settles the
 session's agent, and the field goes back to asking for a follow-up. A single
 agent is no choice at all, and is never listed, but the field still names
 it.
@@ -176,7 +181,18 @@ toolkit's document typography, and the markup itself is not shown. Each
 request sits at the right of the log in a rounded gray bubble, in regular
 weight and the theme's text colour, wrapped inside the bubble and no wider
 than its words need. Everything else — attached files, tool calls, notes, the
-status — stays plain text. An answer still arriving is drawn as far as it has come, so
+status — stays plain text, and is set smaller than the conversation as well as
+dimmer, so what was asked and answered outranks the trace of how. Code, in a
+fenced block or inline, is set at the size of the prose around it: a monospaced
+face is enough to say it is code without shrinking it.
+
+**The tool calls under an answer.** A request's tool calls are one thing in the
+log, not a list: closed, the group is the last call and an ellipsis, which is
+the call the agent is on. Pointing at it fills it faintly and turns the pointer
+to a hand — painted text says nothing about being clickable on its own — and
+clicking opens the group to every call in order; clicking again closes it. A
+request with a single call shows that call plainly, with nothing to open. Which
+groups are open belongs to the conversation on screen and goes when it does. An answer still arriving is drawn as far as it has come, so
 an unclosed code fence reads as code until its end lands. Tables are drawn as
 code, and an image written in the Markdown itself is drawn as its alt text, as
 in Quick View.
