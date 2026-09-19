@@ -1,6 +1,7 @@
 //! Presenting: the surfaces beside the window, repaints, decodes and the info window.
 
 use super::*;
+use otto_kit::preview::Preview;
 
 impl FilesApp {
     /// Bring every surface beside the window up to date: the columns, the
@@ -137,17 +138,69 @@ impl FilesApp {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
 
+        let recognise = ocr::enabled();
+        let recogniser = ocr::command();
         tokio::task::spawn_blocking(move || {
-            let preview = quickview::decode(&path, panel, scale, 1);
+            let mut preview = quickview::decode(&path, panel, scale, 1);
             let video = (path.is_file() && otto_media_kit::player::available())
                 .then(|| (path.clone(), quickview::video_options(panel, scale, true)));
-            state
-                .lock()
-                .unwrap()
-                .finish_quickview(generation, anchor, name, preview, video);
+            // Words already remembered ride in with the picture; otherwise
+            // the picture goes up now and the recogniser follows.
+            let picture = ocr::is_picture(&path)
+                && matches!(&preview, Preview::Pixels { pixels, .. } if pixels.words.is_empty());
+            let mut needs_recognising = false;
+            if picture && recognise {
+                match quickview::remembered_words(&path, panel, scale, 1) {
+                    Some(words) => {
+                        if let Preview::Pixels { pixels, .. } = &mut preview {
+                            pixels.words = words;
+                        }
+                    }
+                    None => needs_recognising = ocr::available(),
+                }
+            }
+            {
+                let mut browser = state.lock().unwrap();
+                browser.finish_quickview(generation, anchor, name, preview, video);
+                if needs_recognising {
+                    browser.begin_reading(path.clone());
+                    browser.start_quickview_recognising(generation);
+                }
+            }
             // Wake the UI thread: a window showing "Opening preview…" is not
             // committing frames, so there is no frame callback to notice the
             // decode landed.
+            AppContext::request_wakeup();
+
+            if !needs_recognising {
+                return;
+            }
+            // The user may already have moved on; the recogniser is the
+            // expensive half, so it is not started for a file nobody is
+            // looking at any more.
+            {
+                let mut browser = state.lock().unwrap();
+                if browser.quickview_generation != generation {
+                    browser.end_reading(&path);
+                    return;
+                }
+            }
+            let words = quickview::recognise(
+                &path,
+                panel,
+                scale,
+                1,
+                recogniser,
+                quickview::Priority::Interactive,
+            );
+            {
+                let mut browser = state.lock().unwrap();
+                match words {
+                    Some(words) => browser.finish_quickview_words(generation, words),
+                    None => browser.finish_quickview_recognising(generation),
+                }
+                browser.end_reading(&path);
+            }
             AppContext::request_wakeup();
         });
     }
@@ -277,6 +330,7 @@ impl FilesApp {
                 changed
                     || browser.loading()
                     || browser.quickview_pending
+                    || browser.quickview_recognising
                     || opening
                     || preview_pending
                     // …and while thumbnails are being fetched, so they appear
@@ -369,6 +423,7 @@ impl FilesApp {
                 &theme,
                 Rect::from_wh(view::INFO_W, view::INFO_H),
                 info,
+                browser.info_text,
                 browser.info_error.as_deref(),
                 browser.info_close_hovered,
                 false,

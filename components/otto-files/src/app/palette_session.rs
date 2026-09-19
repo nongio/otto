@@ -36,6 +36,7 @@ impl Browser {
             show_hidden: self.show_hidden,
             view: view_id(self.mode).to_string(),
             sort: sort_id(self.sort).to_string(),
+            can_recognise_text: ocr::enabled() && ocr::available(),
             places: self
                 .places
                 .iter()
@@ -901,6 +902,7 @@ impl Browser {
                 }
             }
             id::RECENT => self.enter_recent(),
+            id::RECOGNISE_TEXT => self.recognise_selection()?,
             other => return Err(format!("Unknown command: {other}")),
         }
         Ok(Followup::Nothing)

@@ -289,8 +289,41 @@ fn run(request: Request, sink: Sink) {
         // Empty *and* unavailable, which the pane shows as the indexer not
         // running. Nothing was sent before the failure — every path that can
         // fail does so before the first `send` — so this cannot be appended
-        // to half an answer.
-        sink.send(Vec::new(), true, false);
+        // to half an answer. Pictures whose text is remembered still answer:
+        // names are not searched, and the status line says so, but a word
+        // read off a screenshot is found either way.
+        let mut best = Best::default();
+        ask_pictures(&request, &mut best);
+        sink.send(best.entries(), true, false);
+    }
+}
+
+/// Pictures whose remembered text contains the query, under the roots.
+///
+/// Read off Otto's own cache of what the recogniser found in pictures the
+/// person has looked at — see `ocrcache` — so this answers only for those,
+/// and says nothing about the rest. A hit that the index also returned is
+/// the same path, and the caller deduplicates by it.
+fn ask_pictures(request: &Request, best: &mut Best) {
+    let Some(query) = request.query.as_deref() else {
+        return;
+    };
+    for path in crate::ocrcache::matches(query) {
+        if !request.roots.iter().any(|root| path.starts_with(root)) {
+            continue;
+        }
+        let Some(entry) = entry_for_path(&path) else {
+            continue;
+        };
+        if request.files_only && entry.is_dir {
+            continue;
+        }
+        // Ranked as a name match would be at best: the text is a whole-word
+        // hit, which is as good an answer as a name that contains the query.
+        best.push(Ranked {
+            rank: i64::from(i32::MAX),
+            entry,
+        });
     }
 }
 
@@ -347,10 +380,16 @@ impl Best {
         self.0.truncate(LIMIT);
     }
 
-    /// The result set as it stands, best first.
+    /// The result set as it stands, best first, one row per path: a picture
+    /// found both by its name and by its words is one file.
     fn entries(&mut self) -> Vec<Entry> {
         self.trim();
-        self.0.iter().map(|r| r.entry.clone()).collect()
+        let mut seen = std::collections::HashSet::new();
+        self.0
+            .iter()
+            .filter(|r| seen.insert(r.entry.path.clone()))
+            .map(|r| r.entry.clone())
+            .collect()
     }
 }
 
@@ -399,6 +438,7 @@ fn ask_index(request: &Request, sink: &Sink) -> Result<(), Unavailable> {
             best.push(Ranked { rank, entry });
         }
     }
+    ask_pictures(request, &mut best);
 
     // Sent even when empty, and marked available: the index answered, and
     // "nothing matched" is what it said.

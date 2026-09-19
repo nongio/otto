@@ -424,6 +424,11 @@ files-folder-open-failed = 无法打开此文件夹：{ $error }
 
 files-info-where = 位置
 files-info-kind = 种类
+files-info-text = 文字
+files-info-text-reading = 正在识别…
+files-info-text-words = { $count } 个词
+files-info-text-none = 没有文字
+files-info-text-unread = 尚未识别
 files-info-modified = 修改时间
 files-info-created = 创建时间
 files-info-accessed = 访问时间
@@ -558,6 +563,8 @@ files-command-show-hidden = 显示隐藏文件
 files-command-hide-hidden = 不显示隐藏文件
 files-command-quick-look = 快速查看
 files-command-search = 搜索
+files-command-recognise-text = 运行文字识别
+files-recognise-no-pictures = 这里没有可识别的文字
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.
