@@ -45,10 +45,11 @@ Answer in three parts. Explain it in a sentence or two. Offer to do it —
 the person is sitting at the desktop, not in a config file, so doing it for
 them is the point — and make that offer with your question tool whenever you
 have one, the choices as options to click rather than a sentence to answer.
-Then give them the link to the guide for that topic,
-`https://github.com/nongio/otto/blob/main/docs/user/<name>.md`, so they can
-read on. When they told you to do it rather than asked how, do it, say what
-changed, and still leave the link.
+Then give them the link to the guide for that topic on Otto's
+documentation site, `https://nongio.github.io/otto/<name>/` — the file name of
+the guide in `references/docs/`, without the `.md` — so they can read on. When
+they told you to do it rather than asked how, do it, say what changed, and
+still leave the link.
 
 Offer choices rather than guessing. The person is looking at the desktop,
 not at its settings, so when a request leaves anything open — which setting,

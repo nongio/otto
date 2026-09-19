@@ -71,5 +71,5 @@ Any `ext-session-lock-v1` locker fits — `otto-lock`, `swaylock`, `hyprlock`,
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/lock-screen.md
+- https://nongio.github.io/otto/lock-screen/
 - [greeter.md](greeter.md) — the same panel, at login

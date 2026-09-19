@@ -60,5 +60,5 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/tiling.md
-- https://github.com/nongio/otto/blob/main/docs/user/scripting.md
+- https://nongio.github.io/otto/tiling/
+- https://nongio.github.io/otto/scripting/

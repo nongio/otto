@@ -93,5 +93,5 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/theming.md
-- https://github.com/nongio/otto/blob/main/docs/user/customization.md
+- https://nongio.github.io/otto/theming/
+- https://nongio.github.io/otto/customization/

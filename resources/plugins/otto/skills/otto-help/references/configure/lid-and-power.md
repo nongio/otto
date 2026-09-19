@@ -131,5 +131,5 @@ runs. Fix `HandleLidSwitch=ignore` and restart logind.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/power-management.md
+- https://nongio.github.io/otto/power-management/
 - [lock-screen.md](lock-screen.md) — idle locking, and which locker runs

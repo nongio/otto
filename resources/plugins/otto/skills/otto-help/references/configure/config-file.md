@@ -71,5 +71,5 @@ Lists and tables have no identifier and no `Set`:
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/configuration.md
-- https://github.com/nongio/otto/blob/main/docs/user/troubleshooting.md
+- https://nongio.github.io/otto/configuration/
+- https://nongio.github.io/otto/troubleshooting/

@@ -162,6 +162,6 @@ second list — there is no identifier for it and no way to set it.**
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/input.md
-- https://github.com/nongio/otto/blob/main/docs/user/gestures.md
+- https://nongio.github.io/otto/input/
+- https://nongio.github.io/otto/gestures/
 - libinput's own documentation: https://wayland.freedesktop.org/libinput/doc/latest/

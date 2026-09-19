@@ -72,5 +72,5 @@ greeter_args = []
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/login-greeter.md
-- https://github.com/nongio/otto/blob/main/docs/user/lock-screen.md
+- https://nongio.github.io/otto/login-greeter/
+- https://nongio.github.io/otto/lock-screen/

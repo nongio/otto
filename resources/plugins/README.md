@@ -106,9 +106,11 @@ the two drift.
 The guides are the long answer. The hand-written pages stay short and keep
 what the guides deliberately lack — the exact `busctl` lines, the type
 letters, the error tables. An agent reads a guide only when the short page
-does not answer the question, and gives the person the GitHub link,
-`https://github.com/nongio/otto/blob/main/docs/user/<name>.md`, rather than
-the local path.
+does not answer the question, and gives the person the documentation site,
+`https://nongio.github.io/otto/<name>/`, rather than the local path or a
+GitHub one. The slug is the guide's file name without `.md`, which is how
+`website/build-docs.sh` publishes it; a page it does not list has no URL, so
+check there before linking a new one.
 
 Those tables come from a running compositor's `Describe`, which is the authority
 for what settings exist. When `src/settings/schema.rs` gains or changes a row,

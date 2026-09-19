@@ -202,6 +202,6 @@ monitor are understood but not built yet, and say so. Criteria
 
 | Topic | Link |
 |---|---|
-| Scripting Otto with `otto-msg` | https://github.com/nongio/otto/blob/main/docs/user/scripting.md |
-| Keyboard shortcuts | https://github.com/nongio/otto/blob/main/docs/user/keyboard-shortcuts.md |
-| All the user guides | https://github.com/nongio/otto/blob/main/docs/user/README.md |
+| Scripting Otto with `otto-msg` | https://nongio.github.io/otto/scripting/ |
+| Keyboard shortcuts | https://nongio.github.io/otto/keyboard-shortcuts/ |
+| All the user guides | https://nongio.github.io/otto/ |

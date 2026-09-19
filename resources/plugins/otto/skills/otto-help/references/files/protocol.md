@@ -3,7 +3,7 @@
 The authority is the module comment at the top of
 `components/otto-files/src/scripts.rs`, which is where the host parses all of
 this. The user guide is
-https://github.com/nongio/otto/blob/main/docs/user/files-custom-commands.md.
+https://nongio.github.io/otto/files-custom-commands/.
 
 ## The three calls
 

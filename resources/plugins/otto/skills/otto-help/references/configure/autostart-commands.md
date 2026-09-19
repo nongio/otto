@@ -149,5 +149,5 @@ usual cause of a bus-activated helper reporting no compositor.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/autostart.md
+- https://nongio.github.io/otto/autostart/
 - [autostart-xdg.md](autostart-xdg.md) — `.desktop` autostart entries

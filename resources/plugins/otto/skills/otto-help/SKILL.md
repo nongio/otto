@@ -32,11 +32,13 @@ feature can do, how a part of the desktop works, why something behaves the way
 it does. Do not read one to change a setting; the short page already has the
 command.
 
-Every guide is also a page on GitHub, at
-`https://github.com/nongio/otto/blob/main/docs/user/<name>.md` — the same
-`<name>.md` as the local copy. Give the person that link, not the local path:
-the file in `references/docs/` is yours to read, and the link is theirs to
-click.
+Every guide is also a page on Otto's documentation site, at
+`https://nongio.github.io/otto/<name>/` — the local copy's file name, without
+`.md`, as the last part of the address. `references/docs/dock.md` is
+`https://nongio.github.io/otto/dock/`. Give the person that link, never the
+local path and never a GitHub one: the file in `references/docs/` is yours to
+read, the site is theirs to click. The guides' own index is
+`https://nongio.github.io/otto/`.
 
 ## Rules for every page
 
@@ -79,7 +81,7 @@ the change, one sentence saying it happened, and the link.
 ```
 The dock can sit on the bottom, the left or the right; it is on the bottom now.
 → question tool: "Move the dock?"  [ Move it to the left ] [ Leave it where it is ]
-https://github.com/nongio/otto/blob/main/docs/user/dock.md
+https://nongio.github.io/otto/dock/
 ```
 
 ## How to write

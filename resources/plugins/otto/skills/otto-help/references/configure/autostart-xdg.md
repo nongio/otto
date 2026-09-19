@@ -110,5 +110,5 @@ Useful for a helper that makes sense on this desktop and nowhere else.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/autostart.md
+- https://nongio.github.io/otto/autostart/
 - The specification: https://specifications.freedesktop.org/autostart-spec/latest/

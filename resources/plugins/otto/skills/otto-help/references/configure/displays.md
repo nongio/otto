@@ -100,5 +100,5 @@ used. `"winit"` is a valid key for the windowed development backend.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/display.md
+- https://nongio.github.io/otto/display/
 - [virtual-outputs.md](virtual-outputs.md) — screens with no display behind them

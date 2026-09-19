@@ -78,4 +78,4 @@ dock without one.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/dock.md
+- https://nongio.github.io/otto/dock/

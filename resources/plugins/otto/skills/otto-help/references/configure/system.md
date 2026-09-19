@@ -72,6 +72,6 @@ name to the compositor hosting it whatever this says.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/audio.md
-- https://github.com/nongio/otto/blob/main/docs/user/night-shift.md
-- https://github.com/nongio/otto/blob/main/docs/user/topbar.md
+- https://nongio.github.io/otto/audio/
+- https://nongio.github.io/otto/night-shift/
+- https://nongio.github.io/otto/topbar/

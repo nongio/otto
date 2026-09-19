@@ -287,8 +287,8 @@ Follow these exactly.
 
 | Topic | Link |
 |---|---|
-| The Settings app | https://github.com/nongio/otto/blob/main/docs/user/settings.md |
-| Config files | https://github.com/nongio/otto/blob/main/docs/user/configuration.md |
-| Good settings to start with | https://github.com/nongio/otto/blob/main/docs/user/recommended-settings.md |
-| When something does not work | https://github.com/nongio/otto/blob/main/docs/user/troubleshooting.md |
-| All the user guides | https://github.com/nongio/otto/blob/main/docs/user/README.md |
+| The Settings app | https://nongio.github.io/otto/settings/ |
+| Config files | https://nongio.github.io/otto/configuration/ |
+| Good settings to start with | https://nongio.github.io/otto/recommended-settings/ |
+| When something does not work | https://nongio.github.io/otto/troubleshooting/ |
+| All the user guides | https://nongio.github.io/otto/ |

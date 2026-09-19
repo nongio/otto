@@ -87,5 +87,5 @@ switching is read from raw keycodes and works from either key.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/input.md
+- https://nongio.github.io/otto/input/
 - [shortcuts.md](shortcuts.md) — what the keys are bound to

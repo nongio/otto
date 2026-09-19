@@ -191,5 +191,5 @@ otto-files
 - Otto's own scripts, for bigger examples: `components/otto-files/scripts/zip`
   (one archive from many files), `unzip` (`when.extensions`), `ask` (the
   smallest useful script — no preview).
-- https://github.com/nongio/otto/blob/main/docs/user/files-custom-commands.md
-- https://github.com/nongio/otto/blob/main/docs/user/files-command-palette.md
+- https://nongio.github.io/otto/files-custom-commands/
+- https://nongio.github.io/otto/files-command-palette/

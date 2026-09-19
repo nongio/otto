@@ -70,5 +70,5 @@ what RDP needs. Leave it `false` for a view-only feed.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/display.md
-- https://github.com/nongio/otto/blob/main/docs/user/remote-desktop.md
+- https://nongio.github.io/otto/display/
+- https://nongio.github.io/otto/remote-desktop/

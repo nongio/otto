@@ -178,6 +178,6 @@ none can be unbound.
 
 ## Read next
 
-- https://github.com/nongio/otto/blob/main/docs/user/keyboard-shortcuts.md
-- https://github.com/nongio/otto/blob/main/docs/user/scripting.md — the same
+- https://nongio.github.io/otto/keyboard-shortcuts/
+- https://nongio.github.io/otto/scripting/ — the same
   commands from a script, through `otto-msg`
