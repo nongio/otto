@@ -314,7 +314,7 @@ pub fn draw_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preview::{Page, Pixels};
+    use crate::preview::Pixels;
 
     fn word(text: &str, left: u32, top: u32, width: u32, height: u32, line: u32) -> Word {
         Word {
