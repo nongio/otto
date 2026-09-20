@@ -780,6 +780,9 @@ impl Browser {
         if let Some(status) = effect.status {
             self.status = Some(status);
         }
+        // A command is heard by what it did, not by who did it: a script that
+        // makes a file sounds like any other file arriving.
+        Self::play_op_sound(&super::file_ops::sounds_like(&effect.changes));
         if let Some(label) = effect.undo_label {
             self.record_undo(label, effect.changes);
         }

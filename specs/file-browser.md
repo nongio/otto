@@ -959,7 +959,10 @@ spec has no name at all for a put-back, so that row is borrowed throughout.
 
 Choosing from the outcome is what makes undo sound right with no special case:
 undoing a delete is a restore, so it gets the put-back sound; undoing a copy
-takes files away, so it gets the removal one.
+takes files away, so it gets the removal one. It is also what makes a command
+from the palette sound like the rest of the browser: a provider reports the
+changes it made, and a script that creates a file is heard as that file
+arriving, exactly as a paste of it would be.
 
 The preference order exists because the sound naming spec is thinner than a
 desktop needs — there is no "paste" event — and theme coverage of the drag

@@ -817,6 +817,23 @@ impl Browser {
     }
 }
 
+/// A command's changes as the counts [`Browser::play_op_sound`] reads.
+///
+/// A provider says what it did rather than what it counted, so the counting is
+/// here. Only the kinds a sound answers to are counted; a command that changed
+/// nothing stays quiet, which is what an empty result gives.
+pub(super) fn sounds_like(changes: &[model::Change]) -> model::OpResult {
+    let mut result = model::OpResult::default();
+    for change in changes {
+        match change {
+            model::Change::Created { .. } => result.copied += 1,
+            model::Change::Moved { .. } => result.moved += 1,
+            model::Change::Trashed { .. } => result.trashed += 1,
+        }
+    }
+    result
+}
+
 /// What a running paste calls itself, in the island and in the status bar.
 ///
 /// The same sentence throughout: a job that renames itself halfway through
@@ -828,4 +845,39 @@ fn task_title(cut: bool, done: usize, total: usize) -> String {
         "files-task-copying"
     };
     otto_kit::t_owned!(key, done = done as f64, total = total as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// A command is heard by what it did. A provider reports its changes
+    /// rather than counts, so this is where the counts a sound is chosen from
+    /// come back.
+    #[test]
+    fn a_commands_changes_decide_what_it_sounds_like() {
+        let counted = sounds_like(&[
+            model::Change::Created {
+                path: PathBuf::from("/tmp/Scanned.pdf"),
+            },
+            model::Change::Moved {
+                from: PathBuf::from("/tmp/a"),
+                to: PathBuf::from("/tmp/b"),
+            },
+            model::Change::Trashed {
+                from: PathBuf::from("/tmp/c"),
+                to: PathBuf::from("/tmp/Trash/files/c"),
+                info: PathBuf::from("/tmp/Trash/info/c.trashinfo"),
+            },
+        ]);
+        assert_eq!((counted.copied, counted.moved, counted.trashed), (1, 1, 1));
+    }
+
+    #[test]
+    fn a_command_that_changed_nothing_stays_quiet() {
+        let counted = sounds_like(&[]);
+        assert_eq!(counted.copied + counted.moved + counted.trashed, 0);
+        assert_eq!(counted.deleted + counted.restored, 0);
+    }
 }
