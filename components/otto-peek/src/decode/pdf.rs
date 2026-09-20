@@ -168,17 +168,26 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
     //
     // A document is the same lesson once more: it rests with a whole page in
     // the panel, gutters and all, so the page is drawn at a fraction of the
-    // panel's width and that fraction is what is asked for. The host sends
-    // the box in physical pixels rather than an oversampled one, and asks
-    // again for a wider raster if the reader zooms in.
+    // panel's width and that fraction is what is asked for. The oversampling
+    // is divided back out first — the box a page is fitted into is the
+    // panel's own pixels — and a reader who zooms in asks again for a wider
+    // raster.
     let width = match &sizes {
         Some(sizes) => {
             let strip: Vec<Page> = sizes
                 .iter()
                 .map(|(width, height)| Page::blank(*width, *height))
                 .collect();
+            let oversample = if request.oversample.is_finite() {
+                request.oversample.max(1.0)
+            } else {
+                1.0
+            };
             otto_kit::preview::page_raster_width(
-                skia_safe::Rect::from_wh(request.width as f32, request.height as f32),
+                skia_safe::Rect::from_wh(
+                    request.width as f32 / oversample,
+                    request.height as f32 / oversample,
+                ),
                 &strip,
                 (page as usize).saturating_sub(1),
             )

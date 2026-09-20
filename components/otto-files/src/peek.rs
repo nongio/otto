@@ -1295,17 +1295,6 @@ pub fn decode_document(path: &Path, panel: Rect, scale: f32, page: u32) -> Previ
     decode_with(path, panel, scale, page, true, false)
 }
 
-/// The panel's content box in physical pixels, which is what a document is
-/// fitted into. Not oversampled: a page rests at a fraction of the panel's
-/// width, and asking for twice the panel is several times the rasterising for
-/// detail nothing shows.
-fn document_box(panel: Rect, scale: f32) -> (u32, u32) {
-    (
-        ((panel.width() * scale) as u32).clamp(64, 4096),
-        ((panel.height() * scale) as u32).clamp(64, 4096),
-    )
-}
-
 /// Read a document's own text, with a box for every word, in the strip's
 /// coordinates. A second pass over a file already on screen: it costs about a
 /// millisecond a page and carries no pixels at all.
@@ -1327,42 +1316,54 @@ fn decode_with(
     document: bool,
     text: bool,
 ) -> Preview {
-    /// The headroom the worker is asked for over the panel's own pixels, so a
-    /// picture looked at closely has detail to show before the zoom asks
-    /// again. Told to the worker as well as folded into the size, because an
-    /// animation spends it on frames instead.
-    const OVERSAMPLE: f32 = 2.0;
+    let request = decode_request(path, panel, scale, page, document, text);
+    otto_peek::decode_path(path, &request)
+}
 
-    let (width, height) = if document {
-        document_box(panel, scale)
-    } else {
-        (
-            ((panel.width() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
-            ((panel.height() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
-        )
-    };
-    let request = Request {
+/// What the worker is asked for.
+fn decode_request(
+    path: &Path,
+    panel: Rect,
+    scale: f32,
+    page: u32,
+    document: bool,
+    text: bool,
+) -> Request {
+    // The same box whichever kind of file this turns out to be: the host
+    // cannot know before the worker answers, and a picture decoded at the
+    // panel's own pixels has no headroom for a zoom and is not the box the
+    // recogniser's words are measured in — which is what makes a selection
+    // land on them. A document divides the oversampling back out itself,
+    // where it knows a page rests at a fraction of the panel's width.
+    let (width, height) = decode_size(panel, scale);
+    Request {
         page: page.max(1),
         document,
         text,
         width,
         height,
-        oversample: if document { 1.0 } else { OVERSAMPLE },
+        oversample: OVERSAMPLE,
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
         ..Request::default()
-    };
-    otto_peek::decode_path(path, &request)
+    }
 }
 
+/// The headroom the worker is asked for over the panel's own pixels, so a
+/// picture looked at closely has detail to show before the zoom asks again.
+/// Told to the worker as well as folded into the size, because an animation
+/// spends it on frames instead.
+pub const OVERSAMPLE: f32 = 2.0;
+
 /// The size a picture is decoded at for `panel`, so a second decode of the
-/// same file lands on the same pixels as the first.
+/// same file lands on the same pixels as the first — and so the words a
+/// recogniser reads off one decode box a selection against the other.
 pub fn decode_size(panel: Rect, scale: f32) -> (u32, u32) {
     (
-        ((panel.width() * scale * 2.0) as u32).clamp(64, 4096),
-        ((panel.height() * scale * 2.0) as u32).clamp(64, 4096),
+        ((panel.width() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
+        ((panel.height() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
     )
 }
 
@@ -1501,6 +1502,25 @@ mod tests {
         // Both are centred in the same space.
         assert!((rest.center_x() - full.center_x()).abs() < 0.01);
         assert!((rest.center_y() - full.center_y()).abs() < 0.01);
+    }
+
+    /// A picture is decoded into the same box the recogniser reads, whether
+    /// the host asked for a document or not. The words come back boxed in the
+    /// decode's own pixels, and a selection scales panel points by the
+    /// picture's width — so a picture decoded into a smaller box than the one
+    /// its words were measured in puts every word somewhere it is not, and
+    /// nothing on the picture can be selected.
+    #[test]
+    fn a_picture_is_decoded_into_the_box_its_words_are_measured_in() {
+        let panel = Rect::from_wh(1200.0, 800.0);
+        let scale = 2.0;
+        let path = Path::new("/tmp/otto-peek-test.png");
+        let (width, height) = decode_size(panel, scale);
+        for document in [false, true] {
+            let request = decode_request(path, panel, scale, 1, document, false);
+            assert_eq!((request.width, request.height), (width, height));
+            assert_eq!(request.oversample, OVERSAMPLE);
+        }
     }
 
     #[test]
