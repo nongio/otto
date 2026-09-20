@@ -11,7 +11,7 @@ use std::ops::RangeInclusive;
 
 use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 
-use super::{layout, Pixels, Preview, PreviewLayout, Word, Zoom};
+use super::{layout, Preview, PreviewLayout, Word, Zoom};
 use crate::theme::Theme;
 
 /// A run of words in reading order, from the one pressed to the one the
@@ -58,30 +58,51 @@ const HIGHLIGHT_RADIUS: f32 = 2.0;
 /// text fields use for their own selection.
 const HIGHLIGHT_ALPHA: u8 = 90;
 
-/// The picture and its drawn rect, when the preview is one with words.
-fn picture<'a>(layout: &PreviewLayout, preview: &'a Preview) -> Option<(&'a Pixels, Rect)> {
+/// What a selection is made on: the words, the width of the space they are
+/// boxed in, and where that space is drawn.
+///
+/// Two kinds of preview have words, and they measure them in different
+/// units — a picture's in its decoded pixels, a document's in its strip
+/// coordinates — but the conversion is the same ratio either way, so
+/// everything below works in "content units" and never asks which.
+struct Words<'a> {
+    words: &'a [Word],
+    /// The content's own width in those units.
+    width: f32,
+    /// Where the content is drawn, in panel coordinates.
+    content: Rect,
+}
+
+fn picture<'a>(layout: &PreviewLayout, preview: &'a Preview) -> Option<Words<'a>> {
     match preview {
-        Preview::Pixels { pixels, .. } if pixels.width > 0 && pixels.height > 0 => {
-            Some((pixels, layout.content))
-        }
+        Preview::Pixels { pixels, .. } if pixels.width > 0 && pixels.height > 0 => Some(Words {
+            words: &pixels.words,
+            width: pixels.width as f32,
+            content: layout.content,
+        }),
+        Preview::Pages { pages, words } if !pages.is_empty() => Some(Words {
+            words,
+            width: super::strip_size(pages).0,
+            content: layout.content,
+        }),
         _ => None,
     }
 }
 
-/// Panel pixels per decoded pixel for the picture drawn in `content`.
-fn scale_of(pixels: &Pixels, content: Rect) -> f32 {
-    content.width() / pixels.width as f32
+/// Panel pixels per content unit for the content drawn in `content`.
+fn scale_of(width: f32, content: Rect) -> f32 {
+    content.width() / width
 }
 
-/// A panel point in decoded-pixel coordinates.
-fn to_picture(pixels: &Pixels, content: Rect, x: f32, y: f32) -> (f32, f32) {
-    let scale = scale_of(pixels, content);
+/// A panel point in content coordinates.
+fn to_picture(width: f32, content: Rect, x: f32, y: f32) -> (f32, f32) {
+    let scale = scale_of(width, content);
     ((x - content.left) / scale, (y - content.top) / scale)
 }
 
-/// A decoded-pixel rect in panel coordinates.
-fn to_panel(pixels: &Pixels, content: Rect, rect: Rect) -> Rect {
-    let scale = scale_of(pixels, content);
+/// A content rect in panel coordinates.
+fn to_panel(width: f32, content: Rect, rect: Rect) -> Rect {
+    let scale = scale_of(width, content);
     Rect::from_ltrb(
         content.left + rect.left * scale,
         content.top + rect.top * scale,
@@ -100,9 +121,9 @@ fn same_paragraph(a: &Word, b: &Word) -> bool {
 
 /// The word under a panel point, if the point is on one.
 pub fn word_at(layout: &PreviewLayout, preview: &Preview, x: f32, y: f32) -> Option<usize> {
-    let (pixels, content) = picture(layout, preview)?;
-    let (px, py) = to_picture(pixels, content, x, y);
-    pixels.words.iter().position(|word| {
+    let found = picture(layout, preview)?;
+    let (px, py) = to_picture(found.width, found.content, x, y);
+    found.words.iter().position(|word| {
         let rect = word.rect().with_outset((HIT_SLOP, HIT_SLOP));
         px >= rect.left && px <= rect.right && py >= rect.top && py <= rect.bottom
     })
@@ -116,12 +137,12 @@ pub fn word_near(layout: &PreviewLayout, preview: &Preview, x: f32, y: f32) -> O
     if let Some(index) = word_at(layout, preview, x, y) {
         return Some(index);
     }
-    let (pixels, content) = picture(layout, preview)?;
-    let words = &pixels.words;
+    let found = picture(layout, preview)?;
+    let words = found.words;
     if words.is_empty() {
         return None;
     }
-    let (px, py) = to_picture(pixels, content, x, y);
+    let (px, py) = to_picture(found.width, found.content, x, y);
 
     // The closest line by vertical distance to its box; ties go to the
     // earlier line, which is where a drag straight up from a gap lands.
@@ -220,10 +241,10 @@ pub(crate) fn selection_rects(
     preview: &Preview,
     selection: WordSelection,
 ) -> Vec<Rect> {
-    let Some((pixels, content)) = picture(layout, preview) else {
+    let Some(found) = picture(layout, preview) else {
         return Vec::new();
     };
-    let words = &pixels.words;
+    let words = found.words;
     let mut rects: Vec<Rect> = Vec::new();
     let mut current: Option<(&Word, Rect)> = None;
     for index in selection.range() {
@@ -247,7 +268,7 @@ pub(crate) fn selection_rects(
     rects
         .into_iter()
         .map(|rect| rect.with_outset((HIGHLIGHT_PAD, HIGHLIGHT_PAD)))
-        .map(|rect| to_panel(pixels, content, rect))
+        .map(|rect| to_panel(found.width, found.content, rect))
         .filter_map(|rect| {
             let mut clipped = rect;
             clipped.intersect(layout.inner).then_some(clipped)
@@ -293,6 +314,7 @@ pub fn draw_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::preview::Pixels;
 
     fn word(text: &str, left: u32, top: u32, width: u32, height: u32, line: u32) -> Word {
         Word {

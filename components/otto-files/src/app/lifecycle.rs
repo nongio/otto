@@ -572,6 +572,7 @@ impl App for FilesApp {
             self.start_peek(&mut browser);
         }
         self.follow_peek();
+        self.follow_peek_document();
         self.auto_palette();
 
         // With the columns in their own surfaces, a scroll is repainted there
@@ -698,6 +699,9 @@ impl App for FilesApp {
         if browser.focused != configure.is_activated() {
             browser.focused = configure.is_activated();
             browser.dirty = true;
+            // A running job is reported on the island only while the user is
+            // somewhere else; in front of this window the status line has it.
+            crate::tasks::set_watched(browser.focused);
         }
         drop(browser);
         self.render();

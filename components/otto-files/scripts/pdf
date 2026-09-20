@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""Turn a selection of pictures into a PDF, with or without a text layer.
+
+A sample script for Otto Files' command palette. Copy it to
+~/.config/otto/files-scripts/ and it shows up as "PDF from Pictures" whenever
+pictures are selected. The protocol is described at the top of
+components/otto-files/src/scripts.rs.
+
+    pdf describe          what this script offers, once, at startup
+    pdf preview < json    what a run would do — nothing is touched
+    pdf run < json        do it, and say what changed
+
+Two commands, because the palette asks one question per command: the plain one
+asks what to call the file, and the searchable one asks which language to read
+it in. Both report a line per page as they go, so the window, the island and
+the dock icon all fill as the work does.
+
+Pictures become pages through img2pdf; a text layer comes from tesseract, one
+page at a time, and the pages are put back together with pikepdf. Everything
+but tesseract itself is a Python interface.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+try:
+    import img2pdf
+except ImportError:
+    img2pdf = None
+
+try:
+    import pikepdf
+except ImportError:
+    pikepdf = None
+
+# Extensions worth offering this for. A selection has to be all pictures:
+# a PDF made out of "some of what you picked" is not what anyone meant.
+PICTURES = ["png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp", "gif"]
+
+# What the script says, per language. `describe` hands the whole table over
+# and the host picks; at preview and run time the host says which locale it
+# is in (OTTO_LOCALE, and "locale" in the request) and `tr` picks here.
+STRINGS = {
+    "en": {
+        "title": "PDF from Pictures",
+        "ocr_title": "Searchable PDF from Pictures",
+        "keywords": ["pdf", "document", "combine", "pages"],
+        "ocr_keywords": ["pdf", "ocr", "text", "searchable", "scan"],
+        "prompt": "PDF name",
+        "label": "name",
+        "ocr_prompt": "Read the text as",
+        "ocr_label": "language",
+        "undo": "Make PDF",
+        "exists": "“{name}” is already there",
+        "into": "{count} picture into “{name}”",
+        "into_many": "{count} pictures into “{name}”",
+        "ocr_into": "{count} picture into “{name}”, read as {language}",
+        "ocr_into_many": "{count} pictures into “{name}”, read as {language}",
+        "done": "Made “{name}” from {count} picture",
+        "done_many": "Made “{name}” from {count} pictures",
+        "reading": "Reading {name}",
+        "no_img2pdf": "img2pdf is not installed",
+        "no_pikepdf": "pikepdf is not installed",
+        "no_tesseract": "tesseract is not installed",
+    },
+    "it": {
+        "title": "PDF dalle immagini",
+        "ocr_title": "PDF ricercabile dalle immagini",
+        "keywords": ["pdf", "documento", "unisci", "pagine"],
+        "ocr_keywords": ["pdf", "ocr", "testo", "ricercabile", "scansione"],
+        "prompt": "Nome del PDF",
+        "label": "nome",
+        "ocr_prompt": "Leggi il testo come",
+        "ocr_label": "lingua",
+        "undo": "Creazione PDF",
+        "exists": "“{name}” esiste già",
+        "into": "{count} immagine in “{name}”",
+        "into_many": "{count} immagini in “{name}”",
+        "ocr_into": "{count} immagine in “{name}”, letta in {language}",
+        "ocr_into_many": "{count} immagini in “{name}”, lette in {language}",
+        "done": "Creato “{name}” da {count} immagine",
+        "done_many": "Creato “{name}” da {count} immagini",
+        "reading": "Lettura di {name}",
+        "no_img2pdf": "img2pdf non è installato",
+        "no_pikepdf": "pikepdf non è installato",
+        "no_tesseract": "tesseract non è installato",
+    },
+}
+
+# Tesseract's own names for the languages, against the locales they belong to.
+# Only what the locale says is needed here: anything else is picked by hand
+# from the list the command offers.
+LANGUAGES = {
+    "en": ("eng", "English"),
+    "it": ("ita", "Italiano"),
+    "de": ("deu", "Deutsch"),
+    "fr": ("fra", "Français"),
+    "es": ("spa", "Español"),
+    "pt": ("por", "Português"),
+    "pl": ("pol", "Polski"),
+    "ru": ("rus", "Русский"),
+    "uk": ("ukr", "Українська"),
+    "zh": ("chi_sim", "中文"),
+}
+
+
+def strings(locale):
+    """The table for `locale`: the language, then English."""
+    language = (locale or "en").replace("_", "-").split("-")[0].lower()
+    return STRINGS.get(language, STRINGS["en"])
+
+
+def tr(request, key, **kwargs):
+    """One string for the locale of this request, with a plural form where
+    the key has one: "into" alongside "into_many"."""
+    table = strings(request.get("locale", ""))
+    count = kwargs.get("count")
+    if count is not None and count != 1 and f"{key}_many" in table:
+        key = f"{key}_many"
+    return table[key].format(**kwargs)
+
+
+def by_locale(key):
+    """One string per language, for `describe` to hand over whole."""
+    return {language: table[key] for language, table in STRINGS.items()}
+
+
+def keywords(key):
+    return {language: table[key] for language, table in STRINGS.items()}
+
+
+def tesseract_languages():
+    """What tesseract can read here, or an empty list if it cannot be asked."""
+    try:
+        listed = subprocess.run(
+            ["tesseract", "--list-langs"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if listed.returncode != 0:
+        return []
+    # The first line is a heading, the rest are the languages — except "osd",
+    # which is tesseract's orientation detector and reads no text at all.
+    return [
+        line.strip()
+        for line in listed.stdout.splitlines()[1:]
+        if line.strip() and line.strip() != "osd"
+    ]
+
+
+def language_choices(locale):
+    """The languages to offer, the locale's own first so Return takes it."""
+    available = tesseract_languages()
+    if not available:
+        return []
+    named = {code: name for code, name in LANGUAGES.values()}
+    preferred, _ = LANGUAGES.get(
+        (locale or "en").replace("_", "-").split("-")[0].lower(), LANGUAGES["en"]
+    )
+    ordered = sorted(available, key=lambda code: (code != preferred, code))
+    return [
+        {"value": code, "title": named.get(code, code)}
+        for code in ordered
+    ]
+
+
+def describe():
+    commands = [
+        {
+            "id": "pdf",
+            "title": by_locale("title"),
+            "keywords": keywords("keywords"),
+            "group": "file",
+            "when": {"targets": "some", "extensions": PICTURES, "kinds": "files"},
+            "arg": {
+                "prompt": by_locale("prompt"),
+                "label": by_locale("label"),
+                "placeholder": "Scanned.pdf",
+                "initial": "Scanned.pdf",
+                "preview": True,
+            },
+            "undo": by_locale("undo"),
+            "progress": True,
+        }
+    ]
+    # Offered only where there is something to read the text with, and with
+    # the languages that thing actually has installed.
+    choices = language_choices(os.environ.get("OTTO_LOCALE", "en"))
+    if choices:
+        commands.append(
+            {
+                "id": "ocr",
+                "title": by_locale("ocr_title"),
+                "keywords": keywords("ocr_keywords"),
+                "group": "file",
+                "when": {"targets": "some", "extensions": PICTURES, "kinds": "files"},
+                "arg": {
+                    "prompt": by_locale("ocr_prompt"),
+                    "label": by_locale("ocr_label"),
+                    "initial": choices[0]["value"],
+                    "choices": choices,
+                    "preview": True,
+                },
+                "undo": by_locale("undo"),
+                "progress": True,
+            }
+        )
+    return {"commands": commands}
+
+
+def report(done, total, item):
+    """One line saying where the run has got to. Flushed, because the host
+    reads it while the script is still working."""
+    json.dump({"done": done, "total": total, "item": item}, sys.stdout)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def unique(directory, name):
+    """`name`, or the first "name 2.pdf" that is free."""
+    stem, extension = os.path.splitext(name)
+    candidate = name
+    n = 2
+    while os.path.exists(os.path.join(directory, candidate)):
+        candidate = f"{stem} {n}{extension}"
+        n += 1
+    return candidate
+
+
+def plan(request):
+    """Where the PDF goes, and what it is called.
+
+    The plain command is asked for the name; the searchable one is asked for
+    the language, so it names the file itself.
+    """
+    directory = request["situation"]["path"]
+    if request["command"] == "ocr":
+        name = "Scanned.pdf"
+    else:
+        name = (request.get("arg") or "").strip() or "Scanned.pdf"
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+    conflict = "/" in name
+    return name, os.path.join(directory, name), conflict
+
+
+def language_of(request):
+    """The tesseract language for a searchable run."""
+    return (request.get("arg") or "").strip() or "eng"
+
+
+def preview(request):
+    # One page per picture, in the order they were given, and the note says
+    # where they are going — and, for a searchable PDF, what it will be read
+    # as, since that is what was asked rather than the name.
+    name, _, conflict = plan(request)
+    rows = [{"from": os.path.basename(t)} for t in request["targets"]]
+    count = len(rows)
+    if conflict:
+        note = tr(request, "exists", name=name)
+    elif request["command"] == "ocr":
+        note = tr(request, "ocr_into", count=count, name=name, language=language_of(request))
+    else:
+        note = tr(request, "into", count=count, name=name)
+    return {"rows": rows, "note": note}
+
+
+def page_of(picture, destination):
+    """One picture as a one-page PDF, written to `destination`."""
+    with open(destination, "wb") as pdf:
+        pdf.write(img2pdf.convert(picture))
+
+
+def read_page(picture, destination, language):
+    """One picture as a one-page PDF with the text tesseract found in it."""
+    base = os.path.splitext(destination)[0]
+    result = subprocess.run(
+        ["tesseract", picture, base, "-l", language, "pdf"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        sys.exit((result.stderr or result.stdout).strip() or "tesseract failed")
+
+
+def run(request):
+    if img2pdf is None:
+        sys.exit(tr(request, "no_img2pdf"))
+    if pikepdf is None:
+        sys.exit(tr(request, "no_pikepdf"))
+
+    name, destination, conflict = plan(request)
+    if conflict:
+        sys.exit(tr(request, "exists", name=name))
+    directory = request["situation"]["path"]
+    # Never over an existing PDF: this is a command with no question attached
+    # about replacing anything, so it takes the next free name instead.
+    name = unique(directory, name)
+    destination = os.path.join(directory, name)
+
+    pictures = request["targets"]
+    count = len(pictures)
+    searchable = request["command"] == "ocr"
+    language = language_of(request) if searchable else None
+
+    # A page at a time, so there is something to report between them, and so
+    # a long read of a dozen scans is not one silent wait.
+    with tempfile.TemporaryDirectory(prefix="otto-files-pdf-") as workspace:
+        pages = []
+        for done, picture in enumerate(pictures):
+            report(done, count, os.path.basename(picture))
+            page = os.path.join(workspace, f"{done:04d}.pdf")
+            if searchable:
+                read_page(picture, page, language)
+            else:
+                page_of(picture, page)
+            pages.append(page)
+
+        report(count, count, "")
+        document = pikepdf.Pdf.new()
+        for page in pages:
+            with pikepdf.Pdf.open(page) as one:
+                document.pages.extend(one.pages)
+        document.save(destination)
+
+    return {
+        "status": tr(request, "done", count=count, name=name),
+        "changes": [{"kind": "created", "path": destination}],
+        "reload": True,
+    }
+
+
+def main():
+    verb = sys.argv[1] if len(sys.argv) > 1 else ""
+    if verb == "describe":
+        out = describe()
+    elif verb in ("preview", "run"):
+        request = json.load(sys.stdin)
+        out = preview(request) if verb == "preview" else run(request)
+    else:
+        sys.exit(f"usage: {sys.argv[0]} describe|preview|run")
+    json.dump(out, sys.stdout)
+
+
+if __name__ == "__main__":
+    main()

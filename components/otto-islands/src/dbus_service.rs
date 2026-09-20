@@ -31,6 +31,9 @@ impl IslandService {
     /// Returns the activity ID on success.
     /// `progress`: 0.0–1.0 for a progress bar, negative for no progress.
     /// `priority`: "low", "normal", "high", or "critical".
+    /// `quiet`: report it to the dock icon but do not put it on screen — for
+    /// an app whose own window is in front of the user and has already said
+    /// what it is doing. See [`crate::activity::Activity::quiet`].
     async fn create_activity(
         &self,
         app_id: &str,
@@ -40,6 +43,7 @@ impl IslandService {
         timeout_ms: u32,
         priority: &str,
         live: bool,
+        quiet: bool,
     ) -> zbus::fdo::Result<u64> {
         let priority = Priority::try_from(priority).map_err(zbus::fdo::Error::InvalidArgs)?;
 
@@ -58,6 +62,7 @@ impl IslandService {
             timeout_ms,
             priority,
             live,
+            quiet,
         );
         drop(state);
 
@@ -78,6 +83,22 @@ impl IslandService {
     ) -> zbus::fdo::Result<bool> {
         let mut state = self.state.lock().unwrap();
         let ok = state.update_activity(id, title, progress);
+        drop(state);
+
+        if ok {
+            AppContext::request_wakeup();
+        }
+        Ok(ok)
+    }
+
+    /// Show or hide a running activity's island without ending it.
+    ///
+    /// The dock icon keeps filling either way. An app calls this as its own
+    /// window comes forward and goes away again, so a job it is already
+    /// reporting in its window is not reported twice.
+    async fn set_activity_quiet(&self, id: u64, quiet: bool) -> zbus::fdo::Result<bool> {
+        let mut state = self.state.lock().unwrap();
+        let ok = state.set_activity_quiet(id, quiet);
         drop(state);
 
         if ok {

@@ -33,6 +33,7 @@ pub mod rename;
 pub mod scene;
 pub mod scripts;
 pub mod search;
+pub mod tasks;
 pub mod thumbcache;
 pub mod thumbnails;
 pub mod view;

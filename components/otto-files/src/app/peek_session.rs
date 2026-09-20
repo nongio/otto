@@ -69,6 +69,8 @@ impl Browser {
         let anchor = self.peek_anchor();
         self.peek_generation += 1;
         self.peek_pending = true;
+        self.peek_pages_pending.clear();
+        self.peek_text_asked = false;
         // The panel goes up — or over to this file — on the keystroke, not
         // when the decode lands. An open one drops what it was showing now
         // rather than carrying the last file's preview while the new one is
@@ -92,22 +94,115 @@ impl Browser {
         Some((entry.path, self.peek_generation, anchor))
     }
 
-    /// Turn a paginated preview by `delta` pages, in place.
+    /// Turn a document by `delta` pages: scroll the strip so that page's top
+    /// edge is at the top of the box.
     ///
-    /// Returns what the caller must decode — the same file, at another page —
-    /// or `None` when the open preview has no pages to turn, which is the
-    /// signal to let the keystroke go on meaning what it means everywhere
-    /// else. Unlike [`Browser::begin_peek`] the panel is *not* emptied
-    /// while the decode runs: the page on screen is the right file and a good
-    /// answer to the keystroke until the next one lands, where the waiting
-    /// line would only be a flash of nothing.
-    pub(super) fn turn_peek_page(&mut self, delta: i32) -> Option<(PathBuf, u64, u32, Rect)> {
-        let page = self.peek.as_ref()?.page_turn(delta)?;
-        let path = self.selected_entry()?.path;
-        self.peek_generation += 1;
-        self.peek_pending = true;
+    /// Returns whether there was a page to turn to. When there is not — the
+    /// preview has no pages, or the end is already reached — the keystroke
+    /// goes on meaning what it means everywhere else, which is to move the
+    /// selection. Nothing is decoded: every page is already laid out, and the
+    /// pixels for the one arrived at are asked for like any other page
+    /// scrolled into view.
+    pub(super) fn turn_peek_page(&mut self, delta: i32) -> bool {
+        let panel = self
+            .peek_panel
+            .unwrap_or_else(|| self.peek_fallback_panel());
+        let content = view::peek_content_rect(panel);
+        let Some(session) = self.peek.as_mut() else {
+            return false;
+        };
+        let Some(page) = session.page_turn(delta, content) else {
+            return false;
+        };
+        session.scroll_to_page(page, content);
         self.dirty = true;
-        Some((path, self.peek_generation, page, self.peek_anchor()))
+        true
+    }
+
+    /// What the open document still needs: the pages on screen whose pixels
+    /// have not been asked for, and whether its text layer is still to be
+    /// read. `None` when no document is open.
+    ///
+    /// Bounded per pass rather than asking for everything in view at once: a
+    /// fast scroll crosses pages faster than they rasterise, and a queue of
+    /// workers for pages already gone past would spend the machine on what
+    /// nobody is looking at any more.
+    pub(super) fn peek_document_work(
+        &mut self,
+    ) -> Option<(PathBuf, u64, Vec<peek::PageRequest>, bool)> {
+        /// How many pages are rasterised at once. Enough that one slow page —
+        /// a photograph across the whole of it — does not hold up its
+        /// neighbours, and few enough that a fast scroll does not leave a
+        /// queue of workers behind it.
+        const AT_ONCE: usize = 3;
+
+        let panel = self
+            .peek_panel
+            .unwrap_or_else(|| self.peek_fallback_panel());
+        let content = view::peek_content_rect(panel);
+        let scale = AppContext::scale_factor().max(1) as f32;
+        let session = self.peek.as_ref()?;
+        if session.pages().is_empty() {
+            return None;
+        }
+        let path = self.selected_entry()?.path;
+        let wanted: Vec<peek::PageRequest> = session
+            .pages_wanted(content, scale)
+            .into_iter()
+            .filter(|request| !self.peek_pages_pending.contains(&request.page))
+            .take(AT_ONCE.saturating_sub(self.peek_pages_pending.len()))
+            .collect();
+        let text = !self.peek_text_asked;
+        if wanted.is_empty() && !text {
+            return None;
+        }
+        self.peek_text_asked = true;
+        for request in &wanted {
+            self.peek_pages_pending.insert(request.page);
+        }
+        Some((path, self.peek_generation, wanted, text))
+    }
+
+    /// Put a rasterised page into the open document.
+    pub(super) fn finish_peek_page(
+        &mut self,
+        generation: u64,
+        page: u32,
+        pixels: Option<otto_kit::preview::Pixels>,
+    ) {
+        if generation != self.peek_generation {
+            return;
+        }
+        self.peek_pages_pending.remove(&page);
+        let panel = self
+            .peek_panel
+            .unwrap_or_else(|| self.peek_fallback_panel());
+        let content = view::peek_content_rect(panel);
+        let Some((session, pixels)) = self.peek.as_mut().zip(pixels) else {
+            return;
+        };
+        if session.attach_page(page, pixels, content) {
+            self.dirty = true;
+        }
+    }
+
+    /// Put the document's own text on the open document, so it can be
+    /// selected and read aloud.
+    pub(super) fn finish_peek_text(
+        &mut self,
+        generation: u64,
+        measured: Vec<otto_kit::preview::Page>,
+        words: Vec<Word>,
+    ) {
+        if generation != self.peek_generation {
+            return;
+        }
+        if let Some(session) = self.peek.as_mut() {
+            if session.attach_text_layer(measured, words) {
+                tracing::debug!(words = session.words().len(), name = %session.name, "text layer");
+                self.dirty = true;
+            }
+        }
     }
 
     /// Show a decode that arrived, unless the user has moved on since.
@@ -586,6 +681,8 @@ impl Browser {
         self.peek_generation += 1;
         self.peek_pending = false;
         self.peek_recognising = false;
+        self.peek_pages_pending.clear();
+        self.peek_text_asked = false;
         // A panel dismissed mid-drag is no longer being dragged; the offset
         // itself stays, so the exit flies home from where the card actually
         // is rather than from where it would have rested.

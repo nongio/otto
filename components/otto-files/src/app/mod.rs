@@ -252,6 +252,36 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
 
 /// The browser's whole state. Shared with the draw and input callbacks, which
 /// outlive any borrow this struct could hand out.
+/// A file operation running on a worker thread.
+///
+/// The window keeps a handle to it so it can show where it has got to, stop
+/// it, and take its outcome when it lands. The work itself is on the worker:
+/// nothing here touches the disk.
+struct Job {
+    /// What the worker has said so far, drained in `poll`.
+    updates: std::sync::mpsc::Receiver<JobUpdate>,
+    /// Set to ask the worker to stop. It is read between items, so stopping
+    /// never leaves half a file behind.
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// What the undo step this job leaves behind is called.
+    undo_label: &'static str,
+    /// Whether the clipboard is spent when this finishes — a cut is consumed
+    /// by its paste, a copy is not.
+    cut: bool,
+}
+
+/// One thing a running job has to say for itself.
+enum JobUpdate {
+    /// `done` of `total` items handled; `item` is the one it is on now.
+    Progress {
+        done: usize,
+        total: usize,
+        item: String,
+    },
+    /// It is over, and this is what it did.
+    Done(model::OpResult),
+}
+
 struct Browser {
     /// The path stack: `[root, …, deepest]`. Miller columns render all of it;
     /// the list renders the last. Navigation pushes and pops in both views, so
@@ -327,6 +357,9 @@ struct Browser {
     drop_target: Option<DropTarget>,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
+    /// The file operation running on a worker thread, if there is one. See
+    /// [`Job`]: one at a time, and the window stays usable while it runs.
+    job: Option<Job>,
     /// Operations that changed files, newest last. Ctrl+Z pops one and puts
     /// it back; see [`UndoStep`] for what does and does not go on here.
     undo: Vec<UndoStep>,
@@ -373,6 +406,15 @@ struct Browser {
     /// Whether the recogniser is running on the previewed picture. Keeps
     /// the frame loop alive so the words paint when they land.
     peek_recognising: bool,
+    /// The pages of the open document whose pixels have been asked for and
+    /// have not arrived. A document scrolls with two pages of images held, so
+    /// the rest are fetched as they come into view — and each one only once,
+    /// however many frames go by before it lands.
+    peek_pages_pending: std::collections::HashSet<u32>,
+    /// Whether the open document's text layer has been asked for. One pass
+    /// per document: it reads the whole file, so a second would be the same
+    /// work for the same answer.
+    peek_text_asked: bool,
     /// Whether the cursor is the text beam because the pointer is over a
     /// recognised word on the panel. Tracked so the shape is set on the
     /// crossing rather than on every motion event.
@@ -550,6 +592,15 @@ struct Browser {
     /// the successor is chosen from the listing that is still on screen, and
     /// acted on against the one that replaces it.
     pending_pick: Option<(usize, Option<String>)>,
+    /// A pane the keyboard stepped into before its listing had arrived, and
+    /// which should take the cursor on its first row as soon as it does.
+    ///
+    /// Pressing Right on a folder makes its column the active one and puts the
+    /// cursor on the first entry — but the column is read on a worker, and a
+    /// folder reached from a file's selection has had no head start at all, so
+    /// the press usually beats the read. Without this the pane arrives with no
+    /// cursor in it, and the next arrow press has nothing to move.
+    entering: Option<usize>,
     /// Locations left behind by Back, most recent last. Forward pops them back.
     back: Vec<Location>,
     /// Locations left behind by Forward, most recent last. Back pops them back.
@@ -1410,3 +1461,11 @@ mod picture_info_tests {
         assert!(picture_info(&text).is_none());
     }
 }
+
+/// Stepping in and out of Miller columns from the keyboard.
+#[cfg(test)]
+mod columns_tests;
+
+/// Where a paste puts what is on the clipboard.
+#[cfg(test)]
+mod paste_target_tests;

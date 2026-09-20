@@ -1,7 +1,7 @@
 mod activity;
 mod dbus_service;
 mod dialog;
-mod dock_badges;
+mod dock_overlays;
 mod notifications;
 mod renderer;
 mod state;
@@ -36,7 +36,7 @@ fn action_focus(id: u64, key: &str) -> otto_kit::focus::FocusId {
 }
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView, Presence, Shape};
-use crate::dock_badges::DockBadges;
+use crate::dock_overlays::DockOverlays;
 use crate::renderer::{
     animate_to, apply_island_style, draw_content, set_size_and_position, COMPACT_H, MINI_H,
 };
@@ -82,6 +82,7 @@ struct IslandContent {
     mode: IslandMode,
     icon: String,
     title: String,
+    progress: Option<f64>,
     body: String,
     time_label: String,
     actions: Vec<crate::activity::NotificationAction>,
@@ -120,6 +121,8 @@ struct Island {
     /// Body text, cached alongside the actions: the action row sits under the
     /// wrapped body, so hit-testing has to know how many lines it took.
     body: String,
+    /// How far along a running task is, cached for hit-testing and drawing.
+    progress: Option<f64>,
 }
 
 /// A presented Access-style dialog panel (one subsurface, drawn as a whole).
@@ -206,7 +209,7 @@ struct IslandApp {
     /// island row — placed by `layout`.
     dialog_circle_x: f32,
     /// Unread-notification counts published onto the dock icons.
-    dock_badges: DockBadges,
+    dock_overlays: DockOverlays,
 }
 
 impl IslandApp {
@@ -233,7 +236,7 @@ impl IslandApp {
             last_resolution: None,
             shift_held: false,
             dialog_circle_x: LAYER_W as f32 / 2.0,
-            dock_badges: DockBadges::new(),
+            dock_overlays: DockOverlays::new(),
         }
     }
 
@@ -294,9 +297,16 @@ impl IslandApp {
         let notifications: Vec<Activity> = state.activities.clone();
         drop(state);
 
-        // The dock shows what is still waiting to be read, whether or not the
-        // island for it is still on screen.
-        self.dock_badges.sync(&notifications);
+        // The dock shows what is still waiting to be read and what is still
+        // running, whether or not the island for it is still on screen.
+        self.dock_overlays.sync(&notifications);
+
+        // A quiet activity is reported to the dock and nowhere else, so as
+        // far as the row is concerned it is not there at all.
+        let notifications: Vec<Activity> = notifications
+            .into_iter()
+            .filter(|a| !a.quiet)
+            .collect::<Vec<_>>();
 
         // Remove islands whose notification is gone.
         let mut removed_island = false;
@@ -341,6 +351,7 @@ impl IslandApp {
                 last_content: None,
                 actions: activity.actions.clone(),
                 body: activity.body.clone(),
+                progress: activity.progress,
                 opened_by_user: false,
             });
             self.last_interaction = std::time::Instant::now();
@@ -352,6 +363,7 @@ impl IslandApp {
                 island.actions = a.actions.clone();
                 island.icon = a.icon.clone();
                 island.body = a.body.clone();
+                island.progress = a.progress;
             }
         }
 
@@ -383,7 +395,8 @@ impl IslandApp {
         // Exactly one island may be Compact at a time. The pointer wins it,
         // then whatever was last clicked, then the arrival when it could not
         // open — so a burst of notifications doesn't blow the row up into a
-        // wall of pills.
+        // wall of pills. A running task is no exception: shrunk to Mini its
+        // ring still reads, so it takes its turn like everything else.
         let compact_id = self.hovered_island.or(self.focused_island).or(arriving);
 
         for island in &mut self.islands {
@@ -595,6 +608,7 @@ impl IslandApp {
                 mode,
                 icon: activity.icon.clone(),
                 title: activity.title.clone(),
+                progress: activity.progress,
                 body: activity.body.clone(),
                 time_label: renderer::elapsed_label(activity.created_at),
                 actions: activity.actions.clone(),
@@ -605,13 +619,14 @@ impl IslandApp {
                 let surface = &mut self.islands[idx].surface;
                 match mode {
                     IslandMode::Mini => draw_content(surface, w, h, |canvas| {
-                        renderer::draw_mini(canvas, &activity.icon, w, h);
+                        renderer::draw_mini(canvas, &activity.icon, activity.progress, w, h);
                     }),
                     IslandMode::Compact => draw_content(surface, w, h, |canvas| {
                         renderer::draw_pill(
                             canvas,
                             &activity.icon,
                             &activity.title,
+                            activity.progress,
                             skia_safe::Color::WHITE,
                             w,
                             h,
@@ -805,15 +820,20 @@ impl IslandApp {
                 let action_id = if island.mode == IslandMode::Expanded && !island.actions.is_empty()
                 {
                     let (local_x, local_y) = (px - x, py - y);
-                    renderer::card_action_rects(&island.body, &island.actions, w)
-                        .into_iter()
-                        .find(|(bx, by, bw, bh, _, _)| {
-                            local_x >= *bx
-                                && local_x <= *bx + *bw
-                                && local_y >= *by
-                                && local_y <= *by + *bh
-                        })
-                        .map(|(_, _, _, _, id, _)| id)
+                    renderer::card_action_rects(
+                        &island.body,
+                        &island.actions,
+                        island.progress.is_some(),
+                        w,
+                    )
+                    .into_iter()
+                    .find(|(bx, by, bw, bh, _, _)| {
+                        local_x >= *bx
+                            && local_x <= *bx + *bw
+                            && local_y >= *by
+                            && local_y <= *by + *bh
+                    })
+                    .map(|(_, _, _, _, id, _)| id)
                 } else {
                     None
                 };
@@ -1147,12 +1167,18 @@ impl IslandApp {
             })
             .flatten();
         draw_content(&mut panel.surface, w, h, |canvas| match shape {
-            Shape::Circle => renderer::draw_mini(canvas, &view.icon, w, h),
+            Shape::Circle => renderer::draw_mini(canvas, &view.icon, None, w, h),
             // The peek wears the dialog's themed material, so its text follows
             // the theme rather than the dark island pill's white.
-            Shape::Peek => {
-                renderer::draw_pill(canvas, &view.icon, &view.title, dialog::text_color(), w, h)
-            }
+            Shape::Peek => renderer::draw_pill(
+                canvas,
+                &view.icon,
+                &view.title,
+                None,
+                dialog::text_color(),
+                w,
+                h,
+            ),
             Shape::Panel => dialog::draw_dialog(canvas, &view, &picks, &layout, scroll, focus),
         });
 

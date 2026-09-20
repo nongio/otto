@@ -91,17 +91,14 @@ fn draw_card(
     let content = Rect::from_ltrb(0.0, HEADER, width, height);
     canvas.save();
     canvas.clip_rect(content, None, true);
-    // Fit, always: this is the offline renderer, and there is nobody here to
-    // pinch.
-    preview::draw(
-        canvas,
-        content,
-        preview,
-        theme,
-        0,
-        preview::Zoom::FIT,
-        &resolve_icon,
-    );
+    // Unzoomed, always: this is the offline renderer, and there is nobody here
+    // to pinch. A document opens at the top of its first page, which is where
+    // a host opens one too.
+    let zoom = match preview {
+        Preview::Pages { .. } => preview::Zoom::TOP,
+        _ => preview::Zoom::FIT,
+    };
+    preview::draw(canvas, content, preview, theme, 0, zoom, &resolve_icon);
     canvas.restore();
 }
 

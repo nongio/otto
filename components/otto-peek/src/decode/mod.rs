@@ -46,6 +46,16 @@ pub struct Request {
     pub animate: bool,
     /// 1-based page for paginated content.
     pub page: u32,
+    /// Whether the host scrolls documents. A paginated file then comes back
+    /// as the whole strip — every page's geometry, one page's pixels — rather
+    /// than as a picture of the page that was asked for. A caller that will
+    /// only ever draw one page, a thumbnail in a listing, leaves this off and
+    /// gets exactly what it got before there were strips.
+    pub document: bool,
+    /// Ask for the file's own text with its boxes, and no pixels at all. A
+    /// pass of its own because it is worth a second or two on a long document
+    /// and the pages are worth showing before it.
+    pub text: bool,
     /// Zoom factor being displayed. Past 1.0 the image decoders stop
     /// downsampling, which is what keeps a photograph sharp when you look
     /// closely.
@@ -85,6 +95,8 @@ impl Default for Request {
             oversample: 1.0,
             animate: true,
             page: 1,
+            document: false,
+            text: false,
             zoom: 1.0,
             mime: String::new(),
             name: String::new(),
@@ -297,6 +309,8 @@ pub fn parse_request(arguments: &[String]) -> Request {
             "--still" => request.animate = false,
             "--name" => request.name = value(),
             "--mime" => request.mime = value(),
+            "--document" => request.document = true,
+            "--text-layer" => request.text = true,
             "--ocr" => request.ocr = true,
             "--languages" => request.languages = value(),
             "--recogniser" => request.recogniser = value(),

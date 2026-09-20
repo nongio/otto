@@ -127,6 +127,8 @@ async fn main() {
                 request.height = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1200);
             }
             "--still" => request.animate = false,
+            "--document" => request.document = true,
+            "--text-layer" => request.text = true,
             "--oversample" => {
                 request.oversample = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1.0);
             }
@@ -270,6 +272,25 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
                 println!("  animation {} frames, {total} ms a loop", pixels.frames());
             }
             println!("  buffer    {} bytes", pixels.data.len());
+        }
+        PreviewPayload::Pages { pages, words } => {
+            let (width, height) = otto_kit::preview::strip_size(pages);
+            let rendered = pages.iter().filter(|page| page.pixels.is_some()).count();
+            println!(
+                "  document  {} pages, strip {:.0}×{:.0}, {rendered} rasterised",
+                pages.len(),
+                width,
+                height
+            );
+            println!("  text      {} words", words.len());
+            let sample: Vec<&str> = words
+                .iter()
+                .take(12)
+                .map(|word| word.text.as_str())
+                .collect();
+            if !sample.is_empty() {
+                println!("    │ {}…", sample.join(" "));
+            }
         }
         PreviewPayload::Text {
             lines,

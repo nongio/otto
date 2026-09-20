@@ -28,6 +28,11 @@
 //! } ] }
 //! ```
 //!
+//! An `arg` with `choices` is a set to pick from rather than a field to type
+//! in - `"choices": ["eng", "ita"]`, or
+//! `{"value": "eng", "title": "English", "subtitle": "the default"}` where
+//! there is more to say. The palette completes them itself.
+//!
 //! Every string a person reads — `title`, `undo`, the `arg`'s `prompt`,
 //! `label`, `placeholder` and `initial` — may instead be an object keyed by
 //! locale, `{ "en": "Compress to Zip", "it": "Comprimi in Zip" }`; the host
@@ -44,6 +49,20 @@
 //! `kinds` is `"files"`, `"folders"` or `"any"`. A command with no `arg`
 //! runs on Return; one with an `arg` opens the field, and with `preview`
 //! set is asked for a dry run after every keystroke.
+//!
+//! A command that declares `"progress": true` is run in line mode: while it
+//! works it may print one JSON object per line saying where it has got to,
+//!
+//! ```json
+//! { "done": 3, "total": 12, "item": "holiday.png" }
+//! ```
+//!
+//! and the last line that is not one of those is its result. The host turns
+//! those into the window's status line, the island, and the app's dock icon,
+//! so a script gets all three without knowing any of them exist. `total` may
+//! grow as the script finds more to do, and `0` means it does not know yet.
+//! Without the declaration a run's output is read as one JSON document as
+//! before, so a script that prints its result over several lines is unaffected.
 //!
 //! `script preview` and `script run` — with this on standard input:
 //!
@@ -84,7 +103,7 @@
 //! [`CommandProvider::poll`].
 
 use std::collections::{BTreeMap, HashSet};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,8 +114,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::command::{
-    ArgKind, ArgSpec, Command, CommandProvider, Effect, Group, Preview, PreviewRow, Request,
-    Situation,
+    ArgKind, ArgSpec, Choice, Command, CommandProvider, Effect, Group, Preview, PreviewRow,
+    Request, Situation,
 };
 use crate::model::Change;
 
@@ -189,6 +208,24 @@ struct Described {
     /// What to call the run in the undo history. The title when absent.
     #[serde(default)]
     undo: Option<Text>,
+    /// Whether this command reports its progress line by line while it runs.
+    #[serde(default)]
+    progress: bool,
+}
+
+/// A line a script prints while it works, when it has declared `progress`.
+///
+/// `done` is what marks it as one: a result has no such field, so the two can
+/// never be mistaken for each other.
+#[derive(Debug, Deserialize)]
+struct ProgressLine {
+    done: usize,
+    /// How many there are in all, or `0` while the script is still finding out.
+    #[serde(default)]
+    total: usize,
+    /// What it is working on now. The command's own title when absent.
+    #[serde(default)]
+    item: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
@@ -255,6 +292,51 @@ struct DescribedArg {
     initial: Option<Text>,
     #[serde(default)]
     preview: bool,
+    /// A fixed set to pick from instead of a field to type in. The palette
+    /// completes these itself, so picking one costs no call to the script.
+    #[serde(default)]
+    choices: Vec<DescribedChoice>,
+}
+
+/// One of a command's fixed answers: `"eng"`, or a value with something to
+/// read beside it.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(untagged)]
+enum DescribedChoice {
+    /// The value is also what is read.
+    Bare(String),
+    Titled {
+        value: String,
+        #[serde(default)]
+        title: Option<Text>,
+        #[serde(default)]
+        subtitle: Option<Text>,
+    },
+}
+
+impl DescribedChoice {
+    fn resolve(&self, locale: &str) -> Choice {
+        match self {
+            Self::Bare(value) => Choice::new(value, value),
+            Self::Titled {
+                value,
+                title,
+                subtitle,
+            } => {
+                let choice = Choice::new(
+                    value,
+                    title
+                        .as_ref()
+                        .map(|title| title.get(locale))
+                        .unwrap_or_else(|| value.clone()),
+                );
+                match subtitle {
+                    Some(subtitle) => choice.with_subtitle(subtitle.get(locale)),
+                    None => choice,
+                }
+            }
+        }
+    }
 }
 
 /// One command a script offers, with the script it came from.
@@ -309,13 +391,23 @@ impl ScriptCommand {
         let mut command = Command::new(&self.full_id, d.title.get(locale), Group::from(d.group))
             .with_keywords(d.keywords.as_ref().map(Words::all).unwrap_or_default());
         if let Some(arg) = &d.arg {
+            let kind = if arg.choices.is_empty() {
+                ArgKind::Text
+            } else {
+                ArgKind::Choice(
+                    arg.choices
+                        .iter()
+                        .map(|choice| choice.resolve(locale))
+                        .collect(),
+                )
+            };
             let mut spec = ArgSpec::new(
                 arg.prompt.get(locale),
                 arg.label
                     .as_ref()
                     .map(|label| label.get(locale))
                     .unwrap_or_else(|| otto_kit::t_owned!("files-command-arg-name")),
-                ArgKind::Text,
+                kind,
             );
             if let Some(placeholder) = &arg.placeholder {
                 spec = spec.with_placeholder(placeholder.get(locale));
@@ -428,12 +520,19 @@ impl Outcome {
 
 /// Run `script verb` with `input` on stdin. With a deadline, a script that
 /// overruns is killed and the outcome is a failure.
+///
+/// With `on_line`, standard output is read a line at a time as it arrives and
+/// each line is offered to it; a line it takes is progress and is not kept,
+/// and the last line it leaves is the outcome. That is how a script reports
+/// itself while it is still running, and it rules out a deadline: a job that
+/// says how it is getting on is a job that is allowed to take its time.
 fn call(
     script: &Path,
     verb: &str,
     locale: &str,
     input: Option<&[u8]>,
     deadline: Option<Duration>,
+    on_line: Option<&mut dyn FnMut(&str) -> bool>,
 ) -> Result<Outcome, String> {
     let mut child = Process::new(script)
         .arg(verb)
@@ -454,8 +553,28 @@ fn call(
         let _ = stdin.write_all(bytes);
     }
 
-    let stdout = child.stdout.take().map(drain);
     let stderr = child.stderr.take().map(drain);
+
+    // Line mode: read here, as it comes, so progress arrives while the script
+    // is still working rather than all at once when it is over. Everything
+    // else is drained on its own thread and read when the script is done.
+    let mut streamed = None;
+    let mut stdout = None;
+    match (on_line, deadline) {
+        (Some(on_line), None) => {
+            let mut last = String::new();
+            if let Some(pipe) = child.stdout.take() {
+                for line in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
+                    if line.trim().is_empty() || on_line(&line) {
+                        continue;
+                    }
+                    last = line;
+                }
+            }
+            streamed = Some(last);
+        }
+        _ => stdout = child.stdout.take().map(drain),
+    }
 
     let status = match deadline {
         Some(deadline) => wait_until(&mut child, deadline),
@@ -473,7 +592,9 @@ fn call(
     };
     Ok(Outcome {
         success: status.success(),
-        stdout: stdout.and_then(|h| h.join().ok()).unwrap_or_default(),
+        stdout: streamed
+            .or_else(|| stdout.and_then(|h| h.join().ok()))
+            .unwrap_or_default(),
         stderr: stderr.and_then(|h| h.join().ok()).unwrap_or_default(),
     })
 }
@@ -510,7 +631,14 @@ fn describe(script: &Path, locale: &str) -> Vec<ScriptCommand> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let outcome = match call(script, "describe", locale, None, Some(DESCRIBE_DEADLINE)) {
+    let outcome = match call(
+        script,
+        "describe",
+        locale,
+        None,
+        Some(DESCRIBE_DEADLINE),
+        None,
+    ) {
         Ok(outcome) => outcome,
         Err(err) => {
             tracing::warn!("files-scripts: {err}");
@@ -710,9 +838,36 @@ impl ScriptProvider {
 
     /// Run `command` to completion and turn what it says into an effect.
     fn run_now(command: &ScriptCommand, locale: &str, input: &[u8]) -> Result<Effect, String> {
-        let outcome = call(&command.script, "run", locale, Some(input), None)?;
+        // Every run is a job, whether or not it counts its work: a script
+        // that says nothing still gets an island with its name on it, so a
+        // long one is not silence.
+        let title = command.described.title.get(locale);
+        let mut task = crate::tasks::Task::start(title.clone());
+
+        let outcome = if command.described.progress {
+            let mut on_line = |line: &str| match serde_json::from_str::<ProgressLine>(line) {
+                Ok(step) => {
+                    let item = step.item.as_deref().unwrap_or(&title);
+                    task.progress(step.done, step.total, item);
+                    true
+                }
+                Err(_) => false,
+            };
+            call(
+                &command.script,
+                "run",
+                locale,
+                Some(input),
+                None,
+                Some(&mut on_line),
+            )?
+        } else {
+            call(&command.script, "run", locale, Some(input), None, None)?
+        };
         if !outcome.success {
-            return Err(outcome.complaint());
+            let complaint = outcome.complaint();
+            task.end(Some(complaint.clone()));
+            return Err(complaint);
         }
         let reply: RunReply = if outcome.stdout.trim().is_empty() {
             RunReply::default()
@@ -728,6 +883,7 @@ impl ScriptProvider {
                 )
             })?
         };
+        task.end(reply.status.clone());
         let changes: Vec<Change> = reply.changes.into_iter().map(Change::from).collect();
         let label = command
             .described
@@ -786,6 +942,7 @@ impl CommandProvider for ScriptProvider {
             &self.locale,
             Some(&input),
             Some(PREVIEW_DEADLINE),
+            None,
         )
         .ok()?;
         if !outcome.success {
@@ -908,6 +1065,23 @@ case "$1" in
 esac
 "#;
 
+    /// A script that counts its way through the work before answering, the
+    /// way a long one does.
+    const COUNTING: &str = r#"
+case "$1" in
+  describe)
+    printf '%s' '{"commands":[{"id":"count","title":"Count","when":{"targets":"any"},
+      "progress":true,"undo":"Count"}]}'
+    ;;
+  run)
+    cat > /dev/null
+    printf '{"done":0,"total":2,"item":"a"}\n'
+    printf '{"done":1,"total":2,"item":"b"}\n'
+    printf '{"status":"counted 2","reload":true}'
+    ;;
+esac
+"#;
+
     fn situation(dir: &Path, selection: &[&str]) -> Situation {
         Situation {
             path: dir.to_path_buf(),
@@ -983,6 +1157,26 @@ esac
             !dir.0.join("hello.out").exists(),
             "a preview changes nothing"
         );
+    }
+
+    /// A script that declares `progress` prints its progress and its result
+    /// down the same pipe. The lines counting the work must not be mistaken
+    /// for the result, and the result must survive them.
+    #[test]
+    fn progress_lines_are_read_as_progress_and_the_last_line_is_the_result() {
+        let dir = Dir::new("counting");
+        dir.script("count", COUNTING);
+        let mut provider = ScriptProvider::discovered(&dir.0);
+        provider
+            .run(
+                &Request::new("scripts:count.count", None),
+                &situation(&dir.0, &[]),
+            )
+            .expect("accepted");
+
+        let effect = wait_for(&mut provider).expect("the script succeeded");
+        assert_eq!(effect.status.as_deref(), Some("counted 2"));
+        assert!(effect.reload);
     }
 
     #[test]

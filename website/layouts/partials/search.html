@@ -1,0 +1,12 @@
+{{/* Hidden until opened; the dialog is inert markup, the behaviour all
+     lives in assets/js/search.js. */}}
+<dialog id="search-dialog" aria-label="Search the documentation">
+    <form id="search-form" role="search" onsubmit="return false">
+        <input id="search-input" type="search" autocomplete="off"
+               spellcheck="false" placeholder="Search the documentation"
+               aria-label="Search the documentation"
+               aria-controls="search-results">
+    </form>
+    <div id="search-status" role="status"></div>
+    <ul id="search-results"></ul>
+</dialog>

@@ -32,8 +32,9 @@ one file descriptor and no network.
   appears late.
 - Images, PDFs, and text documents are previewed properly — not as a card
   describing the file. A photograph can be zoomed into and stays sharp; a PDF
-  shows its pages and can be paged through; a text file shows its text. These
-  three carry the feature, and no other type may be traded against them.
+  scrolls through its pages as one document and its own text can be selected
+  and copied; a text file shows its text. These three carry the feature, and
+  no other type may be traded against them.
 - Adding a content type means writing a decoder, not a new surface, a new IPC
   shape, or a new drawing path.
 - Previews and every file view's thumbnails come from one cache in one format,
@@ -177,14 +178,14 @@ There is no hand-back: the host already has the keypress.
 - **Space, Escape** — close the preview.
 - **Arrows, Home, End, Page Up/Down** — the host moves its own selection and
   tells the preview the new path. When the content has pages, Page Up/Down
-  paginate instead — and at the last page they go back to meaning what they
-  mean everywhere else, because a key that stops working at the end of a
-  document is worse than one that hands the listing back. A page turn is a
-  fresh decode of the same file at another page, since the worker rasterises
-  one page and holds no document between calls; the page on screen stays up
-  while it runs, rather than being replaced by the waiting line. The panel's
-  title strip says which page of how many, or a turn would have no visible
-  effect on a document whose pages look alike.
+  scroll the document to the next page's top edge instead — and at the last
+  page they go back to meaning what they mean everywhere else, because a key
+  that stops working at the end of a document is worse than one that hands the
+  listing back. Nothing is decoded for a page turn: every page is already laid
+  out, and the one arrived at is rasterised like any other page scrolled into
+  view. The panel's title strip says which page of how many, since on a
+  document whose pages look alike the scroll is otherwise the only evidence
+  that anything moved.
 - **Enter** — the host opens the file in its default application and closes the
   preview.
 - **`+` / `-` / `0`** — zoom, which is the preview's own business; past fit,
@@ -409,8 +410,30 @@ Notes on the ones that look like they need a crate and do not:
 
 ### Documents scroll; they do not page
 
+**A PDF is one strip, not a slideshow.** Every page's geometry is read when the
+document is opened — from `pdfinfo`, which knows the page tree — so the whole
+document is laid out immediately: pages stacked down a strip, with a gap
+between each pair, at the scale that puts a **whole page** in the panel. What is *not* read is the pixels.
+One page is rasterised with the payload and the rest are drawn as the paper
+they will be, filled in as they scroll into view and let go of again once they
+are well behind, so a three-hundred-page manual scrolls at the cost of two page
+images rather than three hundred.
+
+The strip scrolls with the toolkit's own scroll views — the same ones a zoomed
+picture is panned with, and the same ones every list in the browser uses: a
+two-finger gesture that keeps gliding after the fingers lift, a rubber band at
+both ends, and bars that fade in while it moves. A document is not a special
+case of scrolling, and it does not get a scroll of its own.
+
+It rests on a whole page rather than filling the panel's width, because a
+glance is what Peek is for: a page cropped at the fold reads as a picture that
+did not fit, and the shape of the page — its proportions, its margins, where
+the text sits on it — is most of what the glance is asking. Zoom is there for
+reading, and applies to the strip as a whole rather than to a page, so pinching
+in magnifies the document and leaves the reader on the passage they were on.
+
 A Markdown preview is one continuous flow, wrapped to the panel's width and
-scrolled by wheel or two-finger gesture like a text file — not paged like a PDF.
+scrolled by wheel or two-finger gesture like a text file.
 The unit it scrolls by is the *wrapped line*, which only the layout knows: the
 same blocks are more lines in a narrow panel than in a wide one, and a
 document's lines are not all one height, so both the total and how many fit come
@@ -445,12 +468,35 @@ The worker tries, in order, and uses the first one present:
 If none is present, PDF falls back to the metadata card, and the card says which
 package would enable page rendering rather than silently looking broken.
 
-The file is handed to the rasteriser as an already-open descriptor via
-`/dev/fd`, so the child never resolves a path of its own and cannot be
-redirected to a different file between the worker's `fstat` and the child's
-open. Page navigation re-execs for the requested page; at roughly 50–100 ms per
-page this stays inside the interaction budget, and the current page is kept
-while the next renders so paging never blanks the view.
+The document is handed to the rasteriser **on standard input**, so the child
+never resolves a path of its own and cannot be redirected to a different file
+between the worker's `fstat` and the child's open. Each page is a worker of its
+own for the page asked for; at roughly 50–100 ms per page this stays inside the
+interaction budget, and the page's place in the strip is already there before
+its pixels are, so scrolling never runs into a hole.
+
+### A PDF's text is the file's own
+
+The words on a PDF page are read out of the document, not recognised from a
+picture of it: a second, cheaper pass runs `pdftotext -bbox-layout`, which gives
+every word's box in points together with the flow, block and line it was read
+in. That is exact where a recogniser is approximate, it costs about a
+millisecond a page rather than seconds, and it works for a page that has not
+been rasterised at all.
+
+The boxes come back in **strip coordinates** — points, pages stacked the way the
+layout stacks them — which is the same space a selection is made in, so a drag
+that runs across a page break selects the words either side of it in reading
+order and copies with a break between them. A page is a block, so that break is
+where the pages are.
+
+It is a pass of its own rather than part of opening the document because it
+reads the whole file: a long manual is worth a second, and the pages are worth
+showing before it. A document with no text layer — a scan — has no words, and is
+where the recogniser comes in instead, on the page images, converted into the
+same strip coordinates so nothing downstream knows which of the two it is
+reading. Selection, copy, select-all and what a screen reader is handed are the
+same machinery a recognised picture already uses.
 
 **This generalises, and is the reason to prefer it over a linked library.** The
 same seam — a table of external renderer commands, tried in order, run inside
@@ -597,6 +643,12 @@ type:
 3. Nothing else. Drawing comes from the payload.
 
 `PreviewPayload` is a **closed** set in v1, and this is the point of the design:
+
+- `Pages` — a document: every page's size, the pixels of however many of them
+  the host has asked for, and one list of words for the whole document. A shape
+  of its own rather than a picture with a page number on it, because the
+  geometry is known long before the pixels are and that is what lets a document
+  be laid out, scrolled and reported on while most of it is still blank.
 
 - `Pixels` — premultiplied RGBA at a stated size, with an optional intrinsic
   size for zoom, and an optional page count. Zoom is measured against the

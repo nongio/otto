@@ -504,6 +504,13 @@ files-status-items =
 files-status-items-hidden = { $items }, { $hidden } hidden
 files-status-selected = { $count } of { $total } selected
 files-status-opening-preview = Opening preview…
+# The island and the status bar while a copy or a move runs. $done is how many
+# items are finished and $total how many there are in all.
+files-task-copying = Copying { $done } of { $total }
+files-task-moving = Moving { $done } of { $total }
+# The status bar's fuller line: $name is the file being handled right now.
+files-task-progress = { $name } — { $done } of { $total }
+files-task-already-running = One operation at a time — this one is still going
 files-nothing-to-undo = Nothing to undo
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = Undid { $label }
@@ -1500,5 +1507,7 @@ a11y-settings = Settings
 # Quick Look's contents, when it is showing something with no pages.
 a11y-preview = Preview
 a11y-preview-page = Preview, page { $page } of { $pages }
+# A scrollable document of several pages.
+a11y-preview-pages = Preview, { $pages } pages
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = Preview, shortened

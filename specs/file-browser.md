@@ -840,6 +840,18 @@ progress, and can cancel it.
   rename syscall and is instantaneous; a move across filesystems is copy,
   verify, then unlink the source, and the source is unlinked only after the
   destination is fully written and fsynced.
+- **Where a paste lands** — in column view, the folder that is selected if
+  exactly one is, and otherwise the directory on screen. Column view only: a
+  selected folder there is somewhere the window is already showing, with its
+  contents open in the pane beside it, so putting the files next to it instead
+  reads as a paste that went somewhere else. List and icon view show one
+  directory at a time, that directory is where the window is, and a selection
+  in them is often incidental — the row a type-ahead landed on — so it never
+  redirects the files. A file selected, several entries selected, or nothing
+  selected all mean the directory itself. A folder on the clipboard is the
+  exception: it cannot be put inside itself, and copying a folder leaves it
+  selected, so that duplicates it beside itself as it always did. A drop names
+  its own destination and does not consult the selection at all.
 - **Conflicts** — when a destination entry exists, a sheet offers Replace,
   Skip, Keep Both (numeric suffix), each with an "apply to all remaining"
   option. Directories merge rather than replace; the conflict question is asked
@@ -892,9 +904,22 @@ progress, and can cancel it.
   is now taken says so and leaves both files alone rather than choosing for the
   user. There is no redo: undoing a delete is a *restore*, and re-deleting it
   would be a second trip to the trash rather than the inverse of anything.
-- **Progress** — an operation shorter than 500 ms shows nothing. Beyond that,
-  the status bar shows the current file, the count, and a cancel action; per-byte
-  progress appears for files above 32 MB.
+- **Progress** — an operation shorter than 500 ms shows nothing. Beyond that it
+  is reported in three places, each good at something different:
+  - the **status bar** of the window it was started from: the current file, the
+    count, and a cancel action. Per-byte progress appears for files above 32 MB.
+  - the **dock icon**, which fills for as long as the work lasts and is
+    visible from anywhere;
+  - the **island**, but only while the window is not the one in front of the
+    user. A job started in the window being looked at has already said so
+    there, and a bubble would be a second copy of it to deal with; leave the
+    window and the island comes up, come back and it goes quiet again. Both go
+    through `org.otto.Island1`, which publishes the dock bar from the same
+    activity — see [dynamic-island.md](./dynamic-island.md).
+
+  Cancelling stops the operation between items, never inside one: whole files
+  are left behind, never half of one, and everything done up to that point
+  stands and stays undoable.
 - **Errors** — a failure part-way through a multi-file operation stops and
   reports which files were done, which failed and why, and offers to continue
   with the rest or to stop. It does not abort silently and it does not retry
@@ -934,7 +959,10 @@ spec has no name at all for a put-back, so that row is borrowed throughout.
 
 Choosing from the outcome is what makes undo sound right with no special case:
 undoing a delete is a restore, so it gets the put-back sound; undoing a copy
-takes files away, so it gets the removal one.
+takes files away, so it gets the removal one. It is also what makes a command
+from the palette sound like the rest of the browser: a provider reports the
+changes it made, and a script that creates a file is heard as that file
+arriving, exactly as a paste of it would be.
 
 The preference order exists because the sound naming spec is thinner than a
 desktop needs — there is no "paste" event — and theme coverage of the drag

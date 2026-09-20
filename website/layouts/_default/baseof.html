@@ -50,10 +50,32 @@
         </script>
     </head>
     <body>
-        <a id="repo-link" href="https://github.com/nongio/otto">GitHub</a>
-        <button id="theme-toggle" aria-label="Switch color theme">Dark</button>
+        <div id="site-tools">
+            <button id="search-button" aria-label="Search the documentation">
+                <svg class="lens" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                    <line x1="10.4" y1="10.4" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                <span class="label">Search</span>
+                <span class="keys"><span class="key">Ctrl</span><span class="key">K</span></span>
+            </button>
+            <a id="repo-link" href="https://github.com/nongio/otto">GitHub</a>
+            <button id="theme-toggle" aria-label="Switch color theme">Dark</button>
+        </div>
+        {{ partial "search.html" . }}
         {{- block "main" . }}{{- end }}
         {{ $js := resources.Get "js/main.js" }}
         <script src="{{ $js.Permalink }}"></script>
+        {{/* data-base is the path the site is published under: the Pagefind
+             index stores root-relative URLs, and search.js prepends this so
+             one index works under GitHub Pages' /otto/ subpath too.
+
+             Both are absolute on purpose. canonifyURLs rewrites href and src
+             against the baseURL but leaves data-* attributes alone, so a
+             relURL here would silently drop the subpath. */}}
+        {{ $search := resources.Get "js/search.js" }}
+        <script type="module" src="{{ $search.Permalink }}"
+                data-bundle="{{ "pagefind/pagefind.js" | absURL }}"
+                data-base="{{ (urls.Parse (absURL "")).Path }}"></script>
     </body>
 </html>

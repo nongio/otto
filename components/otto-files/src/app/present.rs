@@ -137,6 +137,57 @@ impl FilesApp {
         }
     }
 
+    /// Fill in the open document: the pages that have scrolled into view, and
+    /// the text layer, both off the UI thread.
+    ///
+    /// Run from the update pass, like the decode that opened the panel. A
+    /// document is opened with one page rasterised and the rest laid out
+    /// blank, so this is what turns scrolling into reading.
+    pub(super) fn follow_peek_document(&self) {
+        let work = {
+            let mut browser = self.state.lock().unwrap();
+            browser.peek_document_work()
+        };
+        let Some((path, generation, pages, text)) = work else {
+            return;
+        };
+        let panel = {
+            let browser = self.state.lock().unwrap();
+            peek::panel_rect(browser.size.0, browser.size.1)
+        };
+        let scale = AppContext::scale_factor().max(1) as f32;
+
+        for request in pages {
+            let state = Arc::clone(&self.state);
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || {
+                let pixels = match peek::decode_page(&path, request.page, request.width) {
+                    Preview::Pixels { pixels, .. } => Some(pixels),
+                    _ => None,
+                };
+                state
+                    .lock()
+                    .unwrap()
+                    .finish_peek_page(generation, request.page, pixels);
+                AppContext::request_wakeup();
+            });
+        }
+
+        if text {
+            let state = Arc::clone(&self.state);
+            tokio::task::spawn_blocking(move || {
+                let Some((measured, words)) = peek::text_layer(&path, panel, scale) else {
+                    return;
+                };
+                state
+                    .lock()
+                    .unwrap()
+                    .finish_peek_text(generation, measured, words);
+                AppContext::request_wakeup();
+            });
+        }
+    }
+
     /// Preview the cursor's file, decoding off the UI thread.
     ///
     /// [`peek::decode`] blocks until the sandboxed worker answers or its
@@ -158,7 +209,7 @@ impl FilesApp {
         let recognise = ocr::enabled();
         let recogniser = ocr::command();
         tokio::task::spawn_blocking(move || {
-            let mut preview = peek::decode(&path, panel, scale, 1);
+            let mut preview = peek::decode_document(&path, panel, scale, 1);
             let video = (path.is_file() && otto_media_kit::player::available())
                 .then(|| (path.clone(), peek::video_options(panel, scale, true)));
             // Words already remembered ride in with the picture; otherwise
@@ -220,36 +271,6 @@ impl FilesApp {
             }
             AppContext::request_wakeup();
         });
-    }
-
-    /// Turn an open PDF's page, decoding off the UI thread like any other
-    /// preview. Returns whether there was a page to turn to — when there is
-    /// not, the keystroke was never the preview's and the caller goes on to
-    /// do what it does to the listing.
-    pub(super) fn turn_peek_page(&self, browser: &mut Browser, delta: i32) -> bool {
-        let Some((path, generation, page, anchor)) = browser.turn_peek_page(delta) else {
-            return false;
-        };
-        let panel = peek::panel_rect(browser.size.0, browser.size.1);
-        let scale = AppContext::scale_factor().max(1) as f32;
-        let state = Arc::clone(&self.state);
-
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-
-        // No video: what is being turned is a document's page, and a
-        // paginated preview is never a player.
-        tokio::task::spawn_blocking(move || {
-            let preview = peek::decode(&path, panel, scale, page);
-            state
-                .lock()
-                .unwrap()
-                .finish_peek(generation, anchor, name, preview, None);
-            AppContext::request_wakeup();
-        });
-        true
     }
 
     /// Decode the docked preview column's target, off the UI thread — the

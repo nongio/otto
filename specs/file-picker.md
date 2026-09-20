@@ -365,6 +365,13 @@ Within the file view:
 | Escape | close a sheet if one is open; else clear the search field if non-empty; else cancel the request |
 | `~`, `/` | open a location field pre-filled with that character, accepting an absolute or `~`-relative path |
 
+**Right steps into the column it opens.** In column view, Right on a folder
+makes that folder's column the active one and puts the cursor on its first row,
+so the next Down starts inside it. The column is read on a worker and the press
+usually arrives first: the row is taken when the listing lands, not skipped
+because it was not there yet. Leaving the column again before it lands cancels
+that, so a cursor never moves after the user has gone elsewhere.
+
 Any key that moves the cursor **scrolls it into view**: the pane scrolls the
 shortest distance that brings the cursor's whole row or cell inside the
 viewport, and does not move at all when it is already there. Walking a long

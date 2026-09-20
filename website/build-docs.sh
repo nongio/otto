@@ -82,6 +82,7 @@ declare -A PAGE_TITLE=(
     [tiling]="Tiling in Otto - Tiled Workspaces on Wayland"
     [files-command-palette]="Otto Files Command Palette - Run Any Command"
     [files-custom-commands]="Custom Commands in Otto Files - Script Its Menus"
+    [files-pdf-command]="PDF from Pictures - An Otto Files Script"
     [emoji]="Otto Emoji Picker - Find and Type Any Emoji"
     [agents]="Ask and Agents in Otto - Run a Coding Agent from the Desktop"
     [accessibility]="Accessibility in Otto - Screen Readers and Keyboard Use"
@@ -159,6 +160,7 @@ declare -A PAGE_DESC=(
     [tiling]="Switch any Otto workspace between stacking and tiling: build a layout from the keyboard or the pointer, set gaps and tile decorations, and drive it from scripts."
     [files-command-palette]="Press Ctrl+P in Otto Files to run any command by name, select files by pattern, and rename many files at once from one pattern with a live dry run."
     [files-custom-commands]="Add your own commands to Otto Files with a script: a tutorial, the JSON a script speaks, previews, undo and translations."
+    [files-pdf-command]="Build a Files command that turns pictures into a PDF, reads their text with tesseract, and reports a page at a time while it works."
     [emoji]="Search or browse every emoji by category with Otto's picker and have it typed into the focused window, with a skin-tone setting."
     [agents]="Run a coding agent from the Otto desktop with Ask: what to install, what each agent can do, permission modes and questions."
     [accessibility]="Use Otto with a screen reader or the keyboard alone: what to install, what the desktop announces, and how to drive its applications."
@@ -227,6 +229,7 @@ USER_FILES=(
     "user/files.md"
     "user/files-command-palette.md"
     "user/files-custom-commands.md"
+    "user/files-pdf-command.md"
     "user/settings.md"
     "user/launcher.md"
     "user/emoji.md"
@@ -418,3 +421,7 @@ fi
 
 echo "✓ Built User Guide: $OUTPUT_DIR/_index.md"
 echo "✓ Built Developer Guide: $DEV_OUT/ ($(ls "$DEV_OUT" | wc -l) pages)"
+
+# The pages exist now, so the search index can be built from them.
+"$SCRIPT_DIR/build-search.sh"
+echo "✓ Built search index: $SCRIPT_DIR/assets/pagefind/"

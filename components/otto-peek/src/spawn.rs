@@ -150,6 +150,12 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         .arg(&request.languages)
         .arg("--recogniser")
         .arg(&request.recogniser);
+    if request.document {
+        command.arg("--document");
+    }
+    if request.text {
+        command.arg("--text-layer");
+    }
     if request.ocr {
         command.arg("--ocr");
     }
