@@ -10,6 +10,8 @@ applications (App Switcher).
 Exposé scales every window on the current workspace down into a packed grid, so
 you can see all of them at once.
 
+![Exposé: four workspace previews in a strip along the top, and below them every window on the current workspace laid out in a grid](images/expose.jpg)
+
 ### Opening and closing
 
 | How | Effect |

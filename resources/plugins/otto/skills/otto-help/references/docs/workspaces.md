@@ -3,6 +3,8 @@
 A workspace is a full-screen page of windows. Otto arranges them in a
 horizontal row and slides between them.
 
+![The workspace selector above the window grid, with four named workspaces — Terminals, Documents, Internet, Music](images/workspaces.jpg)
+
 ## Per-monitor workspaces
 
 **Each monitor has its own independent set of workspaces.** Adding a workspace
@@ -64,6 +66,8 @@ at that monitor's own size and scale, not a stale screenshot.
 Adding and removing are animated — a new preview grows in from zero width, and
 a removed one fades out as its slot collapses, the remaining previews sliding
 across to close the gap before the workspace actually goes.
+
+![The `+` at the end of the workspace strip clicked, a new preview growing in from zero width and the others sliding across to make room](images/workspace-add.gif)
 
 ### Removing a workspace
 

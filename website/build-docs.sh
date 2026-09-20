@@ -170,6 +170,12 @@ declare -A PAGE_DESC=(
 declare -A PAGE_IMAGE=(
     [desktop-widgets]="images/desktop-widgets.jpg"
     [customization]="images/rice-deep-field.jpg"
+    [desktop-tour]="images/desktop-tour.jpg"
+    [expose-and-switcher]="images/expose.jpg"
+    [workspaces]="images/workspaces.jpg"
+    [tiling]="images/tiling.jpg"
+    [files]="images/files-icon-view.jpg"
+    [dock]="images/dock.jpg"
     [lock-screen]="images/lock-screen.jpg"
     [login-greeter]="images/login-greeter.jpg"
 )

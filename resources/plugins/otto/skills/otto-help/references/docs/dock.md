@@ -176,6 +176,8 @@ spreads it over more neighbours. Both apply live.
 
 Set `magnification = false` for a flat dock with no hover scaling.
 
+![The dock with the pointer over one icon: that icon at full size and its neighbours tapering back down to normal](images/dock-magnification.jpg)
+
 ### Auto-hide
 
 With `autohide = true` the dock slides away when the pointer leaves and comes

@@ -1,0 +1,20 @@
+{{- /* Images carry their real pixel size and, below the first one, are
+       deferred until they are near the viewport.
+
+       Without the dimensions the browser reserves no space for an image,
+       so the prose under it jumps as each screenshot lands. Without the
+       deferral a page like Customization fetches a dozen 1600px
+       screenshots before the first paragraph is readable — but the image
+       at the top of a page is usually the largest paint, so that one is
+       fetched eagerly instead.
+
+       build-docs.sh rewrites the markdown paths to root-relative
+       (/images/dock.jpg) while resources.Get wants them relative to
+       assets/, hence the trimmed slash. Anything it cannot resolve (an
+       absolute URL, say) still renders, just without the dimensions. */ -}}
+{{- $res := resources.Get (strings.TrimPrefix "/" .Destination) -}}
+{{- $hero := eq .Ordinal 0 -}}
+<img src="{{ .Destination | safeURL | relURL }}" alt="{{ .Text }}"
+  {{- with .Title }} title="{{ . }}"{{ end }}
+  {{- if and $res (eq $res.ResourceType "image") (ne $res.MediaType.SubType "svg") }} width="{{ $res.Width }}" height="{{ $res.Height }}"{{ end }}
+  {{- if $hero }} fetchpriority="high"{{ else }} loading="lazy"{{ end }} decoding="async">

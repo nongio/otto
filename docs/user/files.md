@@ -208,6 +208,8 @@ as the panel is open.
 Arrow keys move to the next file and the preview follows, `Space` closes it,
 and `Escape` closes it before it clears your selection.
 
+![Quick view open on a picture: the file fills the panel, with its name, dimensions and size listed underneath](images/quick-view.jpg)
+
 While the panel is up it owns the pointer: the wheel scrolls a text preview, a
 pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum
 and springy ends. Files never decodes a file itself — the bytes are parsed in a
