@@ -50,7 +50,7 @@ impl Browser {
     pub(super) fn subtitle(&self) -> String {
         // A first preview pays D-Bus activation, so this can be visible for a
         // moment. Saying so beats a keystroke that appears to do nothing.
-        if self.quickview_pending {
+        if self.peek_pending {
             return otto_kit::t_owned!("files-status-opening-preview");
         }
         if let Some(status) = &self.status {
@@ -163,7 +163,11 @@ impl Browser {
             // The player is on its own subsurface, over the column.
             video_on_surface: true,
             first_row: 0,
-            info: preview_info(entry, self.decoded_preview()),
+            info: preview_info(
+                entry,
+                self.decoded_preview(),
+                self.preview.as_ref().and_then(|pane| pane.text),
+            ),
         });
 
         view::Frame {
@@ -235,9 +239,9 @@ impl Browser {
                 pressed: self.footer_pressed,
             }),
             footer: self.footer_h(),
-            quickview_close_hovered: self.quickview_close_hovered,
-            quickview_expand_hovered: self.quickview_expand_hovered,
-            quickview_expanded: self.quickview.as_ref().is_some_and(|s| s.expanded),
+            peek_close_hovered: self.peek_close_hovered,
+            peek_expand_hovered: self.peek_expand_hovered,
+            peek_expanded: self.peek.as_ref().is_some_and(|s| s.expanded),
             thumbs: Some(&self.thumbs),
             drop_target: self.drop_target.as_ref().map(DropTarget::highlight),
             marquee: self.marquee_band(),

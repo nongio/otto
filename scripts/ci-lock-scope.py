@@ -25,7 +25,7 @@ ROOTS = {
     "compositor": {"otto"},
     "rdp": {"otto-rdp"},
     "portal": {"xdg-desktop-portal-otto"},
-    "files": {"otto-files", "otto-quickview", "otto-media-kit"},
+    "files": {"otto-files", "otto-peek", "otto-media-kit"},
 }
 NOT_UI = {"otto", "otto-rdp", "xdg-desktop-portal-otto"}
 

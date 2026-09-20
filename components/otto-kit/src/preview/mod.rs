@@ -18,8 +18,10 @@
 //! the same geometry, so they cannot drift.
 
 pub mod document;
+pub mod selection;
 
 pub use document::{Block, Span, SpanStyle};
+pub use selection::{draw_selection, selection_text, word_at, word_near, WordSelection};
 
 use skia_safe::{Canvas, Color, Contains, Image, Paint, Rect};
 
@@ -49,6 +51,47 @@ pub struct Pixels {
     /// How long each frame is shown, in milliseconds. Empty for a still
     /// image, which is what all but the animated decoders produce.
     pub frame_delays: Vec<u32>,
+    /// Text recognised in the picture, in reading order, with boxes in the
+    /// coordinates of `data`. Empty when nothing was recognised or no
+    /// recogniser ran; a picture with words draws exactly like one without
+    /// until a selection is made.
+    pub words: Vec<Word>,
+}
+
+/// One recognised word: where it is on the decoded picture and what it says.
+///
+/// `block`, `paragraph` and `line` are the recogniser's reading-order
+/// groups, so a drag across words selects text in the order it reads rather
+/// than the order the pointer swept it, and copying puts breaks where the
+/// recogniser saw them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    /// What the recogniser read, with no tab or newline in it.
+    pub text: String,
+    /// The word's box, in the coordinates of the decoded picture.
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+    /// 0–100, the recogniser's confidence in `text`.
+    pub confidence: u8,
+    /// The recogniser's reading-order groups, outermost first. A recogniser
+    /// that reports none of them puts every word in the same one.
+    pub block: u32,
+    pub paragraph: u32,
+    pub line: u32,
+}
+
+impl Word {
+    /// The word's box as a rect, in decoded-picture coordinates.
+    pub fn rect(&self) -> Rect {
+        Rect::from_xywh(
+            self.left as f32,
+            self.top as f32,
+            self.width as f32,
+            self.height as f32,
+        )
+    }
 }
 
 impl Pixels {
@@ -231,6 +274,11 @@ pub enum Preview {
         /// Carried for a future highlighter, so adding one is not a wire change.
         language: String,
     },
+    /// A formatted document: Markdown, decoded into blocks the toolkit draws
+    /// with its own typography. Distinct from [`Preview::Text`] because the
+    /// two answer different questions — text shows a file's *bytes*, with
+    /// line numbers, and this shows what the file *says*.
+    Document { blocks: Vec<Block>, truncated: bool },
     /// A listing: archive entries, directory children.
     Rows {
         rows: Vec<Row>,
@@ -315,6 +363,9 @@ pub struct PreviewLayout {
     pub fit: Rect,
     /// One rect per visible row, for listings. Empty otherwise.
     pub row_rects: Vec<Rect>,
+    /// Every line of a wrapped document, visible or not — the count is what
+    /// a host scrolls against. Empty for everything else.
+    pub doc_lines: Vec<document::Line>,
     /// How many rows fit, whether or not that many exist.
     pub visible_rows: usize,
 }
@@ -484,6 +535,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 inner,
                 fit: fitted,
                 row_rects: Vec::new(),
+                doc_lines: Vec::new(),
                 visible_rows: 0,
             }
         }
@@ -502,6 +554,30 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 inner,
                 fit: inner,
                 row_rects,
+                doc_lines: Vec::new(),
+                visible_rows: visible,
+            }
+        }
+        Preview::Document { blocks, .. } => {
+            let lines = document::wrap(blocks, inner.width());
+            // How many whole lines fit from `first_row`, which is what a page
+            // key advances by. Measured from the lines themselves rather than
+            // from a nominal height: a document's lines are not all one size,
+            // so a division would be wrong wherever it mattered.
+            let top = lines.get(first_row).map(|line| line.top).unwrap_or(0.0);
+            let visible = lines
+                .iter()
+                .skip(first_row)
+                .take_while(|line| line.top + line.height <= top + inner.height())
+                .count()
+                .max(1);
+            PreviewLayout {
+                bounds,
+                content: inner,
+                inner,
+                fit: inner,
+                row_rects: Vec::new(),
+                doc_lines: lines,
                 visible_rows: visible,
             }
         }
@@ -511,6 +587,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
             inner,
             fit: inner,
             row_rects: Vec::new(),
+            doc_lines: Vec::new(),
             visible_rows: ((inner.height() / LINE_HEIGHT).floor().max(0.0)) as usize,
         },
         Preview::Card { .. } | Preview::Unavailable { .. } => PreviewLayout {
@@ -519,6 +596,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
             inner,
             fit: inner,
             row_rects: Vec::new(),
+            doc_lines: Vec::new(),
             visible_rows: 0,
         },
     }
@@ -579,6 +657,13 @@ pub fn draw(
     match preview {
         Preview::Pixels { pixels, .. } => draw_pixels(canvas, &geometry, pixels, first_row, theme),
         Preview::Text { lines, .. } => draw_text(canvas, &geometry, lines, first_row, theme),
+        Preview::Document { .. } => document::draw(
+            canvas,
+            geometry.content,
+            &geometry.doc_lines,
+            first_row,
+            theme,
+        ),
         Preview::Rows { rows, .. } => {
             draw_rows(canvas, &geometry, rows, first_row, theme, resolve_icon)
         }
@@ -996,6 +1081,7 @@ mod tests {
             intrinsic_height: height,
             data: vec![0; (width * height * 4) as usize],
             frame_delays: Vec::new(),
+            words: Vec::new(),
         }
     }
 
@@ -1382,6 +1468,7 @@ mod tests {
             intrinsic_height: 2,
             data: [frame(1), frame(2), frame(3)].concat(),
             frame_delays: vec![0, 50, 5],
+            words: Vec::new(),
         }
     }
 
@@ -1468,6 +1555,7 @@ mod tests {
             intrinsic_height: 2000,
             data: vec![0; 500 * 500 * 4],
             frame_delays: Vec::new(),
+            words: Vec::new(),
         };
         assert_eq!(scaled.native_scale(), 4.0);
     }

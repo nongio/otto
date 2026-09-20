@@ -1,4 +1,4 @@
-# Quick View
+# Peek
 
 **Status:** draft — nothing implemented
 **Related specs:** [file-browser.md](./file-browser.md) — in particular its *Shared foundations*, which defines the thumbnail cache and file-type detection this spec consumes — [file-picker.md](./file-picker.md), [launcher.md](./launcher.md), [portal-access-dialog.md](./portal-access-dialog.md), [settings-app.md](./settings-app.md), [context-menus.md](./context-menus.md), [localisation.md](./localisation.md)
@@ -6,7 +6,7 @@
 ## Summary
 
 Press space on a selected file and see it, instantly, without launching the
-application that owns it. Quick View is a **component the file views embed** —
+application that owns it. Peek is a **component the file views embed** —
 the file browser, the save/open dialog, and the desktop's file view — drawn as a
 subsurface of the window showing the files, so it is parented, stacked and
 dismissed by that window rather than managing any of it itself. Everything that
@@ -43,7 +43,7 @@ one file descriptor and no network.
 ## Non-Goals
 
 - Editing, annotating, cropping, rotating, converting, exporting, printing, or
-  sharing. Quick View is read-only, and the escape hatch is "open in the real
+  sharing. Peek is read-only, and the escape hatch is "open in the real
   application".
 - File management: rename, delete, move, copy, permissions. That is the
   browser's job.
@@ -58,7 +58,9 @@ one file descriptor and no network.
   the sandbox exists to solve.
 - Remote or virtual locations. `file://` only — no network fetch, ever, by any
   part of the system.
-- A second thumbnail cache, a content index, or full-text search.
+- A second thumbnail cache. Text recognised in pictures is cached and searched
+  under the bounded terms of [peek-ocr.md](./peek-ocr.md); nothing
+  else is indexed.
 - A preview process, a preview service, or a preview daemon. There is no bus
   name and nothing to activate.
 
@@ -66,7 +68,7 @@ one file descriptor and no network.
 
 ### What this is, and what it is not
 
-Three things could have been built. Only one of them is Quick View.
+Three things could have been built. Only one of them is Peek.
 
 **It is not a compositor feature.** A previewer's entire job is parsing
 untrusted bytes, and the compositor is a single process whose death takes the
@@ -92,7 +94,7 @@ protocol, no compositor change, and no `anchor` in screen coordinates that
 nobody could compute.
 
 Three hosts embed it: the file browser, the save/open file dialog, and the
-desktop's file view. The `otto-quickview` binary remains for previewing a path
+desktop's file view. The `otto-peek` binary remains for previewing a path
 named on a command line, and for being the sandboxed decode worker.
 
 The layers, and the split is load-bearing:
@@ -103,7 +105,7 @@ The layers, and the split is load-bearing:
    the compositor can draw the same thing server-side for a dock thumbnail.
 2. `otto_kit::filetype` and `otto_kit::thumbnails` — type detection and the
    shared on-disk thumbnail cache, used identically by all three hosts.
-3. `otto-quickview` — the library: the sandboxed decode worker, the payload
+3. `otto-peek` — the library: the sandboxed decode worker, the payload
    wire format, and the entrance geometry. Hosts call it; they do not
    re-implement it.
 
@@ -120,11 +122,11 @@ Rust API rather than a wire protocol, because the preview runs inside its host.
 
 ```rust
 // Once, first thing in main — before any thread or Wayland connection.
-otto_quickview::run_worker_if_requested();
+otto_peek::run_worker_if_requested();
 
 // Per preview: open the file, decode it in a contained worker.
-let opened = otto_quickview::open(path)?;                  // refuses FIFOs, devices
-let preview = otto_quickview::decode_path(path, &request); // always returns something
+let opened = otto_peek::open(path)?;                  // refuses FIFOs, devices
+let preview = otto_peek::decode_path(path, &request); // always returns something
 
 // Draw it into the host's own surface, at whatever rect the host chose.
 // `zoom` magnifies an image and drags it about; a host with no zoom gesture
@@ -138,7 +140,7 @@ let zoom = otto_kit::preview::zoom_about(rect, &preview, zoom, scale, focus);
 let zoom = otto_kit::preview::clamp_zoom(rect, &preview, zoom);
 
 // The entrance, from the row the user pressed space on.
-let entrance = otto_quickview::opening::entrance(row_rect, panel_rect);
+let entrance = otto_peek::opening::entrance(row_rect, panel_rect);
 ```
 
 Rules the host must honour:
@@ -175,7 +177,14 @@ There is no hand-back: the host already has the keypress.
 - **Space, Escape** — close the preview.
 - **Arrows, Home, End, Page Up/Down** — the host moves its own selection and
   tells the preview the new path. When the content has pages, Page Up/Down
-  paginate instead.
+  paginate instead — and at the last page they go back to meaning what they
+  mean everywhere else, because a key that stops working at the end of a
+  document is worse than one that hands the listing back. A page turn is a
+  fresh decode of the same file at another page, since the worker rasterises
+  one page and holds no document between calls; the page on screen stays up
+  while it runs, rather than being replaced by the waiting line. The panel's
+  title strip says which page of how many, or a turn would have no visible
+  effect on a document whose pages look alike.
 - **Enter** — the host opens the file in its default application and closes the
   preview.
 - **`+` / `-` / `0`** — zoom, which is the preview's own business; past fit,
@@ -319,7 +328,7 @@ Dismissal, for ephemeral sessions: space, Escape, the close affordance, a click
 outside the card, focus loss (when `close_on_focus_loss`), `Close` from the
 caller, or the caller vanishing. Every path emits `Closed` with its reason.
 
-Modality: Quick View is **not** modal. It takes the keyboard while it is up
+Modality: Peek is **not** modal. It takes the keyboard while it is up
 because it is an overlay, but it does not block the caller, does not prevent
 the caller from repainting, and imposes no ordering on anything. The
 anti-spoofing requirements that apply to a permission grant
@@ -328,7 +337,7 @@ nothing is being consented to.
 
 The rule that keeps this from eroding, on **both** surface paths: nothing in
 this spec may be phrased as "the user cannot do X while the preview is open".
-Quick View holds the keyboard and it may be buried by the window that opened it;
+Peek holds the keyboard and it may be buried by the window that opened it;
 those are the only two facts about its relationship to other windows. Any
 requirement that needs more than that is a requirement Otto cannot currently
 enforce, and writing it down as though it could is how a spec acquires a
@@ -351,6 +360,7 @@ the table is arranged around not compromising them.
 | **Image** — SVG | Full, re-rendered at each zoom level, so it stays sharp | Skia's own SVG module — `skia-safe` is already built with `features = ["svg"]` |
 | **PDF** | Full: rendered pages, page navigation, zoom | An external rasteriser, exec'd — see below |
 | **Text and source code** | Full: monospace layout, line numbers, encoding sniff, wrap toggle. No syntax highlighting in v1 | Nothing |
+| **Markdown** | Full, as a *document*: headings, emphasis, links, inline and fenced code, quotes, nested lists, rules. Wrapped and scrolled, not paged | Nothing — parsed by `otto-md-kit` in the worker, drawn by the toolkit |
 | Directory | Full: entry count, total size, a grid of child icons and image thumbnails | Nothing |
 | Lottie animation | Full, played | Skottie — already enabled and already used by otto-kit |
 | Archive — zip, uncompressed tar | Listing only: names, sizes, dates, entry count | Nothing (see below) |
@@ -371,13 +381,50 @@ Notes on the ones that look like they need a crate and do not:
   Sample-size decoding is the difference between previewing a 200 MP image and
   refusing to.
 - **SVG and Lottie come from Skia, not from `resvg`.** Both modules are already
-  compiled into `skia-safe` here, so the vector types cost nothing. Quick View
+  compiled into `skia-safe` here, so the vector types cost nothing. Peek
   deliberately does not become a new consumer of `resvg`/`usvg`, since whether
   Skia's SVG can replace them outright is an open question elsewhere in the
   project and a new caller would only make removing them harder.
 - **Skia does not help with PDF.** Its PDF support is a document *writer*; there
   is no reader and no rasteriser. This is worth stating because "Skia already
   does PDF" is the natural wrong assumption.
+- **Markdown needs no parser crate and no browser engine.** Otto parses it by
+  hand into a small block vocabulary — heading, paragraph, list item, quote,
+  code, rule, each carrying styled spans — and the toolkit draws those blocks
+  with its own typography. It is a *reading* parser, not a conforming one:
+  CommonMark's corners degrade to a paragraph rather than to nonsense, a table
+  is drawn as a code block because the parser has no fonts to measure columns
+  with, and an image becomes its alt text because the worker holds one
+  descriptor and cannot open what the image refers to. This is the one document
+  format the desktop is full of that can be shown honestly for free, which is
+  why it is here and HTML and Office are not.
+
+  The parser itself lives in its own crate, `otto-md-kit`, not in the
+  previewer: reading Markdown as a document is a capability the desktop wants
+  in more than one place, and the crate takes a `&str` and returns blocks with
+  no files, no network and no runtime — which is what lets the same code run
+  inside the sandboxed worker and inside an application's UI thread. The worker
+  keeps only what is its own: the read budget, the refusal to parse something
+  that is not text, and the shape of the answer on the wire.
+
+### Documents scroll; they do not page
+
+A Markdown preview is one continuous flow, wrapped to the panel's width and
+scrolled by wheel or two-finger gesture like a text file — not paged like a PDF.
+The unit it scrolls by is the *wrapped line*, which only the layout knows: the
+same blocks are more lines in a narrow panel than in a wide one, and a
+document's lines are not all one height, so both the total and how many fit come
+from the measured lines rather than from a nominal row height. Page Up/Down keep
+meaning what they mean everywhere else — move the host's selection — because
+only paged content claims them.
+
+A link keeps its destination. The worker carries it in the payload beside the
+link's text, and the layout can say which link is under a point, so a host that
+has somewhere to send a URL has one to send. Peek itself opens nothing: it
+neither fetches a destination nor checks it, and a host that acts on one decides
+for itself which schemes it is willing to hand on — the text came out of a file
+the user has not read yet. A reference-style link whose reference the parser
+cannot resolve is drawn as a link with no destination.
 
 ### PDF, and the external rasteriser seam
 
@@ -451,7 +498,7 @@ already produces:
 
 1. The decode worker sniffs the file, finds `video/*`, and produces the
    metadata `Card` it always did, stamped with the `video-…` icon chain.
-2. The host asks `otto_quickview::payload::is_video` of the *decoded*
+2. The host asks `otto_peek::payload::is_video` of the *decoded*
    payload. The answer comes from the sniffed type — the bytes said video —
    never from the name, for the same reason dispatch never reads the name.
    A `.mp4` full of something else is never handed to a demuxer.
@@ -540,7 +587,7 @@ type:
    contain the consequences, but the correct preview is the one matching the
    bytes. Display, conversely, follows the name — so the two calls cannot
    disagree, because they are not answering the same question. Where the answers
-   differ and it is useful, Quick View says so on the card ("named `.png`, is
+   differ and it is useful, Peek says so on the card ("named `.png`, is
    not one").
 
    The type hierarchy from `subclasses` is what lets the text previewer claim
@@ -562,6 +609,27 @@ type:
   picture is never drawn larger than it is; an animation may be, up to the
   source's own size, since its frames are shrunk to fit the strip's budget
   rather than because the file is small.
+
+  A strip has a ceiling, because every frame is uncompressed and a screen
+  recording runs to hundreds of them. How that ceiling is spent is a quality
+  decision, and it goes to **detail first**: the strip is carried at the
+  largest fraction of the size it is drawn at that the whole animation fits
+  inside, and frames are thinned only once that fraction would fall below a
+  half — and then only while the gap between the frames that are kept stays
+  under a tenth of a second. A recording carried at a quarter
+  of the size it is shown at is a blurred preview however well it is
+  resampled, while the same recording a size down, playing every frame, still
+  reads as the thing it recorded. A strip is also asked for at the size it
+  will be *drawn* at rather than with the still path's zoom headroom: a zoom
+  asks the worker again, and detail nobody is looking at costs frames.
+  An animation that cannot be carried at all is shown as its first frame.
+
+  The ceiling is a peak rather than a footprint — one animation is live at a
+  time and the strip dies with the preview — so the transfer is built not to
+  multiply it: the worker writes the buffer straight to the pipe instead of
+  encoding a second copy of it, and the host takes the buffer out of the
+  bytes it read rather than copying it again. Without that, the worker's own
+  address-space limit is reached by the transfer rather than by the picture.
 - `Text` — bounded, validated UTF-8 with optional style spans.
 - `Rows` — a table (archive entries, directory listing): name, size, date, an
   icon key.
@@ -592,14 +660,14 @@ to this spec — not a routine extension.
 
 ### Sandboxing
 
-Nothing in the Quick View application process ever interprets file content. For
+Nothing in the Peek application process ever interprets file content. For
 each file to be previewed, the application:
 
 1. Opens the path itself with `O_NONBLOCK`, `fstat`s it, and refuses anything
    that is not a regular file or a directory — no FIFOs, devices, or sockets,
    which can block on open or on read.
 2. Creates a `memfd` for the result and a pipe for status.
-3. Spawns `otto-quickview --decode-worker`, passing exactly three descriptors:
+3. Spawns `otto-peek --decode-worker`, passing exactly three descriptors:
    the file (read-only), the memfd (write), the status pipe (write). No other
    descriptor, no Wayland socket, no D-Bus socket, no environment beyond a
    minimal set — `PATH`, `RUST_LOG`, and `LANGUAGE`. The locale is in that set
@@ -640,7 +708,7 @@ hard budgets, no network, no writes — and reading is not contained. This is
 stated rather than glossed because a security property nobody measures is a
 security property nobody has.
 
-**The claim is testable.** `otto-quickview --sandbox-selftest` applies the real
+**The claim is testable.** `otto-peek --sandbox-selftest` applies the real
 sandbox in a real child and reports what is in force, so this section can be
 checked rather than believed. Any change to the sandbox must keep that output
 matching this text.
@@ -690,20 +758,20 @@ matching this text.
 - **A 2 GB video** is never read whole. The worker reads container headers and
   the index only, under a hard cap on total bytes read, and produces a poster or
   a card. The same cap applies to every metadata-only path.
-- **The compositor is never in the path.** Quick View is a separate process and
+- **The compositor is never in the path.** Peek is a separate process and
   decoding is in a grandchild of it; the compositor's only involvement is
   mapping and compositing a surface like any other client's. No decode, no file
   I/O, and no parse ever runs on a compositor thread. Memory pressure is the one
   channel by which a preview could hurt the session, which is what the worker's
   `RLIMIT_AS` is for.
 
-### The shared foundations, and what Quick View does with them
+### The shared foundations, and what Peek does with them
 
 The thumbnail cache and file-type detection are defined once, in
 [file-browser.md](./file-browser.md#shared-foundations). They are not restated
 here. What matters on this side:
 
-**Quick View is a thumbnail producer, not only a consumer.** Its worker already
+**Peek is a thumbnail producer, not only a consumer.** Its worker already
 performs a scaled decode, in a sandbox, on the file the user is most interested
 in — so it writes that result into the cache under the shared rules, and the
 browser is faster afterwards for a preview having been opened. Discarding it
@@ -751,6 +819,42 @@ out of the file's icon. Centring it on the **display** instead is opt-in
   against each sibling in turn, restated while the panel is up rather than
   assumed from creation order — a pooled column that is shown again still holds
   its old place in the stack.
+
+**The panel can be dragged by its title strip**, which is what the strip is for
+— the content below it is for reading, scrolling and zooming, so a press there
+means one of those.
+
+- The drag is an offset folded into the resting rect, so the surface's
+  placement, the card's drawing and the rect the pointer is hit-tested against
+  are all moved by the same amount and cannot disagree.
+- **Everything the drag needs is fixed at the press**: the point it was
+  reported at, and where the card was in the window then. Where the pointer
+  has travelled since, added to where the card was, is where the card should
+  be now. Nothing is read back from the render path, because a pointer reports
+  far more often than the window paints and the card's own movement would feed
+  back into the next measurement — the drag would run away, once per event or
+  once per frame depending on which rect it trusted.
+- That the press-time frame *stays* right is not an accident of this client:
+  a pointer holding a button is in a grab, and a grab keeps the focus it was
+  taken with, surface and position both. Coordinates go on being measured
+  against wherever the panel's surface was when the press landed, however far
+  the card has moved since. The same holds over the toplevel, where the frame
+  is the window and does not move at all.
+- **A double-click on the title strip fills the display**, the same thing the
+  expand button does. The strip is the panel's titlebar, and that is what a
+  titlebar does.
+- The card is kept on the display it may be dragged around — the same answer
+  the centring uses, the window standing in until it arrives — with at least
+  the title strip on screen, since that is the only thing that can bring it
+  back. It is clamped again when the window or the display changes, not only
+  while a drag is running.
+- The panel's content key is its *size*, not its rect: the card's drawing is
+  translated to its surface's own origin, so a panel being dragged repaints
+  nothing and only the subsurface moves.
+- The position outlives the file but not the panel. Arrow-keying to the next
+  file keeps the card where it was put; closing and opening again starts it at
+  rest, as does expanding it — an expanded panel takes nearly the whole
+  display, so there is nowhere to be aside to.
 
 ## Constraints & Edge Cases
 
@@ -808,7 +912,7 @@ and has to hand-manage focus and dismissal. Choosing the embedding API instead
 deleted three problems rather than solving them: the `Navigate` hand-back, the
 surface-position prerequisite, and the overlay's lifetime.
 
-**The keyboard is handed back rather than shared.** The alternative — Quick View
+**The keyboard is handed back rather than shared.** The alternative — Peek
 declining focus so the browser keeps its arrows — leaves nobody able to close
 the window with a key, and makes the second space press unroutable. Taking focus
 and forwarding navigation puts one component in charge of the keyboard at a
@@ -823,7 +927,7 @@ cannot be killed, a runaway process can. The cost is one `fork`+`exec` and a
 memfd copy per preview, which fits inside the 100 ms budget comfortably.
 
 **Two surface types, not one.** An overlay that cannot be left open is wrong for
-`otto-quickview report.pdf`; an ordinary window that must be dismissed by hand is
+`otto-peek report.pdf`; an ordinary window that must be dismissed by hand is
 wrong for space-on-selection. Both behaviours already exist in Otto's toolkit —
 layer-shell for the launcher, xdg-toplevel for the settings app — so supporting
 both costs one branch at surface creation and nothing at draw time.
@@ -859,7 +963,7 @@ is what keeps a PDF card and an audio card visually the same object.
 process to start, a lifetime to manage, and a second failure mode for something
 whose whole job is to make things faster. The freedesktop layout already
 specifies naming and invalidation, is already populated by other applications,
-and lets Quick View and the browser cooperate without either knowing the other
+and lets Peek and the browser cooperate without either knowing the other
 exists. Both sessions designing this reached that conclusion independently,
 which is some evidence it is the obvious one.
 
@@ -871,7 +975,7 @@ by an attacker-chosen extension. Two answers make both correct, and make the
 disagreement itself displayable.
 
 **Selections are sent, directories are not.** Once navigation round-trips
-through `Navigate` → `SetIndex`, Quick View never needs the directory — and it
+through `Navigate` → `SetIndex`, Peek never needs the directory — and it
 must not have it, because the caller's sort order, filter and hidden-file state
 are the caller's alone. The 256-URI window exists so that selecting a very large
 number of files does not put a very large array on the bus for no benefit.
@@ -881,7 +985,7 @@ number of files does not put a very large array on the bus for no benefit.
 Settled with the file browser/picker session; recorded so neither side reopens
 them.
 
-- Quick View is a separate binary, not a compositor feature and not a library
+- Peek is a separate binary, not a compositor feature and not a library
   the browser embeds. The cache contract is therefore cross-process — and is a
   filesystem layout, so that costs nothing.
 - The browser has **no inline preview pane in v1**, so no decoded payload ever
@@ -889,7 +993,7 @@ them.
   need either a second sandboxed decoder inside the file manager — which is
   precisely what a separate previewer process exists to avoid — or a public
   decode call. Neither is v1.
-- Quick View writes into the shared thumbnail cache, in the four standard size
+- Peek writes into the shared thumbnail cache, in the four standard size
   buckets only.
 - The cache never holds full-resolution content, and gains no arbitrary-size
   decode call.
@@ -913,8 +1017,9 @@ them.
   arrow-key navigation feeling instant and feeling spawned, but it contradicts
   the launcher's "no daemon, nothing to keep warm" principle. If that principle
   is absolute here too, `SetIndex` latency needs a different answer.
-- **What is a "text document"?** Plain text and source code are fully previewed
-  in v1. If the intent includes `.odt` and `.docx`, that is a different and much
+- **What is a "text document"?** Plain text, source code and Markdown are fully
+  previewed in v1 — Markdown as a rendered document rather than as its source.
+  If the intent includes `.odt` and `.docx`, that is a different and much
   larger feature: both are zip containers whose text lives in compressed XML, so
   it needs an inflate implementation and an XML parser before a single word can
   be shown, and a faithful rendering needs layout on top of that. Extracting the
@@ -925,7 +1030,7 @@ them.
   associations through the settings service, which makes `mimeapps.list` plus
   `freedesktop-desktop-entry` the authoritative pair and leaves the compositor's
   `default_apps.rs` as something else — a fallback, or a thing to fold in.
-  Quick View only needs this on the non-ephemeral path, since an ephemeral
+  Peek only needs this on the non-ephemeral path, since an ephemeral
   session emits `Activated` and lets its caller launch. Narrower than it was,
   but not closed.
 - **Does the compositor need any new surface role for this at all?** The design

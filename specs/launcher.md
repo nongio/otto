@@ -195,7 +195,7 @@ request with a single call shows that call plainly, with nothing to open. Which
 groups are open belongs to the conversation on screen and goes when it does. An answer still arriving is drawn as far as it has come, so
 an unclosed code fence reads as code until its end lands. Tables are drawn as
 code, and an image written in the Markdown itself is drawn as its alt text, as
-in Quick View.
+in Peek.
 
 **Pictures the agent sends.** An agent can answer with a picture rather than a
 description of one — a screenshot it read, an image a tool returned — and the log

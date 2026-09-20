@@ -87,23 +87,23 @@ fn the_next_row_takes_the_selection() {
     assert_eq!(browser.columns[0].cursor, Some(row_of(&browser, "c.txt")));
 }
 
-/// Quick View is anchored to the cursor, so a delete has to carry it over
+/// Peek is anchored to the cursor, so a delete has to carry it over
 /// to the row that takes the deleted one's place — otherwise the panel
 /// sits there previewing a file that is now in the Trash.
 #[test]
-fn quick_view_follows_the_delete_to_the_next_row() {
+fn peek_follows_the_delete_to_the_next_row() {
     let (mut browser, _dir) = browser_over(&["a.txt", "b.txt", "c.txt"]);
     browser.select(0, row_of(&browser, "b.txt"));
-    browser.begin_quickview().expect("a file to preview");
+    browser.begin_peek().expect("a file to preview");
 
     browser.move_selected_to_trash();
     settle(&mut browser);
 
     assert!(
-        browser.take_quickview_follow(),
+        browser.take_peek_follow(),
         "the host is asked for a fresh decode"
     );
-    assert!(browser.quickview.is_some(), "the panel stays up");
+    assert!(browser.peek.is_some(), "the panel stays up");
     assert_eq!(
         browser.selected_entry().map(|e| e.name),
         Some("c.txt".to_string()),
@@ -114,16 +114,16 @@ fn quick_view_follows_the_delete_to_the_next_row() {
 /// Deleting the only file leaves no row to stand on, so the panel goes
 /// away rather than hanging over an empty pane.
 #[test]
-fn quick_view_closes_when_the_delete_leaves_nothing() {
+fn peek_closes_when_the_delete_leaves_nothing() {
     let (mut browser, _dir) = browser_over(&["only.txt"]);
     browser.select(0, 0);
-    browser.begin_quickview().expect("a file to preview");
+    browser.begin_peek().expect("a file to preview");
 
     browser.move_selected_to_trash();
     settle(&mut browser);
 
-    assert!(!browser.take_quickview_follow(), "nothing left to decode");
-    assert!(browser.quickview.is_none(), "the panel is dismissed");
+    assert!(!browser.take_peek_follow(), "nothing left to decode");
+    assert!(browser.peek.is_none(), "the panel is dismissed");
 }
 
 /// Nothing below the deleted row, so the selection steps back up rather

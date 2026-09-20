@@ -427,6 +427,11 @@ files-folder-open-failed = 无法打开此文件夹：{ $error }
 
 files-info-where = 位置
 files-info-kind = 种类
+files-info-text = 文字
+files-info-text-reading = 正在识别…
+files-info-text-words = { $count } 个词
+files-info-text-none = 没有文字
+files-info-text-unread = 尚未识别
 files-info-modified = 修改时间
 files-info-created = 创建时间
 files-info-accessed = 访问时间
@@ -561,6 +566,8 @@ files-command-show-hidden = 显示隐藏文件
 files-command-hide-hidden = 不显示隐藏文件
 files-command-quick-look = 快速查看
 files-command-search = 搜索
+files-command-recognise-text = 运行文字识别
+files-recognise-no-pictures = 这里没有可识别的文字
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.
@@ -1229,83 +1236,87 @@ lock-power-shutdown-failed = 无法关机：{ $error }
 ## mid-sentence on purpose: they read as a continuation of "no preview".
 
 
-## Quick View — card labels
+## Peek — card labels
 ##
 ## Fact keys: the left-hand column of a card's detail list. One or two words,
 ## drawn in a narrow column — keep them short. Title case in English.
 
 # Column heading for the file's type, e.g. "JPEG", "PDF". Max ~12 characters.
-quickview-fact-kind = 种类
+peek-fact-kind = 种类
 # Column heading for the file's size on disk. Max ~12 characters.
-quickview-fact-size = 大小
+peek-fact-size = 大小
 # Column heading for an image's or a video's pixel dimensions. Max ~12 characters.
-quickview-fact-dimensions = 尺寸
+peek-fact-dimensions = 尺寸
 # Column heading for a video's or an audio track's running time. Max ~12 characters.
-quickview-fact-duration = 时长
+peek-fact-duration = 时长
 # Column heading for an image's total pixel count, in megapixels. Max ~12 characters.
-quickview-fact-pixels = 像素
+peek-fact-pixels = 像素
 # Column heading for a PDF's page count. Max ~12 characters.
-quickview-fact-pages = 页数
+peek-fact-pages = 页数
 # Column heading for a PDF's document title, taken from the document itself.
 # Max ~12 characters.
-quickview-fact-title = 标题
+peek-fact-title = 标题
 # Column heading for a song's performer, from its ID3 tags. Max ~12 characters.
-quickview-fact-artist = 表演者
+peek-fact-artist = 表演者
 # Column heading for a song's album, from its ID3 tags. Max ~12 characters.
-quickview-fact-album = 专辑
+peek-fact-album = 专辑
 # Column heading for a song's year of release, from its ID3 tags. Max ~12 characters.
-quickview-fact-year = 年份
+peek-fact-year = 年份
 
 # Subtitle of the card for a file that is zero bytes long. Shown under the
 # file's name in place of its type.
-quickview-empty-file = 空文件
+peek-empty-file = 空文件
 # Subtitle for an image with too many pixels to decode safely. Its real
 # dimensions are still listed below it.
-quickview-image-too-large = 过大，无法预览
+peek-image-too-large = 过大，无法预览
 # The value beside "Pixels" on that card. $count is a whole number of
 # megapixels.
-quickview-megapixels = { $count } 百万像素
+peek-megapixels = { $count } 百万像素
 # Subtitle for a PDF when no page rasteriser is installed. $packages is a
 # comma-separated list of package names — pdftoppm's package and so on — and
 # is not translated. Wraps to two lines if it has to.
-quickview-pdf-install-rasteriser = 安装其中之一即可看到页面：{ $packages }
+peek-pdf-install-rasteriser = 安装其中之一即可看到页面：{ $packages }
+# Which page of a PDF the panel is showing, in the corner of its title strip.
+# $page and $pages are whole numbers. Very little room — keep it to a few
+# characters, and drop the word for "page" if the language can.
+peek-page-of = { $page } / { $pages }
 
 
-## Quick View — listings
+## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
 ## summary line under it.
 
 # Summary line for a folder with nothing in it.
-quickview-empty-folder = 空文件夹
+peek-empty-folder = 空文件夹
 # Summary line for a folder or archive: how many entries it holds. Hidden
 # entries are counted.
-quickview-item-count =
+peek-item-count =
     { $count ->
        *[other] { $count } 个项目
     }
 # Summary line for an archive, joining the entry count to the archive's own
-# size on disk. $items is quickview-item-count, $size is a formatted byte
+# size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
-quickview-archive-summary = { $items } —— { $size }
+peek-archive-summary = { $items } —— { $size }
 
 
-## Quick View — sizes
+## Peek — sizes
 ##
-## Byte units. Quick View counts in powers of 1024, so the symbols are the
+## Byte units. Peek counts in powers of 1024, so the symbols are the
 ## conventional binary-rounded ones. Translate only the spelled-out "bytes".
 
-quickview-size-bytes =
+peek-size-bytes =
     { $count ->
        *[other] { $count } 字节
     }
-quickview-size-kb = { $value } KB
-quickview-size-mb = { $value } MB
-quickview-size-gb = { $value } GB
-quickview-size-tb = { $value } TB
+peek-size-kb = { $value } KB
+peek-size-mb = { $value } MB
+peek-size-gb = { $value } GB
+peek-size-tb = { $value } TB
 
 
-## Quick View — nothing to show
+## Peek — nothing to show
 ##
 ## Each of these fills the card in place of a preview, so a person reads it
 ## instead of seeing the file. They state what happened and stop. Lower case,
@@ -1315,52 +1326,52 @@ quickview-size-tb = { $value } TB
 ## the system libraries produce and is usually English. Keep it at the end.
 
 # The file is a pipe, socket or device — opening it could block forever.
-quickview-error-not-previewable = 这不是可以预览的文件
+peek-error-not-previewable = 这不是可以预览的文件
 # The file's metadata could not be read.
-quickview-error-stat-file = 无法读取文件信息：{ $error }
+peek-error-stat-file = 无法读取文件信息：{ $error }
 # The file's bytes could not be read. Also used by the text previewer.
-quickview-error-read-file = 无法读取文件：{ $error }
+peek-error-read-file = 无法读取文件：{ $error }
 # The file cannot be rewound, so it cannot be identified and then read.
-quickview-error-not-seekable = 该文件不支持定位
+peek-error-not-seekable = 该文件不支持定位
 # The worker refused to parse the file because it could not confine itself
 # first. Parsing an untrusted file uncontained is not something Otto does.
-quickview-error-sandbox = 无法将预览程序放入沙盒：{ $error }
+peek-error-sandbox = 无法将预览程序放入沙盒：{ $error }
 
 # Image previewer.
-quickview-error-read-image = 无法读取图像：{ $error }
+peek-error-read-image = 无法读取图像：{ $error }
 # The bytes are an image format this build has no decoder for.
-quickview-error-image-unsupported = 此版本无法解码的图像
-quickview-error-image-no-size = 图像没有报告尺寸
-quickview-error-image-decode = 图像没有解码成功：{ $error }
-quickview-error-image-readback = 无法回读解码后的图像
+peek-error-image-unsupported = 此版本无法解码的图像
+peek-error-image-no-size = 图像没有报告尺寸
+peek-error-image-decode = 图像没有解码成功：{ $error }
+peek-error-image-readback = 无法回读解码后的图像
 
 # SVG previewer. "the drawing" means the SVG, as distinct from a photograph.
-quickview-error-read-drawing = 无法读取图形：{ $error }
-quickview-error-drawing-parse = 无法解析该图形
-quickview-error-drawing-surface = 没有可供绘制的表面
-quickview-error-drawing-readback = 无法回读该图形
+peek-error-read-drawing = 无法读取图形：{ $error }
+peek-error-drawing-parse = 无法解析该图形
+peek-error-drawing-surface = 没有可供绘制的表面
+peek-error-drawing-readback = 无法回读该图形
 
 # Text previewer: the bytes are not text in UTF-8 or in Latin-1.
-quickview-error-not-text = 此文件不是 Otto 能读取的任何编码的文本
+peek-error-not-text = 此文件不是 Otto 能读取的任何编码的文本
 
 # PDF previewer.
-quickview-error-read-document = 无法读取文稿：{ $error }
-quickview-error-page-readback = 无法读取渲染后的页面
+peek-error-read-document = 无法读取文稿：{ $error }
+peek-error-page-readback = 无法读取渲染后的页面
 
 # Folder listing.
-quickview-error-read-folder = 无法读取文件夹
+peek-error-read-folder = 无法读取文件夹
 
 ## The worker process itself failed. "the previewer" is the separate program
 ## that parses the file; a person never sees it by name anywhere else, so
 ## describing it as "the previewer" rather than naming it is deliberate.
 
-quickview-error-previewer-missing = 找不到预览程序：{ $error }
-quickview-error-previewer-start = 无法启动预览程序：{ $error }
-quickview-error-previewer-no-output = 预览程序没有产生输出
-quickview-error-previewer-unreadable = 预览程序产生了无法读取的内容
-quickview-error-previewer-failed = 预览程序出错：{ $error }
+peek-error-previewer-missing = 找不到预览程序：{ $error }
+peek-error-previewer-start = 无法启动预览程序：{ $error }
+peek-error-previewer-no-output = 预览程序没有产生输出
+peek-error-previewer-unreadable = 预览程序产生了无法读取的内容
+peek-error-previewer-failed = 预览程序出错：{ $error }
 # The worker was still going after the deadline and was killed.
-quickview-error-timeout = 此文件预览耗时过长
+peek-error-timeout = 此文件预览耗时过长
 
 ## Islands
 ##

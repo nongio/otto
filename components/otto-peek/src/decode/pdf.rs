@@ -10,7 +10,7 @@
 //! about running a program.
 //!
 //! The same table generalises: video poster frames arrive later as more rows,
-//! without GStreamer entering the default build. See `specs/quickview.md`.
+//! without GStreamer entering the default build. See `specs/peek.md`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -21,7 +21,7 @@ use skia_safe::{Codec, Data};
 use crate::payload;
 use crate::payload::{Fact, PreviewPayload};
 
-use super::{human_size, Request};
+use super::{human_size, on_path, Request};
 
 /// A rasteriser, and how to ask it for one page as a PNG on stdout.
 struct Rasteriser {
@@ -130,7 +130,7 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
         Ok(bytes) => bytes,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-document",
+                "peek-error-read-document",
                 error = err.to_string()
             ))
         }
@@ -156,12 +156,25 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
 
     match rasterise(rasteriser, &bytes, page, width) {
         Some(png) => match decode_png(&png) {
-            Some(pixels) => PreviewPayload::Pixels {
-                pixels,
-                pages,
-                page,
-            },
-            None => payload::unavailable(otto_kit::t_owned!("quickview-error-page-readback")),
+            Some(mut pixels) => {
+                // The rasteriser hands back pixels, whatever the document
+                // had in it, so a page is recognised like any other picture.
+                // Reading a PDF's own text layer instead would be exact and
+                // free, and is later work.
+                if request.ocr {
+                    pixels.words = crate::ocr::recognise(
+                        &pixels,
+                        request.recogniser_command(),
+                        &request.languages,
+                    );
+                }
+                PreviewPayload::Pixels {
+                    pixels,
+                    pages,
+                    page,
+                }
+            }
+            None => payload::unavailable(otto_kit::t_owned!("peek-error-page-readback")),
         },
         None => no_rasteriser(file, &bytes, request, pages),
     }
@@ -217,22 +230,6 @@ fn decode_png(png: &[u8]) -> Option<crate::payload::Pixels> {
     let dimensions = codec.dimensions();
     let image = codec.get_image(info, None).ok()?;
     super::image::to_pixels(&image, dimensions)
-}
-
-/// Is this command on `PATH`?
-///
-/// Resolved by hand rather than by spawning something: the worker has a tight
-/// descriptor budget and no reason to fork twice per lookup.
-fn on_path(command: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|directory| {
-        let candidate = directory.join(command);
-        // Existence is enough; if it is not executable the spawn fails and the
-        // next rasteriser is tried.
-        candidate.is_file()
-    })
 }
 
 /// Page count, read out of the document's own structure.
@@ -292,11 +289,11 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
 
     let mut facts = vec![
         Fact {
-            key: otto_kit::t_owned!("quickview-fact-pages"),
+            key: otto_kit::t_owned!("peek-fact-pages"),
             value: pages.to_string(),
         },
         Fact {
-            key: otto_kit::t_owned!("quickview-fact-size"),
+            key: otto_kit::t_owned!("peek-fact-size"),
             value: human_size(size),
         },
     ];
@@ -304,7 +301,7 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
         facts.insert(
             0,
             Fact {
-                key: otto_kit::t_owned!("quickview-fact-title"),
+                key: otto_kit::t_owned!("peek-fact-title"),
                 value: title,
             },
         );
@@ -318,7 +315,7 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
 
     PreviewPayload::Card {
         title: request.name.clone(),
-        subtitle: otto_kit::t_owned!("quickview-pdf-install-rasteriser", packages = wanted),
+        subtitle: otto_kit::t_owned!("peek-pdf-install-rasteriser", packages = wanted),
         facts,
         hero: None,
         // Stamped by `decode`, which is where the sniffed type is known.

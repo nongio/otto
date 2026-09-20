@@ -555,6 +555,44 @@ impl A11yTree {
                     },
                 );
             }
+            Preview::Document { blocks, truncated } => {
+                // Read as a document, like a text preview and for the same
+                // reason: the Text interface needs text-run children, and the
+                // runs are what line-by-line review walks. One run per block
+                // rather than per visual line — the wrapping is the panel's,
+                // and a screen reader should not inherit somebody else's
+                // column width.
+                let runs: Vec<String> = blocks.iter().map(spoken_block).collect();
+                let truncated = *truncated;
+                let name = name.to_owned();
+
+                self.group_with(
+                    id,
+                    Role::Document,
+                    |node| {
+                        node.set_bounds(bounds_of(bounds));
+                        node.set_label(name);
+                        if truncated {
+                            node.set_description(crate::t_owned!("a11y-preview-shortened"));
+                        }
+                    },
+                    |tree| {
+                        for (index, run) in runs.into_iter().enumerate() {
+                            tree.node(
+                                FocusId::new(format!("preview-line-{index}")),
+                                Role::TextRun,
+                                |node| {
+                                    let run = format!("{run}\n");
+                                    let lengths: Vec<u8> =
+                                        run.chars().map(|c| c.len_utf8() as u8).collect();
+                                    node.set_value(run);
+                                    node.set_character_lengths(lengths);
+                                },
+                            );
+                        }
+                    },
+                );
+            }
             Preview::Rows {
                 rows,
                 truncated,
@@ -652,6 +690,30 @@ impl A11yTree {
     }
 }
 
+/// One block of a document, as a screen reader should hear it.
+///
+/// The marker is spoken because it carries meaning a sighted reader gets from
+/// the shape of the list — which item this is, and whether a task is done.
+/// A rule is a pause, not a word.
+fn spoken_block(block: &crate::preview::Block) -> String {
+    use crate::preview::Block;
+
+    let joined = |spans: &[crate::preview::Span]| {
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>()
+    };
+    match block {
+        Block::Heading { spans, .. } | Block::Paragraph { spans } | Block::Quote { spans } => {
+            joined(spans)
+        }
+        Block::Item { marker, spans, .. } => format!("{marker} {}", joined(spans)),
+        Block::Code { lines } => lines.join("\n"),
+        Block::Rule => String::new(),
+    }
+}
+
 /// A size, as a preview row says it.
 fn bytes(size: u64) -> String {
     const UNITS: [&str; 5] = ["bytes", "kB", "MB", "GB", "TB"];
@@ -743,6 +805,7 @@ mod preview_tests {
                     intrinsic_height: 600,
                     data: Vec::new(),
                     frame_delays: Vec::new(),
+                    words: Vec::new(),
                 },
                 pages: 12,
                 page: 3,

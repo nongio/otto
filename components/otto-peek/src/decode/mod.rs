@@ -1,6 +1,6 @@
 //! The decode worker: the only place in Otto that interprets an untrusted file.
 //!
-//! Runs as a separate short-lived process (`otto-quickview --decode-worker`),
+//! Runs as a separate short-lived process (`otto-peek --decode-worker`),
 //! sandboxed by [`crate::sandbox`], holding one read-only descriptor and
 //! writing one [`PreviewPayload`] to stdout. It has no Wayland connection, no
 //! bus connection, and no path it could open.
@@ -12,6 +12,7 @@
 
 mod image;
 mod listing;
+mod markdown;
 mod media;
 mod pdf;
 mod text;
@@ -34,6 +35,15 @@ pub struct Request {
     /// decode still has detail to show.
     pub width: u32,
     pub height: u32,
+    /// How much detail headroom `width`/`height` carry over the size the
+    /// preview is drawn at. The still decoders spend it on zoom; an animation
+    /// divides it back out, because its budget buys frames rather than a
+    /// picture nobody is looking closely at.
+    pub oversample: f32,
+    /// Whether an animation should be carried as one. A caller that will only
+    /// ever draw the first frame — a thumbnail in a listing — asks for a
+    /// still, and is spared a strip of frames it would throw away.
+    pub animate: bool,
     /// 1-based page for paginated content.
     pub page: u32,
     /// Zoom factor being displayed. Past 1.0 the image decoders stop
@@ -45,7 +55,26 @@ pub struct Request {
     pub mime: String,
     /// The file's display name. Used only in card titles; never for dispatch.
     pub name: String,
+    /// Recognise text in a picture and send the words with the pixels. Costs
+    /// an exec of the system's recogniser inside the worker, so the parent
+    /// sets it only when no cached words exist for the file.
+    pub ocr: bool,
+    /// The recogniser's languages, as its `-l` argument spells them
+    /// (`ita+eng`). Computed by the parent, which knows the locale and can
+    /// look at which language packs are installed.
+    pub languages: String,
+    /// The recogniser to exec, as a command line with `{languages}` where
+    /// the languages go. Empty means the default, tesseract.
+    pub recogniser: String,
     pub budget: Budget,
+}
+
+impl Request {
+    /// The recogniser command line to run: the configured one, else the
+    /// default.
+    pub fn recogniser_command(&self) -> &str {
+        crate::ocr::command_or_default(&self.recogniser)
+    }
 }
 
 impl Default for Request {
@@ -53,10 +82,15 @@ impl Default for Request {
         Self {
             width: 1600,
             height: 1200,
+            oversample: 1.0,
+            animate: true,
             page: 1,
             zoom: 1.0,
             mime: String::new(),
             name: String::new(),
+            ocr: false,
+            languages: "eng".into(),
+            recogniser: String::new(),
             budget: Budget::default(),
         }
     }
@@ -83,7 +117,7 @@ pub fn run_worker(request: Request) -> i32 {
     if let Err(err) = unsafe { sandbox::apply(request.budget) } {
         // Refuse to decode rather than decode uncontained.
         let fallback = payload::unavailable(otto_kit::t_owned!(
-            "quickview-error-sandbox",
+            "peek-error-sandbox",
             error = err.to_string()
         ));
         let _ = payload::write_to(&fallback, &mut std::io::stdout());
@@ -129,7 +163,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
         Err(err) => {
             return (
                 payload::unavailable(otto_kit::t_owned!(
-                    "quickview-error-stat-file",
+                    "peek-error-stat-file",
                     error = err.to_string()
                 )),
                 None,
@@ -146,7 +180,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
         return (
             PreviewPayload::Card {
                 title: request.name.clone(),
-                subtitle: otto_kit::t_owned!("quickview-empty-file"),
+                subtitle: otto_kit::t_owned!("peek-empty-file"),
                 facts: vec![],
                 hero: None,
                 icon: Vec::new(),
@@ -159,7 +193,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
     if let Err(err) = file.read_exact(&mut head) {
         return (
             payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-file",
+                "peek-error-read-file",
                 error = err.to_string()
             )),
             None,
@@ -167,7 +201,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
     }
     if file.seek(SeekFrom::Start(0)).is_err() {
         return (
-            payload::unavailable(otto_kit::t_owned!("quickview-error-not-seekable")),
+            payload::unavailable(otto_kit::t_owned!("peek-error-not-seekable")),
             None,
         );
     }
@@ -225,6 +259,12 @@ fn dispatch(
     if mime.starts_with("video/") {
         return media::video(file, metadata, request, mime);
     }
+    // Before the text rule below, which would otherwise catch it: Markdown is
+    // a subclass of text/plain, and showing it as source is showing the
+    // markup rather than the document.
+    if mime == "text/markdown" {
+        return markdown::read(file, request);
+    }
     // Text last, and via the hierarchy rather than a language list: every
     // source file in existence is a subclass of text/plain, and enumerating
     // them would be a losing game.
@@ -253,8 +293,13 @@ pub fn parse_request(arguments: &[String]) -> Request {
             "--height" => request.height = value().parse().unwrap_or(request.height),
             "--page" => request.page = value().parse().unwrap_or(request.page),
             "--zoom" => request.zoom = value().parse().unwrap_or(request.zoom),
+            "--oversample" => request.oversample = value().parse().unwrap_or(request.oversample),
+            "--still" => request.animate = false,
             "--name" => request.name = value(),
             "--mime" => request.mime = value(),
+            "--ocr" => request.ocr = true,
+            "--languages" => request.languages = value(),
+            "--recogniser" => request.recogniser = value(),
             _ => {}
         }
     }
@@ -270,18 +315,34 @@ pub(crate) fn read_capped(file: &mut File, cap: u64) -> std::io::Result<Vec<u8>>
     Ok(bytes)
 }
 
+/// Is this command on `PATH`?
+///
+/// Resolved by hand rather than by spawning something: the worker has a tight
+/// descriptor budget and no reason to fork twice per lookup.
+pub(crate) fn on_path(command: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|directory| {
+        let candidate = directory.join(command);
+        // Existence is enough; if it is not executable the spawn fails and the
+        // caller falls back.
+        candidate.is_file()
+    })
+}
+
 /// Human-readable byte count, for the facts on a card.
 pub(crate) fn human_size(bytes: u64) -> String {
     // Below a kilobyte the count is exact and needs a plural rule; above it
     // the unit is a symbol and only the number varies.
     if bytes < 1024 {
-        return otto_kit::t_owned!("quickview-size-bytes", count = bytes as f64);
+        return otto_kit::t_owned!("peek-size-bytes", count = bytes as f64);
     }
     const UNITS: [&str; 4] = [
-        "quickview-size-kb",
-        "quickview-size-mb",
-        "quickview-size-gb",
-        "quickview-size-tb",
+        "peek-size-kb",
+        "peek-size-mb",
+        "peek-size-gb",
+        "peek-size-tb",
     ];
     let mut value = bytes as f64 / 1024.0;
     let mut unit = 0;
@@ -295,6 +356,20 @@ pub(crate) fn human_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_recogniser_flags_parse() {
+        let request = parse_request(&[
+            "--ocr".to_string(),
+            "--languages".to_string(),
+            "ita+eng".to_string(),
+        ]);
+        assert!(request.ocr);
+        assert_eq!(request.languages, "ita+eng");
+        let request = parse_request(&[]);
+        assert!(!request.ocr);
+        assert_eq!(request.languages, "eng");
+    }
 
     #[test]
     fn human_size_reads_naturally() {

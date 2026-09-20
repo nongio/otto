@@ -271,12 +271,12 @@ fn a_result_can_be_previewed_even_though_it_is_not_in_a_folder() {
     browser.searching = true;
     browser.select(0, 0);
 
-    let started = browser.begin_quickview();
+    let started = browser.begin_peek();
     std::fs::remove_file(&file).ok();
 
-    let (path, _, _) = started.expect("Quick View opened on a result");
+    let (path, _, _) = started.expect("Peek opened on a result");
     assert_eq!(path, file, "and on the file the cursor is actually on");
-    assert!(browser.quickview.is_some(), "with the panel up");
+    assert!(browser.peek.is_some(), "with the panel up");
 }
 
 /// A search is not a place, so the sidebar lights nothing while one is on

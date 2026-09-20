@@ -36,6 +36,7 @@ impl Browser {
             show_hidden: self.show_hidden,
             view: view_id(self.mode).to_string(),
             sort: sort_id(self.sort).to_string(),
+            can_recognise_text: ocr::enabled() && ocr::available(),
             places: self
                 .places
                 .iter()
@@ -746,7 +747,7 @@ impl Browser {
                     // Closed only once the command was carried out: a refusal
                     // keeps the panel up with the text still there to fix.
                     self.finish_palette();
-                    self.palette_quickview = followup == Followup::QuickView;
+                    self.palette_peek = followup == Followup::Peek;
                 }
                 Err(error) => {
                     if let Some(palette) = self.palette.as_mut() {
@@ -765,10 +766,10 @@ impl Browser {
         }
     }
 
-    /// Whether a palette command asked for Quick View. Drained by the host,
-    /// which owns the decode — see [`FilesApp::follow_quickview`].
-    pub(super) fn take_palette_quickview(&mut self) -> bool {
-        std::mem::take(&mut self.palette_quickview)
+    /// Whether a palette command asked for Peek. Drained by the host,
+    /// which owns the decode — see [`FilesApp::follow_peek`].
+    pub(super) fn take_palette_peek(&mut self) -> bool {
+        std::mem::take(&mut self.palette_peek)
     }
 
     /// Take on board what a provider's command did: the status line, the undo
@@ -885,7 +886,7 @@ impl Browser {
             }
             // The preview is the host window's, not the browser's: it owns the
             // decode. Handed back rather than run here.
-            id::QUICK_LOOK => return Ok(Followup::QuickView),
+            id::QUICK_LOOK => return Ok(Followup::Peek),
             // The strip is opened either way; a query given with the command
             // is typed into it, so one keystroke can start a search outright.
             id::SEARCH => {
@@ -901,6 +902,7 @@ impl Browser {
                 }
             }
             id::RECENT => self.enter_recent(),
+            id::RECOGNISE_TEXT => self.recognise_selection()?,
             other => return Err(format!("Unknown command: {other}")),
         }
         Ok(Followup::Nothing)

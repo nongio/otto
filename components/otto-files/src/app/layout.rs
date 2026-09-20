@@ -80,7 +80,7 @@ impl Browser {
     /// so neither has an area to name.
     pub(super) fn scroll_damage(&self) -> Option<Rect> {
         let plain = self.mode != ViewMode::Columns
-            && self.quickview.is_none()
+            && self.peek.is_none()
             && self.palette.is_none()
             && self.rename.is_none();
         plain.then(|| view::content_viewport(self.size.0, self.content_h(), self.mode))
@@ -91,7 +91,7 @@ impl Browser {
     /// that is the update loop's job — but not by repainting the window.
     pub(super) fn scroll_on_surfaces(&self) -> bool {
         self.mode == ViewMode::Columns
-            && self.quickview.is_none()
+            && self.peek.is_none()
             && self.palette.is_none()
             && self.rename.is_none()
     }

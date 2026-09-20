@@ -1,6 +1,6 @@
 use crate::{
-    command, model, palette, pane_surfaces, perf, picker, quickview, remembered, rename, scene,
-    scripts, thumbcache, thumbnails, view,
+    command, model, ocrcache, palette, pane_surfaces, peek, perf, picker, remembered, rename,
+    scene, scripts, thumbcache, thumbnails, view,
 };
 
 use std::cell::RefCell;
@@ -48,18 +48,22 @@ mod listing;
 mod listing_pointer;
 mod menus;
 mod navigation;
+mod ocr;
 mod opening;
 mod palette_session;
+mod peek_session;
 mod picking;
 mod pointer;
 mod present;
 mod preview;
-mod quickview_session;
 mod refresh;
 mod renaming;
 mod scroll;
 mod searching;
 mod selection;
+
+/// Reading text out of pictures from the command line, with no window.
+pub use ocr::recognise_paths;
 
 /// What a drag carries: the picture to draw, the size of the surface it needs,
 /// and where inside that surface the grab happened.
@@ -327,14 +331,14 @@ struct Browser {
     /// it back; see [`UndoStep`] for what does and does not go on here.
     undo: Vec<UndoStep>,
     /// The open preview, if one is up.
-    quickview: Option<quickview::Session>,
+    peek: Option<peek::Session>,
     /// The docked preview column's state, for the entry currently under a
     /// single-item selection. `None` both when the column is hidden (no
     /// selection, or not enough room for it) and briefly while a fresh
     /// selection's decode is still in flight — [`PreviewPaneState::pending`]
     /// tells the two apart.
     preview: Option<PreviewPaneState>,
-    /// Bumped for every preview decode started, independent of Quick View's
+    /// Bumped for every preview decode started, independent of Peek's
     /// own generation counter — the two panels can be open at once.
     preview_generation_seed: u64,
     /// Thumbnails for the entries on screen, in place of their type icons.
@@ -346,15 +350,15 @@ struct Browser {
     thumbs: thumbnails::Store,
     /// A decode is in flight. Keeps the frame loop alive so its result is
     /// painted without waiting for the next input.
-    quickview_pending: bool,
+    peek_pending: bool,
     /// A dismissed preview still on screen, shrinking back to its file.
-    quickview_closing: Option<quickview::Session>,
-    /// Open Quick View on the first entry as soon as one is listed, so the
+    peek_closing: Option<peek::Session>,
+    /// Open Peek on the first entry as soon as one is listed, so the
     /// panel can be looked at without anyone pressing a key. Driving the real
     /// keyboard means injecting into whatever session the test runs in, which
     /// is both unreliable and rude to whoever is using that desktop.
     /// `OTTO_FILES_QV_AUTO=1`.
-    quickview_auto: bool,
+    peek_auto: bool,
     /// Open the command palette as soon as the window has a listing, so it can
     /// be looked at without anyone pressing a key. Driving the real keyboard
     /// means injecting into whatever session the test runs in, which is both
@@ -365,13 +369,32 @@ struct Browser {
     /// generation is dropped: arrow-keying is much faster than decoding, and a
     /// slow PDF must not land on top of a file the user moved off three keys
     /// ago.
-    quickview_generation: u64,
+    peek_generation: u64,
+    /// Whether the recogniser is running on the previewed picture. Keeps
+    /// the frame loop alive so the words paint when they land.
+    peek_recognising: bool,
+    /// Whether the cursor is the text beam because the pointer is over a
+    /// recognised word on the panel. Tracked so the shape is set on the
+    /// crossing rather than on every motion event.
+    peek_text_cursor: bool,
+    /// Pictures the background recognition pass has already considered in
+    /// this window, whatever it decided.
+    ocr_seen: std::collections::HashSet<PathBuf>,
+    /// Pictures somebody asked to have read, in the order they were asked
+    /// for. Drained ahead of the background pass's own scan and read whatever
+    /// is already remembered about them: the command exists because the
+    /// remembered answer is the one that is wrong.
+    ocr_queue: std::collections::VecDeque<PathBuf>,
+    /// The pictures a recogniser is on right now. A set rather than a flag
+    /// because the panel's own recognition and the background pass can
+    /// overlap, and one of them finishing must not speak for the other.
+    ocr_reading: std::collections::HashSet<PathBuf>,
     /// The cursor moved on its own — a delete landing its selection on the
-    /// survivor — rather than through an arrow key. Quick View follows the
+    /// survivor — rather than through an arrow key. Peek follows the
     /// cursor, so it has to re-decode for those moves too, and the deleted
     /// file's preview must not be left up over a file that no longer exists.
-    /// Drained by the host, which owns the decode; see [`FilesApp::follow_quickview`].
-    quickview_follow: bool,
+    /// Drained by the host, which owns the decode; see [`FilesApp::follow_peek`].
+    peek_follow: bool,
     /// This window is the Trash: one flat listing of the trash can, with Put
     /// Back and Empty Trash in place of the view switcher, and every command
     /// that would move, rename or open a file suppressed.
@@ -417,6 +440,10 @@ struct Browser {
     info: Option<model::FileInfo>,
     /// Why the last permission change was refused, if it was.
     info_error: Option<String>,
+    /// What the panel says about the words in the picture it is showing.
+    /// Held rather than read at draw time: the answer comes off the disk, and
+    /// it only changes when a recogniser starts or finishes.
+    info_text: Option<ocrcache::Status>,
     /// Pointer is over the panel's close dot, so its × glyph reveals — the
     /// same hover behaviour as the window's own traffic lights.
     info_close_hovered: bool,
@@ -493,9 +520,9 @@ struct Browser {
     /// A drag of the palette in progress: where in the card the pointer took
     /// hold, so the card follows the pointer without jumping to centre on it.
     palette_drag: Option<(f32, f32)>,
-    /// A palette command asked for Quick View. The panel and its decode belong
+    /// A palette command asked for Peek. The panel and its decode belong
     /// to the window around the browser, so the request is left here for it.
-    palette_quickview: bool,
+    palette_peek: bool,
     /// Where commands come from. The built-ins today, and the seam a later
     /// extension system hangs off — see [`crate::command`].
     commands: command::Registry,
@@ -573,19 +600,19 @@ struct Browser {
     /// light the one that was pressed.
     active_place: Option<usize>,
     footer_pressed: Option<view::FooterButton>,
-    /// Pointer is over Quick View's close button.
-    quickview_close_hovered: bool,
-    /// Pointer is over Quick View's expand button.
-    quickview_expand_hovered: bool,
-    /// Where Quick View's panel actually is, in window coordinates.
+    /// Pointer is over Peek's close button.
+    peek_close_hovered: bool,
+    /// Pointer is over Peek's expand button.
+    peek_expand_hovered: bool,
+    /// Where Peek's panel actually is, in window coordinates.
     ///
     /// Written by the render path, read by the pointer handler, because the
     /// two cannot otherwise agree: a panel centred on the *display* is placed
     /// from an answer only [`pane_surfaces`] has, and the pointer callback
     /// outlives any borrow of it. `None` falls back to the window's centre,
     /// which is where the panel is when it is not centred on the display.
-    quickview_panel: Option<Rect>,
-    /// The pointer's last position over the Quick View panel, together with
+    peek_panel: Option<Rect>,
+    /// The pointer's last position over the Peek panel, together with
     /// the panel rect it was measured against.
     ///
     /// The two are stored as a pair because they are not always in the same
@@ -594,14 +621,34 @@ struct Browser {
     /// two different coordinate systems. Whichever handler saw the pointer
     /// records the panel *it* was hit-testing against, so a pinch can work in
     /// that space without having to know which handler it came from.
-    quickview_focus: Option<(skia_safe::Point, Rect)>,
+    peek_focus: Option<(skia_safe::Point, Rect)>,
+    /// A drag of the panel by its title strip in progress: the point the
+    /// press was reported at, and where the card was in the window then.
+    ///
+    /// Both are fixed at the press, because a pointer holding a button keeps
+    /// the focus it was grabbed with: its positions go on being reported in
+    /// the frame the press landed in, whichever of the two doors that was —
+    /// the panel's own surface, or the toplevel. See
+    /// [`Browser::drag_peek_to`].
+    peek_drag: Option<((f32, f32), (f32, f32))>,
+    /// When the panel's title strip was last pressed, for the double-click
+    /// that fills the display.
+    last_peek_title_click: Option<std::time::Instant>,
+    /// The offset [`Browser::peek_panel`] was placed with, so a drag can
+    /// tell where the card would rest untouched from where it actually is.
+    /// Written by the render path beside the rect itself, for the same reason.
+    peek_placed_offset: Option<(f32, f32)>,
+    /// The display the panel may be dragged around, in window points, as the
+    /// compositor last answered. `None` until it has; the window stands in
+    /// for it until then, which is only wrong in being too strict.
+    peek_display: Option<Rect>,
     /// The zoom a pinch in progress started from, if one is.
     ///
     /// `zwp_pointer_gesture_pinch_v1` reports its scale against the start of
     /// the gesture rather than against the last update, so the zoom it is
     /// asking for is this times that — and applying it incrementally instead
     /// would compound rounding across a gesture that can run for seconds.
-    quickview_pinch: Option<f32>,
+    peek_pinch: Option<f32>,
 }
 
 /// A pane's selection as it stood at some moment, so it can be put back.
@@ -634,13 +681,13 @@ pub struct PaletteRowData {
 
 /// What the host window still has to do after a palette command ran.
 ///
-/// Almost everything a command does is the browser's own; Quick View is not —
+/// Almost everything a command does is the browser's own; Peek is not —
 /// the panel and its decode belong to the window around the browser, so that
 /// one command is handed back rather than run in place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Followup {
     Nothing,
-    QuickView,
+    Peek,
 }
 
 /// How many path completions the palette is offered at once. A directory can
@@ -686,13 +733,13 @@ fn sort_from_id(id: &str) -> Option<SortKey> {
     }
 }
 
-/// What a pointer event over the Quick View panel is, as far as the pan's
+/// What a pointer event over the Peek panel is, as far as the pan's
 /// scrollbars are concerned. The two handlers that can deliver one — the
 /// toplevel's and the panel's own surface — funnel into
-/// [`Browser::quickview_pan_pointer`] through this, so a bar behaves the same
+/// [`Browser::peek_pan_pointer`] through this, so a bar behaves the same
 /// whichever of them the compositor picked.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum QuickviewPointer {
+enum PeekPointer {
     Press,
     Motion,
     Release,
@@ -750,7 +797,11 @@ struct PreviewPaneState {
     /// A player, when the decode said video. Opened paused: the column
     /// follows the selection, and a video that started playing on every
     /// arrow key would be a column that talks.
-    video: Option<quickview::Video>,
+    video: Option<peek::Video>,
+    /// What the caption says about the words in the picture. Held rather than
+    /// read while drawing: the answer comes off the disk, and the caption is
+    /// rebuilt every frame.
+    text: Option<ocrcache::Status>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
@@ -927,7 +978,7 @@ const FILES_STATUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_ra
 const PREVIEW_PANE: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5003);
 
 /// The preview panel's, when one is open.
-const QUICKVIEW: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5002);
+const PEEK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xF11E_5002);
 
 /// The longest prefix `names` all share, in whole characters. Empty when
 /// they diverge at the first one — which the caller reads as "nothing more
@@ -980,19 +1031,19 @@ struct FilesApp {
     /// until `on_app_ready` constructs it, which is the earliest point
     /// `AppContext` is set up.
     context_menu: Option<ContextMenu>,
-    /// Quick View's surface and its card's rect within it, published by the
+    /// Peek's surface and its card's rect within it, published by the
     /// render path for the pointer callback below. See
-    /// [`pane_surfaces::PaneSurfaces::quickview_target`].
-    quickview_target: Arc<Mutex<Option<(wayland_client::backend::ObjectId, Rect)>>>,
+    /// [`pane_surfaces::PaneSurfaces::peek_target`].
+    peek_target: Arc<Mutex<Option<(wayland_client::backend::ObjectId, Rect)>>>,
     /// The palette's surface and where it sits in window points, for the same
-    /// reason Quick View has one: dragged clear of the window, the card is
+    /// reason Peek has one: dragged clear of the window, the card is
     /// over pixels the toplevel is never told about.
     palette_target: Arc<Mutex<Option<(wayland_client::backend::ObjectId, Rect)>>>,
     /// The picker's request queue, when this process is serving
     /// `org.otto.FilePicker1`. `None` in the browser.
     picker_queue: Option<crate::dbus::SharedQueue>,
     /// The surfaces the window hangs over itself: each column's scroll pane,
-    /// the stack's bar, Quick View, the palette and the preview's player.
+    /// the stack's bar, Peek, the palette and the preview's player.
     /// `None` until the window exists.
     pane_surfaces: Option<pane_surfaces::PaneSurfaces>,
     /// The Get Info panel's window, while one is open.
@@ -1021,7 +1072,11 @@ struct FilesApp {
 /// rather than from the file's name or its bytes here, because the decoder is
 /// the only thing that has read the picture — which is also why the line
 /// appears when the decode lands rather than with the rest.
-fn preview_info(entry: &Entry, decoded: Option<&otto_kit::preview::Preview>) -> Vec<String> {
+fn preview_info(
+    entry: &Entry,
+    decoded: Option<&otto_kit::preview::Preview>,
+    text: Option<ocrcache::Status>,
+) -> Vec<String> {
     let mut info = vec![entry.kind_label().to_string()];
     if let Some(line) = decoded.and_then(picture_info) {
         info.push(line);
@@ -1031,6 +1086,12 @@ fn preview_info(entry: &Entry, decoded: Option<&otto_kit::preview::Preview>) -> 
     }
     if let Some(modified) = entry.modified {
         info.push(model::format_time(modified));
+    }
+    // Last, under the dates: a picture always has this line once there is a
+    // recogniser to read it, so the caption keeps its height as the answer
+    // changes and the picture above it does not jump.
+    if let Some(text) = text {
+        info.push(view::describe_text_status(text));
     }
     info
 }
@@ -1230,7 +1291,7 @@ fn run_app(
         opaque_region: None,
         modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
-        quickview_target: Arc::new(Mutex::new(None)),
+        peek_target: Arc::new(Mutex::new(None)),
         palette_target: Arc::new(Mutex::new(None)),
         picker_queue,
     };
@@ -1284,6 +1345,10 @@ mod caret_report_tests;
 #[cfg(test)]
 mod search_tests;
 
+/// Dragging Peek's panel by its title strip.
+#[cfg(test)]
+mod peek_drag_tests;
+
 #[cfg(test)]
 mod path_bar_tests;
 
@@ -1302,6 +1367,7 @@ mod picture_info_tests {
                 intrinsic_height: 563,
                 data: Vec::new(),
                 frame_delays,
+                words: Vec::new(),
             },
             pages: 1,
             page: 1,

@@ -267,6 +267,9 @@ pub struct Situation {
     pub sort: String,
     /// The sidebar's places, in sidebar order.
     pub places: Vec<PlaceRef>,
+    /// A recogniser is installed and text recognition is on, so a picture can
+    /// be asked to be read.
+    pub can_recognise_text: bool,
 }
 
 impl Situation {
@@ -282,6 +285,19 @@ impl Situation {
 
     fn has_target(&self) -> bool {
         self.target_count() > 0
+    }
+
+    /// Whether at least one of the files a command would act on is a picture.
+    /// By name, like every other fact in here: a provider somewhere else has
+    /// the same names and must reach the same answer.
+    fn targets_a_picture(&self) -> bool {
+        if self.selection.is_empty() {
+            return self.cursor_name.as_deref().is_some_and(is_picture_name);
+        }
+        self.selection.iter().any(|path| {
+            path.file_name()
+                .is_some_and(|name| is_picture_name(&name.to_string_lossy()))
+        })
     }
 
     /// This situation with the names toggled out of a dry run left out of
@@ -594,6 +610,7 @@ pub mod id {
     pub const SORT_BY: &str = "sort_by";
     pub const TOGGLE_HIDDEN: &str = "toggle_hidden";
     pub const QUICK_LOOK: &str = "quick_look";
+    pub const RECOGNISE_TEXT: &str = "recognise_text";
     pub const SEARCH: &str = "search";
     pub const RECENT: &str = "recent";
 }
@@ -615,6 +632,20 @@ pub fn sort_choices() -> Vec<Choice> {
         Choice::new("kind", otto_kit::t_owned!("files-column-kind")),
         Choice::new("modified", otto_kit::t_owned!("files-column-date-modified")),
     ]
+}
+
+/// Whether a file of this name is a picture with pixels to read. The one
+/// spelling of the question, so the palette and the recogniser cannot
+/// disagree about what they are offering to read.
+///
+/// An SVG is drawn from text, not photographed: whatever words it has are in
+/// the file already, and rendering it only to recognise them back is work for
+/// an answer nobody needs.
+pub fn is_picture_name(name: &str) -> bool {
+    otto_kit::filetype::mime_for_name(name).is_some_and(|mime| {
+        mime != "image/svg+xml"
+            && otto_kit::filetype::kind_of(mime) == otto_kit::filetype::Kind::Image
+    })
 }
 
 /// The window's own commands.
@@ -746,6 +777,26 @@ impl CommandProvider for Builtin {
                 )
                 .with_keywords(["properties", "permissions", "size"])
                 .with_shortcut("Ctrl+I"),
+            );
+        }
+        // Reading a picture again: the words are remembered, so this is for
+        // when the remembered answer is wrong — a picture that was half
+        // decoded, or a language pack installed since.
+        if !s.trash && s.can_recognise_text && s.targets_a_picture() {
+            out.push(
+                Command::new(
+                    id::RECOGNISE_TEXT,
+                    otto_kit::t_owned!("files-command-recognise-text"),
+                    Group::File,
+                )
+                .with_keywords([
+                    "ocr",
+                    "text",
+                    "words",
+                    "read",
+                    "scan",
+                    "recognise",
+                ]),
             );
         }
         if !s.trash {
@@ -1095,6 +1146,43 @@ mod tests {
             sort: "name".into(),
             ..Situation::default()
         }
+    }
+
+    /// Reading text is offered for a picture and only for a picture — and
+    /// only where there is something to read it with.
+    #[test]
+    fn text_recognition_is_offered_for_pictures() {
+        let on_a_text_file = Situation {
+            can_recognise_text: true,
+            ..browsing()
+        };
+        assert!(!ids(&on_a_text_file).contains(&id::RECOGNISE_TEXT.to_string()));
+
+        let on_a_picture = Situation {
+            cursor_name: Some("shot.png".into()),
+            can_recognise_text: true,
+            ..browsing()
+        };
+        assert!(ids(&on_a_picture).contains(&id::RECOGNISE_TEXT.to_string()));
+
+        // A picture among the selected ones is enough.
+        let selected = Situation {
+            selection: vec![
+                PathBuf::from("/home/someone/notes.txt"),
+                PathBuf::from("/home/someone/shot.jpg"),
+            ],
+            can_recognise_text: true,
+            ..browsing()
+        };
+        assert!(ids(&selected).contains(&id::RECOGNISE_TEXT.to_string()));
+
+        // Nothing installed to read it with: the command is not offered at
+        // all rather than offered and refused.
+        let no_recogniser = Situation {
+            cursor_name: Some("shot.png".into()),
+            ..browsing()
+        };
+        assert!(!ids(&no_recogniser).contains(&id::RECOGNISE_TEXT.to_string()));
     }
 
     fn ids(situation: &Situation) -> Vec<String> {

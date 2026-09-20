@@ -179,7 +179,7 @@ members = [
     "components/otto-emoji",
     "components/otto-settings",
     "components/otto-files",
-    "components/otto-quickview",
+    "components/otto-peek",
     "components/otto-media-kit",
     "components/otto-md-kit",
     "components/otto-msg",
@@ -244,9 +244,9 @@ section = "x11"
 priority = "optional"
 # GStreamer loads these at runtime — otto-rdp's pipewiresrc and the VA-API
 # H.264 encoder it falls back from, and the decoders otto-media-worker needs
-# to play a file in Quick View — so dpkg-shlibdeps cannot see them.
+# to play a file in Peek — so dpkg-shlibdeps cannot see them.
 # Recommended, not required: the desktop works without them, but the RDP
-# bridge and Quick View's video playback do not.
+# bridge and Peek's video playback do not.
 recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire"
 assets = [
     ["target/release/otto", "usr/bin/", "755"],
@@ -257,7 +257,7 @@ assets = [
     ["target/release/otto-files", "usr/bin/", "755"],
     ["target/release/otto-launcher", "usr/bin/", "755"],
     ["target/release/otto-emoji", "usr/bin/", "755"],
-    ["target/release/otto-quickview", "usr/bin/", "755"],
+    ["target/release/otto-peek", "usr/bin/", "755"],
     ["target/release/otto-msg", "usr/bin/", "755"],
     ["target/release/otto-agents", "usr/bin/", "755"],
     # Alias: a symlink to otto-launcher, which opens in ask mode under this
@@ -320,7 +320,7 @@ assets = [
     { source = "target/release/otto-files", dest = "/usr/bin/otto-files", mode = "755" },
     { source = "target/release/otto-launcher", dest = "/usr/bin/otto-launcher", mode = "755" },
     { source = "target/release/otto-emoji", dest = "/usr/bin/otto-emoji", mode = "755" },
-    { source = "target/release/otto-quickview", dest = "/usr/bin/otto-quickview", mode = "755" },
+    { source = "target/release/otto-peek", dest = "/usr/bin/otto-peek", mode = "755" },
     { source = "target/release/otto-msg", dest = "/usr/bin/otto-msg", mode = "755" },
     { source = "target/release/otto-agents", dest = "/usr/bin/otto-agents", mode = "755" },
     { source = "target/release/otto-media-worker", dest = "/usr/bin/otto-media-worker", mode = "755" },
@@ -359,7 +359,7 @@ assets = [
     { source = "components/xdg-desktop-portal-otto/portals.conf.example", dest = "/usr/share/doc/otto/portals.conf.example", mode = "644", doc = true },
     { source = "components/otto-lock/otto-lock.pam", dest = "/etc/pam.d/otto-lock", mode = "644", config = true },
 ]
-# Runtime-loaded GStreamer plugins for otto-rdp and for Quick View's video
+# Runtime-loaded GStreamer plugins for otto-rdp and for Peek's video
 # playback — see the deb `recommends`. gstreamer1-libav lives in RPM Fusion
 # on Fedora; a weak dependency on a package no enabled repository carries is
 # ignored rather than fatal.
@@ -413,9 +413,9 @@ optdepends = [
     "greetd: login manager otto --login hosts a greeter for",
     "gst-plugin-pipewire: otto-rdp video capture",
     "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)",
-    "gst-plugins-base: Quick View video playback (the playbin element)",
-    "gst-plugins-good: Quick View playback of MP4 and Matroska",
-    "gst-libav: Quick View playback of H.264 and AAC",
+    "gst-plugins-base: Peek video playback (the playbin element)",
+    "gst-plugins-good: Peek playback of MP4 and Matroska",
+    "gst-libav: Peek playback of H.264 and AAC",
 ]
 files = [
     ["target/release/otto", "/usr/bin/otto", "755"],
@@ -428,7 +428,7 @@ files = [
     ["target/release/otto-files", "/usr/bin/otto-files", "755"],
     ["target/release/otto-launcher", "/usr/bin/otto-launcher", "755"],
     ["target/release/otto-emoji", "/usr/bin/otto-emoji", "755"],
-    ["target/release/otto-quickview", "/usr/bin/otto-quickview", "755"],
+    ["target/release/otto-peek", "/usr/bin/otto-peek", "755"],
     ["target/release/otto-msg", "/usr/bin/otto-msg", "755"],
     ["target/release/otto-agents", "/usr/bin/otto-agents", "755"],
     ["components/otto-agents/otto-agents.service", "/usr/lib/systemd/user/otto-agents.service", "644"],

@@ -7078,7 +7078,7 @@ fn window_has_overlapping_subsurface(window: &WindowElement) -> bool {
 /// The subsurface layers under a window's `content` layer that reach outside
 /// `rect`, the window's own output-local physical rect, in that same space.
 ///
-/// A subsurface is not held to its parent's geometry: Files' Quick View is one
+/// A subsurface is not held to its parent's geometry: Files' Peek is one
 /// centred on the display, hanging over whichever tile sits next to the
 /// window. The root surface's own layer is left out — its buffer can carry a
 /// client-drawn shadow past the geometry, and counting that would keep every

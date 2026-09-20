@@ -5,7 +5,7 @@ media stack is more code than the toolkit it would be bolted onto, and it
 links GStreamer, which no application binary should.
 
 The user-facing behaviour is specified in
-[specs/quickview.md](../../specs/quickview.md#video-playback); this page is
+[specs/peek.md](../../specs/peek.md#video-playback); this page is
 about the pieces.
 
 ## Two halves
@@ -53,7 +53,7 @@ The worker contains itself after exec (`contain()` in the worker binary):
 `chdir("/")`, `PR_SET_NO_NEW_PRIVS`, `RLIMIT_AS` 8 GiB (hardware decoders map
 device memory freely), `RLIMIT_NOFILE` 512, `RLIMIT_CORE` 0, then a
 best-effort `unshare(CLONE_NEWUSER | CLONE_NEWNET)`. Compared with the decode
-worker in `otto-quickview` it has no `RLIMIT_FSIZE` (the plugin registry
+worker in `otto-peek` it has no `RLIMIT_FSIZE` (the plugin registry
 cache), no `RLIMIT_CPU`, a higher descriptor ceiling, and no pre-exec half.
 
 The host clears the environment and passes a whitelist: `PATH`, `HOME`,
@@ -87,13 +87,13 @@ then kills the worker at once, so the worker's own teardown rarely runs.
 rather than the live `Player`, so a host that records its drawing into a
 picture on another thread (as otto-files' preview column does) can paint the
 player without holding the player. `otto-files` uses it in two places behind
-one `quickview::Video`: the Quick View panel (autoplays) and the docked
+one `peek::Video`: the Peek panel (autoplays) and the docked
 Miller preview column (opens paused on the first frame, plays on click).
 
 A paused pipeline emits its first frame as a *preroll*, not a sample, so the
 worker delivers both — otherwise a paused embed would show black. The docked
 column always opens paused on that first frame and plays on click; only the
-Quick View panel autoplays.
+Peek panel autoplays.
 
 ## Aspect and the preview-column subsurface
 

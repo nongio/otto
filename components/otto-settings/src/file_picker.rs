@@ -134,7 +134,7 @@ pub fn open_file(title: &str, filters: &[(&str, &[&str])]) -> Outcome {
 
 /// Percent-decode a `file://` URI into a path.
 ///
-/// Deliberately a local copy rather than a dependency on otto-quickview: this
+/// Deliberately a local copy rather than a dependency on otto-peek: this
 /// app links otto-kit and nothing else, and pulling in an image-decoding crate
 /// for twenty lines of URI handling would be a poor trade. If a third consumer
 /// appears, the pair belongs in otto-kit.

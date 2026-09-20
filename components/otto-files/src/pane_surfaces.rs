@@ -39,14 +39,14 @@ use skia_safe::{Color, Rect};
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_surface::WlSurface;
 
-use crate::quickview;
+use crate::peek;
 use crate::scene;
 use crate::view::{self, Frame, PaneData, ViewMode};
 
 /// Height of the box a column's status line is painted into.
 const STATUS_H: f32 = 40.0;
 
-/// Whether Quick View is centred on the display rather than on the window.
+/// Whether Peek is centred on the display rather than on the window.
 ///
 /// The panel is a subsurface, so its position is relative to the browser's
 /// window — and a client is never told where its own window sits, so it cannot
@@ -58,7 +58,7 @@ const STATUS_H: f32 = 40.0;
 /// A window pushed to a screen edge otherwise puts its preview there too.
 ///
 /// `OTTO_FILES_QV_CENTER=0` opts out and goes back to centring on the window.
-pub fn quickview_centered() -> bool {
+pub fn peek_centered() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         !matches!(
@@ -187,8 +187,8 @@ pub struct PaneSurfaces {
     /// sideways, holding the columns and the preview's player.
     stack: Option<ScrollSurfaces>,
     columns: Vec<ColumnPane>,
-    /// The Quick View panel, in a surface of its own over everything.
-    quickview: Option<PlacedSurface>,
+    /// The Peek panel, in a surface of its own over everything.
+    peek: Option<PlacedSurface>,
     /// The command palette, in a surface of its own so it can be dragged clear
     /// of the window.
     palette: Option<PlacedSurface>,
@@ -224,7 +224,7 @@ pub struct PaneSurfaces {
     /// A surface was created in the stack, which puts it on top of its
     /// siblings there.
     stack_children_dirty: bool,
-    /// Which panel, and which direction, [`Self::quickview_resting`] was
+    /// Which panel, and which direction, [`Self::peek_resting`] was
     /// worked out for: the session's generation and whether it is closing.
     /// `Some(closing)` once the output has been asked about for the panel
     /// currently up. Deliberately *not* keyed on the decode generation:
@@ -232,10 +232,10 @@ pub struct PaneSurfaces {
     /// panel, so the compositor's answer cannot have changed, and re-asking
     /// per file made the panel fall back to the window's centre for the frame
     /// or two before the new answer landed — a visible jump on every file.
-    quickview_placement: Option<bool>,
+    peek_placement: Option<bool>,
     /// A fresh answer has been asked for and has not arrived. The previous
     /// resting rect stays in use until it does.
-    quickview_awaiting: bool,
+    peek_awaiting: bool,
     /// The display the panel is centred on, in window points, frozen for the
     /// length of one opening or one closing.
     ///
@@ -246,10 +246,10 @@ pub struct PaneSurfaces {
     /// and, when the window moves far enough, off it. The panel's own rect is
     /// derived from this on every pass, since expanding it changes the rect
     /// without changing where the display is.
-    quickview_display: Option<Rect>,
+    peek_display: Option<Rect>,
     /// Where the panel was last placed to rest, whichever space it rests in.
     /// What the pointer handler measures against.
-    quickview_resting: Option<Rect>,
+    peek_resting: Option<Rect>,
     /// Set when a paint was wanted but the surface still had a frame in
     /// flight. The throttle is only safe while something else keeps calling
     /// `sync`: a surface whose content has stopped changing is never asked
@@ -276,7 +276,7 @@ impl PaneSurfaces {
         &mut self,
         parent: &WlSurface,
         f: &Frame,
-        quickview: Option<(&quickview::Session, u64)>,
+        peek: Option<(&peek::Session, u64)>,
     ) -> bool {
         self.pending = false;
         // Outside column view there are no columns: what is left here is Quick
@@ -284,7 +284,7 @@ impl PaneSurfaces {
         // it.
         if f.mode != ViewMode::Columns {
             let mut changed = self.hide_all();
-            changed |= self.sync_quickview(parent, f, quickview);
+            changed |= self.sync_peek(parent, f, peek);
             self.restack(parent);
             return changed;
         }
@@ -400,14 +400,14 @@ impl PaneSurfaces {
             painted |= column.hide();
         }
         painted |= self.sync_preview_pane(&band, f, viewport, (shown_from, shown_to));
-        painted |= self.sync_preview_video(&band, f, viewport, quickview.is_some());
-        painted |= self.sync_quickview(parent, f, quickview);
+        painted |= self.sync_preview_video(&band, f, viewport, peek.is_some());
+        painted |= self.sync_peek(parent, f, peek);
         self.restack(parent);
         painted
     }
 
     /// Put the sibling surfaces back into a known order, bottom to top: in the
-    /// window the stack, then the palette and Quick View; in the stack the
+    /// window the stack, then the palette and Peek; in the stack the
     /// columns in depth order, then the preview's player.
     ///
     /// Stacking each surface against the one below it states the whole order
@@ -468,7 +468,7 @@ impl PaneSurfaces {
         let overlays = [
             self.palette.as_ref(),
             self.catcher.as_ref(),
-            self.quickview.as_ref(),
+            self.peek.as_ref(),
         ];
         for pane in overlays.into_iter().flatten() {
             if let Some(below) = &below {
@@ -479,37 +479,37 @@ impl PaneSurfaces {
         // `place_above` is part of the *parent's* pending state, so committing
         // the children does nothing for it. Without this the new order waits
         // for whatever else happens to commit the toplevel — and when a column
-        // appears while Quick View is up, nothing does, so the column that
+        // appears while Peek is up, nothing does, so the column that
         // arrived on top stays on top.
         parent.commit();
     }
 
     /// Where this panel rests, worked out once per opening and once per
     /// closing and held steady in between.
-    fn resting_for(&mut self, session: &quickview::Session) -> Option<Rect> {
-        if !quickview_centered() {
+    fn resting_for(&mut self, session: &peek::Session) -> Option<Rect> {
+        if !peek_centered() {
             return None;
         }
-        let pane = self.quickview.as_ref()?;
+        let pane = self.peek.as_ref()?;
 
         // Once per open, and again when the exit starts — the two moments the
         // answer can actually differ.
         let placement = session.closing.is_some();
-        if self.quickview_placement != Some(placement) {
-            self.quickview_placement = Some(placement);
-            self.quickview_awaiting = true;
+        if self.peek_placement != Some(placement) {
+            self.peek_placement = Some(placement);
+            self.peek_awaiting = true;
             pane.ask_output_frame();
         }
         // The *old* rect stays in force until the new answer lands. Nulling it
         // here is what made the panel snap to the window's centre and back.
-        if self.quickview_awaiting {
+        if self.peek_awaiting {
             if let Some(rect) = pane.output_frame() {
-                self.quickview_display = Some(rect);
-                self.quickview_awaiting = false;
+                self.peek_display = Some(rect);
+                self.peek_awaiting = false;
             }
         }
-        self.quickview_display
-            .map(|display| quickview::resting_in(display, session.expanded))
+        self.peek_display
+            .map(|display| peek::resting_in(display, session.expanded))
     }
 
     /// The command palette, on a surface of its own.
@@ -519,7 +519,7 @@ impl PaneSurfaces {
     /// covering. Here the compositor owns both: the card goes where it is put,
     /// and the frost samples the desktop behind the window.
     ///
-    /// It takes its own pointer input, like Quick View and for the same
+    /// It takes its own pointer input, like Peek and for the same
     /// reason — dragged clear of the window, the card is over pixels the
     /// toplevel is never told about. The keyboard is untouched: a subsurface
     /// takes no keyboard focus, so the palette's keys keep arriving at the
@@ -755,7 +755,7 @@ impl PaneSurfaces {
         self.palette_display
     }
 
-    /// The Quick View panel.
+    /// The Peek panel.
     ///
     /// Drawn into the window it would be buried: the column surfaces sit over
     /// the toplevel, so a panel painted underneath them is a panel nobody can
@@ -764,22 +764,22 @@ impl PaneSurfaces {
     ///
     /// Unlike the columns it answers for its own pointer: centred on the
     /// display it hangs outside the toplevel, where no event reaches the
-    /// window. See [`Self::quickview_target`].
-    fn sync_quickview(
+    /// window. See [`Self::peek_target`].
+    fn sync_peek(
         &mut self,
         parent: &WlSurface,
         f: &Frame,
-        quickview: Option<(&quickview::Session, u64)>,
+        peek: Option<(&peek::Session, u64)>,
     ) -> bool {
-        let Some((session, generation)) = quickview else {
+        let Some((session, generation)) = peek else {
             // Nothing is up, so the next open asks afresh. The last known
             // resting rect is kept: if the window has not moved it is still
             // right, and starting from it beats starting from the window's
             // centre and correcting.
-            self.quickview_placement = None;
-            self.quickview_awaiting = false;
+            self.peek_placement = None;
+            self.peek_awaiting = false;
             return self
-                .quickview
+                .peek
                 .as_mut()
                 .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
@@ -789,10 +789,18 @@ impl PaneSurfaces {
         // stays in window coordinates either way, which is what lets the
         // entrance keep growing out of the file's icon: the anchor and the
         // resting place are in the same space.
-        let resting = self.resting_for(session).unwrap_or_else(|| {
-            quickview::resting_in(Rect::from_wh(f.width, f.window_h()), session.expanded)
-        });
-        self.quickview_resting = Some(resting);
+        // Where it rests, moved by however far it has been dragged by its
+        // title strip. Folded in here rather than inside the session's own
+        // geometry so that everything derived from the resting rect — the
+        // surface's placement, the drawing, and the rect the pointer is
+        // hit-tested against — is moved by the same amount.
+        let resting = self
+            .resting_for(session)
+            .unwrap_or_else(|| {
+                peek::resting_in(Rect::from_wh(f.width, f.window_h()), session.expanded)
+            })
+            .with_offset(session.offset);
+        self.peek_resting = Some(resting);
         // Wherever the panel is *now* — part way in, at rest, or part way
         // back to its file. Asking for the entrance alone left the exit out
         // of the surface entirely: once open, `entrance_t` is pinned at 1, so
@@ -800,23 +808,23 @@ impl PaneSurfaces {
         // never changed, and the card sat frozen at full size until the
         // session was retired out from under it.
         let panel = session.panel(resting);
-        let mut rect = panel.with_outset((quickview::SURFACE_MARGIN, quickview::SURFACE_MARGIN));
+        let mut rect = panel.with_outset((peek::SURFACE_MARGIN, peek::SURFACE_MARGIN));
         // A panel centred on the display may legitimately reach past the
         // window it belongs to, so it is only clipped to the window when it is
         // the window it is centred on.
-        if !quickview_centered() && !rect.intersect(Rect::from_wh(f.width, f.height)) {
+        if !peek_centered() && !rect.intersect(Rect::from_wh(f.width, f.height)) {
             return self
-                .quickview
+                .peek
                 .as_mut()
                 .map(|pane| pane.set_hidden(true))
                 .unwrap_or(false);
         }
 
-        if self.quickview.is_none() {
-            self.quickview = PlacedSurface::new(parent, rect).ok();
+        if self.peek.is_none() {
+            self.peek = PlacedSurface::new(parent, rect).ok();
             self.stack_dirty = true;
-            if let Some(pane) = self.quickview.as_mut() {
-                Self::style_quickview(pane);
+            if let Some(pane) = self.peek.as_mut() {
+                Self::style_peek(pane);
                 // A panel centred on the display hangs outside the toplevel,
                 // and the pointer never reports those coordinates to this
                 // client — so the close button would be dead exactly when the
@@ -825,7 +833,7 @@ impl PaneSurfaces {
                 pane.set_takes_input(true);
             }
         }
-        let Some(pane) = self.quickview.as_mut() else {
+        let Some(pane) = self.peek.as_mut() else {
             return false;
         };
         let mut painted = pane.set_hidden(false);
@@ -835,13 +843,13 @@ impl PaneSurfaces {
         // far its content is scrolled — and now how far its picture is zoomed
         // and dragged, which changes what is drawn without moving the card an
         // inch.
-        let key = quickview_key(panel, generation, session);
+        let key = peek_key(panel, generation, session);
         let origin = (rect.left, rect.top);
         let paint = pane.paint(key, |canvas| {
             canvas.clear(skia_safe::Color::TRANSPARENT);
             canvas.save();
             canvas.translate((-origin.0, -origin.1));
-            view::draw_quickview(canvas, f, session, resting);
+            view::draw_peek(canvas, f, session, resting);
             canvas.restore();
         });
         painted |= self.painted(paint);
@@ -904,9 +912,7 @@ impl PaneSurfaces {
             // A video painted here re-records on every frame of it; on its own
             // surface it is none of this one's business.
             if !data.video_on_surface {
-                data.video
-                    .map(crate::quickview::Video::key)
-                    .hash(&mut hasher);
+                data.video.map(crate::peek::Video::key).hash(&mut hasher);
             }
             view::is_dark().hash(&mut hasher);
             hash_rect(Rect::from_wh(rect.width(), rect.height())).hash(&mut hasher);
@@ -936,11 +942,11 @@ impl PaneSurfaces {
         stack: &WlSurface,
         f: &Frame,
         viewport: Rect,
-        quickview_up: bool,
+        peek_up: bool,
     ) -> bool {
         // Shown only for a video in the column view, and never behind the
-        // Quick View panel — which is its own, larger player.
-        let video = (f.mode == ViewMode::Columns && !quickview_up)
+        // Peek panel — which is its own, larger player.
+        let video = (f.mode == ViewMode::Columns && !peek_up)
             .then(|| {
                 f.preview
                     .as_ref()
@@ -1035,7 +1041,7 @@ impl PaneSurfaces {
             .is_some_and(|stack| stack.set_hidden(true))
     }
 
-    /// Quick View's surface and where its card sits *within* that surface,
+    /// Peek's surface and where its card sits *within* that surface,
     /// for the pointer callback.
     ///
     /// The panel is centred on the display, so it routinely reaches outside
@@ -1047,27 +1053,34 @@ impl PaneSurfaces {
     /// needs both that button and the content box under it: everything else
     /// the panel's own geometry is derived from the card, and deriving it
     /// twice from two published rects is how the two drift apart.
-    pub fn quickview_target(&self) -> Option<(ObjectId, Rect)> {
+    pub fn peek_target(&self) -> Option<(ObjectId, Rect)> {
         use wayland_client::Proxy;
-        let pane = self.quickview.as_ref()?;
+        let pane = self.peek.as_ref()?;
         let panel = Rect::from_xywh(
-            quickview::SURFACE_MARGIN,
-            quickview::SURFACE_MARGIN,
-            pane.rect().width() - quickview::SURFACE_MARGIN * 2.0,
-            pane.rect().height() - quickview::SURFACE_MARGIN * 2.0,
+            peek::SURFACE_MARGIN,
+            peek::SURFACE_MARGIN,
+            pane.rect().width() - peek::SURFACE_MARGIN * 2.0,
+            pane.rect().height() - peek::SURFACE_MARGIN * 2.0,
         );
         Some((pane.wl_surface().id(), panel))
     }
 
-    /// Where Quick View's panel actually rests, once it has been worked out.
+    /// The display the panel is centred on, in window points, once the
+    /// compositor has answered. What a drag of the title strip is bounded by:
+    /// a panel dragged off the screen is one nobody can find the way back to.
+    pub fn peek_display(&self) -> Option<Rect> {
+        self.peek_display
+    }
+
+    /// Where Peek's panel actually rests, once it has been worked out.
     ///
     /// `None` until the compositor has answered with the output's geometry,
     /// and always `None` when the panel is centred on the window — the caller
     /// can compute that one itself. Hit-testing must use this rather than
     /// re-deriving a rect from the window size: a panel centred on the
     /// *display* is nowhere near the window's own centre.
-    pub fn quickview_resting(&self) -> Option<Rect> {
-        self.quickview_resting
+    pub fn peek_resting(&self) -> Option<Rect> {
+        self.peek_resting
     }
 
     /// The panel's material, handed to the compositor once.
@@ -1082,7 +1095,7 @@ impl PaneSurfaces {
     ///
     /// `material_popup` is 0xD8 — the toolkit's popup material is translucent
     /// by design, expecting exactly this blur behind it.
-    fn style_quickview(pane: &PlacedSurface) {
+    fn style_peek(pane: &PlacedSurface) {
         let Some(style) = pane.style() else {
             return;
         };
@@ -1241,8 +1254,12 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
 /// zoomed and dragged — which changes what is drawn without moving the card an
 /// inch — how its bars are presented, since they fade in and out over a
 /// picture that is not moving, and whether the content has landed at all.
-fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> u64 {
-    hash_rect(panel)
+fn peek_key(panel: Rect, generation: u64, session: &peek::Session) -> u64 {
+    // The card's *size*, not where it sits. Its drawing is translated to the
+    // surface's own origin, so two panels of the same size are the same
+    // pixels wherever they are — and a panel being dragged by its title
+    // strip would otherwise repaint in full on every frame of the drag.
+    hash_rect(Rect::from_wh(panel.width(), panel.height()))
         ^ generation.rotate_left(17)
         ^ (session.first_row as u64) << 1
         ^ hash_zoom(session.zoom).rotate_left(33)
@@ -1252,9 +1269,39 @@ fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> 
         // invisible to the key, and the panel never repaints out of its
         // waiting state.
         ^ if session.loading { LOADING_KEY } else { 0 }
+        // Words landing on a picture, and a selection moving over them,
+        // change what is drawn without moving anything else the key sees.
+        ^ session.words_epoch.rotate_left(23)
+        ^ hash_selection(session).rotate_left(41)
         // A video changes what is drawn on every frame and every tick of its
         // clock, with nothing else about the panel moving.
         ^ session.video_key()
+        // The working badge breathes while the recogniser reads the picture,
+        // and nothing else about the panel moves for as long as it takes.
+        ^ hash_recognising(session).rotate_left(11)
+}
+
+/// The working badge's breath, as a key contribution: the phase quantised to
+/// the frames it is actually drawn in, so the panel repaints while the
+/// recogniser runs and stops the moment it does. `0` when nothing is running,
+/// which is also what a panel with no recogniser on it contributes.
+fn hash_recognising(session: &peek::Session) -> u64 {
+    const STEPS_PER_SECOND: f32 = 25.0;
+    match session.recognising_phase() {
+        Some(phase) => (phase * STEPS_PER_SECOND) as u64 + 1,
+        None => 0,
+    }
+}
+
+/// Which words are selected on the panel's picture, as a key contribution.
+fn hash_selection(session: &peek::Session) -> u64 {
+    match session.selection {
+        Some(selection) => {
+            let range = selection.range();
+            ((*range.start() as u64 + 1) << 32) | (*range.end() as u64 + 1)
+        }
+        None => 0,
+    }
 }
 
 /// The content key's contribution for a panel that is still waiting for its
@@ -1264,7 +1311,7 @@ const LOADING_KEY: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// How the pan's scrollbars are presented — how faded in each is, and how
 /// far each has widened under the pointer.
-fn hash_bars(session: &quickview::Session) -> u64 {
+fn hash_bars(session: &peek::Session) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -1318,19 +1365,60 @@ fn hash_rect(rect: Rect) -> u64 {
 mod tests {
     use super::*;
 
+    /// The working badge breathes, and nothing else about the panel moves
+    /// while it does. Without the phase in the key the cached picture replays
+    /// and the badge is a still glyph for the whole wait.
+    #[test]
+    fn a_running_recogniser_moves_the_panel_key() {
+        let resting = peek::panel_rect(1100.0, 700.0);
+        let anchor = Rect::new_empty();
+        let opened_at = std::time::Instant::now();
+        let generation = 7;
+
+        let mut session = peek::Session::new(
+            otto_kit::preview::Preview::Text {
+                lines: vec!["hello".into()],
+                truncated: false,
+                language: String::new(),
+            },
+            "shot.png".into(),
+            anchor,
+            opened_at,
+        );
+        let idle = peek_key(resting, generation, &session);
+
+        // Started two frames ago, and started now: two different keys, so the
+        // panel is redrawn between them.
+        session.start_recognising(std::time::Instant::now());
+        let running = peek_key(resting, generation, &session);
+        assert_ne!(idle, running, "a running recogniser does not move the key");
+
+        session
+            .start_recognising(std::time::Instant::now() - std::time::Duration::from_millis(200));
+        assert_ne!(
+            running,
+            peek_key(resting, generation, &session),
+            "the badge's breath does not move the key"
+        );
+
+        // And it stops moving the moment the recogniser does.
+        session.stop_recognising();
+        assert_eq!(idle, peek_key(resting, generation, &session));
+    }
+
     /// The panel repaints only when its key changes, and the decode landing
     /// changes nothing else: same file, same request, same rect, same zoom.
     /// If it does not move the key, the card stays on "Opening preview…" for
     /// as long as the user does not touch anything.
     #[test]
     fn a_decode_landing_moves_the_panel_key() {
-        let resting = quickview::panel_rect(1100.0, 700.0);
+        let resting = peek::panel_rect(1100.0, 700.0);
         let anchor = Rect::new_empty();
         let opened_at = std::time::Instant::now();
         let generation = 7;
 
-        let waiting = quickview::Session::waiting("notes.txt".into(), false, anchor, opened_at);
-        let landed = quickview::Session::new(
+        let waiting = peek::Session::waiting("notes.txt".into(), false, anchor, opened_at);
+        let landed = peek::Session::new(
             otto_kit::preview::Preview::Text {
                 lines: vec!["hello".into()],
                 truncated: false,
@@ -1342,8 +1430,8 @@ mod tests {
         );
 
         assert_ne!(
-            quickview_key(resting, generation, &waiting),
-            quickview_key(resting, generation, &landed),
+            peek_key(resting, generation, &waiting),
+            peek_key(resting, generation, &landed),
         );
     }
 }

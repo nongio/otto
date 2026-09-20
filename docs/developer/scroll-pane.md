@@ -236,10 +236,10 @@ that does not move: dividers, tints, headers.
    `ScrollPane` inside its card, with the selection a pane highlight
    (`ScrollPane::set_highlight`) and wheel scrolling it did not have. otto-emoji's
    categories are vertical panes in a horizontal container driven by its own
-   paging physics, with the highlight on the selected cell. Left: Quick View's
+   paging physics, with the highlight on the selected cell. Left: Peek's
    pan as a two-axis pane.
 5. **Beside the panes.** *Done.* `PlacedSurface` carries otto-files' status
-   lines, docked preview and its video, the palette card and Quick View.
+   lines, docked preview and its video, the palette card and Peek.
 
 Exit, for each step that moves an application: zero window commits during a
 fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under

@@ -1,25 +1,26 @@
 [package]
-name = "otto-quickview"
+name = "otto-peek"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Press space on a file and see it — Otto's quick-view previewer"
+description = "Press space on a file and see it — Otto's Peek previewer"
 
 # A library the file views embed, plus a binary that is both the sandboxed
 # decode worker and a standalone previewer for a path named on the command line.
 [lib]
-name = "otto_quickview"
+name = "otto_peek"
 path = "src/lib.rs"
 
 [[bin]]
-name = "otto-quickview"
+name = "otto-peek"
 path = "src/main.rs"
 
 [dependencies]
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
+otto-md-kit = { path = "../otto-md-kit" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wayland-client = "0.31"

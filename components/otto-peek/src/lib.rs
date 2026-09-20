@@ -1,4 +1,4 @@
-//! Quick View — press space on a file and see it.
+//! Peek — press space on a file and see it.
 //!
 //! A **library the file views embed**, not a service they call. The preview is
 //! a subsurface of whichever window is showing files, which is what makes it
@@ -10,7 +10,7 @@
 //! window instead of leaving them to be managed by hand.
 //!
 //! Three hosts embed it: the file browser, the save/open file dialog, and the
-//! desktop's file view. The `otto-quickview` binary remains for previewing a
+//! desktop's file view. The `otto-peek` binary remains for previewing a
 //! path from a terminal.
 //!
 //! # What lives where
@@ -33,7 +33,7 @@
 //!
 //! ```no_run
 //! fn main() {
-//!     otto_quickview::run_worker_if_requested();
+//!     otto_peek::run_worker_if_requested();
 //!     // ... the host's own startup
 //! }
 //! ```
@@ -46,13 +46,14 @@
 #![allow(clippy::needless_doctest_main)]
 
 pub mod decode;
+pub mod ocr;
 pub mod opening;
 pub mod payload;
 pub mod sandbox;
 pub mod spawn;
 pub mod uri;
 
-pub use otto_kit::preview::{Fact, Pixels, Preview, PreviewLayout, Row};
+pub use otto_kit::preview::{Fact, Pixels, Preview, PreviewLayout, Row, Word};
 pub use spawn::{decode_path, open, Opened};
 
 /// Run the sandboxed decode worker if this process was started as one.

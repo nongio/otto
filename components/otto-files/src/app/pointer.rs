@@ -1,4 +1,4 @@
-//! Pointer handling: the window, the palette, Quick View and the info window.
+//! Pointer handling: the window, the palette, Peek and the info window.
 
 use super::*;
 
@@ -70,7 +70,7 @@ impl FilesApp {
         });
     }
 
-    /// Quick View's panel handles its own pointer, because it is the one
+    /// Peek's panel handles its own pointer, because it is the one
     /// surface of this window that is routinely *outside* it.
     ///
     /// Centred on the display, the card hangs past the toplevel's edges, and
@@ -84,9 +84,9 @@ impl FilesApp {
     /// outside the panel stays with the toplevel, where the rest of the
     /// browser's hit-testing already lives — a click outside the card is a
     /// click on the window.
-    pub(super) fn install_quickview_pointer(&self) {
+    pub(super) fn install_peek_pointer(&self) {
         let state = Arc::clone(&self.state);
-        let target = Arc::clone(&self.quickview_target);
+        let target = Arc::clone(&self.peek_target);
 
         AppContext::register_pointer_callback(move |events| {
             for event in events {
@@ -101,46 +101,56 @@ impl FilesApp {
                 // against the surface the pointer is over. Everything derived
                 // from `panel` below is in that same space.
                 let point = skia_safe::Point::new(event.position.0 as f32, event.position.1 as f32);
-                let over = view::quickview_close_rect(panel)
+                let over = view::peek_close_rect(panel)
                     .with_outset((4.0, 4.0))
                     .contains(point);
-                let over_expand = view::quickview_expand_rect(panel)
+                let over_expand = view::peek_expand_rect(panel)
                     .with_outset((4.0, 4.0))
                     .contains(point);
 
                 let mut browser = state.lock().unwrap();
                 match event.kind {
                     PointerEventKind::Press { .. } if over => {
-                        browser.close_quickview();
+                        browser.close_peek();
                     }
                     PointerEventKind::Press { .. } if over_expand => {
-                        browser.toggle_quickview_expand();
+                        browser.toggle_peek_expand();
                     }
                     PointerEventKind::Press { .. } => {
-                        // A scrollbar over a zoomed picture takes the press
-                        // before anything else does.
-                        browser.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
+                        // The title strip takes hold of the card; failing
+                        // that, a scrollbar over a zoomed picture takes the
+                        // press before anything else does.
+                        if !browser.peek_grip(point, panel) {
+                            browser.peek_pan_pointer(PeekPointer::Press, point, panel);
+                        }
                     }
                     PointerEventKind::Release { .. } => {
-                        browser.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
+                        browser.end_peek_drag();
+                        browser.peek_pan_pointer(PeekPointer::Release, point, panel);
+                    }
+                    PointerEventKind::Motion { .. } if browser.peek_dragging() => {
+                        browser.drag_peek_to(point);
                     }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
-                        browser.quickview_focus(point, panel);
-                        browser.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
-                        if browser.quickview_close_hovered != over
-                            || browser.quickview_expand_hovered != over_expand
+                        browser.peek_focus(point, panel);
+                        browser.peek_pan_pointer(PeekPointer::Motion, point, panel);
+                        browser.sync_peek_cursor(point, panel);
+                        if browser.peek_close_hovered != over
+                            || browser.peek_expand_hovered != over_expand
                         {
-                            browser.quickview_close_hovered = over;
-                            browser.quickview_expand_hovered = over_expand;
+                            browser.peek_close_hovered = over;
+                            browser.peek_expand_hovered = over_expand;
                             browser.dirty = true;
                         }
                     }
                     PointerEventKind::Leave { .. } => {
-                        browser.quickview_focus = None;
-                        browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
-                        if browser.quickview_close_hovered || browser.quickview_expand_hovered {
-                            browser.quickview_close_hovered = false;
-                            browser.quickview_expand_hovered = false;
+                        browser.end_peek_drag();
+                        browser.peek_focus = None;
+                        browser.peek_pan_pointer(PeekPointer::Leave, point, panel);
+                        browser.reset_peek_cursor();
+                        if browser.peek_close_hovered || browser.peek_expand_hovered {
+                            browser.peek_close_hovered = false;
+                            browser.peek_expand_hovered = false;
                             browser.dirty = true;
                         }
                     }
@@ -149,7 +159,7 @@ impl FilesApp {
                         horizontal,
                         ..
                     } => {
-                        browser.quickview_wheel(
+                        browser.peek_wheel(
                             horizontal.absolute as f32,
                             vertical.absolute as f32,
                             panel,
@@ -214,7 +224,7 @@ impl FilesApp {
         let state = Arc::clone(&self.state);
         let window = window.clone();
         // Enter names the surface; motion and drop do not. A drag over some
-        // other surface of ours — Quick View, the info sheet — is not a drop
+        // other surface of ours — Peek, the info sheet — is not a drop
         // target, so what the enter decided has to be remembered.
         let on_toplevel = std::cell::Cell::new(false);
 

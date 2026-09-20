@@ -297,12 +297,15 @@ pub fn fetch(job: &Job) -> Found {
         return Found::Nothing;
     }
 
-    // The same sandboxed decoder Quick View uses, asked for a thumbnail-sized
+    // The same sandboxed decoder Peek uses, asked for a thumbnail-sized
     // picture rather than a panel-sized one. Untrusted bytes are parsed in the
     // worker, never here.
-    let request = otto_quickview::decode::Request {
+    let request = otto_peek::decode::Request {
         width: job.size.pixels(),
         height: job.size.pixels(),
+        // A tile in a listing shows one frame, so asking for an animation
+        // would buy a strip of hundreds and keep the first of them.
+        animate: false,
         name: job
             .path
             .file_name()
@@ -310,7 +313,7 @@ pub fn fetch(job: &Job) -> Found {
             .unwrap_or_default(),
         ..Default::default()
     };
-    match otto_quickview::decode_path(&job.path, &request) {
+    match otto_peek::decode_path(&job.path, &request) {
         otto_kit::preview::Preview::Pixels { pixels, .. } => match pixels.to_image() {
             Some(image) => Found::Thumbnail(image),
             None => Found::Nothing,

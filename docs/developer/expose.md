@@ -298,7 +298,7 @@ hovered preview or the workspace's top window.
 Two things ride on this. Keys pressed while the previews are up no longer land
 in whatever window happened to be in front. And it is the **only** signal a
 client gets that exposé opened: `dismiss_all_popups` reaches popups, but an app
-that draws transient chrome into a *subsurface* — the file browser's quick view
+that draws transient chrome into a *subsurface* — the file browser's Peek
 panel — is out of its reach, and takes the panel down on `wl_keyboard.leave`
 instead.
 

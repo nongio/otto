@@ -33,8 +33,8 @@ picker window, and the path the user chooses comes back as a `file://` URI.
 - The action row carries the filter control, Cancel, and the request's own
   `accept_label`.
 - The chrome is titleless: no traffic lights, no window title, one toolbar row.
-- Quick View works in the picker exactly as it does in the browser.
-- URIs are encoded by `otto_quickview::uri::path_to_uri`, which lives beside the
+- Peek works in the picker exactly as it does in the browser.
+- URIs are encoded by `otto_peek::uri::path_to_uri`, which lives beside the
   decoder every consumer already uses, so the round trip is tested as a pair.
 - **Save modes.** `SaveFile` shows the name field, pre-filled and with the stem
   preselected; `SaveFiles` asks only for a directory. Both put up the replace
@@ -462,7 +462,7 @@ a frame.
 
 The cache itself — location, key, validity, atomicity, who may write to it — is
 defined in [file-browser.md](./file-browser.md) under *Shared foundations*, and
-is shared with quick view. What follows is how the picker uses it.
+is shared with Peek. What follows is how the picker uses it.
 
 - **Who generates them:** the picker/browser process itself, on the worker pool,
   never the compositor and never a separate daemon.
@@ -720,7 +720,7 @@ and press state before they can be used in a toolbar.
 Also joining otto-kit, because more than the file components need them:
 `filetype` (MIME resolution, magic sniffing, the kind classification) and the
 thumbnail cache, both defined in [file-browser.md](./file-browser.md) under
-*Shared foundations* — quick view consumes both and must not have to depend on
+*Shared foundations* — Peek consumes both and must not have to depend on
 a file manager to do so.
 
 Staying in the file components, because they encode this application's

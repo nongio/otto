@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // re-executed, so without this line a preview would start a second file
     // browser instead of decoding a file. Returns immediately on a normal
     // start; never returns at all when this process is a worker.
-    otto_quickview::run_worker_if_requested();
+    otto_peek::run_worker_if_requested();
 
     // Before the first string is read, and before the Wayland connection: the
     // sidebar and the column headings are built during startup. Asks the
@@ -35,6 +35,25 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // `--recognise <path>…` reads the words out of pictures and remembers
+    // them, then exits: the background pass's work asked for directly, so a
+    // folder can be made searchable — and Get Info given an answer — without
+    // opening a window on it and waiting for the pass to get there.
+    if let Some(at) = std::env::args().position(|a| a == "--recognise") {
+        let paths: Vec<PathBuf> = std::env::args_os()
+            .skip(at + 1)
+            .map(PathBuf::from)
+            .collect();
+        if paths.is_empty() {
+            eprintln!("usage: otto-files --recognise <picture or folder>…");
+            std::process::exit(2);
+        }
+        if !otto_files::app::recognise_paths(&paths) {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     // `--picker` is how the bus activates us: no window until a request
     // arrives, and the process outlives each one so a run of picks shares a

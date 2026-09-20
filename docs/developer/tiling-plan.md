@@ -324,7 +324,7 @@ The variant is chosen per window in `decoration_view.rs` from the
 workspace's mode, and swapped when the window enters or leaves the tree —
 the same path the maximized (gapless, squared) variant already uses.
 
-**Otto's own apps.** otto-files, otto-settings, the launcher and quick view
+**Otto's own apps.** otto-files, otto-settings, the launcher and Peek
 draw their own titlebar through otto-kit's titlebar component, so the
 compositor-side variants never reach them. They follow the same setting
 from the client side:
@@ -339,7 +339,7 @@ from the client side:
   client-decorated window.
 
 One component change in otto-kit covers every app that already implements
-the settings callback; islands, quick view and lock still need that hook.
+the settings callback; islands, Peek and lock still need that hook.
 
 ## Settings app and per-workspace settings
 

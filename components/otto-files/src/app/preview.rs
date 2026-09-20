@@ -54,6 +54,7 @@ impl Browser {
         self.preview_generation_seed += 1;
         let generation = self.preview_generation_seed;
         self.preview = Some(PreviewPaneState {
+            text: self.text_status(&entry.path),
             path: entry.path.clone(),
             generation,
             pending: true,
@@ -120,7 +121,12 @@ impl Browser {
         let (width, height) = (self.size.0, self.content_h());
         let panel =
             view::preview_pane_rect(self.columns.len(), height, self.pan.offset(), self.miller_w);
-        let lines = preview_info(&self.selected_entry()?, self.decoded_preview()).len();
+        let lines = preview_info(
+            &self.selected_entry()?,
+            self.decoded_preview(),
+            self.preview.as_ref().and_then(|pane| pane.text),
+        )
+        .len();
         let stage = view::preview_stage_rect(panel, lines);
         // Clipped to the file area: the stack is panned, so a preview column
         // half off the left of the window must not be grabbable under the
@@ -149,7 +155,11 @@ impl Browser {
             video: None,
             video_on_surface: false,
             first_row: 0,
-            info: preview_info(&entry, self.decoded_preview()),
+            info: preview_info(
+                &entry,
+                self.decoded_preview(),
+                self.preview.as_ref().and_then(|pane| pane.text),
+            ),
         };
         Some(view::preview_drag_picture(
             &data,
@@ -265,7 +275,7 @@ impl Browser {
     }
 
     /// Show a preview decode that arrived, unless the selection has moved on
-    /// since — the same staleness guard Quick View uses.
+    /// since — the same staleness guard Peek uses.
     pub(super) fn finish_preview(
         &mut self,
         generation: u64,
@@ -280,7 +290,7 @@ impl Browser {
         }
         pane.pending = false;
         pane.video = video.and_then(|options| {
-            quickview::Video::open(&preview, &pane.path, options, AppContext::request_wakeup)
+            peek::Video::open(&preview, &pane.path, options, AppContext::request_wakeup)
         });
         pane.decoded = Some(preview);
         self.dirty = true;
@@ -291,7 +301,7 @@ impl Browser {
     /// under it is the listing's business.
     pub(super) fn preview_video_pointer(
         &mut self,
-        kind: quickview::VideoPointer,
+        kind: peek::VideoPointer,
         x: f32,
         y: f32,
     ) -> bool {
@@ -307,8 +317,15 @@ impl Browser {
             self.pan.offset(),
             self.miller_w,
         );
-        let stage =
-            view::preview_stage_rect(pane, preview_info(&entry, self.decoded_preview()).len());
+        let stage = view::preview_stage_rect(
+            pane,
+            preview_info(
+                &entry,
+                self.decoded_preview(),
+                self.preview.as_ref().and_then(|pane| pane.text),
+            )
+            .len(),
+        );
         let Some(video) = self.preview.as_mut().and_then(|p| p.video.as_mut()) else {
             return false;
         };

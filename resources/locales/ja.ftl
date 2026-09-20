@@ -427,6 +427,11 @@ files-folder-open-failed = このフォルダを開けませんでした：{ $er
 
 files-info-where = 場所
 files-info-kind = 種類
+files-info-text = テキスト
+files-info-text-reading = 読み取り中…
+files-info-text-words = { $count } 語
+files-info-text-none = テキストなし
+files-info-text-unread = 未読み取り
 files-info-modified = 変更日
 files-info-created = 作成日
 files-info-accessed = アクセス日
@@ -560,6 +565,8 @@ files-command-show-hidden = 隠しファイルを表示
 files-command-hide-hidden = 隠しファイルを非表示
 files-command-quick-look = クイックルック
 files-command-search = 検索
+files-command-recognise-text = テキスト認識を実行
+files-recognise-no-pictures = 読み取るテキストがありません
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.
@@ -1226,83 +1233,86 @@ lock-power-shutdown-failed = システム終了できません：{ $error }
 ## mid-sentence on purpose: they read as a continuation of "no preview".
 
 
-## Quick View — card labels
+## Peek — card labels
 ##
 ## Fact keys: the left-hand column of a card's detail list. One or two words,
 ## drawn in a narrow column — keep them short. Title case in English.
 
 # Column heading for the file's type, e.g. "JPEG", "PDF". Max ~12 characters.
-quickview-fact-kind = 種類
+peek-fact-kind = 種類
 # Column heading for the file's size on disk. Max ~12 characters.
-quickview-fact-size = サイズ
+peek-fact-size = サイズ
 # Column heading for an image's or a video's pixel dimensions. Max ~12 characters.
-quickview-fact-dimensions = 寸法
+peek-fact-dimensions = 寸法
 # Column heading for a video's or an audio track's running time. Max ~12 characters.
-quickview-fact-duration = 長さ
+peek-fact-duration = 長さ
 # Column heading for an image's total pixel count, in megapixels. Max ~12 characters.
-quickview-fact-pixels = 画素数
+peek-fact-pixels = 画素数
 # Column heading for a PDF's page count. Max ~12 characters.
-quickview-fact-pages = ページ数
+peek-fact-pages = ページ数
 # Column heading for a PDF's document title, taken from the document itself.
 # Max ~12 characters.
-quickview-fact-title = タイトル
+peek-fact-title = タイトル
 # Column heading for a song's performer, from its ID3 tags. Max ~12 characters.
-quickview-fact-artist = アーティスト
+peek-fact-artist = アーティスト
 # Column heading for a song's album, from its ID3 tags. Max ~12 characters.
-quickview-fact-album = アルバム
+peek-fact-album = アルバム
 # Column heading for a song's year of release, from its ID3 tags. Max ~12 characters.
-quickview-fact-year = 年
+peek-fact-year = 年
 
 # Subtitle of the card for a file that is zero bytes long. Shown under the
 # file's name in place of its type.
-quickview-empty-file = 空のファイル
+peek-empty-file = 空のファイル
 # Subtitle for an image with too many pixels to decode safely. Its real
 # dimensions are still listed below it.
-quickview-image-too-large = 大きすぎてプレビューできません
+peek-image-too-large = 大きすぎてプレビューできません
 # The value beside "Pixels" on that card. $count is a whole number of
 # megapixels.
-quickview-megapixels = { $count } メガピクセル
+peek-megapixels = { $count } メガピクセル
 # Subtitle for a PDF when no page rasteriser is installed. $packages is a
 # comma-separated list of package names — pdftoppm's package and so on — and
 # is not translated. Wraps to two lines if it has to.
-quickview-pdf-install-rasteriser = ページを表示するには次のいずれかをインストール：{ $packages }
+peek-pdf-install-rasteriser = ページを表示するには次のいずれかをインストール：{ $packages }
+# パネルのタイトル帯の隅に出る、PDF の何ページ目かの表示。
+# $page と $pages は整数。幅がとても狭いので数文字に収める。
+peek-page-of = { $page } / { $pages }
 
 
-## Quick View — listings
+## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
 ## summary line under it.
 
 # Summary line for a folder with nothing in it.
-quickview-empty-folder = 空のフォルダ
+peek-empty-folder = 空のフォルダ
 # Summary line for a folder or archive: how many entries it holds. Hidden
 # entries are counted.
-quickview-item-count =
+peek-item-count =
     { $count ->
        *[other] { $count } 項目
     }
 # Summary line for an archive, joining the entry count to the archive's own
-# size on disk. $items is quickview-item-count, $size is a formatted byte
+# size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
-quickview-archive-summary = { $items } — { $size }
+peek-archive-summary = { $items } — { $size }
 
 
-## Quick View — sizes
+## Peek — sizes
 ##
-## Byte units. Quick View counts in powers of 1024, so the symbols are the
+## Byte units. Peek counts in powers of 1024, so the symbols are the
 ## conventional binary-rounded ones. Translate only the spelled-out "bytes".
 
-quickview-size-bytes =
+peek-size-bytes =
     { $count ->
        *[other] { $count } バイト
     }
-quickview-size-kb = { $value } KB
-quickview-size-mb = { $value } MB
-quickview-size-gb = { $value } GB
-quickview-size-tb = { $value } TB
+peek-size-kb = { $value } KB
+peek-size-mb = { $value } MB
+peek-size-gb = { $value } GB
+peek-size-tb = { $value } TB
 
 
-## Quick View — nothing to show
+## Peek — nothing to show
 ##
 ## Each of these fills the card in place of a preview, so a person reads it
 ## instead of seeing the file. They state what happened and stop. Lower case,
@@ -1312,52 +1322,52 @@ quickview-size-tb = { $value } TB
 ## the system libraries produce and is usually English. Keep it at the end.
 
 # The file is a pipe, socket or device — opening it could block forever.
-quickview-error-not-previewable = これはプレビューできる種類のファイルではありません
+peek-error-not-previewable = これはプレビューできる種類のファイルではありません
 # The file's metadata could not be read.
-quickview-error-stat-file = ファイルの情報を取得できません：{ $error }
+peek-error-stat-file = ファイルの情報を取得できません：{ $error }
 # The file's bytes could not be read. Also used by the text previewer.
-quickview-error-read-file = ファイルを読み込めません：{ $error }
+peek-error-read-file = ファイルを読み込めません：{ $error }
 # The file cannot be rewound, so it cannot be identified and then read.
-quickview-error-not-seekable = このファイルはシークできません
+peek-error-not-seekable = このファイルはシークできません
 # The worker refused to parse the file because it could not confine itself
 # first. Parsing an untrusted file uncontained is not something Otto does.
-quickview-error-sandbox = プレビューアをサンドボックスに入れられません：{ $error }
+peek-error-sandbox = プレビューアをサンドボックスに入れられません：{ $error }
 
 # Image previewer.
-quickview-error-read-image = イメージを読み込めません：{ $error }
+peek-error-read-image = イメージを読み込めません：{ $error }
 # The bytes are an image format this build has no decoder for.
-quickview-error-image-unsupported = このビルドではデコードできないイメージです
-quickview-error-image-no-size = イメージがサイズを報告しません
-quickview-error-image-decode = イメージをデコードできませんでした：{ $error }
-quickview-error-image-readback = デコードしたイメージを読み戻せませんでした
+peek-error-image-unsupported = このビルドではデコードできないイメージです
+peek-error-image-no-size = イメージがサイズを報告しません
+peek-error-image-decode = イメージをデコードできませんでした：{ $error }
+peek-error-image-readback = デコードしたイメージを読み戻せませんでした
 
 # SVG previewer. "the drawing" means the SVG, as distinct from a photograph.
-quickview-error-read-drawing = ベクター画像を読み込めません：{ $error }
-quickview-error-drawing-parse = ベクター画像を解析できませんでした
-quickview-error-drawing-surface = 描画先のサーフェスがありません
-quickview-error-drawing-readback = ベクター画像を読み戻せませんでした
+peek-error-read-drawing = ベクター画像を読み込めません：{ $error }
+peek-error-drawing-parse = ベクター画像を解析できませんでした
+peek-error-drawing-surface = 描画先のサーフェスがありません
+peek-error-drawing-readback = ベクター画像を読み戻せませんでした
 
 # Text previewer: the bytes are not text in UTF-8 or in Latin-1.
-quickview-error-not-text = このファイルはOttoが読めるどの符号化のテキストでもありません
+peek-error-not-text = このファイルはOttoが読めるどの符号化のテキストでもありません
 
 # PDF previewer.
-quickview-error-read-document = 書類を読み込めません：{ $error }
-quickview-error-page-readback = レンダリングしたページを読み取れませんでした
+peek-error-read-document = 書類を読み込めません：{ $error }
+peek-error-page-readback = レンダリングしたページを読み取れませんでした
 
 # Folder listing.
-quickview-error-read-folder = フォルダを読み込めません
+peek-error-read-folder = フォルダを読み込めません
 
 ## The worker process itself failed. "the previewer" is the separate program
 ## that parses the file; a person never sees it by name anywhere else, so
 ## describing it as "the previewer" rather than naming it is deliberate.
 
-quickview-error-previewer-missing = プレビューアが見つかりません：{ $error }
-quickview-error-previewer-start = プレビューアを起動できません：{ $error }
-quickview-error-previewer-no-output = プレビューアは何も出力しませんでした
-quickview-error-previewer-unreadable = プレビューアが読み取れないものを出力しました
-quickview-error-previewer-failed = プレビューアが止まりました：{ $error }
+peek-error-previewer-missing = プレビューアが見つかりません：{ $error }
+peek-error-previewer-start = プレビューアを起動できません：{ $error }
+peek-error-previewer-no-output = プレビューアは何も出力しませんでした
+peek-error-previewer-unreadable = プレビューアが読み取れないものを出力しました
+peek-error-previewer-failed = プレビューアが止まりました：{ $error }
 # The worker was still going after the deadline and was killed.
-quickview-error-timeout = このファイルはプレビューに時間がかかりすぎました
+peek-error-timeout = このファイルはプレビューに時間がかかりすぎました
 
 ## Islands
 ##

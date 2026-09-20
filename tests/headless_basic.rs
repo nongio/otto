@@ -1036,7 +1036,7 @@ mod headless_tests {
         handle.stop();
     }
 
-    /// A subsurface drawn past its window — Files' Quick View, centred on the
+    /// A subsurface drawn past its window — Files' Peek, centred on the
     /// display — is composited into the windows plane, so the window it hangs
     /// over must not be promoted: its plane would cover the panel.
     #[test]

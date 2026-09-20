@@ -13,10 +13,13 @@
 
 use std::io::{self, Write};
 
-pub use otto_kit::preview::{Fact, Pixels, Preview as PreviewPayload, Row};
+pub use otto_kit::preview::{
+    document::{Block, Span, SpanStyle},
+    Fact, Pixels, Preview as PreviewPayload, Row, Word,
+};
 
 /// Wire magic. Bumped if the encoding below ever changes shape.
-const MAGIC: &[u8; 4] = b"OQV3";
+const MAGIC: &[u8; 4] = b"OQV4";
 
 /// Ceiling on any single length field. A corrupt worker must not be able to
 /// make the parent allocate a gigabyte because a length byte flipped.
@@ -26,6 +29,15 @@ const MAX_LEN: u32 = 512 * 1024 * 1024;
 /// allocated for. Well past what any animation a preview would play has, and
 /// far short of what a flipped length byte could ask for.
 pub const MAX_FRAMES: u32 = 4096;
+
+/// The most words a picture may carry over the wire. The recogniser keeps
+/// the most confident ones under the same bound, so a payload that exceeds
+/// it did not come from the recogniser.
+pub const MAX_WORDS: usize = 4096;
+
+/// The longest a single word's text may be. A recognised word is a token,
+/// not a line; anything longer is a corrupt length, not a word.
+const MAX_WORD_TEXT: usize = 256;
 
 /// Nothing could be shown, and why.
 pub fn unavailable(reason: impl Into<String>) -> PreviewPayload {
@@ -124,7 +136,13 @@ fn put_strs(out: &mut Vec<u8>, values: &[String]) {
     }
 }
 
-fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
+/// Everything about a picture except the picture: the dimensions, the frame
+/// delays and the length of the buffer that follows.
+///
+/// Split out from the buffer itself because an animation's buffer is the
+/// largest thing this process will ever hold, and the worker writes it to the
+/// pipe rather than into a second copy of it — see [`write_to`].
+fn put_pixels_header(out: &mut Vec<u8>, pixels: &Pixels) {
     put_u32(out, pixels.width);
     put_u32(out, pixels.height);
     put_u32(out, pixels.intrinsic_width);
@@ -134,7 +152,79 @@ fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
         put_u32(out, *delay);
     }
     put_u32(out, pixels.data.len() as u32);
+}
+
+fn put_pixels(out: &mut Vec<u8>, pixels: &Pixels) {
+    put_pixels_header(out, pixels);
+    // Exactly, not by doubling: a buffer this size is what the worker's
+    // address-space limit is there to catch, and growing into twice it is how
+    // a perfectly affordable animation would fail to be carried at all.
+    out.reserve_exact(pixels.data.len());
     out.extend_from_slice(&pixels.data);
+    put_words(out, &pixels.words);
+}
+
+/// The words on a picture, after its pixels. Written for every picture,
+/// empty or not, so the reader never has to guess whether a list follows.
+fn put_words(out: &mut Vec<u8>, words: &[Word]) {
+    put_u32(out, words.len() as u32);
+    for word in words {
+        put_str(out, &word.text);
+        put_u32(out, word.left);
+        put_u32(out, word.top);
+        put_u32(out, word.width);
+        put_u32(out, word.height);
+        out.push(word.confidence);
+        put_u32(out, word.block);
+        put_u32(out, word.paragraph);
+        put_u32(out, word.line);
+    }
+}
+
+fn put_spans(out: &mut Vec<u8>, spans: &[Span]) {
+    put_u32(out, spans.len() as u32);
+    for span in spans {
+        put_str(out, &span.text);
+        out.push(span.style.to_bits());
+        // Where a link goes, as a string that is empty when it goes nowhere.
+        // Always written, even for text that is not a link: a field that is
+        // there or not depending on a flag is how a reader and a writer come
+        // to disagree.
+        put_str(out, span.href.as_deref().unwrap_or(""));
+    }
+}
+
+fn put_block(out: &mut Vec<u8>, block: &Block) {
+    match block {
+        Block::Heading { level, spans } => {
+            out.push(1);
+            out.push(*level);
+            put_spans(out, spans);
+        }
+        Block::Paragraph { spans } => {
+            out.push(2);
+            put_spans(out, spans);
+        }
+        Block::Item {
+            indent,
+            marker,
+            spans,
+        } => {
+            out.push(3);
+            out.push(*indent);
+            put_str(out, marker);
+            put_spans(out, spans);
+        }
+        Block::Quote { spans } => {
+            out.push(4);
+            put_spans(out, spans);
+        }
+        Block::Code { lines } => {
+            out.push(5);
+            put_strs(out, lines);
+        }
+        Block::Rule => out.push(6),
+    }
 }
 
 pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
@@ -163,6 +253,14 @@ pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
             }
             out.push(*truncated as u8);
             put_str(&mut out, language);
+        }
+        PreviewPayload::Document { blocks, truncated } => {
+            out.push(6);
+            put_u32(&mut out, blocks.len() as u32);
+            for block in blocks {
+                put_block(&mut out, block);
+            }
+            out.push(*truncated as u8);
         }
         PreviewPayload::Rows {
             rows,
@@ -214,13 +312,65 @@ pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
     out
 }
 
+/// Write a payload to the pipe the parent is reading.
+///
+/// A picture goes out in three writes — header, buffer, trailer — rather than
+/// through [`encode`], so the frames of an animation are never held twice.
+/// Everything else is small enough that one buffer is simpler than three.
 pub fn write_to(payload: &PreviewPayload, sink: &mut impl Write) -> io::Result<()> {
-    sink.write_all(&encode(payload))
+    let PreviewPayload::Pixels {
+        pixels,
+        pages,
+        page,
+    } = payload
+    else {
+        return sink.write_all(&encode(payload));
+    };
+
+    let mut head = Vec::with_capacity(256 + pixels.frame_delays.len() * 4);
+    head.extend_from_slice(MAGIC);
+    head.push(1);
+    put_pixels_header(&mut head, pixels);
+    let mut tail = Vec::with_capacity(8);
+    // The words go after the buffer, as `put_pixels` writes them, so the two
+    // writers stay one format.
+    put_words(&mut tail, &pixels.words);
+    put_u32(&mut tail, *pages);
+    put_u32(&mut tail, *page);
+
+    sink.write_all(&head)?;
+    sink.write_all(&pixels.data)?;
+    sink.write_all(&tail)
 }
 
 // ---------------------------------------------------------------------------
 // Decoding
 // ---------------------------------------------------------------------------
+
+/// A picture without its pixels, which is what parsing produces before the
+/// buffer is either copied out or taken over.
+struct PixelsHeader {
+    width: u32,
+    height: u32,
+    intrinsic_width: u32,
+    intrinsic_height: u32,
+    frame_delays: Vec<u32>,
+    words: Vec<Word>,
+}
+
+impl PixelsHeader {
+    fn with_data(self, data: Vec<u8>) -> Pixels {
+        Pixels {
+            width: self.width,
+            height: self.height,
+            intrinsic_width: self.intrinsic_width,
+            intrinsic_height: self.intrinsic_height,
+            data,
+            frame_delays: self.frame_delays,
+            words: self.words,
+        }
+    }
+}
 
 /// A cursor that refuses to read past the end rather than panicking. The input
 /// is the output of a process that may have been killed mid-write.
@@ -272,7 +422,50 @@ impl<'a> Cursor<'a> {
         Some(values)
     }
 
-    fn pixels(&mut self) -> Option<Pixels> {
+    fn spans(&mut self) -> Option<Vec<Span>> {
+        let count = self.len()?;
+        let mut spans = Vec::with_capacity(count.min(64));
+        for _ in 0..count {
+            let text = self.string()?;
+            let style = SpanStyle::from_bits(self.u8()?);
+            let href = self.string()?;
+            spans.push(Span {
+                text,
+                style,
+                href: (!href.is_empty()).then(|| href.into()),
+            });
+        }
+        Some(spans)
+    }
+
+    fn block(&mut self) -> Option<Block> {
+        match self.u8()? {
+            1 => Some(Block::Heading {
+                level: self.u8()?,
+                spans: self.spans()?,
+            }),
+            2 => Some(Block::Paragraph {
+                spans: self.spans()?,
+            }),
+            3 => Some(Block::Item {
+                indent: self.u8()?,
+                marker: self.string()?,
+                spans: self.spans()?,
+            }),
+            4 => Some(Block::Quote {
+                spans: self.spans()?,
+            }),
+            5 => Some(Block::Code {
+                lines: self.strings()?,
+            }),
+            6 => Some(Block::Rule),
+            _ => None,
+        }
+    }
+
+    /// A picture's dimensions and delays, and where in the input its buffer
+    /// lies. The cursor is left past the buffer, on whatever follows it.
+    fn pixels_header(&mut self) -> Option<(PixelsHeader, std::ops::Range<usize>)> {
         let width = self.u32()?;
         let height = self.u32()?;
         let intrinsic_width = self.u32()?;
@@ -296,15 +489,85 @@ impl<'a> Cursor<'a> {
         if count != expected {
             return None;
         }
-        Some(Pixels {
-            width,
-            height,
-            intrinsic_width,
-            intrinsic_height,
-            data: self.take(count)?.to_vec(),
-            frame_delays,
-        })
+        let start = self.at;
+        self.take(count)?;
+        // The words follow the buffer, so the cursor is left on whatever
+        // comes after them — the page numbers, for a picture payload.
+        let words = self.words()?;
+        Some((
+            PixelsHeader {
+                width,
+                height,
+                intrinsic_width,
+                intrinsic_height,
+                frame_delays,
+                words,
+            },
+            start..start + count,
+        ))
     }
+
+    fn words(&mut self) -> Option<Vec<Word>> {
+        let count = self.len()?;
+        if count > MAX_WORDS {
+            return None;
+        }
+        let mut words = Vec::with_capacity(count);
+        for _ in 0..count {
+            let text = self.string()?;
+            if text.len() > MAX_WORD_TEXT {
+                return None;
+            }
+            words.push(Word {
+                text,
+                left: self.u32()?,
+                top: self.u32()?,
+                width: self.u32()?,
+                height: self.u32()?,
+                confidence: self.u8()?,
+                block: self.u32()?,
+                paragraph: self.u32()?,
+                line: self.u32()?,
+            });
+        }
+        Some(words)
+    }
+
+    fn pixels(&mut self) -> Option<Pixels> {
+        let (header, blob) = self.pixels_header()?;
+        let data = self.bytes.get(blob)?.to_vec();
+        Some(header.with_data(data))
+    }
+}
+
+/// Parse a payload the caller owns, taking the picture's buffer out of it
+/// rather than copying it.
+///
+/// The frames of an animation are hundreds of megabytes, and the parent has
+/// just read them off the pipe: copying them into the payload would hold them
+/// twice for no reason. Everything else defers to [`decode`], whose copies
+/// are of strings.
+pub fn decode_owned(mut bytes: Vec<u8>) -> Option<PreviewPayload> {
+    let mut cursor = Cursor {
+        bytes: &bytes,
+        at: 0,
+    };
+    if cursor.take(4)? != MAGIC || cursor.u8()? != 1 {
+        return decode(&bytes);
+    }
+    let (header, blob) = cursor.pixels_header()?;
+    let pages = cursor.u32()?;
+    let page = cursor.u32()?;
+
+    // Safe after the header: the words are parsed into strings of their own,
+    // so nothing past the buffer is still being pointed at.
+    bytes.truncate(blob.end);
+    let data = bytes.split_off(blob.start);
+    Some(PreviewPayload::Pixels {
+        pixels: header.with_data(data),
+        pages,
+        page,
+    })
 }
 
 /// Parse a payload. `None` means the worker produced something malformed,
@@ -376,6 +639,17 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
                 icon: cursor.strings()?,
             })
         }
+        6 => {
+            let count = cursor.len()?;
+            let mut blocks = Vec::with_capacity(count.min(4096));
+            for _ in 0..count {
+                blocks.push(cursor.block()?);
+            }
+            Some(PreviewPayload::Document {
+                blocks,
+                truncated: cursor.u8()? != 0,
+            })
+        }
         5 => {
             let reason = cursor.string()?;
             Some(PreviewPayload::Unavailable {
@@ -391,6 +665,58 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
 mod tests {
     use super::*;
 
+    /// The pipe the worker writes and the buffer the parent takes over are
+    /// two different code paths to the same payload, and an animation only
+    /// ever travels the second one.
+    #[test]
+    fn an_animation_survives_the_pipe_without_being_copied() {
+        let payload = PreviewPayload::Pixels {
+            pixels: Pixels {
+                width: 2,
+                height: 3,
+                intrinsic_width: 8,
+                intrinsic_height: 12,
+                data: (0..2 * 3 * 4 * 5).map(|byte| byte as u8).collect(),
+                frame_delays: vec![40, 40, 60, 60, 100],
+                // Written after the buffer, so they are what the taken-over
+                // path would lose if it read them off the truncated bytes.
+                words: vec![Word {
+                    text: "Otto".into(),
+                    left: 1,
+                    top: 2,
+                    width: 3,
+                    height: 4,
+                    confidence: 80,
+                    block: 1,
+                    paragraph: 1,
+                    line: 1,
+                }],
+            },
+            pages: 1,
+            page: 1,
+        };
+        let mut wire = Vec::new();
+        write_to(&payload, &mut wire).expect("written");
+        assert_eq!(wire, encode(&payload), "the pipe writes what `encode` does");
+
+        let borrowed = decode(&wire).expect("parsed");
+        let owned = decode_owned(wire).expect("parsed");
+        let (
+            PreviewPayload::Pixels {
+                pixels: from_pipe, ..
+            },
+            PreviewPayload::Pixels { pixels: taken, .. },
+        ) = (&borrowed, &owned)
+        else {
+            panic!("pixels expected");
+        };
+        assert_eq!(taken.data, from_pipe.data);
+        assert_eq!(taken.frame_delays, from_pipe.frame_delays);
+        assert_eq!((taken.width, taken.height), (2, 3));
+        assert_eq!((taken.intrinsic_width, taken.intrinsic_height), (8, 12));
+        assert_eq!(taken.words, from_pipe.words);
+    }
+
     #[test]
     fn round_trips_every_variant() {
         let pixels = Pixels {
@@ -400,6 +726,7 @@ mod tests {
             intrinsic_height: 8,
             data: vec![0xAB; 16],
             frame_delays: Vec::new(),
+            words: Vec::new(),
         };
         let animation = Pixels {
             width: 2,
@@ -408,6 +735,34 @@ mod tests {
             intrinsic_height: 2,
             data: vec![0xCD; 48],
             frame_delays: vec![40, 40, 200],
+            words: Vec::new(),
+        };
+        let with_words = Pixels {
+            words: vec![
+                Word {
+                    text: "Hello".into(),
+                    left: 21,
+                    top: 41,
+                    width: 54,
+                    height: 19,
+                    confidence: 89,
+                    block: 1,
+                    paragraph: 1,
+                    line: 1,
+                },
+                Word {
+                    text: "Otto".into(),
+                    left: 82,
+                    top: 44,
+                    width: 45,
+                    height: 16,
+                    confidence: 92,
+                    block: 1,
+                    paragraph: 1,
+                    line: 2,
+                },
+            ],
+            ..pixels.clone()
         };
         let cases = vec![
             PreviewPayload::Pixels {
@@ -417,6 +772,11 @@ mod tests {
             },
             PreviewPayload::Pixels {
                 pixels: animation,
+                pages: 1,
+                page: 1,
+            },
+            PreviewPayload::Pixels {
+                pixels: with_words,
                 pages: 1,
                 page: 1,
             },
@@ -445,6 +805,25 @@ mod tests {
                 }],
                 hero: Some(pixels),
                 icon: vec!["audio-mpeg".into(), "audio-x-generic".into()],
+            },
+            PreviewPayload::Document {
+                blocks: vec![
+                    Block::Heading {
+                        level: 2,
+                        spans: vec![Span::plain("Notes")],
+                    },
+                    // A link's destination has to survive the worker: it is
+                    // the one thing in a document the host can act on, and it
+                    // is read in a process that cannot act on anything.
+                    Block::Paragraph {
+                        spans: vec![
+                            Span::plain("see "),
+                            Span::link("the spec", "https://example.com/a"),
+                        ],
+                    },
+                    Block::Rule,
+                ],
+                truncated: false,
             },
             unavailable("no decoder"),
             with_icon(unavailable("no decoder"), vec!["video-x-generic".into()]),
@@ -488,6 +867,48 @@ mod tests {
             assert!(decode(&good[..cut]).is_none());
         }
         assert!(decode(b"XXXX\x01").is_none());
+
+        // The same for a picture with words: a list cut off mid-word is not
+        // a shorter list, it is no payload.
+        let with_words = PreviewPayload::Pixels {
+            pixels: Pixels {
+                width: 1,
+                height: 1,
+                intrinsic_width: 1,
+                intrinsic_height: 1,
+                data: vec![0; 4],
+                frame_delays: Vec::new(),
+                words: vec![Word {
+                    text: "x".into(),
+                    left: 0,
+                    top: 0,
+                    width: 1,
+                    height: 1,
+                    confidence: 70,
+                    block: 1,
+                    paragraph: 1,
+                    line: 1,
+                }],
+            },
+            pages: 1,
+            page: 1,
+        };
+        let good = encode(&with_words);
+        for cut in 0..good.len() {
+            assert!(decode(&good[..cut]).is_none());
+        }
+
+        // A word count past the bound is refused before anything is
+        // allocated for it.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.push(1);
+        for value in [1u32, 1, 1, 1, 4] {
+            put_u32(&mut bytes, value);
+        }
+        bytes.extend_from_slice(&[0; 4]);
+        put_u32(&mut bytes, MAX_WORDS as u32 + 1);
+        assert!(decode(&bytes).is_none());
     }
 
     #[test]
@@ -503,6 +924,7 @@ mod tests {
             put_u32(&mut bytes, value);
         }
         bytes.extend_from_slice(&[0; 8]);
+        put_u32(&mut bytes, 0);
         put_u32(&mut bytes, 1);
         put_u32(&mut bytes, 1);
         assert!(decode(&bytes).is_none());

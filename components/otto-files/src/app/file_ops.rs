@@ -544,7 +544,7 @@ impl Browser {
     ///
     /// Shared by every operation that takes rows out of the listing — a
     /// trash, a Put Back, a permanent delete — so all three leave the cursor
-    /// in the same place and carry Quick View along in the same way.
+    /// in the same place and carry Peek along in the same way.
     pub(super) fn hand_selection_to(&mut self, successor: Option<String>) {
         let depth = self.active.min(self.columns.len().saturating_sub(1));
         let column = &mut self.columns[depth];
@@ -599,10 +599,10 @@ impl Browser {
         if depth >= self.columns.len() {
             return;
         }
-        // Quick View is anchored to the cursor, and the cursor is about to
+        // Peek is anchored to the cursor, and the cursor is about to
         // move off a file that no longer exists. Whichever way this lands —
         // on the survivor, or on nothing at all — the panel has to be told.
-        self.quickview_follow = self.quickview.is_some();
+        self.peek_follow = self.peek.is_some();
 
         let index = key.as_deref().and_then(|key| {
             self.visible(depth)

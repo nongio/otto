@@ -1,12 +1,12 @@
-//! otto-quickview — the previewer's binary.
+//! otto-peek — the previewer's binary.
 //!
 //! The preview itself is a *library* the file views embed
-//! ([`otto_quickview`]); this binary exists for the cases that have no host:
+//! ([`otto_peek`]); this binary exists for the cases that have no host:
 //!
 //! * `--decode-worker` — the sandboxed decoder, re-executed per preview with
 //!   one file on descriptor 3 and a payload on stdout. Never run by hand, and
 //!   the reason every embedding host must call
-//!   [`otto_quickview::run_worker_if_requested`] first thing in `main`;
+//!   [`otto_peek::run_worker_if_requested`] first thing in `main`;
 //! * `--describe` — decode one file and print what the previewer made of it,
 //!   which exercises the decoders with no display attached;
 //! * `--render OUT.png` — draw a preview through the same
@@ -15,15 +15,15 @@
 //! * `--filmstrip OUT.png` — the entrance, sampled.
 //!
 //! Why the preview is embedded rather than a service of its own is in
-//! `specs/quickview.md`.
+//! `specs/peek.md`.
 
 mod render;
 
 use std::path::PathBuf;
 
-use otto_quickview::decode::Request;
-use otto_quickview::payload::PreviewPayload;
-use otto_quickview::{opening, sandbox, spawn};
+use otto_peek::decode::Request;
+use otto_peek::payload::PreviewPayload;
+use otto_peek::{opening, sandbox, spawn};
 
 #[tokio::main]
 async fn main() {
@@ -76,7 +76,7 @@ async fn main() {
     }
     // The same entry point every embedding host calls, so the worker path is
     // identical whether it was re-executed from here or from a file browser.
-    otto_quickview::run_worker_if_requested();
+    otto_peek::run_worker_if_requested();
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -126,17 +126,21 @@ async fn main() {
             "--height" => {
                 request.height = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1200);
             }
+            "--still" => request.animate = false,
+            "--oversample" => {
+                request.oversample = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+            }
             "--index" => {
                 index = rest.next().and_then(|v| v.parse().ok()).unwrap_or(0);
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: otto-quickview [--describe] [--render OUT.png] [--dark] [--index N] [--page N] [--zoom F] [--width W] [--height H] PATH..."
+                    "usage: otto-peek [--describe] [--render OUT.png] [--dark] [--index N] [--page N] [--zoom F] [--width W] [--height H] [--oversample F] [--still] PATH..."
                 );
                 return;
             }
             other if other.starts_with('-') => {
-                eprintln!("otto-quickview: unknown option {other}");
+                eprintln!("otto-peek: unknown option {other}");
                 std::process::exit(2);
             }
             other => paths.push(PathBuf::from(other)),
@@ -144,10 +148,8 @@ async fn main() {
     }
 
     if paths.is_empty() {
-        eprintln!("otto-quickview: nothing to preview");
-        eprintln!(
-            "usage: otto-quickview [--describe|--render OUT.png|--filmstrip OUT.png] PATH..."
-        );
+        eprintln!("otto-peek: nothing to preview");
+        eprintln!("usage: otto-peek [--describe|--render OUT.png|--filmstrip OUT.png] PATH...");
         std::process::exit(2);
     }
     let selected = paths
@@ -174,7 +176,7 @@ async fn main() {
                 let _ = std::fs::write(&out, png);
                 println!("{out}");
             }
-            None => eprintln!("otto-quickview: could not render the filmstrip"),
+            None => eprintln!("otto-peek: could not render the filmstrip"),
         }
         return;
     }
@@ -196,12 +198,12 @@ async fn main() {
             Some(png) => match std::fs::write(&out, png) {
                 Ok(()) => println!("{out}"),
                 Err(err) => {
-                    eprintln!("otto-quickview: cannot write {out}: {err}");
+                    eprintln!("otto-peek: cannot write {out}: {err}");
                     std::process::exit(1);
                 }
             },
             None => {
-                eprintln!("otto-quickview: could not render the preview");
+                eprintln!("otto-peek: could not render the preview");
                 std::process::exit(1);
             }
         }
@@ -209,6 +211,35 @@ async fn main() {
     }
 
     print_payload(&selected, &payload);
+}
+
+/// One document block, as `--describe` shows it: its kind, and enough of its
+/// text to recognise it by.
+fn describe_block(block: &otto_kit::preview::Block) -> (&'static str, String) {
+    use otto_kit::preview::Block;
+
+    let joined = |spans: &[otto_kit::preview::Span]| {
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>()
+    };
+    match block {
+        Block::Heading { level, spans } => (
+            match level {
+                1 => "h1",
+                2 => "h2",
+                3 => "h3",
+                _ => "h4",
+            },
+            joined(spans),
+        ),
+        Block::Paragraph { spans } => ("para", joined(spans)),
+        Block::Item { marker, spans, .. } => ("item", format!("{marker} {}", joined(spans))),
+        Block::Quote { spans } => ("quote", joined(spans)),
+        Block::Code { lines } => ("code", format!("{} lines", lines.len())),
+        Block::Rule => ("rule", String::new()),
+    }
 }
 
 /// Render a payload as text. This is what `--describe` prints, and it is the
@@ -259,6 +290,20 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
                 println!("    │ {line}");
             }
             if lines.len() > 5 {
+                println!("    │ …");
+            }
+        }
+        PreviewPayload::Document { blocks, truncated } => {
+            println!(
+                "  document  {} blocks{}",
+                blocks.len(),
+                if *truncated { ", truncated" } else { "" }
+            );
+            for block in blocks.iter().take(8) {
+                let (kind, text) = describe_block(block);
+                println!("    │ {kind:<9} {text}");
+            }
+            if blocks.len() > 8 {
                 println!("    │ …");
             }
         }

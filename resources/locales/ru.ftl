@@ -445,6 +445,16 @@ files-folder-open-failed = Не удалось открыть эту папку:
 
 files-info-where = Расположение
 files-info-kind = Тип
+files-info-text = Текст
+files-info-text-reading = Распознаётся…
+files-info-text-words =
+    { $count ->
+        [one] { $count } слово
+        [few] { $count } слова
+       *[many] { $count } слов
+    }
+files-info-text-none = Текста нет
+files-info-text-unread = Ещё не распознан
 files-info-modified = Изменено
 files-info-created = Создано
 files-info-accessed = Открыто
@@ -590,6 +600,8 @@ files-command-show-hidden = Показать скрытые файлы
 files-command-hide-hidden = Скрыть скрытые файлы
 files-command-quick-look = Быстрый просмотр
 files-command-search = Поиск
+files-command-recognise-text = Распознать текст
+files-recognise-no-pictures = Здесь нечего распознавать
 
 # The non-editable prefix the palette's field wears while an argument is being
 # typed. A colon and a space are added after it.
@@ -1286,42 +1298,42 @@ lock-power-shutdown-failed = Не удалось выключить: { $error }
 ## mid-sentence on purpose: they read as a continuation of "no preview".
 
 
-## Quick View — card labels
+## Peek — card labels
 ##
 ## Fact keys: the left-hand column of a card's detail list. One or two words,
 ## drawn in a narrow column — keep them short. Title case in English.
 
 # Column heading for the file's type, e.g. "JPEG", "PDF". Max ~12 characters.
-quickview-fact-kind = Тип
+peek-fact-kind = Тип
 # Column heading for the file's size on disk. Max ~12 characters.
-quickview-fact-size = Размер
+peek-fact-size = Размер
 # Column heading for an image's or a video's pixel dimensions. Max ~12 characters.
-quickview-fact-dimensions = Размеры
+peek-fact-dimensions = Размеры
 # Column heading for a video's or an audio track's running time. Max ~12 characters.
-quickview-fact-duration = Длительность
+peek-fact-duration = Длительность
 # Column heading for an image's total pixel count, in megapixels. Max ~12 characters.
-quickview-fact-pixels = Пиксели
+peek-fact-pixels = Пиксели
 # Column heading for a PDF's page count. Max ~12 characters.
-quickview-fact-pages = Страницы
+peek-fact-pages = Страницы
 # Column heading for a PDF's document title, taken from the document itself.
 # Max ~12 characters.
-quickview-fact-title = Название
+peek-fact-title = Название
 # Column heading for a song's performer, from its ID3 tags. Max ~12 characters.
-quickview-fact-artist = Исполнитель
+peek-fact-artist = Исполнитель
 # Column heading for a song's album, from its ID3 tags. Max ~12 characters.
-quickview-fact-album = Альбом
+peek-fact-album = Альбом
 # Column heading for a song's year of release, from its ID3 tags. Max ~12 characters.
-quickview-fact-year = Год
+peek-fact-year = Год
 
 # Subtitle of the card for a file that is zero bytes long. Shown under the
 # file's name in place of its type.
-quickview-empty-file = Пустой файл
+peek-empty-file = Пустой файл
 # Subtitle for an image with too many pixels to decode safely. Its real
 # dimensions are still listed below it.
-quickview-image-too-large = Слишком большое для просмотра
+peek-image-too-large = Слишком большое для просмотра
 # The value beside "Pixels" on that card. $count is a whole number of
 # megapixels.
-quickview-megapixels =
+peek-megapixels =
     { $count ->
         [one] { $count } мегапиксель
         [few] { $count } мегапикселя
@@ -1331,19 +1343,23 @@ quickview-megapixels =
 # Subtitle for a PDF when no page rasteriser is installed. $packages is a
 # comma-separated list of package names — pdftoppm's package and so on — and
 # is not translated. Wraps to two lines if it has to.
-quickview-pdf-install-rasteriser = Чтобы увидеть страницы, установите один из пакетов: { $packages }
+peek-pdf-install-rasteriser = Чтобы увидеть страницы, установите один из пакетов: { $packages }
+# Which page of a PDF the panel is showing, in the corner of its title strip.
+# $page and $pages are whole numbers. Very little room — keep it to a few
+# characters, and drop the word for "page" if the language can.
+peek-page-of = { $page } / { $pages }
 
 
-## Quick View — listings
+## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
 ## summary line under it.
 
 # Summary line for a folder with nothing in it.
-quickview-empty-folder = Пустая папка
+peek-empty-folder = Пустая папка
 # Summary line for a folder or archive: how many entries it holds. Hidden
 # entries are counted.
-quickview-item-count =
+peek-item-count =
     { $count ->
         [one] { $count } элемент
         [few] { $count } элемента
@@ -1351,30 +1367,30 @@ quickview-item-count =
        *[other] { $count } элемента
     }
 # Summary line for an archive, joining the entry count to the archive's own
-# size on disk. $items is quickview-item-count, $size is a formatted byte
+# size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
-quickview-archive-summary = { $items } — { $size }
+peek-archive-summary = { $items } — { $size }
 
 
-## Quick View — sizes
+## Peek — sizes
 ##
-## Byte units. Quick View counts in powers of 1024, so the symbols are the
+## Byte units. Peek counts in powers of 1024, so the symbols are the
 ## conventional binary-rounded ones. Translate only the spelled-out "bytes".
 
-quickview-size-bytes =
+peek-size-bytes =
     { $count ->
         [one] { $count } байт
         [few] { $count } байта
         [many] { $count } байт
        *[other] { $count } байта
     }
-quickview-size-kb = { $value } КБ
-quickview-size-mb = { $value } МБ
-quickview-size-gb = { $value } ГБ
-quickview-size-tb = { $value } ТБ
+peek-size-kb = { $value } КБ
+peek-size-mb = { $value } МБ
+peek-size-gb = { $value } ГБ
+peek-size-tb = { $value } ТБ
 
 
-## Quick View — nothing to show
+## Peek — nothing to show
 ##
 ## Each of these fills the card in place of a preview, so a person reads it
 ## instead of seeing the file. They state what happened and stop. Lower case,
@@ -1384,52 +1400,52 @@ quickview-size-tb = { $value } ТБ
 ## the system libraries produce and is usually English. Keep it at the end.
 
 # The file is a pipe, socket or device — opening it could block forever.
-quickview-error-not-previewable = этот файл нельзя просмотреть
+peek-error-not-previewable = этот файл нельзя просмотреть
 # The file's metadata could not be read.
-quickview-error-stat-file = не удалось получить сведения о файле: { $error }
+peek-error-stat-file = не удалось получить сведения о файле: { $error }
 # The file's bytes could not be read. Also used by the text previewer.
-quickview-error-read-file = не удалось прочитать файл: { $error }
+peek-error-read-file = не удалось прочитать файл: { $error }
 # The file cannot be rewound, so it cannot be identified and then read.
-quickview-error-not-seekable = в файле невозможно перемещение
+peek-error-not-seekable = в файле невозможно перемещение
 # The worker refused to parse the file because it could not confine itself
 # first. Parsing an untrusted file uncontained is not something Otto does.
-quickview-error-sandbox = не удалось изолировать программу просмотра: { $error }
+peek-error-sandbox = не удалось изолировать программу просмотра: { $error }
 
 # Image previewer.
-quickview-error-read-image = не удалось прочитать изображение: { $error }
+peek-error-read-image = не удалось прочитать изображение: { $error }
 # The bytes are an image format this build has no decoder for.
-quickview-error-image-unsupported = эта сборка не поддерживает такой формат изображения
-quickview-error-image-no-size = изображение не сообщает свой размер
-quickview-error-image-decode = изображение не декодировано: { $error }
-quickview-error-image-readback = не удалось прочитать декодированное изображение
+peek-error-image-unsupported = эта сборка не поддерживает такой формат изображения
+peek-error-image-no-size = изображение не сообщает свой размер
+peek-error-image-decode = изображение не декодировано: { $error }
+peek-error-image-readback = не удалось прочитать декодированное изображение
 
 # SVG previewer. "the drawing" means the SVG, as distinct from a photograph.
-quickview-error-read-drawing = не удалось прочитать рисунок: { $error }
-quickview-error-drawing-parse = не удалось разобрать рисунок
-quickview-error-drawing-surface = нет поверхности для его отрисовки
-quickview-error-drawing-readback = не удалось прочитать готовый рисунок
+peek-error-read-drawing = не удалось прочитать рисунок: { $error }
+peek-error-drawing-parse = не удалось разобрать рисунок
+peek-error-drawing-surface = нет поверхности для его отрисовки
+peek-error-drawing-readback = не удалось прочитать готовый рисунок
 
 # Text previewer: the bytes are not text in UTF-8 or in Latin-1.
-quickview-error-not-text = это не текст ни в одной из читаемых кодировок
+peek-error-not-text = это не текст ни в одной из читаемых кодировок
 
 # PDF previewer.
-quickview-error-read-document = не удалось прочитать документ: { $error }
-quickview-error-page-readback = не удалось прочитать отрисованную страницу
+peek-error-read-document = не удалось прочитать документ: { $error }
+peek-error-page-readback = не удалось прочитать отрисованную страницу
 
 # Folder listing.
-quickview-error-read-folder = не удалось прочитать папку
+peek-error-read-folder = не удалось прочитать папку
 
 ## The worker process itself failed. "the previewer" is the separate program
 ## that parses the file; a person never sees it by name anywhere else, so
 ## describing it as "the previewer" rather than naming it is deliberate.
 
-quickview-error-previewer-missing = не удалось найти программу просмотра: { $error }
-quickview-error-previewer-start = не удалось запустить программу просмотра: { $error }
-quickview-error-previewer-no-output = программа просмотра ничего не выдала
-quickview-error-previewer-unreadable = программа просмотра выдала неразборчивый результат
-quickview-error-previewer-failed = сбой программы просмотра: { $error }
+peek-error-previewer-missing = не удалось найти программу просмотра: { $error }
+peek-error-previewer-start = не удалось запустить программу просмотра: { $error }
+peek-error-previewer-no-output = программа просмотра ничего не выдала
+peek-error-previewer-unreadable = программа просмотра выдала неразборчивый результат
+peek-error-previewer-failed = сбой программы просмотра: { $error }
 # The worker was still going after the deadline and was killed.
-quickview-error-timeout = просмотр этого файла занял слишком много времени
+peek-error-timeout = просмотр этого файла занял слишком много времени
 
 ## Islands
 ##

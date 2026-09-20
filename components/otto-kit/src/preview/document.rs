@@ -8,7 +8,7 @@
 //! previewed document looking like the rest of Otto rather than like a web
 //! page. Anything a faithful renderer would need beyond this (tables that
 //! align, images, arbitrary HTML) is either flattened by the decoder or left
-//! out; see `specs/quickview.md`.
+//! out; see `specs/peek.md`.
 //!
 //! The split matches the rest of [`crate::preview`]: the decoder produces
 //! [`Block`]s in a sandboxed worker and never measures anything, and this

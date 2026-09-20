@@ -2,7 +2,7 @@
 
 **Status:** draft — nothing implemented
 **Wire contract:** `org.freedesktop.FileManager1`, defined inline below
-**Related specs:** [file-picker.md](./file-picker.md), [quickview.md](./quickview.md),
+**Related specs:** [file-picker.md](./file-picker.md), [peek.md](./peek.md),
 [launcher.md](./launcher.md), [context-menus.md](./context-menus.md),
 [settings-app.md](./settings-app.md)
 
@@ -18,7 +18,7 @@ window and one desktop entry of its own, out of the same binary. See *The Trash
 window*.
 
 This spec also owns the **shared foundations** that other components depend on:
-the thumbnail cache, file-type detection, and the quick-view invocation
+the thumbnail cache, file-type detection, and the Peek invocation
 contract. Those are defined here once, and consumed — not redefined — elsewhere.
 
 ## Goals
@@ -46,7 +46,7 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
 - Being a picker. The browser never returns a selection to another process, and
   has no accept/cancel action.
 - Decoding previews. Pressing space draws a panel, but the bytes are parsed by
-  quick view's sandboxed worker ([quickview.md](./quickview.md)); the browser
+  Peek's sandboxed worker ([peek.md](./peek.md)); the browser
   draws a validated payload and never interprets a file itself.
 - Network and virtual filesystems: `smb://`, `sftp://`, MTP, GVfs backends of any
   kind. The browser deals in local paths.
@@ -56,7 +56,9 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
   nothing about the user's files between runs. See Non-Goals in
   [launcher.md](./launcher.md) — the same reasoning applies. Consulting an
   index the desktop already keeps is a different thing and is in scope; see
-  *Recent and Find*.
+  *Recent and Find*. The one exception is text recognised in pictures the
+  person has looked at, kept in Otto's cache under the bounded terms of
+  [peek-ocr.md](./peek-ocr.md).
 - A scripting or plugin interface.
 - Being configurable by theme file. It follows the desktop's colour scheme and
   icon theme.
@@ -170,8 +172,11 @@ The defaults stand on their own and need no configuration: Recent, home, and
 whichever XDG user directories actually exist. A directory that is not there is
 not listed — a row leading nowhere is worse than its absence.
 
-`~/.config/otto/files.toml` adds the two things defaults cannot know: the
-folders this person works in, and which built-in rows they never touch.
+`~/.config/otto/files.toml` holds the browser's settings. Its `[sidebar]`
+section adds the two things defaults cannot know: the folders this person
+works in, and which built-in rows they never touch. Its `[peek]` section
+is text recognition's, and belongs to
+[peek-ocr.md](./peek-ocr.md).
 
 ```toml
 [sidebar]
@@ -498,7 +503,7 @@ that builds an ordinary directory listing. That is not duplicated work: an
 index is always a little behind the disk, so a listing built from what it
 remembers would name files that have been deleted and give the sizes they used
 to have. Statting every row is what makes a result an ordinary entry that the
-grid, the thumbnailer and Quick View can treat like any other.
+grid, the thumbnailer and Peek can treat like any other.
 
 The scope pills differ only in how much of the disk the index may answer from:
 *This folder* narrows the query to the current directory and everything under
@@ -517,7 +522,7 @@ every command that acts on the selection then acts on all three. A key rather
 than an index for the older reason: the listing is re-read, re-sorted and
 re-filtered under a live selection, and indices survive none of that.
 
-**Results and Recent act on files like anything else.** Quick View works in
+**Results and Recent act on files like anything else.** Peek works in
 both — they are where you go when you cannot quite name the file, and looking
 at it is how you tell which one it is — and so does opening one. Opening a
 *folder* found this way goes to it rather than descending inside it: there is
@@ -794,7 +799,7 @@ The browser adds:
 
 | Key | Effect |
 | --- | --- |
-| Space | quick view of the selection (see below) |
+| Space | Peek of the selection (see below) |
 | Return / F2 | rename the entry at the cursor, inline, with the extension unselected — in every view mode, icon view included |
 | Delete / Ctrl+Delete / Ctrl+Backspace | move the selection to trash — the modified forms because the chord people reach for is Cmd+Delete, and on a keyboard whose big key is Backspace that arrives as Ctrl+Backspace. Plain Backspace goes up a directory instead, and always has |
 | Shift+Delete | delete the selection permanently, after confirmation — **not built** in the browser; the chord is deliberately inert rather than trashing, which is the wrong answer to a keystroke that means "and I mean it". In the Trash window plain Delete already means this, and asks |
@@ -1070,14 +1075,14 @@ own.
 - **A close request for the panel closes the panel.** A secondary window's
   close is not the application's, and must not end the process.
 
-### Quick view
+### Peek
 
-Pressing space with a selection previews it. Quick view
-([quickview.md](./quickview.md)) is a **library the browser embeds**, not a
+Pressing space with a selection previews it. Peek
+([peek.md](./peek.md)) is a **library the browser embeds**, not a
 service it calls: the panel is drawn into the browser's own surface, and the
 decoding happens in a sandboxed worker process.
 
-**This replaces an earlier `org.otto.QuickView1` D-Bus contract**, which is
+**This replaces an earlier `org.otto.Peek1` D-Bus contract**, which is
 deleted. It is recorded here so nobody reconstructs it: a subsurface's parent
 must be a `wl_surface` owned by the same client, so "the preview is parented to
 the file view" and "the previewer is a separate process" cannot both be true.
@@ -1139,7 +1144,7 @@ What the browser does:
   other. Restoring the panel on the way back is deliberately not done: expose
   ends by focusing a window, which is a fresh start.
 
-Quick view **consumes** the thumbnail cache and the file-type detection defined
+Peek **consumes** the thumbnail cache and the file-type detection defined
 below, and may **produce** into the thumbnail cache under the same rules. It
 must not define a second cache, a second cache location, or a second
 type-detection path.
@@ -1181,7 +1186,7 @@ for free.
 
 ## Shared foundations
 
-These three are defined here and consumed by the picker, by quick view, and by
+These three are defined here and consumed by the picker, by Peek, and by
 anything else that grows a need for them.
 
 ### 1. The thumbnail cache
@@ -1236,7 +1241,7 @@ read Otto's:
   and the benefit is no protocol.
 - **In-memory decoded images are per process** and never shared. Each process
   keeps its own LRU bounded by count and bytes.
-- **Other Otto components may write into it**, and quick view does: its decode
+- **Other Otto components may write into it**, and Peek does: its decode
   worker already produces a scaled image of the file the user is looking at, so
   it stores the thumbnail rather than making the browser decode the same file
   again in a less isolated process. Any writer obeys the rules above exactly —
@@ -1256,7 +1261,7 @@ read Otto's:
 One implementation, **in otto-kit as `otto_kit::filetype`**, not in
 `otto-files`. It sits beside the icon lookup that already lives there, and every
 component needs it: the picker for portal filters, the browser for icons and
-the Kind column, quick view to choose a renderer. Putting it in the file
+the Kind column, Peek to choose a renderer. Putting it in the file
 manager's crate would make the previewer depend on the file manager.
 
 It answers two different questions, with two calls, and the distinction is
@@ -1287,7 +1292,7 @@ follows the name: an empty `.rs` file is Rust source, and an icon that flips
 because a sniff was inconclusive is a bug the user sees. Decoding follows the
 content: **a consumer that is about to parse a file must dispatch its decoder on
 `sniff`, never on the name**, so a `.png` that is really something else is never
-handed to the PNG decoder. Quick view and the thumbnailer both do this. Where a
+handed to the PNG decoder. Peek and the thumbnailer both do this. Where a
 consumer wants to report the disagreement — "this file is named `.png` but is
 not one" — it has both answers and can.
 
@@ -1297,7 +1302,7 @@ not one" — it has both answers and can.
 - A small **kind** classification over MIME types — image, video, audio, text,
   document, archive, application, folder, other — is what the Kind column
   shows, what the icon lookup falls back to, what decides whether a thumbnail is
-  attempted, and what quick view dispatches its renderer on. It is a lossy
+  attempted, and what Peek dispatches its renderer on. It is a lossy
   convenience over the MIME type, not a replacement; consumers needing precision
   use the MIME type.
 - The glob matcher is shared with the picker's portal filters. A portal MIME
@@ -1359,7 +1364,7 @@ picker link it, rather than the reverse, means the shared code is exercised by
 the more demanding caller. The Trash is the third, and the cheapest: it is a
 listing of one directory, and a listing is what this layer is. Building it as
 its own binary would have forked the listing, the sorting, the selection, the
-thumbnails, the drag handling and quick view so that one window could hide a
+thumbnails, the drag handling and Peek so that one window could hide a
 sidebar.
 
 **`org.freedesktop.FileManager1` rather than an Otto interface.** Firefox,
@@ -1430,14 +1435,14 @@ external thumbnailers. Persisted column widths.
 
 ## Resolved decisions
 
-### Negotiated with quick view
+### Negotiated with Peek
 
-With [quickview.md](./quickview.md), recorded so they are not reopened:
+With [peek.md](./peek.md), recorded so they are not reopened:
 
 - The thumbnail cache is a **filesystem layout, not a service**. No daemon, no
   D-Bus request/ready protocol, no coordinator. Cross-process correctness comes
   from the standard key, atomic rename, and the `Thumb::MTime` check.
-- Quick view is a **producer as well as a consumer** of the cache. It stores the
+- Peek is a **producer as well as a consumer** of the cache. It stores the
   scaled decode it was making anyway, at the standard buckets only.
 - The cache is **small images only**. Full-resolution decoding is each
   consumer's own business; the cache never serves it and never brokers it.
@@ -1450,9 +1455,9 @@ With [quickview.md](./quickview.md), recorded so they are not reopened:
   dispatch). Content never overrides the name for display.
 - The MIME source is the **full shared database via `globs2`/`subclasses`**, not
   a hardcoded table. They are plain text; no XML parser is needed.
-- Quick view is **embedded as a library**, and the browser keeps the keyboard,
+- Peek is **embedded as a library**, and the browser keeps the keyboard,
   the pointer, and the panel's place in its own window. The earlier decision —
-  that quick view owned a D-Bus invocation interface and held the keyboard —
+  that Peek owned a D-Bus invocation interface and held the keyboard —
   was reversed when it became clear that parenting the preview to the file view
   and running it as a separate process are mutually exclusive.
 - The **decode worker stays a separate process**, and is the host binary
