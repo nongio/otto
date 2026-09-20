@@ -389,6 +389,11 @@ files-status-items =
 files-status-items-hidden = { $items }、非表示 { $hidden } 項目
 files-status-selected = { $total } 項目中 { $count } 項目を選択
 files-status-opening-preview = プレビューを開いています…
+files-task-copying = { $total } 件中 { $done } 件をコピー中
+files-task-moving = { $total } 件中 { $done } 件を移動中
+# The status bar's fuller line: $name is the file being handled right now.
+files-task-progress = { $name } — { $total } 件中 { $done } 件
+files-task-already-running = 操作は一度にひとつだけです — これはまだ実行中です
 files-nothing-to-undo = 取り消せる操作はありません
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = { $label }を取り消しました
@@ -1478,5 +1483,6 @@ a11y-settings = 設定
 # Quick Look's contents, when it is showing something with no pages.
 a11y-preview = プレビュー
 a11y-preview-page = プレビュー、{ $pages } ページ中 { $page } ページ
+a11y-preview-pages = プレビュー、{ $pages } ページ
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = プレビュー、短縮表示

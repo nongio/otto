@@ -403,6 +403,11 @@ files-status-items =
 files-status-items-hidden = { $items }, { $hidden } masqués
 files-status-selected = { $count } sur { $total } sélectionnés
 files-status-opening-preview = Ouverture de l’aperçu…
+files-task-copying = Copie de { $done } sur { $total }
+files-task-moving = Déplacement de { $done } sur { $total }
+# The status bar's fuller line: $name is the file being handled right now.
+files-task-progress = { $name } — { $done } sur { $total }
+files-task-already-running = Une opération à la fois — celle-ci continue
 files-nothing-to-undo = Rien à annuler
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = Annulé : { $label }
@@ -1505,4 +1510,5 @@ a11y-results = Résultats
 a11y-settings = Réglages
 a11y-preview = Aperçu
 a11y-preview-page = Aperçu, page { $page } sur { $pages }
+a11y-preview-pages = Aperçu, { $pages } pages
 a11y-preview-shortened = Aperçu, abrégé

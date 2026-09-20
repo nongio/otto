@@ -407,6 +407,11 @@ files-status-items =
 files-status-items-hidden = { $items }, скрытых: { $hidden }
 files-status-selected = Выбрано { $count } из { $total }
 files-status-opening-preview = Открытие предпросмотра…
+files-task-copying = Копирование { $done } из { $total }
+files-task-moving = Перемещение { $done } из { $total }
+# The status bar's fuller line: $name is the file being handled right now.
+files-task-progress = { $name } — { $done } из { $total }
+files-task-already-running = По одной операции за раз — эта ещё выполняется
 files-nothing-to-undo = Нечего отменять
 # $label is a command name — Move, Copy, Delete — from the files-undo-* keys.
 files-undid = Действие отменено: { $label }
@@ -1540,4 +1545,5 @@ a11y-results = Результаты
 a11y-settings = Настройки
 a11y-preview = Просмотр
 a11y-preview-page = Просмотр, страница { $page } из { $pages }
+a11y-preview-pages = Просмотр, { $pages } страниц
 a11y-preview-shortened = Просмотр, сокращённый
