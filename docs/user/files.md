@@ -55,7 +55,8 @@ command in the window, without needing its menu or shortcut. It also has
 commands the menus don't: selecting by pattern, renaming many files from one
 pattern, and commands added by your own scripts. See
 [Command Palette](files-command-palette.md) and
-[Custom Commands in Files](files-custom-commands.md).
+[Custom Commands in Files](files-custom-commands.md), which ends in a
+[PDF from Pictures](files-pdf-command.md) tutorial.
 
 ### Typing a path
 
@@ -296,6 +297,14 @@ recogniser = "tesseract stdin stdout -l {languages} --psm 6 hocr"
 That is the default command with `--psm 6`, which reads a picture as one
 block of text — better on a screenshot of a paragraph, worse on a photo of a
 sign.
+
+**Keeping the words.** What Peek reads stays in the cache, not in the file. To
+end up with a document whose text travels with it, select the pictures and run
+**Searchable PDF from Pictures**: it puts the text behind each page, so the
+PDF can be searched and its words copied anywhere. The command comes from a
+sample script rather than from Files itself —
+[PDF from Pictures](files-pdf-command.md) builds it, and says how to install
+it.
 
 ## Opening and saving in other applications
 

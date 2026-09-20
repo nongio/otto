@@ -37,6 +37,7 @@ versions: useful day to day, still filling in.
 | [Files](files.md) | Browsing, typing a path, thumbnails, file operations, Peek, the file picker |
 | [Files Command Palette](files-command-palette.md) | `Ctrl+P`: running commands by name, selecting and renaming by pattern |
 | [Custom Commands in Files](files-custom-commands.md) | Writing scripts that add commands to Files, with a tutorial |
+| [PDF from Pictures](files-pdf-command.md) | A longer script tutorial: progress, choices, two commands in one |
 | [Settings](settings.md) | Editing the configuration live, display arrangement, shortcuts |
 | [Launcher](launcher.md) | Starting applications and switching windows from the keyboard |
 | [Emoji Picker](emoji.md) | Finding an emoji and typing it into the focused window |
