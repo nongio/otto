@@ -46,6 +46,15 @@ pub struct Request {
     pub animate: bool,
     /// 1-based page for paginated content.
     pub page: u32,
+    /// The panel's own content box in physical pixels, when the caller has
+    /// one. `width`/`height` carry the headroom a picture is decoded with;
+    /// this is the box a *page* is fitted into, which is a different thing:
+    /// a page rests whole in the panel and is rasterised at the fraction of
+    /// its width it is drawn at, so asking for the oversampled box is
+    /// several times the rasterising for detail nothing shows. `(0, 0)` for
+    /// a caller with no panel — a thumbnail, the command line — which then
+    /// gets `width`/`height` as before.
+    pub panel: (u32, u32),
     /// Whether the host scrolls documents. A paginated file then comes back
     /// as the whole strip — every page's geometry, one page's pixels — rather
     /// than as a picture of the page that was asked for. A caller that will
@@ -80,6 +89,15 @@ pub struct Request {
 }
 
 impl Request {
+    /// The box a page is fitted into: the panel's own pixels when the caller
+    /// sent them, and the decode box otherwise.
+    pub fn page_box(&self) -> (u32, u32) {
+        match self.panel {
+            (0, _) | (_, 0) => (self.width, self.height),
+            panel => panel,
+        }
+    }
+
     /// The recogniser command line to run: the configured one, else the
     /// default.
     pub fn recogniser_command(&self) -> &str {
@@ -95,6 +113,7 @@ impl Default for Request {
             oversample: 1.0,
             animate: true,
             page: 1,
+            panel: (0, 0),
             document: false,
             text: false,
             zoom: 1.0,
@@ -309,6 +328,8 @@ pub fn parse_request(arguments: &[String]) -> Request {
             "--still" => request.animate = false,
             "--name" => request.name = value(),
             "--mime" => request.mime = value(),
+            "--panel-width" => request.panel.0 = value().parse().unwrap_or(request.panel.0),
+            "--panel-height" => request.panel.1 = value().parse().unwrap_or(request.panel.1),
             "--document" => request.document = true,
             "--text-layer" => request.text = true,
             "--ocr" => request.ocr = true,

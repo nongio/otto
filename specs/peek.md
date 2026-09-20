@@ -801,6 +801,14 @@ matching this text.
   asked for and does not double it again. Applied at both ends the factors
   compound to four, which for a PDF meant rasterising a page at four times the
   panel and waiting seconds for detail no panel can show.
+- **A page is fitted into the panel's own box, which is sent beside the decode
+  box rather than derived from it.** The two are different things: the decode
+  box carries the headroom a picture is zoomed into, and the page box is the
+  pixels a page is actually drawn at, a fraction of the panel's width. One
+  request carries both, because the host cannot know which kind of file it has
+  until the worker answers — and a picture decoded into the smaller of the two
+  no longer matches the box its recognised words are measured in, which is
+  what makes a selection land on them.
 - **A PDF page is rasterised no wider than 2048 px**, whatever the panel asks
   for. A page is re-rendered from vectors at whatever size is requested and the
   cost climbs faster than the area, so this is a ceiling in its own right

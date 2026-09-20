@@ -1329,15 +1329,16 @@ fn decode_request(
     document: bool,
     text: bool,
 ) -> Request {
-    // The same box whichever kind of file this turns out to be: the host
-    // cannot know before the worker answers, and a picture decoded at the
-    // panel's own pixels has no headroom for a zoom and is not the box the
-    // recogniser's words are measured in — which is what makes a selection
-    // land on them. A document divides the oversampling back out itself,
-    // where it knows a page rests at a fraction of the panel's width.
+    // The same decode box whichever kind of file this turns out to be: the
+    // host cannot know before the worker answers, and a picture decoded at
+    // the panel's own pixels has no headroom for a zoom and is not the box
+    // the recogniser's words are measured in — which is what makes a
+    // selection land on them. The panel's own box rides along beside it for
+    // a document, where a page is fitted rather than oversampled.
     let (width, height) = decode_size(panel, scale);
     Request {
         page: page.max(1),
+        panel: page_box(panel, scale),
         document,
         text,
         width,
@@ -1355,7 +1356,18 @@ fn decode_request(
 /// picture looked at closely has detail to show before the zoom asks again.
 /// Told to the worker as well as folded into the size, because an animation
 /// spends it on frames instead.
-pub const OVERSAMPLE: f32 = 2.0;
+const OVERSAMPLE: f32 = 2.0;
+
+/// The panel's content box in physical pixels, which is what a page is fitted
+/// into. Not oversampled: a page rests at a fraction of the panel's width,
+/// and asking for twice the panel is several times the rasterising for detail
+/// nothing shows.
+fn page_box(panel: Rect, scale: f32) -> (u32, u32) {
+    (
+        ((panel.width() * scale) as u32).clamp(64, 4096),
+        ((panel.height() * scale) as u32).clamp(64, 4096),
+    )
+}
 
 /// The size a picture is decoded at for `panel`, so a second decode of the
 /// same file lands on the same pixels as the first — and so the words a
@@ -1416,6 +1428,10 @@ pub fn recognise(
         page: page.max(1),
         width,
         height,
+        // The same box *and* the same headroom the picture itself was decoded
+        // with: the words come back boxed in the decode's own pixels, and a
+        // selection is made against the picture on screen.
+        oversample: OVERSAMPLE,
         ocr: true,
         languages: otto_peek::ocr::languages(),
         recogniser: recogniser.to_string(),
@@ -1520,6 +1536,33 @@ mod tests {
             let request = decode_request(path, panel, scale, 1, document, false);
             assert_eq!((request.width, request.height), (width, height));
             assert_eq!(request.oversample, OVERSAMPLE);
+        }
+    }
+
+    /// A page is fitted into the panel's own pixels, which ride beside the
+    /// decode box rather than being divided back out of it. Deriving one from
+    /// the other costs a document the top of the clamp — twice the panel hits
+    /// the ceiling at half the panel's own size — and asks a rasteriser for
+    /// detail no page is drawn at.
+    #[test]
+    fn a_page_is_fitted_into_the_panel_not_into_the_decode_box() {
+        let path = Path::new("/tmp/otto-peek-test.pdf");
+        let scale = 2.0;
+        for panel in [Rect::from_wh(1200.0, 800.0), Rect::from_wh(2600.0, 1400.0)] {
+            let request = decode_request(path, panel, scale, 1, true, false);
+            let wanted = (
+                ((panel.width() * scale) as u32).clamp(64, 4096),
+                ((panel.height() * scale) as u32).clamp(64, 4096),
+            );
+            assert_eq!(request.panel, wanted);
+            assert_eq!(request.page_box(), wanted);
+            // Below the clamp the two boxes are plainly different things:
+            // the page box is the panel's own pixels and the decode box
+            // carries the headroom. Above it they meet, which is the clamp
+            // doing its job rather than the boxes being confused.
+            if request.width < 4096 {
+                assert!(request.panel.0 < request.width);
+            }
         }
     }
 

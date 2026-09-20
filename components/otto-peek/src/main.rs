@@ -127,6 +127,12 @@ async fn main() {
                 request.height = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1200);
             }
             "--still" => request.animate = false,
+            "--panel-width" => {
+                request.panel.0 = rest.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
+            "--panel-height" => {
+                request.panel.1 = rest.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
             "--document" => request.document = true,
             "--text-layer" => request.text = true,
             "--oversample" => {
