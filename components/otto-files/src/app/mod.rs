@@ -622,6 +622,26 @@ struct Browser {
     /// records the panel *it* was hit-testing against, so a pinch can work in
     /// that space without having to know which handler it came from.
     quickview_focus: Option<(skia_safe::Point, Rect)>,
+    /// A drag of the panel by its title strip in progress: the point the
+    /// press was reported at, and where the card was in the window then.
+    ///
+    /// Both are fixed at the press, because a pointer holding a button keeps
+    /// the focus it was grabbed with: its positions go on being reported in
+    /// the frame the press landed in, whichever of the two doors that was —
+    /// the panel's own surface, or the toplevel. See
+    /// [`Browser::drag_quickview_to`].
+    quickview_drag: Option<((f32, f32), (f32, f32))>,
+    /// When the panel's title strip was last pressed, for the double-click
+    /// that fills the display.
+    last_quickview_title_click: Option<std::time::Instant>,
+    /// The offset [`Browser::quickview_panel`] was placed with, so a drag can
+    /// tell where the card would rest untouched from where it actually is.
+    /// Written by the render path beside the rect itself, for the same reason.
+    quickview_placed_offset: Option<(f32, f32)>,
+    /// The display the panel may be dragged around, in window points, as the
+    /// compositor last answered. `None` until it has; the window stands in
+    /// for it until then, which is only wrong in being too strict.
+    quickview_display: Option<Rect>,
     /// The zoom a pinch in progress started from, if one is.
     ///
     /// `zwp_pointer_gesture_pinch_v1` reports its scale against the start of
@@ -1324,6 +1344,10 @@ mod caret_report_tests;
 
 #[cfg(test)]
 mod search_tests;
+
+/// Dragging Quick View's panel by its title strip.
+#[cfg(test)]
+mod quickview_drag_tests;
 
 #[cfg(test)]
 mod path_bar_tests;

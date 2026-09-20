@@ -117,12 +117,19 @@ impl FilesApp {
                         browser.toggle_quickview_expand();
                     }
                     PointerEventKind::Press { .. } => {
-                        // A scrollbar over a zoomed picture takes the press
-                        // before anything else does.
-                        browser.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
+                        // The title strip takes hold of the card; failing
+                        // that, a scrollbar over a zoomed picture takes the
+                        // press before anything else does.
+                        if !browser.quickview_grip(point, panel) {
+                            browser.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
+                        }
                     }
                     PointerEventKind::Release { .. } => {
+                        browser.end_quickview_drag();
                         browser.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
+                    }
+                    PointerEventKind::Motion { .. } if browser.quickview_dragging() => {
+                        browser.drag_quickview_to(point);
                     }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         browser.quickview_focus(point, panel);
@@ -137,6 +144,7 @@ impl FilesApp {
                         }
                     }
                     PointerEventKind::Leave { .. } => {
+                        browser.end_quickview_drag();
                         browser.quickview_focus = None;
                         browser.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
                         browser.reset_quickview_cursor();

@@ -789,9 +789,17 @@ impl PaneSurfaces {
         // stays in window coordinates either way, which is what lets the
         // entrance keep growing out of the file's icon: the anchor and the
         // resting place are in the same space.
-        let resting = self.resting_for(session).unwrap_or_else(|| {
-            quickview::resting_in(Rect::from_wh(f.width, f.window_h()), session.expanded)
-        });
+        // Where it rests, moved by however far it has been dragged by its
+        // title strip. Folded in here rather than inside the session's own
+        // geometry so that everything derived from the resting rect — the
+        // surface's placement, the drawing, and the rect the pointer is
+        // hit-tested against — is moved by the same amount.
+        let resting = self
+            .resting_for(session)
+            .unwrap_or_else(|| {
+                quickview::resting_in(Rect::from_wh(f.width, f.window_h()), session.expanded)
+            })
+            .with_offset(session.offset);
         self.quickview_resting = Some(resting);
         // Wherever the panel is *now* — part way in, at rest, or part way
         // back to its file. Asking for the entrance alone left the exit out
@@ -1059,6 +1067,13 @@ impl PaneSurfaces {
         Some((pane.wl_surface().id(), panel))
     }
 
+    /// The display the panel is centred on, in window points, once the
+    /// compositor has answered. What a drag of the title strip is bounded by:
+    /// a panel dragged off the screen is one nobody can find the way back to.
+    pub fn quickview_display(&self) -> Option<Rect> {
+        self.quickview_display
+    }
+
     /// Where Quick View's panel actually rests, once it has been worked out.
     ///
     /// `None` until the compositor has answered with the output's geometry,
@@ -1242,7 +1257,11 @@ fn column_key(f: &Frame, depth: usize) -> u64 {
 /// inch — how its bars are presented, since they fade in and out over a
 /// picture that is not moving, and whether the content has landed at all.
 fn quickview_key(panel: Rect, generation: u64, session: &quickview::Session) -> u64 {
-    hash_rect(panel)
+    // The card's *size*, not where it sits. Its drawing is translated to the
+    // surface's own origin, so two panels of the same size are the same
+    // pixels wherever they are — and a panel being dragged by its title
+    // strip would otherwise repaint in full on every frame of the drag.
+    hash_rect(Rect::from_wh(panel.width(), panel.height()))
         ^ generation.rotate_left(17)
         ^ (session.first_row as u64) << 1
         ^ hash_zoom(session.zoom).rotate_left(33)

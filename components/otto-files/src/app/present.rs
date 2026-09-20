@@ -16,6 +16,10 @@ impl FilesApp {
         let parent = surface.wl_surface().clone();
         let mut browser = self.state.lock().unwrap();
         browser.sync_scroll_metrics();
+        // Before the frame is built from it: a panel dragged aside in a
+        // bigger window, or before the display answered, may otherwise be
+        // placed somewhere nothing can reach it.
+        browser.clamp_quickview();
         let theme = browser.theme();
         let title = browser.title();
         let frame = browser.frame(&theme, &title);
@@ -34,6 +38,19 @@ impl FilesApp {
             .pane_surfaces
             .as_ref()
             .and_then(pane_surfaces::PaneSurfaces::quickview_resting);
+        // The offset that rect was placed with, recorded together with it: a
+        // drag reads the two back to work out where the card would rest
+        // untouched, and they are only true as a pair.
+        browser.quickview_placed_offset = browser
+            .quickview_panel
+            .and(browser.quickview_visible().map(|session| session.offset));
+        // Where the display is, so a drag of the title strip knows how far the
+        // card may go. Like the panel's own rect, it is the surface layer that
+        // knows and the pointer handler that asks.
+        browser.quickview_display = self
+            .pane_surfaces
+            .as_ref()
+            .and_then(pane_surfaces::PaneSurfaces::quickview_display);
         *self.quickview_target.lock().unwrap() = self
             .pane_surfaces
             .as_ref()

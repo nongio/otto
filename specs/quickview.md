@@ -799,6 +799,42 @@ out of the file's icon. Centring it on the **display** instead is opt-in
   assumed from creation order — a pooled column that is shown again still holds
   its old place in the stack.
 
+**The panel can be dragged by its title strip**, which is what the strip is for
+— the content below it is for reading, scrolling and zooming, so a press there
+means one of those.
+
+- The drag is an offset folded into the resting rect, so the surface's
+  placement, the card's drawing and the rect the pointer is hit-tested against
+  are all moved by the same amount and cannot disagree.
+- **Everything the drag needs is fixed at the press**: the point it was
+  reported at, and where the card was in the window then. Where the pointer
+  has travelled since, added to where the card was, is where the card should
+  be now. Nothing is read back from the render path, because a pointer reports
+  far more often than the window paints and the card's own movement would feed
+  back into the next measurement — the drag would run away, once per event or
+  once per frame depending on which rect it trusted.
+- That the press-time frame *stays* right is not an accident of this client:
+  a pointer holding a button is in a grab, and a grab keeps the focus it was
+  taken with, surface and position both. Coordinates go on being measured
+  against wherever the panel's surface was when the press landed, however far
+  the card has moved since. The same holds over the toplevel, where the frame
+  is the window and does not move at all.
+- **A double-click on the title strip fills the display**, the same thing the
+  expand button does. The strip is the panel's titlebar, and that is what a
+  titlebar does.
+- The card is kept on the display it may be dragged around — the same answer
+  the centring uses, the window standing in until it arrives — with at least
+  the title strip on screen, since that is the only thing that can bring it
+  back. It is clamped again when the window or the display changes, not only
+  while a drag is running.
+- The panel's content key is its *size*, not its rect: the card's drawing is
+  translated to its surface's own origin, so a panel being dragged repaints
+  nothing and only the subsurface moves.
+- The position outlives the file but not the panel. Arrow-keying to the next
+  file keeps the card where it was put; closing and opening again starts it at
+  rest, as does expanding it — an expanded panel takes nearly the whole
+  display, so there is nowhere to be aside to.
+
 ## Constraints & Edge Cases
 
 - A file that changes or is deleted while previewed: the preview is re-decoded

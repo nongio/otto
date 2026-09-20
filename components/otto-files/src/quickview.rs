@@ -315,6 +315,15 @@ pub struct Session {
     /// the window — rather than taking its usual share of it. Toggled by the
     /// title strip's expand button and kept while arrow-keying between files.
     pub expanded: bool,
+    /// How far the panel has been dragged from where it rests, by its title
+    /// strip. In the same space as the resting rect the host works out — the
+    /// display when the panel is centred on one, the window otherwise — so
+    /// the host folds it into that rect and everything downstream follows.
+    ///
+    /// Kept while arrow-keying between files, like `expanded`: a panel moved
+    /// out of the way of something stays where it was put. A panel closed and
+    /// opened again starts at rest, because a session is built afresh.
+    pub offset: (f32, f32),
     /// Whether `preview` is the waiting line rather than a decoded file.
     ///
     /// The panel's surface repaints only when its content key changes, and
@@ -357,6 +366,7 @@ impl Session {
             closing: None,
             video: None,
             expanded: false,
+            offset: (0.0, 0.0),
             loading: false,
             selection: None,
             selecting: false,
@@ -470,6 +480,7 @@ impl Session {
     pub fn awaiting(&mut self, name: String, is_dir: bool, anchor: Rect) {
         let opened_at = self.opened_at;
         let expanded = self.expanded;
+        let offset = self.offset;
         let anchor = if anchor.is_empty() {
             self.anchor
         } else {
@@ -477,6 +488,7 @@ impl Session {
         };
         *self = Self::waiting(name, is_dir, anchor, opened_at);
         self.expanded = expanded;
+        self.offset = offset;
     }
 
     /// The words on the picture, if it is one with any.

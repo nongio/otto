@@ -195,12 +195,19 @@ impl Browser {
                         self.close_quickview();
                     } else if over_expand {
                         self.toggle_quickview_expand();
+                    } else if self.quickview_grip(point, panel) {
+                        // Taken hold of by its title strip; the motions that
+                        // follow move the card.
                     } else {
                         self.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
                     }
                 }
                 PointerEventKind::Release { .. } => {
+                    self.end_quickview_drag();
                     self.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
+                }
+                PointerEventKind::Motion { .. } if self.quickview_dragging() => {
+                    self.drag_quickview_to(point);
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                     self.quickview_focus(point, panel);
@@ -215,6 +222,7 @@ impl Browser {
                     }
                 }
                 PointerEventKind::Leave { .. } => {
+                    self.end_quickview_drag();
                     self.quickview_focus = None;
                     self.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
                     self.reset_quickview_cursor();

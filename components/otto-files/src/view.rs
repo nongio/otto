@@ -5243,6 +5243,24 @@ pub fn quickview_titlebar_rect(panel: Rect) -> Rect {
     )
 }
 
+/// The part of the title strip a drag takes hold of: everything but the
+/// buttons at its right-hand end.
+///
+/// The strip rather than the whole card, for the same reason a window is
+/// moved by its titlebar: the content is there to be read, scrolled and
+/// zoomed, and a press on it means one of those. The buttons keep their own
+/// generous outset, so the band a drag starts in stops short of them.
+pub fn quickview_grip_rect(panel: Rect) -> Rect {
+    const CLEARANCE: f32 = 4.0;
+    let strip = quickview_titlebar_rect(panel);
+    Rect::from_ltrb(
+        strip.left,
+        strip.top,
+        (quickview_expand_rect(panel).left - CLEARANCE).max(strip.left),
+        strip.bottom,
+    )
+}
+
 /// What is left of the panel for the preview itself.
 ///
 /// Inset on every side, not just below the title strip: the card reads as a

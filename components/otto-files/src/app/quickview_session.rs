@@ -264,6 +264,12 @@ impl Browser {
     pub(super) fn toggle_quickview_expand(&mut self) {
         if let Some(session) = self.quickview.as_mut() {
             session.toggle_expanded();
+            // Back to the middle, both ways. An expanded panel takes nearly
+            // the whole display, so a card that had been dragged aside would
+            // have nowhere to be dragged aside *to* — and coming back out of
+            // expanded to a remembered corner reads as the button having
+            // moved the panel rather than resized it.
+            session.offset = (0.0, 0.0);
             self.dirty = true;
         }
     }
@@ -271,8 +277,147 @@ impl Browser {
     /// Where the panel rests when the surface layer has not said: centred in
     /// the window, at whichever size the session asks for.
     pub(super) fn quickview_fallback_panel(&self) -> Rect {
-        let expanded = self.quickview.as_ref().is_some_and(|s| s.expanded);
-        quickview::resting_in(Rect::from_wh(self.size.0, self.size.1), expanded)
+        let Some(session) = self.quickview_visible() else {
+            return quickview::resting_in(Rect::from_wh(self.size.0, self.size.1), false);
+        };
+        quickview::resting_in(Rect::from_wh(self.size.0, self.size.1), session.expanded)
+            .with_offset(session.offset)
+    }
+
+    /// Take hold of the panel by its title strip. Returns whether the press
+    /// started a drag, so the caller can stop looking for other meanings.
+    ///
+    /// `panel` is the card in whichever space the press arrived in — the
+    /// panel's own surface, or the window — and the grab is stored inside the
+    /// card, which means the same thing in both.
+    /// A second press in the same strip inside the double-click window fills
+    /// the display instead, which is what the expand button does — the strip
+    /// is the panel's titlebar, and a titlebar answers a double-click that
+    /// way.
+    pub(super) fn quickview_grip(&mut self, point: skia_safe::Point, panel: Rect) -> bool {
+        if self.quickview.is_none() || !view::quickview_grip_rect(panel).contains(point) {
+            return false;
+        }
+        let now = std::time::Instant::now();
+        let doubled = self
+            .last_quickview_title_click
+            .is_some_and(|at| now.duration_since(at) < DOUBLE_CLICK_WINDOW);
+        if doubled {
+            // Cleared, so a third press starts a fresh pair rather than
+            // toggling again on the way past.
+            self.last_quickview_title_click = None;
+            self.toggle_quickview_expand();
+            return true;
+        }
+        self.last_quickview_title_click = Some(now);
+        // The press point as reported, and where the card was in the window
+        // when it was reported. Everything the drag needs is fixed at this
+        // moment; see [`Browser::drag_quickview_to`].
+        let card = self
+            .quickview_panel
+            .unwrap_or_else(|| self.quickview_fallback_panel());
+        self.quickview_drag = Some(((point.x, point.y), (card.left, card.top)));
+        true
+    }
+
+    /// Follow the pointer, in the frame the press was reported in.
+    ///
+    /// A pointer holding a button is in a *grab*, and a grab keeps the focus
+    /// it was taken with — surface and position both. Coordinates therefore
+    /// go on being measured against wherever the panel's surface was when the
+    /// press landed, however far the card has been moved since, and the frame
+    /// the pointer is reported in stays still for the length of the drag.
+    ///
+    /// So the drag needs nothing from the render path: where the pointer has
+    /// travelled since the press, added to where the card was at the press,
+    /// is where the card should be now. Reading a rect back per frame and
+    /// moving relative to *that* is what makes a drag run away — the pointer
+    /// reports far more often than the window paints, and the card's own
+    /// movement feeds back into the next measurement.
+    pub(super) fn drag_quickview_to(&mut self, point: skia_safe::Point) {
+        let Some(((grab_x, grab_y), (origin_x, origin_y))) = self.quickview_drag else {
+            return;
+        };
+        let (resting, _) = self.quickview_placement();
+        let wanted = (origin_x + point.x - grab_x, origin_y + point.y - grab_y);
+        self.place_quickview(resting, wanted);
+    }
+
+    /// Keep a dragged panel where it can still be reached. The window can be
+    /// resized, and the display answered for, after the card has been put
+    /// somewhere that was on screen at the time and is not any more.
+    pub(super) fn clamp_quickview(&mut self) {
+        let Some(offset) = self
+            .quickview
+            .as_ref()
+            .map(|session| session.offset)
+            .filter(|offset| *offset != (0.0, 0.0))
+        else {
+            return;
+        };
+        // Where the panel is *asking* to be, which mid-drag is not where it
+        // was last placed: the clamp trims what the drag wants, it does not
+        // undo it.
+        let (resting, _) = self.quickview_placement();
+        let wanted = (resting.left + offset.0, resting.top + offset.1);
+        self.place_quickview(resting, wanted);
+    }
+
+    /// Where the card would rest with no drag applied, in window points, and
+    /// the offset it was last placed with.
+    fn quickview_placement(&self) -> (Rect, (f32, f32)) {
+        let offset = self
+            .quickview_placed_offset
+            .or_else(|| self.quickview.as_ref().map(|session| session.offset))
+            .unwrap_or((0.0, 0.0));
+        let placed = self
+            .quickview_panel
+            .unwrap_or_else(|| self.quickview_fallback_panel());
+        (placed.with_offset((-offset.0, -offset.1)), offset)
+    }
+
+    /// Put the card's top-left at `wanted`, as far as the display allows.
+    /// `resting` is where it would be with no drag applied, so the offset is
+    /// the difference between the two.
+    fn place_quickview(&mut self, resting: Rect, wanted: (f32, f32)) {
+        let bounds = self.quickview_bounds();
+        let left = wanted.0.clamp(
+            bounds.left,
+            (bounds.right - resting.width()).max(bounds.left),
+        );
+        // Never above the top edge, and never so far down that the title
+        // strip — the only thing that can bring it back — has gone off the
+        // bottom.
+        let top = wanted.1.clamp(
+            bounds.top,
+            (bounds.bottom - quickview::TITLEBAR_H).max(bounds.top),
+        );
+        let offset = (left - resting.left, top - resting.top);
+        let Some(session) = self.quickview.as_mut() else {
+            return;
+        };
+        if session.offset == offset {
+            return;
+        }
+        session.offset = offset;
+        self.dirty = true;
+    }
+
+    /// The panel has been let go of. Returns whether it was being dragged.
+    pub(super) fn end_quickview_drag(&mut self) -> bool {
+        self.quickview_drag.take().is_some()
+    }
+
+    /// Whether the panel is being dragged by its title strip.
+    pub(super) fn quickview_dragging(&self) -> bool {
+        self.quickview_drag.is_some()
+    }
+
+    /// Where the panel may be dragged: the display when the compositor has
+    /// said where it is, and the window until it has.
+    fn quickview_bounds(&self) -> Rect {
+        self.quickview_display
+            .unwrap_or_else(|| Rect::from_wh(self.size.0, self.size.1))
     }
 
     /// Remember where the pointer is over the Quick View panel, and which
@@ -459,6 +604,10 @@ impl Browser {
         self.quickview_generation += 1;
         self.quickview_pending = false;
         self.quickview_recognising = false;
+        // A panel dismissed mid-drag is no longer being dragged; the offset
+        // itself stays, so the exit flies home from where the card actually
+        // is rather than from where it would have rested.
+        self.quickview_drag = None;
         // Where the file is *now*, not where it was when the panel opened: the
         // selection may have arrow-keyed on, or the list scrolled, and the
         // point of the exit is to say which file this was.
