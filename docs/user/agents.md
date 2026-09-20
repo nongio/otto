@@ -43,7 +43,8 @@ Agents are configured in `~/.config/otto/agents.toml`, one `[[agents]]` block
 each. See [Configuration](configuration.md) for where that sits. Two settings
 there are worth knowing before you start: `permissions`, which decides how an
 agent's requests are answered and is **`deny` unless you set it**, and
-`folder`, which says where that agent's sessions start.
+`folder`, which says where that agent's sessions start. To put an agent of
+your own in that list, see [Add an agent of your own](#add-an-agent-of-your-own).
 
 ## What leaves your machine
 
@@ -148,6 +149,83 @@ is not, and shows as its name instead.
 Whichever you pick, `default_agent` in `agents.toml` says which one a request
 goes to when you do not choose.
 
+## Add an agent of your own
+
+The four agents above are the ones Otto is set up with, not the only ones it
+can have. An agent is two things: a file saying who it is, and a block in
+`agents.toml` saying how to run it. Here is a marketing assistant called Nora,
+who works in one repository and nothing else.
+
+**1. Write who it is.** Otto reads agents from plugins — a directory with a
+name, holding skills, agent files, or both. Yours goes in
+`~/.local/share/otto/plugins/`:
+
+```
+~/.local/share/otto/plugins/marketing/
+├── .claude-plugin/plugin.json    {"name": "marketing", "version": "1.0.0"}
+└── agents/nora.md
+```
+
+`nora.md` is Markdown with a little YAML at the top:
+
+```markdown
+---
+name: nora
+description: Writes and plans the marketing. Knows the product and its audience.
+model: opus
+tools: Read, Write, Edit, Grep, Glob, Bash, WebSearch, WebFetch
+---
+
+You are Nora. You look after how this project is described to the people who
+might use it …
+```
+
+Everything under the second `---` is the agent's instructions — who it is, what
+it does, how it should answer. Write it as if you were telling a new colleague
+what the job is.
+
+`otto-agents plugins status` says whether Otto found it.
+
+**2. Give it a seat.** Add a block to `~/.config/otto/agents.toml`. The
+simplest one copies an agent already there and changes four lines:
+
+```toml
+[[agents]]
+id = "marketing"
+name = "Nora"                # what the launcher shows
+description = "Marketing, on Claude Code"
+command = "npx"
+args = ["-y", "@agentclientprotocol/claude-agent-acp@latest"]
+model = "opus"
+permissions = "ask"
+skills = "claude"            # `agent` needs this
+agent = "nora"               # the `name` from nora.md
+folder = "~/dev/my-project"  # all it can reach
+colour = "magenta"           # the material its card wears
+enter = ["claude", "--resume", "{session}"]
+enter_new = ["claude", "--session-id", "{session}"]
+```
+
+`folder` is worth a moment: it is the reach you are handing over, so name the
+narrowest folder the agent needs rather than your home.
+
+**3. Restart the service.** `systemctl --user restart otto-agents` — the
+configuration is read when it starts, so nothing changes until you do.
+
+**4. Ask it something.** Open Ask, press `Down`, and Nora is in the list.
+
+### On another harness
+
+`agent` is Claude Code's route: it reads the plugin file where it lies. Every
+other harness wants the same instructions in its own dialect and its own place,
+so `otto-agents plugins install` writes them, and `otto-agents plugins status`
+lists what it wrote and what is still missing. Which file is used is then part
+of the `[[agents]]` block — OpenCode takes a `default_agent` in
+`OPENCODE_CONFIG_CONTENT`, Codex a `CODEX_CONFIG` pointing at the rendering,
+pi a wrapper in `PI_ACP_PI_COMMAND`, Hermes a profile named after the agent.
+Copy the block of the agent you are borrowing from and change the one line
+that names the file.
+
 ## When something is wrong
 
 - **Nothing happens.** Check the service: `systemctl --user status otto-agents`
@@ -159,6 +237,10 @@ goes to when you do not choose.
 - **The agent says it is Claude, or Codex, rather than Otto.** Run
   `otto-agents plugins install` again, then `otto-agents plugins status`: a
   rendering that is not `current` is one the agent will not have read.
+- **Your own agent answers as plain Claude.** Its `name` is probably one Claude
+  Code already knows — an agent of the same name in `~/.claude/agents/` wins,
+  and the plugin's file is dropped without a word. Give yours a name nothing
+  else uses.
 - **No dialog appears when it needs you.** Permission requests and questions
   are drawn by otto-islands; without it, a permission request is denied and a
   question waits in the conversation.
