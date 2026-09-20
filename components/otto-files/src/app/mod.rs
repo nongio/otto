@@ -1465,3 +1465,7 @@ mod picture_info_tests {
 /// Stepping in and out of Miller columns from the keyboard.
 #[cfg(test)]
 mod columns_tests;
+
+/// Where a paste puts what is on the clipboard.
+#[cfg(test)]
+mod paste_target_tests;

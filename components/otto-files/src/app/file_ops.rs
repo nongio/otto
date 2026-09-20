@@ -291,6 +291,37 @@ impl Browser {
     /// dock icon carry the same job for anyone not looking at this window.
     /// The outcome lands in [`Self::poll`], where it is applied exactly as an
     /// operation that finished at once would be.
+    /// Where a paste puts things: in column view the folder that is selected,
+    /// if exactly one is, and otherwise the directory on screen.
+    ///
+    /// Column view only, because only there is a selected folder somewhere the
+    /// window is already showing: its contents are open in the pane beside it,
+    /// and putting the files *next to* it instead reads as a paste that went
+    /// somewhere else. List and icon view show one directory at a time, that
+    /// directory is what the window is in, and a selection there is often
+    /// incidental — a row the type-ahead landed on — so it must not quietly
+    /// redirect the files.
+    ///
+    /// Anything other than one selected folder means the directory itself: a
+    /// file, several entries, or nothing at all. A folder that is in the
+    /// clipboard is the exception to the exception — it cannot be put inside
+    /// itself, and copying one leaves it selected, which is the ordinary way
+    /// to duplicate a folder, so that lands beside it as it always did.
+    pub(super) fn paste_destination(&self, clip: &model::Clipboard) -> PathBuf {
+        let here = self.columns[self.active].path.clone();
+        if self.mode != ViewMode::Columns {
+            return here;
+        }
+        let selected = self.selected_entries();
+        let [entry] = selected.as_slice() else {
+            return here;
+        };
+        if !entry.is_dir || clip.paths.contains(&entry.path) {
+            return here;
+        }
+        entry.path.clone()
+    }
+
     pub(super) fn paste(&mut self) {
         // A synthetic listing is not a folder: there is nowhere in it to put
         // anything.
@@ -319,7 +350,7 @@ impl Browser {
         if clip.is_empty() {
             return;
         }
-        let dest = self.columns[self.active].path.clone();
+        let dest = self.paste_destination(&clip);
 
         // One at a time: a second paste while one is running would fight it
         // for the same names in the same folder.

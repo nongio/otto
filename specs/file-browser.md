@@ -840,6 +840,18 @@ progress, and can cancel it.
   rename syscall and is instantaneous; a move across filesystems is copy,
   verify, then unlink the source, and the source is unlinked only after the
   destination is fully written and fsynced.
+- **Where a paste lands** — in column view, the folder that is selected if
+  exactly one is, and otherwise the directory on screen. Column view only: a
+  selected folder there is somewhere the window is already showing, with its
+  contents open in the pane beside it, so putting the files next to it instead
+  reads as a paste that went somewhere else. List and icon view show one
+  directory at a time, that directory is where the window is, and a selection
+  in them is often incidental — the row a type-ahead landed on — so it never
+  redirects the files. A file selected, several entries selected, or nothing
+  selected all mean the directory itself. A folder on the clipboard is the
+  exception: it cannot be put inside itself, and copying a folder leaves it
+  selected, so that duplicates it beside itself as it always did. A drop names
+  its own destination and does not consult the selection at all.
 - **Conflicts** — when a destination entry exists, a sheet offers Replace,
   Skip, Keep Both (numeric suffix), each with an "apply to all remaining"
   option. Directories merge rather than replace; the conflict question is asked
