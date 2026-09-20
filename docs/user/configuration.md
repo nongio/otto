@@ -33,13 +33,76 @@ Otto searches for configuration files in the following order (later files overri
 
 Values from higher-priority files are merged recursively into lower-priority ones, so you only need to specify the options you want to override.
 
-Config files are read once, when the session starts: an edit takes effect on the next login.
+Config files are read once, when the session starts, so an edit you make by
+hand takes effect on the next login. Changing the same setting through the
+Settings app is different: most of them apply straight away. See
+[How everything connects](#how-everything-connects) below.
 
 ### Which file gets written
 
 Changes made from the Settings app, or from the desktop itself such as dragging the dock handle, are written to the **highest-priority file that exists**, because that is the one whose values actually take effect. With no `otto_config.toml` around, that is `~/.config/otto/config.toml`, and it is created if it is not there yet. The system-wide `/etc/otto/config.toml` is never written.
 
 This is worth knowing when a setting appears not to stick. A leftover `otto_config.toml` in the directory the session was started from (the current directory is the home directory for a normal login, and the checkout for `cargo run`) overrides `~/.config/otto/config.toml` for every key it sets, and quietly becomes the file the Settings app edits. Otto logs a warning at startup when the writable file is not your own config; delete the stray file, or the keys it repeats, to go back to configuring from `~/.config/otto`.
+
+## How everything connects
+
+There are three ways into the same configuration, and they all end at the same
+file.
+
+```
+  Settings app  ─┐
+  your script   ─┼─▶  org.otto.Settings (D-Bus)  ─▶  the compositor  ─▶  config.toml
+  the desktop   ─┘                                        │
+  (dragging the dock handle, and the like)                └─▶  the Settings portal ─▶ other apps
+```
+
+**The file** is the whole truth. Everything else is a way of editing it, and
+nothing is stored anywhere else.
+
+**The Settings app** (`otto-settings`) is not special. It is an ordinary D-Bus
+client: it asks the compositor to describe every setting it knows, draws that
+description, and asks it to change values. See [Settings](settings.md).
+
+**The D-Bus interface** is `org.otto.Settings`, which the compositor itself
+owns. Anything on your session bus can use it, so a setting is scriptable
+without touching TOML:
+
+```bash
+# What is there, and what it is set to now
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings GetAll
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
+    Get s "dock.size"
+
+# Change one. Replies "applied", or "pending-restart" if it needs a new session
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
+    Set sv "dock.size" d 1.25
+
+# Put it back to the default
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
+    Reset s "dock.size"
+```
+
+A value set this way is validated, applied and written to the config file, the
+same as if you had used the app. A bad value is refused rather than saved. The
+compositor emits a `Changed` signal, so an open Settings app follows along.
+
+**Most settings apply live.** The dock, the keyboard and touchpad, appearance
+and accent colour, sound, power and lock all take effect as soon as they
+change. Six need a new session: the interface scale, the interface font, the
+GTK theme, the display language, and the greeter command and its arguments.
+
+**Applications outside Otto** are told about the appearance settings through
+the desktop's standard [Settings portal](desktop-standards.md), which is how
+GTK, Qt and browser apps follow your light or dark preference and your accent
+colour without knowing anything about Otto.
+
+Editing the file by hand is still the most direct route, and it is the only
+route for the things that have no single value behind them: shortcuts, dock
+bookmarks and display profiles are not in the D-Bus schema.
+
+The wire contract, if you are writing a client, is documented in
+[org.otto.Settings](../developer/settings-dbus-api.md). Windows and tiling have
+a separate interface of their own; see [Scripting](scripting.md).
 
 ## Getting Started
 
