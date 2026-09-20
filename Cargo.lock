@@ -5561,6 +5561,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-input-overlay"
+version = "1.4.0"
+dependencies = [
+ "libc",
+ "otto-kit",
+ "skia-safe",
+ "smithay-client-toolkit",
+ "tokio",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "zbus 4.4.0",
+]
+
+[[package]]
 name = "otto-islands"
 version = "1.4.0"
 dependencies = [

@@ -1,0 +1,24 @@
+[package]
+name = "otto-input-overlay"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "On-screen overlays of the touchpad and the keys being pressed, for screen recordings"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+
+[dependencies.skia-safe]
+version = "=0.93"
+features = ["gl", "textlayout", "svg", "skottie"]
+
+[lints]
+workspace = true
