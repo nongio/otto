@@ -66,12 +66,16 @@
         {{- block "main" . }}{{- end }}
         {{ $js := resources.Get "js/main.js" }}
         <script src="{{ $js.Permalink }}"></script>
-        {{/* data-base is where the site is published from: the Pagefind
+        {{/* data-base is the path the site is published under: the Pagefind
              index stores root-relative URLs, and search.js prepends this so
-             the same index works under GitHub Pages' /otto/ subpath. */}}
+             one index works under GitHub Pages' /otto/ subpath too.
+
+             Both are absolute on purpose. canonifyURLs rewrites href and src
+             against the baseURL but leaves data-* attributes alone, so a
+             relURL here would silently drop the subpath. */}}
         {{ $search := resources.Get "js/search.js" }}
         <script type="module" src="{{ $search.Permalink }}"
-                data-bundle="{{ "pagefind/pagefind.js" | relURL }}"
-                data-base="{{ "" | relURL }}"></script>
+                data-bundle="{{ "pagefind/pagefind.js" | absURL }}"
+                data-base="{{ (urls.Parse (absURL "")).Path }}"></script>
     </body>
 </html>
