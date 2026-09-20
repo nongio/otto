@@ -892,9 +892,22 @@ progress, and can cancel it.
   is now taken says so and leaves both files alone rather than choosing for the
   user. There is no redo: undoing a delete is a *restore*, and re-deleting it
   would be a second trip to the trash rather than the inverse of anything.
-- **Progress** — an operation shorter than 500 ms shows nothing. Beyond that,
-  the status bar shows the current file, the count, and a cancel action; per-byte
-  progress appears for files above 32 MB.
+- **Progress** — an operation shorter than 500 ms shows nothing. Beyond that it
+  is reported in three places, each good at something different:
+  - the **status bar** of the window it was started from: the current file, the
+    count, and a cancel action. Per-byte progress appears for files above 32 MB.
+  - the **dock icon**, which fills for as long as the work lasts and is
+    visible from anywhere;
+  - the **island**, but only while the window is not the one in front of the
+    user. A job started in the window being looked at has already said so
+    there, and a bubble would be a second copy of it to deal with; leave the
+    window and the island comes up, come back and it goes quiet again. Both go
+    through `org.otto.Island1`, which publishes the dock bar from the same
+    activity — see [dynamic-island.md](./dynamic-island.md).
+
+  Cancelling stops the operation between items, never inside one: whole files
+  are left behind, never half of one, and everything done up to that point
+  stands and stays undoable.
 - **Errors** — a failure part-way through a multi-file operation stops and
   reports which files were done, which failed and why, and offers to continue
   with the rest or to stop. It does not abort silently and it does not retry

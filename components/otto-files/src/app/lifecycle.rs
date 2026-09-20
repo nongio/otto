@@ -698,6 +698,9 @@ impl App for FilesApp {
         if browser.focused != configure.is_activated() {
             browser.focused = configure.is_activated();
             browser.dirty = true;
+            // A running job is reported on the island only while the user is
+            // somewhere else; in front of this window the status line has it.
+            crate::tasks::set_watched(browser.focused);
         }
         drop(browser);
         self.render();

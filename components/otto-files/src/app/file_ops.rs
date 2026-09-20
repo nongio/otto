@@ -286,11 +286,11 @@ impl Browser {
 
     /// Paste into the directory being viewed.
     ///
-    /// Runs on the calling thread today, which is the UI thread — acceptable
-    /// only because it is a deliberate keystroke on a known selection, not
-    /// something that happens while scrolling. The spec puts this on the worker
-    /// pool with progress and cancellation, and that is the next change; the
-    /// `OpResult` it returns is already the shape that path reports.
+    /// Runs on a worker thread, reporting as it goes: the window stays live,
+    /// the status bar says which file is being handled, and the island and the
+    /// dock icon carry the same job for anyone not looking at this window.
+    /// The outcome lands in [`Self::poll`], where it is applied exactly as an
+    /// operation that finished at once would be.
     pub(super) fn paste(&mut self) {
         // A synthetic listing is not a folder: there is nowhere in it to put
         // anything.
@@ -321,28 +321,125 @@ impl Browser {
         }
         let dest = self.columns[self.active].path.clone();
 
-        // Keep Both rather than Replace: without a conflict sheet to ask with,
-        // the only safe default is the one that cannot destroy anything.
-        let result = model::paste(&clip, &dest, model::OnConflict::KeepBoth);
-
-        // A cut is consumed by its paste; a copy stays available to paste again.
-        if clip.cut && result.errors.is_empty() {
-            self.clipboard = model::Clipboard::default();
+        // One at a time: a second paste while one is running would fight it
+        // for the same names in the same folder.
+        if self.job.is_some() {
+            self.refuse(otto_kit::t_owned!("files-task-already-running"));
+            return;
         }
 
-        let summary = result.summary();
-        self.status = (!summary.is_empty()).then_some(summary);
-        Self::play_op_sound(&result);
-        self.record_undo(
-            if clip.cut {
+        let (updates, rx) = std::sync::mpsc::channel();
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
+        let cut = clip.cut;
+
+        let spawned = std::thread::Builder::new()
+            .name("otto-files-paste".into())
+            .spawn(move || {
+                let mut task = crate::tasks::Task::start(task_title(cut, 0, clip.paths.len()));
+                // Keep Both rather than Replace: without a conflict sheet to
+                // ask with, the only safe default is the one that cannot
+                // destroy anything.
+                let result = model::paste_reporting(
+                    &clip,
+                    &dest,
+                    model::OnConflict::KeepBoth,
+                    |done, total, item| {
+                        task.progress(done, total, &task_title(cut, done, total));
+                        let _ = updates.send(JobUpdate::Progress {
+                            done,
+                            total,
+                            item: item.to_string(),
+                        });
+                    },
+                    &worker_cancel,
+                );
+                let summary = result.summary();
+                task.end((!summary.is_empty()).then_some(summary));
+                let _ = updates.send(JobUpdate::Done(result));
+                // The window is asleep between events, and an operation that
+                // finished while nothing was happening still has to land.
+                otto_kit::prelude::AppContext::request_wakeup();
+            });
+
+        if let Err(err) = spawned {
+            tracing::warn!(?err, "could not start the paste");
+            return;
+        }
+
+        self.job = Some(Job {
+            updates: rx,
+            cancel,
+            undo_label: if cut {
                 otto_kit::t!("files-undo-move")
             } else {
                 otto_kit::t!("files-undo-copy")
             },
-            result.changes,
-        );
-        self.reload_all();
+            cut,
+        });
         self.dirty = true;
+    }
+
+    /// Stop the running operation, if there is one.
+    ///
+    /// What it has already done stands and stays undoable; it simply does no
+    /// more. The outcome still arrives through [`Self::poll`], so a cancelled
+    /// paste is reported like any other.
+    pub(super) fn cancel_job(&mut self) {
+        if let Some(job) = &self.job {
+            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Take everything the running job has said, and its outcome if it is
+    /// over. Returns whether anything needs redrawing.
+    pub(super) fn poll_job(&mut self) -> bool {
+        let Some(job) = &self.job else {
+            return false;
+        };
+
+        let mut changed = false;
+        let mut finished = None;
+        loop {
+            match job.updates.try_recv() {
+                Ok(JobUpdate::Progress { done, total, item }) => {
+                    self.status = Some(otto_kit::t_owned!(
+                        "files-task-progress",
+                        name = item.as_str(),
+                        done = done as f64,
+                        total = total as f64
+                    ));
+                    changed = true;
+                }
+                Ok(JobUpdate::Done(result)) => {
+                    finished = Some(result);
+                    changed = true;
+                }
+                // Disconnected without a result: the worker died, and holding
+                // a job that can never finish would wedge every later paste.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) if finished.is_none() => {
+                    self.job = None;
+                    return true;
+                }
+                Err(_) => break,
+            }
+        }
+
+        if let Some(result) = finished {
+            let job = self.job.take().expect("checked above");
+            // A cut is consumed by its paste; a copy stays available to paste
+            // again.
+            if job.cut && result.errors.is_empty() {
+                self.clipboard = model::Clipboard::default();
+            }
+            let summary = result.summary();
+            self.status = (!summary.is_empty()).then_some(summary);
+            Self::play_op_sound(&result);
+            self.record_undo(job.undo_label, result.changes);
+            self.reload_all();
+        }
+
+        changed
     }
 
     /// Say out loud what an operation did.
@@ -687,4 +784,17 @@ impl Browser {
             column.reload();
         }
     }
+}
+
+/// What a running paste calls itself, in the island and in the status bar.
+///
+/// The same sentence throughout: a job that renames itself halfway through
+/// reads as two jobs.
+fn task_title(cut: bool, done: usize, total: usize) -> String {
+    let key = if cut {
+        "files-task-moving"
+    } else {
+        "files-task-copying"
+    };
+    otto_kit::t_owned!(key, done = done as f64, total = total as f64)
 }

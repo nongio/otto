@@ -252,6 +252,36 @@ fn hover_drag(state: &Arc<Mutex<Browser>>, x: f32, y: f32) {
 
 /// The browser's whole state. Shared with the draw and input callbacks, which
 /// outlive any borrow this struct could hand out.
+/// A file operation running on a worker thread.
+///
+/// The window keeps a handle to it so it can show where it has got to, stop
+/// it, and take its outcome when it lands. The work itself is on the worker:
+/// nothing here touches the disk.
+struct Job {
+    /// What the worker has said so far, drained in `poll`.
+    updates: std::sync::mpsc::Receiver<JobUpdate>,
+    /// Set to ask the worker to stop. It is read between items, so stopping
+    /// never leaves half a file behind.
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// What the undo step this job leaves behind is called.
+    undo_label: &'static str,
+    /// Whether the clipboard is spent when this finishes — a cut is consumed
+    /// by its paste, a copy is not.
+    cut: bool,
+}
+
+/// One thing a running job has to say for itself.
+enum JobUpdate {
+    /// `done` of `total` items handled; `item` is the one it is on now.
+    Progress {
+        done: usize,
+        total: usize,
+        item: String,
+    },
+    /// It is over, and this is what it did.
+    Done(model::OpResult),
+}
+
 struct Browser {
     /// The path stack: `[root, …, deepest]`. Miller columns render all of it;
     /// the list renders the last. Navigation pushes and pops in both views, so
@@ -327,6 +357,9 @@ struct Browser {
     drop_target: Option<DropTarget>,
     /// The last operation's outcome, shown in the header until the next action.
     status: Option<String>,
+    /// The file operation running on a worker thread, if there is one. See
+    /// [`Job`]: one at a time, and the window stays usable while it runs.
+    job: Option<Job>,
     /// Operations that changed files, newest last. Ctrl+Z pops one and puts
     /// it back; see [`UndoStep`] for what does and does not go on here.
     undo: Vec<UndoStep>,

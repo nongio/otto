@@ -85,6 +85,7 @@ impl Browser {
             recent_sections: view::GridSections::default(),
             trash_pressed: None,
             status: None,
+            job: None,
             undo: Vec::new(),
             info: None,
             info_text: None,

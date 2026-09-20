@@ -5,6 +5,7 @@
 //! `specs/file-browser.md` under *Async I/O*.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -1439,12 +1440,40 @@ fn plural(n: usize) -> &'static str {
 
 /// Paste `clipboard` into `dest`. Runs on a worker thread.
 pub fn paste(clipboard: &Clipboard, dest: &Path, on_conflict: OnConflict) -> OpResult {
-    let mut result = OpResult::default();
+    paste_reporting(
+        clipboard,
+        dest,
+        on_conflict,
+        |_, _, _| {},
+        &AtomicBool::new(false),
+    )
+}
 
-    for source in &clipboard.paths {
+/// Paste, saying where it has got to and stopping when asked to.
+///
+/// `report` is called before each item with how many are done, how many there
+/// are in all, and the name of the one about to be handled - enough for a
+/// progress bar and a line of text. `cancel` is read between items, never
+/// during one: stopping leaves whole files behind, never half of one, and the
+/// items already handled stay in the result so they can still be undone.
+pub fn paste_reporting(
+    clipboard: &Clipboard,
+    dest: &Path,
+    on_conflict: OnConflict,
+    mut report: impl FnMut(usize, usize, &str),
+    cancel: &AtomicBool,
+) -> OpResult {
+    let mut result = OpResult::default();
+    let total = clipboard.paths.len();
+
+    for (done, source) in clipboard.paths.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         let Some(name) = source.file_name() else {
             continue;
         };
+        report(done, total, &name.to_string_lossy());
 
         // Pasting a directory into itself or its own descendant would recurse
         // forever. Checked before anything is written.
@@ -1502,6 +1531,7 @@ pub fn paste(clipboard: &Clipboard, dest: &Path, on_conflict: OnConflict) -> OpR
         }
     }
 
+    report(total, total, "");
     result
 }
 

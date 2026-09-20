@@ -35,6 +35,9 @@ impl Browser {
             self.follow_vanished(depth);
             changed = true;
         }
+        if self.poll_job() {
+            changed = true;
+        }
         // What a provider's earlier runs — a script, most likely — have
         // finished with, applied the same way as a run that answered at once.
         for landed in self.commands.poll() {

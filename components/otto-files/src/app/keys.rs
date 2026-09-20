@@ -491,7 +491,8 @@ impl FilesApp {
                     }
                 }
                 // Escape unwinds one layer at a time: the preview, then the
-                // filter menu, then — in the picker — the request itself.
+                // filter menu, then — in the picker — the request itself, and
+                // with nothing else up it stops a running operation.
                 Keysym::Escape => {
                     let menu_open = browser.picker.as_ref().is_some_and(|p| p.filter_open);
                     // The panel is not modal, so Escape does not belong to it
@@ -515,6 +516,10 @@ impl FilesApp {
                         browser.dirty = true;
                     } else if browser.picker.is_some() {
                         browser.picker_cancel();
+                    } else if browser.job.is_some() {
+                        // What it has copied so far stands, and stays
+                        // undoable. It simply does no more.
+                        browser.cancel_job();
                     } else {
                         browser.clear_selection();
                     }
