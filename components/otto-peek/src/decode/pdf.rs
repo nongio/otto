@@ -168,9 +168,11 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
     //
     // A document is the same lesson once more: it rests with a whole page in
     // the panel, gutters and all, so the page is drawn at a fraction of the
-    // panel's width and that fraction is what is asked for. The host sends
-    // the box in physical pixels rather than an oversampled one, and asks
-    // again for a wider raster if the reader zooms in.
+    // panel's width and that fraction is what is asked for. It is fitted into
+    // the panel's own box — `Request::page_box`, sent alongside the decode
+    // box rather than derived from it — and a reader who zooms in asks again
+    // for a wider raster.
+    let (box_width, box_height) = request.page_box();
     let width = match &sizes {
         Some(sizes) => {
             let strip: Vec<Page> = sizes
@@ -178,12 +180,16 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
                 .map(|(width, height)| Page::blank(*width, *height))
                 .collect();
             otto_kit::preview::page_raster_width(
-                skia_safe::Rect::from_wh(request.width as f32, request.height as f32),
+                skia_safe::Rect::from_wh(box_width as f32, box_height as f32),
                 &strip,
                 (page as usize).saturating_sub(1),
             )
             .ceil() as u32
         }
+        // No page tree to lay a strip out from — no `pdfinfo` on the system.
+        // A document still fits its page into the panel's box; a caller that
+        // will draw the page as a picture gets the decode box's headroom.
+        None if request.document => (box_width as f32 * request.zoom.max(1.0)).ceil() as u32,
         None => (request.width as f32 * request.zoom.max(1.0)).ceil() as u32,
     };
     let width = width.clamp(320, MAX_WIDTH);

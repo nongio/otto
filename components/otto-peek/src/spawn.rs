@@ -135,6 +135,10 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         .arg(format!("{:.4}", request.oversample))
         .arg("--page")
         .arg(request.page.to_string())
+        .arg("--panel-width")
+        .arg(request.panel.0.to_string())
+        .arg("--panel-height")
+        .arg(request.panel.1.to_string())
         .args(if request.animate {
             None
         } else {

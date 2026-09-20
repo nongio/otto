@@ -231,7 +231,7 @@ fn guarded_lookup(
 ) -> Option<String> {
     use std::sync::atomic::Ordering;
 
-    let find = |theme: Option<&str>| {
+    let find_at = |theme: Option<&str>, size: i32| {
         let mut lookup = freedesktop_icons::lookup(icon_name)
             .with_size(size.clamp(1, i32::from(u16::MAX)) as u16)
             .with_scale(scale.clamp(1, i32::from(u16::MAX)) as u16);
@@ -243,6 +243,7 @@ fn guarded_lookup(
             .find()
             .map(|path| path.to_string_lossy().into_owned())
     };
+    let find = |theme: Option<&str>| largest_at_or_below(size, |s| find_at(theme, s));
 
     let broken = THEME_IS_BROKEN.load(Ordering::Relaxed);
     if let Some(theme) = theme_name.filter(|_| broken) {
@@ -271,6 +272,59 @@ fn guarded_lookup(
             })
         }
     }
+}
+
+/// The pixel size a themed icon's path implies: the numeric part of its
+/// directory (`apps/256`, `256x256/apps`), or no ceiling at all for a
+/// `scalable` one. A path with no size in it — `/usr/share/pixmaps` — is left
+/// unjudged.
+fn size_from_path(path: &str) -> Option<i32> {
+    std::path::Path::new(path)
+        .components()
+        .rev()
+        .skip(1)
+        .find_map(|component| {
+            let part = component.as_os_str().to_str()?;
+            if part == "scalable" {
+                return Some(i32::MAX);
+            }
+            part.split(['x', '@']).next()?.parse::<i32>().ok()
+        })
+}
+
+/// Ask for `wanted`, but settle for the largest size the theme really ships.
+///
+/// When no directory declares the size asked for, `freedesktop-icons` falls
+/// back to its nearest directory — and for the fixed-size directories most
+/// themes are built from it ranks that fallback by a signed distance, so every
+/// directory scores negative and the *smallest* one wins. A theme whose `apps`
+/// stops at 256 therefore answers a request for 512 with its 16px icon, and the
+/// dock, which asks big on purpose, draws a smear.
+///
+/// So walk the standard sizes down from the request and keep the biggest icon
+/// at or below it. The first probe that lands in a directory of its own size is
+/// the largest there is, so the walk stops there.
+fn largest_at_or_below(wanted: i32, find: impl Fn(i32) -> Option<String>) -> Option<String> {
+    let first = find(wanted)?;
+    let mut best = match size_from_path(&first) {
+        Some(found) if found < wanted => (found, first),
+        _ => return Some(first),
+    };
+    for probe in STANDARD_ICON_SIZES
+        .into_iter()
+        .rev()
+        .filter(|&size| size < wanted)
+    {
+        let Some(path) = find(probe) else { continue };
+        let found = size_from_path(&path).unwrap_or(0);
+        if found > best.0 && found <= wanted {
+            best = (found, path);
+        }
+        if found >= probe {
+            break;
+        }
+    }
+    Some(best.1)
 }
 
 /// The directories a theme may live in, most specific first.
