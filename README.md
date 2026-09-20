@@ -115,40 +115,36 @@ For where each one is implemented and how to trace it through the code, see [doc
 
 ## Installation
 
-Pre-built packages are on the [GitHub Releases](https://github.com/nongio/otto/releases) page.
+Each block below installs the [latest release](https://github.com/nongio/otto/releases/latest).
+Copy it as it is: it works out which file it needs and pulls in the
+dependencies.
 
-#### Debian/Ubuntu (`.deb`)
+#### Debian / Ubuntu
 
 ```bash
-# Download the .deb package from releases, then:
-sudo dpkg -i otto_*.deb
-sudo apt-get install -f  # Install dependencies if needed
+curl -fLO "$(curl -fsSL https://api.github.com/repos/nongio/otto/releases/latest \
+    | grep -o 'https://[^"]*amd64\.deb')"
+sudo apt install ./otto_*.deb
 ```
 
-#### Fedora/RHEL (`.rpm`)
+#### Fedora / RHEL
 
 ```bash
-# Download the .rpm package from releases, then:
-sudo dnf install otto-*.rpm
-# or
-sudo rpm -i otto-*.rpm
+sudo dnf install "$(curl -fsSL https://api.github.com/repos/nongio/otto/releases/latest \
+    | grep -o 'https://[^"]*x86_64\.rpm')"
 ```
 
 #### Arch Linux
 
 ```bash
-# Download PKGBUILD and let makepkg fetch the tarball automatically:
-curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
+curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
 makepkg -si
 ```
 
-If you already downloaded the tarball from GitHub Releases, put the PKGBUILD in the same directory — `makepkg` will use it without re-downloading:
+`makepkg` fetches the release tarball itself. If you already downloaded it,
+put the `PKGBUILD` beside it and it will be used as it is.
 
-```bash
-cd ~/Downloads  # wherever your otto-*-x86_64.tar.gz is
-curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
-makepkg -si
-```
+Prefer to build it yourself? See [Building Otto](#building-otto).
 
 ### After installation
 

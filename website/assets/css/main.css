@@ -169,6 +169,7 @@ body {
    display: none;
 }
 
+#repo-link,
 #theme-toggle {
    position: fixed;
    top: 0;
@@ -186,13 +187,22 @@ body {
 }
 
 #theme-toggle:hover,
-#theme-toggle:focus {
+#theme-toggle:focus,
+#repo-link:hover,
+#repo-link:focus {
    opacity: 1;
+}
+
+/* Sits to the left of the theme toggle, whose width is its label plus the
+   same 1.7em gutter either side. */
+#repo-link {
+   right: calc(3.4em + 3ch);
 }
 
 @media (max-width: 900px) {
    /* Sits above the full-width "Contents" bar on mobile instead of
       overlapping it. */
+   #repo-link,
    #theme-toggle {
       top: 2.5em;
    }

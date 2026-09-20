@@ -5,31 +5,39 @@ worth checking on first run.
 
 ## Installing
 
-Pre-built packages are published on the
-[GitHub Releases](https://github.com/nongio/otto/releases) page.
+Each block below installs the
+[latest release](https://github.com/nongio/otto/releases/latest). Copy it as
+it is: it works out which file it needs and pulls in the dependencies. Packages
+are built for x86_64.
 
 ### Debian / Ubuntu
 
 ```sh
-sudo dpkg -i otto_*.deb
-sudo apt-get install -f   # pull in any missing dependencies
+curl -fLO "$(curl -fsSL https://api.github.com/repos/nongio/otto/releases/latest \
+    | grep -o 'https://[^"]*amd64\.deb')"
+sudo apt install ./otto_*.deb
 ```
 
 ### Fedora / RHEL
 
 ```sh
-sudo dnf install otto-*.rpm
+sudo dnf install "$(curl -fsSL https://api.github.com/repos/nongio/otto/releases/latest \
+    | grep -o 'https://[^"]*x86_64\.rpm')"
 ```
 
 ### Arch Linux
 
 ```sh
-curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
+curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
 makepkg -si
 ```
 
-If you already downloaded the release tarball, drop the `PKGBUILD` next to it
-and `makepkg` will use it without re-downloading.
+`makepkg` fetches the release tarball itself. If you already downloaded it,
+drop the `PKGBUILD` next to it and it will be used without downloading again.
+
+Once it is installed, Otto appears in your login manager's session menu. Pick
+it there and log in, then run through the
+[first-run checklist](#first-run-checklist).
 
 ### Building from source
 
