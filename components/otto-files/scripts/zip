@@ -85,6 +85,9 @@ def describe():
                     "preview": True,
                 },
                 "undo": by_locale("undo"),
+                # Say where the run has got to as it goes. The host turns it
+                # into the window's status line, the island, and the dock.
+                "progress": True,
             }
         ]
     }
@@ -121,6 +124,15 @@ def preview(request):
     return {"rows": rows, "note": note}
 
 
+def report(done, total, item):
+    """One line saying where the run has got to. Anything printed before the
+    result that carries "done" is progress, and the host reads it as it
+    arrives — so it has to be flushed, not left in the buffer until the end."""
+    json.dump({"done": done, "total": total, "item": item}, sys.stdout)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
 def run(request):
     name, destination, conflict = plan(request)
     if conflict:
@@ -129,15 +141,21 @@ def run(request):
     # Paths relative to the listing's directory, so the archive holds
     # "Photos/a.png" rather than "/home/me/Pictures/Photos/a.png".
     relative = [os.path.relpath(t, directory) for t in request["targets"]]
-    result = subprocess.run(
-        ["zip", "-r", "-q", "-y", destination, *relative],
-        cwd=directory,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        sys.exit((result.stderr or result.stdout).strip() or "zip failed")
     count = len(relative)
+    # One target at a time, appending to the same archive, so there is
+    # something to report between them. zip adds to an archive that is
+    # already there, which is what makes this the same archive either way.
+    for done, item in enumerate(relative):
+        report(done, count, os.path.basename(item))
+        result = subprocess.run(
+            ["zip", "-r", "-q", "-y", destination, item],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            sys.exit((result.stderr or result.stdout).strip() or "zip failed")
+    report(count, count, "")
     return {
         "status": tr(request, "done", count=count, name=name),
         "changes": [{"kind": "created", "path": destination}],
