@@ -7,7 +7,9 @@ impl Browser {
     ///
     /// A freshly loaded column starts with nothing selected — no eager pick
     /// of its first entry. `move_cursor` already lands Down's first press on
-    /// index 0 from an empty cursor, so there is nowhere that needs one.
+    /// index 0 from an empty cursor, so there is nowhere that needs one. The
+    /// exception is a pane the keyboard has already stepped into, which is
+    /// what `take_entering` is for.
     pub(super) fn poll(&mut self) -> bool {
         let mut changed = false;
         let mut refreshed = false;
@@ -35,6 +37,9 @@ impl Browser {
             self.follow_vanished(depth);
             changed = true;
         }
+        if self.take_entering() {
+            changed = true;
+        }
         if self.poll_job() {
             changed = true;
         }
@@ -48,6 +53,30 @@ impl Browser {
             changed = true;
         }
         changed
+    }
+
+    /// Put the cursor on the first row of a pane the keyboard stepped into
+    /// while it was still being read — see [`Browser::entering`].
+    ///
+    /// Dropped the moment the read finishes, whatever it found, and dropped
+    /// unused if the user has moved on in the meantime: the request belongs to
+    /// one press, and a stale one would move a cursor nobody asked it to move.
+    pub(super) fn take_entering(&mut self) -> bool {
+        let Some(depth) = self.entering else {
+            return false;
+        };
+        if depth < self.columns.len() && self.columns[depth].loading() {
+            return false;
+        }
+        self.entering = None;
+        if depth >= self.columns.len() || self.active != depth {
+            return false;
+        }
+        if self.columns[depth].cursor.is_some() || self.visible(depth).is_empty() {
+            return false;
+        }
+        self.select(depth, 0);
+        true
     }
 
     /// Select the folder `new_folder` just created and open its rename field,

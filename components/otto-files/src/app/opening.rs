@@ -263,14 +263,20 @@ impl Browser {
                 ViewMode::Columns => {
                     if depth + 1 < self.columns.len() {
                         self.active = depth + 1;
-                        if self.columns[self.active].cursor.is_none()
-                            && !self.visible(self.active).is_empty()
-                        {
-                            // Same path a click takes: if this first entry is
-                            // itself a directory, its column shows up too —
-                            // every directory on screen keeps the pane to its
-                            // right populated, not just the one last entered.
-                            self.select(self.active, 0);
+                        if self.columns[self.active].cursor.is_none() {
+                            if self.visible(self.active).is_empty() {
+                                // Still being read: take the first row when it
+                                // lands, in `poll`. The listing is on a worker
+                                // and a keyboard descent routinely beats it.
+                                self.entering = Some(self.active);
+                            } else {
+                                // Same path a click takes: if this first entry
+                                // is itself a directory, its column shows up
+                                // too — every directory on screen keeps the
+                                // pane to its right populated, not just the
+                                // one last entered.
+                                self.select(self.active, 0);
+                            }
                         }
                         self.reveal_pane(self.active);
                     }
