@@ -444,7 +444,7 @@ jobs:
 
   publish-nightly:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-arch]
+    needs: [build-arch, build-deb, build-rpm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -453,24 +453,59 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: otto-arch
+      - name: Download .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-deb
+          path: artifacts/deb
+      - name: Download .rpm artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: otto-rpm
+          path: artifacts/rpm
+      # The nightly tag is reused by every build, so its assets carry no
+      # version: the download URL in the instructions below has to keep
+      # working from one night to the next.
+      - name: Names that do not change from night to night
+        run: |
+          cp artifacts/deb/*.deb otto-nightly-amd64.deb
+          cp artifacts/rpm/*.rpm otto-nightly-x86_64.rpm
       - name: Publish nightly release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: nightly
           name: Nightly
           prerelease: true
-          files: otto-nightly-x86_64.tar.gz
+          files: |
+            otto-nightly-x86_64.tar.gz
+            otto-nightly-amd64.deb
+            otto-nightly-x86_64.rpm
           body: |
-            Automated nightly build from the latest commit on `main`.
+            Automated nightly build from the latest commit on `main`. Expect
+            rough edges; the [latest release](https://github.com/nongio/otto/releases/latest)
+            is the one to run if you want a working desktop.
 
-            ### Arch Linux (binary, no compilation needed)
+            ### Debian/Ubuntu
             ```bash
+            curl -fLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-amd64.deb
+            sudo apt install ./otto-nightly-amd64.deb
+            ```
+
+            ### Fedora/RHEL
+            ```bash
+            sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
+            ```
+
+            ### Arch Linux
+            ```bash
+            curl -fsSLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz
             mkdir otto && tar -xzf otto-nightly-x86_64.tar.gz -C otto
             cd otto
             makepkg -p PKGBUILD-nightly-bin -si
             ```
 
-            To update, re-download the tarball and re-run `makepkg`.
+            To update, run the same commands again: the URLs always point at
+            the most recent build.
 
   validate-pkgbuild:
     needs: changes

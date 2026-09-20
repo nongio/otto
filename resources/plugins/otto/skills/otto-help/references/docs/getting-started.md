@@ -37,6 +37,31 @@ Once it is installed, Otto appears in your login manager's session menu. Pick
 it there and log in, then run through the
 [first-run checklist](#first-run-checklist).
 
+### Nightly builds
+
+Every commit to `main` is packaged as a
+[nightly build](https://github.com/nongio/otto/releases/tag/nightly). It is
+what is being worked on rather than what has been tested, so expect rough
+edges and keep a release installed if you need the machine to work.
+
+```sh
+# Debian / Ubuntu
+curl -fLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-amd64.deb
+sudo apt install ./otto-nightly-amd64.deb
+
+# Fedora / RHEL
+sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
+
+# Arch Linux
+curl -fsSLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz
+mkdir otto && tar -xzf otto-nightly-x86_64.tar.gz -C otto
+cd otto && makepkg -p PKGBUILD-nightly-bin -si
+```
+
+The URLs never change, so running the same commands again is how you update.
+On Arch the nightly package replaces `otto-bin`; going back is
+`makepkg -si` from the release `PKGBUILD` above.
+
 ### Building from source
 
 ```sh

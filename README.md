@@ -34,25 +34,31 @@ You can try it inside your current session in about a minute — [jump to Try it
 
 ## Try it
 
-**Zero risk:** Otto runs as a window inside the desktop you're using right now.
+Install the package for your distribution:
 
 ```sh
-git clone https://github.com/nongio/otto
-cd otto
-cargo run --release        # opens Otto in a window (winit backend)
+# Debian / Ubuntu
+curl -fLO https://github.com/nongio/otto/releases/latest/download/otto-amd64.deb
+sudo apt install ./otto-amd64.deb
+
+# Fedora / RHEL
+sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x86_64.rpm
+
+# Arch
+curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD && makepkg -si
+```
+
+**Zero risk:** Otto runs as a window inside the desktop you are using right now.
+
+```sh
+otto --winit
 ```
 
 Then open something inside it (`WAYLAND_DISPLAY=wayland-1 <your app>`), minimize a window to the Dock, hit `PageUp` for Exposé, `Ctrl+Tab` for the app switcher.
 
-**For real:** install a package and pick "Otto" in your login manager.
+**For real:** log out and pick "Otto" in your login manager.
 
-```sh
-sudo dpkg -i otto_*.deb && sudo apt-get install -f   # Debian / Ubuntu
-sudo dnf install otto-*.rpm                          # Fedora / RHEL
-curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD && makepkg -si   # Arch
-```
-
-Packages come from the [GitHub Releases](https://github.com/nongio/otto/releases) page. See [Installation](#installation) for the details and post-install notes, and the [Getting Started guide](https://nongio.github.io/otto/getting-started/) for a walkthrough.
+See [Installation](#installation) for nightly builds and post-install notes, [Building Otto](#building-otto) if you would rather compile it yourself, and the [Getting Started guide](https://nongio.github.io/otto/getting-started/) for a walkthrough.
 
 ## What you get
 
@@ -141,6 +147,28 @@ makepkg -si
 
 `makepkg` fetches the release tarball itself. If you already downloaded it,
 put the `PKGBUILD` beside it and it will be used as it is.
+
+#### Nightly
+
+Every commit to `main` is packaged as a [nightly build](https://github.com/nongio/otto/releases/tag/nightly).
+It is what is being worked on rather than what has been tested, so keep a
+release installed if you need the machine to work.
+
+```bash
+# Debian / Ubuntu
+curl -fLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-amd64.deb
+sudo apt install ./otto-nightly-amd64.deb
+
+# Fedora / RHEL
+sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
+
+# Arch Linux
+curl -fsSLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz
+mkdir otto && tar -xzf otto-nightly-x86_64.tar.gz -C otto
+cd otto && makepkg -p PKGBUILD-nightly-bin -si
+```
+
+The URLs never change, so the same commands update an existing install.
 
 Prefer to build it yourself? See [Building Otto](#building-otto).
 
