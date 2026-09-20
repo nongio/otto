@@ -71,8 +71,9 @@ Path `/org/otto/Island`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `CreateActivity` | `(s app_id, s title, s icon, d progress, u timeout_ms, s priority, b live) -> t` | Create an activity, returning its id. `progress`: 0.0–1.0, negative for none. `priority`: `low`/`normal`/`high`/`critical` (`urgent` is accepted as `critical`). |
+| `CreateActivity` | `(s app_id, s title, s icon, d progress, u timeout_ms, s priority, b live, b quiet) -> t` | Create an activity, returning its id. `progress`: 0.0–1.0, negative for none. `priority`: `low`/`normal`/`high`/`critical` (`urgent` is accepted as `critical`). |
 | `UpdateActivity` | `(t id, s title, d progress) -> b` | Update title and/or progress. Empty title = no change. Negative progress = clear. |
+| `SetActivityQuiet` | `(t id, b quiet) -> b` | Show or hide a running activity's island without ending it. |
 | `DismissActivity` | `(t id) -> b` | Dismiss by id. |
 
 Any process can call these. Each mutation wakes the event loop via
@@ -80,12 +81,34 @@ Any process can call these. Each mutation wakes the event loop via
 
 An activity created this way gets an island like any notification.
 
+### Running tasks
+
+A `live` activity is a job rather than something that happened: it does not
+expire on a timeout, and it ends when the app that started it says so. Its
+`progress` is drawn — a ring around the icon in Mini and Compact, a bar with a
+percentage beside it on the open card — and it takes its turn in the row like
+anything else, so a job the user is not attending to shrinks to a ring on a
+dot.
+
+The same activity is what fills the app's dock icon (see **Dock overlays**),
+which is why `quiet` exists: an app whose own window is in front of the user
+has already said what it is doing there, and a bubble would only be a second
+copy of it. A quiet activity is reported to the dock and not to the row. The
+app flips it as its window gains and loses focus; the job is unaffected.
+
+### Dock overlays
+
+otto-islands is the session's notification daemon and the home of its
+activities, so it is the one process that knows both what an app has
+outstanding and what it is busy with. It publishes both through
+`otto_dock_v1`: `set_badge` with the count of unread notifications, and
+`set_progress` with how far along that app's live activities are — their mean,
+so an app running two jobs gets one honest bar. Quiet counts here; only the
+island is quiet. Changes smaller than a percent are not sent.
+
 **Accepted but not yet honoured.** These are part of the interface contract and
 callers may pass them, but nothing reads them yet:
 
-- `live` — intended to drive an animated indicator.
-- `progress` — stored and exposed to accessibility as a numeric value; no
-  progress bar is drawn.
 - `timeout_ms` — expiry marks the activity `expired` (which stops it announcing
   itself) but never removes it. `IslandState::expire_timeouts` exists and is not
   called. Removal is `DismissActivity`, a user dismissal, or `CloseNotification`.

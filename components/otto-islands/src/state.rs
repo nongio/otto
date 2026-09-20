@@ -44,6 +44,7 @@ impl IslandState {
         timeout_ms: u32,
         priority: Priority,
         live: bool,
+        quiet: bool,
     ) -> ActivityId {
         let id = self.next_activity_id();
         self.activities.push(Activity {
@@ -56,6 +57,7 @@ impl IslandState {
             timeout_ms,
             priority,
             live,
+            quiet,
             created_at: Instant::now(),
             expired: false,
             actions: Vec::new(),
@@ -127,6 +129,7 @@ impl IslandState {
             timeout_ms,
             priority,
             live: false,
+            quiet: false,
             created_at: Instant::now(),
             expired: false,
             actions,
@@ -180,6 +183,21 @@ impl IslandState {
         }
     }
 
+    /// Put an activity on screen, or take it off it without ending it.
+    ///
+    /// A job that goes quiet keeps running and keeps filling its dock icon;
+    /// it just stops being a bubble.
+    pub fn set_activity_quiet(&mut self, id: ActivityId, quiet: bool) -> bool {
+        let Some(activity) = self.activities.iter_mut().find(|a| a.id == id) else {
+            return false;
+        };
+        if activity.quiet != quiet {
+            activity.quiet = quiet;
+            self.dirty = true;
+        }
+        true
+    }
+
     pub fn dismiss_activity(&mut self, id: ActivityId) -> bool {
         let len_before = self.activities.len();
         self.activities.retain(|a| a.id != id);
@@ -197,6 +215,11 @@ impl IslandState {
     pub fn check_expired_refocus(&mut self) {
         let now = Instant::now();
         for activity in &mut self.activities {
+            // A running task ends when the app says it has ended, whatever
+            // timeout came with it.
+            if activity.live {
+                continue;
+            }
             if activity.timeout_ms > 0
                 && !activity.expired
                 && now.duration_since(activity.created_at).as_millis()

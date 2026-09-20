@@ -40,6 +40,19 @@ pub const FAN_STEP: f32 = 20.0;
 /// group can't grow the row without bound.
 pub const MAX_STACK: usize = 5;
 
+/// Thickness of the ring a live activity wears around its icon.
+const RING_STROKE: f32 = 2.5;
+/// How much of the ring the icon inside it takes up. The icon is the smaller
+/// of the two: the ring is what is being read, and it needs clear air between
+/// itself and the artwork to be read at a glance.
+const RING_ICON_RATIO: f32 = 0.55;
+/// Thickness of the linear bar on an open card.
+const BAR_H: f32 = 4.0;
+/// The row that bar and its readout sit in, between the title and the body.
+const PROGRESS_ROW_H: f32 = 16.0;
+/// Top of that row.
+const PROGRESS_TOP: f32 = CARD_PAD + 22.0;
+
 pub const SLOT_BUF_W: i32 = 460;
 pub const SLOT_BUF_H: i32 = 140;
 
@@ -70,15 +83,58 @@ pub fn pill_width(title: &str) -> f32 {
     (text_x + title_w + pad).clamp(MINI_H, 300.0)
 }
 
+/// The ring a live activity wears: the whole circle dim, the fraction done
+/// bright, starting at the top and going round clockwise. It is the same
+/// reading as the card's bar, in the space a bubble has.
+pub fn draw_progress_ring(canvas: &Canvas, cx: f32, cy: f32, radius: f32, progress: f64) {
+    let oval = Rect::from_xywh(cx - radius, cy - radius, radius * 2.0, radius * 2.0);
+
+    let mut track = Paint::default();
+    track.set_anti_alias(true);
+    track.set_style(skia_safe::paint::Style::Stroke);
+    track.set_stroke_width(RING_STROKE);
+    track.set_color(Color::from_argb(60, 255, 255, 255));
+    canvas.draw_oval(oval, &track);
+
+    let mut arc = track.clone();
+    arc.set_color(Color::WHITE);
+    arc.set_stroke_cap(skia_safe::paint::Cap::Round);
+    canvas.draw_arc(
+        oval,
+        -90.0,
+        360.0 * progress.clamp(0.0, 1.0) as f32,
+        false,
+        &arc,
+    );
+}
+
 /// Compact: this notification's own icon and title on one line.
-pub fn draw_pill(canvas: &Canvas, icon: &str, title: &str, text: Color, w: f32, h: f32) {
+pub fn draw_pill(
+    canvas: &Canvas,
+    icon: &str,
+    title: &str,
+    progress: Option<f64>,
+    text: Color,
+    w: f32,
+    h: f32,
+) {
     let pad = 8.0;
-    let icon_size = h - pad * 2.0;
-    let icon_x = pad;
+    let slot = h - pad * 2.0;
+    // The ring is drawn a little wider than the icon's slot and the icon
+    // shrinks inside it, so the pill keeps the width it measured either way.
+    let ring_radius = slot / 2.0 + 2.0;
+    let icon_size = match progress {
+        Some(_) => ring_radius * 2.0 * RING_ICON_RATIO,
+        None => slot,
+    };
+    let icon_x = pad + (slot - icon_size) / 2.0;
     let icon_y = (h - icon_size) / 2.0;
     draw_app_icon(canvas, icon, icon_x, icon_y, icon_size);
+    if let Some(progress) = progress {
+        draw_progress_ring(canvas, pad + slot / 2.0, h / 2.0, ring_radius, progress);
+    }
 
-    let text_x = icon_x + icon_size + 6.0;
+    let text_x = pad + slot + 6.0;
     let max_w = w - text_x - pad;
 
     let font = TextStyle {
@@ -100,10 +156,18 @@ pub fn draw_pill(canvas: &Canvas, icon: &str, title: &str, text: Color, w: f32, 
 
 /// Mini: just this notification's icon in a circle. There is no count badge —
 /// how many bubbles are stacked behind is what conveys the count.
-pub fn draw_mini(canvas: &Canvas, icon: &str, _w: f32, h: f32) {
-    let pad = 6.0;
-    let icon_size = h - pad * 2.0;
-    draw_app_icon(canvas, icon, pad, (h - icon_size) / 2.0, icon_size);
+pub fn draw_mini(canvas: &Canvas, icon: &str, progress: Option<f64>, _w: f32, h: f32) {
+    // The ring takes the circle's edge and the icon sits well inside it.
+    let ring_radius = h / 2.0 - RING_STROKE / 2.0 - 1.0;
+    let icon_size = match progress {
+        Some(_) => ring_radius * 2.0 * RING_ICON_RATIO,
+        None => h - 12.0,
+    };
+    let inset = (h - icon_size) / 2.0;
+    draw_app_icon(canvas, icon, inset, inset, icon_size);
+    if let Some(progress) = progress {
+        draw_progress_ring(canvas, h / 2.0, h / 2.0, ring_radius, progress);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +218,59 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
     let title = truncate_text(&activity.title, &title_font, max_w);
     canvas.draw_str(&title, (text_x, pad + 13.0), &title_font, &title_paint);
 
+    // Progress: the bar, and the readout beside it. A live activity's card is
+    // the one place with room to say the number as well as show it.
+    if let Some(progress) = activity.progress {
+        let (bar_x, column) = card_text_column(w);
+        let readout = format!("{}%", (progress.clamp(0.0, 1.0) * 100.0).round() as i32);
+        let readout_font = TextStyle {
+            family: "Inter",
+            weight: 500,
+            size: 9.0,
+        }
+        .font();
+        let (readout_w, _) = readout_font.measure_str(&readout, None);
+        let bar_w = (column - readout_w - 8.0).max(0.0);
+        let radius = BAR_H / 2.0;
+
+        let mut track = Paint::default();
+        track.set_anti_alias(true);
+        track.set_color(Color::from_argb(50, 255, 255, 255));
+        canvas.draw_rrect(
+            RRect::new_rect_xy(
+                Rect::from_xywh(bar_x, PROGRESS_TOP, bar_w, BAR_H),
+                radius,
+                radius,
+            ),
+            &track,
+        );
+
+        let mut fill = Paint::default();
+        fill.set_anti_alias(true);
+        fill.set_color(Color::WHITE);
+        let filled = bar_w * progress.clamp(0.0, 1.0) as f32;
+        if filled > 0.0 {
+            canvas.draw_rrect(
+                RRect::new_rect_xy(
+                    Rect::from_xywh(bar_x, PROGRESS_TOP, filled.max(BAR_H), BAR_H),
+                    radius,
+                    radius,
+                ),
+                &fill,
+            );
+        }
+
+        let mut readout_paint = Paint::default();
+        readout_paint.set_anti_alias(true);
+        readout_paint.set_color(Color::from_argb(200, 255, 255, 255));
+        canvas.draw_str(
+            &readout,
+            (bar_x + bar_w + 8.0, PROGRESS_TOP + BAR_H + 1.0),
+            &readout_font,
+            &readout_paint,
+        );
+    }
+
     // Body, wrapped over as many lines as the card was sized for. The card
     // grows to fit it, so the text is readable on arrival rather than cut off
     // after a few words.
@@ -163,15 +280,19 @@ pub fn draw_card(canvas: &Canvas, activity: &Activity, w: f32, h: f32) {
         body_paint.set_anti_alias(true);
         body_paint.set_color(Color::from_argb(180, 255, 255, 255));
         for (i, line) in card_body_lines(&activity.body, w).iter().enumerate() {
-            let y = BODY_TOP_BASELINE + i as f32 * BODY_LINE_H;
+            let y = body_top_baseline(activity.progress.is_some()) + i as f32 * BODY_LINE_H;
             canvas.draw_str(line, (text_x, y), &body_font, &body_paint);
         }
     }
 
     // Inline action buttons, on their own row under the body.
     if !activity.actions.is_empty() {
-        for (bx, by, bw, bh, _id, label) in card_action_rects(&activity.body, &activity.actions, w)
-        {
+        for (bx, by, bw, bh, _id, label) in card_action_rects(
+            &activity.body,
+            &activity.actions,
+            activity.progress.is_some(),
+            w,
+        ) {
             let mut btn_bg = Paint::default();
             btn_bg.set_anti_alias(true);
             btn_bg.set_color(Color::from_argb(50, 255, 255, 255));
@@ -408,19 +529,28 @@ fn card_body_lines(body: &str, w: f32) -> Vec<String> {
 pub fn card_height(activity: &Activity) -> f32 {
     let lines = card_body_lines(&activity.body, CARD_W).len().max(1);
     let mut h = CARD_H + (lines as f32 - 1.0) * BODY_LINE_H;
+    if activity.progress.is_some() {
+        h += PROGRESS_ROW_H;
+    }
     if !activity.actions.is_empty() {
         h += ACTION_ROW_H + ACTION_ROW_GAP;
     }
     h
 }
 
-/// Baseline of the first body line.
+/// Baseline of the first body line on a card with no progress row.
 const BODY_TOP_BASELINE: f32 = CARD_PAD + 28.0;
 
+/// Baseline of the first body line. A live activity's bar sits above the body,
+/// so everything under the title moves down by the row it takes.
+fn body_top_baseline(has_progress: bool) -> f32 {
+    BODY_TOP_BASELINE + if has_progress { PROGRESS_ROW_H } else { 0.0 }
+}
+
 /// Top of the inline action row, sitting below the last body line.
-fn action_row_y(body: &str, w: f32) -> f32 {
+fn action_row_y(body: &str, has_progress: bool, w: f32) -> f32 {
     let lines = card_body_lines(body, w).len().max(1);
-    BODY_TOP_BASELINE + (lines as f32 - 1.0) * BODY_LINE_H + ACTION_ROW_GAP
+    body_top_baseline(has_progress) + (lines as f32 - 1.0) * BODY_LINE_H + ACTION_ROW_GAP
 }
 
 /// The inline action buttons of a card of width `w`, in card-local
@@ -429,10 +559,11 @@ fn action_row_y(body: &str, w: f32) -> f32 {
 pub fn card_action_rects(
     body: &str,
     actions: &[NotificationAction],
+    has_progress: bool,
     w: f32,
 ) -> Vec<(f32, f32, f32, f32, String, String)> {
     let (text_x, max_w) = card_text_column(w);
-    action_button_rects(actions, text_x, max_w, action_row_y(body, w))
+    action_button_rects(actions, text_x, max_w, action_row_y(body, has_progress, w))
 }
 
 fn truncate_text(text: &str, font: &skia_safe::Font, max_width: f32) -> String {
