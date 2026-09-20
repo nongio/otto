@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // re-executed, so without this line a preview would start a second file
     // browser instead of decoding a file. Returns immediately on a normal
     // start; never returns at all when this process is a worker.
-    otto_quickview::run_worker_if_requested();
+    otto_peek::run_worker_if_requested();
 
     // Before the first string is read, and before the Wayland connection: the
     // sidebar and the column headings are built during startup. Asks the

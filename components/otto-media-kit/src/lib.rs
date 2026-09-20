@@ -22,7 +22,7 @@
 //!
 //! Why a process and not a thread: a demuxer fed a hostile file crashes, and
 //! a crash in a thread takes the file browser with it. The worker also
-//! carries the same containment Quick View's decoder does — no network, no
+//! carries the same containment Peek's decoder does — no network, no
 //! new privileges, hard descriptor and memory limits — for the same reason.
 
 pub mod player;

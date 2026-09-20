@@ -433,7 +433,7 @@ files-recent-yesterday = Yesterday
 files-recent-this-week = Earlier This Week
 files-recent-this-month = Earlier This Month
 files-recent-earlier = Earlier
-# Shown when a command that needs a folder — rename, open, trash, quick view —
+# Shown when a command that needs a folder — rename, open, trash, Peek —
 # is used on a listing that has none behind it: Recent, or search results.
 files-synthetic-no-action = This listing has no folder behind it.
 files-recent-grid-only = Recent is shown as a grid.
@@ -1252,89 +1252,89 @@ lock-power-shutdown-failed = Could not shut down: { $error }
 ## mid-sentence on purpose: they read as a continuation of "no preview".
 
 
-## Quick View — card labels
+## Peek — card labels
 ##
 ## Fact keys: the left-hand column of a card's detail list. One or two words,
 ## drawn in a narrow column — keep them short. Title case in English.
 
 # Column heading for the file's type, e.g. "JPEG", "PDF". Max ~12 characters.
-quickview-fact-kind = Kind
+peek-fact-kind = Kind
 # Column heading for the file's size on disk. Max ~12 characters.
-quickview-fact-size = Size
+peek-fact-size = Size
 # Column heading for an image's or a video's pixel dimensions. Max ~12 characters.
-quickview-fact-dimensions = Dimensions
+peek-fact-dimensions = Dimensions
 # Column heading for a video's or an audio track's running time. Max ~12 characters.
-quickview-fact-duration = Duration
+peek-fact-duration = Duration
 # Column heading for an image's total pixel count, in megapixels. Max ~12 characters.
-quickview-fact-pixels = Pixels
+peek-fact-pixels = Pixels
 # Column heading for a PDF's page count. Max ~12 characters.
-quickview-fact-pages = Pages
+peek-fact-pages = Pages
 # Column heading for a PDF's document title, taken from the document itself.
 # Max ~12 characters.
-quickview-fact-title = Title
+peek-fact-title = Title
 # Column heading for a song's performer, from its ID3 tags. Max ~12 characters.
-quickview-fact-artist = Artist
+peek-fact-artist = Artist
 # Column heading for a song's album, from its ID3 tags. Max ~12 characters.
-quickview-fact-album = Album
+peek-fact-album = Album
 # Column heading for a song's year of release, from its ID3 tags. Max ~12 characters.
-quickview-fact-year = Year
+peek-fact-year = Year
 
 # Subtitle of the card for a file that is zero bytes long. Shown under the
 # file's name in place of its type.
-quickview-empty-file = Empty file
+peek-empty-file = Empty file
 # Subtitle for an image with too many pixels to decode safely. Its real
 # dimensions are still listed below it.
-quickview-image-too-large = Too large to preview
+peek-image-too-large = Too large to preview
 # The value beside "Pixels" on that card. $count is a whole number of
 # megapixels.
-quickview-megapixels = { $count } megapixels
+peek-megapixels = { $count } megapixels
 # Subtitle for a PDF when no page rasteriser is installed. $packages is a
 # comma-separated list of package names — pdftoppm's package and so on — and
 # is not translated. Wraps to two lines if it has to.
-quickview-pdf-install-rasteriser = Install one of: { $packages } — to see the pages
+peek-pdf-install-rasteriser = Install one of: { $packages } — to see the pages
 # Which page of a PDF the panel is showing, in the corner of its title strip.
 # $page and $pages are whole numbers. Very little room — keep it to a few
 # characters, and drop the word for "page" if the language can.
-quickview-page-of = { $page } / { $pages }
+peek-page-of = { $page } / { $pages }
 
 
-## Quick View — listings
+## Peek — listings
 ##
 ## A folder or an archive is previewed as a list of what is inside, with one
 ## summary line under it.
 
 # Summary line for a folder with nothing in it.
-quickview-empty-folder = Empty folder
+peek-empty-folder = Empty folder
 # Summary line for a folder or archive: how many entries it holds. Hidden
 # entries are counted.
-quickview-item-count =
+peek-item-count =
     { $count ->
         [one] { $count } item
        *[other] { $count } items
     }
 # Summary line for an archive, joining the entry count to the archive's own
-# size on disk. $items is quickview-item-count, $size is a formatted byte
+# size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
-quickview-archive-summary = { $items } — { $size }
+peek-archive-summary = { $items } — { $size }
 
 
-## Quick View — sizes
+## Peek — sizes
 ##
-## Byte units. Quick View counts in powers of 1024, so the symbols are the
+## Byte units. Peek counts in powers of 1024, so the symbols are the
 ## conventional binary-rounded ones. Translate only the spelled-out "bytes".
 
-quickview-size-bytes =
+peek-size-bytes =
     { $count ->
         [one] { $count } byte
        *[other] { $count } bytes
     }
-quickview-size-kb = { $value } KB
-quickview-size-mb = { $value } MB
-quickview-size-gb = { $value } GB
-quickview-size-tb = { $value } TB
+peek-size-kb = { $value } KB
+peek-size-mb = { $value } MB
+peek-size-gb = { $value } GB
+peek-size-tb = { $value } TB
 
 
-## Quick View — nothing to show
+## Peek — nothing to show
 ##
 ## Each of these fills the card in place of a preview, so a person reads it
 ## instead of seeing the file. They state what happened and stop. Lower case,
@@ -1344,52 +1344,52 @@ quickview-size-tb = { $value } TB
 ## the system libraries produce and is usually English. Keep it at the end.
 
 # The file is a pipe, socket or device — opening it could block forever.
-quickview-error-not-previewable = this is not a file that can be previewed
+peek-error-not-previewable = this is not a file that can be previewed
 # The file's metadata could not be read.
-quickview-error-stat-file = cannot stat the file: { $error }
+peek-error-stat-file = cannot stat the file: { $error }
 # The file's bytes could not be read. Also used by the text previewer.
-quickview-error-read-file = cannot read the file: { $error }
+peek-error-read-file = cannot read the file: { $error }
 # The file cannot be rewound, so it cannot be identified and then read.
-quickview-error-not-seekable = the file is not seekable
+peek-error-not-seekable = the file is not seekable
 # The worker refused to parse the file because it could not confine itself
 # first. Parsing an untrusted file uncontained is not something Otto does.
-quickview-error-sandbox = could not sandbox the previewer: { $error }
+peek-error-sandbox = could not sandbox the previewer: { $error }
 
 # Image previewer.
-quickview-error-read-image = cannot read the image: { $error }
+peek-error-read-image = cannot read the image: { $error }
 # The bytes are an image format this build has no decoder for.
-quickview-error-image-unsupported = not an image this build can decode
-quickview-error-image-no-size = the image reports no size
-quickview-error-image-decode = the image did not decode: { $error }
-quickview-error-image-readback = the decoded image could not be read back
+peek-error-image-unsupported = not an image this build can decode
+peek-error-image-no-size = the image reports no size
+peek-error-image-decode = the image did not decode: { $error }
+peek-error-image-readback = the decoded image could not be read back
 
 # SVG previewer. "the drawing" means the SVG, as distinct from a photograph.
-quickview-error-read-drawing = cannot read the drawing: { $error }
-quickview-error-drawing-parse = the drawing could not be parsed
-quickview-error-drawing-surface = no surface to render it on
-quickview-error-drawing-readback = the drawing could not be read back
+peek-error-read-drawing = cannot read the drawing: { $error }
+peek-error-drawing-parse = the drawing could not be parsed
+peek-error-drawing-surface = no surface to render it on
+peek-error-drawing-readback = the drawing could not be read back
 
 # Text previewer: the bytes are not text in UTF-8 or in Latin-1.
-quickview-error-not-text = this file is not text in any encoding Otto reads
+peek-error-not-text = this file is not text in any encoding Otto reads
 
 # PDF previewer.
-quickview-error-read-document = cannot read the document: { $error }
-quickview-error-page-readback = the rendered page could not be read
+peek-error-read-document = cannot read the document: { $error }
+peek-error-page-readback = the rendered page could not be read
 
 # Folder listing.
-quickview-error-read-folder = cannot read the folder
+peek-error-read-folder = cannot read the folder
 
 ## The worker process itself failed. "the previewer" is the separate program
 ## that parses the file; a person never sees it by name anywhere else, so
 ## describing it as "the previewer" rather than naming it is deliberate.
 
-quickview-error-previewer-missing = cannot find the previewer: { $error }
-quickview-error-previewer-start = cannot start the previewer: { $error }
-quickview-error-previewer-no-output = the previewer produced no output
-quickview-error-previewer-unreadable = the previewer produced something unreadable
-quickview-error-previewer-failed = the previewer failed: { $error }
+peek-error-previewer-missing = cannot find the previewer: { $error }
+peek-error-previewer-start = cannot start the previewer: { $error }
+peek-error-previewer-no-output = the previewer produced no output
+peek-error-previewer-unreadable = the previewer produced something unreadable
+peek-error-previewer-failed = the previewer failed: { $error }
 # The worker was still going after the deadline and was killed.
-quickview-error-timeout = this file took too long to preview
+peek-error-timeout = this file took too long to preview
 
 ## Islands
 ##

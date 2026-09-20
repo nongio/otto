@@ -1,6 +1,6 @@
 //! The decode worker: the only place in Otto that interprets an untrusted file.
 //!
-//! Runs as a separate short-lived process (`otto-quickview --decode-worker`),
+//! Runs as a separate short-lived process (`otto-peek --decode-worker`),
 //! sandboxed by [`crate::sandbox`], holding one read-only descriptor and
 //! writing one [`PreviewPayload`] to stdout. It has no Wayland connection, no
 //! bus connection, and no path it could open.
@@ -117,7 +117,7 @@ pub fn run_worker(request: Request) -> i32 {
     if let Err(err) = unsafe { sandbox::apply(request.budget) } {
         // Refuse to decode rather than decode uncontained.
         let fallback = payload::unavailable(otto_kit::t_owned!(
-            "quickview-error-sandbox",
+            "peek-error-sandbox",
             error = err.to_string()
         ));
         let _ = payload::write_to(&fallback, &mut std::io::stdout());
@@ -163,7 +163,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
         Err(err) => {
             return (
                 payload::unavailable(otto_kit::t_owned!(
-                    "quickview-error-stat-file",
+                    "peek-error-stat-file",
                     error = err.to_string()
                 )),
                 None,
@@ -180,7 +180,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
         return (
             PreviewPayload::Card {
                 title: request.name.clone(),
-                subtitle: otto_kit::t_owned!("quickview-empty-file"),
+                subtitle: otto_kit::t_owned!("peek-empty-file"),
                 facts: vec![],
                 hero: None,
                 icon: Vec::new(),
@@ -193,7 +193,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
     if let Err(err) = file.read_exact(&mut head) {
         return (
             payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-file",
+                "peek-error-read-file",
                 error = err.to_string()
             )),
             None,
@@ -201,7 +201,7 @@ fn previewed(file: &mut File, request: &Request) -> (PreviewPayload, Option<&'st
     }
     if file.seek(SeekFrom::Start(0)).is_err() {
         return (
-            payload::unavailable(otto_kit::t_owned!("quickview-error-not-seekable")),
+            payload::unavailable(otto_kit::t_owned!("peek-error-not-seekable")),
             None,
         );
     }
@@ -336,13 +336,13 @@ pub(crate) fn human_size(bytes: u64) -> String {
     // Below a kilobyte the count is exact and needs a plural rule; above it
     // the unit is a symbol and only the number varies.
     if bytes < 1024 {
-        return otto_kit::t_owned!("quickview-size-bytes", count = bytes as f64);
+        return otto_kit::t_owned!("peek-size-bytes", count = bytes as f64);
     }
     const UNITS: [&str; 4] = [
-        "quickview-size-kb",
-        "quickview-size-mb",
-        "quickview-size-gb",
-        "quickview-size-tb",
+        "peek-size-kb",
+        "peek-size-mb",
+        "peek-size-gb",
+        "peek-size-tb",
     ];
     let mut value = bytes as f64 / 1024.0;
     let mut unit = 0;

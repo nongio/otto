@@ -1,7 +1,7 @@
-# Quick View text recognition
+# Peek text recognition
 
 **Status:** stable
-**Related specs:** [quickview.md](./quickview.md) — the preview panel, the sandboxed decode worker and the payload this spec extends — [file-browser.md](./file-browser.md) — the thumbnail cache whose keying this reuses, and Find, which this feeds — [settings-app.md](./settings-app.md)
+**Related specs:** [peek.md](./peek.md) — the preview panel, the sandboxed decode worker and the payload this spec extends — [file-browser.md](./file-browser.md) — the thumbnail cache whose keying this reuses, and Find, which this feeds — [settings-app.md](./settings-app.md)
 
 ## Summary
 
@@ -60,7 +60,7 @@ installed, and remembers what it found so nothing is recognised twice.
 
 ### What is recognised
 
-Recognition applies to files Quick View previews as a picture: raster images
+Recognition applies to files Peek previews as a picture: raster images
 Skia decodes natively, and rasterised PDF pages. A PDF page is recognised
 from its pixels like any other picture, whether or not the document carries a
 text layer of its own — the rasteriser hands back pixels, and reading the text
@@ -82,7 +82,7 @@ input as a PNG and reads an **hOCR** document from its standard output: the
 one format the OCR world shares, carrying every word's bounding box,
 confidence and text in reading order, grouped into lines, paragraphs and
 blocks. The default command is `tesseract` with its hOCR output; the
-`[quickview] recogniser` setting names another, with `{languages}` standing
+`[peek] recogniser` setting names another, with `{languages}` standing
 for the language list, which the command also finds in `OCR_LANGUAGES`. A
 recogniser that emits words without confidences is trusted; one that emits
 no lines puts everything on one.
@@ -114,7 +114,7 @@ A payload with no words draws exactly as an image payload draws today.
 
 ### When recognition runs
 
-**On preview.** Opening a picture in Quick View decodes it and shows it as
+**On preview.** Opening a picture in Peek decodes it and shows it as
 soon as the decode lands. Recognition follows as a second decode of the same
 file at the same size, with the recogniser run inside that worker, and the
 words land as a second result on the same generation. Moving the selection
@@ -287,7 +287,7 @@ the worker reports none and nothing is recorded, so a later install is
 picked up at the next preview. The preview shows the picture. Get Info and the panel
 say nothing about it; the user guide says what to install.
 
-Recognition is on by default. `[quickview] recognise_text = false` in
+Recognition is on by default. `[peek] recognise_text = false` in
 `~/.config/otto/files.toml` turns it off: no background recognition and none
 on preview. Cached words are still shown and still searched, since they cost
 nothing. There is no row for it in the Settings app.
@@ -334,7 +334,7 @@ nothing. There is no row for it in the Settings app.
   likely to hit a parser bug, and would mean two places that spawn processes.
   Boxes are data; drawing them is the host's job like drawing the pixels is.
 - **Exec, not link.** Linking `tesseract` and `leptonica` into every host that
-  embeds Quick View adds a large C++ dependency to the file browser, the
+  embeds Peek adds a large C++ dependency to the file browser, the
   picker and the desktop for a feature many installs will never use. The
   command is the same seam the PDF rasteriser uses, and it degrades the same
   way when absent.
@@ -348,7 +348,7 @@ nothing. There is no row for it in the Settings app.
   formats that carry XMP. The cache costs one recognition per machine and
   touches nothing.
 - **Folders you visit, not the disk.** [file-browser.md](./file-browser.md)
-  refuses to build an index, and [quickview.md](./quickview.md) refuses a
+  refuses to build an index, and [peek.md](./peek.md) refuses a
   content index or full-text search. This spec bends both: an OCR cache is a
   content index of the pictures a person has looked at, and Find reads it.
   What is kept from those refusals is the boundary: nothing crawls home,

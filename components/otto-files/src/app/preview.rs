@@ -275,7 +275,7 @@ impl Browser {
     }
 
     /// Show a preview decode that arrived, unless the selection has moved on
-    /// since — the same staleness guard Quick View uses.
+    /// since — the same staleness guard Peek uses.
     pub(super) fn finish_preview(
         &mut self,
         generation: u64,
@@ -290,7 +290,7 @@ impl Browser {
         }
         pane.pending = false;
         pane.video = video.and_then(|options| {
-            quickview::Video::open(&preview, &pane.path, options, AppContext::request_wakeup)
+            peek::Video::open(&preview, &pane.path, options, AppContext::request_wakeup)
         });
         pane.decoded = Some(preview);
         self.dirty = true;
@@ -301,7 +301,7 @@ impl Browser {
     /// under it is the listing's business.
     pub(super) fn preview_video_pointer(
         &mut self,
-        kind: quickview::VideoPointer,
+        kind: peek::VideoPointer,
         x: f32,
         y: f32,
     ) -> bool {

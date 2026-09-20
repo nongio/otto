@@ -16,14 +16,14 @@ use skia_safe::Rect;
 
 use super::*;
 
-/// The `[quickview]` section, read once per process.
-fn config() -> &'static crate::places_config::QuickviewConfig {
-    static CONFIG: OnceLock<crate::places_config::QuickviewConfig> = OnceLock::new();
-    CONFIG.get_or_init(crate::places_config::quickview)
+/// The `[peek]` section, read once per process.
+fn config() -> &'static crate::places_config::PeekConfig {
+    static CONFIG: OnceLock<crate::places_config::PeekConfig> = OnceLock::new();
+    CONFIG.get_or_init(crate::places_config::peek)
 }
 
 /// Whether pictures are recognised at all. On unless `files.toml` says
-/// `[quickview] recognise_text = false`; words already remembered are shown
+/// `[peek] recognise_text = false`; words already remembered are shown
 /// and searched either way, since they cost nothing.
 pub(super) fn enabled() -> bool {
     config().recognise_text
@@ -33,7 +33,7 @@ pub(super) fn enabled() -> bool {
 pub(super) fn command() -> &'static str {
     let configured = config().recogniser.trim();
     if configured.is_empty() {
-        otto_quickview::ocr::DEFAULT_COMMAND
+        otto_peek::ocr::DEFAULT_COMMAND
     } else {
         configured
     }
@@ -41,7 +41,7 @@ pub(super) fn command() -> &'static str {
 
 /// Whether the recogniser is installed.
 pub(super) fn available() -> bool {
-    otto_quickview::ocr::available(command())
+    otto_peek::ocr::available(command())
 }
 
 /// Drop the entries whose pictures nobody has touched in months.
@@ -89,13 +89,13 @@ pub fn recognise_paths(paths: &[PathBuf]) -> bool {
         // it: small print survives it, and a remembered entry carries the
         // size it was found at, so a panel of any size can scale the words to
         // what it is showing.
-        match quickview::recognise(
+        match peek::recognise(
             &path,
             pass_panel(),
             2.0,
             1,
             command(),
-            quickview::Priority::Interactive,
+            peek::Priority::Interactive,
         ) {
             Some(words) => println!(
                 "{}: {} {} in {:.1}s",
@@ -148,7 +148,7 @@ pub(super) fn is_picture(path: &Path) -> bool {
 /// A picture to recognise, and how much of a hurry it is in.
 pub(super) struct Job {
     pub path: PathBuf,
-    pub priority: quickview::Priority,
+    pub priority: peek::Priority,
 }
 
 impl Browser {
@@ -172,10 +172,10 @@ impl Browser {
             self.begin_reading(path.clone());
             return Some(Job {
                 path,
-                priority: quickview::Priority::Interactive,
+                priority: peek::Priority::Interactive,
             });
         }
-        if self.quickview_pending || self.quickview_recognising || self.thumbs.is_busy() {
+        if self.peek_pending || self.peek_recognising || self.thumbs.is_busy() {
             return None;
         }
         let depth = self.active.min(self.columns.len().saturating_sub(1));
@@ -195,19 +195,14 @@ impl Browser {
         // An entry made by another engine, or before a language pack was
         // installed, still shows and still searches — but it is read again,
         // which is how the cache catches up with what is installed now.
-        if crate::ocrcache::is_current(
-            &path,
-            1,
-            modified,
-            &otto_quickview::ocr::languages(),
-            command(),
-        ) {
+        if crate::ocrcache::is_current(&path, 1, modified, &otto_peek::ocr::languages(), command())
+        {
             return None;
         }
         self.begin_reading(path.clone());
         Some(Job {
             path,
-            priority: quickview::Priority::Background,
+            priority: peek::Priority::Background,
         })
     }
 
@@ -322,8 +317,7 @@ impl FilesApp {
         let state = Arc::clone(&self.state);
         let scale = AppContext::scale_factor().max(1) as f32;
         tokio::task::spawn_blocking(move || {
-            let _ =
-                quickview::recognise(&job.path, pass_panel(), scale, 1, command(), job.priority);
+            let _ = peek::recognise(&job.path, pass_panel(), scale, 1, command(), job.priority);
             state.lock().unwrap().end_reading(&job.path);
             // Another picture may be waiting its turn; the frame loop hands
             // it out.
@@ -430,7 +424,7 @@ mod tests {
 
         let job = browser.sync_recognition().expect("the queue is handed out");
         assert_eq!(job.path, path);
-        assert_eq!(job.priority, quickview::Priority::Interactive);
+        assert_eq!(job.priority, peek::Priority::Interactive);
         assert!(browser.reading(&path), "the panels say it is being read");
 
         // One at a time: nothing else goes out while it is running.

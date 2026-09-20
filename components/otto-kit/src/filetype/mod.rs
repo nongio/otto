@@ -1,7 +1,7 @@
 //! File-type detection: what kind of thing is this file?
 //!
 //! One implementation, shared by the file picker (portal filters), the file
-//! browser (icons and the Kind column) and quick view (which renderer to
+//! browser (icons and the Kind column) and Peek (which renderer to
 //! dispatch). See `specs/file-browser.md` under *Shared foundations*.
 //!
 //! It answers **two different questions**, and the distinction is load-bearing:
@@ -91,7 +91,7 @@ impl Kind {
     ///
     /// Only images, which Skia and resvg decode in-process. This is narrower
     /// than "has a thumbnail": every kind is worth a shared-cache *lookup*,
-    /// because other applications write there too — quick view contributes PDF
+    /// because other applications write there too — Peek contributes PDF
     /// first pages, and other file managers contribute video frames. Look up
     /// for anything; generate only for these.
     pub fn thumbnailable(self) -> bool {

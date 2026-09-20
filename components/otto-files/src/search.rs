@@ -405,7 +405,7 @@ impl Best {
 // an index is always a little behind the disk, and a listing built from what
 // it remembers would name files that have been deleted and give the sizes they
 // used to have. Statting every row is what makes a result an ordinary [`Entry`]
-// that the grid, the thumbnailer and Quick View can all treat like any other.
+// that the grid, the thumbnailer and Peek can all treat like any other.
 
 const LOCALSEARCH_NAME: &str = "org.freedesktop.LocalSearch3";
 const ENDPOINT_PATH: &str = "/org/freedesktop/Tracker3/Endpoint";

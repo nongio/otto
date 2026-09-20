@@ -241,7 +241,7 @@ impl App for FilesApp {
         self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new());
 
         self.install_dnd(&window);
-        self.install_quickview_pointer();
+        self.install_peek_pointer();
         self.install_palette_pointer();
         self.install_info_window_pointer();
         self.install_pointer(&window, self.context_menu.clone().unwrap());
@@ -410,12 +410,10 @@ impl App for FilesApp {
         // An open preview *is* what the user is looking at, so it takes the
         // focus — and the previewer describes itself, whatever it is showing.
         // See `A11yTree::preview`.
-        if let Some(session) = browser.quickview.as_ref().filter(|s| s.closing.is_none()) {
-            let panel = browser
-                .quickview_panel
-                .unwrap_or_else(|| session.panel(area));
-            tree.preview(QUICKVIEW, panel, &session.name, &session.preview);
-            tree.set_focus(QUICKVIEW);
+        if let Some(session) = browser.peek.as_ref().filter(|s| s.closing.is_none()) {
+            let panel = browser.peek_panel.unwrap_or_else(|| session.panel(area));
+            tree.preview(PEEK, panel, &session.name, &session.preview);
+            tree.set_focus(PEEK);
         } else if let Some(cursor) = cursor.filter(|c| *c < entries.len()) {
             tree.set_focus(row_focus(cursor));
         }
@@ -502,9 +500,9 @@ impl App for FilesApp {
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
-                | browser.quickview_animating()
-                | browser.tick_quickview_animation()
-                | browser.tick_quickview_exit()
+                | browser.peek_animating()
+                | browser.tick_peek_animation()
+                | browser.tick_peek_exit()
                 | browser.tick_open_pulse();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
@@ -562,18 +560,18 @@ impl App for FilesApp {
         let open_now = {
             let mut browser = self.state.lock().unwrap();
             let depth = browser.active;
-            let ready = browser.quickview_auto && !browser.visible(depth).is_empty();
+            let ready = browser.peek_auto && !browser.visible(depth).is_empty();
             if ready {
-                browser.quickview_auto = false;
+                browser.peek_auto = false;
                 browser.columns[depth].cursor = Some(0);
             }
             ready
         };
         if open_now {
             let mut browser = self.state.lock().unwrap();
-            self.start_quickview(&mut browser);
+            self.start_peek(&mut browser);
         }
-        self.follow_quickview();
+        self.follow_peek();
         self.auto_palette();
 
         // With the columns in their own surfaces, a scroll is repainted there
@@ -626,8 +624,8 @@ impl App for FilesApp {
         let mut browser = self.state.lock().unwrap();
         // Where this gesture's scale is measured from. Taken at the start
         // because the protocol reports scale against the start.
-        browser.quickview_pinch = (fingers == 2)
-            .then(|| browser.quickview.as_ref().map(|s| s.zoom.scale))
+        browser.peek_pinch = (fingers == 2)
+            .then(|| browser.peek.as_ref().map(|s| s.zoom.scale))
             .flatten();
     }
 
@@ -640,10 +638,10 @@ impl App for FilesApp {
         _rotation: f64,
     ) {
         let mut browser = self.state.lock().unwrap();
-        let Some(base) = browser.quickview_pinch else {
+        let Some(base) = browser.peek_pinch else {
             return;
         };
-        let moved = browser.quickview_zoom_to(base * scale as f32, (dx as f32, dy as f32));
+        let moved = browser.peek_zoom_to(base * scale as f32, (dx as f32, dy as f32));
         drop(browser);
         if moved {
             self.render();
@@ -653,7 +651,7 @@ impl App for FilesApp {
     fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
         // Nothing to settle: every update already left the zoom clamped and
         // snapped, so the fingers lifting only ends the gesture.
-        self.state.lock().unwrap().quickview_pinch = None;
+        self.state.lock().unwrap().peek_pinch = None;
     }
 
     /// While something is gliding the app needs a steady clock, not just the
@@ -661,10 +659,10 @@ impl App for FilesApp {
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         let browser = self.state.lock().unwrap();
         let animating = browser.scroll_animating()
-            || browser.quickview_animating()
+            || browser.peek_animating()
             // An animated preview has a frame due on its own clock, with
             // nothing else on screen moving to ask for one.
-            || browser.quickview_frames_running()
+            || browser.peek_frames_running()
             || browser.opening.is_some()
             // The panel materials' fade runs on this client's own engine, and
             // an engine only advances when it is ticked.
@@ -711,7 +709,7 @@ impl App for FilesApp {
         *self.modifiers.lock().unwrap() = modifiers;
     }
 
-    /// Quick View is a preview of what the window has selected, so it belongs
+    /// Peek is a preview of what the window has selected, so it belongs
     /// to the window's focus: once the keyboard goes somewhere else the panel
     /// is a card floating over a background window with nothing to preview.
     ///
@@ -735,7 +733,7 @@ impl App for FilesApp {
         // Both go with the keyboard: a panel that is nothing but a place to
         // type has no reason to stay up once the typing would land elsewhere.
         let mut browser = self.state.lock().unwrap();
-        let changed = browser.close_quickview() | browser.close_palette();
+        let changed = browser.close_peek() | browser.close_palette();
         drop(browser);
         if changed {
             self.render();

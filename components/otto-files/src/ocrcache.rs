@@ -217,7 +217,7 @@ pub fn matches(query: &str) -> Vec<PathBuf> {
         if !contains_words(&entry.words, &needle) {
             continue;
         }
-        let Some(path) = otto_quickview::uri::uri_to_path(&uri) else {
+        let Some(path) = otto_peek::uri::uri_to_path(&uri) else {
             continue;
         };
         let Ok(meta) = fs::metadata(&path) else {

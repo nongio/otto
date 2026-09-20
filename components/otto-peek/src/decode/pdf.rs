@@ -10,7 +10,7 @@
 //! about running a program.
 //!
 //! The same table generalises: video poster frames arrive later as more rows,
-//! without GStreamer entering the default build. See `specs/quickview.md`.
+//! without GStreamer entering the default build. See `specs/peek.md`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -130,7 +130,7 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
         Ok(bytes) => bytes,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-document",
+                "peek-error-read-document",
                 error = err.to_string()
             ))
         }
@@ -174,7 +174,7 @@ pub fn render(file: &mut File, request: &Request) -> PreviewPayload {
                     page,
                 }
             }
-            None => payload::unavailable(otto_kit::t_owned!("quickview-error-page-readback")),
+            None => payload::unavailable(otto_kit::t_owned!("peek-error-page-readback")),
         },
         None => no_rasteriser(file, &bytes, request, pages),
     }
@@ -289,11 +289,11 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
 
     let mut facts = vec![
         Fact {
-            key: otto_kit::t_owned!("quickview-fact-pages"),
+            key: otto_kit::t_owned!("peek-fact-pages"),
             value: pages.to_string(),
         },
         Fact {
-            key: otto_kit::t_owned!("quickview-fact-size"),
+            key: otto_kit::t_owned!("peek-fact-size"),
             value: human_size(size),
         },
     ];
@@ -301,7 +301,7 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
         facts.insert(
             0,
             Fact {
-                key: otto_kit::t_owned!("quickview-fact-title"),
+                key: otto_kit::t_owned!("peek-fact-title"),
                 value: title,
             },
         );
@@ -315,7 +315,7 @@ fn no_rasteriser(file: &mut File, bytes: &[u8], request: &Request, pages: u32) -
 
     PreviewPayload::Card {
         title: request.name.clone(),
-        subtitle: otto_kit::t_owned!("quickview-pdf-install-rasteriser", packages = wanted),
+        subtitle: otto_kit::t_owned!("peek-pdf-install-rasteriser", packages = wanted),
         facts,
         hero: None,
         // Stamped by `decode`, which is where the sniffed type is known.

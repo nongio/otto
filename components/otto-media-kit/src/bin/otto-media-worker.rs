@@ -371,7 +371,7 @@ fn read_commands(pipeline: gst::Element, events: Arc<Events>) {
 
 /// Drop what the worker will not need.
 ///
-/// The same shape as Quick View's decode sandbox, minus the limits a media
+/// The same shape as Peek's decode sandbox, minus the limits a media
 /// stack cannot live under: no `RLIMIT_FSIZE` (GStreamer writes its plugin
 /// registry cache) and a much larger address-space ceiling (hardware
 /// decoders map device memory generously).

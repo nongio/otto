@@ -113,7 +113,7 @@ mod tests {
     /// The same answer whether or not a runtime is already running.
     ///
     /// `init_from_desktop` is called from `main`, and Otto's components do not
-    /// agree on what `main` is: otto-bar, otto-islands and otto-quickview are
+    /// agree on what `main` is: otto-bar, otto-islands and otto-peek are
     /// `#[tokio::main]`, while otto-settings, otto-files, otto-launcher,
     /// otto-greeter and otto-lock are synchronous. Building a runtime on a
     /// thread that is already driving one panics outright — "Cannot start a

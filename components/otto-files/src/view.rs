@@ -1152,7 +1152,7 @@ pub fn grid_rename_rect(width: f32, height: f32, scroll: f32, index: usize) -> R
 ///
 /// Every consumer of row geometry is derived from this one description — the
 /// render walk, the hit test, the keyboard's idea of where a row is, and the
-/// Quick View anchor — so what is painted and what is clickable cannot drift
+/// Peek anchor — so what is painted and what is clickable cannot drift
 /// apart. Because the pitch is fixed the walk is closed-form rather than a
 /// fold over the entries, which is what lets a directory of ten thousand
 /// files cost a frame no more than one of ten.
@@ -2612,14 +2612,14 @@ pub struct Frame<'a> {
     pub action_row: Option<FooterData<'a>>,
     /// How much of the window height the footer takes. `0.0` in the browser.
     pub footer: f32,
-    /// Pointer is over Quick View's close button, so it lights up — the same
+    /// Pointer is over Peek's close button, so it lights up — the same
     /// hover behaviour the sheet's close dot has.
-    pub quickview_close_hovered: bool,
-    /// Pointer is over Quick View's expand button.
-    pub quickview_expand_hovered: bool,
+    pub peek_close_hovered: bool,
+    /// Pointer is over Peek's expand button.
+    pub peek_expand_hovered: bool,
     /// Whether the open panel is expanded, which flips the expand button's
     /// glyph to the collapse one.
-    pub quickview_expanded: bool,
+    pub peek_expanded: bool,
     /// Thumbnails for the entries on screen, where any have been found. A
     /// file with one is drawn as itself instead of as its type's icon.
     ///
@@ -2795,7 +2795,7 @@ pub struct PreviewData<'a> {
     pub decoded: Option<&'a otto_kit::preview::Preview>,
     /// A player, when the decode said video and one could be started. The
     /// column then shows its frame and transport in the stage.
-    pub video: Option<&'a crate::quickview::Video>,
+    pub video: Option<&'a crate::peek::Video>,
     /// Whether that video is presented on its own subsurface, so the scene
     /// layer leaves the stage to the column ground rather than drawing frames.
     pub video_on_surface: bool,
@@ -3476,7 +3476,7 @@ pub fn preview_content(
     let name = data.name.to_string();
     let icon_chain = data.icon_chain.clone();
     let decoded = data.decoded.cloned();
-    let video = data.video.map(crate::quickview::Video::snapshot);
+    let video = data.video.map(crate::peek::Video::snapshot);
     let video_on_surface = data.video_on_surface;
     let first_row = data.first_row;
     let info = data.info.clone();
@@ -3577,7 +3577,7 @@ fn draw_preview_stage(
     theme: &Theme,
     stage: Rect,
     decoded: Option<&otto_kit::preview::Preview>,
-    video: Option<&crate::quickview::VideoSnapshot>,
+    video: Option<&crate::peek::VideoSnapshot>,
     // Whether a video is drawn on its own subsurface over this stage, in
     // which case the stage is left to the column ground here.
     on_surface: bool,
@@ -3669,7 +3669,7 @@ fn draw_preview_stage(
                 theme,
                 first_row,
                 // The docked column is a glance, not a viewer: zooming
-                // belongs to Quick View, which is the panel the user
+                // belongs to Peek, which is the panel the user
                 // opened deliberately.
                 otto_kit::preview::Zoom::FIT,
                 &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
@@ -5191,11 +5191,11 @@ pub fn perm_box_at(sheet: Rect, x: f32, y: f32) -> Option<(usize, usize)> {
     None
 }
 
-/// Draw the Quick View panel over a dimmed window.
+/// Draw the Peek panel over a dimmed window.
 ///
 /// The panel is drawn into this window's own surface rather than into a
 /// separate previewer's, which is what lets it grow out of the row the user
-/// pressed Space on: [`quickview_anchor`] is already in these coordinates.
+/// pressed Space on: [`peek_anchor`] is already in these coordinates.
 /// The content itself comes from [`otto_kit::preview`], canvas-pure and shared
 /// with every other file view.
 ///
@@ -5204,23 +5204,23 @@ pub fn perm_box_at(sheet: Rect, x: f32, y: f32) -> Option<(usize, usize)> {
 /// on the display rests somewhere only the caller knows, and the drawing and
 /// the surface it is drawn into must agree about it or the card is painted at
 /// one size inside a surface of another.
-/// Quick View's close button: a round dot in the panel's top-*right*.
+/// Peek's close button: a round dot in the panel's top-*right*.
 ///
 /// Right, not left, because it is not a titlebar control. The card has no
 /// titlebar and no other controls to sit in a group with, and the browser's
 /// own traffic lights are already down the window's left edge — a second dot
 /// in the same corner would read as one of them.
-pub fn quickview_close_rect(panel: Rect) -> Rect {
+pub fn peek_close_rect(panel: Rect) -> Rect {
     const D: f32 = 17.0;
     const INSET: f32 = 10.0;
-    let strip = quickview_titlebar_rect(panel);
+    let strip = peek_titlebar_rect(panel);
     Rect::from_xywh(panel.right - INSET - D, strip.center_y() - D / 2.0, D, D)
 }
 
 /// The expand button, to the left of the close button.
-pub fn quickview_expand_rect(panel: Rect) -> Rect {
+pub fn peek_expand_rect(panel: Rect) -> Rect {
     const GAP: f32 = 8.0;
-    let close = quickview_close_rect(panel);
+    let close = peek_close_rect(panel);
     Rect::from_xywh(
         close.left - GAP - close.width(),
         close.top,
@@ -5234,12 +5234,12 @@ pub fn quickview_expand_rect(panel: Rect) -> Rect {
 /// Chrome, not content. The preview is drawn below it, so a close button in
 /// the corner is never sitting on top of the thing being previewed — which
 /// is both hard to see against a busy image and easy to mis-click.
-pub fn quickview_titlebar_rect(panel: Rect) -> Rect {
+pub fn peek_titlebar_rect(panel: Rect) -> Rect {
     Rect::from_ltrb(
         panel.left,
         panel.top,
         panel.right,
-        panel.top + crate::quickview::TITLEBAR_H,
+        panel.top + crate::peek::TITLEBAR_H,
     )
 }
 
@@ -5250,13 +5250,13 @@ pub fn quickview_titlebar_rect(panel: Rect) -> Rect {
 /// moved by its titlebar: the content is there to be read, scrolled and
 /// zoomed, and a press on it means one of those. The buttons keep their own
 /// generous outset, so the band a drag starts in stops short of them.
-pub fn quickview_grip_rect(panel: Rect) -> Rect {
+pub fn peek_grip_rect(panel: Rect) -> Rect {
     const CLEARANCE: f32 = 4.0;
-    let strip = quickview_titlebar_rect(panel);
+    let strip = peek_titlebar_rect(panel);
     Rect::from_ltrb(
         strip.left,
         strip.top,
-        (quickview_expand_rect(panel).left - CLEARANCE).max(strip.left),
+        (peek_expand_rect(panel).left - CLEARANCE).max(strip.left),
         strip.bottom,
     )
 }
@@ -5271,19 +5271,19 @@ pub fn quickview_grip_rect(panel: Rect) -> Rect {
 /// Narrow, because it is not the only inset the content gets: the preview
 /// pads itself as well ([`otto_kit::preview::PADDING`], and less than that
 /// for a picture). This one only has to clear the corners and the border.
-pub fn quickview_content_rect(panel: Rect) -> Rect {
+pub fn peek_content_rect(panel: Rect) -> Rect {
     const INSET: f32 = 4.0;
     Rect::from_ltrb(
         panel.left + INSET,
-        panel.top + crate::quickview::TITLEBAR_H + INSET,
+        panel.top + crate::peek::TITLEBAR_H + INSET,
         panel.right - INSET,
         panel.bottom - INSET,
     )
 }
 
 /// Paint the close button. Split out so the panel's own draw stays readable.
-fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bool, opacity: f32) {
-    let close = quickview_close_rect(panel);
+fn draw_peek_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bool, opacity: f32) {
+    let close = peek_close_rect(panel);
     let centre = Point::new(close.center_x(), close.center_y());
 
     let mut paint = Paint::default();
@@ -5324,7 +5324,7 @@ fn draw_quickview_close(canvas: &Canvas, theme: &Theme, panel: Rect, hovered: bo
 
 /// The expand button: the same dot as close, with two diagonal arrows —
 /// pointing out to fill the display, in to come back.
-fn draw_quickview_expand(
+fn draw_peek_expand(
     canvas: &Canvas,
     theme: &Theme,
     panel: Rect,
@@ -5332,7 +5332,7 @@ fn draw_quickview_expand(
     expanded: bool,
     opacity: f32,
 ) {
-    let button = quickview_expand_rect(panel);
+    let button = peek_expand_rect(panel);
     let centre = Point::new(button.center_x(), button.center_y());
 
     let mut paint = Paint::default();
@@ -5379,15 +5379,15 @@ fn draw_quickview_expand(
 }
 
 #[cfg(test)]
-mod quickview_buttons {
+mod peek_buttons {
     use super::*;
 
     #[test]
     fn the_expand_button_sits_left_of_close_inside_the_strip() {
         let panel = Rect::from_xywh(100.0, 100.0, 800.0, 600.0);
-        let close = quickview_close_rect(panel);
-        let expand = quickview_expand_rect(panel);
-        let strip = quickview_titlebar_rect(panel);
+        let close = peek_close_rect(panel);
+        let expand = peek_expand_rect(panel);
+        let strip = peek_titlebar_rect(panel);
         assert!(expand.right < close.left);
         assert!(expand.top >= strip.top && expand.bottom <= strip.bottom);
         assert!((expand.center_y() - close.center_y()).abs() < 0.01);
@@ -5407,10 +5407,10 @@ mod quickview_buttons {
 /// So the chrome fades in as the card grows into a size that can carry it,
 /// and both ends of the ramp are reached well below [`PANEL_MIN`] — a panel
 /// at rest, however small the window, always has its titlebar.
-fn quickview_chrome_opacity(panel: Rect) -> f32 {
+fn peek_chrome_opacity(panel: Rect) -> f32 {
     // Two strips tall before any of it shows, four before all of it does.
-    const HEIGHT_FROM: f32 = crate::quickview::TITLEBAR_H * 2.0;
-    const HEIGHT_TO: f32 = crate::quickview::TITLEBAR_H * 4.0;
+    const HEIGHT_FROM: f32 = crate::peek::TITLEBAR_H * 2.0;
+    const HEIGHT_TO: f32 = crate::peek::TITLEBAR_H * 4.0;
     // Width matters too: a card wide enough for the dot but not for a name
     // is a card the strip has nothing to say in.
     const WIDTH_FROM: f32 = 140.0;
@@ -5435,12 +5435,7 @@ fn fade(color: Color, opacity: f32) -> Color {
     )
 }
 
-pub fn draw_quickview(
-    canvas: &Canvas,
-    f: &Frame,
-    session: &crate::quickview::Session,
-    resting: Rect,
-) {
+pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, resting: Rect) {
     let panel = session.panel(resting);
 
     let mut paint = Paint::default();
@@ -5471,10 +5466,10 @@ pub fn draw_quickview(
     // keeps its place either way — the strip's room is reserved whether or
     // not the strip is drawn — so what appears mid-entrance appears where it
     // will rest, and nothing under it moves when it does.
-    let chrome = quickview_chrome_opacity(panel);
+    let chrome = peek_chrome_opacity(panel);
     if chrome > 0.0 {
         // The title strip first, so the content's clip can exclude it.
-        let strip = quickview_titlebar_rect(panel);
+        let strip = peek_titlebar_rect(panel);
         let mut strip_paint = Paint::default();
         strip_paint.set_anti_alias(true);
         strip_paint.set_color(fade(f.theme.fill_quaternary, chrome));
@@ -5524,7 +5519,7 @@ pub fn draw_quickview(
         // is no evidence at all.
         if let Some((page, pages)) = session.paged() {
             Label::new(otto_kit::t_owned!(
-                "quickview-page-of",
+                "peek-page-of",
                 page = page.to_string(),
                 pages = pages.to_string()
             ))
@@ -5534,18 +5529,18 @@ pub fn draw_quickview(
             .render(canvas);
         }
 
-        draw_quickview_close(canvas, f.theme, panel, f.quickview_close_hovered, chrome);
-        draw_quickview_expand(
+        draw_peek_close(canvas, f.theme, panel, f.peek_close_hovered, chrome);
+        draw_peek_expand(
             canvas,
             f.theme,
             panel,
-            f.quickview_expand_hovered,
-            f.quickview_expanded,
+            f.peek_expand_hovered,
+            f.peek_expanded,
             chrome,
         );
     }
 
-    let content = quickview_content_rect(panel);
+    let content = peek_content_rect(panel);
     canvas.save();
     canvas.clip_rrect(RRect::new_rect_xy(panel, 12.0, 12.0), None, true);
     canvas.clip_rect(content, None, true);
@@ -5602,17 +5597,15 @@ pub fn draw_quickview(
     // One badge, two things to say: the recogniser is working, or it has
     // finished and there is something to select.
     match session.recognising_phase() {
-        Some(phase) => draw_quickview_working_badge(canvas, f.theme, panel, chrome, phase),
-        None if !session.words().is_empty() => {
-            draw_quickview_text_badge(canvas, f.theme, panel, chrome)
-        }
+        Some(phase) => draw_peek_working_badge(canvas, f.theme, panel, chrome, phase),
+        None if !session.words().is_empty() => draw_peek_text_badge(canvas, f.theme, panel, chrome),
         None => {}
     }
 }
 
 /// The badge that says the picture's text has been recognised and can be
 /// selected, in the panel's bottom-right corner.
-pub fn quickview_text_badge_rect(panel: Rect) -> Rect {
+pub fn peek_text_badge_rect(panel: Rect) -> Rect {
     const D: f32 = 22.0;
     const INSET: f32 = 10.0;
     Rect::from_xywh(panel.right - INSET - D, panel.bottom - INSET - D, D, D)
@@ -5622,17 +5615,11 @@ pub fn quickview_text_badge_rect(panel: Rect) -> Rect {
 /// dot as the finished one so the two read as one thing changing rather than
 /// two appearing. It breathes: recognition takes seconds on a big screenshot,
 /// and a still glyph for that long looks like a result rather than a wait.
-fn draw_quickview_working_badge(
-    canvas: &Canvas,
-    theme: &Theme,
-    panel: Rect,
-    opacity: f32,
-    phase: f32,
-) {
+fn draw_peek_working_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32, phase: f32) {
     // A slow breath, never all the way out: the badge stays legible at the
     // bottom of it, so what pulses is attention rather than presence.
     let breath = 0.65 + 0.35 * (phase * std::f32::consts::TAU / WORKING_BADGE_PERIOD).sin();
-    draw_quickview_badge(
+    draw_peek_badge(
         canvas,
         theme,
         panel,
@@ -5653,8 +5640,8 @@ const WORKING_BADGE_PERIOD: f32 = 1.6;
 /// A dot in the same idiom as the close button, carrying a text-selection
 /// glyph. Its presence is the message: the picture has words in it, and they
 /// can be selected.
-fn draw_quickview_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
-    draw_quickview_badge(
+fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
+    draw_peek_badge(
         canvas,
         theme,
         panel,
@@ -5673,7 +5660,7 @@ fn draw_quickview_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacit
 /// carrying whichever symbolic glyph the caller asked for. `weight` scales it
 /// against the panel's own chrome opacity, which is what the working badge
 /// breathes on.
-fn draw_quickview_badge(
+fn draw_peek_badge(
     canvas: &Canvas,
     theme: &Theme,
     panel: Rect,
@@ -5683,7 +5670,7 @@ fn draw_quickview_badge(
     fallback: fn(&Canvas, &Theme, Rect, Point, f32),
 ) {
     let opacity = opacity * weight;
-    let badge = quickview_text_badge_rect(panel);
+    let badge = peek_text_badge_rect(panel);
     let centre = Point::new(badge.center_x(), badge.center_y());
 
     let mut paint = Paint::default();
@@ -6065,10 +6052,10 @@ fn elide(text: &str, max: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Quick View anchor
+// Peek anchor
 // ---------------------------------------------------------------------------
 
-/// The rect quick view should grow its card out of: the cursor's row, in this
+/// The rect Peek should grow its card out of: the cursor's row, in this
 /// surface's own coordinates, with scrolling already applied.
 ///
 /// Returns an **empty rect** when there is nothing to grow from — no cursor, or
@@ -6174,7 +6161,7 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
     canvas.restore();
 }
 
-pub fn quickview_anchor(
+pub fn peek_anchor(
     width: f32,
     height: f32,
     mode: ViewMode,
@@ -6206,7 +6193,7 @@ pub fn quickview_anchor(
 /// in surface coordinates with scrolling applied.
 ///
 /// Empty when there is nothing there to point at: no cursor, or one scrolled
-/// out of the viewport. [`quickview_anchor`] narrows this to the icon; the open
+/// out of the viewport. [`peek_anchor`] narrows this to the icon; the open
 /// pulse uses it whole, because what it echoes is the selection.
 pub fn cursor_entry_rect(
     width: f32,
@@ -6249,7 +6236,7 @@ pub fn cursor_entry_rect(
 }
 
 /// Where the icon sits inside a row or a grid cell — the same geometry the
-/// drawing uses, read back so the Quick View entrance can start there.
+/// drawing uses, read back so the Peek entrance can start there.
 pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
     match mode {
         ViewMode::Grid => Rect::from_xywh(
@@ -7017,7 +7004,7 @@ mod geometry_tests {
     #[test]
     fn a_tiny_card_carries_no_chrome() {
         let row = Rect::from_xywh(240.0, 180.0, 260.0, 24.0);
-        assert_eq!(quickview_chrome_opacity(row), 0.0);
+        assert_eq!(peek_chrome_opacity(row), 0.0);
     }
 
     /// And every panel that is actually at rest has it in full, however
@@ -7026,9 +7013,9 @@ mod geometry_tests {
     #[test]
     fn a_resting_panel_always_has_its_titlebar() {
         for (w, h) in [(1100.0, 700.0), (320.0, 240.0), (480.0, 360.0)] {
-            let panel = crate::quickview::panel_rect(w, h);
+            let panel = crate::peek::panel_rect(w, h);
             assert_eq!(
-                quickview_chrome_opacity(panel),
+                peek_chrome_opacity(panel),
                 1.0,
                 "{w}x{h} window, panel {panel:?}"
             );
@@ -7039,12 +7026,12 @@ mod geometry_tests {
     /// card instead of appearing on top of one already in motion.
     #[test]
     fn the_chrome_fades_in_as_the_card_grows() {
-        let resting = crate::quickview::panel_rect(1100.0, 700.0);
+        let resting = crate::peek::panel_rect(1100.0, 700.0);
         let row = Rect::from_xywh(240.0, 180.0, 260.0, 24.0);
         let mut last = 0.0;
         for step in 0..=20 {
             let t = step as f32 / 20.0;
-            let opacity = quickview_chrome_opacity(crate::quickview::entrance_at(row, resting, t));
+            let opacity = peek_chrome_opacity(crate::peek::entrance_at(row, resting, t));
             assert!(opacity >= last - 0.001, "went backwards at t={t}");
             last = opacity;
         }
@@ -7225,7 +7212,7 @@ mod geometry_tests {
     #[test]
     fn no_cursor_means_no_anchor() {
         let owned = entries(10);
-        let anchor = quickview_anchor(
+        let anchor = peek_anchor(
             1100.0,
             700.0,
             ViewMode::List,
@@ -7240,7 +7227,7 @@ mod geometry_tests {
     #[test]
     fn a_visible_row_anchors_to_itself() {
         let owned = entries(10);
-        let anchor = quickview_anchor(
+        let anchor = peek_anchor(
             1100.0,
             700.0,
             ViewMode::List,
@@ -7266,7 +7253,7 @@ mod geometry_tests {
     fn every_mode_anchors_to_a_square_inside_its_row() {
         let owned = entries(10);
         for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
-            let anchor = quickview_anchor(
+            let anchor = peek_anchor(
                 1100.0,
                 700.0,
                 mode,
@@ -7291,7 +7278,7 @@ mod geometry_tests {
         // The case that would look wrong once the zoom lands: the selection is
         // real, but it is not on screen, so there is nothing to grow from.
         let owned = entries(500);
-        let anchor = quickview_anchor(
+        let anchor = peek_anchor(
             1100.0,
             700.0,
             ViewMode::List,
@@ -7306,7 +7293,7 @@ mod geometry_tests {
     #[test]
     fn a_cursor_past_the_end_anchors_nowhere() {
         let owned = entries(3);
-        let anchor = quickview_anchor(
+        let anchor = peek_anchor(
             1100.0,
             700.0,
             ViewMode::List,
@@ -7322,7 +7309,7 @@ mod geometry_tests {
     fn every_view_mode_produces_an_anchor() {
         let owned = entries(10);
         for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
-            let anchor = quickview_anchor(
+            let anchor = peek_anchor(
                 1100.0,
                 700.0,
                 mode,
@@ -7449,9 +7436,9 @@ mod geometry_tests {
             trash: None,
             action_row: None,
             footer: 0.0,
-            quickview_close_hovered: false,
-            quickview_expand_hovered: false,
-            quickview_expanded: false,
+            peek_close_hovered: false,
+            peek_expand_hovered: false,
+            peek_expanded: false,
             drop_target: None,
             marquee: None,
             path_bar: Vec::new(),
@@ -7518,7 +7505,7 @@ mod geometry_tests {
     #[test]
     fn a_miller_column_panned_off_screen_anchors_nowhere() {
         let owned = entries(10);
-        let anchor = quickview_anchor(
+        let anchor = peek_anchor(
             1100.0,
             700.0,
             ViewMode::Columns,
@@ -7561,7 +7548,7 @@ mod badge_tests {
         let theme = Theme::light();
         draw(surface.canvas(), &theme, panel);
 
-        let badge = quickview_text_badge_rect(panel);
+        let badge = peek_text_badge_rect(panel);
         let image = surface.image_snapshot();
         let info = skia_safe::ImageInfo::new_n32_premul(
             (badge.width() as i32, badge.height() as i32),
@@ -7588,7 +7575,7 @@ mod badge_tests {
     #[test]
     fn the_working_badge_draws_in_the_corner() {
         let pixels = badge_pixels(|canvas, theme, panel| {
-            draw_quickview_working_badge(canvas, theme, panel, 1.0, 0.0)
+            draw_peek_working_badge(canvas, theme, panel, 1.0, 0.0)
         });
         assert!(drawn(&pixels) > 100, "nothing drawn in the badge's square");
     }
@@ -7598,16 +7585,10 @@ mod badge_tests {
     #[test]
     fn the_working_badge_breathes() {
         let early = badge_pixels(|canvas, theme, panel| {
-            draw_quickview_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD / 4.0)
+            draw_peek_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD / 4.0)
         });
         let later = badge_pixels(|canvas, theme, panel| {
-            draw_quickview_working_badge(
-                canvas,
-                theme,
-                panel,
-                1.0,
-                WORKING_BADGE_PERIOD * 3.0 / 4.0,
-            )
+            draw_peek_working_badge(canvas, theme, panel, 1.0, WORKING_BADGE_PERIOD * 3.0 / 4.0)
         });
         assert_ne!(early, later, "the badge looks the same across a breath");
     }
@@ -7616,11 +7597,10 @@ mod badge_tests {
     #[test]
     fn the_finished_badge_is_not_the_working_one() {
         let working = badge_pixels(|canvas, theme, panel| {
-            draw_quickview_working_badge(canvas, theme, panel, 1.0, 0.0)
+            draw_peek_working_badge(canvas, theme, panel, 1.0, 0.0)
         });
-        let finished = badge_pixels(|canvas, theme, panel| {
-            draw_quickview_text_badge(canvas, theme, panel, 1.0)
-        });
+        let finished =
+            badge_pixels(|canvas, theme, panel| draw_peek_text_badge(canvas, theme, panel, 1.0));
         assert!(drawn(&finished) > 100);
         assert_ne!(working, finished, "both states draw the same badge");
     }

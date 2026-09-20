@@ -2,14 +2,14 @@
 
 **Status:** draft — implemented across the workspace, catalogues still growing
 **Related specs:** [settings-app.md](./settings-app.md), [topbar.md](./topbar.md),
-[quickview.md](./quickview.md), [login-mode.md](./login-mode.md),
+[peek.md](./peek.md), [login-mode.md](./login-mode.md),
 [lock-screen.md](./lock-screen.md), [launcher.md](./launcher.md),
 [file-browser.md](./file-browser.md), [file-picker.md](./file-picker.md)
 
 ## Summary
 
 Every string Otto itself writes — the compositor's menus, the bar, the
-launcher, Files, Settings, Quick View, the greeter and the lock screen — is
+launcher, Files, Settings, Peek, the greeter and the lock screen — is
 looked up by a stable key in a per-locale catalogue rather than written into
 the code. One language is chosen once, at process start, from Otto's own
 preference rather than from the shell environment, and every part of the
@@ -314,7 +314,7 @@ a key, such as a discovered font or theme name, passes through untouched.
 ### Components with no bus
 
 A component that has deliberately given up its session bus cannot ask the
-portal. Quick View's decode worker is the case that exists: it is re-executed
+portal. Peek's decode worker is the case that exists: it is re-executed
 with a cleared environment and no Wayland or D-Bus socket, because those are
 capabilities, and it writes strings a person reads — why a preview is
 unavailable, the facts on a card. Its parent therefore forwards the language it
@@ -407,7 +407,7 @@ which operation the undo stack recorded, which month `civil_from_days` landed on
 
 - **A runtime inside a runtime.** The portal read must not build a runtime on
   the thread that calls it. Otto's components do not agree on what `main` is:
-  otto-bar, otto-islands and otto-quickview drive a Tokio runtime from `main`
+  otto-bar, otto-islands and otto-peek drive a Tokio runtime from `main`
   itself, while otto-settings, otto-files, otto-launcher, otto-greeter and
   otto-lock are synchronous. Building a runtime on a thread already inside one
   panics outright — it does not fail — so a read done on the caller's thread

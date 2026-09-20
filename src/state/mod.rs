@@ -2105,7 +2105,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
             // Sibling order, when it has changed. `place_above` reorders
             // Smithay's tree but nothing in the scene, because a layer is only
-            // appended when its *parent* changes — so without this a Quick View
+            // appended when its *parent* changes — so without this a Peek
             // panel raised above a column stays underneath it.
             for (parent_id, child_ids) in children_order.iter() {
                 if self.surface_children_order.get(parent_id) == Some(child_ids) {

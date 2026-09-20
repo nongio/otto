@@ -1,12 +1,12 @@
 # File Previews
 
 How otto-files shows what is inside a file: grid and list thumbnails, the
-preview column at the end of column view, the Quick View panel, and video
+preview column at the end of column view, the Peek panel, and video
 playback in the last two.
 
-Behaviour is specified in [specs/quickview.md](../../specs/quickview.md) and
+Behaviour is specified in [specs/peek.md](../../specs/peek.md) and
 [specs/file-browser.md](../../specs/file-browser.md). This page describes the
-structure as it is built today, and it disagrees with the Quick View spec in
+structure as it is built today, and it disagrees with the Peek spec in
 several places; see [Where the spec has drifted](#where-the-spec-has-drifted).
 The video worker has its own page, [otto-media-kit](otto-media-kit.md).
 
@@ -16,22 +16,22 @@ The video worker has its own page, [otto-media-kit](otto-media-kit.md).
 components/
 ├── otto-kit/src/preview/          Preview payload types, layout, draw, zoom maths (pure Skia)
 ├── otto-kit/src/filetype/         name → type of record, bytes → sniffed type
-├── otto-quickview/                the decode worker and everything around it
+├── otto-peek/                     the decode worker and everything around it
 │   ├── src/spawn.rs               open a file, run a worker on it, read the payload back
 │   ├── src/sandbox.rs             rlimits, namespaces, fd hygiene, --sandbox-selftest
 │   ├── src/payload.rs             the wire format ("OQV2") and its validation
 │   ├── src/decode/                one decoder per content type, run in the worker
 │   ├── src/opening.rs             entrance/exit geometry for the panel
 │   ├── src/render.rs              PNG rendering for the standalone CLI only
-│   └── src/main.rs                `otto-quickview` CLI: --describe, --render, --filmstrip
+│   └── src/main.rs                `otto-peek` CLI: --describe, --render, --filmstrip
 ├── otto-media-kit/                video: Player (library) + otto-media-worker (GStreamer)
 └── otto-files/src/
     ├── thumbnails.rs              in-memory thumbnail store (no threads, no I/O)
     ├── thumbcache.rs              read-only freedesktop thumbnail cache
-    ├── quickview.rs               Session, zoom/pan, Video, decode request sizing
+    ├── peek.rs                    Session, zoom/pan, Video, decode request sizing
     ├── pane_surfaces.rs           the panel's and the preview video's subsurfaces
-    ├── view.rs                    draw_quickview, preview column stage, draw_thumbnail
-    └── app.rs                     wiring: sync_thumbnails, start_preview, start_quickview
+    ├── view.rs                    draw_peek, preview column stage, draw_thumbnail
+    └── app.rs                     wiring: sync_thumbnails, start_preview, start_peek
 ```
 
 Three paths use this code. **Every file byte is interpreted in the same
@@ -42,7 +42,7 @@ sandboxed decode worker**, which is the host binary run again with
                          ┌─────────────── otto-files process ───────────────┐
  grid/list/column rows ─▶│ thumbnails::Store ─▶ thumbcache::lookup ─(miss)─┐│
  preview column ────────▶│ start_preview ───────────────────────────────── ┤│
- Quick View (Space) ────▶│ start_quickview ─────────────────────────────── ┤│
+ Peek (Space) ────▶│ start_peek ─────────────────────────────── ┤│
                          │               spawn_blocking: decode_path ◀──────┘│
                          └──────────────────────────┬────────────────────────┘
                                    fd 3 = the file   │  stdout = OQV2 payload
@@ -54,7 +54,7 @@ sandboxed decode worker**, which is the host binary run again with
                          otto-media-worker  (GStreamer, one per playback)
 ```
 
-Every host must call `otto_quickview::run_worker_if_requested()` as the first
+Every host must call `otto_peek::run_worker_if_requested()` as the first
 thing in `main`, before any thread or Wayland connection exists (otto-files
 does it in `main.rs`). If it doesn't, the worker is the host re-executed as an
 ordinary host, which starts a second file browser instead of decoding
@@ -133,14 +133,14 @@ worker. It does the following, in order:
    This is best effort and failures are ignored.
 
 If `apply` fails inside the worker, the worker answers
-`Unavailable("quickview-error-sandbox")` rather than decoding without
+`Unavailable("peek-error-sandbox")` rather than decoding without
 containment. Decoders also read through `read_capped` (512 MiB by default) and
 apply their own limits, listed below.
 
 **This is not a filesystem jail.** There is no seccomp filter and no mount
 namespace, so a compromised decoder can still open and read any file the user
 can read. The code says so, and
-`otto-quickview --sandbox-selftest` reports it (`can_still_open_other_files`)
+`otto-peek --sandbox-selftest` reports it (`can_still_open_other_files`)
 together with the rlimits and a network probe. The self-test runs the real
 sandbox in a real child with a piped stdout, because `RLIMIT_FSIZE = 0` would
 raise SIGXFSZ on a file-backed stdout. Keep its output in step with any change
@@ -216,7 +216,7 @@ which thumbnails are wanted, runs those jobs, and reports each result back:
    - **Failures.** `fail/otto-files/` markers are honoured on read.
 2. **On a miss**, it generates a thumbnail only when `may_generate` is true.
    That is `Kind::Image` today, so PDF and video thumbnails come from the shared
-   cache or not at all. Generating calls `otto_quickview::decode_path` with a
+   cache or not at all. Generating calls `otto_peek::decode_path` with a
    thumbnail-sized `Request`: **one sandboxed worker per thumbnail**.
 3. **Only `Preview::Pixels` becomes a thumbnail.** Cards, text and listings
    leave the type icon in place.
@@ -250,12 +250,12 @@ an 18 pt row is sampled nearest-neighbour.
 The trailing pane in column view (`view::PREVIEW_W = 280`) is shown when
 `Browser::preview_visible` holds: column view, exactly one selected entry, and
 that entry is not a directory. **It does not use thumbnails**: it runs a full
-Quick View decode at panel size.
+Peek decode at panel size.
 
 - `sync_preview_target` replaces `PreviewPaneState` and bumps its generation on
   every selection change. There is no cache, and an in-flight decode is not
   cancelled.
-- `App::start_preview` runs `quickview::decode(path, panel, scale)` on a
+- `App::start_preview` runs `peek::decode(path, panel, scale)` on a
   blocking task. The width is `280 × scale × 2` and the height is the window
   height × scale × 2, both clamped to 64–4096. `finish_preview` drops results
   from an old generation.
@@ -272,38 +272,38 @@ Quick View decode at panel size.
 - A video opens **paused** on its first frame and plays on click, because the
   column follows the arrow keys; see [Video](#video).
 
-## Quick View
+## Peek
 
 ### A session
 
-`quickview::Session` is the whole state of one open panel: the current
+`peek::Session` is the whole state of one open panel: the current
 `Preview`, `first_row`, `Zoom`, the two pan `ScrollView`s, an optional `Video`,
 `expanded`, `opened_at`, and whether it is closing.
 
 Opening and moving between files work like this:
 
-1. Space, or the palette's **Quick Look**, calls `start_quickview`. The palette
-   can't run it itself: `run_request` returns `Followup::QuickView`, and the
-   host drains that in `follow_quickview`.
-2. `begin_quickview` bumps `quickview_generation` and replaces the session with
+1. Space, or the palette's **Quick Look**, calls `start_peek`. The palette
+   can't run it itself: `run_request` returns `Followup::Peek`, and the
+   host drains that in `follow_peek`.
+2. `begin_peek` bumps `peek_generation` and replaces the session with
    `Session::awaiting(name, is_dir, anchor)`. The old preview, zoom, pan and
    video are dropped, while `opened_at` and `expanded` are kept, so moving to
    another file doesn't replay the entrance. The panel shows "Opening preview…"
    immediately, **never the previous file's content**.
-3. A blocking task runs `quickview::decode`, sized at panel × scale × 2 and
-   clamped to 64–4096. `finish_quickview` discards a result whose generation is
+3. A blocking task runs `peek::decode`, sized at panel × scale × 2 and
+   clamped to 64–4096. `finish_peek` discards a result whose generation is
    stale.
 4. An arrow key, Home, End or Page Up/Down with the panel open moves the
-   selection and calls `start_quickview` again.
+   selection and calls `start_peek` again.
 
 Stale decodes are **ignored, not killed**. The superseded worker keeps running
-until it finishes or reaches the 8 s deadline. `close_quickview` also bumps the
+until it finishes or reaches the 8 s deadline. `close_peek` also bumps the
 generation, so a slow decode can't reopen a panel that was dismissed.
 
 ### The surface
 
 The panel is a **subsurface** of the browser toplevel, created and synced by
-`PaneSurfaces::sync_quickview`:
+`PaneSurfaces::sync_peek`:
 
 - **Position.** By default it is centred on the display. `request_output_frame`
   is asked once when the panel opens and once when the exit starts, so a window
@@ -313,8 +313,8 @@ The panel is a **subsurface** of the browser toplevel, created and synced by
   and `BackgroundBlur` when frosting is on (`OTTO_FROSTING`), `Normal`
   otherwise. The client draws no shadow of its own.
 - **Stacking.** `restack` orders the subsurfaces as columns, preview video, pan
-  bar, palette, catcher, Quick View, calling `place_above` again on each sync.
-- **Repaints.** The panel is repainted only when `quickview_key` changes (rect,
+  bar, palette, catcher, Peek, calling `place_above` again on each sync.
+- **Repaints.** The panel is repainted only when `peek_key` changes (rect,
   generation, `first_row`, zoom, scrollbars, loading, the video's frame
   sequence), and not while a frame is in flight. A resize is claimed only once
   the matching buffer has been painted (otto-kit's `PlacedSurface::set_rect`
@@ -322,20 +322,20 @@ The panel is a **subsurface** of the browser toplevel, created and synced by
   immediately and would stretch the old buffer. A hidden panel drops its input
   region.
 
-**Entrance and exit** use the geometry in `otto_quickview::opening`:
+**Entrance and exit** use the geometry in `otto_peek::opening`:
 - **`entrance`.** A single uniform scale from the anchor (the cursor entry's icon
-  rect, `view::quickview_anchor`) to the resting rect, clamped to 0.04–1. With
+  rect, `view::peek_anchor`) to the resting rect, clamped to 0.04–1. With
   no anchor it swells in place from 0.96.
 - **Timing.** `sample` is a spring with a small overshoot and runs 300 ms in;
   `sample_out` is a smoothstep and runs 180 ms out.
 - **Who animates.** The client does, resizing and moving the surface every
   frame (`Session::panel`), with the frame loop kept alive by
-  `quickview_animating()`. Comments in `opening.rs` and `lib.rs` still say the
+  `peek_animating()`. Comments in `opening.rs` and `lib.rs` still say the
   compositor runs it through surface-style transactions; it doesn't.
 - **Chrome.** The 30 pt title strip, close dot and expand dot fade in with the
-  card's size (`quickview_chrome_opacity`), so they don't fill the first frames.
-- **Closing.** `close_quickview` moves the session to `quickview_closing`,
-  re-reads the anchor, and `tick_quickview_exit` retires it. A playing video
+  card's size (`peek_chrome_opacity`), so they don't fill the first frames.
+- **Closing.** `close_peek` moves the session to `peek_closing`,
+  re-reads the anchor, and `tick_peek_exit` retires it. A playing video
   keeps being drawn through the exit.
 
 **Expand** (`Session::toggle_expanded`) swaps the resting rect: normally 72% of
@@ -344,7 +344,7 @@ margin. The setting survives moving to another file.
 
 ### Drawing and input
 
-`view::draw_quickview` draws the card background and hairline, the title strip,
+`view::draw_peek` draws the card background and hairline, the title strip,
 and then either `otto_media_kit::view::draw` for a video or
 `otto_kit::preview::draw(content, preview, first_row, zoom, icons)`, followed by
 the pan scrollbars.
@@ -367,18 +367,18 @@ Input in otto-files:
 
 | Gesture | Path |
 |---------|------|
-| Wheel over text or a listing | `quickview_wheel` → `Session::scroll_by(rows)`; a plain row step, no momentum |
-| Pinch over an image | `on_pointer_pinch_*` → `quickview_zoom_to` → `Session::zoom_to` |
+| Wheel over text or a listing | `peek_wheel` → `Session::scroll_by(rows)`; a plain row step, no momentum |
+| Pinch over an image | `on_pointer_pinch_*` → `peek_zoom_to` → `Session::zoom_to` |
 | Two-finger scroll over a zoomed image | `Session::pan_wheel` feeds one `ScrollView` per axis (fling, spring-back, overlay bars); `pull_pan`/`push_pan` sync them with `Zoom` |
-| Space / Escape | Space toggles. Escape unwinds one layer at a time: Get Info, search, Quick View, picker menu, picker, selection |
+| Space / Escape | Space toggles. Escape unwinds one layer at a time: Get Info, search, Peek, picker menu, picker, selection |
 | Click outside the panel | Closes it, and the click goes no further |
 
 The pointer reaches the panel two ways: on its own surface
-(`install_quickview_pointer`, surface-local) and on the toplevel (a press
+(`install_peek_pointer`, surface-local) and on the toplevel (a press
 outside closes). The two share hit rects.
 
 **Zoom does not decode again.** `Request.zoom` exists and `image::raster`
-supports it, but `quickview::decode` always asks for zoom 1. An 8× zoom
+supports it, but `peek::decode` always asks for zoom 1. An 8× zoom
 enlarges the panel-sized decode, which is about 2× the panel's pixels.
 
 **Accessibility.** An open session is published with `A11yTree::preview` and
@@ -394,14 +394,14 @@ usual, and the host decides whether to play it:
    the file extension.
 2. `otto_media_kit::player::available()` must find `otto-media-worker`, looking
    at `OTTO_MEDIA_WORKER`, then next to the executable, then `PATH`.
-3. `quickview::Video::open` calls `Player::open(path, options, wake)`, with the
+3. `peek::Video::open` calls `Player::open(path, options, wake)`, with the
    frame size limited to panel × scale (64–3840 × 64–2160). The card stays
    underneath as the fallback. Its `hero` would be the poster, but
    `media::video` never produces one, so a video shows its icon until the first
    frame arrives.
 
-**In the Quick View panel** the video autoplays and is drawn into the panel's
-own surface. `Session::video_key` is part of `quickview_key`, and the player's
+**In the Peek panel** the video autoplays and is drawn into the panel's
+own surface. `Session::video_key` is part of `peek_key`, and the player's
 `wake` requests a frame. `Video::pointer` handles input:
 - a click on the picture or the play button toggles playback;
 - mute switches the volume between 0 and 1;
@@ -416,7 +416,7 @@ preroll frame so it isn't black. `PaneSurfaces::sync_preview_video` gives it
 **its own subsurface**, so a 30 fps clip repaints only that surface and not the
 toplevel or the cached `files-preview` picture, whose key leaves the video out
 when it is on a surface. That surface:
-- exists only in column view, and only while Quick View is closed;
+- exists only in column view, and only while Peek is closed;
 - stays hidden until `VideoSnapshot::aspect()` is known (frame, then announced
   size, then poster);
 - is sized by `view::preview_video_box` to `width / aspect + transport height`,
@@ -458,13 +458,13 @@ needs to know:
 
 | Tool | Does |
 |------|------|
-| `otto-quickview --describe FILE` | Prints the payload the worker produces |
-| `otto-quickview --render OUT.png FILE [--dark --page N --zoom Z --width W --height H]` | Draws the card through the same `otto_kit::preview::draw` |
-| `otto-quickview --filmstrip OUT.png FILE` | Samples the entrance animation over a mock desktop |
-| `otto-quickview --sandbox-selftest` | Reports which parts of the sandbox are in force |
-| `OTTO_FILES_QV_AUTO=1` | Opens Quick View on the first entry, with no keypress |
+| `otto-peek --describe FILE` | Prints the payload the worker produces |
+| `otto-peek --render OUT.png FILE [--dark --page N --zoom Z --width W --height H]` | Draws the card through the same `otto_kit::preview::draw` |
+| `otto-peek --filmstrip OUT.png FILE` | Samples the entrance animation over a mock desktop |
+| `otto-peek --sandbox-selftest` | Reports which parts of the sandbox are in force |
+| `OTTO_FILES_QV_AUTO=1` | Opens Peek on the first entry, with no keypress |
 | `OTTO_FILES_QV_CENTER=0` | Centres the panel on the window rather than the display |
-| `OTTO_QUICKVIEW_OPEN_MS`, `OTTO_QUICKVIEW_CLOSE_MS`, `OTTO_QUICKVIEW_BOUNCE` | Tunes the entrance and exit |
+| `OTTO_PEEK_OPEN_MS`, `OTTO_PEEK_CLOSE_MS`, `OTTO_PEEK_BOUNCE` | Tunes the entrance and exit |
 | `RUST_LOG=debug` | Forwarded to the worker, which logs the time and name of each decode |
 | `OTTO_MEDIA_TRACE=1`, `GST_DEBUG=3` | Worker stderr and GStreamer debugging; see [otto-media-kit](otto-media-kit.md#debugging) |
 | `cargo test -p otto-files --lib -- --ignored --nocapture thumbcache` | Runs the two ignored tests against your real thumbnail cache |
@@ -473,7 +473,7 @@ Unit tests cover:
 - the payload round trip and rejection of bad input;
 - decoder limits, text encodings and PDF page counts;
 - `opening.rs` geometry;
-- zoom and pan in both `otto_kit::preview` and `quickview.rs`;
+- zoom and pan in both `otto_kit::preview` and `peek.rs`;
 - the thumbnail store's throttling and eviction;
 - cache naming and mtime checks;
 - the media-kit protocol and transport layout.
@@ -486,7 +486,7 @@ above is the way to check them.
 **Thumbnails**
 
 - **Cache writes.** Nothing writes to the shared thumbnail cache, including the
-  failure markers it reads. The spec's "Quick View is a thumbnail producer" is
+  failure markers it reads. The spec's "Peek is a thumbnail producer" is
   not built (`Opened::mtime` and `len` are marked `dead_code`).
 - **Cancellation.** Neither thumbnails nor previews are cancelled. Scrolling
   fast or arrow-keying quickly leaves workers running up to their deadline.
@@ -511,7 +511,7 @@ above is the way to check them.
   read; a `moov` atom at the end of a large file isn't found. Folders get no
   preview column. Text has no highlighting.
 
-**Quick View and media kit**
+**Peek and media kit**
 
 - **Zoom.** Zooming never decodes again, so detail stops at about 2× the
   panel's pixels.
@@ -526,7 +526,7 @@ above is the way to check them.
 
 ## Where the spec has drifted
 
-`specs/quickview.md` still carries parts of earlier designs:
+`specs/peek.md` still carries parts of earlier designs:
 - **Status.** It says "draft — nothing implemented".
 - **Descriptors.** It describes three descriptors (file, memfd, status pipe).
   The code uses fd 3 and a stdout pipe.

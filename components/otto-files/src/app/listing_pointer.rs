@@ -1,5 +1,5 @@
 //! What a pointer event does to the browser, layer by layer: whatever is
-//! up over the listing first — a rename, Quick View, a sheet, a field, the
+//! up over the listing first — a rename, Peek, a sheet, a field, the
 //! footer — then the listing itself, by the kind of event.
 
 use smithay_client_toolkit::seat::pointer::{AxisScroll, PointerEvent};
@@ -70,7 +70,7 @@ impl Browser {
         // order; the first that answers for it keeps it.
         let layers: [Layer; 9] = [
             Self::rename_pointer,
-            Self::quickview_pointer,
+            Self::peek_pointer,
             Self::preview_video_press,
             Self::confirm_pointer,
             Self::search_strip_pointer,
@@ -163,26 +163,26 @@ impl Browser {
         None
     }
 
-    /// An open Quick View owns the pointer.
-    fn quickview_pointer(&mut self, event: &PointerEvent, at: PointerAt) -> Option<After> {
+    /// An open Peek owns the pointer.
+    fn peek_pointer(&mut self, event: &PointerEvent, at: PointerAt) -> Option<After> {
         let PointerAt { x, y, .. } = at;
         // An open preview owns the pointer, the way the sheet does: a
         // click outside dismisses it, the wheel scrolls its content, and
         // nothing reaches the listing underneath.
-        if self.quickview.is_some() {
+        if self.peek.is_some() {
             // Where the panel *is*, which is not where the window's
             // centre is once the compositor has centred it on the
             // display. The fallback is the window-centred rect, and
             // the window height is right for it: the panel floats
             // over the action row rather than beside it.
             let panel = self
-                .quickview_panel
-                .unwrap_or_else(|| self.quickview_fallback_panel());
+                .peek_panel
+                .unwrap_or_else(|| self.peek_fallback_panel());
             let point = skia_safe::Point::new(x, y);
-            let over_close = view::quickview_close_rect(panel)
+            let over_close = view::peek_close_rect(panel)
                 .with_outset((4.0, 4.0))
                 .contains(point);
-            let over_expand = view::quickview_expand_rect(panel)
+            let over_expand = view::peek_expand_rect(panel)
                 .with_outset((4.0, 4.0))
                 .contains(point);
             match event.kind {
@@ -192,43 +192,43 @@ impl Browser {
                     // would never reach them. Then the pan's
                     // scrollbars, which are inside it too.
                     if over_close || !panel.contains(point) {
-                        self.close_quickview();
+                        self.close_peek();
                     } else if over_expand {
-                        self.toggle_quickview_expand();
-                    } else if self.quickview_grip(point, panel) {
+                        self.toggle_peek_expand();
+                    } else if self.peek_grip(point, panel) {
                         // Taken hold of by its title strip; the motions that
                         // follow move the card.
                     } else {
-                        self.quickview_pan_pointer(QuickviewPointer::Press, point, panel);
+                        self.peek_pan_pointer(PeekPointer::Press, point, panel);
                     }
                 }
                 PointerEventKind::Release { .. } => {
-                    self.end_quickview_drag();
-                    self.quickview_pan_pointer(QuickviewPointer::Release, point, panel);
+                    self.end_peek_drag();
+                    self.peek_pan_pointer(PeekPointer::Release, point, panel);
                 }
-                PointerEventKind::Motion { .. } if self.quickview_dragging() => {
-                    self.drag_quickview_to(point);
+                PointerEventKind::Motion { .. } if self.peek_dragging() => {
+                    self.drag_peek_to(point);
                 }
                 PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
-                    self.quickview_focus(point, panel);
-                    self.quickview_pan_pointer(QuickviewPointer::Motion, point, panel);
-                    self.sync_quickview_cursor(point, panel);
-                    if self.quickview_close_hovered != over_close
-                        || self.quickview_expand_hovered != over_expand
+                    self.peek_focus(point, panel);
+                    self.peek_pan_pointer(PeekPointer::Motion, point, panel);
+                    self.sync_peek_cursor(point, panel);
+                    if self.peek_close_hovered != over_close
+                        || self.peek_expand_hovered != over_expand
                     {
-                        self.quickview_close_hovered = over_close;
-                        self.quickview_expand_hovered = over_expand;
+                        self.peek_close_hovered = over_close;
+                        self.peek_expand_hovered = over_expand;
                         self.dirty = true;
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    self.end_quickview_drag();
-                    self.quickview_focus = None;
-                    self.quickview_pan_pointer(QuickviewPointer::Leave, point, panel);
-                    self.reset_quickview_cursor();
-                    if self.quickview_close_hovered || self.quickview_expand_hovered {
-                        self.quickview_close_hovered = false;
-                        self.quickview_expand_hovered = false;
+                    self.end_peek_drag();
+                    self.peek_focus = None;
+                    self.peek_pan_pointer(PeekPointer::Leave, point, panel);
+                    self.reset_peek_cursor();
+                    if self.peek_close_hovered || self.peek_expand_hovered {
+                        self.peek_close_hovered = false;
+                        self.peek_expand_hovered = false;
                         self.dirty = true;
                     }
                 }
@@ -237,7 +237,7 @@ impl Browser {
                     horizontal,
                     ..
                 } => {
-                    self.quickview_wheel(
+                    self.peek_wheel(
                         horizontal.absolute as f32,
                         vertical.absolute as f32,
                         panel,
@@ -258,12 +258,12 @@ impl Browser {
         // scrub in progress, before anything decides what a click on
         // the column means.
         let video_pointer = match event.kind {
-            PointerEventKind::Press { .. } => Some(quickview::VideoPointer::Press),
-            PointerEventKind::Release { .. } => Some(quickview::VideoPointer::Release),
+            PointerEventKind::Press { .. } => Some(peek::VideoPointer::Press),
+            PointerEventKind::Release { .. } => Some(peek::VideoPointer::Release),
             PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
-                Some(quickview::VideoPointer::Motion)
+                Some(peek::VideoPointer::Motion)
             }
-            PointerEventKind::Leave { .. } => Some(quickview::VideoPointer::Leave),
+            PointerEventKind::Leave { .. } => Some(peek::VideoPointer::Leave),
             PointerEventKind::Axis { .. } => None,
         };
         if let Some(kind) = video_pointer {
@@ -352,7 +352,7 @@ impl Browser {
             // Below the strip: the click belongs to the listing, and
             // so does the keyboard from here on. Without this the
             // query keeps taking keys after you have clicked a file,
-            // and Space types a space instead of opening Quick View
+            // and Space types a space instead of opening Peek
             // on what you just selected. The strip stays open — the
             // results are still what you are looking at — it simply
             // stops being where the typing goes. Falls through rather

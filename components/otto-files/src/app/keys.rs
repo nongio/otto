@@ -445,14 +445,14 @@ impl FilesApp {
                 // a PDF — a key that stops working at the end would be worse
                 // than one that hands the listing back.
                 Keysym::Page_Down => {
-                    paginated = self.turn_quickview_page(&mut browser, 1);
+                    paginated = self.turn_peek_page(&mut browser, 1);
                     if !paginated {
                         let step = browser.row_step();
                         browser.move_cursor(15 * step, shift)
                     }
                 }
                 Keysym::Page_Up => {
-                    paginated = self.turn_quickview_page(&mut browser, -1);
+                    paginated = self.turn_peek_page(&mut browser, -1);
                     if !paginated {
                         let step = browser.row_step();
                         browser.move_cursor(-15 * step, shift)
@@ -462,7 +462,7 @@ impl FilesApp {
                 // more than one file.
                 // With a picture up, select-all takes its words first; a
                 // picture without any hands the key back to the listing.
-                Keysym::a if ctrl && browser.select_all_quickview_words() => {}
+                Keysym::a if ctrl && browser.select_all_peek_words() => {}
                 Keysym::a if ctrl => {
                     let multiple = browser.picker.as_ref().is_none_or(|p| p.request.multiple);
                     if multiple {
@@ -471,7 +471,7 @@ impl FilesApp {
                 }
                 // Words selected on a previewed picture are copied as text,
                 // in either host: copying text is not file management.
-                Keysym::c if ctrl && browser.copy_quickview_selection(serial) => {}
+                Keysym::c if ctrl && browser.copy_peek_selection(serial) => {}
                 // Cut, copy and paste are file management: browser only.
                 Keysym::c if ctrl && browser.picker.is_none() => {
                     browser.copy_selection(false, serial)
@@ -486,8 +486,8 @@ impl FilesApp {
                 // Space toggles: the second press dismisses what the first
                 // opened, which is the gesture people already have.
                 Keysym::space => {
-                    if !browser.close_quickview() {
-                        self.start_quickview(&mut browser);
+                    if !browser.close_peek() {
+                        self.start_peek(&mut browser);
                     }
                 }
                 // Escape unwinds one layer at a time: the preview, then the
@@ -499,14 +499,14 @@ impl FilesApp {
                     // as everything else that is up.
                     if browser.info.is_some() {
                         browser.close_info();
-                    } else if browser.clear_quickview_selection() {
+                    } else if browser.clear_peek_selection() {
                         // A stray drag does not cost the preview.
                     } else if browser.searching {
                         // The field can be closed with results still up. That
                         // is still a search, and Escape's job is to put back
                         // what was on screen before it.
                         browser.clear_search();
-                    } else if browser.close_quickview() {
+                    } else if browser.close_peek() {
                         // The preview took it.
                     } else if menu_open {
                         if let Some(session) = browser.picker.as_mut() {
@@ -595,8 +595,8 @@ impl FilesApp {
                     | Keysym::Page_Down
                     | Keysym::Page_Up
             );
-            if moved && !paginated && browser.quickview.is_some() {
-                self.start_quickview(&mut browser);
+            if moved && !paginated && browser.peek.is_some() {
+                self.start_peek(&mut browser);
             }
         }
     }

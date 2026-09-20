@@ -96,9 +96,9 @@ pub struct SidebarConfig {
     pub extra: Vec<Custom>,
 }
 
-/// The `[quickview]` section: text recognition in pictures.
+/// The `[peek]` section: text recognition in pictures.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct QuickviewConfig {
+pub struct PeekConfig {
     /// Whether text in pictures is recognised for selection and Find.
     #[serde(default = "yes")]
     pub recognise_text: bool,
@@ -110,7 +110,7 @@ pub struct QuickviewConfig {
 }
 
 // A missing section means on, the same as a missing key.
-impl Default for QuickviewConfig {
+impl Default for PeekConfig {
     fn default() -> Self {
         Self {
             recognise_text: true,
@@ -123,22 +123,22 @@ fn yes() -> bool {
     true
 }
 
-/// Read the `[quickview]` section of `~/.config/otto/files.toml`, or the
+/// Read the `[peek]` section of `~/.config/otto/files.toml`, or the
 /// defaults when there is none.
-pub fn quickview() -> QuickviewConfig {
+pub fn peek() -> PeekConfig {
     #[derive(Deserialize, Default)]
     struct Only {
         #[serde(default)]
-        quickview: QuickviewConfig,
+        peek: PeekConfig,
     }
     let Some(path) = config_path() else {
-        return QuickviewConfig::default();
+        return PeekConfig::default();
     };
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return QuickviewConfig::default();
+        return PeekConfig::default();
     };
     toml::from_str::<Only>(&text)
-        .map(|file| file.quickview)
+        .map(|file| file.peek)
         .unwrap_or_default()
 }
 

@@ -83,7 +83,7 @@ behaves exactly as its menu item or shortcut does, with the same undo entry.
 | Group | Commands |
 |-------|----------|
 | Go | Back, Forward, Up, Home, **Go to Path**, **Go to Place**, Open |
-| File | Get Info, **Rename**, **New Folder**, Move to Trash, **Move to Folder**, **New Folder with Selection**, **Rename N Items** |
+| File | Get Info, **Rename**, **New Folder**, Move to Trash, **Move to Folder**, **New Folder with Selection**, **Rename N Items**, **Run text recognition** (pictures, with a recogniser installed) |
 | File (in the Trash) | Put Back, Delete Immediately, Empty Trash |
 | Edit | Cut, Copy, Paste, Select All, **Select Matching**, Undo |
 | View | List, Icon and Column view, **Change View**, **Sort By**, Show or Hide Hidden Files, Quick Look, **Search** |

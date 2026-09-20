@@ -41,12 +41,12 @@ pub fn directory(file: &mut File, _request: &Request) -> PreviewPayload {
     unsafe {
         let duplicate = libc::dup(file.as_raw_fd());
         if duplicate < 0 {
-            return payload::unavailable(otto_kit::t_owned!("quickview-error-read-folder"));
+            return payload::unavailable(otto_kit::t_owned!("peek-error-read-folder"));
         }
         let dir = libc::fdopendir(duplicate);
         if dir.is_null() {
             libc::close(duplicate);
-            return payload::unavailable(otto_kit::t_owned!("quickview-error-read-folder"));
+            return payload::unavailable(otto_kit::t_owned!("peek-error-read-folder"));
         }
 
         loop {
@@ -100,9 +100,9 @@ pub fn directory(file: &mut File, _request: &Request) -> PreviewPayload {
         rows,
         truncated,
         summary: if total == 0 {
-            otto_kit::t_owned!("quickview-empty-folder")
+            otto_kit::t_owned!("peek-empty-folder")
         } else {
-            otto_kit::t_owned!("quickview-item-count", count = total as f64)
+            otto_kit::t_owned!("peek-item-count", count = total as f64)
         },
     }
 }
@@ -123,8 +123,8 @@ pub fn zip(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPa
             rows,
             truncated,
             summary: otto_kit::t_owned!(
-                "quickview-archive-summary",
-                items = otto_kit::t_owned!("quickview-item-count", count = total as f64),
+                "peek-archive-summary",
+                items = otto_kit::t_owned!("peek-item-count", count = total as f64),
                 size = human_size(metadata.len())
             ),
         },
@@ -317,8 +317,8 @@ pub fn tar(file: &mut File, metadata: &Metadata, request: &Request) -> PreviewPa
         rows,
         truncated,
         summary: otto_kit::t_owned!(
-            "quickview-archive-summary",
-            items = otto_kit::t_owned!("quickview-item-count", count = total as f64),
+            "peek-archive-summary",
+            items = otto_kit::t_owned!("peek-item-count", count = total as f64),
             size = human_size(metadata.len())
         ),
     }

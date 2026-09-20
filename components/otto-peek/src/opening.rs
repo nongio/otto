@@ -18,11 +18,11 @@ use std::time::Duration;
 /// from its first frame and only its geometry animates, so what the eye
 /// follows is one thing moving rather than a shape resolving out of nothing.
 ///
-/// Overridable at run time — `OTTO_QUICKVIEW_OPEN_MS` — because the only way
+/// Overridable at run time — `OTTO_PEEK_OPEN_MS` — because the only way
 /// to settle how an entrance feels is to watch it at several speeds.
 pub fn geometry_in() -> Duration {
     static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
-    *V.get_or_init(|| env_ms("OTTO_QUICKVIEW_OPEN_MS").unwrap_or(Duration::from_millis(300)))
+    *V.get_or_init(|| env_ms("OTTO_PEEK_OPEN_MS").unwrap_or(Duration::from_millis(300)))
 }
 
 fn env_ms(name: &str) -> Option<Duration> {
@@ -34,22 +34,22 @@ fn env_ms(name: &str) -> Option<Duration> {
 /// settle into on the way out, and an exit that lingers reads as the card
 /// being reluctant rather than as the card going home.
 ///
-/// Overridable at run time — `OTTO_QUICKVIEW_CLOSE_MS`.
+/// Overridable at run time — `OTTO_PEEK_CLOSE_MS`.
 pub fn geometry_out() -> Duration {
     static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
-    *V.get_or_init(|| env_ms("OTTO_QUICKVIEW_CLOSE_MS").unwrap_or(Duration::from_millis(180)))
+    *V.get_or_init(|| env_ms("OTTO_PEEK_CLOSE_MS").unwrap_or(Duration::from_millis(180)))
 }
 
 /// How far the entrance overshoots. Deliberately smaller than the launcher's
 /// 0.35: this surface is much larger, and the same overshoot on a large card
 /// stops reading as life and starts reading as wobble.
 ///
-/// Overridable at run time — `OTTO_QUICKVIEW_BOUNCE`. Zero is a clean ease
+/// Overridable at run time — `OTTO_PEEK_BOUNCE`. Zero is a clean ease
 /// with no overshoot at all.
 pub fn bounce() -> f32 {
     static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *V.get_or_init(|| {
-        std::env::var("OTTO_QUICKVIEW_BOUNCE")
+        std::env::var("OTTO_PEEK_BOUNCE")
             .ok()
             .and_then(|raw| raw.parse().ok())
             .unwrap_or(0.07f32)

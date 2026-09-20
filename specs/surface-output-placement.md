@@ -1,7 +1,7 @@
 # Surface Output Placement
 
 **Status:** draft
-**Related specs:** [quickview.md](./quickview.md), [file-browser.md](./file-browser.md)
+**Related specs:** [peek.md](./peek.md), [file-browser.md](./file-browser.md)
 
 ## Summary
 

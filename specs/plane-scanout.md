@@ -328,7 +328,7 @@ vibrancy even though the content behind it lives on other planes.
   around for reuse), animating, or covered by a higher window is not
   promoted. "Covered" counts a higher window's visible subsurfaces as
   well as its geometry: a subsurface may be drawn past its window (Files'
-  Quick View is centred on the display and hangs over the neighbouring
+  Peek is centred on the display and hangs over the neighbouring
   tile), it is composited into the windows plane, and a window promoted
   beneath it would scan out on top of it. The root surface's own buffer
   past the geometry (a client-drawn shadow) does not count, and neither

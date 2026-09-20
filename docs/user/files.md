@@ -181,7 +181,7 @@ selected. Clicking empty space selects nothing.
 | `Delete`, `Ctrl+Delete`, `Ctrl+Backspace` | Move to trash (in the Trash window, delete permanently — it asks first) |
 | `Ctrl+Z` | Undo the last operation |
 | `Ctrl+I` | Show info for the selection |
-| `Space` | Quick view (see below) |
+| `Space` | Peek (see below) |
 | `Escape` | Cancel a rename, else clear the selection |
 
 Copy, move and trash run in the background, with progress and a cancel that
@@ -198,7 +198,7 @@ undo entry says so rather than quietly disappearing.
 other applications — dragging a picture into a browser upload field or a chat
 window does what you expect.
 
-## Quick view
+## Peek
 
 Select something and press `Space`. A panel grows out of the row showing the
 file itself: pictures, text and code, PDFs, a listing for a folder, and — for
@@ -208,7 +208,7 @@ as the panel is open.
 Arrow keys move to the next file and the preview follows, `Space` closes it,
 and `Escape` closes it before it clears your selection.
 
-![Quick view open on a picture: the file fills the panel, with its name, dimensions and size listed underneath](images/quick-view.jpg)
+![Peek open on a picture: the file fills the panel, with its name, dimensions and size listed underneath](images/peek.jpg)
 
 While the panel is up it owns the pointer: the wheel scrolls a text preview, a
 pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum
@@ -271,7 +271,7 @@ window would.
 To turn recognition off, in `~/.config/otto/files.toml`:
 
 ```toml
-[quickview]
+[peek]
 recognise_text = false
 ```
 
@@ -285,7 +285,7 @@ neural engines do. Name it in the same section of that file;
 `OCR_LANGUAGES` variable:
 
 ```toml
-[quickview]
+[peek]
 recogniser = "kraken -i /dev/stdin /dev/stdout ocr -h"
 ```
 

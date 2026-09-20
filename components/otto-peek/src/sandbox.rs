@@ -27,7 +27,7 @@
 //! those lands, the containment story is: one process, one descriptor, hard
 //! budgets, no network, no writes — and reading is not contained.
 //!
-//! Run `otto-quickview --sandbox-selftest` to see the current answer rather
+//! Run `otto-peek --sandbox-selftest` to see the current answer rather
 //! than trusting this comment.
 //!
 //! Everything here is raw `libc`. There is no sandboxing crate in the tree and
@@ -169,7 +169,7 @@ fn unshare_network() {
 /// rather than by assuming the syscall that set it up worked.
 ///
 /// This exists because a security property nobody measures is a security
-/// property nobody has. `otto-quickview --sandbox-selftest` prints it.
+/// property nobody has. `otto-peek --sandbox-selftest` prints it.
 #[derive(Debug, Default)]
 pub struct SelfTest {
     pub address_space_capped: bool,

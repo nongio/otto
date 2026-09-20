@@ -594,7 +594,7 @@ impl TestClient {
 
     /// Hang a subsurface with a `width`x`height` SHM buffer off `parent`, at
     /// `x`/`y` in the parent's surface-local coordinates — which may lie
-    /// outside the parent, the way Files' Quick View panel does.
+    /// outside the parent, the way Files' Peek panel does.
     ///
     /// Commits the parent too, since that is what applies a subsurface's
     /// position and first buffer. Returns the objects for the caller to keep

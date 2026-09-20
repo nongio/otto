@@ -420,7 +420,7 @@ impl Session {
 
     /// Accept `paths`, recording the filter that was in force.
     ///
-    /// The URIs come from otto-quickview's encoder, which lives beside the
+    /// The URIs come from otto-peek's encoder, which lives beside the
     /// decoder every consumer of them uses — the round trip is the property
     /// that matters, and it is only testable with both halves together.
     pub fn accept(&mut self, paths: &[PathBuf]) {
@@ -428,7 +428,7 @@ impl Session {
             response: 0,
             uris: paths
                 .iter()
-                .map(|p| otto_quickview::uri::path_to_uri(p))
+                .map(|p| otto_peek::uri::path_to_uri(p))
                 .collect(),
             current_filter: self.filter().label.clone(),
             choices: Vec::new(),

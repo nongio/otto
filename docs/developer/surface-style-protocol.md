@@ -74,7 +74,7 @@ below the surface's own content). Plus `cancel_animation` and
 **Version 3 added output placement** — `request_output_frame` with its
 `output_frame` event, plus `set_output_placement` and
 `set_output_relative_size`. These let a surface be placed and sized against the
-output rather than its parent, which is how Quick View sits centred on the
+output rather than its parent, which is how Peek sits centred on the
 display while remaining a subsurface of the file browser's window. Reach for
 `request_output_frame`; the other two move only the layer the compositor paints,
 which is the wrong half of a subsurface. Full rules, the recipe and the

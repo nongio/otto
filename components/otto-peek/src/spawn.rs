@@ -69,10 +69,10 @@ pub fn open(path: &Path) -> Result<Opened, String> {
     let metadata = file.metadata().map_err(|err| format!("{err}"))?;
     let kind = metadata.file_type();
     if kind.is_fifo() || kind.is_socket() || kind.is_char_device() || kind.is_block_device() {
-        return Err(otto_kit::t_owned!("quickview-error-not-previewable"));
+        return Err(otto_kit::t_owned!("peek-error-not-previewable"));
     }
     if !kind.is_file() && !kind.is_dir() {
-        return Err(otto_kit::t_owned!("quickview-error-not-previewable"));
+        return Err(otto_kit::t_owned!("peek-error-not-previewable"));
     }
 
     Ok(Opened {
@@ -109,7 +109,7 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         Ok(path) => path,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-previewer-missing",
+                "peek-error-previewer-missing",
                 error = err.to_string()
             ))
         }
@@ -208,7 +208,7 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
             // SAFETY: the descriptor was not consumed by a successful spawn.
             unsafe { libc::close(file_fd) };
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-previewer-start",
+                "peek-error-previewer-start",
                 error = err.to_string()
             ));
         }
@@ -220,9 +220,7 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
     // block in `read_to_end` with no way to notice time passing.
     let mut stdout = match child.stdout.take() {
         Some(stdout) => stdout,
-        None => {
-            return payload::unavailable(otto_kit::t_owned!("quickview-error-previewer-no-output"))
-        }
+        None => return payload::unavailable(otto_kit::t_owned!("peek-error-previewer-no-output")),
     };
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
@@ -236,16 +234,16 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         // `decode_owned`, not `decode`: an animation's frames are the largest
         // thing either process holds, and they are already in this buffer.
         Ok(Ok(bytes)) => payload::decode_owned(bytes).unwrap_or_else(|| {
-            payload::unavailable(otto_kit::t_owned!("quickview-error-previewer-unreadable"))
+            payload::unavailable(otto_kit::t_owned!("peek-error-previewer-unreadable"))
         }),
         Ok(Err(err)) => payload::unavailable(otto_kit::t_owned!(
-            "quickview-error-previewer-failed",
+            "peek-error-previewer-failed",
             error = err.to_string()
         )),
         Err(_) => {
             // Overran. This is the case a thread could not have recovered from.
             let _ = child.kill();
-            payload::unavailable(otto_kit::t_owned!("quickview-error-timeout"))
+            payload::unavailable(otto_kit::t_owned!("peek-error-timeout"))
         }
     };
 

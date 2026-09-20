@@ -20,7 +20,7 @@ pub fn read(file: &mut File, _request: &Request) -> PreviewPayload {
         Ok(bytes) => bytes,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-file",
+                "peek-error-read-file",
                 error = err.to_string()
             ))
         }
@@ -28,7 +28,7 @@ pub fn read(file: &mut File, _request: &Request) -> PreviewPayload {
     let capped = bytes.len() as u64 >= MAX_BYTES;
 
     let Some(text) = otto_md_kit::source_text(bytes) else {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-not-text"));
+        return payload::unavailable(otto_kit::t_owned!("peek-error-not-text"));
     };
 
     let (blocks, too_many) = otto_md_kit::parse_capped(&text, otto_md_kit::MAX_BLOCKS);

@@ -7,7 +7,7 @@ a Skia drawing layer, a widget set and a design system in one crate.
 It has **two consumers, and they use it in opposite ways.**
 
 - **Client apps** — otto-bar, otto-islands, otto-launcher, otto-settings,
-  otto-files, otto-quickview, otto-lock, otto-greeter, otto-auth-ui. They take
+  otto-files, otto-peek, otto-lock, otto-greeter, otto-auth-ui. They take
   the runtime (`AppRunner`, `AppContext`, surfaces, protocols) and then either
   draw their own Skia or assemble components.
 - **The compositor** — `src/` has no `AppRunner`, no `AppContext` and no
@@ -203,7 +203,7 @@ startup-only, and always outranked by the portal. Otto's own backend for that po
 `desktop_entry` parses `.desktop` files (the dock and launcher's app database);
 `filetype` resolves MIME types by glob and by content sniffing, and `preview`
 renders file thumbnails against the shared freedesktop cache — both for
-otto-files and otto-quickview. `clipboard` and `dnd` cover selections and drag
+otto-files and otto-peek. `clipboard` and `dnd` cover selections and drag
 and drop — `clipboard::set_text` and `clipboard::text` are the plain-text pair
 a text field needs, since `TextInput` owns no clipboard itself: it answers a
 `Copy` or `Cut` key with `TextInputResponse::Clipboard(text)` for the host to

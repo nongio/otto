@@ -1,6 +1,6 @@
 //! Text and source code.
 //!
-//! No syntax highlighting in v1 — see `specs/quickview.md` for why, and for
+//! No syntax highlighting in v1 — see `specs/peek.md` for why, and for
 //! what it will be when it arrives (a hand-written token scanner, not
 //! `syntect`). The `language` field is carried on the wire already so that
 //! adding it later is not a wire change.
@@ -29,7 +29,7 @@ pub fn read(file: &mut File, request: &Request, mime: &str) -> PreviewPayload {
         Ok(bytes) => bytes,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-file",
+                "peek-error-read-file",
                 error = err.to_string()
             ))
         }
@@ -37,7 +37,7 @@ pub fn read(file: &mut File, request: &Request, mime: &str) -> PreviewPayload {
     let read_everything = (bytes.len() as u64) < MAX_TEXT_BYTES;
 
     let Some(text) = decode_text(&bytes) else {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-not-text"));
+        return payload::unavailable(otto_kit::t_owned!("peek-error-not-text"));
     };
 
     let mut lines: Vec<String> = Vec::new();

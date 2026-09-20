@@ -1,6 +1,6 @@
-//! Quick View, embedded — the Space-bar preview.
+//! Peek, embedded — the Space-bar preview.
 //!
-//! Quick View used to be a separate application reached over `org.otto.QuickView1`.
+//! Peek used to be a separate application reached over `org.otto.Peek1`.
 //! It is now a library this window embeds, because the preview wants to be a
 //! subsurface of the file view and a subsurface's parent must be a `wl_surface`
 //! owned by the same client: "parented to the browser" and "separate process"
@@ -11,7 +11,7 @@
 //!
 //! What is still a separate process is the *decoder*. Untrusted bytes are
 //! parsed by a sandboxed worker that is this binary re-executed, which is why
-//! `main` must call [`otto_quickview::run_worker_if_requested`] before anything
+//! `main` must call [`otto_peek::run_worker_if_requested`] before anything
 //! else. This module never interprets file bytes; it receives a validated
 //! [`Preview`] and draws it.
 
@@ -22,8 +22,8 @@ use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
 use otto_kit::preview::{self, Pixels, Preview, Word, WordSelection, Zoom};
 use otto_media_kit::transport::TransportHit;
 use otto_media_kit::{Frame, Options, Playback, Player, State};
-use otto_quickview::decode::Request;
-use otto_quickview::opening;
+use otto_peek::decode::Request;
+use otto_peek::opening;
 use skia_safe::{Contains, Rect};
 
 /// The title strip along the top of the panel: the file's name, and the
@@ -117,7 +117,7 @@ impl Video {
     /// Start playing `path`, if the decoded `preview` says it is a video
     /// and a player can be started.
     ///
-    /// Only for a preview [`otto_quickview::payload::is_video`] vouches for:
+    /// Only for a preview [`otto_peek::payload::is_video`] vouches for:
     /// the sandboxed decoder read the bytes and said video, which is the one
     /// opinion that counts before a demuxer is handed the file. A worker
     /// that cannot be found or started leaves the card as it was, and says
@@ -129,7 +129,7 @@ impl Video {
         options: Options,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Option<Video> {
-        if !otto_quickview::payload::is_video(preview) {
+        if !otto_peek::payload::is_video(preview) {
             return None;
         }
         match Player::open(path, options, wake) {
@@ -950,7 +950,7 @@ impl Session {
 fn waiting_preview(name: &str, is_dir: bool) -> Preview {
     Preview::Unavailable {
         reason: otto_kit::t_owned!("files-status-opening-preview"),
-        icon: otto_quickview::payload::icon_names_for(name, is_dir),
+        icon: otto_peek::payload::icon_names_for(name, is_dir),
     }
 }
 
@@ -1047,7 +1047,7 @@ pub fn decode(path: &Path, panel: Rect, scale: f32, page: u32) -> Preview {
             .unwrap_or_default(),
         ..Request::default()
     };
-    otto_quickview::decode_path(path, &request)
+    otto_peek::decode_path(path, &request)
 }
 
 /// The size a picture is decoded at for `panel`, so a second decode of the
@@ -1087,7 +1087,7 @@ impl Priority {
 }
 
 /// Recognise the text in a picture with `recogniser` — a command line, see
-/// `otto_quickview::ocr` — at the size [`decode`] shows it, and remember
+/// `otto_peek::ocr` — at the size [`decode`] shows it, and remember
 /// it. Returns the words in the coordinates of that decode, or
 /// `None` when the file is not a picture or nothing could be recognised
 /// (in which case nothing is remembered either, so a transient failure is
@@ -1109,20 +1109,20 @@ pub fn recognise(
         width,
         height,
         ocr: true,
-        languages: otto_quickview::ocr::languages(),
+        languages: otto_peek::ocr::languages(),
         recogniser: recogniser.to_string(),
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        budget: otto_quickview::sandbox::Budget {
+        budget: otto_peek::sandbox::Budget {
             nice: priority.nice(),
             ..Default::default()
         },
         ..Request::default()
     };
     let modified = std::fs::metadata(path).ok()?.modified().ok()?;
-    match otto_quickview::decode_path(path, &request) {
+    match otto_peek::decode_path(path, &request) {
         Preview::Pixels { pixels, .. } => {
             if let Err(err) = crate::ocrcache::store(
                 path,
@@ -1385,7 +1385,7 @@ mod tests {
 
     /// The content box of a panel resting in a window of a comfortable size.
     fn content() -> Rect {
-        crate::view::quickview_content_rect(panel_rect(1100.0, 700.0))
+        crate::view::peek_content_rect(panel_rect(1100.0, 700.0))
     }
 
     /// Arrow-keying on must not leave the last file's picture on screen under

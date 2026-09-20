@@ -5,7 +5,7 @@ use otto_kit::preview::Preview;
 
 impl FilesApp {
     /// Bring every surface beside the window up to date: the columns, the
-    /// preview, Quick View and the palette.
+    /// preview, Peek and the palette.
     pub(super) fn sync_pane_surfaces(&mut self) {
         let Some(window) = self.window.as_ref() else {
             return;
@@ -19,42 +19,42 @@ impl FilesApp {
         // Before the frame is built from it: a panel dragged aside in a
         // bigger window, or before the display answered, may otherwise be
         // placed somewhere nothing can reach it.
-        browser.clamp_quickview();
+        browser.clamp_peek();
         let theme = browser.theme();
         let title = browser.title();
         let frame = browser.frame(&theme, &title);
-        let quickview = browser
-            .quickview_visible()
-            .map(|session| (session, browser.quickview_generation));
+        let peek = browser
+            .peek_visible()
+            .map(|session| (session, browser.peek_generation));
         if let Some(panes) = self.pane_surfaces.as_mut() {
-            panes.sync(&parent, &frame, quickview);
+            panes.sync(&parent, &frame, peek);
         }
 
         // Hand the pointer handler the rect the panel was actually placed at.
         // Doing it here, after the sync, is what keeps the hit test and the
         // paint from disagreeing about where the card is.
         drop(frame);
-        browser.quickview_panel = self
+        browser.peek_panel = self
             .pane_surfaces
             .as_ref()
-            .and_then(pane_surfaces::PaneSurfaces::quickview_resting);
+            .and_then(pane_surfaces::PaneSurfaces::peek_resting);
         // The offset that rect was placed with, recorded together with it: a
         // drag reads the two back to work out where the card would rest
         // untouched, and they are only true as a pair.
-        browser.quickview_placed_offset = browser
-            .quickview_panel
-            .and(browser.quickview_visible().map(|session| session.offset));
+        browser.peek_placed_offset = browser
+            .peek_panel
+            .and(browser.peek_visible().map(|session| session.offset));
         // Where the display is, so a drag of the title strip knows how far the
         // card may go. Like the panel's own rect, it is the surface layer that
         // knows and the pointer handler that asks.
-        browser.quickview_display = self
+        browser.peek_display = self
             .pane_surfaces
             .as_ref()
-            .and_then(pane_surfaces::PaneSurfaces::quickview_display);
-        *self.quickview_target.lock().unwrap() = self
+            .and_then(pane_surfaces::PaneSurfaces::peek_display);
+        *self.peek_target.lock().unwrap() = self
             .pane_surfaces
             .as_ref()
-            .and_then(pane_surfaces::PaneSurfaces::quickview_target);
+            .and_then(pane_surfaces::PaneSurfaces::peek_target);
 
         // The palette's card, on its own surface. Synced apart from the rest
         // because painting it needs the browser back mutably — its field
@@ -115,7 +115,7 @@ impl FilesApp {
         }
     }
 
-    /// Move an open Quick View onto whatever the cursor landed on after a
+    /// Move an open Peek onto whatever the cursor landed on after a
     /// delete.
     ///
     /// A delete cannot do this itself: the successor is only known once the
@@ -124,29 +124,29 @@ impl FilesApp {
     /// flag instead and this drains it on the next pass — one frame of a
     /// stale panel, against a panel that would otherwise sit there showing a
     /// file that is now in the Trash.
-    pub(super) fn follow_quickview(&self) {
+    pub(super) fn follow_peek(&self) {
         let mut browser = self.state.lock().unwrap();
-        // Quick View asked for by name, from the palette. Its command ran in
+        // Peek asked for by name, from the palette. Its command ran in
         // the browser, which does not own the decode.
-        if browser.take_palette_quickview() {
-            self.start_quickview(&mut browser);
+        if browser.take_palette_peek() {
+            self.start_peek(&mut browser);
             return;
         }
-        if browser.take_quickview_follow() {
-            self.start_quickview(&mut browser);
+        if browser.take_peek_follow() {
+            self.start_peek(&mut browser);
         }
     }
 
     /// Preview the cursor's file, decoding off the UI thread.
     ///
-    /// [`quickview::decode`] blocks until the sandboxed worker answers or its
+    /// [`peek::decode`] blocks until the sandboxed worker answers or its
     /// deadline expires — inline, that would stall the frame loop for as long
     /// as the file takes.
-    pub(super) fn start_quickview(&self, browser: &mut Browser) {
-        let Some((path, generation, anchor)) = browser.begin_quickview() else {
+    pub(super) fn start_peek(&self, browser: &mut Browser) {
+        let Some((path, generation, anchor)) = browser.begin_peek() else {
             return;
         };
-        let panel = quickview::panel_rect(browser.size.0, browser.size.1);
+        let panel = peek::panel_rect(browser.size.0, browser.size.1);
         let scale = AppContext::scale_factor().max(1) as f32;
         let state = Arc::clone(&self.state);
 
@@ -158,16 +158,16 @@ impl FilesApp {
         let recognise = ocr::enabled();
         let recogniser = ocr::command();
         tokio::task::spawn_blocking(move || {
-            let mut preview = quickview::decode(&path, panel, scale, 1);
+            let mut preview = peek::decode(&path, panel, scale, 1);
             let video = (path.is_file() && otto_media_kit::player::available())
-                .then(|| (path.clone(), quickview::video_options(panel, scale, true)));
+                .then(|| (path.clone(), peek::video_options(panel, scale, true)));
             // Words already remembered ride in with the picture; otherwise
             // the picture goes up now and the recogniser follows.
             let picture = ocr::is_picture(&path)
                 && matches!(&preview, Preview::Pixels { pixels, .. } if pixels.words.is_empty());
             let mut needs_recognising = false;
             if picture && recognise {
-                match quickview::remembered_words(&path, panel, scale, 1) {
+                match peek::remembered_words(&path, panel, scale, 1) {
                     Some(words) => {
                         if let Preview::Pixels { pixels, .. } = &mut preview {
                             pixels.words = words;
@@ -178,10 +178,10 @@ impl FilesApp {
             }
             {
                 let mut browser = state.lock().unwrap();
-                browser.finish_quickview(generation, anchor, name, preview, video);
+                browser.finish_peek(generation, anchor, name, preview, video);
                 if needs_recognising {
                     browser.begin_reading(path.clone());
-                    browser.start_quickview_recognising(generation);
+                    browser.start_peek_recognising(generation);
                 }
             }
             // Wake the UI thread: a window showing "Opening preview…" is not
@@ -197,24 +197,24 @@ impl FilesApp {
             // looking at any more.
             {
                 let mut browser = state.lock().unwrap();
-                if browser.quickview_generation != generation {
+                if browser.peek_generation != generation {
                     browser.end_reading(&path);
                     return;
                 }
             }
-            let words = quickview::recognise(
+            let words = peek::recognise(
                 &path,
                 panel,
                 scale,
                 1,
                 recogniser,
-                quickview::Priority::Interactive,
+                peek::Priority::Interactive,
             );
             {
                 let mut browser = state.lock().unwrap();
                 match words {
-                    Some(words) => browser.finish_quickview_words(generation, words),
-                    None => browser.finish_quickview_recognising(generation),
+                    Some(words) => browser.finish_peek_words(generation, words),
+                    None => browser.finish_peek_recognising(generation),
                 }
                 browser.end_reading(&path);
             }
@@ -226,11 +226,11 @@ impl FilesApp {
     /// preview. Returns whether there was a page to turn to — when there is
     /// not, the keystroke was never the preview's and the caller goes on to
     /// do what it does to the listing.
-    pub(super) fn turn_quickview_page(&self, browser: &mut Browser, delta: i32) -> bool {
-        let Some((path, generation, page, anchor)) = browser.turn_quickview_page(delta) else {
+    pub(super) fn turn_peek_page(&self, browser: &mut Browser, delta: i32) -> bool {
+        let Some((path, generation, page, anchor)) = browser.turn_peek_page(delta) else {
             return false;
         };
-        let panel = quickview::panel_rect(browser.size.0, browser.size.1);
+        let panel = peek::panel_rect(browser.size.0, browser.size.1);
         let scale = AppContext::scale_factor().max(1) as f32;
         let state = Arc::clone(&self.state);
 
@@ -242,19 +242,19 @@ impl FilesApp {
         // No video: what is being turned is a document's page, and a
         // paginated preview is never a player.
         tokio::task::spawn_blocking(move || {
-            let preview = quickview::decode(&path, panel, scale, page);
+            let preview = peek::decode(&path, panel, scale, page);
             state
                 .lock()
                 .unwrap()
-                .finish_quickview(generation, anchor, name, preview, None);
+                .finish_peek(generation, anchor, name, preview, None);
             AppContext::request_wakeup();
         });
         true
     }
 
     /// Decode the docked preview column's target, off the UI thread — the
-    /// same worker path Quick View's overlay uses, just landing in
-    /// [`Browser::finish_preview`] instead of [`Browser::finish_quickview`].
+    /// same worker path Peek's overlay uses, just landing in
+    /// [`Browser::finish_preview`] instead of [`Browser::finish_peek`].
     pub(super) fn start_preview(&self, path: PathBuf, generation: u64) {
         let panel = {
             let browser = self.state.lock().unwrap();
@@ -267,9 +267,9 @@ impl FilesApp {
         // follows the selection, and the click that starts it is the user
         // asking for sound. It opens on the first frame, not on black.
         let video = (path.is_file() && otto_media_kit::player::available())
-            .then(|| quickview::video_options(panel, scale, false));
+            .then(|| peek::video_options(panel, scale, false));
         tokio::task::spawn_blocking(move || {
-            let preview = quickview::decode(&path, panel, scale, 1);
+            let preview = peek::decode(&path, panel, scale, 1);
             state
                 .lock()
                 .unwrap()
@@ -337,17 +337,17 @@ impl FilesApp {
                 // clears `loading` — so without the `changed` arm the column
                 // that finished would sit empty until the next input event.
                 let changed = browser.poll();
-                // Also while a Quick View call is outstanding, so its result
+                // Also while a Peek call is outstanding, so its result
                 // paints without waiting for the next keystroke.
                 // …and while the preview's entrance is still running, which is
                 // animated in this process now that the panel lives in this
                 // window's own surface.
-                let opening = browser.quickview_animating();
+                let opening = browser.peek_animating();
                 let preview_pending = browser.preview.as_ref().is_some_and(|p| p.pending);
                 changed
                     || browser.loading()
-                    || browser.quickview_pending
-                    || browser.quickview_recognising
+                    || browser.peek_pending
+                    || browser.peek_recognising
                     || opening
                     || preview_pending
                     // …and while thumbnails are being fetched, so they appear

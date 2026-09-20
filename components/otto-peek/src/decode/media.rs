@@ -3,7 +3,7 @@
 //! v1 deliberately gets most of the value here without a decoder: tags and
 //! embedded cover art need no PCM decode, and container headers give dimensions
 //! and duration without reading a 2 GB file. Playback and poster frames are
-//! later stages; see `specs/quickview.md`.
+//! later stages; see `specs/peek.md`.
 //!
 //! The hard rule in this file is that **nothing reads the whole file**. A
 //! metadata previewer that streams two gigabytes to find a duration has missed
@@ -30,11 +30,11 @@ pub fn generic(metadata: &Metadata, request: &Request, mime: &str) -> PreviewPay
         subtitle: filetype::kind_of(mime).label().to_string(),
         facts: vec![
             Fact {
-                key: otto_kit::t_owned!("quickview-fact-kind"),
+                key: otto_kit::t_owned!("peek-fact-kind"),
                 value: describe(mime),
             },
             Fact {
-                key: otto_kit::t_owned!("quickview-fact-size"),
+                key: otto_kit::t_owned!("peek-fact-size"),
                 value: human_size(metadata.len()),
             },
         ],
@@ -55,9 +55,9 @@ pub fn audio(
 
     let mut facts = Vec::new();
     for (key, value) in [
-        ("quickview-fact-artist", tags.artist.as_deref()),
-        ("quickview-fact-album", tags.album.as_deref()),
-        ("quickview-fact-year", tags.year.as_deref()),
+        ("peek-fact-artist", tags.artist.as_deref()),
+        ("peek-fact-album", tags.album.as_deref()),
+        ("peek-fact-year", tags.year.as_deref()),
     ] {
         if let Some(value) = value.filter(|value| !value.is_empty()) {
             facts.push(Fact {
@@ -67,11 +67,11 @@ pub fn audio(
         }
     }
     facts.push(Fact {
-        key: otto_kit::t_owned!("quickview-fact-kind"),
+        key: otto_kit::t_owned!("peek-fact-kind"),
         value: describe(mime),
     });
     facts.push(Fact {
-        key: otto_kit::t_owned!("quickview-fact-size"),
+        key: otto_kit::t_owned!("peek-fact-size"),
         value: human_size(metadata.len()),
     });
 
@@ -101,22 +101,22 @@ pub fn video(
 
     if let Some((width, height)) = mp4_dimensions(&head) {
         facts.push(Fact {
-            key: otto_kit::t_owned!("quickview-fact-dimensions"),
+            key: otto_kit::t_owned!("peek-fact-dimensions"),
             value: format!("{width} × {height}"),
         });
     }
     if let Some(seconds) = mp4_duration(&head) {
         facts.push(Fact {
-            key: otto_kit::t_owned!("quickview-fact-duration"),
+            key: otto_kit::t_owned!("peek-fact-duration"),
             value: clock(seconds),
         });
     }
     facts.push(Fact {
-        key: otto_kit::t_owned!("quickview-fact-kind"),
+        key: otto_kit::t_owned!("peek-fact-kind"),
         value: describe(mime),
     });
     facts.push(Fact {
-        key: otto_kit::t_owned!("quickview-fact-size"),
+        key: otto_kit::t_owned!("peek-fact-size"),
         value: human_size(metadata.len()),
     });
 

@@ -104,7 +104,7 @@ impl Browser {
         self.pan.is_animating()
             || self.columns.iter().any(|c| c.scroll.is_animating())
             || self.palette_scroll.is_animating()
-            || self.quickview_pan_animating()
+            || self.peek_pan_animating()
     }
 
     /// Advance every pane's scrolling by one tick. Returns whether anything
@@ -122,7 +122,7 @@ impl Browser {
         // The palette's list glides on its own tick: see
         // `tick_palette_scroll`. The open preview's picture pans on scroll views of its own, and
         // they fling and spring like any other.
-        moved |= self.tick_quickview_pan();
+        moved |= self.tick_peek_pan();
         moved
     }
 }

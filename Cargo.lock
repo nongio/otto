@@ -5529,7 +5529,7 @@ dependencies = [
  "libc",
  "otto-kit",
  "otto-media-kit",
- "otto-quickview",
+ "otto-peek",
  "serde",
  "serde_json",
  "skia-safe",
@@ -5698,7 +5698,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "otto-quickview"
+name = "otto-peek"
 version = "1.4.0"
 dependencies = [
  "laye-rs",

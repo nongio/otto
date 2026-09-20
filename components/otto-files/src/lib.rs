@@ -5,7 +5,7 @@
 //! window the user opens; the picker is a transient serving somebody else's
 //! application through the XDG desktop portal. Below the chrome they are the
 //! same code: the same directory model, the same async reads, the same
-//! list/grid/column presentations, the same Quick View.
+//! list/grid/column presentations, the same Peek.
 //!
 //! ```sh
 //! cargo run -p otto-files            # browse $HOME
@@ -23,10 +23,10 @@ pub mod model;
 pub mod ocrcache;
 pub mod palette;
 pub mod pane_surfaces;
+pub mod peek;
 pub mod perf;
 pub mod picker;
 pub mod places_config;
-pub mod quickview;
 pub mod recent;
 pub mod remembered;
 pub mod rename;

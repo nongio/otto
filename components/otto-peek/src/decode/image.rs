@@ -55,19 +55,19 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
         Ok(bytes) => bytes,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-image",
+                "peek-error-read-image",
                 error = err.to_string()
             ))
         }
     };
     let data = Data::new_copy(&bytes);
     let Some(mut codec) = Codec::from_data(data) else {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-image-unsupported"));
+        return payload::unavailable(otto_kit::t_owned!("peek-error-image-unsupported"));
     };
 
     let intrinsic = codec.dimensions();
     if intrinsic.width <= 0 || intrinsic.height <= 0 {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-image-no-size"));
+        return payload::unavailable(otto_kit::t_owned!("peek-error-image-no-size"));
     }
 
     let target = target_size(intrinsic, request);
@@ -109,7 +109,7 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
         Ok(image) => image,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-image-decode",
+                "peek-error-image-decode",
                 error = format!("{err:?}")
             ))
         }
@@ -139,7 +139,7 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
                 page: 1,
             }
         }
-        None => payload::unavailable(otto_kit::t_owned!("quickview-error-image-readback")),
+        None => payload::unavailable(otto_kit::t_owned!("peek-error-image-readback")),
     }
 }
 
@@ -147,7 +147,7 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
 ///
 /// `None` for anything that is not an animation, and for one that cannot be
 /// carried: the caller then decodes the first frame as an ordinary picture,
-/// which is what Quick View did for every GIF before this.
+/// which is what Peek did for every GIF before this.
 ///
 /// Frames are decoded at the source's own size because a frame is rarely a
 /// whole picture — GIF frames are patches composited onto what came before,
@@ -330,13 +330,13 @@ fn fit_within(size: ISize, bounds: ISize) -> ISize {
 
 /// SVG, rendered at the size it will be shown rather than at some nominal one,
 /// so it stays sharp at every zoom level. Skia's own SVG module does this —
-/// Quick View deliberately does not become a new consumer of `resvg`.
+/// Peek deliberately does not become a new consumer of `resvg`.
 pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read.min(64 * 1024 * 1024)) {
         Ok(bytes) => bytes,
         Err(err) => {
             return payload::unavailable(otto_kit::t_owned!(
-                "quickview-error-read-drawing",
+                "peek-error-read-drawing",
                 error = err.to_string()
             ))
         }
@@ -348,13 +348,13 @@ pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
     // and offers fonts only. The network namespace already forbids the remote
     // case; this forbids the local one at the same time.
     let Ok(mut dom) = skia_safe::svg::Dom::from_bytes(&bytes, SealedResources) else {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-drawing-parse"));
+        return payload::unavailable(otto_kit::t_owned!("peek-error-drawing-parse"));
     };
 
     let width = request.width.clamp(1, 8192) as i32;
     let height = request.height.clamp(1, 8192) as i32;
     let Some(mut surface) = skia_safe::surfaces::raster_n32_premul((width, height)) else {
-        return payload::unavailable(otto_kit::t_owned!("quickview-error-drawing-surface"));
+        return payload::unavailable(otto_kit::t_owned!("peek-error-drawing-surface"));
     };
     dom.set_container_size(skia_safe::Size::new(width as f32, height as f32));
     dom.render(surface.canvas());
@@ -366,7 +366,7 @@ pub fn svg(file: &mut File, request: &Request) -> PreviewPayload {
             pages: 1,
             page: 1,
         },
-        None => payload::unavailable(otto_kit::t_owned!("quickview-error-drawing-readback")),
+        None => payload::unavailable(otto_kit::t_owned!("peek-error-drawing-readback")),
     }
 }
 
@@ -446,16 +446,16 @@ fn pixel_count(size: ISize) -> u64 {
 fn too_large(intrinsic: ISize, request: &Request) -> PreviewPayload {
     PreviewPayload::Card {
         title: request.name.clone(),
-        subtitle: otto_kit::t_owned!("quickview-image-too-large"),
+        subtitle: otto_kit::t_owned!("peek-image-too-large"),
         facts: vec![
             crate::payload::Fact {
-                key: otto_kit::t_owned!("quickview-fact-dimensions"),
+                key: otto_kit::t_owned!("peek-fact-dimensions"),
                 value: format!("{} × {}", intrinsic.width, intrinsic.height),
             },
             crate::payload::Fact {
-                key: otto_kit::t_owned!("quickview-fact-pixels"),
+                key: otto_kit::t_owned!("peek-fact-pixels"),
                 value: otto_kit::t_owned!(
-                    "quickview-megapixels",
+                    "peek-megapixels",
                     count = (pixel_count(intrinsic) / 1_000_000) as f64
                 ),
             },
@@ -528,8 +528,7 @@ mod tests {
             .image_snapshot()
             .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
             .unwrap();
-        let path =
-            std::env::temp_dir().join(format!("otto-quickview-fit-{}.png", std::process::id()));
+        let path = std::env::temp_dir().join(format!("otto-peek-fit-{}.png", std::process::id()));
         std::fs::write(&path, png.as_bytes()).unwrap();
         let mut file = File::open(&path).unwrap();
         let request = Request {
@@ -572,8 +571,7 @@ mod tests {
 
     #[test]
     fn an_animated_gif_comes_back_as_every_frame() {
-        let path =
-            std::env::temp_dir().join(format!("otto-quickview-anim-{}.gif", std::process::id()));
+        let path = std::env::temp_dir().join(format!("otto-peek-anim-{}.gif", std::process::id()));
         std::fs::write(&path, THREE_FRAME_GIF).unwrap();
         let mut file = File::open(&path).unwrap();
         let payload = raster(&mut file, &Request::default());

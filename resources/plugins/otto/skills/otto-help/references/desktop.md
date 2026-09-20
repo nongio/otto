@@ -114,7 +114,7 @@ setsid otto-files >/dev/null 2>&1 &
 | The emoji picker, searching | `setsid otto-emoji heart >/dev/null 2>&1 &` |
 | Settings | `setsid otto-settings >/dev/null 2>&1 &` |
 | The launcher (apps) | `setsid otto-launcher >/dev/null 2>&1 &` |
-| A quick look at a file | `setsid otto-quickview /home/me/a.pdf >/dev/null 2>&1 &` |
+| A quick look at a file | `setsid otto-peek /home/me/a.pdf >/dev/null 2>&1 &` |
 | Anything else — a file, a folder, a link | `setsid xdg-open /home/me/notes.txt >/dev/null 2>&1 &` |
 
 The emoji picker types the emoji into whatever window has the keyboard when the
