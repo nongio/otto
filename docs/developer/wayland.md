@@ -1,7 +1,7 @@
 # Wayland protocols
 
-> For the inventory of XDG/freedesktop standards Otto implements — the
-> `xdg_*` protocols and the desktop specifications around them — see
+> For the inventory of XDG/freedesktop standards Otto implements (the
+> `xdg_*` protocols and the desktop specifications around them), see
 > [XDG specifications](xdg-specifications.md).
 
 Otto follows Smithay's "one big compositor state" architecture: nearly all
@@ -13,8 +13,8 @@ makes the rest of the codebase navigable.
 
 `Otto<BackendData>` lives in `src/state/mod.rs` and holds:
 
-- High-level compositor state — workspaces, popups, input state, the scene graph
-- Smithay protocol state objects — `CompositorState`, `XdgShellState`,
+- High-level compositor state: workspaces, popups, input state, the scene graph
+- Smithay protocol state objects: `CompositorState`, `XdgShellState`,
   `WlrLayerShellState`, `PresentationState`, `ShmState`, …
 - Backend-specific data (`BackendData`) for rendering and outputs
 
@@ -51,19 +51,19 @@ up in your handler impl.
 
 When you need to know where protocol X is implemented:
 
-1. **Grep for the delegate macro** — `delegate_xdg_shell!`,
+1. **Grep for the delegate macro**: `delegate_xdg_shell!`,
    `delegate_layer_shell!`, `delegate_presentation!`, …
-2. **Find the handler impl** — `impl<BackendData: Backend> XdgShellHandler for Otto<BackendData>`
-3. **Find where the state is constructed** — usually `Otto::init(...)` in
+2. **Find the handler impl**: `impl<BackendData: Backend> XdgShellHandler for Otto<BackendData>`
+3. **Find where the state is constructed**: usually `Otto::init(...)` in
    `src/state/mod.rs`; backend-specific globals (dmabuf) live in `src/udev/`,
    `src/winit.rs`, `src/x11.rs`.
 
 Handlers are split roughly like this:
 
-- `src/state/*.rs` — core protocol handlers and delegate glue (seat, selection,
+- `src/state/*.rs`: core protocol handlers and delegate glue (seat, selection,
   input method, fractional scale, foreign toplevel, session lock, screencopy, …)
-- `src/shell/*.rs` — xdg-shell, layer-shell, XWayland, and surface commit plumbing
-- `src/{udev,winit,x11}.rs` — backend-specific globals and handler impls
+- `src/shell/*.rs`: xdg-shell, layer-shell, XWayland, and surface commit plumbing
+- `src/{udev,winit,x11}.rs`: backend-specific globals and handler impls
 
 ## Common entrypoints
 
@@ -82,15 +82,19 @@ Handlers are split roughly like this:
 | foreign toplevel (both protocols) | `src/state/foreign_toplevel_list_handler.rs`, `src/state/wlr_foreign_toplevel.rs` | see [foreign-toplevel.md](foreign-toplevel.md) |
 | `ext_background_effect_manager_v1` | `src/background_effect.rs` | Standard blur-behind; maps onto the same `BackgroundBlur` layer path as `otto-surface-style`. See [specs/background-effect.md](../../specs/background-effect.md) |
 
-## Otto's own protocols
+## Protocols with XML in the tree
 
-Three protocols are Otto-specific. Their XML lives in `protocols/`:
+Otto ships the XML for the protocols Smithay does not generate bindings for.
+It lives in `protocols/`:
 
 | Protocol | Implementation | What it does |
 |----------|----------------|--------------|
-| `otto-surface-style-unstable-v1` | `src/surface_style/` | Lets a client style and animate its own surface through the compositor's scene graph — corner radius, shadow, opacity, transforms, batched in transactions. See [surface-style-protocol.md](surface-style-protocol.md). |
+| `otto-surface-style-unstable-v1` | `src/surface_style/` | Lets a client style and animate its own surface through the compositor's scene graph: corner radius, shadow, opacity, transforms, batched in transactions. See [surface-style-protocol.md](surface-style-protocol.md). |
 | `otto-dock-v1` | `src/otto_dock/` | Lets a client contribute items to the compositor-drawn dock |
+| `otto-text-cursor-v1` | `src/text_cursor/` | Tells a client where the desktop's text cursor is, so a picker or completion popup can sit beside it. `unavailable` is a normal answer |
 | `wlr-gamma-control-unstable-v1` | `src/state/gamma_control.rs` | Gamma ramps, used for night shift |
+| `wlr-foreign-toplevel-management-unstable-v1` | `src/state/wlr_foreign_toplevel.rs` | See [foreign-toplevel.md](foreign-toplevel.md) |
 
-`protocols/sc-layer-v1.xml` is the ancestor of `otto-surface-style` and is no
-longer implemented; only stale comments still say `sc_layer`.
+The first three are Otto's own; the `wlr-*` two are wlroots protocols.
+`protocols/sc-layer-v1.xml` is not implemented, though some code comments and
+identifiers still use the name `sc_layer`.

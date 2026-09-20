@@ -1,538 +1,549 @@
 # Tiling implementation plan
 
 Companion to [`specs/tiling.md`](../../specs/tiling.md), which describes the
-behaviour. This document describes how to get there from the code as it stands
-today, and what changes when the target audience is people coming from i3 and
-sway.
+behaviour, and to [`shell-dbus-api.md`](shell-dbus-api.md), which documents the
+scripting wire. This document is the plan the implementation followed, kept
+because most of it is built and the rest is still the intended shape.
+
+> **Status: mostly built.** Phases 0–2b are in the tree: the pure core
+> (`src/workspaces/tiling/`), keyboard tiling, pointer resize and drag, the
+> decoration variants, the Tiling settings pane, and `org.otto.Shell1` with
+> `otto-msg`. Each section below says what is built and what is not. The
+> headline gaps are tabbed and stacked containers, monocle, XWayland tiling,
+> window rules, an `[animations]` config section, and the sway-ipc socket.
+> `docs/user/tiling.md` (*Not there yet*) is the user-facing version of the
+> same list.
 
 ## Who this is for
 
 i3 and sway users switch compositors for one of two reasons: the tree model
-they already think in, or the workflow built on top of it — keyboard-only,
-config-as-text, scriptable through `i3-msg` / `swaymsg`, a bar that reflects
-workspaces. Otto's pitch is that same model with an animated, decorated,
-per-workspace desktop around it: a tiled workspace one swipe away from a
-floating one, a dock and a top bar that keep working, exposé that already
-understands the tree.
+they already think in, or the workflow built on top of it. That workflow is
+keyboard-only, config-as-text, scriptable through `i3-msg` / `swaymsg`, with
+a bar that reflects workspaces. Otto's pitch is that same model with an
+animated, decorated, per-workspace desktop around it: a tiled workspace one
+swipe away from a floating one, a dock and a top bar that keep working,
+exposé that already understands the tree.
 
 That audience changes four things relative to the spec as drafted:
 
 1. **The tree must be i3's tree.** N-ary `splith` / `splitv` containers,
-   `focus parent` / `focus child`, and — sooner than the spec's "open
-   question" — `tabbed` and `stacked` container layouts. Someone with a
-   three-year-old i3 config expects `layout toggle split` to do something.
+   `focus parent` / `focus child`, and `tabbed` and `stacked` container
+   layouts. Someone with a three-year-old i3 config expects `layout toggle
+   split` to do something. *Built:* n-ary split containers
+   (`Node::Container { axis, children }`, `src/workspaces/tiling/tree.rs:81`)
+   and `focus parent` / `focus child` as commands
+   (`TilingState::focused_container`, `src/workspaces/tiling/state.rs:56`).
+   *Not built:* tabbed and stacked. `layout tabbed` and `layout stacking`
+   parse and then report that they are unsupported.
 2. **Named actions, and an i3 preset that is only a config file.** Every
    tiling operation is a builtin action with a name (`FocusLeft`,
-   `MoveContainerLeft`, `SplitVertical`, `LayoutTabbed`, …), bound in
-   `[keyboard_shortcuts]` exactly like `TileWindowLeft` is today. The i3
-   preset is a shipped TOML fragment, `config/presets/i3.toml`, with `Logo`
-   as `$mod` and the stock i3 defaults; the user copies it into their config
-   and edits lines. No preset key in the config format, no hidden defaults:
-   what is bound is what is in the file. The spec's non-goal "reproducing any
+   `MoveContainerLeft`, `SplitVertical`, …), bound in `[keyboard_shortcuts]`
+   exactly like `TileWindowLeft` is. The spec's non-goal "reproducing any
    specific existing tiler's keybindings verbatim" softens to "not by
-   default".
-3. **An i3-syntax command language for scripting.** One parser for
-   `focus left`, `move container to workspace 3`,
-   `resize grow width 10 px or 5 ppt`, `split v`, `layout tabbed`,
-   `floating toggle`, `fullscreen`, `kill`, each resolving to the same named
-   action. Used by the D-Bus method, the CLI, and the headless tests, so
-   existing `i3-msg` scripts port with a rename. Shortcuts do not use it.
+   default". *Built:* the named actions
+   (`src/config/shortcuts.rs:142`) and an i3-style block, commented out, in
+   `otto_config.example.toml` under `[keyboard_shortcuts]`. *Not built:* a
+   separate `config/presets/i3.toml` file. There is no `preset =` key and no
+   include mechanism; the config loader layers fixed paths only.
+3. **An i3-syntax command language for scripting.** One parser resolving each
+   command to the same operation the named action performs. Used by the D-Bus
+   method, the CLI and the headless tests, so existing `i3-msg` scripts port
+   with a rename. Shortcuts do not use it. *Built:*
+   `src/workspaces/tiling/command.rs`, dispatched in
+   `src/shell/commands.rs`.
 4. **A scriptable surface.** `otto-msg` (CLI) over `org.otto.Shell1` with
-   `RunCommand(string)` and `GetTree() -> JSON`. Full sway-ipc socket
-   compatibility is a later, optional layer on top of the same two calls.
+   `RunCommand` and `GetTree`. *Built:* `src/shell_service.rs` and
+   `components/otto-msg/`, documented in
+   [`shell-dbus-api.md`](shell-dbus-api.md). Full sway-ipc socket
+   compatibility remains a later, optional layer on top of the same calls.
 
-## What exists today
+## What it was built on
 
-| Piece | Where | Reuse |
+Tiling shares the half-snap machinery rather than duplicating it:
+
+| Piece | Where | How it is used |
 | --- | --- | --- |
-| Half-snap zones (left / right / maximize) | `src/workspaces/tiling_overlay.rs`, `TileZone`, `zone_from_pointer` | Overlay view becomes the slot overlay for drag-into-tree; zones stay for floating workspaces |
-| Snap apply / restore with animation | `src/shell/xdg.rs` `apply_tile`, `untile`, `animated_client_size` | Extract the per-window "animate to rect, then set states" body into a helper both paths call |
+| Half-snap zones (left / right / maximize) | `src/workspaces/tiling_overlay.rs`, `TileZone`, `zone_from_pointer` | The overlay view also shows the drop slot for a drag into the tree; the zones stay for floating workspaces |
+| Snap apply / restore with animation | `src/shell/xdg.rs` `apply_tile`, `untile`, `animated_client_size` | The per-window "animate to rect, then set states" body is shared with the relayout path |
 | Per-window snap state | `WindowView { tiled_zone, unmaximised_rect }` in `src/workspaces/window_view/view.rs` | `unmaximised_rect` is the spec's "floating rectangle it had before it was tiled" |
-| Usable area | `usable_zone(output)` in `src/shell/mod.rs` | The root container's rectangle, minus the outer gap |
+| Usable area | `usable_zone(output)` in `src/shell/mod.rs` | The root container's rectangle, minus the outer gap, via `Otto::tiling_area` |
 | Placement with transition | `Workspaces::map_window_on_output(.., Some(transition))` | Every cell move goes through this |
-| Drag grab with zone detection | `PointerMoveSurfaceGrab` in `src/shell/grabs.rs` | Gains a "workspace tiles" branch: detach + slot overlay instead of edge zones |
+| Drag grab with zone detection | `PointerMoveSurfaceGrab` in `src/shell/grabs.rs` | Has a tiling branch: detach plus slot overlay instead of edge zones |
 | Popup re-anchoring after a move | `reposition_popups_for_window` | Called per relaid-out window |
-| Shortcut actions | `src/config/shortcuts.rs` (27 builtins), `src/input/actions.rs` | Add the tiling builtins alongside `TileWindowLeft`; `WorkspaceNum { index }` already shows the parameterised shape `MoveToWorkspace { index }` needs |
-| Headless harness | `src/headless.rs` `tile_focused`, `window_tiled_zone`, `window_floating_rect`; `tests/tiling.rs` (11 tests) | Extend with `run_command` and `tree_json` |
-| D-Bus | `org.otto.Settings`, `org.otto.Dialog1`, … via `zbus` in `src/settings_service.rs` and the portal | Same pattern for `org.otto.Shell1` |
-
-What does **not** exist: any per-workspace layout state, directional focus,
-gap hit-testing, a compact titlebar variant, a general command IPC, or a
-scaled-last-frame render path (today `apply_tile` reconfigures the client on
-every animation frame; the spec makes that the non-default "faithful" mode).
+| Shortcut actions | `src/config/shortcuts.rs`, `src/input/actions.rs` | The tiling builtins sit alongside `TileWindowLeft` |
+| Headless harness | `src/headless.rs`, `tests/tiling.rs` | Extended with `tiling_*` helpers; see *Phases* |
+| D-Bus | `org.otto.Settings` etc. via `zbus` | The same pattern serves `org.otto.Shell1` |
 
 ## Architecture
 
-New module `src/workspaces/tiling/`, kept out of the 7000-line
+The pure core lives in `src/workspaces/tiling/`, kept out of the very large
 `workspaces/mod.rs`:
 
 ```
 tiling/
   tree.rs      pure data + operations, no compositor types
   layout.rs    pure fn (tree, rect, gaps, min sizes) -> Vec<(leaf, rect)>
-  apply.rs     relayout: per-window animate + configure, transactions
   command.rs   i3 grammar -> Command enum
   state.rs     per-workspace TilingState, held on WorkspaceView
-  focus.rs     directional focus / move over resolved rects
+  splits.rs    pure split arithmetic for edge-drag resize
+  drag.rs      pure drop-target resolution for a detach drag
+  floating.rs  the floating layer within a tiling workspace
   mod.rs
 ```
 
+The compositor half (applying a layout, directional focus, the drag grabs)
+lives in `src/shell/tiling.rs` and `src/shell/tiling_drag.rs`, because it
+needs `Otto`. The plan's `apply.rs` and `focus.rs` became those two files.
+
 **Division of labour.** `layout.rs` is the truth: it answers "what is this
 window's rectangle" synchronously, for the client configure, hit-testing,
-scanout eligibility and tests. `apply.rs` turns rectangles into motion and
-configures, and owns the one hard fact about animating a tiled layout: a
-resized rectangle only has real content once the client has committed a
-buffer of that size. The engine can move a layer for free; it cannot resize
-its content.
+scanout eligibility and tests. `src/shell/tiling.rs` turns rectangles into
+motion and configures, and owns the one hard fact about animating a tiled
+layout: a resized rectangle only has real content once the client has
+committed a buffer of that size. The engine can move a layer for free; it
+cannot resize its content.
 
-**`tree.rs`.** `Node = Leaf(WindowId) | Container { layout: Split(Axis) | Tabbed | Stacked, children: Vec<(NodeId, f32)> }`.
-Operations from the spec, each a method returning what changed: `insert_next_to`,
-`remove`, `move_dir`, `swap_dir`, `resize`, `promote` / `demote`,
-`set_layout`, `split`, `equalize`, `focus_parent` / `focus_child`, and
-`dissolve_single_child_containers` as an invariant restored after every
-mutation. Fractions only, never pixels. Fully unit-tested with `cargo test --lib`
-before any compositor code touches it.
+**`tree.rs`.** `Node<L> = Leaf(L) | Container { axis: Axis, children: Vec<Child> }`,
+where a `Child` is a node id plus a share. Leaves are `ObjectId`s in the
+compositor and `&str`s in the tests. Operations, each returning what changed:
+`insert_next_to`, `insert_beside`, `insert_at_root_edge`, `remove`,
+`move_dir`, `swap_leaves`, `resize`, `set_pair_shares`, `equalize`,
+`equalize_container_of`, `equalize_all`, `set_container_axis`. Single-child
+containers are dissolved as an invariant after every mutation. Fractions
+only, never pixels. Unit-tested with `cargo test --lib`.
+
+*Not built:* a `layout` field on `Container` (tabbed, stacked), and explicit
+`promote` / `demote`.
 
 **`layout.rs`.** Resolves the tree against the usable rectangle in logical
-pixels, applying outer/inner gaps, the lone-tile no-gap rule, per-leaf minimum
-sizes with the spec's overflow rule, and the tabbed/stacked title-strip height.
-Output rects are snapped with `workspaces::utils::snap_extent_px` so tiles land
-on the pixel grid at fractional scale (see `rendering.md`; an off-grid layer
-origin blurs the whole window).
+pixels, applying outer and inner gaps and the lone-tile no-gap rule. Integer
+division remainders go to the last child of each container, so a row of tiles
+covers its rectangle exactly.
 
-**`command.rs`.** A hand-written parser for the i3 subset in the table below.
-No dependency. Errors carry the offset so `otto-msg` can print them the way
-`swaymsg` does.
+*Not built:* per-leaf minimum sizes with the spec's overflow rule during
+layout resolution, the tabbed/stacked title-strip height, and snapping cell
+extents through `workspaces::utils::snap_extent_px`. Minimums are honoured by
+the edge drag (`drag.rs` `min_extent`), not by `resolve`. Layout rounds in
+logical pixels, and the pixel-grid snap happens per window in
+`window_view/render.rs`.
 
-**`state.rs`.** On `WorkspaceView`, `Arc<RwLock<TilingState>>`:
+**`command.rs`.** A hand-written parser, no dependency. Errors carry the
+offset so `otto-msg` can print them the way `swaymsg` does. It covers more
+than the phase-1 subset first drafted: window criteria (`[app_id="…"]`),
+`rename workspace`, and an Otto-only `expose`.
+
+**`state.rs`.** `TilingState` on `WorkspaceView`:
 
 ```
 TilingState {
-  mode: Floating | Tiling,
-  gaps: Option<Gaps>,               // per-workspace override of [tiling] gaps
-  tree: Tree,
-  focused: Option<NodeId>,          // may be a container after `focus parent`
+  enabled: bool,                    // is this workspace tiling
+  tree: Tree<ObjectId>,
+  focused: Option<ObjectId>,        // the tiled layer's focus
+  focused_container: Option<NodeId>,// where `focus parent` walked up to
+  dirty: bool,                      // a relayout is owed on the next loop turn
+  returning: Vec<ObjectId>,         // unminimized windows waiting to rejoin
+  floating_focused: Option<ObjectId>,
   preselect: Option<Axis>,
-  floating: HashSet<WindowId>,      // the floating layer: i3's exceptions
-  held_slots: HashMap<WindowId, SlotPath>,  // fullscreen / monocle return points
-  monocle: Option<WindowId>,
+  gaps: Option<Gaps>,               // per-workspace override of [tiling] gaps
 }
 ```
 
-**`apply.rs` — motion paced by the client.** Moves and swaps, where sizes
-do not change, animate the window layers with a lay-rs transition and look
-right throughout: the buffer stays valid. Resizes are configured per
-animation frame, as half-snap and the MVP already do, and the window is
-drawn with whatever buffer the client has committed most recently. A client
-that keeps up (GTK, Qt, otto-kit at frame rate) shows real content on every
-frame; a slow one lags behind its rectangle for a few frames, which is the
-honest state of affairs rather than a stretched or clipped stand-in. No
-Taffy mirroring of the tree: it would move the same problem into the engine
-and reparent window layers for nothing.
+The floating layer itself is not a set on this struct: `floating.rs` derives
+it from the workspace's windows and the tree. There is no `monocle` field and
+no `held_slots` map. See *Not built* under *Hooks*.
 
-Two refinements on top of the MVP:
+**Motion paced by the client.** Moves and swaps, where sizes do not change,
+animate the window layers with a lay-rs transition and look right throughout:
+the buffer stays valid. Resizes are configured per animation frame, as
+half-snap does, and the window is drawn with whatever buffer the client has
+committed most recently. A client that keeps up (GTK, Qt, otto-kit at frame
+rate) shows real content on every frame; a slow one lags behind its rectangle
+for a few frames, which is the honest state of affairs rather than a
+stretched or clipped stand-in. There is no Taffy mirroring of the tree: it
+would move the same problem into the engine and reparent window layers for
+nothing.
 
-- **Transactions for the final frame.** The last configure of a relayout is
-  tracked per window; the layout is presented as settled only when every
-  affected client has committed the final size, or a short deadline passes.
-  This is sway's transaction model applied to the end of the animation, so
-  a slow client never leaves a half-applied layout on screen.
-- **Configure only what changed.** Leaves whose rectangle is unchanged get
-  no configure at all.
+Leaves whose rectangle is unchanged get no configure at all.
 
-**Applying a layout.** One entry point on `Otto`, `relayout_workspace(output,
-workspace, transition)`: resolve the tree with `layout.rs`, then for each leaf
-whose rect changed animate the layer and configure the client through
-`apply.rs`, and call `reposition_popups_for_window`. Every mutation of the tree — from a
-keystroke, a map, an unmap, a drag drop, a usable-area change — ends by
-calling it.
+*Not built:* sway-style transactions for the final frame: tracking the last
+configure per window and presenting the layout as settled only once every
+affected client has committed the final size or a deadline passes.
+
+**Applying a layout.** One entry point on `Otto`: `relayout_workspace(output,
+animate)` (`src/shell/tiling.rs:184`), with `relayout_workspace_forced` and
+`relayout_workspace_with` beneath it. It resolves the tree with `layout.rs`,
+animates and configures each leaf whose rect changed, and repositions popups.
+Every mutation of the tree ends by calling it, or by setting
+`TilingState::dirty` so `flush_tiling_relayout` picks it up on the next
+event-loop turn.
 
 **Hooks into existing paths.**
 
-| Event | Today | With tiling |
+| Event | Floating workspace | Tiling workspace |
 | --- | --- | --- |
-| `new_toplevel` / first map (`shell/mod.rs` cascade placement) | cascade | if workspace tiles and window is eligible: `insert_next_to(focused)`, relayout |
-| unmap, minimize, move to workspace | — | `remove`, relayout; destination workspace inserts |
-| focus change (`focus.rs`) | order list | also `state.focused = leaf` |
+| `new_toplevel` / first map (`shell/mod.rs` cascade placement) | cascade | if the window is eligible: `insert_next_to(focused)`, relayout |
+| unmap, minimize, move to workspace | nothing | `remove`, relayout; the destination workspace inserts |
+| focus change | order list | also `tiling_note_focus` |
 | `resize_request` / `move_request` on a tiled window | interactive grab | resize refused; move starts the detach drag |
-| `maximize_request` | animate to usable zone | monocle: hide siblings, hold slot |
-| fullscreen | overlay layer | hold slot, restore into it |
-| `recalculate_exclusive_zones`, dock size/edge change, output mode/scale, rotation | nothing for windows | relayout every tiling workspace on that output |
-| `TileWindowLeft/Right` | half-snap | in a tiling workspace: `focus left/right` |
-| decoration mode (`xdg_decoration_handler.rs`) | SSD/CSD | SSD gets the compact bar; xdg states carry `TiledLeft/Right/Top/Bottom` per touching edge, `Maximized` only for a lone gapless tile or monocle |
-| XWayland (`apply_tile_x11`) | same rects | same rects, `_NET_WM_STATE` where an equivalent exists |
+| `recalculate_exclusive_zones`, dock size/edge change, output mode/scale | nothing for windows | `relayout_tiling_workspaces` |
+| decoration mode (`xdg_decoration_handler.rs`) | SSD/CSD | SSD gets the configured tile variant; xdg states carry the tiled edges |
+
+*Not built:* `maximize_request` as monocle (maximizing a tile does not hide
+its siblings), fullscreen slot holding, and XWayland parity. `is_tileable`
+returns false for an X11 window, so it floats (`src/shell/tiling.rs:139`).
 
 **Floating, the i3 way.** A tiling workspace has a floating layer for the
-exceptions, exactly as i3 does and as the spec describes. A window floats
-automatically when it is a dialog or has a parent, when min == max size or
-`is_resizable() == false`, or when it is a utility or splash surface;
-`[tiling] float = ["app_id", …]` is the `for_window … floating enable`
-equivalent. `floating toggle` moves the focused window between the tree and
-the floating layer; `focus mode_toggle` moves focus between the two layers.
-Floating windows always draw above the tiles, keep their full titlebar and
-shadow, and are moved and resized as on a floating workspace. Nothing in the
-tree ever overlaps them.
+exceptions. A window floats automatically when it has a parent, when it
+carries a *modal* `xdg-dialog-v1` hint, when it is not resizable, when it is
+fullscreen or minimized, or when it lacks the `Maximize` window-management
+capability (`src/shell/tiling.rs:139`). `floating toggle` moves the focused
+window between the tree and the floating layer; `focus mode_toggle` moves
+focus between the two layers. Floating windows always draw above the tiles
+(`restack_floating_above_tiles`), keep their full titlebar and shadow, and
+are moved and resized as on a floating workspace.
 
-**Otto's own dialogs.** The portal file picker is the test case: the portal
-hands otto-files a `parent_window` handle and the file-picker spec requires
-the picker to be parented to it, but today otto-files only stores the
-string. The picker must import the handle through xdg-foreign (the
-compositor already implements it) and call `set_parent`; then
-`is_tileable` floats it for the same reason it floats any dialog, and it
-stacks over the requesting window everywhere. A picker with no parent handle
-gets its own app id, `otto-files-picker`, and the compositor ships a
-built-in float list of its own dialogs which `[tiling] float` extends. The
-same check applies to every otto-kit dialog surface (portal access dialog,
-settings sub-dialogs).
+*Not built:* a `[tiling] float = ["app_id", …]` list, i3's
+`for_window … floating enable` equivalent, and a compositor-side built-in
+float list of Otto's own dialogs.
+
+**Otto's own dialogs.** The portal file picker is the test case. otto-files
+imports the `parent_window` handle through xdg-foreign and parents the picker
+to the requesting window; where the compositor or the application does not
+offer a foreign handle, it asks for the modal dialog hint instead, which is
+what `is_tileable` floats on (`components/otto-files/src/app/lifecycle.rs:868`).
 
 ## Animation configuration
 
-Otto animates everywhere — the workspace switch, maximize, half-snap,
-minimize, exposé, the dock, and now tiling — and each grew its own constant
-or config key. Animation timing is therefore a **general setting outside
-`[tiling]`**, not a tiling one:
+**Not built.** Otto animates everywhere: the workspace switch, maximize,
+half-snap, minimize, exposé, the dock, tiling. Each grew its own constant or
+config key. The intent is that animation timing becomes a general
+setting outside `[tiling]`:
 
 ```toml
 [animations]
 scale = 1.0             # multiplies every duration; 0.5 = twice as fast, 0 = snap everywhere
 layout = { duration = 0.3, bounce = 0.0 }    # windows moving into place: maximize, snap, tiling relayouts, tiling mode in/out
 interactive = { duration = 0.35, bounce = 0.25 }  # anything chasing the pointer: edge and tile drags
-switch = { duration = 0.6, bounce = 0.1 }    # workspace scrolling (replaces [workspaces] switch_duration/bounce, still read)
+switch = { duration = 0.6, bounce = 0.1 }    # workspace scrolling
 ```
 
-Rules:
+What exists instead is four keys under `[tiling]`: `layout_duration`,
+`layout_bounce`, `mode_duration` and `mode_bounce`, each with a `spec(...)`
+entry in `src/settings/schema.rs:473`. A duration of 0 passes no transition
+to lay-rs: the layer lands in one frame and the client gets one configure.
+That is the only "off" switch; there is no separate enable flag.
+
+The rest of the section stands as the plan:
 
 - A family is a duration in seconds plus a bounce; `scale` multiplies the
-  duration. A resulting duration of 0 passes **no** transition to lay-rs: the
-  layer lands in one frame and the client gets one configure. That is the
-  only "off" switch; there is no separate enable flag.
+  duration. `[tiling]` would then carry no duration or bounce keys at all,
+  and the existing four would be read as legacy overrides.
 - `[accessibility] reduce_motion = true` forces `scale` to 0 and goes out
-  over the portal's reduced-motion key so clients see it too.
-- `[tiling]` has no duration or bounce keys: relayouts, keyboard resizes and
-  mode changes use `layout`; edge drags and tile drags use `interactive`.
-  The old `tiling.layout_*` and `mode_*` keys are read as legacy overrides of
-  the families and no longer written.
-- The hard-coded `ease_out(0.3)` in maximize, half-snap and restore move onto
-  `layout`. Dock magnification and exposé keep their own tuned springs for
-  now and only honour `scale`.
+  over the portal's reduced-motion key so clients see it too. No such key
+  exists today.
+- The hard-coded `ease_out(0.3)` in maximize, half-snap and restore moves
+  onto `layout`. Dock magnification and exposé keep their own tuned springs
+  and only honour `scale`.
 - Every named action accepts `animate = false` in the shortcut config, and
   `otto-msg` takes `--no-animation`, so a keybinding can be instant while the
-  same operation from the pointer or a script animates — the distinction the
-  workspace switch already draws between a keybinding and a swipe.
-- Otto Settings shows an *Animations* group in General: the scale and the
-  three families, all live. The Tiling pane keeps decoration, gaps, smart
-  gaps and resize step.
+  same operation from the pointer or a script animates. Neither is
+  implemented.
+- Otto Settings shows an *Animations* group in General. The Tiling pane keeps
+  decoration, gaps, smart gaps and resize step, as it does today.
 
 ## Named actions
 
-Phase-1 set, one builtin per operation, parameterised where i3 takes an
-argument:
+**Built** (`src/config/shortcuts.rs:142`), one builtin per operation:
 
 ```
-FocusLeft/Right/Up/Down, FocusParent, FocusChild, FocusModeToggle
-MoveContainerLeft/Right/Up/Down, MoveToWorkspace { index }
-SplitHorizontal, SplitVertical, SplitToggle
-LayoutSplitH, LayoutSplitV, LayoutTabbed, LayoutStacking, LayoutToggle
-ResizeGrowWidth/ShrinkWidth/GrowHeight/ShrinkHeight { step }
-EqualizeContainer
-FloatingToggle, ToggleFullscreen, CloseWindow
 TilingToggle                       # workspace mode
+FocusLeft/Right/Up/Down, FocusModeToggle
+MoveContainerLeft/Right/Up/Down
+SplitHorizontal, SplitVertical
+ResizeGrowWidth/ShrinkWidth/GrowHeight/ShrinkHeight
+EqualizeContainer
+FloatingToggle
 ```
 
-`config/presets/i3.toml` binds them to the i3 defaults:
+i3's `kill` and `workspace <n>` are served by the general `CloseWindow` and
+`Workspace { index }` builtins.
+
+**Not built:** `FocusParent`, `FocusChild` (available as commands only),
+`MoveToWorkspace { index }`, `SplitToggle`, the `Layout*` family, a
+fullscreen builtin, and a `{ step }` parameter on the resize actions. The
+step is the global `[tiling] resize_step`.
+
+The i3-style bindings ship commented out in `otto_config.example.toml` under
+`[keyboard_shortcuts]`, with `Logo` as the modifier:
 
 ```toml
-[keyboard_shortcuts]
+"Logo+t" = "TilingToggle"
 "Logo+h" = "FocusLeft"
 "Logo+j" = "FocusDown"
 "Logo+Shift+h" = "MoveContainerLeft"
-"Logo+v" = "SplitVertical"
 "Logo+b" = "SplitHorizontal"
-"Logo+w" = "LayoutTabbed"
-"Logo+Shift+Space" = "FloatingToggle"
-"Logo+Space" = "FocusModeToggle"
-"Logo+f" = "ToggleFullscreen"
-"Logo+Shift+q" = "CloseWindow"
-"Logo+Shift+3" = { builtin = "MoveToWorkspace", index = 2 }
-"Logo+3" = { builtin = "Workspace", index = 2 }
+"Logo+v" = "SplitVertical"
+"Logo+e" = "EqualizeContainer"
 # …
 ```
 
-The file is documented in `docs/user/keyboard-shortcuts.md` as "copy this
-block into your config"; there is no `preset =` key and no include mechanism
-(the config loader layers fixed paths only). The example config gains the
-same block commented out.
+`docs/user/tiling.md` (*Setting up the keys*) documents the block as "copy
+this into your config".
 
 ## Resizing with the pointer
 
-Gaps are not drag handles. A tile is resized by dragging the window's own
-resize edge, exactly as a floating window is: the drag moves every split that
-edge lies on, changing the shares of the two children either side of each and
-nothing else, stopping at each window's minimum size. The boundary snaps to
-halves, thirds and quarters of the pair it divides, and `Shift` bypasses the
-snap. An edge that is the outside of the tree does not resize and keeps the
-ordinary arrow cursor. A window's titlebar drag still detaches it and the slot
-overlay still shows where it would land. This keeps pointer handling on a
-tiling workspace identical to a floating one, and avoids a hidden hit area
-competing with window edges.
+**Built.** Gaps are not drag handles. A tile is resized by dragging the
+window's own resize edge, exactly as a floating window is: the drag moves
+every split that edge lies on, changing the shares of the two children either
+side of each and nothing else, stopping at each window's minimum size
+(`min_extent`). The boundary snaps to fractions of the pair it divides, and
+`Shift` bypasses the snap (`src/shell/tiling_drag.rs:408`). An edge that is
+the outside of the tree does not resize and keeps the ordinary arrow cursor.
+A window's titlebar drag
+detaches it and the slot overlay shows where it would land. This keeps
+pointer handling on a tiling workspace identical to a floating one, and
+avoids a hidden hit area competing with window edges.
 
-**Adjusting cells is animated.** When an edge is dragged the shares update
-under the pointer but the windows chase it on a spring rather than tracking it
-rigidly, so a fast drag lags a touch and overshoots a little before settling.
-Clients are reconfigured as they ack during the drag and once more with the
-final size when the spring settles, so a slow client never holds the drag
-back.
-
-**Implementation.** The split arithmetic — where a boundary is, and what a
-pointer offset does to the two shares either side of it — is pure and lives in
+The split arithmetic — where a boundary is, and what a pointer offset does to
+the two shares either side of it — is pure and lives in
 `src/workspaces/tiling/splits.rs`; the compositor half, which turns a resize
 edge into a set of splits and writes the shares into the tree, is in
 `src/shell/tiling_drag.rs`. The titlebar drag reuses `TilingOverlayView` to
-show the slot before release.
+show the slot before release, and `src/workspaces/tiling/drag.rs` resolves
+the drop target and the minimum extent a neighbour refuses to go below.
+`tests/tiling_drag.rs` covers both.
 
 ## Decorations on tiles
 
-Tiles want less chrome than floating windows, and i3 users disagree on how
-much less: i3 draws a one-line title bar by default, sway users very often
-set `default_border pixel 2` and keep only a coloured border. So it is a
-setting, `[tiling] decoration = "normal" | "minimal" | "none"`, default
-`minimal`:
+**Built.** Tiles want less chrome than floating windows, and i3 users
+disagree on how much less: i3 draws a one-line title bar by default, sway
+users very often set `default_border pixel 2` and keep only a coloured
+border. So it is a setting, `[tiling] decoration = "normal" | "minimal" |
+"none"`, default `minimal`
+(`components/otto-kit/src/tile_decoration.rs:20`):
 
-- **normal** — the bar the window wears while it floats: full height, the
+- **normal**: the bar the window wears while it floats: full height, the
   title at its usual size, all three controls. Squared corners and no shadow
   all the same, since a tile abuts its neighbours whatever it wears on top.
-- **minimal** — a bar one text line high with the title and the full control
-  group at 11pt, no shadow, and corners rounded at half the floating radius
-  (`WindowDecoration::MINIMAL_CORNER_RADIUS`) — 12pt on a 20pt bar swallows
-  most of the strip. It keeps the move handle, the window menu and the title,
-  which is the spec's reason for keeping a bar at all. Its title is set one
-  step down the type scale, and its controls inset far enough from the
-  leading edge to clear the rounded corner. `WindowDecoration::corner_radius_for`
-  is the one answer for every frame: the compositor's bar, otto-kit's window
-  frames and Settings' painted body all read it.
-- **none** — no bar; the focused tile gets a hairline border in the accent
+- **minimal**: a bar one text line high with the title and a close control,
+  no shadow, and corners rounded at half the floating radius
+  (`WindowDecoration::MINIMAL_CORNER_RADIUS`, 6pt). 12pt on a 20pt bar
+  swallows most of the strip. It keeps the move handle and the window menu,
+  which is the reason for keeping a bar at all.
+  `WindowDecoration::corner_radius_for` is the one answer for every frame:
+  the compositor's bar, otto-kit's window frames and Settings' painted body
+  all read it.
+- **none**: no bar; the focused tile gets a hairline border in the accent
   colour, the rest a neutral hairline. Moving a tile is then the keyboard's
   job. This is sway's `pixel` border.
 
-Tabbed and stacked containers draw their strip under all three, since it
-is the only way to see the hidden windows. Client-side-decorated windows are
-told they are tiled on every touching edge and square off on their own; they
-get no bar under any of them. Floating windows in a tiling workspace keep
-the full floating decoration.
+Client-side-decorated windows are told they are tiled on every touching edge
+and square off on their own; they get no bar under any of the three.
+Floating windows in a tiling workspace keep the full floating decoration.
 
-The variant is chosen per window in `decoration_view.rs` from the
-workspace's mode, and swapped when the window enters or leaves the tree —
-the same path the maximized (gapless, squared) variant already uses.
+The variant is swapped when the window enters or leaves the tree
+(`refresh_tiling_decorations`, `src/shell/tiling.rs:684`), the same path the
+maximized (gapless, squared) variant uses.
 
-**Otto's own apps.** otto-files, otto-settings, the launcher and Peek
-draw their own titlebar through otto-kit's titlebar component, so the
-compositor-side variants never reach them. They follow the same setting
-from the client side:
+*Not built:* the title strip tabbed and stacked containers would draw, since
+those containers do not exist.
+
+**Otto's own apps.** otto-files, otto-settings, the launcher and Peek draw
+their own titlebar through otto-kit's titlebar component, so the
+compositor-side variants never reach them. They follow the same setting from
+the client side:
 
 - the tiled xdg edge states in the configure tell the app it is tiled; the
-  otto-kit titlebar switches to its compact form and rounds — or squares —
-  its corners for the variant while any edge is tiled, as GTK does; the
+  otto-kit titlebar switches to its compact form and rounds (or squares) its
+  corners for the variant while any edge is tiled, as GTK does; the
   window's frame is re-rounded to match on the same configure;
 - the `minimal` / `none` choice goes out over `org.otto.Settings` like the
-  theme and the controls side already do, so the app applies it live;
+  theme and the controls side do, so the app applies it live;
 - with `none` the app draws no bar and is moved by the keyboard, like any
   client-decorated window.
 
-One component change in otto-kit covers every app that already implements
-the settings callback; islands, Peek and lock still need that hook.
+One component change in otto-kit covers every app that already implements the
+settings callback; islands, Peek and lock still need that hook.
 
 ## Settings app and per-workspace settings
 
-Two halves. Both persist through the existing settings machinery
-(validate → apply → persist → announce) so they are live and reach the
+**Built.** Both halves persist through the existing settings machinery
+(validate → apply → persist → announce), so they are live and reach the
 otto-kit apps.
 
-**Global tiling settings in Otto Settings.** A *Tiling* pane in
-`components/otto-settings` (a new file under `panes/`, discovered from the
-schema like the others) with every `[tiling]` key: decoration
-(`normal`/`minimal`/`none`), inner and outer gap, smart gaps, resize step, and the
-(animation timing lives in `[animations]`, see "Animation configuration"). Each key
-gets a `spec(...)` entry in `src/settings/schema.rs` marked `Live` and an
-apply arm in `src/settings/apply.rs` that relays out every tiling workspace
-(gaps, decoration) or just stores the value (durations, step). Decoration
-already has both; the rest follow it.
+**Global tiling settings in Otto Settings.** A *Tiling* pane,
+`components/otto-settings/src/panes/tiling.rs`, discovered from the schema
+like the others, with every `[tiling]` key: decoration, inner and outer gap,
+smart gaps, resize step, and the layout and mode springs. Each key has a
+`spec(...)` entry in `src/settings/schema.rs:424` marked `Live` and an apply
+arm in `src/settings/apply.rs` that relays out every tiling workspace (gaps,
+decoration) or just stores the value (durations, step).
 
-Two things make the difference between a key marked `Live` and one that is:
-the gap sliders are the session default, so they clear the per-workspace
-overrides `gaps <n>` leaves behind — otherwise the slider is dead on the one
-workspace the user is watching — and a value is checked against what the
+Two things make the difference between a key marked `Live` and one that is.
+The gap sliders are the session default, so they clear the per-workspace
+overrides `gaps <n>` leaves behind; otherwise the slider is dead on the one
+workspace the user is watching. A value is also checked against what the
 configuration *kept*, not against what was asked for, since the fractions
 here are stored as `f32` and 0.05 does not come back as 0.05.
 `tests/tiling_settings.rs` drives all of it through the real settings entry
 point.
 
-**Per-workspace settings, persisted with the name.** Today the config holds
-two parallel maps keyed `"<output>:<position>"`: `[workspaces] names` and
-`[workspaces.gaps]`. They become one record per workspace:
+**Per-workspace settings, persisted with the name.** One record per
+workspace, keyed `"<output>:<position>"`:
 
 ```toml
 [workspaces.entries."eDP-1:0"]
 name = "Code"
-tiling = true          # the mode is restored on login (answers the spec's open question; the tree is not)
+tiling = true          # the mode is restored on login; the tree is not
 inner_gap = 0          # optional override; absent = [tiling] default
 outer_gap = 0
 ```
 
-Reading accepts the old `names`/`gaps` maps and folds them in; writing
-emits only `entries`. One writer (`save_workspace_entry`) replaces
-`save_workspace_names` and `save_workspace_gaps`, and the existing
-`restore_workspace_settings` at the three workspace-creation sites restores
+Reading accepts the older `names` and `[workspaces.gaps]` maps and folds them
+in; writing emits only `entries` (`src/config/mod.rs:1075`). One writer,
+`save_workspace_entry` (`src/config/mod.rs:1282`), covers all three fields,
+and `restore_workspace_settings` at the workspace-creation sites restores
 name, mode and gaps together. Toggling tiling persists the mode; `gaps …
-current` persists the override; `gaps … all` clears every override. A
-workspace that moves position keeps best-effort semantics, as names do
-today.
+current` persists the override; `gaps … all` clears every override
+(`clear_workspace_gap_overrides`). A workspace that moves position keeps
+best-effort semantics, as names do.
 
-**Editing per-workspace settings.** For now only where they already are
-edited: the name in the workspace selector, the mode with `TilingToggle`,
-the gaps with the `gaps` command. Each persists its own field of the record.
-A Workspaces pane in Otto Settings, and a `SetWorkspace` call on
-`org.otto.Shell1` to back it, are deferred; the record is shaped so they
-can be added without a migration.
+**Editing per-workspace settings.** Only where they are already edited: the
+name in the workspace selector, the mode with `TilingToggle`, the gaps with
+the `gaps` command. Each persists its own field of the record. A Workspaces
+pane in Otto Settings, and a `SetWorkspace` call on `org.otto.Shell1` to back
+it, are deferred; the record is shaped so they can be added without a
+migration. A tiling item in the workspace context menu is also still missing.
 
 ## Command language
 
-The scripting grammar, resolving to the actions above. Phase-1 subset:
+**Built** in `src/workspaces/tiling/command.rs`, dispatched in
+`src/shell/commands.rs`, documented for users in
+[`shell-dbus-api.md`](shell-dbus-api.md) and `docs/user/scripting.md`:
 
 ```
 focus left|right|up|down|parent|child|mode_toggle
+focus [app_id="…"]                 # window criteria
 move left|right|up|down
-move container to workspace <n|name>
+move container to workspace <n>
 workspace <n|name|next|prev>
+rename workspace <n> to <name>
 split h|v|toggle
-layout splith|splitv|tabbed|stacking|toggle [split|all]
-resize grow|shrink width|height <n> px [or <n> ppt]
-resize set width <n> ppt|px [height ...]
+layout splith|splitv|tabbed|stacking|toggle
+resize grow|shrink width|height <n> px|ppt
 floating toggle|enable|disable
-fullscreen [toggle]
+fullscreen
 kill
 tiling toggle                      # Otto: workspace mode
+expose toggle                      # Otto: the overview
 gaps inner|outer <n> [current|all]  # current = this workspace's override, all = the default
 ```
+
+`layout tabbed` and `layout stacking` parse and then report that they are not
+supported.
 
 Deferred: `mark` / `[con_mark]` criteria, `mode "resize"` binding modes,
 `scratchpad`, `assign`, `for_window`, `exec` (shortcuts already do `run`).
 
-Workspaces by number need "create on demand": i3 makes workspace 7 when you
-switch to it. Otto today has a fixed strip with `Ctrl+1..4`; `workspace <n>`
-should append workspaces until `n` exists. i3 also drops a workspace when it
-empties; Otto does **not** follow that. Otto's workspaces are persistent —
-named, reorderable, per output — and a renamed workspace vanishing because its
-last window closed would break that model. An empty workspace stays.
+Workspaces by number create on demand: i3 makes workspace 7 when you switch
+to it, and `ensure_workspace` (`src/shell/commands.rs:495`) appends
+workspaces until `n` exists. i3 also drops a workspace when it empties; Otto
+does **not** follow that. Otto's workspaces are persistent: named,
+reorderable, per output. A renamed workspace vanishing because its last
+window closed would break that model. An empty workspace stays.
 
 ## IPC
 
-`org.otto.Shell1` on the session bus, alongside the existing `org.otto.*`
-interfaces:
+**Built.** `org.otto.Shell1` on the session bus, served from
+`src/shell_service.rs` alongside the other `org.otto.*` interfaces, with
+`RunCommand`, `GetTree`, `GetWorkspaces`, `GetOutputs` and the workspace and
+window signals a status bar watches. `components/otto-msg` is the CLI:
+`otto-msg focus left` and `otto-msg -t get_tree | jq` both work, and
+`-t subscribe -m` streams events. The wire contract is
+[`shell-dbus-api.md`](shell-dbus-api.md).
 
-- `RunCommand(s command) -> a(bs)` — one result per `;`-separated command,
-  mirroring `swaymsg`'s reply shape.
-- `GetTree() -> s` — JSON with the i3 node shape (`id`, `type`, `layout`,
-  `nodes`, `floating_nodes`, `focused`, `rect`, `app_id`, `name`, `window_properties` for X11).
-- `GetWorkspaces() -> s`, `GetOutputs() -> s`.
-- Signals `WorkspaceChanged`, `WindowChanged`, `ModeChanged` for bars.
-
-`components/otto-msg`: a `-t get_tree` / positional command CLI over that
-interface, so `otto-msg focus left` and `otto-msg -t get_tree | jq` work.
-A sway-ipc-compatible Unix socket (`$SWAYSOCK`) is a Phase-4 shim over the same
+**Not built.** A sway-ipc-compatible Unix socket (`$SWAYSOCK`) over the same
 calls; it would let waybar's `sway/workspaces`, `i3-msg`-based scripts and
-`autotiling` run as-is. Check separately whether Otto exposes
-`ext-workspace-v1` and `wlr-output-management`; waybar's `wlr/workspaces` and
-kanshi need them, and both matter to this audience independently of tiling.
+`autotiling` run as-is. Whether Otto exposes `ext-workspace-v1` and
+`wlr-output-management` (which waybar's `wlr/workspaces` and kanshi need)
+is a separate question worth checking, and matters to this audience
+independently of tiling.
 
 ## Phases
 
-**Phase 0 — pure core.** `tree.rs`, `layout.rs`, `command.rs` with unit tests
-covering every spec rule (insertion by cell shape, share redistribution on
-removal, single-child dissolve, move-out-of-container, min-size overflow, lone
-tile gaps, tabbed strip height). No compositor changes. Reviewable on its own.
+**Phase 0: pure core.** *Done.* `tree.rs`, `layout.rs`, `command.rs` with
+unit tests run by `cargo test --lib`. Minimum sizes and their overflow rule
+are not implemented.
 
-**Phase 1 — keyboard tiling.** `TilingState` on `WorkspaceView`; mode toggle
-(shortcut + workspace context-menu item); insert/remove on map/unmap/minimize/
-move; `relayout_workspace` with the extracted animation helper; xdg tiled
-states; auto-float rules and the floating layer; `[tiling]` durations with
-`0` = snap, per-action `animate = false`, and `[accessibility] reduce_motion`;
-the named actions and `config/presets/i3.toml`; focus
-directions, moves, splits, layouts (tabbed/stacked rendered as a title strip on
-the compact bar), resize step, float toggle, monocle, fullscreen slot holding;
-`workspace <n>` create-on-demand. Headless tests in `tests/tiling_tree.rs`
-drive everything through `run_command` and assert on `tree_json` and
-geometries, the way `tests/tiling.rs` does for half-snap.
+**Phase 1: keyboard tiling.** *Done.* `TilingState` on `WorkspaceView`; the
+mode toggle; insert and remove on map, unmap, minimize and workspace move;
+`relayout_workspace`; xdg tiled states; the auto-float rules and the floating
+layer; the `[tiling]` springs with `0` = snap; the named actions and the
+example-config block; focus directions, moves, splits, resize step, float
+toggle; `workspace <n>` create-on-demand. `tests/tiling_tree.rs` and
+`tests/tiling_scripting.rs` drive it through the headless harness the way
+`tests/tiling.rs` does for half-snap.
 
-**Phase 2 — pointer and chrome.** Edge-drag resize with the
-`ew-resize`/`ns-resize` cursor shapes and live reconfigure on ack;
-drag-to-detach with the reused `TilingOverlayView` showing
-the slot; dropping a floating window into a tree; the minimal and none decoration variants;
-accent focus border; no shadow on tiles; usable-area re-fit on dock/layer-shell/
-mode changes; XWayland parity; workspace-selector mode indicator.
+*Left over from Phase 1:* the workspace context-menu toggle, tabbed and
+stacked layouts, monocle, fullscreen slot holding, and per-action
+`animate = false` with `[accessibility] reduce_motion`.
 
-**Phase 2b — settings.** The Tiling pane, and the per-workspace record with
-name + mode + gaps persisted together. The Workspaces pane is deferred. See
-"Settings app and per-workspace settings".
+**Phase 2: pointer and chrome.** *Done.* Edge-drag resize with the
+`ew-resize` / `ns-resize` cursor shapes and live reconfigure on ack;
+drag-to-detach with `TilingOverlayView` showing the slot; dropping a floating
+window into a tree; the minimal and none decoration variants; the accent
+focus border; no shadow on tiles; usable-area re-fit on dock, layer-shell and
+mode changes.
 
-**Phase 3 — scriptability and depth.** `org.otto.Shell1` + `otto-msg`;
-`GetTree`; marks and criteria; binding modes (`mode "resize"`); scratchpad;
-per-app `assign`/`for_window` rules; persistence of mode and tree across
-restart (spec open question — recommend yes for mode, tree best-effort by
-app_id).
+*Left over from Phase 2:* XWayland parity (X11 windows float), the
+workspace-selector mode indicator, and dropping a tile outside the layout
+leaving it floating where it was released.
 
-**Phase 4 — compatibility.** Sway-ipc socket shim if there is demand.
+**Phase 2b: settings.** *Done.* The Tiling pane, and the per-workspace
+record with name, mode and gaps persisted together. The Workspaces pane is
+still deferred. See *Settings app and per-workspace settings*.
+
+**Phase 3: scriptability and depth.** *Partly done.* `org.otto.Shell1`,
+`otto-msg` and `GetTree` are built, along with window criteria on `focus`.
+Still to do: marks, binding modes (`mode "resize"`), scratchpad, per-app
+`assign` / `for_window` rules, and persistence of the tree across restart
+(the mode already persists; the tree is best-effort by app_id at most).
+
+**Phase 4: compatibility.** Sway-ipc socket shim if there is demand.
 The spec's scaled-last-frame animation is dropped: there is no honest way
 to fill a resized rectangle before the client has drawn it. Per-frame
 configure plus end-of-animation transactions is the model.
 
 ## Open: exposé on a tiled workspace
 
-Deliberately unresolved. The spec says exposé works on a tiled workspace
-exactly as on a floating one, but that is untested against the tree, and a
-tiled workspace is already an overview of itself. Questions to settle once
-Phase 1 is on screen:
+Partly settled. `expose toggle` is a command, and exposé runs on a tiling
+workspace, but the questions below are still open:
 
 - whether exposé should spread tiles at all, or only pull the floating layer
-  and the tabbed/stacked hidden windows out where they can be seen;
+  and any hidden windows out where they can be seen;
 - what happens to the containers' layers while exposé reparents or mirrors
   windows (`pre_expose_order` and the mirror path assume `windows_layer`
   children);
 - whether selecting a window in exposé should also move it in the tree, or
   only focus it;
 - how the workspace-selector previews render a tree (they replicate
-  `wallpaper_group` plus windows today).
-
-Revisit after Phase 1; nothing in Phases 1–2 depends on the answer.
-
-## Spec deltas to make
-
-Update `specs/tiling.md` when Phase 1 starts:
-
-- Non-goals: keybinding parity becomes "not the default"; add the named
-  actions, the shipped i3 preset file, and the command grammar as goals.
-- Promote tabbed/stacked from open question to behaviour.
-- Add `focus parent` / `focus child` and container focus.
-- Replace the "Resizing / Pointer" paragraph: gaps are not handles; resizing
-  is an edge drag on the window itself, and it animates on a spring rather
-  than tracking the pointer rigidly.
-- Add the command language and IPC sections.
-- Add workspace create-on-demand (touches `workspaces-multi-output.md`).
-- Animation: replace "fluid by default" (scaled last frame) with per-frame
-  configure paced by the client, plus transactions for the settled frame.
+  `wallpaper_group` plus windows).
 
 ## Risks
 
-- **Configure storms.** Per-frame configures across N clients on every
-  layout change is exactly what the spec warns about. Mitigate in Phase 1 by
-  configuring only leaves whose rect changed and by throttling configures to
-  acked ones (the interactive-resize rule), not by fixed cadence.
-- **Scanout.** A lone tile or monocle must still promote to a plane
+- **Configure storms.** Per-frame configures across N clients on every layout
+  change is exactly what the spec warns about. Only leaves whose rect changed
+  are configured, and configures are throttled to acked ones (the
+  interactive-resize rule), not to a fixed cadence.
+- **Scanout.** A lone tile must still promote to a plane
   (`specs/plane-scanout.md`); the tiled xdg states must not change the
   promotion gate. Verify on tty with `/tmp/otto-dump-planes`.
 - **lay-rs cancelled changes.** Re-targeting a running transition has bitten
-  exposé before; interruptible relayout leans on that fix and needs a headless
+  exposé; interruptible relayout leans on that fix and wants a headless
   regression that issues two moves within one animation.
-- **Fractional scale.** Every cell rect goes through `snap_extent_px`; a test
-  at scale 1.5 asserting integer physical origins belongs in Phase 0.
-- **`workspaces/mod.rs` size.** All new logic lives in `workspaces/tiling/`;
-  `mod.rs` only gains the calls into it.
+- **Fractional scale.** Layout rounds in logical pixels and the pixel-grid
+  snap happens per window in `window_view/render.rs`. A test at scale 1.5
+  asserting integer physical origins is still missing.
+- **`workspaces/mod.rs` size.** All the pure logic lives in
+  `workspaces/tiling/` and the compositor half in `shell/tiling*.rs`;
+  `mod.rs` only gains the calls into them.

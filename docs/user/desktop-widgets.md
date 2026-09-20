@@ -34,10 +34,10 @@ Two details are specific to Otto:
 
 Two more options matter for widgets:
 
-- **Exclusive zone** — leave it off. An exclusive zone reserves screen space and
+- **Exclusive zone**: leave it off. An exclusive zone reserves screen space and
   pushes maximized windows aside, which is what a panel wants and a widget does
   not.
-- **Focusable** — leave it off. A non-focusable surface never takes keyboard
+- **Focusable**: leave it off. A non-focusable surface never takes keyboard
   focus from your windows. It can still receive pointer clicks, so widgets with
   buttons keep working.
 
@@ -51,7 +51,7 @@ wlr-sunclock -l bottom -s -a tr -m 40,40,60,40 -w 480
 ```
 
 `-l bottom` picks the layer, `-a tr` anchors it top-right, `-s` draws the sun at
-the subsolar point. Drag a window over it and away again — the widget should
+the subsolar point. Drag a window over it and away again. The widget should
 still be there. It only repaints every few minutes, so it proves the layer works
 and little else.
 
@@ -164,7 +164,7 @@ the centre. Set it explicitly whenever you place panels by absolute position:
 ### Geometry is in logical pixels
 
 Otto scales the desktop by `screen_scale`. Layer-shell clients are laid out in
-**logical** pixels — physical pixels divided by that scale — so a 2880x1920
+**logical** pixels, physical pixels divided by that scale, so a 2880x1920
 panel at `screen_scale = 2.0` gives you a 1440x960 canvas to place widgets on.
 Check your value with:
 
@@ -190,14 +190,14 @@ gsettings get org.gnome.desktop.interface text-scaling-factor   # want 1.0
 
 A clock, a CPU sparkline, and live memory, temperature and network readouts.
 Three files, roughly 100 lines, no dependencies beyond eww itself. The
-screenshot at the top of this page is an extended version of exactly this —
+screenshot at the top of this page is an extended version of exactly this:
 same structure and styling, with more panels hung off the same data source.
 
 ### One data source, not twenty pollers
 
 The obvious way to feed a dashboard is a `defpoll` per value. Twenty pollers is
 twenty shell pipelines a second. A single script emitting one JSON line per
-second, read by a single `deflisten`, is dramatically cheaper — and every panel
+second, read by a single `deflisten`, is dramatically cheaper, and every panel
 stays consistent because they all read the same sample.
 
 `~/.config/eww-hud/scripts/metrics` (`chmod +x` it):
@@ -298,8 +298,8 @@ and it costs nothing to redraw.
   (w_system))
 ```
 
-`defwidget` takes parameters and `(children)`, so `panel` is a reusable frame —
-add a third panel by writing four more lines, not by copying the styling.
+`defwidget` takes parameters and `(children)`, so `panel` is a reusable frame.
+Add a third panel by writing four more lines, not by copying the styling.
 
 ### The stylesheet
 
@@ -356,7 +356,7 @@ window { background-color: transparent; }
 Two rules are both required for transparency: GTK paints an opaque window
 background from the active theme unless `window` clears it, and the panel then
 supplies its own translucent fill. Otto composites the result over the
-wallpaper, so the alpha you choose is what you get — around `0.5`–`0.6` stays
+wallpaper, so the alpha you choose is what you get. Around `0.5`–`0.6` stays
 readable over a busy wallpaper while still reading as glass.
 
 ### Running it
@@ -396,7 +396,7 @@ ordering rules and the XDG alternative.
 ### The stylesheet is ignored entirely
 
 Symptoms: default theme colors, sans-serif font, opaque backgrounds, visible
-slider knobs — as if `eww.scss` did not exist.
+slider knobs, as if `eww.scss` did not exist.
 
 eww compiles SCSS with `grass`, which prepends `@charset "UTF-8";` as soon as
 the file contains a single non-ASCII byte. GTK's CSS parser rejects `@charset`
@@ -415,7 +415,7 @@ LC_ALL=C grep -nP '[^\x00-\x7F]' ~/.config/eww-hud/eww.scss
 
 ### Config errors do not appear in the log
 
-`~/.cache/eww/eww_*.log` does not capture SCSS and parse errors — those go to
+`~/.cache/eww/eww_*.log` does not capture SCSS and parse errors; those go to
 the daemon's stderr, which is discarded when it forks into the background. Run
 it in the foreground to see them:
 
@@ -438,7 +438,7 @@ placed on the wrong output is easy to mistake for one that failed to open. See
 
 ### The widget hides behind the wallpaper
 
-The wallpaper daemon is on `background` and the widget should be on `bottom` —
+The wallpaper daemon is on `background` and the widget should be on `bottom`;
 check `:stacking`. Two clients on the same layer stack in the order they
 connected.
 
@@ -448,7 +448,7 @@ Something has an exclusive zone; set `:exclusive false`.
 
 ## See also
 
-- [Theming](theming.md) — wallpaper, accent color, fonts, light and dark
-- [Display](display.md) — scaling and monitor arrangement
-- [Autostart](autostart.md) — starting widgets with the session
-- [Top Bar](topbar.md) — Otto's own panel, if that is what you actually want
+- [Theming](theming.md): wallpaper, accent color, fonts, light and dark
+- [Display](display.md): scaling and monitor arrangement
+- [Autostart](autostart.md): starting widgets with the session
+- [Top Bar](topbar.md): Otto's own panel, if that is what you actually want

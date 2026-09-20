@@ -12,7 +12,7 @@ RUST_LOG=info otto --winit &> /tmp/otto.log
 RUST_LOG=debug otto --winit &> /tmp/otto.log
 ```
 
-Use `&>` (both stdout and stderr), not `2>` — some output goes to stdout and a
+Use `&>` (both stdout and stderr), not `2>`. Some output goes to stdout, and a
 half-captured log is a frustrating thing to debug from.
 
 Narrow it down when `debug` is too noisy:
@@ -33,7 +33,7 @@ Component logs:
 | Component | Where |
 |-----------|-------|
 | `xdg-desktop-portal-otto` | `journalctl --user -u xdg-desktop-portal-otto` |
-| `otto-bar`, `otto-islands`, `otto-lock` | stderr — run them by hand to see it |
+| `otto-bar`, `otto-islands`, `otto-lock` | stderr; run them by hand to see it |
 | `otto-rdp` | stderr; `run-rdp.sh` captures it to `/tmp/otto-rdp.log` |
 
 ## Configuration problems
@@ -44,7 +44,7 @@ overriding earlier:
 1. `/etc/otto/config.toml`
 2. `~/.config/otto/config.toml`
 3. `./otto_config.toml` (working directory)
-4. `./otto_config.{backend}.toml` — highest priority
+4. `./otto_config.{backend}.toml` (highest priority)
 
 A stray `otto_config.toml` in the directory you launched from silently wins over
 your user config. The log reports which files were loaded.
@@ -66,8 +66,8 @@ action name in the wrong case. See
 
 ## Startup failures
 
-**Otto exits immediately on a TTY.** It needs seat access — `seatd` or
-`systemd-logind` running, and your user in the right group:
+**Otto exits immediately on a TTY.** It needs seat access, meaning `seatd` or
+`systemd-logind` running and your user in the right group:
 
 ```sh
 systemctl status seatd
@@ -94,7 +94,7 @@ is genuinely useful. See
 [docs/developer/drm_plane.md](../developer/drm_plane.md).
 
 **Windows are missing content or partially blank.** Try turning off occlusion
-culling — Otto skips drawing layers it believes are fully hidden, and a wrong
+culling. Otto skips drawing layers it believes are fully hidden, and a wrong
 belief shows up exactly like this:
 
 ```toml
@@ -153,7 +153,7 @@ tells you quickly.
 |-----------|---------|
 | Compositor unresponsive | `Ctrl+Alt+F2` to another VT, log in, investigate |
 | Need to quit now | `Logo+Q` or `Ctrl+Alt+Backspace` |
-| Locked out by a broken locker | `Ctrl+Alt+F2` — VT switching always works while locked |
+| Locked out by a broken locker | `Ctrl+Alt+F2`; VT switching always works while locked |
 | Broken config | Move `~/.config/otto/config.toml` aside and restart |
 
 ## Reporting a bug
@@ -162,11 +162,11 @@ Open an issue at [github.com/nongio/otto](https://github.com/nongio/otto/issues)
 with:
 
 1. **What you did, what happened, what you expected.**
-2. **Otto version** — `otto --version`, or the commit if you built it.
-3. **Backend** — `--tty-udev`, `--winit` or `--x11`.
-4. **Hardware** — GPU and driver especially. `lspci -k | grep -A3 VGA`.
+2. **Otto version.** `otto --version`, or the commit if you built it.
+3. **Backend.** `--tty-udev`, `--winit` or `--x11`.
+4. **Hardware.** GPU and driver especially. `lspci -k | grep -A3 VGA`.
 5. **Distribution**, and how you installed Otto.
-6. **A log** — `RUST_LOG=debug otto &> /tmp/otto.log`, attached.
+6. **A log.** `RUST_LOG=debug otto &> /tmp/otto.log`, attached.
 7. **Your config**, if it is not the shipped default.
 
 For a rendering bug, the scene snapshot helps a lot. Bind these and press them

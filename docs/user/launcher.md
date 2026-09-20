@@ -19,7 +19,7 @@ The default bindings are:
 | `Ctrl+Shift+P` | Open windows |
 
 Both are ordinary shortcuts in `otto_config.toml` running `otto-launcher` (with
-`--windows` for the second), so you can rebind them like any other — see
+`--windows` for the second), so you can rebind them like any other. See
 [Keyboard Shortcuts](keyboard-shortcuts.md).
 
 While the launcher is up it takes the keyboard exclusively: every keystroke goes
@@ -49,8 +49,8 @@ first, because browsing is the point there.
 
 ## Arithmetic
 
-Type a complete expression with at least one operator — `128*1.21`, `(90+45)/2`
-— and the answer appears as the first row, above the matches. Acting on it
+Type a complete expression with at least one operator (`128*1.21`, `(90+45)/2`)
+and the answer appears as the first row, above the matches. Acting on it
 copies the result. A bare number is treated as a search, not a sum. A comma
 works as a decimal separator, and the answer is written with whichever
 separator you used.

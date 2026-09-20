@@ -1,14 +1,14 @@
 # Lock Screen
 
 Locking hides your session behind an opaque surface on every monitor and routes
-all input to the locker. Everything underneath — windows, workspaces, focus,
-running programs — is untouched and comes back exactly as you left it.
+all input to the locker. Everything underneath is untouched and comes back
+exactly as you left it: windows, workspaces, focus, running programs.
 
 ![The Otto lock screen](images/lock-screen.jpg)
 
 The clock and date sit top left, the panel is centred, and sleep, restart and
-power sit bottom right. The panel carries the account's avatar — or its initials
-when there is no avatar file — the account name, and the password field.
+power sit bottom right. The panel carries the account's avatar (or its initials
+when there is no avatar file), the account name, and the password field.
 
 ## Otto-lock
 
@@ -45,7 +45,7 @@ account   include    common-account
 ```
 
 `otto-lock` does notice a missing service file and falls back to `system-auth`,
-then `login` — but the fallback is not the configuration anyone reviewed, so
+then `login`. But the fallback is not the configuration anyone reviewed, so
 install the file properly.
 
 ### 2. Bind the lock action
@@ -69,12 +69,12 @@ locker_command = "otto-lock"
 locker_args = []
 ```
 
-Any `ext-session-lock-v1` locker fits here — `swaylock`, `hyprlock`, `gtklock`.
+Any `ext-session-lock-v1` locker fits here: `swaylock`, `hyprlock`, `gtklock`.
 
 ## Using it
 
-The `otto-lock` panel is a frosted card with your avatar, a password field and —
-when a fingerprint reader is configured — a fingerprint mark. It shows a clock,
+The `otto-lock` panel is a frosted card with your avatar, a password field, and
+a fingerprint mark when a fingerprint reader is configured. It shows a clock,
 which keeps time however long you are away.
 
 Type your password and press Enter, or touch the reader.
@@ -95,13 +95,13 @@ auth sufficient pam_fprintd.so
 ```
 
 It has to be listed explicitly because a distribution's `system-auth` usually
-does not include it — a reader configured for `sudo` or polkit is configured in
+does not include it. A reader configured for `sudo` or polkit is configured in
 *those* services, not in the shared stack.
 
 `sufficient` means a recognised finger is enough, and anything else falls
 through to the password prompt below. The module holds the conversation open
 until it times out, and anything you type meanwhile waits for the prompt that
-follows — which is what the panel's "Enter Password" button is for.
+follows, which is what the panel's "Enter Password" button is for.
 
 Enroll fingers with `fprintd-enroll` first. On a machine with no reader, delete
 the line.
@@ -119,8 +119,8 @@ it afterwards.
 
 ### Idle inhibitors
 
-A client holding an `idle-inhibit-unstable-v1` inhibitor — a video player during
-playback, a presentation tool — holds auto-lock off, and **restarts** the
+A client holding an `idle-inhibit-unstable-v1` inhibitor (a video player during
+playback, a presentation tool) holds auto-lock off, and **restarts** the
 countdown when it releases the inhibitor. So the timer runs from when the video
 stops, not from your last keypress.
 
@@ -136,7 +136,7 @@ can delay the lock by up to one further timeout.
 
 | | |
 |---|---|
-| `Ctrl+Alt+F1`…`F12` | VT switching — always available |
+| `Ctrl+Alt+F1`…`F12` | VT switching; always available |
 | `Ctrl+Alt+Escape` | Lock (already locked, so a no-op) |
 | Power button | Runs your `on_power_button` action |
 | Everything else | Nothing. The locker owns the keyboard; all configured shortcuts are inactive. |
@@ -144,7 +144,7 @@ can delay the lock by up to one further timeout.
 Multiple monitors are all covered, including ones plugged in, unplugged, or
 mode-changed while locked.
 
-If the locker crashes, Otto restarts it — rate-limited — so a crash is
+If the locker crashes, Otto restarts it, rate-limited, so a crash is
 recoverable without a VT switch, and the screen never uncovers in the meantime.
 
 ## Locking from a script
@@ -184,9 +184,9 @@ designed. Switch VT with `Ctrl+Alt+F2`, log in, and check the logs.
 
 **The session never auto-locks.** `auto_lock_timeout` defaults to `0`, which
 means never. If it is set and still does not fire, a client is probably holding
-an idle inhibitor — check for a paused-but-not-closed video.
+an idle inhibitor; check for a paused-but-not-closed video.
 
 ## See also
 
-- [Login Greeter](login-greeter.md) — the same panel, for logging *in*
-- [Power Management](power-management.md) — locking on lid close and power button
+- [Login Greeter](login-greeter.md): the same panel, for logging *in*
+- [Power Management](power-management.md): locking on lid close and power button

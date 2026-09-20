@@ -109,9 +109,8 @@ agents it runs write under the home and runtime directories and nowhere else.
 
 Sessions are stored in `$XDG_STATE_HOME/otto-agents/sessions`. They are the
 person's conversations: the directory is created 0700 and each record 0600,
-and a store written by an older version is tightened to the same on the next
-start. The first start after the rename moves them over from
-`otto-ahp/sessions`.
+and a store written with wider permissions is tightened to the same on the next
+start.
 
 The launcher does **not** depend on that crate. It uses the upstream `ahp` and
 `ahp-ws` client crates from crates.io, so the two sides are only coupled
@@ -135,7 +134,7 @@ through the protocol.
 
 **One lock, one sequence.** Every mutation goes through `Host::lock`, which
 reduces the action with the same `ahp::reducers` the clients use, stamps it with
-the next `serverSeq`, and queues the outgoing envelopes — responses included.
+the next `serverSeq`, and queues the outgoing envelopes, responses included.
 A client therefore sees snapshots, responses and envelopes in an order that
 always makes sense, and reaches the same state the host has by replaying the
 same reducers.
@@ -147,22 +146,23 @@ tests, with no model credentials anywhere in CI.
 
 **Sessions outlive the process.** `store.rs` writes one JSON file per session
 under `$XDG_STATE_HOME/otto-agents/sessions/`, every second and once more on the
-way out. What is stored is otto-agents' own part — the AHP state as clients see
-it, plus the agent's own id for the session, in `agentSession`. The agent keeps
-its history; on restart the id is handed back so it can pick that history up,
-and what it replays becomes the chat again — see below.
+way out. What is stored is otto-agents' own part: the session's and its chat's
+AHP state, minus the turns, plus the agent's own id for the session, in
+`agentSession`. The turns are the agent's. The record keeps only a `written`
+flag saying it has some. On restart the id is handed back so the agent can pick
+that history up, and what it replays becomes the chat again. See below.
 
 ## A picture an agent sends
 
 ACP carries a picture in the message: `ContentBlock::Image` with the bytes
-base64-encoded and a media type beside them. AHP carries *state*, not payloads —
-a chat snapshot is meant to be small enough to hand a client whole — so the two
-do not meet directly.
+base64-encoded and a media type beside them. AHP carries *state*, not payloads
+(a chat snapshot is meant to be small enough to hand a client whole), so the
+two do not meet directly.
 
 **A picture comes from a tool, not from the model.** This is the part worth
 knowing before reading the rest: a language model does not emit an image. It
-calls a tool that returns one — Claude reading a JPEG, a browser tool taking a
-screenshot — so the picture arrives in that call's `content`, as
+calls a tool that returns one (Claude reading a JPEG, a browser tool taking a
+screenshot), so the picture arrives in that call's `content`, as
 `ToolCallContent::Content` wrapping a `ContentBlock::Image`. ACP also allows an
 image in `agent_message_chunk`, and otto-agents handles that too, but in practice
 nothing sends one. Both paths end in the same `SessionEvent::MessageImage`, so a
@@ -184,8 +184,8 @@ client that does not draw pictures ignores a part it does not know.
 Three consequences worth knowing:
 
 - **The file is named after its contents.** `<label>-<digest>.<extension>`,
-  where the digest is FNV-1a over the bytes. The same picture sent twice — or
-  replayed out of the agent's own history on `session/load` — lands on the file
+  where the digest is FNV-1a over the bytes. The same picture sent twice (or
+  replayed out of the agent's own history on `session/load`) lands on the file
   already there rather than on a second copy.
 - **The label is in the name because there is nowhere else.** A `contentRef` has
   a URI, a size and a media type, and no field for a caption, so what the agent
@@ -195,8 +195,8 @@ Three consequences worth knowing:
   therefore cope with a picture whose file has gone; the launcher draws its name
   in its place.
 
-A picture the agent points at rather than sends — `ContentBlock::ResourceLink`
-to a `file://` path — is not copied at all. The chat points at the file where it
+A picture the agent points at rather than sends (`ContentBlock::ResourceLink`
+to a `file://` path) is not copied at all. The chat points at the file where it
 lies, provided it exists and is a picture.
 
 Only bitmaps are taken: PNG, JPEG, GIF, WebP, BMP, AVIF and HEIF. SVG is
@@ -209,34 +209,29 @@ honest choice.
 
 ## The agent's history is the session
 
-A session's conversation exists twice. The agent keeps its own — for Claude,
-`~/.claude/projects/<cwd-slug>/<agent-session>.jsonl` — and otto-agents keeps a
-`ChatState` in `~/.local/state/otto-agents/sessions/<ahp-session>.json`. The
-only thing linking them is the stored record's `agentSession` field.
-
-Nothing used to reconcile the two, so anything that touched the agent outside
-the host left them as two different conversations sharing a name. The plainest
-way to do that is Ctrl/Cmd+O in the launcher, which hands the session to the
-agent's own interface in a terminal (`claude --resume {session}`): whatever was
-said there was in the agent's history and nowhere else, and the next look at the
-session in Ask showed the conversation as it had been before.
-
 **The agent's history is the truth, and the host's chat is a projection of it,
-rebuilt every time the session is opened.**
+rebuilt whenever opening the session starts its agent.** The agent keeps the
+history (for Claude, `~/.claude/projects/<cwd-slug>/<agent-session>.jsonl`)
+and the host's `ChatState` is built from what the agent replays. The only thing
+linking a stored record to that history is its `agentSession` field. So a
+session touched outside the host comes back whole the next time it is opened in
+Ask. The plainest way to touch one is Ctrl/Cmd+O in the launcher, which hands
+it to the agent's own interface in a terminal (`claude --resume {session}`).
 
-The store keeps no turns, so after a restart a chat is empty until its agent
-has replayed them. Subscribing to a chat is what opens it: when the session's
-agent is not running and has an `agentSession` to take up, the host starts it
-right there (`load_for` in `host.rs`), and the turns follow once the agent is
-up — with an `npx …@latest` agent that can be a while after the card opens.
+The store keeps no turns, so a chat is empty until its agent has replayed them.
+Subscribing to a chat is what opens it: when the session's agent is not running
+and has an `agentSession` to take up, the host starts it right there (`load_for`
+in `host.rs`), and the turns follow once the agent is up, which with an
+`npx …@latest` agent can be a while after the card opens. An agent already
+running has already replayed its history, and the chat it is writing stands as
+it is; nothing is loaded again.
 
 Opening a session that has an `agentSession` therefore prefers ACP
 `session/load` over `session/resume` (`open_session` in `acp.rs`).
 `session/load` replays the whole history back as `session/update`
-notifications; `session/resume` returns nothing at all. Those replayed updates
-used to be dropped, because no turn was running to claim them; a `Replay` now
-collects them while the load is in flight, and the session reports them as
-`SessionEvent::HistoryLoaded`.
+notifications; `session/resume` returns nothing at all. No turn is running to
+claim those replayed updates, so a `Replay` collects them while the load is in
+flight, and the session reports them as `SessionEvent::HistoryLoaded`.
 
 The host then applies `chat/truncated`, clearing every turn, followed by
 `chat/turnsLoaded` with the turns it rebuilt (`rebuild_chat`, `history_turn`).
@@ -244,21 +239,21 @@ Both are ordinary actions on the ordinary stream, so every connected client
 reconciles the same way it takes any other change, with no special case
 anywhere.
 
-The replay carries no turn markers — only `user_message_chunk`,
+The replay carries no turn markers, only `user_message_chunk`,
 `agent_message_chunk`, `agent_thought_chunk`, `tool_call` and
-`tool_call_update` — so a turn is taken to be everything from one user message
+`tool_call_update`, so a turn is taken to be everything from one user message
 up to the next. A replayed tool call is recorded as completed, carrying its
 title and whether it succeeded, which is all the agent says about it.
 
-Loading costs nothing that resuming did not. Both spawn the same agent process
+Loading costs no more than resuming. Both spawn the same agent process
 and both have it read its own history; neither sends anything to the model, so
 neither spends tokens. What differs is that only `load` hands the history back.
 
 `session/load` is also the method that is actually in the spec, gated by the
 agent's `loadSession` capability; `session/resume` and `session/close` are both
-marked UNSTABLE in the ACP schema — "not part of the spec yet, and may be
-removed or changed at any point". Every agent tried against the service so
-far — claude, opencode, pi and hermes — advertises `loadSession: true`, so
+marked UNSTABLE in the ACP schema: "not part of the spec yet, and may be
+removed or changed at any point". Every agent tried against the service so far
+(claude, opencode, pi and hermes) advertises `loadSession: true`, so
 `resume` stays only as a fallback for an agent that cannot load.
 
 ## The launcher as a client
@@ -266,7 +261,7 @@ far — claude, opencode, pi and hermes — advertises `loadSession: true`, so
 `components/otto-launcher/src/ask.rs` is the whole client. The launcher's main
 loop has no async runtime, so the connection lives on a thread with a
 current-thread tokio runtime. The thread sends updates over a channel and wakes
-the loop through a socket the launcher already polls — the same `poll_fd` /
+the loop through a socket the launcher already polls, the same `poll_fd` /
 `pump` shape the window list uses. It connects as soon as the launcher opens, so
 the agent list and the session list are there by the time anyone looks.
 
@@ -280,16 +275,16 @@ the agent list and the session list are there by the time anyone looks.
 `otto-ask` is an alias, installed as a symlink to `otto-launcher`: started
 under that name the launcher opens in `--ask` mode, and the rest of the command
 line works as usual (`otto-ask --file PATH`). The session list has no alias of
-its own — it is `otto-launcher --agents` — so that `otto-agents` stays free for
+its own. It is `otto-launcher --agents`, so that `otto-agents` stays free for
 the service.
 
 `OTTO_AGENTS_URL` overrides the default socket for both the launcher and the
 `otto-agents` subcommands: `unix:///path` or `ws://host:port`.
 
-**Every request is queued, never started.** The launcher calls `createSession`,
-subscribes to the session and then to its chat, and dispatches
+**The launcher queues a request; it never waits for it.** It calls
+`createSession`, subscribes to the session and then to its chat, and dispatches
 `chat/pendingMessageSet`. It does not wait for a turn. A turn can only begin
-once the agent process is up — seconds — and only when the previous turn has
+once the agent process is up (seconds), and only when the previous turn has
 ended, and the service starts each queued request as soon as it can. This is
 why the card can close at any moment: by then the service already owns the
 request. Subscribing *before* queueing also matters, because it guarantees every
@@ -298,13 +293,13 @@ change the request causes arrives after the snapshot it applies to.
 **The card becomes a conversation.** Once a request is sent, a log opens above
 the field and the field takes follow-ups, which queue on the same chat.
 `log.rs` word-wraps the transcript into styled lines and the results
-`ScrollPane` scrolls it; `view.rs` draws it. An answer is a list of `Said` —
-Markdown and pictures in the order they arrived — so a picture keeps its place
+`ScrollPane` scrolls it; `view.rs` draws it. An answer is a list of `Said`
+(Markdown and pictures in the order they arrived), so a picture keeps its place
 in the answer rather than collecting at the end; `view.rs` decodes each picture
 once into raster pixels and caches it, because the log is laid out again on
 every chunk that lands and each pass asks every picture how large it is. The last line is the status:
 *Starting {agent}…*, *Thinking…*, *Working…*, then *Done*, *Cancelled* or
-*Failed*. Reasoning is never written into the log — it only shows as
+*Failed*. Reasoning is never written into the log. It only shows as
 *Thinking…*. Ctrl+C or Cmd+C cancels a running turn; Esc closes the card and
 leaves the session running. In the list of sessions (`--agents`), the same keys
 stop the highlighted session's turn without opening it, and Ctrl+Backspace or
@@ -322,46 +317,51 @@ with a warning.
 publishes it, the folder and the agent's id for the session in the session's
 `_meta` as `otto.terminal`: `enter` is the command on its own, and `command`
 the same wrapped in the configured `terminal`, or `null` when there is none.
-Ctrl+O in the launcher spawns `command` in a process group of its own and
-closes the card, handing the session to the agent's own interface.
+Ctrl+O in the launcher spawns `command` in a process group of its own, handing
+the session to the agent's own interface. From the list of sessions the
+launcher then goes at once; from an open conversation the card lingers a moment
+on the handover line before it closes, so the log says where the session went.
 
 A harness enters a session it has never written differently from one it has:
 Claude takes `--session-id <id>` for the first and `--resume <id>` for the
-second, and refuses the wrong one either way. So an agent has two commands —
-`enter` and `enter_new` — and the service publishes whichever fits, swapping
-`enter_new` for `enter` as soon as the session has a history. It counts as
-written once the agent has been given a turn, once a replayed history comes
-back on `session/load`, and once the session has been handed to a terminal,
+second, and refuses the wrong one either way. So an agent has two commands
+(`enter` and `enter_new`), and the service publishes whichever fits, swapping
+`enter_new` for `enter` as soon as the session has a history. Any one of three
+things makes it written: the agent has been given a turn, a replayed history
+came back on `session/load`, or the session has been handed to a terminal,
 whose turns this service never sees. The turns themselves are not stored, so
 the flag is, and it outlives a restart.
 
-**From a terminal.** `otto-agents new [agent]` creates a session — with the
+**From a terminal.** `otto-agents new [agent]` creates a session, with the
 agent named by its id or the name it is shown under, in the folder the command
-was run from — waits for the agent to give it an id, hands it over the same way
-Ctrl+O does, and `exec`s the enter command in place: the terminal becomes the
+was run from. It waits for the agent to give it an id, hands it over the same
+way Ctrl+O does, and `exec`s the enter command in place: the terminal becomes the
 agent's own interface. `otto-agents enter [session]` does the same for a
 session that is already there. Both are the other direction of the same
 handover, and what is said in them is in Ask the next time the session is
 opened.
 
-A session has one terminal. The launcher looks for a process that names the
-agent's id on its command line and has a controlling terminal — the agent
-otto-agents runs names the id too, but talks over pipes — and when it finds
-one, Ctrl+O brings that terminal's window to the front rather than opening
+A session has one terminal. `{session}` in `enter`, `enter_new` and `terminal`
+is always the agent's own id for the session, its `agentSession`, not the AHP
+URI the clients and `otto-agents enter` use. The launcher looks for a process
+that names that id on its command line and has a controlling terminal (the
+agent otto-agents runs names the id too, but talks over pipes), and when it
+finds one, Ctrl+O brings that terminal's window to the front rather than opening
 another. Picking the session from the list does the same, in place of opening
 the conversation. The window is found by the id in its app id or title, which
 is what `--class=otto.agent.s{session}` in the `terminal` command is for;
 without it the terminal is still not opened twice, but cannot be raised.
-`{title}` is filled in by the launcher with what the window is called — *Ask:
-@Claude: will it rain today?* — which is what the dock shows.
+`{title}` is filled in by the launcher with what the window is called (*Ask:
+@Claude: will it rain today?*), which is what the dock shows.
 
 Entering the terminal hands the session over. The launcher asks the service to
-`releaseSession`: otto-agents stops its own agent as soon as it is idle — a
-turn under way, and anything queued behind it, finishes first — so the
-terminal's agent is the only one writing the history. The card says so before
-it closes (*Carrying on in the terminal…*, or *Finishing this turn, then…*).
-What is said in the terminal lands in the agent's history, and the next time
-the session is opened in Ask the agent is started again and replays it — see
+`releaseSession`: otto-agents stops its own agent as soon as it is idle (a
+turn under way, and anything queued behind it, finishes first), so the
+terminal's agent is the only one writing the history. That is what the card's
+last line says while it lingers (*Carrying on in the terminal…*, or *Finishing
+this turn, then…*). What is said in the terminal lands in the agent's history,
+and the next time the session is opened in Ask the agent is started again and
+replays it. See
 [the agent's history is the session](#the-agents-history-is-the-session).
 
 ## Where a permission question goes
@@ -371,10 +371,10 @@ whoever is actually in front of the user. The rule is in `host.rs`:
 
 1. The request opens in the chat as a tool call waiting for confirmation, with
    the agent's own options ("Always Allow", "Allow", "Reject") in the agent's
-   order. The service picks which one to start on — `dialog::default_option`,
+   order. The service picks which one to start on in `dialog::default_option`,
    the one place that reasons about option kinds: the narrowest allow ("once"
    before "always"), or the narrowest reject when the agent marked the request
-   `defaultToNo` — and publishes it as `_meta.otto.defaultOption` on
+   `defaultToNo`. It publishes that as `_meta.otto.defaultOption` on
    `chat/toolCallReady`, since AHP has no field for it. What the tool would
    touch goes with it: the first ACP `location` and the `rawInput` as
    `tool_input` (inline JSON, `{"path", "line", "rawInput"}`), and any `diff`
@@ -382,10 +382,10 @@ whoever is actually in front of the user. The rule is in `host.rs`:
    `_meta.permission` hints are honoured: `title` replaces the composed
    "{agent} wants to …" line, `description` becomes a body line before the
    folder, `defaultToNo` flips the default.
-2. **A client is subscribed to that chat** — the launcher, usually. The service
+2. **A client is subscribed to that chat**, the launcher usually. The service
    leaves the question alone and waits for `chat/toolCallConfirmed`. The
-   launcher shows the question in the log — the path and the edit as `-`/`+`
-   lines under it, cut to a dozen lines — and the options as rows under the
+   launcher shows the question in the log (the path and the edit as `-`/`+`
+   lines under it, cut to a dozen lines) and the options as rows under the
    field, starting on the service's default and only falling back to its own
    narrowest-allow pick when the service sent none. The wait has a limit: after
    `WATCHED_GRACE` (20 s) unanswered, the question goes to the dialog as
@@ -402,16 +402,16 @@ whoever is actually in front of the user. The rule is in `host.rs`:
    `PresentQuestion`, with any multi-select questions spelled out in the body
    rather than asked; one without that either gets `PresentAccess`, minus the
    Open in Ask button, and only for a request that carries no questions.
-4. **The dialog can't be shown** — no session bus, no renderer, an error — and
+4. **The dialog can't be shown** (no session bus, no renderer, an error), and
    the request is **denied**. An agent is never granted something nobody saw.
 
 The first answer wins; a later one is refused, and each question escalates at
-most once. Cancelling the turn — `chat/turnCancelled` from a client, or the
-agent ending it — cancels the questions it left open: the ACP request is
+most once. Cancelling the turn (`chat/turnCancelled` from a client, or the
+agent ending it) cancels the questions it left open: the ACP request is
 answered with the `cancelled` outcome, not a refusal, so the agent is not told
 the person said no. A reply channel that is dropped rather than answered still
-denies. The dialog's own words — the tool-kind phrases, "in {folder}", "Open in
-Ask" — come from the Fluent catalogue under `agents-permission-*`, loaded by
+denies. The dialog's own words (the tool-kind phrases, "in {folder}", "Open in
+Ask") come from the Fluent catalogue under `agents-permission-*`, loaded by
 the service's own small `i18n` module from `LC_ALL`/`LC_MESSAGES`/`LANG`, since
 the sentence is composed here even though otto-islands draws it. The hand-off only runs one way, though: if you open the launcher
 while an island dialog is already up and answer there, the dialog stays on
@@ -419,8 +419,8 @@ screen with an answer that no longer counts, because `org.otto.Dialog1` has no
 way to withdraw a prompt. Giving it one is the obvious next step, and would also
 let the islands carry session status rather than questions alone.
 
-**Modes first.** An agent's modes — Claude's Manual, Accept edits, Plan and
-Auto; Codex's read-only, agent and full access — carry its own sandboxing,
+**Modes first.** An agent's modes (Claude's Manual, Accept edits, Plan and
+Auto; Codex's read-only, agent and full access) carry its own sandboxing,
 and are the recommended way to loosen or tighten what it may do: set `mode` in
 `agents.toml` for every new session, or switch with Shift+Tab in Ask. The
 permission questions above are what the agent still asks in the mode it is
@@ -445,25 +445,25 @@ each `elicitation/create` into an AHP input request:
   host checks each answer fits its question and that an accept answers every
   required one; the answers go back to the agent under the field names.
 - With nobody watching, the question escalates like a permission request. The
-  dialog asks every select question — single or multi — itself, through
+  dialog asks every select question, single or multi, itself, through
   `org.otto.Dialog1.PresentQuestions`, with an **Answer** button; several
   questions are asked one page at a time ("2 of 3", **Next**, **Back**), and a
   multi-select question's options are toggles. A question of another kind (free
-  text, a number) is left out when nothing turns on it — Codex offers a note
+  text, a number) is left out when nothing turns on it. Codex offers a note
   beside its choices, and a note nobody has to write is no reason to send the
   choices elsewhere; the whole form is in Ask for anyone who wants the rest of
   it. A **required** question of such a kind is another matter, and makes the
   request one to answer in Ask: the dialog then only lists what is being asked,
   with **Skip** and **Open in Ask**. Each
-  group is labelled with the question's own words — for a lone AskUserQuestion
-  that is the request's message, since the field carries only the short header —
-  and each option's description follows its label after a line break.
+  group is labelled with the question's own words (for a lone AskUserQuestion
+  that is the request's message, since the field carries only the short
+  header), and each option's description follows its label after a line break.
 - The picks come back as one answer per question: the option chosen for a
   single select, every picked option for a multi select (an empty list when
   none were picked). A renderer too old for `PresentQuestions` is asked the old
   way, with the multi-select questions spelled out instead of asked.
 - The service sends only content: who is asking, the questions, the options and
-  their descriptions, the multi flag, any message of the agent's own — and
+  their descriptions, the multi flag, any message of the agent's own, and
   **Open in Ask**, since nothing else knows there is an Ask to open. The words
   for answering, skipping, paging and the multi-select hint belong to
   otto-islands, which localises them.
@@ -471,7 +471,7 @@ each `elicitation/create` into an AHP input request:
   under, whose own lowercasing stands) as `@claude`, or else a slug of its
   display name (`Code Review Bot` → `@code-review-bot`), or else `@agent`.
 - An elicitation's message is shown as context under the first question, in the
-  agent's own words, unless it says nothing the questions do not — "Please
+  agent's own words, unless it says nothing the questions do not. "Please
   answer the following questions" and its like are dropped rather than
   repeated. Skipping or dismissing declines; a dialog that can't be shown
   leaves the question waiting in the chat.
@@ -480,10 +480,10 @@ each `elicitation/create` into an AHP input request:
 
 ## The skills the desktop gives an agent
 
-Otto ships skills of its own — how to configure the desktop, how to use it
-(opening an app, saying something through the island, driving windows with
-`otto-msg`), how to write a Files command — and installs them as a plugin
-directory, `/usr/share/otto/plugins/otto/`: a `.claude-plugin/plugin.json` and a `skills/`
+Otto ships skills of its own, covering how to configure the desktop, how to
+use it (opening an app, saying something through the island, driving windows
+with `otto-msg`) and how to write a Files command. They are installed as a
+plugin directory, `/usr/share/otto/plugins/otto/`: a `.claude-plugin/plugin.json` and a `skills/`
 tree with one `SKILL.md` each, the [Open Plugins](https://open-plugins.com/)
 shape. A person's own go under `$XDG_DATA_HOME/otto/plugins/`, which is searched
 first, so a plugin of the same name shadows the packaged one.
@@ -497,18 +497,18 @@ The skills reach an agent by one of two routes, picked per agent with
 nothing in its session, and an agent whose answers should owe nothing to Otto
 needs no configuration at all.
 
-- **Claude loads them as a plugin** — `skills = "claude"`, the recommended
+- **Claude loads them as a plugin**: `skills = "claude"`, the recommended
   setting for Claude and what the built-in fallback agent uses. The service
   hands the plugin directories to claude-agent-acp in the session's
   `_meta.claudeCode.options.plugins`, and Claude loads them as its own skills:
   `/otto-help` invokes it, and each skill's `allowed-tools` frontmatter is Claude's
   to honour when it runs. The same `_meta` carries `systemPrompt.append`, a
-  short preamble — where Claude is, that the skills are loaded as the `otto`
-  plugin and how one is invoked, and when to reach for one — which the adapter
+  short preamble (where Claude is, that the skills are loaded as the `otto`
+  plugin and how one is invoked, and when to reach for one), which the adapter
   appends to its `claude_code` preset rather than replacing it, so Claude's own
   safety text stays. The adapter reads both on `session/new`, `session/load`
   and `session/resume`, so a session taken up again gets them too.
-- **Every other agent reads them from disk** — the setting for everyone
+- **Every other agent reads them from disk**: the setting for everyone
   else, and what the default expects. `otto-agents
   plugins install` links each skill into `~/.agents/skills/<name>`, the
   directory the Agent Skills convention names and Copilot, Codex and Claude
@@ -517,16 +517,12 @@ needs no configuration at all.
   point at the skill's own directory, so a package upgrade reaches them;
   anything already at a link's path that is not that link is left alone and
   said so. `otto-agents plugins status` shows the plugins and skills found and
-  whether each is linked. The session carries nothing. (`skills install` and
-  `skills status` still work, as aliases.)
+  whether each is linked. The session carries nothing. (`skills` is an alias for
+  `plugins`, so `skills install` and `skills status` work too.)
 
-There is no third route. Earlier versions could brief an agent instead, with a
-skill list ahead of a session's first prompt (`skills = true`); that is gone,
-and a config that still asks for it is refused with a message pointing at the
-two routes above. Sessions opened back then still carry that briefing in the
-history the agent keeps, so `session/load` strips it from the replayed first
-prompt — by its `_meta.otto.briefing` mark when the agent kept it, by its
-opening sentence when the agent folded it into the prompt's text.
+There is no third route: `skills` takes `false` or `"claude"`, and anything
+else (`skills = true` among them) is refused with a message naming the two
+routes above (`config.rs`).
 
 Whatever the route, what was found goes **to the clients** as AHP
 customizations. Each plugin publishes as a `PluginCustomization` with its
@@ -539,17 +535,17 @@ change nothing. An agent with `skills` off publishes none, so what a client
 shows is what the agent was given rather than a catalogue.
 
 The launcher reads that list to complete skill names: type `/otto-h` in ask mode
-and the rest of the name appears in grey, with Tab to take it — see
+and the rest of the name appears in grey, with Tab to take it. See
 [`specs/launcher.md`](../../specs/launcher.md).
 
 ### The plugin's agent
 
 Beside its skills the `otto` plugin carries an agent, `agents/otto.md`: a
-Markdown file in the shape Claude Code plugins use — YAML frontmatter (`name`,
+Markdown file in the shape Claude Code plugins use: YAML frontmatter (`name`,
 `description`, `tools`, `skills`, optionally `model`) and, as the body, the
 system prompt of a helper that answers questions about the desktop, changes
-settings on request and does things on the desktop itself — opening an app,
-telling the person something through the island, moving a window — working
+settings on request and does things on the desktop itself (opening an app,
+telling the person something through the island, moving a window), working
 from the `otto-help` skill. `src/skills.rs` reads the frontmatter and the body
 at startup, next to the skills; a plugin directory with an `agents/` file and no `skills/` is still a plugin. The
 agent is published to clients as an `AgentCustomization` child of the plugin
@@ -565,7 +561,7 @@ it. Every other harness gets the same file rendered for it, below.
 
 One file is maintained, `resources/plugins/otto/agents/otto.md`, and
 `otto-agents plugins install` renders it for each harness that cannot load
-it as it is (`src/vendors.rs`). The body — the instructions — is
+it as it is (`src/vendors.rs`). The body, the instructions, is
 byte-identical in every rendering; what differs is the frontmatter, a
 heading derived from the frontmatter's `name` and `description` where a
 plain file needs one, and where the file goes. Selection is per launch, from
@@ -666,8 +662,8 @@ config = { collaboration_mode = "plan" } # optional; the agent's own session opt
 
 `folder` is the folder an agent's sessions start in when the client names none,
 published to clients as `_meta.otto.folders.<id>` on the root state. It is the
-reach the agent is given — everything under it is readable, and `permissions`
-only covers what the agent stops to ask about — so it is worth setting narrowly,
+reach the agent is given (everything under it is readable, and `permissions`
+only covers what the agent stops to ask about), so it is worth setting narrowly,
 and leaving unset for an agent that only changes desktop settings. Ask falls
 back to a scratch folder, `$XDG_STATE_HOME/otto/ask`, rather than the home
 folder; `createSession` itself refuses a request with no folder at all.
@@ -683,15 +679,15 @@ system prompt alongside it.
 
 The agent file's `allowed-tools` is where a standing permission belongs. A
 skill's `allowed-tools` only covers the turns the skill is loaded for, so the
-otto agent asking about a settings change it made two turns ago — once it is
-running the command straight from what it already read — is the shape to
+otto agent asking about a settings change it made two turns ago, once it is
+running the command straight from what it already read, is the shape to
 expect. The same rule on the agent file holds for the whole session, and the
 `otto` agent carries the settings bus there: `busctl --user list` and calls to
 `org.otto.Settings`, and nothing else.
 
 `agent = "otto"` also gives the agent a face. A dialog from the desktop's own
-helper — a permission request, or a question nobody is watching the chat to
-answer — is Otto speaking to the person rather than a third-party agent asking
+helper (a permission request, or a question nobody is watching the chat to
+answer) is Otto speaking to the person rather than a third-party agent asking
 for something, so it wears Otto's icon instead of the tool glyph the dialog
 would otherwise carry (`system-run` for a permission, `dialog-question` for a
 question). The name sent is `otto-files`: the icon theme has one Otto mark
@@ -700,7 +696,7 @@ name. `dialog::agent_icon` is the whole rule, `Backend::icon` carries it to the
 host beside `colour` and `folder`, and an agent that is not running as `otto`
 gets `None` and keeps the tool glyph.
 
-`colour` names the frosted material the agent's surfaces wear — the Ask card
+`colour` names the frosted material the agent's surfaces wear: the Ask card
 while it is a request to, or a conversation with, that agent. It is one of
 otto-kit's `Frosted` materials, in lower case: `red`, `orange`, `amber`,
 `yellow`, `lime`, `green`, `teal`, `cyan`, `blue`, `indigo`, `violet` or
@@ -711,7 +707,7 @@ from agent id to name (`AgentInfo` has no field for it).
 
 `mode` is the agent's mode id every new session starts in: `acceptEdits` for
 Claude, say, or `agent` for Codex. Modes are the agent's own permission and
-sandboxing presets, and its own list is what counts — the service reads it
+sandboxing presets, and its own list is what counts: the service reads it
 from the `session/new` response and only sends `session/set_mode` for an id
 that is on it; an unknown one is logged and ignored, and a session taken up
 again keeps whatever mode it was last in, here or in a terminal. The modes are
@@ -751,9 +747,9 @@ tell which one to use when none is asked for.
 ## Read next
 
 - [`components/otto-agents/docs/plans/`](../../components/otto-agents/docs/plans/README.md)
-  — one plan per milestone, with status. [0010](../../components/otto-agents/docs/plans/0010-poc.md)
+  covers one plan per milestone, with status. [0010](../../components/otto-agents/docs/plans/0010-poc.md)
   is the proof of concept, [0011](../../components/otto-agents/docs/plans/0011-launcher-ask-v2.md)
   the launcher's ask mode.
-- [`specs/launcher.md`](../../specs/launcher.md) — the launcher's behavioural contract.
-- [`specs/portal-access-dialog.md`](../../specs/portal-access-dialog.md) — the dialog
+- [`specs/launcher.md`](../../specs/launcher.md): the launcher's behavioural contract.
+- [`specs/portal-access-dialog.md`](../../specs/portal-access-dialog.md): the dialog
   contract the permission prompts reuse.

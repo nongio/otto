@@ -32,7 +32,7 @@ workspace.
 ### The grid
 
 Windows are packed into a flowing grid that preserves each window's aspect
-ratio. Nothing is ever scaled *up* — a small window stays small rather than
+ratio. Nothing is ever scaled *up*: a small window stays small rather than
 being blown up to fill a cell.
 
 - **Hover** a preview to highlight it with the accent colour and show its title.
@@ -43,13 +43,13 @@ being blown up to fill a cell.
 
 Minimized windows are not shown.
 
-Previews are **live**, not screenshots — a playing video keeps playing in its
+Previews are **live**, not screenshots. A playing video keeps playing in its
 preview.
 
 ### Desktop widgets
 
-Widgets that live on the desktop — anything on the layer-shell *bottom* layer,
-such as a conky panel or a desktop clock — stay on screen while exposé is open
+Widgets that live on the desktop (anything on the layer-shell *bottom* layer,
+such as a conky panel or a desktop clock) stay on screen while exposé is open
 and fade with the rest of the desktop instead of vanishing the moment the
 gesture starts. They are deliberately left out of the workspace previews in the
 selector strip, which show the wallpaper alone.
@@ -67,7 +67,7 @@ A separate mode: `PageDown` (`Next`), or a **four-finger pinch out**, slides all
 windows off toward the edges of the screen to reveal the wallpaper. Press again,
 or pinch in, to bring them back.
 
-This is not the same as exposé — the windows move aside rather than scaling into
+This is not the same as exposé. The windows move aside rather than scaling into
 a grid, and there is no selector strip.
 
 ---
@@ -85,7 +85,7 @@ backdrop.
 | `Ctrl+Shift+Tab` | Move to the previous app |
 | `` Ctrl+` `` (`Ctrl+grave`) | Cycle windows within the highlighted app |
 | `Ctrl+Q` | Quit the highlighted app |
-| Release `Ctrl` | Commit — focus the highlighted app |
+| Release `Ctrl` | Commit: focus the highlighted app |
 
 The switcher stays up as long as you **hold the modifier** that opened it. Any
 of `Ctrl`, `Alt`, `Logo` or `Shift` works as the hold key, depending on what you
@@ -98,8 +98,8 @@ and release flips between the last two apps.
 
 Committing on an app focuses the window of that app you used last. If that
 window is on another workspace, the screen scrolls there. `` Ctrl+` `` steps
-through all of the app's windows in turn — across workspaces, in workspace
-order — so an app with a window on each of two workspaces alternates between
+through all of the app's windows in turn, across workspaces and in workspace
+order, so an app with a window on each of two workspaces alternates between
 them.
 
 ### Which monitor it appears on
@@ -113,7 +113,7 @@ follow_cursor = false
 ```
 
 The panel is sized from its host monitor's own resolution and scale, so it looks
-right on a screen of a different size. Once it is on screen it stays put — it
+right on a screen of a different size. Once it is on screen it stays put. It
 will not hop to another monitor mid-cycle however far the pointer moves.
 
 It lists windows from **every** monitor. Selecting one focuses it wherever it
@@ -129,7 +129,7 @@ lives, which may not be the screen showing the switcher.
 "Alt+F4"                  = "ApplicationSwitchQuit"
 ```
 
-Note `ISO_Left_Tab` for the shifted variant — `Shift+Tab` produces that keysym,
+Note `ISO_Left_Tab` for the shifted variant: `Shift+Tab` produces that keysym,
 not `Tab`. See [Keyboard Shortcuts](keyboard-shortcuts.md).
 
 ---
@@ -141,7 +141,7 @@ icon to raise it, click again to cycle through that app's windows.
 
 ## Troubleshooting
 
-**Exposé previews are frozen or blank.** This is a bug worth reporting — grab
+**Exposé previews are frozen or blank.** This is a bug worth reporting. Grab
 `RUST_LOG=debug` output and note whether the window was fullscreen just before.
 
 **The switcher opens on the wrong screen.** It resolves the monitor from the

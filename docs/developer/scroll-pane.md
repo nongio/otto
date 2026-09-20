@@ -1,10 +1,10 @@
 # Scroll panes
 
-How an otto-kit application scrolls long content — a file listing, a grid of
-icons, a settings pane, a palette's results, a stack of columns — at the
-display's rate without repainting its window. This page is what building that
-for otto-files taught, and the components otto-kit should offer so no
-application has to learn it again.
+How an otto-kit application scrolls long content (a file listing, a grid of
+icons, a settings pane, a palette's results, a stack of columns) at the
+display's rate without repainting its window. It covers the rules that keep a
+scroll cheap and the otto-kit components that implement them, so no application
+has to work them out again.
 
 > Status: the rules below are proven (otto-files' column view scrolls at 120 Hz
 > on them, frosted), and the components in *The kit* are in otto-kit, used by
@@ -29,7 +29,7 @@ Everything slower than the last row was one of the mistakes below.
 
 Each of these cost a measurable frame budget before it was found.
 
-1. **Scroll by moving, not painting.** Content lives in a *band* — a subsurface
+1. **Scroll by moving, not painting.** Content lives in a *band*: a subsurface
    taller (or wider) than the viewport, inside a *clip* subsurface that crops
    it. A step of the scroll is `otto_surface_style_v1.set_position` on the
    band: no paint, no buffer, no upload. The client paints a new band only
@@ -49,8 +49,8 @@ Each of these cost a measurable frame budget before it was found.
 6. **Say what changed, and what is opaque.** When the window does paint, it
    reports damage (`Window::request_frame_damaged`), not the whole buffer. It
    declares its opaque area (`Window::set_opaque_region`), so a frosted window's
-   blur is not drawn under content that covers it — that draw was ~1–2 ms of GPU
-   per frame on its own.
+   blur is not drawn under content that covers it. That draw was ~1–2 ms of
+   GPU per frame on its own.
 7. **Describe only what is on screen.** Accessibility for a scrolling list is
    bounded by the band, like painting.
 8. **Measure on the wire.** Every A/B here was checked against the client's
@@ -60,16 +60,16 @@ Each of these cost a measurable frame budget before it was found.
 
 The compositor half of these is in Otto and lay-rs and needs nothing from
 applications: a subsurface that only moved is repositioned without repainting
-its layer; a window update no longer re-attaches (and repaints) the root
-surface; damage from a child moving inside a clip is cut to the clip; a kept
-blur is replayed rather than redone, and not under the opaque region.
+its layer; a window update does not re-attach (and repaint) the root surface;
+damage from a child moving inside a clip is cut to the clip; a kept blur is
+replayed rather than redone, and not under the opaque region.
 
 ## The kit
 
 An application implements one trait and owns one value per scrolling thing;
 what sits beside a pane is a `Fill` or a `PlacedSurface`.
 
-### `ScrollContent` — what the application provides
+### `ScrollContent`: what the application provides
 
 ```rust
 pub trait ScrollContent {
@@ -86,7 +86,7 @@ pub trait ScrollContent {
 
 Accessibility stays with the host, bounded by `ScrollPane::visible()`.
 
-### `ScrollPane` — one scrolling viewport
+### `ScrollPane`: one scrolling viewport
 
 Owns everything a scroll view is: the physics (`ScrollView`: wheel, finger,
 momentum, rubber band, thumb), the surfaces (clip, band, thumb) and their band
@@ -134,17 +134,17 @@ presented, but no longer than `FRAME_ANSWER_TIMEOUT` (500 ms, the rate Otto
 keeps for windows out of sight): a surface the compositor never shows cannot
 hold a pane still for good.
 
-A host that owns its scroll state somewhere a surface cannot live — behind a
-lock, in headless tests — drives `ScrollSurfaces::sync_state` with that state
+A host that owns its scroll state somewhere a surface cannot live (behind a
+lock, in headless tests) drives `ScrollSurfaces::sync_state` with that state
 and its speed instead, and does `ScrollPane`'s bookkeeping itself: invalidate
 when what the band shows changes, count `waiting()` as the scroll dealt with.
 otto-files' columns and palette list work this way.
 
-### `Fill` — a flat rect that moves with a pane
+### `Fill`: a flat rect that moves with a pane
 
 One pixel of colour, stretched and rounded by the compositor: what the
 highlight is made of, and what a host uses for anything flat that has to ride
-in a pane rather than be painted into one — the divider down a column's edge.
+in a pane rather than be painted into one: the divider down a column's edge.
 Recolouring, moving or resizing it is a request, never a paint.
 
 ```rust
@@ -153,7 +153,7 @@ divider.set_style(theme.fill_tertiary, 0.0);
 divider.set_rect(Rect::from_xywh(column.right - 0.5, 0.0, 1.0, column.height()));
 ```
 
-### `PlacedSurface` — a painted panel beside a pane
+### `PlacedSurface`: a painted panel beside a pane
 
 A child surface the client places and sizes itself, painted only when what it
 shows changes: a status line over an empty column, a preview card, a palette
@@ -176,7 +176,7 @@ card.ask_output_frame();                         // where its display is,
 card.output_frame();                             // a round trip later
 ```
 
-### `ScrollGroup` — which pane a gesture belongs to
+### `ScrollGroup`: which pane a gesture belongs to
 
 Wheel and touchpad gestures are routed to the pane under the pointer, with the
 axis chosen by the first delta and locked until the gesture ends; wheel end
@@ -192,24 +192,25 @@ scroll views are not panes (see above).
 
 **Nesting.** A pane can be the parent of other panes: `ScrollPane::band_surface()`
 is a valid parent. A horizontal pane whose band holds vertical panes is a
-column stack — panning moves one band, and the columns ride inside it with no
+column stack: panning moves one band, and the columns ride inside it with no
 per-column work.
 
-### `RowLayout` and `GridLayout` — closed-form geometry
+### `RowLayout` and `GridLayout`: closed-form geometry
 
 Fixed-pitch rows and uniform cells (with optional section headers), in content
-coordinates only: `rect(index)`, `index_at(point)`, `range(rect)`, `length()`.
-The same layout answers the paint walk, the hit test, the accessible bounds,
-`reveal` and which thumbnails to fetch, so what is drawn and what is clickable
-cannot drift apart. Replaces otto-files' `RowStrip`, the `*_in(… scroll)` grid
-helpers and every `scroll` parameter threaded through them.
+coordinates only: `RowLayout::{rect, index_at, range, visible, length}` and
+`GridLayout::{cell_rect, index_at, range, cells_in, headers, pinned_header,
+length}`. The same layout answers the paint walk, the hit test, the accessible
+bounds, `reveal` and which thumbnails to fetch, so what is drawn and what is
+clickable cannot drift apart. otto-files' `RowStrip` is a thin wrapper over
+`RowLayout` that folds in the scroll offset.
 
 ## What stays in the application
 
 Row and cell appearance, selection runs, the cursor ring, thumbnails (as part
-of `revision`), a rename field, the drop ring and the marquee — drawn in the
-window over the pane using `content_to_parent`, or into the band — and chrome
-that does not move: dividers, tints, headers.
+of `revision`), a rename field, the drop ring and the marquee, drawn in the
+window over the pane using `content_to_parent` or into the band. Chrome that
+does not move stays in the application too: dividers, tints, headers.
 
 ## Plan
 
@@ -221,23 +222,23 @@ that does not move: dividers, tints, headers.
    over the ground its window paints, input through the window.
 3. **otto-files.** *Columns done.* The stack is a horizontal container clipped
    to the file area and each column a vertical pane placed once inside it;
-   everything that moves with the stack — the active tint (the clip's colour),
-   the dividers (stretched pixels), status lines and the docked preview — is in
-   the stack, so neither a column scroll nor a pan commits the window, and the
-   pan bar is the container's own. otto-files drives `ScrollSurfaces` directly
-   rather than `ScrollPane`: its scroll views live in the browser state, behind
-   its lock and in its headless tests, where no surface can.
+   everything that moves with the stack is in the stack: the active tint (the
+   clip's colour), the dividers (stretched pixels), status lines and the
+   docked preview. So neither a column scroll nor a pan commits the window,
+   and the pan bar is the container's own. otto-files drives `ScrollSurfaces`
+   directly rather than `ScrollPane`: its scroll views live in the browser
+   state, behind its lock and in its headless tests, where no surface can.
    List and grid stay painted into the window with partial damage and the
-   opaque region — one large band costs more to composite than the window's
-   damaged strip — and their geometry is `RowLayout` / `GridLayout`, mapped
+   opaque region (one large band costs more to composite than the window's
+   damaged strip), and their geometry is `RowLayout` / `GridLayout`, mapped
    into the file area. The palette's rows are a pane inside its card, so the
    card repaints only for its field.
 4. **Everyone else.** *Launcher and emoji done.* The launcher's rows are a
    `ScrollPane` inside its card, with the selection a pane highlight
-   (`ScrollPane::set_highlight`) and wheel scrolling it did not have. otto-emoji's
-   categories are vertical panes in a horizontal container driven by its own
-   paging physics, with the highlight on the selected cell. Left: Peek's
-   pan as a two-axis pane.
+   (`ScrollPane::set_highlight`) and wheel scrolling. otto-emoji's categories
+   are vertical panes in a horizontal container driven by its own paging
+   physics, with the highlight on the selected cell. Left: Peek's pan as a
+   two-axis pane.
 5. **Beside the panes.** *Done.* `PlacedSurface` carries otto-files' status
    lines, docked preview and its video, the palette card and Peek.
 
@@ -256,8 +257,6 @@ fling, Otto passes in budget ≥ 80% at 120 Hz with frost on, client CPU under
 
 ## Open questions
 
-- **Nested bands** — answered: Otto composes a band's style position inside a
-  container band that is itself moving, in the probe and in otto-files' stack.
 - **Band memory** on a very wide horizontal band at 2x: the overdraw floor may
   need to be axis-specific.
 - **Pinned section headers.** `GridLayout::pinned_header` knows which header

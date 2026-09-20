@@ -17,8 +17,8 @@ frame costs nothing and saves a GPU pass. An idle Otto desktop does no work.
 Most clients only repaint after they receive a frame callback (`wl_callback`)
 or presentation feedback. So the compositor's schedule dictates theirs.
 
-The naive schedule — repaint immediately after VBlank, then send frame
-callbacks — is the worst one. The client wakes up just after the compositor
+The naive schedule, repainting immediately after VBlank and then sending frame
+callbacks, is the worst one. The client wakes up just after the compositor
 has already composed, so its new buffer misses the frame currently being
 prepared and lands one VBlank later than it could: roughly two frames of
 latency for no reason.
@@ -51,18 +51,18 @@ Damage tracking is what lets Otto stay responsive without redrawing whole
 outputs. It is also the single easiest thing to get subtly wrong:
 
 - Damage is expressed in output space, but surfaces move, scale and transform.
-- Things change without the *scene* changing — cursor surfaces, drag icons,
-  popups — and must still trigger a redraw.
+- Cursor surfaces, drag icons and popups change without the *scene* changing,
+  and must still trigger a redraw.
 - Buffer age and partial updates mean reusing old pixels is only safe under
   specific conditions; getting it wrong shows up as stale rectangles.
 - **The scene sync can invent damage.** Mirroring a Wayland surface into its
   `lay-rs` layer is write-only: `set_position`, `set_size` and
   `set_draw_content` schedule `NEEDS_LAYOUT`/`NEEDS_PAINT` without comparing
-  the value first. The sync runs per WINDOW — a commit on any surface of a
-  window walks that window's whole surface tree *and every popup hanging off
-  it* — so writing back identical values made a client repainting at frame
-  rate dirty its own tooltip at frame rate, and popup damage drove a
-  full-screen backdrop rebuild per commit. Two guards keep it honest:
+  the value first. The sync runs per WINDOW: a commit on any surface of a
+  window walks that window's whole surface tree, and every popup hanging off
+  it. Writing identical values back therefore dirties a client's own tooltip
+  at the client's frame rate, and popup damage drives a full-screen backdrop
+  rebuild on every commit. Two guards keep it honest:
   `configure_surface_layer` reduces each surface's configuration to a hash
   (including the surface's `CommitCounter`) and skips the whole body when it
   matches (`crate::surface_config_cache`), and
@@ -95,7 +95,7 @@ classifies each window and paces its callbacks accordingly:
 | State | Rate | Meaning |
 |-------|------|---------|
 | `Focused` | output refresh | the primary interaction target |
-| `Captured` | output refresh | being screencast — outranks occlusion and minimize |
+| `Captured` | output refresh | being screencast; outranks occlusion and minimize |
 | `Secondary` | ~30 Hz | visible but not focused |
 | `Occluded` / `Minimized` / `HiddenWorkspace` | ~2 Hz | not visible |
 
@@ -114,7 +114,7 @@ the 2 Hz trickle; every other layer surface is paced at the output refresh.
 The set is empty while exposé or show-desktop is active, since both put the
 desktop back on screen.
 
-## Udev (DRM/GBM) backend — `src/udev/`
+## Udev (DRM/GBM) backend: `src/udev/`
 
 This is the production loop, and the only one with real VBlank timing.
 
@@ -145,29 +145,29 @@ This is the production loop, and the only one with real VBlank timing.
    Temporary DRM errors either pause scheduling (device inactive) or trigger a
    retry, depending on the error class.
 
-## Winit backend — `src/winit.rs`
+## Winit backend: `src/winit.rs`
 
 There is no real VBlank to target, so this path biases for responsiveness with
 short timeouts rather than deadline scheduling.
 
-1. **Event intake** — `winit.dispatch_new_events` pumps windowing and input
+1. **Event intake.** `winit.dispatch_new_events` pumps windowing and input
    events, updating workspace geometry on resize.
-2. **Scene update** — `state.scene_element.update()` once per iteration; its
+2. **Scene update.** `state.scene_element.update()` once per iteration; its
    return value feeds the render decision.
-3. **Render decision** — render if *any* of: the scene reported damage; a
+3. **Render decision.** Render if *any* of: the scene reported damage; a
    forced redraw is pending (`full_redraw > 0`); the pointer is backed by a
    Wayland surface; a drag-and-drop icon is active.
-4. **Submit** — when `render_output` produces damage, submit through the winit
+4. **Submit.** When `render_output` produces damage, submit through the winit
    window's swapchain.
-5. **Wait** — `event_loop.dispatch(wait_timeout, …)` with **1 ms** when
+5. **Wait.** `event_loop.dispatch(wait_timeout, …)` with **1 ms** when
    follow-up work is expected (`needs_redraw_soon`, active pointer surface or
    DnD, or the scene just reported damage), and **16 ms** otherwise.
-6. **Housekeeping** — refresh workspace layouts, clean up popups, flush clients.
+6. **Housekeeping.** Refresh workspace layouts, clean up popups, flush clients.
 
 Buffer age from the backend enables partial damage; a requested full redraw
 resets that path so stale contents cannot be reused.
 
-## X11 backend — `src/x11.rs`
+## X11 backend: `src/x11.rs`
 
 Basic and not actively maintained.
 

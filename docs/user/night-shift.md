@@ -23,7 +23,7 @@ cmd = "wlsunset"
 args = ["-l", "48.8", "-L", "2.3"]
 ```
 
-`-l` is latitude, `-L` is longitude — negative for south and west.
+`-l` is latitude, `-L` is longitude. Use negative values for south and west.
 
 Fixed temperatures instead of sun-following:
 
@@ -34,7 +34,7 @@ wlsunset -T 6500 -t 6500     # effectively off
 
 ## gammastep
 
-A fork of redshift with more options — manual times, a systemd unit, and a
+A fork of redshift with more options: manual times, a systemd unit, and a
 config file.
 
 ```sh
@@ -86,7 +86,7 @@ ddcutil setvcp 10 50    # 50% brightness
 
 | Kelvin | Feels like |
 |--------|------------|
-| 6500K | Daylight — no shift, the display's native point |
+| 6500K | Daylight; no shift, the display's native point |
 | 5000K | A gentle warmth, usable all day |
 | 4000K | Clearly warm; a common evening setting |
 | 3400K | Halogen bulb; the usual "night" default |
@@ -95,8 +95,8 @@ ddcutil setvcp 10 50    # 50% brightness
 
 ## Troubleshooting
 
-**"Failed to bind gamma control".** Otto must be running as your compositor —
-the protocol is not available on the `--winit` backend, where the host
+**"Failed to bind gamma control".** Otto must be running as your compositor.
+The protocol is not available on the `--winit` backend, where the host
 compositor owns the display hardware.
 
 **Colours do not change.** Some drivers ignore gamma tables on some outputs.
@@ -104,7 +104,7 @@ Try a different output, and check the tool's own output for errors.
 
 **Colours stay shifted after the tool exits.** Otto resets the ramp when a gamma
 client disconnects, so this should not happen. If it does, the shift is coming
-from somewhere else — check for a second tool still running.
+from somewhere else. Check for a second tool still running.
 
 **A second tool will not start.** Only one gamma client per output is allowed.
 Otto refuses the newcomer, so the tool that got there first keeps the ramp; stop
@@ -112,6 +112,6 @@ it before starting another.
 
 ## Not planned
 
-Otto is unlikely to grow its own night-shift implementation — `wlsunset` and
+Otto is unlikely to grow its own night-shift implementation: `wlsunset` and
 `gammastep` do the job well, and the protocol exists so that compositors do not
 have to.

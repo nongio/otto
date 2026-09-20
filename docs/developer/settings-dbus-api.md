@@ -3,41 +3,40 @@
 The D-Bus interface the compositor serves for reading and writing settings,
 and the contract a settings client can build against.
 
-> **Status**: implemented on both sides — the compositor serves it
+> **Status**: implemented on both sides. The compositor serves it
 > (`src/settings/`, `src/settings_service.rs`) and `otto-settings` consumes it
 > (`components/otto-settings/src/settings_client.rs`). This document is the
 > interface they build against. Behavioural requirements live in
 > [specs/settings-app.md](../../specs/settings-app.md); this is the wire.
 >
-> What the compositor serves today: 52 settings, of which 33 are `live` and 19
-> are `restart`. The nine `dock.*` ones — `size`, `position`, `autohide`,
+> What the compositor serves today: 61 settings, of which 55 are `live` and
+> six are `restart`. The nine `dock.*` ones (`size`, `position`, `autohide`,
 > `magnification`, `genie_scale`, `genie_span`, `colorize_icons`,
-> `colorize_color`, `colorize_intensity` — reconfigure the dock in place. The
-> eleven `input.*` touchpad/pointer ones — `tap_enabled`, `tap_drag_enabled`,
+> `colorize_color`, `colorize_intensity`) reconfigure the dock in place. The
+> eleven `input.*` touchpad/pointer ones (`tap_enabled`, `tap_drag_enabled`,
 > `tap_drag_lock_enabled`, `touchpad_click_method`, `touchpad_dwt_enabled`,
 > `touchpad_natural_scroll_enabled`, `touchpad_left_handed`,
 > `touchpad_middle_emulation_enabled`, `scroll_speed`, `pointer_accel_speed`,
-> `pointer_accel_profile` — reconfigure the connected libinput devices (or, for
+> `pointer_accel_profile`) reconfigure the connected libinput devices (or, for
 > `scroll_speed`, take effect on the next scroll event, since Otto reads the
 > live config per event rather than caching it). Eleven are appearance:
-> `theme_scheme`, `accent_color`, `rounded_corners`, `frosting`, `window_controls_side`,
-> `show_maximize_button`, `cursor_theme`, `cursor_size`, `icon_theme`,
-> `background_color` and `background_image` — the compositor's own chrome and
-> its window decorations are rebuilt, the cursor and icon caches dropped, and
-> the change relayed to other processes through the Settings portal. The
-> remaining two are `appswitcher.colorize_icons` and
-> `appswitcher.follow_cursor`. `screen_scale`, the display language,
-> `font_family` and the keyboard `input.xkb_*` settings still need a restart.
-> No setting is `unsupported` yet. Values that
-> are lists rather than scalars (dock bookmarks, shortcuts, display profiles)
-> have no identifier and are not in the schema.
+> `theme_scheme`, `accent_color`, `rounded_corners`, `frosting`,
+> `window_controls_side`, `show_maximize_button`, `cursor_theme`, `cursor_size`,
+> `icon_theme`, `background_color` and `background_image`. For those the
+> compositor's own chrome and its window decorations are rebuilt, the cursor
+> and icon caches dropped, and the change relayed to other processes through
+> the Settings portal. The six that need a restart are `screen_scale`,
+> `font_family`, `gtk_theme`, `locales`, `login.greeter_command` and
+> `login.greeter_args`.
+> No setting is `unsupported`. Keyed collections (dock bookmarks, shortcuts,
+> display profiles) have no single identifier and are not in the schema.
 
 Bus name `org.otto.Settings`, object path `/org/otto/Settings`, interface
 `org.otto.Settings`. The compositor owns the name.
 
 The portal getters (`GetColorScheme`, `GetIconTheme`, `GetAccentColor`) stay
-exactly as they are — `xdg-desktop-portal-otto` depends on them and must not be
-disturbed.
+exactly as they are: `xdg-desktop-portal-otto` depends on them and must not
+be disturbed.
 
 ## Values
 
@@ -64,7 +63,7 @@ A stable dotted path matching the configuration structure: `dock.size`,
 have no prefix: `accent_color`, `cursor_size`.
 
 **Identifiers are a permanent contract.** Once shipped, an identifier is never
-renamed or repurposed — an app built against an older compositor must keep
+renamed or repurposed. An app built against an older compositor must keep
 working, and the app is the thing that hardcodes these strings.
 
 ## Methods
@@ -80,6 +79,9 @@ Reset(id: s)               → s         status
 GetColorScheme()           → u         0 none, 1 dark, 2 light
 GetIconTheme()             → s         icon theme name, empty to auto-detect
 GetAccentColor()           → (ddd)     accent as sRGB in 0.0..=1.0
+
+GetSoundTheme()            → s         sound theme name, empty to auto-detect
+GetLocales()               → as        preferred locales, most preferred first
 
 ListOutputs()              → aa{sv}    every output, physical and virtual
 SetOutputProfile(connector: s, width: u, height: u,
@@ -97,21 +99,33 @@ ConfigPath()               → s         the file a change is written to
 
 These three answer in the shapes `org.freedesktop.appearance` defines, so the
 portal backend can pass them through untouched. `GetAccentColor` resolves the
-stored accent *name* against the current palette before converting — the name
+stored accent *name* against the current palette before converting. The name
 is what `Get("accent_color")` returns, and it is the value `Set` takes.
+
+### Two the portal asks for by other names
+
+`GetSoundTheme` goes out on `org.gnome.desktop.sound` as `theme-name`, with the
+same contract as `GetIconTheme`: empty means no preference, so the application
+decides for itself.
+
+`GetLocales` has no portal key at all. Otto's own components take their
+language from here rather than from `LANG`, so changing *Preferred languages*
+moves the whole desktop and not just the compositor. Sandboxed third-party
+applications still read the environment, which this does not touch.
 
 ### Outputs
 
 Outputs are deliberately **not** settings. The schema is a table fixed at
-compile time, and outputs come and go with the hardware — there is no honest
-identifier for "the second display". They get their own three methods instead.
+compile time, and outputs come and go with the hardware, so there is no
+honest identifier for "the second display". They get their own three methods
+instead.
 
 `ListOutputs` returns one dictionary per output: `name`, `connector`, `width`,
 `height`, `refresh` (millihertz), `x`, `y`, `scale`, and `virtual`. A client
 drawing a display arrangement reads it from here rather than inventing one.
 
-`SetOutputProfile` writes `displays.named.<connector>` — the same profile the
-compositor resolves when it brings that output up — so a resolution, refresh
+`SetOutputProfile` writes `displays.named.<connector>`, the same profile the
+compositor resolves when it brings that output up, so a resolution, refresh
 rate, position or primary choice survives a restart. It is keyed by connector
 because that is the handle the config has; see the Open section for why that
 identity is not the last word. **It applies at the next start, never now**, and
@@ -128,14 +142,14 @@ wanted for. `persist` also writes a `[[virtual_outputs]]` entry to the writable
 config so it returns next session; the entry is written only after the output
 actually came up, for the same reason `Set` persists only after a successful
 apply. `RemoveVirtualOutput` tears one down and drops its config entry, and
-refuses physical outputs — unmapping one would black out a real screen.
+refuses physical outputs: unmapping one would black out a real screen.
 
 ### The configuration file
 
 `ConfigPath` answers with the file a changed setting is written to. Otto's
-configuration is layered and the writable layer is whichever sits on top — a
+configuration is layered and the writable layer is whichever sits on top: a
 local `otto_config.toml` next to the running binary outranks
-`~/.config/otto/config.toml` — so a client cannot work it out for itself. It is
+`~/.config/otto/config.toml`. A client cannot work that out for itself. It is
 worth showing: everything a settings app changes lands there, and anything it
 does not offer is edited by hand.
 
@@ -167,18 +181,19 @@ Clients should also snap to `default` when the drag comes within half a step of
 it, so a value can land exactly back on the inherited one.
 
 `choice_labels` exists because the strings in `choices` are configuration
-tokens, and those are part of the permanent contract — `clickfinger` has to
+tokens, and those are part of the permanent contract. `clickfinger` has to
 stay `clickfinger` on the wire and in the file, however badly it reads in a
 menu. When present it has exactly one entry per choice, and a client shows it
 in place of the token while continuing to `Set` the token. When absent, the
 tokens are already fit to show.
 
 `apply` is what the setting does when set: `live` takes effect immediately;
-`restart` is persisted but needs a compositor restart — the running session is
-left exactly as it was, so nothing that happens to re-read the value can
-half-apply it; `unsupported` cannot be changed on this system or in this build
-(a display setting under a windowed backend, say) and `Set` will reject it. It
-must be truthful — a `Set` that silently does nothing is worse than one that
+`restart` is persisted but needs a compositor restart, with the running
+session left exactly as it was, so nothing that happens to re-read the value
+can half-apply it; `unsupported` cannot be changed on this system or in this
+build (a display setting under a windowed backend, say) and `Set` will reject
+it. It
+must be truthful: a `Set` that silently does nothing is worse than one that
 refuses.
 
 `Get` and `GetAll` answer for a `restart` setting with the value the next start
@@ -188,8 +203,8 @@ session is still on.
 **`Set`** performs validate → apply → persist → announce, in that order. It
 returns a status string:
 
-- `applied` — live now, and persisted.
-- `pending-restart` — persisted, takes effect on restart.
+- `applied`: live now, and persisted.
+- `pending-restart`: persisted, takes effect on restart.
 
 Any failure is a D-Bus error, not a status, and nothing is persisted.
 
@@ -201,8 +216,8 @@ lower layer. Resetting an identifier that is not in the writable file succeeds
 and changes nothing. Returns the same status strings as `Set`.
 
 **`GetOverridden`** returns the identifiers currently present in the writable
-file — what the app needs to show a per-setting revert affordance. Effective
-values always come from `GetAll`.
+file, which is what the app needs to show a per-setting revert affordance.
+Effective values always come from `GetAll`.
 
 ## Signal
 
@@ -214,7 +229,7 @@ Emitted after any effective value changes, from any source: this API, an
 in-compositor interaction such as dragging the dock handle, or an external edit
 of a configuration file. Carries only the identifiers that changed.
 
-A client that called `Set` also receives the signal — it must not assume it is
+A client that called `Set` also receives the signal. It must not assume it is
 the only writer, and must not suppress its own echo.
 
 The signal is coalesced: a continuous interaction such as dragging a slider

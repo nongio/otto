@@ -5,11 +5,11 @@ display", and where you would hook into that.
 
 Files to follow along with:
 
-- `src/render.rs` — builds the element list for each output
-- `src/skia_renderer.rs` — the Skia wrapper over Smithay's GL renderer
-- `src/render_elements/scene_element.rs` — the element that draws the scene graph
-- `src/udev/render.rs` — the DRM frame path (the real one)
-- `src/winit.rs` — the windowed dev path
+- `src/render.rs` builds the element list for each output
+- `src/skia_renderer.rs` is the Skia wrapper over Smithay's GL renderer
+- `src/render_elements/scene_element.rs` draws the scene graph
+- `src/udev/render.rs` is the DRM frame path (the real one)
+- `src/winit.rs` is the windowed dev path
 
 ## The mental model
 
@@ -18,13 +18,13 @@ clothes.
 
 Smithay expects a list of *render elements* per frame: "draw this texture at
 this rect, it damaged these regions". That is an immediate-mode API. Otto
-satisfies it, but almost all of Otto's UI — windows, the dock, exposé, the app
-switcher, shadows, blur, every animation — lives in a single retained tree
+satisfies it, but almost all of Otto's UI (windows, the dock, exposé, the app
+switcher, shadows, blur, every animation) lives in a single retained tree
 managed by `lay-rs`, and is handed to Smithay as **one element**, the
 `SceneElement`.
 
 The analogy: think of the scene graph as a document, and the frame as printing
-it. `src/workspaces/` spends its time editing the document — moving a layer,
+it. `src/workspaces/` spends its time editing the document: moving a layer,
 changing an opacity, starting an animation. It never prints. Once a frame, the
 printer asks the document what changed, and re-inks only those parts of the
 page.
@@ -34,7 +34,7 @@ updating?" is nearly always a damage question rather than a drawing question.
 
 ## The layers underneath
 
-1. **Smithay owns the plumbing** — a `GlesRenderer`, the output abstraction,
+1. **Smithay owns the plumbing**: a `GlesRenderer`, the output abstraction,
    swapchains, and the damage tracker. Conceptually it renders into a buffer
    that someone will later present.
 
@@ -57,16 +57,16 @@ updating?" is nearly always a damage question rather than a drawing question.
 
 ![Render pipeline](diagrams/render-pipeline.svg)
 
-1. **Build elements** (`src/render.rs`) — one `OutputRenderElements` list per
-   output: the `SceneElement`, plus cursor and drag-and-drop surfaces, plus any
-   debug overlays.
-2. **Hand them to `OutputDamageTracker`** — Smithay intersects each element's
+1. **Build elements** (`src/render.rs`) produces one `OutputRenderElements`
+   list per output: the `SceneElement`, plus cursor and drag-and-drop surfaces,
+   plus any debug overlays.
+2. **Hand them to `OutputDamageTracker`**. Smithay intersects each element's
    damage with the age of the buffer about to be drawn into, and produces the
    set of rects that actually need repainting. If that set is empty, the frame
    is skipped entirely.
-3. **Render the damaged regions** — Smithay drives the pass; `SkiaRenderer`
+3. **Render the damaged regions**. Smithay drives the pass; `SkiaRenderer`
    wraps the framebuffer and the `SceneElement` paints the scene into it.
-4. **Present** — the backend submits the buffer (a KMS atomic commit, or a host
+4. **Present**. The backend submits the buffer (a KMS atomic commit, or a host
    window swap).
 
 On udev this is not the whole story: Otto also splits the scene into several
@@ -75,17 +75,17 @@ GPU. See [DRM Planes](drm_plane.md).
 
 ## Backends in practice
 
-**winit** — best for day-to-day development. The output is a regular window.
+**winit** is best for day-to-day development. The output is a regular window.
 There is no hardware cursor plane, so the cursor is composited normally. It
 does *not* offer real outputs, dmabuf import, hardware planes, or the
 screenshare frame path, so anything touching those has to be tested on udev.
 Touch gestures are unsupported.
 
-**udev/DRM** — the production path. Smithay manages connectors, CRTCs, planes,
+**udev/DRM** is the production path. Smithay manages connectors, CRTCs, planes,
 swapchains and submission. The cursor can be promoted to its own DRM plane;
 parts of the scene can be promoted to overlay planes.
 
-**x11** — Otto as an X11 client. Basic and not actively maintained.
+**x11** runs Otto as an X11 client. Basic and not actively maintained.
 
 ## Sampling a client's texture
 
@@ -108,8 +108,10 @@ Two rules keep that honest, and they only work together:
   physical pixel. Half a pixel of placement accuracy is worth less than the
   identity mapping it buys back, which is both the crisp result and the cheap
   one.
-- `surface_filter` takes `pixel_grid_aligned` and falls back to bicubic without
-  it — for `client_owns_size` surfaces, whose position comes from the client.
+- `surface_filter` takes `pixel_grid_aligned` and refuses both cheap branches
+  without it. `client_owns_size` surfaces, whose position comes from the
+  client, never get it: drawn 1:1 they take bilinear, which is exact wherever
+  the client stays on whole pixels, and anything else takes bicubic.
 
 Dropping either one puts a 1:1 buffer through a point sample half a pixel off,
 which shows up as doubled and dropped rows of pixels across every window on a
@@ -122,7 +124,7 @@ That is a real resample and there is nothing to snap away.
 ### Sizes, not just origins
 
 An origin on the grid is only half of a box. A size reaches a layer the same
-way a position does — a logical integer multiplied by the output scale — so
+way a position does, as a logical integer multiplied by the output scale, so
 snapping the origin alone leaves the **far** edge fractional. The server-side
 titlebar is 34 logical points (`WindowElement::DECORATION_HEIGHT`), and
 34 x 1.75 = 59.5: its bottom hairline paints across three physical rows with
@@ -158,11 +160,11 @@ these is a no-op there.
 
 Two independent capture paths exist, and they share one GPU blit:
 
-- **PipeWire screenshare**, used by the portal — after a successful render on
+- **PipeWire screenshare**, used by the portal: after a successful render on
   udev, Otto blits the framebuffer into a PipeWire-provided DMA-BUF and queues
   it. Window streams take a different route and re-render the window's own
   surface tree.
-- **`zwlr_screencopy_v1`**, used by `grim`, `wf-recorder` and `wl-mirror` —
+- **`zwlr_screencopy_v1`**, used by `grim`, `wf-recorder` and `wl-mirror`:
   dmabuf clients ride the same blit; SHM clients pay a CPU readback.
 
 Both are described in [Screen Sharing](screenshare.md).

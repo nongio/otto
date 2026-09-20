@@ -64,11 +64,11 @@ floating window always draws above them: focusing a tile never covers it up.
 
 `FloatingToggle`, or `otto-msg floating toggle`, takes the focused window out
 of the layout: it goes back to the size and position it had before it was
-tiled, or — if it was opened straight into the layout — to a sensible fraction
-of the workspace, centred where its cell was. The remaining tiles close up
-around it. The same action on a floating window puts it back in, beside
-whichever tile has focus. `floating enable` and `floating disable` say which
-way you mean.
+tiled. A window that was opened straight into the layout instead gets a
+sensible fraction of the workspace, centred where its cell was. The remaining
+tiles close up around it. The same action on a floating window puts it back in,
+beside whichever tile has focus. `floating enable` and `floating disable` say
+which way you mean.
 
 `FocusModeToggle`, or `otto-msg focus mode_toggle`, moves focus between the
 two layers: from a tile to the floating window you used last, and back again.

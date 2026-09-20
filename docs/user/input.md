@@ -13,7 +13,7 @@ xkb_variant = "dvorak"
 xkb_options = ["caps:escape"]
 ```
 
-These are standard XKB settings — the same names `setxkbmap` uses.
+These are standard XKB settings, the same names `setxkbmap` uses.
 
 ### Multiple layouts
 
@@ -36,7 +36,7 @@ switchers: `grp:alt_shift_toggle`, `grp:caps_toggle`, `grp:win_space_toggle`.
 | `ctrl:nocaps` | Caps Lock becomes another Ctrl |
 | `altwin:ctrl_win` | Super becomes Ctrl |
 | `compose:ralt` | Right Alt is the Compose key, for accented characters |
-| `terminate:ctrl_alt_bksp` | Ctrl+Alt+Backspace terminates — already built in |
+| `terminate:ctrl_alt_bksp` | Ctrl+Alt+Backspace terminates; already built in |
 
 Discover what is available:
 
@@ -47,7 +47,7 @@ man xkeyboard-config           # the full reference
 ```
 
 Layout changes apply as you make them: the new keymap replaces the seat's and is
-sent to whichever window has the keyboard, so there is nothing to restart —
+sent to whichever window has the keyboard, so there is nothing to restart,
 whether you edit the file or change it in [Settings](settings.md).
 
 ### Mac-style modifiers
@@ -55,7 +55,7 @@ whether you edit the file or change it in [Settings](settings.md).
 `altwin:ctrl_win` maps the Cmd keys onto Ctrl, so `Cmd+C`, `Cmd+V` and `Cmd+X`
 reach applications as the `Ctrl+C`/`Ctrl+V`/`Ctrl+X` they expect. The catch is
 that Cmd and the real Ctrl key then produce the same event, and a binding like
-`Ctrl+W` fires from both — closing the window when you meant `^W` to delete a
+`Ctrl+W` fires from both, closing the window when you meant `^W` to delete a
 word in a terminal.
 
 With this option set, Otto reads the physical keycode behind the modifier and
@@ -64,9 +64,9 @@ application:
 
 | You press | Otto | Application receives |
 |-----------|------|----------------------|
-| `Cmd+W` | matches a `Ctrl+W` binding | — (Otto consumed it) |
-| `Ctrl+W` | no match | `^W` — deletes a word in a terminal |
-| `Cmd+C` | no match unless you bound one | `Ctrl+C` — copies |
+| `Cmd+W` | matches a `Ctrl+W` binding | nothing (Otto consumed it) |
+| `Ctrl+W` | no match | `^W`, which deletes a word in a terminal |
+| `Cmd+C` | no match unless you bound one | `Ctrl+C`, which copies |
 
 Bindings are still written as `Ctrl+...` in the config; they simply follow the
 Cmd key. Nothing changes for layouts without this option, where Ctrl behaves
@@ -113,7 +113,7 @@ touchpad_middle_emulation_enabled = false
 | `tap_enabled` | `true` | Tap to click: 1 finger = left, 2 = right, 3 = middle |
 | `tap_drag_enabled` | `true` | Tap, hold, then drag |
 | `tap_drag_lock_enabled` | `false` | Keep dragging after lifting your finger briefly |
-| `touchpad_click_method` | `"clickfinger"` | How a physical click maps to a button — see below |
+| `touchpad_click_method` | `"clickfinger"` | How a physical click maps to a button; see below |
 | `touchpad_dwt_enabled` | `true` | Disable the touchpad while typing |
 | `touchpad_natural_scroll_enabled` | `true` | Reversed ("natural") two-finger scrolling |
 | `touchpad_left_handed` | `false` | Swap left and right buttons |
@@ -124,7 +124,7 @@ touchpad_middle_emulation_enabled = false
 | Value | Behaviour |
 |-------|-----------|
 | `"clickfinger"` | The number of fingers on the pad decides: 1 = left, 2 = right, 3 = middle |
-| `"buttonareas"` | Traditional: where you click decides — bottom-right corner = right click |
+| `"buttonareas"` | Traditional: where you click decides; bottom-right corner = right click |
 
 `clickfinger` is the default, and is what GNOME and KDE use too. `buttonareas` is
 what most Windows laptops do.
@@ -142,11 +142,11 @@ scroll_speed = 1.0
 ```
 
 `pointer_accel_speed` and `pointer_accel_profile` apply to **all** pointing
-devices — mice and touchpads alike.
+devices: mice and touchpads alike.
 
 | Profile | Behaviour |
 |---------|-----------|
-| `"adaptive"` | Speed depends on how fast you move — the usual desktop feel |
+| `"adaptive"` | Speed depends on how fast you move; the usual desktop feel |
 | `"flat"` | No acceleration; 1:1 movement, which gamers usually want |
 
 `scroll_speed` is a software multiplier applied to scroll events. `1.0` leaves
@@ -160,7 +160,7 @@ implemented.
 
 ## Touchscreen
 
-Touch input works for ordinary interaction — tap, drag, and window move and
+Touch input works for ordinary interaction: tap, drag, and window move and
 resize requests from applications. There are no touchscreen gestures; the
 [gestures](gestures.md) documented for Otto are touchpad-only.
 
@@ -168,7 +168,7 @@ resize requests from applications. There are no touchscreen gestures; the
 
 Otto implements the tablet protocol (`wp-tablet-v2`), so drawing tablets with
 pressure and tilt work in applications that support them. There are no
-tablet-specific settings — mapping and pressure curves come from the
+tablet-specific settings. Mapping and pressure curves come from the
 application.
 
 ## Input methods and virtual devices

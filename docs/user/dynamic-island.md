@@ -33,7 +33,7 @@ Otto Islands implements the standard `org.freedesktop.Notifications` D-Bus
 service, so it is a drop-in notification daemon: anything that sends a desktop
 notification (`notify-send`, your mail client, a build script) shows up here.
 
-Run only one notification daemon at a time — starting `otto-islands` alongside
+Run only one notification daemon at a time. Starting `otto-islands` alongside
 `dunst` or `mako` means whichever claims the bus name first wins. If
 `otto-islands` loses the race it still runs, but no notifications reach it.
 
@@ -46,7 +46,7 @@ notify-send "Build finished" "42 tests passed"
 ### One bubble per notification
 
 Each notification is its own bubble. Notifications from the same application are
-grouped *visually* — their bubbles overlap into a deck, newest at the front —
+grouped *visually* (their bubbles overlap into a deck, newest at the front)
 rather than being merged into a single entry. Decks sit in a centred horizontal
 row ordered by arrival, oldest deck on the left.
 
@@ -54,7 +54,7 @@ Every bubble is in one of three modes:
 
 | Mode | Looks like |
 |------|------------|
-| **Mini** | A 28px circle with the app icon. There is no count badge — the bubbles peeking out behind it are the count. |
+| **Mini** | A 28px circle with the app icon. There is no count badge; the bubbles peeking out behind it are the count. |
 | **Compact** | A pill with the icon and that notification's own title. |
 | **Expanded** | The same bubble grown into a 300px card: icon, title, wrapped body, action buttons, elapsed time, and a `Close` zone on the right. |
 
@@ -63,8 +63,8 @@ Every bubble is in one of three modes:
 A new notification arrives **expanded**, so you can read it without clicking. It
 stays open for about six seconds and then settles back into its deck as a mini
 circle. Moving the pointer onto it holds it open, and an arrival never takes over
-a bubble you opened yourself — in that case it announces itself as a compact pill
-instead.
+a bubble you opened yourself. In that case it announces itself as a compact
+pill instead.
 
 Only one bubble is compact and one expanded at a time, so a burst of
 notifications never turns the row into a wall of pills. After about four seconds
@@ -98,8 +98,8 @@ or the sending application withdraws it.
 
 Because `otto-islands` is the session's notification daemon, it is also what
 feeds the unread counts badged onto [dock](dock.md) icons. The badge counts an
-application's outstanding notifications — including ones that have timed out,
-since timing out is not reading — and clears with the last one. Counts above 99
+application's outstanding notifications (including ones that have timed out,
+since timing out is not reading) and clears with the last one. Counts above 99
 read as `99+`. Notifications marked transient never badge.
 
 A notification that identifies itself no other way is attributed to the process
@@ -109,7 +109,7 @@ forwarded by your terminal badges the terminal.
 ## Live activities
 
 Beyond notifications, any program can push an **activity** into the island over
-D-Bus — a long-running thing with a title and an icon. A build, a file transfer,
+D-Bus: a long-running thing with a title and an icon. A build, a file transfer,
 a backup.
 
 ![An activity on the island reading "Rendering lantern-turntable", with a Close button beside it](images/island-activity.gif)
@@ -168,7 +168,7 @@ This is brokered by the portal and rendered by `otto-islands` over the
 [Screen Sharing](screen-sharing.md).
 
 If `otto-islands` is not running, the portal falls back to another desktop's
-Access backend (GTK, GNOME or KDE, in that order) where one is installed — the
+Access backend (GTK, GNOME or KDE, in that order) where one is installed. The
 dialog still appears, just without Otto's styling and per-option icons. With no
 backend at all, the request is denied rather than left hanging.
 
@@ -219,6 +219,6 @@ desktop's portal Access backend has to be running to render the consent dialog.
 - A notification history or "do not disturb" mode
 - Persisting notifications across restarts (the daemon advertises the
   `persistence` capability, but does not implement it)
-- Configuration file — position, sizes and timeouts are all compiled in
+- Configuration file: position, sizes and timeouts are all compiled in
 - Multi-monitor: the island shows on the primary monitor only
 - Media player integration: nothing populates the island from MPRIS

@@ -1,6 +1,6 @@
 # Files
 
-`otto-files` is Otto's file manager — browse the filesystem, open things, move
+`otto-files` is Otto's file manager. Browse the filesystem, open things, move
 them around, and preview a file without opening it at all.
 
 ![The Files window in icon view, showing a folder of pictures as thumbnails with the sidebar of places on the left](images/files-icon-view.jpg)
@@ -14,7 +14,7 @@ them around, and preview a file without opening it at all.
 Launch **Files** from the Dock or the launcher, or run `otto-files`. It also
 serves the file-chooser portal, so "Open" and "Save as" in a sandboxed
 application land here. "Open Containing Folder" in a browser or editor does not
-yet — that goes through `org.freedesktop.FileManager1`, which Files does not
+yet. That goes through `org.freedesktop.FileManager1`, which Files does not
 implement.
 
 `Ctrl+N` opens a new window at your home directory. To open a specific folder
@@ -26,7 +26,7 @@ in a new window, hold `Ctrl` and double-click it.
 |------|-----|----------------|
 | List | `Ctrl+1` | One row per entry, with size and date |
 | Icon | `Ctrl+2` | A grid of large icons and thumbnails |
-| Column | `Ctrl+3` | Miller columns — each folder opens a pane to the right, with a preview column at the end |
+| Column | `Ctrl+3` | Miller columns: each folder opens a pane to the right, with a preview column at the end |
 
 Pictures, PDFs and videos show a thumbnail instead of a generic type icon.
 Files reads the shared thumbnail cache that other file managers write, so
@@ -63,12 +63,12 @@ pattern, and commands added by your own scripts. See
 Type or paste a path and press `Return` to go there; `Escape`, or a second
 `Ctrl+L`, puts the title back and leaves you where you were.
 
-- `Tab` **completes** against the folder being typed — to the one match, or as
-  far as every match agrees — and adds the `/` for you, so you can walk down a
+- `Tab` **completes** against the folder being typed, to the one match or as
+  far as every match agrees, and adds the `/` for you, so you can walk down a
   tree without reaching for it. Hidden files are only offered once you have
   typed the leading dot.
 - `~` is your home folder, a path starting with `/` is taken as it reads, and
-  anything else is relative to the folder on screen — so a bare folder name is
+  anything else is relative to the folder on screen, so a bare folder name is
   enough.
 - A path to a **file** opens the folder holding it with the file selected,
   which is what pasting one out of a terminal usually means.
@@ -78,7 +78,7 @@ Type or paste a path and press `Return` to go there; `Escape`, or a second
 ### Type-ahead and the sidebar
 
 - **Type a few letters** to jump to the first entry whose name starts with
-  them. This selects, it does not filter — the whole folder stays on screen.
+  them. This selects, it does not filter: the whole folder stays on screen.
   The typed text expires after about a second, and repeating one letter cycles
   through the entries beginning with it.
 - **The sidebar** holds Recent, your home, and whichever of desktop,
@@ -114,20 +114,20 @@ no such icon you get a plain folder.
 
 The file is read when a window opens, so open a new one to see a change. If it
 contains a mistake, Files says so in its log and carries on with the standard
-sidebar — you will not lose the sidebar over a stray bracket.
+sidebar. You will not lose the sidebar over a stray bracket.
 
 ## Finding files
 
 `Ctrl+F` opens a search field under the header. Type what you are looking for
-and press `Return` — searching happens when you ask for it, not on every
+and press `Return`. Searching happens when you ask for it, not on every
 keystroke, so you can finish the word first.
 
 Two buttons beside the field say how wide to look:
 
-- **This folder** — the folder you pressed `Ctrl+F` in, and everything inside
+- **This folder**: the folder you pressed `Ctrl+F` in, and everything inside
   it. This includes subfolders: it is a search of the folder, not a filter over
   the rows you can already see.
-- **Everywhere** — your whole home directory.
+- **Everywhere**: your whole home directory.
 
 Switching between them re-runs the same query, so you can start narrow and
 widen without retyping.
@@ -143,8 +143,9 @@ Forward step out of a search and into it again.
 ### Search needs the file indexer
 
 Search and the **Recent** listing both come from the desktop's file index,
-`localsearch`. It is not installed with Otto — an indexer that reads your whole
-home directory should be something you choose — so if you want either feature:
+`localsearch`. It is not installed with Otto, because an indexer that reads
+your whole home directory should be something you choose. If you want either
+feature:
 
 ```sh
 sudo pacman -S localsearch
@@ -158,11 +159,11 @@ set-environment XDG_SESSION_CLASS=user` does the same thing for the session you
 are in.)
 
 Until it is running, Files says **File indexing is off** where a result count
-would go, rather than showing an empty listing — "nothing found" and "nothing
+would go, rather than showing an empty listing: "nothing found" and "nothing
 was able to look" are different answers, and the second one should not send you
 hunting for a file that is sitting on your disk.
 
-Searching *inside* files — matching contents rather than names — is not built
+Searching *inside* files (matching contents rather than names) is not built
 yet.
 
 ## Selecting
@@ -178,7 +179,7 @@ selected. Clicking empty space selects nothing.
 |-----|--------|
 | `Return` or `F2` | Rename, inline, with the extension left out of the selection |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
-| `Delete`, `Ctrl+Delete`, `Ctrl+Backspace` | Move to trash (in the Trash window, delete permanently — it asks first) |
+| `Delete`, `Ctrl+Delete`, `Ctrl+Backspace` | Move to trash (in the Trash window, delete permanently; it asks first) |
 | `Ctrl+Z` | Undo the last operation |
 | `Ctrl+I` | Show info for the selection |
 | `Space` | Peek (see below) |
@@ -195,14 +196,14 @@ renames, new folders and trashing. Permanent deletion is not undoable, and the
 undo entry says so rather than quietly disappearing.
 
 **Drag and drop** works within a window, between windows, and in and out of
-other applications — dragging a picture into a browser upload field or a chat
+other applications. Dragging a picture into a browser upload field or a chat
 window does what you expect.
 
 ## Peek
 
 Select something and press `Space`. A panel grows out of the row showing the
-file itself: pictures, text and code, PDFs, a listing for a folder, and — for
-audio and video — the tags, dimensions and duration read from the file's header
+file itself: pictures, text and code, PDFs, a listing for a folder, and, for
+audio and video, the tags, dimensions and duration read from the file's header
 rather than the whole file. An animated GIF plays, and keeps looping for as long
 as the panel is open.
 Arrow keys move to the next file and the preview follows, `Space` closes it,
@@ -212,19 +213,19 @@ and `Escape` closes it before it clears your selection.
 
 While the panel is up it owns the pointer: the wheel scrolls a text preview, a
 pinch zooms a picture, and a two-finger scroll pans a zoomed one with momentum
-and springy ends. Files never decodes a file itself — the bytes are parsed in a
+and springy ends. Files never decodes a file itself. The bytes are parsed in a
 separate sandboxed process, and only a validated result is drawn.
 
 ### Text in pictures
 
-The words in a picture — a screenshot, a photo of a sign, a scanned page —
-can be selected and copied, once `tesseract` is installed.
+The words in a picture (a screenshot, a photo of a sign, a scanned page) can be
+selected and copied, once `tesseract` is installed.
 
 **Install it from your distribution:** `tesseract` plus a language pack such
 as `tesseract-data-eng` (Arch), `tesseract-ocr-eng` (Debian, Ubuntu) or
 `tesseract-langpack-eng` (Fedora). If you read in something other than
-English, install your language's pack as well — swap the `eng` at the end for
-its three-letter code, `deu` for German, `fra` for French, `jpn` for Japanese.
+English, install your language's pack as well. Swap the `eng` at the end for
+its three-letter code: `deu` for German, `fra` for French, `jpn` for Japanese.
 The languages used are your locale's and English, whichever packs are
 installed; there is nothing to configure. Without tesseract, pictures preview
 as before and nothing says otherwise.
@@ -233,8 +234,8 @@ as before and nothing says otherwise.
 panel's bottom right corner: it pulses while the text is being read, settles
 into a text mark once the words are there, and disappears if the picture turns
 out to have no text in it. From the moment the text mark appears the pointer
-turns into a text cursor over any word. Drag over words to select them — the
-selection follows reading order, not the shape of the drag — `Ctrl+C` copies
+turns into a text cursor over any word. Drag over words to select them; the
+selection follows reading order, not the shape of the drag. `Ctrl+C` copies
 the text with line breaks where the picture has them, `Ctrl+A` selects every
 word, and `Escape` drops the selection before it closes the panel. Zooming in
 keeps the selection on the same words.
@@ -257,9 +258,9 @@ while the words are being found, then how many there are, or *No text* when
 there turned out to be none. *Not read yet* means nothing has looked at that
 one yet.
 
-To read one again at once — when the words came out wrong, or to avoid
-waiting for the background to get to it — select it and run **Run text
-recognition** from the command palette.
+To read one again at once, when the words came out wrong or to avoid waiting
+for the background to get to it, select it and run **Run text recognition**
+from the command palette.
 
 To read a whole folder now rather than waiting for the window to get to it:
 
@@ -280,7 +281,7 @@ recognise_text = false
 Words already remembered are still shown and searched.
 
 The recogniser itself is a command you can name in the same section of that
-file — to hand tesseract different options, or to put another engine in its
+file, to hand tesseract different options or to put another engine in its
 place. Anything works that reads a PNG on standard input and writes
 [hOCR](http://kba.cloud/hocr-spec/) on standard output, which tesseract,
 kraken, ocropus and most wrappers around the neural engines do. `{languages}`
@@ -302,7 +303,7 @@ The same code is the desktop's file picker, through the XDG Desktop Portal. When
 Firefox or Chrome asks you to pick a file to upload, or to save a page, you get
 this window rather than a GTK dialog. Save mode gives you a name field with the
 proposed name's stem preselected, refuses a name that is not a single file name,
-and asks before replacing an existing file. The picker never creates the file —
+and asks before replacing an existing file. The picker never creates the file;
 the application does that once you accept.
 
 ## Trash
@@ -316,12 +317,13 @@ filesystems. The original is unlinked only once the copy is fully written.
 ### The Trash window
 
 Trash is an application of its own, in the dock and the applications list. It
-is the same program as Files behind a different window — `otto-files --trash`
-if you are launching it by hand, or `otto-files trash:///`, the URI the rest of
-the desktop uses — showing one flat listing of everything you have thrown away,
-with an **Original Location** column saying where each item came from. Otto
-registers as the handler for `trash:///`, so `xdg-open trash:///` and anything
-else asking the desktop for the trash lands here.
+is the same program as Files behind a different window, showing one flat
+listing of everything you have thrown away, with an **Original Location**
+column saying where each item came from. To launch it by hand, run
+`otto-files --trash`, or `otto-files trash:///`, the URI the rest of the
+desktop uses. Otto registers as the handler for `trash:///`, so
+`xdg-open trash:///` and anything else asking the desktop for the trash lands
+here.
 
 | Action | What it does |
 |--------|--------------|
@@ -330,7 +332,7 @@ else asking the desktop for the trash lands here.
 | `Delete` | Deletes the selection permanently, after asking. There is nowhere further to send it, so this is what the key means here |
 | Dropping files on the window | Throws them away, the same as Move to Trash |
 
-`Ctrl+Z` in the Files window undoes a delete the same way Put Back does — they
+`Ctrl+Z` in the Files window undoes a delete the same way Put Back does. They
 are the same operation reached from two places.
 
 Items in the Trash cannot be opened, renamed, copied or pasted into. Put one
@@ -340,9 +342,9 @@ so you can look inside before deciding.
 ## Not there yet
 
 - Tabs, split views, and persisted column widths.
-- Network and virtual filesystems — `smb://`, `sftp://`, MTP. Local paths only.
+- Network and virtual filesystems: `smb://`, `sftp://`, MTP. Local paths only.
 - Mounting, unmounting and ejecting devices. Mounted volumes do not appear in
-  the sidebar either — it lists Recent, your home directory, the XDG user
+  the sidebar either. It lists Recent, your home directory, the XDG user
   folders and whatever you have added yourself, and you reach anything else by
   typing the path with `Ctrl+L`.
 - Searching file contents, batch rename, archive browsing, tags and labels.

@@ -6,14 +6,14 @@ a Skia drawing layer, a widget set and a design system in one crate.
 
 It has **two consumers, and they use it in opposite ways.**
 
-- **Client apps** — otto-bar, otto-islands, otto-launcher, otto-settings,
-  otto-files, otto-peek, otto-lock, otto-greeter, otto-auth-ui. They take
-  the runtime (`AppRunner`, `AppContext`, surfaces, protocols) and then either
-  draw their own Skia or assemble components.
-- **The compositor** — `src/` has no `AppRunner`, no `AppContext` and no
-  `wl_surface`. It calls the drawing half only: `Titlebar` and `WindowControl`
-  for server-side decorations, `ContextMenuRenderer` for the dock and top-bar
-  menus, and `theme`, `typography` and `icons` everywhere.
+- **Client apps**: otto-bar, otto-islands, otto-launcher, otto-settings,
+  otto-files, otto-peek, otto-emoji, otto-lock, otto-greeter, otto-auth-ui.
+  They take the runtime (`AppRunner`, `AppContext`, surfaces, protocols) and
+  then either draw their own Skia or assemble components.
+- **The compositor**, where `src/` has no `AppRunner`, no `AppContext` and no
+  `wl_surface`. It calls the drawing half only: `WindowDecoration` and
+  `WindowControl` for server-side decorations, `ContextMenuRenderer` for the
+  dock and top-bar menus, and `theme`, `typography` and `icons` everywhere.
 
 That split is the crate's main design constraint: **anything in `components/`
 must be drawable from a bare `&Canvas`**, with no connection, no event loop and
@@ -29,6 +29,8 @@ components/otto-kit/src/
 ├── surfaces/         One type per Wayland surface role
 ├── rendering/        EGL + Skia surface, and the lay-rs renderer
 ├── components/       The widget set
+├── focus.rs          Keyboard focus order and the focus ring
+├── accessibility/    AccessKit trees and the per-surface adapter
 ├── theme.rs          Palette, and ColorScheme
 ├── typography.rs     Named text styles
 ├── icons.rs          Icon lookup
@@ -70,14 +72,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `AppRunner` owns the connection, the event queue and the seat, and drives the
 `App` through a lifecycle: `on_start`, `on_app_ready`, then the callbacks for
-what happens next — `on_configure` for a toplevel, `on_configure_layer` for a
+what happens next: `on_configure` for a toplevel, `on_configure_layer` for a
 layer surface, `on_configure_lock_surface` / `on_session_locked` /
 `on_session_lock_finished` for a locker, `on_keyboard_event`, pointer and
 gesture callbacks, and `on_close`. Everything except `on_app_ready` has a
 default no-op, so an app implements only the roles it plays.
 
 `AppContext` is the handle to everything the runtime bound. Most of it is
-**associated functions on globals, not methods** — `AppContext::outputs()`,
+**associated functions on globals, not methods**: `AppContext::outputs()`,
 `AppContext::fractional_scale()`, `AppContext::wlr_layer_shell()`,
 `AppContext::current_theme()`. This is deliberate: a draw closure or a
 component deep in a view tree needs the scale or the theme without being handed
@@ -98,10 +100,10 @@ One type per role, all implementing `BaseWaylandSurface`:
 | `DockItem` | A surface the dock hosts, via Otto's `otto-dock-v1` |
 
 `Window` (`components/window/`) sits above `ToplevelSurface` and adds a title
-bar, resize affordances and a content area. Note who actually uses it: the
-settings app and the examples. Every other app is layer-shell, subsurface or
-session-lock, and draws its own frame — which is why `Window` is thinner than
-its name suggests.
+bar, resize affordances and a content area. Note who actually uses it:
+otto-settings, otto-files and the examples. Every other app is layer-shell,
+subsurface or session-lock, and draws its own frame — which is why `Window` is
+thinner than its name suggests.
 
 ### Frame pacing
 
@@ -117,14 +119,14 @@ never gets ahead of the compositor.
 Two paths, and an app picks one:
 
 **Straight Skia.** Get a canvas for the surface and draw. This is what
-otto-islands, otto-lock, otto-greeter and most of otto-bar do — they own a
+otto-islands, otto-lock, otto-greeter and most of otto-bar do. They own a
 model and paint a bespoke view of it every frame.
 
 **The lay-rs engine.** Call `AppContext::enable_layer_engine(w, h)` before
 creating a surface, and the app gets the same retained scene graph the
 compositor uses: layers with positions, opacity, blur, corner radius and spring
 animations, updated on a background ticker and drawn with `draw_scene`. Use it
-when the UI animates. The order matters — the engine has to exist before the
+when the UI animates. The order matters: the engine has to exist before the
 surface, because a surface builds its root layer node when it is created.
 
 `rendering/` holds the pieces underneath both: `SkiaContext` (the shared
@@ -138,31 +140,32 @@ itself; it is the same one the compositor runs.
 
 Two shapes, for the reason described at the top:
 
-**Stateless `Renderable` builders** — a value that knows how to paint itself.
+**Stateless `Renderable` builders**, a value that knows how to paint itself.
 
 ```rust
 Label::new("Cursor size").with_style(styles::SUBHEADLINE).render(canvas);
 ```
 
-**Retained state plus an immediate-mode renderer** — for anything interactive.
+**Retained state plus an immediate-mode renderer**, for anything interactive.
 The caller owns a state struct, calls `render_at(canvas, w, h)` to draw it, and
 feeds it `on_pointer_down` / `on_pointer_drag` / `on_pointer_up` / `on_key`,
-each returning a response describing what changed. `TextInput` set this
-precedent; the form controls, scroll view, dropdown, slider and context menu
-all follow it.
+each returning a response describing what changed. `TextInput` is the model;
+the form controls, scroll view, dropdown, slider and context menu all follow
+it.
 
 | Group | Components |
 |-------|-----------|
-| Text and images | `Label`, `Icon`, `SvgIcon` |
+| Text and images | `Label`, `Icon` |
 | Containers | `Frame`, `Stack`, `Toolbar`, `ScrollView` |
-| Controls | `Button`, `Toggle`, `Slider`, `TextInput`, `Dropdown`, `ColorPicker` |
-| Collections | `List`, `SourceList` |
-| Menus | `MenuBar`, `ContextMenu`, `MenuItem` |
-| Window chrome | `Titlebar`, `WindowControl`, `Decoration`, `SharingIndicator`, `Window` |
+| Controls | `Button`, `Toggle`, `Slider`, `TextInput`, `dropdown`, `color_picker` |
+| Collections | `ListLayout`, `SourceListLayout` |
+| Menus | `MenuBarRenderer`, `ContextMenu`, `MenuItem` |
+| Window chrome | `Titlebar`, `WindowControl`, `WindowDecoration`, `SharingIndicator`, `Window` |
 
-`Titlebar`, `WindowControl` and `ContextMenu` are the ones the compositor draws
-directly, so a change to them lands on server-side decorations and the dock's
-menus at the same time as on apps.
+`WindowDecoration` (which builds a `Titlebar`), `WindowControl` and
+`ContextMenuRenderer` are the ones the compositor draws directly, so a change
+to them lands on server-side decorations and the dock's menus at the same time
+as on apps.
 
 ## Theme, typography and icons
 
@@ -170,14 +173,15 @@ menus at the same time as on apps.
 `AppContext::current_theme()` is `Theme::for_scheme(current_color_scheme())`,
 with the accent folded in.
 
-Both inputs come from the freedesktop settings portal —
-`org.freedesktop.appearance`'s `color-scheme` and `accent-color` — read once at
+Both inputs come from the freedesktop settings portal:
+`org.freedesktop.appearance`'s `color-scheme` and `accent-color`, read once at
 startup and then watched for `SettingChanged`, each kept in an atomic. So every
 otto-kit app follows the user's light/dark and accent choice with no code, and
 switches live. The portal backend is optional, so light/dark has a second
 source: the compositor publishes its configured scheme as `OTTO_COLOR_SCHEME`,
-which `color_scheme.rs` falls back to when the portal has answered nothing —
-startup-only, and always outranked by the portal. Otto's own backend for that portal is
+which `color_scheme.rs` falls back to when the portal has answered nothing.
+That path is startup-only, and always outranked by the portal. Otto's own
+backend for that portal is
 [`xdg-desktop-portal-otto`](settings-dbus-api.md); see
 [Color Scheme](color-scheme-setting.md) for the whole path.
 
@@ -186,25 +190,30 @@ startup-only, and always outranked by the portal. Otto's own backend for that po
 
 ## Otto's own protocols
 
-`protocols/` generates client bindings from the XML in `protocols/`:
+`src/protocols/` generates client bindings from the XML in the repository's
+top-level `protocols/`:
 
-- **`otto-surface-style-unstable-v1`** — lets a client hand the *compositor*
+- **`otto-surface-style-unstable-v1`** lets a client hand the *compositor*
   a surface's size, position, corner radius, blur, shadow and colour, and have
   them animated server-side with springs. This is what makes the dynamic island
   morph rather than cross-fade: the geometry is animated by Otto, and the
   content is drawn once at the target size. See
   [Surface Style Protocol](surface-style-protocol.md).
-- **`otto-dock-v1`** — the dock's client-side contract: publishing a dock item,
+- **`otto-dock-v1`** is the dock's client-side contract: publishing a dock item,
   and pushing per-app badge counts and progress. otto-islands uses the badge
   half to put unread notification counts on dock icons.
+- **`otto-text-cursor-v1`** carries where the desktop's text cursor is, as
+  applications last reported it through `zwp_text_input_v3.set_cursor_rectangle`,
+  so a picker or completion popup can put itself beside the caret rather than
+  in the middle of the screen.
 
 ## Everything else
 
 `desktop_entry` parses `.desktop` files (the dock and launcher's app database);
 `filetype` resolves MIME types by glob and by content sniffing, and `preview`
-renders file thumbnails against the shared freedesktop cache — both for
+renders file thumbnails against the shared freedesktop cache, both for
 otto-files and otto-peek. `clipboard` and `dnd` cover selections and drag
-and drop — `clipboard::set_text` and `clipboard::text` are the plain-text pair
+and drop: `clipboard::set_text` and `clipboard::text` are the plain-text pair
 a text field needs, since `TextInput` owns no clipboard itself: it answers a
 `Copy` or `Cut` key with `TextInputResponse::Clipboard(text)` for the host to
 offer, and takes a paste as `TextInputKey::Paste(text)` already read. `sound`
@@ -218,7 +227,7 @@ cargo build -p otto-kit
 cargo run -p otto-kit --example simple_app
 ```
 
-The `examples/` directory is the practical reference — around thirty of them,
+The `examples/` directory is the practical reference, around three dozen,
 one per component or surface pattern: `simple_app` (toplevel + menu),
 `window_with_titlebar`, `sidebar_window`, `form_controls_gallery`,
 `list_gallery`, `dropdown_gallery`, `titlebar_gallery`, `scroll_ab`,
@@ -234,7 +243,7 @@ WAYLAND_DISPLAY=wayland-1 cargo run -p otto-kit --example form_controls_gallery
 
 ## Testing
 
-The `testing` feature exposes `otto_kit::testing::TestClient` — a minimal
+The `testing` feature exposes `otto_kit::testing::TestClient`, a minimal
 Wayland client built on SHM buffers, with no EGL, Skia or `AppRunner`. It
 exists so the compositor's end-to-end tests can drive real clients:
 
@@ -246,7 +255,7 @@ assert!(toplevel.lock().unwrap().configured);
 ```
 
 Those tests live in the compositor's `tests/` and run behind its `headless`
-feature — see [Project Structure](project-structure.md).
+feature; see [Project Structure](project-structure.md).
 
 ## Where the gaps are
 

@@ -4,7 +4,7 @@ The D-Bus interface the compositor serves for driving the shell from a script:
 an i3-syntax command language, the window tree as JSON, and the two events a
 status bar watches.
 
-> **Status**: implemented on both sides — the compositor serves it
+> **Status**: implemented on both sides. The compositor serves it
 > (`src/shell_service.rs`, `src/shell/commands.rs`,
 > `src/workspaces/tiling/command.rs`) and `otto-msg`
 > (`components/otto-msg/`) consumes it. Behaviour lives in
@@ -41,8 +41,8 @@ Runs a `;`-separated command string. One result per command, in the order they
 were given. A command that worked carries an empty message; one that did not
 says why, in the words `swaymsg` would print.
 
-A string that does not **parse** abandons the whole string — i3 and sway do the
-same rather than run half of it — and comes back as a single failure naming the
+A string that does not **parse** abandons the whole string, as i3 and sway do
+rather than run half of it, and comes back as a single failure naming the
 character it stumbled on:
 
 ```
@@ -74,29 +74,36 @@ and Otto has not built it. Commands that parse and are refused at run time
 | `fullscreen [toggle]` | the same path a client's own request takes |
 | `kill` | closes the focused window |
 | `tiling toggle\|enable\|disable` | Otto's own: the workspace's mode |
+| `expose [show\|hide\|toggle]` | Otto's own: the window overview. Show and hide are idempotent |
 | `gaps inner\|outer <n> [current\|all]` | see below |
+
+A criteria is parsed, but only `focus` reads one: `[app_id="firefox"] focus`
+and `[title="…"] focus` work, and `class` and `instance` are accepted as
+spellings of `app_id`. A criteria in front of any other command is refused
+rather than quietly acted on the focused window.
 
 **Not implemented yet**, and refused by name rather than ignored:
 `layout tabbed`, `layout stacking`, `layout toggle all`, `resize set`,
-`split none`,
-`fullscreen global`, `move … to output`, per-edge `gaps`, addressing a
-workspace by name (`workspace Music`, `rename workspace Music to Code`),
-`workspace back_and_forth`. Criteria (`[app_id="…"] …`), marks, binding modes,
-`scratchpad`, `assign` and `for_window` are not parsed at all.
+`split none`, `fullscreen global`, `move … to output`, per-edge `gaps`, and
+`workspace` with `back_and_forth`, `next_on_output` or `prev_on_output`.
+Marks, binding modes, `scratchpad`, `assign` and `for_window` are not parsed
+at all. Addressing a workspace by name (`workspace Music`,
+`rename workspace Music to Code`) comes back as an ordinary parse error: Otto
+addresses a workspace by number.
 
 **Workspaces are created but never removed.** `workspace 7` appends workspaces
 until seven exist. Unlike i3, Otto does not drop one when it empties: Otto's
 workspaces are named, reorderable and per output, and a renamed workspace
 vanishing because its last window closed would break that model.
 
-**Gaps are per session with a per-workspace override.** `gaps inner 4` — or the
-explicit `gaps inner 4 current` — overrides the focused workspace alone and
-saves that override in `[workspaces.gaps]`, keyed `"<output>:<position>"`
-exactly as the workspace names are. `gaps inner 4 all` sets the `[tiling]`
-session default and drops every override, so one command undoes a session's
-worth of tweaking. `smart_gaps` stays global either way: it is a preference
-about how a *lone* tile looks, not a measurement of one workspace. sway's word
-order (`gaps inner all set 4`) reads the same.
+**Gaps are per session with a per-workspace override.** `gaps inner 4`, or the
+explicit `gaps inner 4 current`, overrides the focused workspace alone and
+saves that override in the workspace's own `[workspaces.entries]` record, keyed
+`"<output>:<position>"`, beside its name and its mode. `gaps inner 4 all` sets
+the `[tiling]` session default and drops every override, so one command undoes
+a session's worth of tweaking. `smart_gaps` stays global either way: it is a
+preference about how a *lone* tile looks, not a measurement of one workspace.
+sway's word order (`gaps inner all set 4`) reads the same.
 
 ### `GetTree() → s`
 
@@ -112,7 +119,7 @@ and windows.
 | `orientation` | every node | `horizontal`, `vertical`, `none` |
 | `percent` | children | the child's share of its container, `null` at the top |
 | `rect` | every node | `{x, y, width, height}` in **logical** pixels |
-| `focused` | every node | exactly one window is `true` |
+| `focused` | every node | the focused window, or the container `focus parent` selected |
 | `focus` | every node | child ids, most recently focused first |
 | `nodes` | every node | tiled children |
 | `floating_nodes` | workspaces | windows the tree does not hold |
@@ -121,7 +128,7 @@ and windows.
 | `window_properties` | X11 windows | `{class, instance, title}` |
 | `gaps` | workspaces | Otto's own: `{inner, outer}` when the workspace has an override, else `null` |
 
-A container's `rect` is the union of the cells under it — the tree stores
+A container's `rect` is the union of the cells under it: the tree stores
 fractions, not rectangles, so a container's extent is what its leaves span.
 
 **A floating workspace lists every window under `floating_nodes`** and has no
@@ -144,8 +151,8 @@ An array of `{name, active, primary, focused, current_workspace, rect}`.
 
 | Signal | Argument | When |
 | --- | --- | --- |
-| `WorkspaceChanged` | `s` — i3's `workspace` event as JSON | the current workspace changed |
-| `WindowChanged` | `s` — i3's `window` event as JSON | keyboard focus moved to another window |
+| `WorkspaceChanged` | `s`, i3's `workspace` event as JSON | the current workspace changed |
+| `WindowChanged` | `s`, i3's `window` event as JSON | keyboard focus moved to another window |
 
 Both payloads carry a `change` key (`"focus"`) and the subject: `current` for a
 workspace, in the `GetWorkspaces` entry shape, and `container` for a window, in
@@ -156,14 +163,14 @@ tree: focus changes with every click and every step through the app switcher,
 and walking every workspace on every output to answer one of them would be a
 cost the desktop pays whether or not anything is listening.
 
-This cut emits both signals from the focus paths — `set_keyboard_focus_on_window`
-and `set_current_workspace_index`. A workspace scrolled to by a trackpad swipe
-does not emit one yet.
+Both signals come from the focus paths — `set_keyboard_focus_on_window` and
+`set_current_workspace_index`. A workspace scrolled to by a trackpad swipe does
+not emit one.
 
 ## Errors
 
-`org.otto.Shell1.Error.Unavailable` — the compositor is not listening, or did
-not answer. Everything else is reported per command inside `RunCommand`'s
+`org.otto.Shell1.Error.Unavailable` means the compositor is not listening, or
+did not answer. Everything else is reported per command inside `RunCommand`'s
 reply, not as a D-Bus error: a command string is a batch, and one bad command
 must not lose the results of the ones around it.
 
@@ -177,4 +184,4 @@ busctl --user --json=short call org.otto.Shell1 /org/otto/Shell1 \
 ```
 
 `otto-msg` is the same calls with the argument handling and output formatting
-`swaymsg` has — see [docs/user/scripting.md](../user/scripting.md).
+`swaymsg` has; see [docs/user/scripting.md](../user/scripting.md).

@@ -30,7 +30,7 @@ then `PATH`. `otto_media_kit::player::available()` says whether one was found.
 
 Descriptors are fixed, not negotiated: the media file on 3 (read-only), the
 frame ring on 4 (read-write). Commands are lines on stdin, events lines on
-stdout — `protocol.rs` has the grammar and both parsers, and its tests keep
+stdout. `protocol.rs` has the grammar and both parsers, and its tests keep
 them round-tripping.
 
 The ring is a memfd the host creates and the worker sizes once it knows the
@@ -91,7 +91,7 @@ one `peek::Video`: the Peek panel (autoplays) and the docked
 Miller preview column (opens paused on the first frame, plays on click).
 
 A paused pipeline emits its first frame as a *preroll*, not a sample, so the
-worker delivers both — otherwise a paused embed would show black. The docked
+worker delivers both. Otherwise a paused embed would show black. The docked
 column always opens paused on that first frame and plays on click; only the
 Peek panel autoplays.
 
@@ -110,5 +110,5 @@ In the preview column that box is its **own Wayland subsurface**
 surface — never the browser's toplevel, nor the scene's cached preview
 picture, whose key drops the video term when the video is on a surface. Input
 still belongs to the toplevel (empty input region), and the browser hit-tests
-the same box, so play and scrub work through the existing routing. The Quick
-View panel is unaffected: it is already its own surface.
+the same box, so play and scrub work through the existing routing. The Peek
+panel is unaffected: it is already its own surface.

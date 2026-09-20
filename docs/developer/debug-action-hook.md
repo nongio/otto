@@ -3,7 +3,7 @@
 Otto's keyboard shortcuts are matched inside the libinput handler, before the
 key ever reaches a client. Keys synthesised through the virtual-keyboard
 protocol (`wtype`, `wlrctl`, the RDP bridge) deliberately skip that filter and
-go straight to the focused surface — see
+go straight to the focused surface; see
 `src/state/virtual_keyboard_handler.rs`. A script therefore *cannot* drive
 compositor UI by pressing keys.
 
@@ -41,7 +41,7 @@ over the same well-known file.
 
 ## Action names
 
-Any name `parse_builtin_name` accepts (`src/config/shortcuts.rs`) — the same
+Any name `parse_builtin_name` accepts (`src/config/shortcuts.rs`), the same
 names the `[shortcuts]` config table uses:
 
 | Group | Names |
@@ -49,6 +49,7 @@ names the `[shortcuts]` config table uses:
 | Overview | `ExposeShowAll`, `ExposeShowDesktop` |
 | App switcher | `ApplicationSwitchNext`, `ApplicationSwitchPrev`, `ApplicationSwitchNextWindow`, `ApplicationSwitchQuit` |
 | Windows | `ToggleMaximizeWindow`, `TileWindowLeft`, `TileWindowRight`, `CloseWindow`, `ToggleDecorations` |
+| Tiling | `TilingToggle`, `FocusLeft`, `FocusRight`, `FocusUp`, `FocusDown`, `MoveContainerLeft`, `MoveContainerRight`, `MoveContainerUp`, `MoveContainerDown`, `SplitHorizontal`, `SplitVertical`, `ResizeGrowWidth`, `ResizeShrinkWidth`, `ResizeGrowHeight`, `ResizeShrinkHeight`, `EqualizeContainer`, `FloatingToggle`, `FocusModeToggle` |
 | Session | `Quit`, `LockSession` |
 | OSD | `BrightnessUp`, `BrightnessDown`, `VolumeUp`, `VolumeDown`, `VolumeMute` |
 | Media | `MediaPlayPause`, `MediaNext`, `MediaPrev`, `MediaStop` |
@@ -57,17 +58,17 @@ names the `[shortcuts]` config table uses:
 `Workspace` and `Screen` need an index, which the bare-name parser cannot
 carry, so they are not reachable through the hook — a workspace switch bound
 to a shortcut still resolves to `WorkspaceNum` and runs, but only via a real
-key press. Backend-specific actions (`VtSwitch`, `ScaleUp`, `ScaleDown`,
-`RotateOutput`, `Screen`) are dispatched by the per-backend keyboard handlers;
-reaching them from the hook logs a warning rather than doing anything.
+key press. Backend-specific actions (`ScaleUp`, `ScaleDown`, `RotateOutput`)
+are dispatched by the per-backend keyboard handlers; reaching them from the
+hook logs a warning rather than doing anything.
 
 An unknown name logs `unknown debug action: …` and is otherwise ignored.
 
 ## Where it lives
 
 `Otto::poll_debug_action_file` and `process_debug_key_action` in
-`src/input/actions.rs`. Both backends — `src/winit.rs` and `src/udev/init.rs`
-— call the same function and differ only in how they ask for the redraw
+`src/input/actions.rs`. Both backends (`src/winit.rs` and `src/udev/init.rs`)
+call the same function and differ only in how they ask for the redraw
 afterwards, so the two are guaranteed to accept the same set of actions.
 
 Note that `process_common_key_action` warns and drops anything it does not

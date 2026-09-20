@@ -6,22 +6,22 @@ the bridge and whatever draws that indicator.
 
 ## Is there an existing indicator to join?
 
-There was none. Before this, nothing in Otto surfaced "something can see your
-screen" to the user:
+No. Nothing else in Otto surfaces "something can see your screen" to the user:
 
-- `src/screenshare/` implements `org.otto.ScreenCast` — sessions, streams,
+- `src/screenshare/` implements `org.otto.ScreenCast`: sessions, streams,
   cursor modes, PipeWire nodes. It is a capture *API*, consumed by
   `xdg-desktop-portal-otto` and by `otto-rdp --connector`. It has no notion of
   an indicator, no "capture is active" property, and no UI consumer.
-- `components/otto-bar/` had a tray, a clock and an app menu. No privacy UI.
-- The dock's "running" dots and `src/workspaces/osd.rs` are unrelated —
+- `components/otto-bar/` has a tray, a clock and an app menu, and no privacy
+  UI of its own.
+- The dock's "running" dots and `src/workspaces/osd.rs` are unrelated:
   application state and volume/brightness OSDs.
 
-So this is the first such indicator, not a second parallel system. It
-deliberately reuses the tray protocols the bar already speaks rather than
-introducing an Otto-specific one, which means a future compositor-side
-screencast indicator can be a second StatusNotifierItem and the two will queue
-up in the same place with the same appearance, instead of competing.
+So this is the only such indicator, not one of two parallel systems. It
+deliberately reuses the tray protocols the bar already speaks rather than an
+Otto-specific one. A future compositor-side screencast indicator can therefore
+be a second StatusNotifierItem: the two queue up in the same place with the
+same appearance instead of competing.
 
 ## The contract
 
@@ -43,13 +43,13 @@ their own item and their own dot.
 
 | Property | Value |
 |---|---|
-| `Category` | `SystemServices` — the session acting on the user, not an app's own icon |
+| `Category` | `SystemServices`: the session acting on the user, not an app's own icon |
 | `Id` | `otto-rdp` |
 | `Title` | `Screen shared with <peer host>` |
 | `Status` | `Active`, always. Never `Passive`: hosts may hide passive items, and a privacy signal the user cannot see is worse than none |
 | `IconName` | `media-record` |
 | `IconPixmap` | 22px and 44px red discs, drawn by the bridge. ARGB32, network byte order, unpremultiplied |
-| `ItemIsMenu` | `true` — hosts open the menu rather than synthesising an activation |
+| `ItemIsMenu` | `true`; hosts open the menu rather than synthesising an activation |
 | `Menu` | `/MenuBar` |
 | `ToolTip` | title as above, description `<output> is being shared since HH:MM` |
 
@@ -73,7 +73,7 @@ A flat, fixed layout. `GetLayout(0, -1, [])` returns:
 
 `Event(4, "clicked", …)` stops the session. Ids 1–3 are inert.
 
-The layout never changes within a session, because hosts cache it — Otto's bar
+The layout never changes within a session, because hosts cache it: Otto's bar
 prefetches it at registration time and renders from that cache. That is why the
 "since" line is an absolute clock time rather than a live elapsed duration, and
 why the transport codec is not shown at all: the codec is only settled after the
@@ -105,8 +105,8 @@ unregister in practice: the KDE spec's `StatusNotifierItemUnregistered` is
 emitted by watchers, not items, and hosts do not universally act on it. So the
 item lives on its **own `zbus::Connection`**, opened when sharing starts:
 
-- normal end of session — the bridge calls `release_name`;
-- crash, `SIGKILL`, OOM — the socket closes and the bus daemon releases the name.
+- normal end of session: the bridge calls `release_name`;
+- crash, `SIGKILL`, OOM: the socket closes and the bus daemon releases the name.
 
 Both paths end at the same `NameOwnerChanged`, which is what every host already
 watches. A stale "you are being recorded" icon is not reachable.
@@ -142,13 +142,13 @@ reconnect, which is not what a user means by stopping sharing.
 
 ## Implementation
 
-- `components/otto-rdp/src/indicator.rs` — the item, the menu, the lifecycle.
-- `components/otto-rdp/src/rdp.rs` — `updates()` raises the indicator.
-- `components/otto-rdp/src/main.rs` — wires the connection handler and the stop
+- `components/otto-rdp/src/indicator.rs`: the item, the menu, the lifecycle.
+- `components/otto-rdp/src/rdp.rs`: `updates()` raises the indicator.
+- `components/otto-rdp/src/main.rs`: wires the connection handler and the stop
   path into the ironrdp server.
 
-Nothing in `components/otto-bar/` changed: the bar's existing
-`StatusNotifierWatcher`/host (`src/tray.rs`) and dbusmenu client
-(`src/dbusmenu.rs`) render the indicator as they would any other tray item.
+No bar-side code is involved: the bar's `StatusNotifierWatcher`/host
+(`src/tray.rs`) and dbusmenu client (`src/dbusmenu.rs`) render the indicator as
+they would any other tray item.
 
 See also `specs/rdp-bridge.md` and `docs/developer/rdp-virtual-output.md`.

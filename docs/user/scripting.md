@@ -3,7 +3,7 @@
 `otto-msg` drives the desktop from a script or a terminal: it runs window
 commands, prints the window tree as JSON, and follows what the compositor is
 doing. If you have written anything for i3 or sway, this is `i3-msg` and
-`swaymsg` under another name — the command words and the JSON shapes are the
+`swaymsg` under another name. The command words and the JSON shapes are the
 same ones.
 
 ```sh
@@ -12,7 +12,7 @@ otto-msg -t get_tree
 ```
 
 Behind it is a D-Bus interface, `org.otto.Shell1`, so anything that can make a
-D-Bus call can do the same without the CLI — see
+D-Bus call can do the same without the CLI. See
 [shell-dbus-api.md](../developer/shell-dbus-api.md) for the wire.
 
 ## Running commands
@@ -45,7 +45,7 @@ the command, spaces and all, so `rename workspace to Deep Work` needs no
 quotes (though quotes are allowed, and dropped). The name is written to your
 config as the workspace selector writes it, so it is there again next login.
 
-Most of these need a **tiling workspace** — `tiling enable` first, or bind
+Most of these need a **tiling workspace**: `tiling enable` first, or bind
 `TilingToggle` to a key. On a floating workspace they say so rather than doing
 something surprising. The exception is `[app_id="…"] focus`, which works
 anywhere.
@@ -66,7 +66,7 @@ otto-msg '[app_id="foot" title="build"] focus'
 | `app_id` | The Wayland app id. `class` and `instance` are accepted as the X11 spellings. |
 | `title` | The window title. |
 
-The match is a **case-insensitive substring**, not i3's regex — `chrome` finds
+The match is a **case-insensitive substring**, not i3's regex: `chrome` finds
 `google-chrome`. Give both fields and both must match. Otto switches workspace
 to reach the window. When several match it takes the first, so narrow the
 criteria to reach the others; when none match it says so rather than doing
@@ -149,7 +149,7 @@ node holding that workspace's override (or `null`).
 
 ## Binding it to a key
 
-`otto-msg` is not the way to bind a key — the compositor has named actions for
+`otto-msg` is not the way to bind a key. The compositor has named actions for
 every one of these commands, and going out through D-Bus and back for a
 keystroke is slower and can fail. Bind the action instead, in
 `[keyboard_shortcuts]`; see

@@ -1,4 +1,4 @@
-# Surface Style Protocol — design and history
+# Surface Style Protocol — design notes
 
 Why Otto lets clients describe animations declaratively instead of driving
 them frame by frame, and how that idea became a Wayland protocol.
@@ -8,9 +8,8 @@ them frame by frame, and how that idea became a Wayland protocol.
 > implementation in `src/surface_style/`. The XML is the authority for the
 > current interface; this page explains *why* it looks the way it does.
 >
-> It was sketched as `sc_layer_shell` and that name is gone.
-> `protocols/sc-layer-v1.xml` is the dead ancestor, and only stale code
-> comments still say `sc_layer` — read any of them as the style protocol.
+> `protocols/sc-layer-v1.xml` is a dead ancestor of it, and some code comments
+> still say `sc_layer`; read any of them as the style protocol.
 
 ## The idea
 
@@ -54,24 +53,24 @@ established retained-mode layer APIs, where they mean what they usually mean.
 
 Four interfaces, all in the XML:
 
-**`otto_surface_style_manager_v1`** — the global. `get_surface_style` attaches
+**`otto_surface_style_manager_v1`** is the global. `get_surface_style` attaches
 a style object to a `wl_surface`; `begin_transaction` and
 `create_timing_function` make the other two.
 
-**`otto_surface_style_v1`** — the properties. Geometry: `set_position`,
+**`otto_surface_style_v1`** carries the properties. Geometry: `set_position`,
 `set_z_position`, `set_size`, `set_scale`, `set_rotation`, `set_anchor_point`,
 `set_transform`. Appearance: `set_opacity`, `set_background_color`,
 `set_corner_radius`, `set_border`, `set_shadow`, `set_blend_mode`.
 Layout and clipping: `set_hidden`, `set_masks_to_bounds` (clip this surface's
 own content to its style bounds), `set_clip_children` (clip its *subsurfaces*
-to those bounds — the two are independent, and the bounds are the style node's
+to those bounds; the two are independent, and the bounds are the style node's
 size, which a client can own separately from its buffer size),
-`set_contents_gravity` (how the surface buffer fills the layer — resize,
+`set_contents_gravity` (how the surface buffer fills the layer: resize,
 aspect-fit, aspect-fill), `set_z_order` (whether the style renders above or
 below the surface's own content). Plus `cancel_animation` and
 `cancel_all_animations`.
 
-**Version 3 added output placement** — `request_output_frame` with its
+**Version 3 added output placement**: `request_output_frame` with its
 `output_frame` event, plus `set_output_placement` and
 `set_output_relative_size`. These let a surface be placed and sized against the
 output rather than its parent, which is how Peek sits centred on the
@@ -81,23 +80,30 @@ which is the wrong half of a subsurface. Full rules, the recipe and the
 recognisable failure modes are in
 [specs/surface-output-placement.md](../../specs/surface-output-placement.md).
 
-**Version 4 added `desktop_frame`** — an event carrying where the compositor is
+**Version 4 added `desktop_frame`**: an event carrying where the compositor is
 actually drawing the surface, in the desktop's coordinate space rather than the
 window's. A client is otherwise never told where its window is, which is fine
 for drawing and wrong for accessibility: an assistive technology asks an
 application what is at a screen coordinate, so a window answering in its own
 coordinates claims a rectangle belonging to whatever sits in the top-left of the
-desktop. It is sent on first draw and whenever the rect changes — the window
-moving, the workspace scrolling, a mode or scale change — in physical pixels,
+desktop. It is sent on first draw and whenever the rect changes (the window
+moving, the workspace scrolling, a mode or scale change), in physical pixels,
 and it deliberately ignores the window overview, which draws scaled-down copies
 rather than moving the windows. Implementation in
 `src/surface_style/desktop_frame.rs`.
 
-**`otto_style_transaction_v1`** — `set_duration`, `set_delay`,
+**Version 5 added `set_beak`**: a rounded rectangle with a point reaching out
+of one edge, instead of a plain rounded rectangle. Everything the compositor
+paints follows the new outline: the background, the blur behind it, the border
+and the shadow, so a frosted balloon stays one piece of glass. `set_size`
+covers the whole balloon and the beak is taken out of the edge it sits on, so
+the client's own drawing has to leave that strip alone. It is not animatable.
+
+**`otto_style_transaction_v1`** carries `set_duration`, `set_delay`,
 `set_timing_function`, `enable_completion_event`, `commit`, and a `completed`
 event.
 
-**`otto_timing_function_v1`** — `set_preset` (linear, ease-in, ease-out,
+**`otto_timing_function_v1`** carries `set_preset` (linear, ease-in, ease-out,
 ease-in-out), `set_bezier` for a custom cubic curve, and two ways to specify a
 spring: `set_spring` (duration, bounce, initial velocity) or
 `set_spring_stiffness_damping` for direct physical parameters.
@@ -137,7 +143,7 @@ otto_surface_style_v1_set_output_placement(style,
 ```
 
 The gesture case is the one that justifies springs. Set the position directly
-while the finger is down — no transaction, no animation — then on release,
+while the finger is down (no transaction, no animation), then on release
 commit a spring seeded with the gesture's own velocity so the motion continues
 rather than restarting:
 
@@ -155,17 +161,19 @@ the pending property changes are turned into layer changes, and both are handed
 to the engine:
 
 ```rust
-let animation = engine.add_animation_from_transition(&transition, true);
-let transactions = engine.schedule_changes(&changes, animation);
+let animation = engine.add_animation_from_transition(trans, false);
+engine.schedule_changes(&txn.accumulated_changes, animation);
 
-if tx.wants_completion {
-    if let Some(tr) = transactions.first() {
-        tr.on_finish(move |_, _| tx_object.completed(), true);
-    }
+if txn.send_completion {
+    engine.on_animation_finish(animation, move |_| wl_txn.completed(), false);
 }
+
+engine.start_animation(animation, trans.delay);
 ```
 
-See `src/surface_style/handlers/transactions.rs`.
+A transaction with no changes, or one with no transition, sends its
+`completed` event straight away. See `commit_transaction` in
+`src/surface_style/handlers/mod.rs`.
 
 ## Working on the XML
 
@@ -176,11 +184,11 @@ Two traps, both of which look like the code being wrong rather than the build:
   `protocols/otto-surface-style-unstable-v1.xml` changes nothing until something
   forces otto-kit to rebuild. `touch components/otto-kit/src/protocols/mod.rs`
   after every XML edit.
-- **Both ends have to agree on the version.** A request added `since="4"` needs
-  the compositor to advertise 4 *and* the client to bind at least 4
-  (`globals.bind(&qh, 1..=4, ())` in otto-kit's app runner). Bind too low and
-  the compositor kills the client with "invalid version ... (3, need at least
-  4)" the moment it uses the request.
+- **Both ends have to agree on the version.** A request added `since="5"` needs
+  the compositor to advertise 5 *and* the client to bind at least 5
+  (`globals.bind(&qh, 1..=5, ())` in otto-kit's app runner). Bind too low and
+  the compositor kills the client with "invalid version ... (4, need at least
+  5)" the moment it uses the request.
 
 ## Not built
 
@@ -189,17 +197,17 @@ recorded here so the reasoning is not re-derived:
 
 - **Compositing filters** (blur, brightness, contrast, saturation as a
   client-settable filter object).
-- **Keyframe animations** — multi-stop value tracks with per-segment timing.
-- **Animation groups** — choreographing several transactions with relative
+- **Keyframe animations**: multi-stop value tracks with per-segment timing.
+- **Animation groups**: choreographing several transactions with relative
   start times.
-- **Gesture recognizers** — binding a compositor-side gesture directly to a
+- **Gesture recognizers**: binding a compositor-side gesture directly to a
   layer property, with `progress`/`velocity` events. Clients currently drive
   this themselves from ordinary pointer/touch events, which is more code but
   keeps the protocol small.
 
 ## References
 
-- [`protocols/otto-surface-style-unstable-v1.xml`](../../protocols/otto-surface-style-unstable-v1.xml) — the interface
-- `src/surface_style/` — the implementation
-- [lay-rs](https://github.com/nongio/layers) — the engine being exposed
-- `src/workspaces/mod.rs` — the compositor's own spring animation usage
+- [`protocols/otto-surface-style-unstable-v1.xml`](../../protocols/otto-surface-style-unstable-v1.xml): the interface
+- `src/surface_style/`: the implementation
+- [lay-rs](https://github.com/nongio/layers): the engine being exposed
+- `src/workspaces/mod.rs`: the compositor's own spring animation usage

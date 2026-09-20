@@ -3,21 +3,21 @@
 How Otto hands parts of the screen straight to the display hardware, so the
 GPU does not have to composite them.
 
-> Structure and rationale live here. The full behavioural contract —
-> per-buffer damage rules, blur-composite invalidation, promotion hysteresis —
+> Structure and rationale live here. The full behavioural contract
+> (per-buffer damage rules, blur-composite invalidation, promotion hysteresis)
 > is [`specs/plane-scanout.md`](../../specs/plane-scanout.md).
 
 ## Reparenting a layer raises it
 
 `add_sublayer` on a layer that is already a child *moves it to the end* of its
-parent's children — which is exactly how `raise_window_to_front` raises a
+parent's children, which is exactly how `raise_window_to_front` raises a
 window. Anything that reparents a window layer therefore raises it as a side
 effect, whatever its place in the stack was.
 
 Promotion moves a window's subtree out of the workspace's `windows_layer` and
 into the output's promoted-plane container; demotion moves it back. That move
-back is a raise, so a window demoted after another one was mapped came back on
-top of it and stayed there — the workspace's `windows_list` is the stack, and
+back is a raise, so a window demoted after another one was mapped would come
+back on top of it. The workspace's `windows_list` is the stack, and
 `WorkspaceView::restack_windows` re-applies it after every demotion.
 
 The promoted plane also scans out *above* the windows plane, so anything left
@@ -38,37 +38,41 @@ every frame, you draw the background once, the characters on a second sheet,
 and the caption on a third — then let the camera stack them. Moving the caption
 means moving one sheet, not repainting the picture.
 
-Concretely: if the dock is on its own plane and only the dock is animating,
-the GPU renders a small strip and the display engine composites it over
-untouched buffers. The background, the windows and everything else are not
-touched at all, and often no GPU work happens for that frame whatsoever.
+Concretely: the app switcher is on its own plane, so while it is animating the
+GPU renders a small strip and the display engine composites it over untouched
+buffers. The background, the windows and everything else are not touched at
+all, and often no GPU work happens for that frame whatsoever.
 
 ## What Otto actually does
 
-Most compositors use planes opportunistically — "if a fullscreen window
+Most compositors use planes opportunistically: "if a fullscreen window
 happens to be scanout-compatible, promote it". Otto goes further and
 **deliberately splits its own scene into per-purpose buffers** so there is
 something for the planes to take.
 
 ![Plane decomposition](diagrams/planes.svg)
 
-For the same decomposition seen from the other end — which scene subtree each
-of these buffers is rendered from — see
+For the same decomposition seen from the other end (which scene subtree each
+of these buffers is rendered from), see
 [the overview in The Scene Graph](scene-graph.md#the-whole-chain-at-a-glance).
 
-Per output, front to back: the dock strip, the app-switcher strip, overlay UI,
-exposé, the promoted client window, the windows buffer, and the background.
-Each of those is a subtree of the `lay-rs` scene — see
-[The Scene Graph](scene-graph.md) for how the tree is shaped and why.
-(When the session is locked, only the lock plane is composited — nothing that
+Per output, front to back: the app-switcher strip, overlay UI (the bar, the
+islands, the dock, the OSD and popups), exposé, the promoted client window,
+the windows buffer, and the background. Each of those is a subtree of the
+`lay-rs` scene. See [The Scene Graph](scene-graph.md) for how the tree is
+shaped and why.
+(When the session is locked, only the lock plane is composited: nothing that
 could hold a window is even consulted.)
 
 Two details are load-bearing:
 
-- **The dock and switcher buffers are strips, not full screens.** A bottom dock
-  gets a band of `min(height/4, 480)` px; a side dock gets a column. Small
-  buffers mean a dock animation redraws a band rather than a screen, and KMS
-  bandwidth ("watermark") cost scales with plane size.
+- **The switcher buffer is a strip, not a full screen.** It starts as a
+  centred band of `min(height/2, 960)` px and follows its content from there
+  (`fit_plane`). A small buffer means a switcher animation redraws a band
+  rather than a screen, and KMS bandwidth ("watermark") cost scales with plane
+  size. The dock has no plane of its own: a plane costs the full pixel rate
+  whatever its size, so the dock draws on the overlay plane with the rest of
+  the chrome and leaves the spare plane to a client.
 - **The background is `XRGB8888` and opaque, and is pinned to the primary
   plane** (`Kind::Unspecified`). A full-output opaque buffer that floated up to
   an overlay would hide every element that had fallen back to GPU compositing
@@ -89,8 +93,8 @@ desktop produces no re-renders and no page flips.
 - **The primary GPU.** Plane dmabufs are rendered with the primary GPU's EGL
   context; a cross-device import per plane per frame is not reliable.
 
-When any fails, the output renders as a single scene element — the ordinary
-path — and Otto logs why under the `otto::planes` target.
+When any fails, the output renders as a single scene element (the ordinary
+path), and Otto logs why under the `otto::planes` target.
 
 **NVIDIA**: overlay planes are cleared entirely at surface creation, because
 overlay usage on those drivers is broken. That also disables decomposition, by
@@ -105,7 +109,7 @@ first, **every frame**. For each element it:
 1. Calls `element.underlying_storage(renderer)`. `None` means the element has
    no importable buffer and must be GPU-composited.
 2. Exports a dmabuf and adds a framebuffer via the framebuffer exporter.
-3. Tests plane compatibility — format, transform, z-order, size — with
+3. Tests plane compatibility (format, transform, z-order, size) with
    `try_assign_plane()`.
 4. Assigns it if compatible; otherwise the element is rendered by the GPU into
    the primary swapchain, exactly as a plane-less compositor would.
@@ -114,9 +118,11 @@ So plane usage is best-effort and re-decided per frame. There is no probing
 step and no cached tier: acceptance is delegated to the kernel, and rejection
 is a normal, silent fallback.
 
-For an element to be *eligible* it must provide `underlying_storage()`, report
-`Kind::ScanoutCandidate`, be backed by a dmabuf (not CPU memory or an anonymous
-GPU texture), and use a format and transform the plane supports.
+For an element to be eligible for an *overlay* it must provide
+`underlying_storage()`, report `Kind::ScanoutCandidate`, be backed by a dmabuf
+(not CPU memory or an anonymous GPU texture), and use a format and transform
+the plane supports. `Kind::Unspecified` leaves an element to the primary plane,
+which is how the background stays pinned there.
 
 ## Direct scanout of a client window
 
@@ -126,7 +132,8 @@ big win for video players and games.
 
 Promotion has hysteresis: the candidate set must stay unchanged for 500 ms
 (`PROMOTE_STABLE`) before anything new is promoted, because flapping between
-promoted and composited is visible as a flicker. Its shadow is drawn separately by the
+promoted and composited is visible as a flicker. Only the root surface is
+promoted: the shadow and the server-side decorations keep rendering in the
 windows buffer.
 
 Otto also publishes **dmabuf feedback** to clients, with a scanout tranche
@@ -149,12 +156,12 @@ edge and leaves a faded rim, while a whole-image blur has no edge to sample
 across.
 
 Promoted client windows are folded into that composite by blitting their
-dmabuf — the same buffer KMS scans out — so a shared window does not vanish
+dmabuf (the same buffer KMS scans out), so a shared window does not vanish
 from the blur behind the dock.
 
 The composite is rebuilt only when lower-plane damage lands under a blur
 consumer. A consumer is the set of `BackgroundBlur` shapes in a plane's
-subtree — the dock bar, a hovered label, the switcher card — each outset by
+subtree (the dock bar, a hovered label, the switcher card), each outset by
 `BLUR_REACH`, not the plane's whole strip; `SceneDmabufElement::
 subtree_blur_rects` reads them from lay-rs' bubbled-up `backdrop_blur_region`.
 Damage that misses every consumer rebuilds nothing and marks nothing, but is
@@ -176,16 +183,16 @@ RUST_LOG=smithay::backend::drm::compositor=trace cargo run -- --tty-udev
 
 Useful trace lines:
 
-- `assigned element … to overlay plane …` — success
-- `skipping element … element kind not scanout-candidate` — wrong `Kind`
-- `skipping direct scan-out … format … not supported` — format mismatch
-- `failed to claim plane` — the plane is already in use
+- `assigned element … to overlay plane …`: success
+- `skipping element … element kind not scanout-candidate`: wrong `Kind`
+- `skipping direct scan-out … format … not supported`: format mismatch
+- `failed to claim plane`: the plane is already in use
 
 Build with `--features debug-kms` for extra KMS logging.
 
 ## Related
 
-- [`specs/plane-scanout.md`](../../specs/plane-scanout.md) — the contract
-- [Rendering](rendering.md) — the pipeline these buffers feed
-- [Render Loop](render_loop.md) — the damage rules that decide what re-renders
+- [`specs/plane-scanout.md`](../../specs/plane-scanout.md): the contract
+- [Rendering](rendering.md): the pipeline these buffers feed
+- [Render Loop](render_loop.md): the damage rules that decide what re-renders
 - `src/udev/planes.rs`, `src/udev/backdrop.rs`, `src/udev/render.rs`

@@ -29,7 +29,7 @@ feedback is on, plays a short click so you can hear where the level is.
 "XF86AudioStop" = "MediaStop"
 ```
 
-These control whichever media player is registered on MPRIS — Spotify, VLC,
+These control whichever media player is registered on MPRIS: Spotify, VLC,
 mpv with the MPRIS script, browsers playing video. No configuration needed;
 Otto talks to the active player.
 
@@ -81,7 +81,7 @@ wpctl status         # list PipeWire devices
 wpctl set-default 42 # make node 42 the default sink
 ```
 
-`pavucontrol` in the system tray is the usual setup — see
+`pavucontrol` in the system tray is the usual setup. See
 [Top Bar](topbar.md).
 
 ## Audio over remote sessions

@@ -8,7 +8,10 @@ Behaviour is specified in [specs/peek.md](../../specs/peek.md) and
 [specs/file-browser.md](../../specs/file-browser.md). This page describes the
 structure as it is built today, and it disagrees with the Peek spec in
 several places; see [Where the spec has drifted](#where-the-spec-has-drifted).
-The video worker has its own page, [otto-media-kit](otto-media-kit.md).
+Three neighbouring pieces have their own pages: the video worker,
+[otto-media-kit](otto-media-kit.md); the words recognised in a picture,
+[Text in Pictures](peek-ocr.md); and the icon a preview stands in for,
+[File Icons](file-icons.md).
 
 ## The pieces
 
@@ -381,8 +384,53 @@ outside closes). The two share hit rects.
 supports it, but `peek::decode` always asks for zoom 1. An 8× zoom
 enlarges the panel-sized decode, which is about 2× the panel's pixels.
 
+**Words.** A picture that has been read carries its words on
+`Preview::Pixels`, and `draw_selection` paints the selection over the picture
+after it is drawn. The recogniser, the cache and the badge are on
+[Text in Pictures](peek-ocr.md).
+
+**Animation.** `first_row` doubles as the frame index for an animated picture,
+and `tick_animation` advances it from the update tick for as long as the panel
+is open. Because `first_row` is part of `peek_key`, each frame repaints the
+panel's surface alone. The strip itself is built by the decoder; see
+[File Icons](file-icons.md#animated-previews).
+
 **Accessibility.** An open session is published with `A11yTree::preview` and
 takes focus.
+
+### Dragging the panel
+
+The panel is dragged by its title strip. `view::peek_grip_rect` is that strip
+minus the buttons, with 4 pt of clearance before the expand dot; the content is
+not a handle.
+
+`peek_grip` records the press point and the panel's top-left at the press, and
+takes a double click inside the double-click window as *expand* instead.
+`drag_peek_to` then places the panel at `origin + point - grab`.
+
+**Nothing is read back from the render path.** A pointer holding a button stays
+in a grab whose focus surface and coordinate frame are fixed, so measuring
+against a per-frame rect would make the drag run away from the cursor.
+
+`place_peek` clamps the left edge inside the bounds and the top so that at
+least the title strip stays on screen. The strip is the only thing that can
+bring the panel back. `clamp_peek` re-clamps when the window or the display
+changes, against where the panel is *asking* to be rather than where it was
+last put.
+Bounds are the display once the compositor has answered `request_output_frame`,
+and the window until then.
+
+The offset is folded into the resting rect, so surface placement, drawing and
+hit rects cannot disagree, and the panel's content key is its **size** rather
+than its rect. Dragging repaints nothing and only moves the subsurface.
+Expanding recentres. The offset survives arrow-keying to another file, but not
+closing the panel, since a session is built afresh.
+
+`app/peek_drag_tests.rs` names the rules it holds:
+`the_title_strip_takes_hold_of_the_panel`, `the_content_does_not`,
+`a_drag_over_the_panels_own_surface_does_not_run_away`,
+`a_panel_cannot_be_dragged_off_the_display`,
+`clamping_every_frame_does_not_walk_the_panel`.
 
 ## Video
 

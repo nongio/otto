@@ -1,6 +1,6 @@
 # Layers
 
-A layer is the unit Otto draws with — every window, shadow, menu, dock icon and
+A layer is the unit Otto draws with. Every window, shadow, menu, dock icon and
 wallpaper is one or more of them in the
 [lay-rs](https://github.com/nongio/layers) scene. This page is about that unit:
 what it holds, what happens to it on a frame, and the few ideas that make the
@@ -17,7 +17,7 @@ whole subtrees of them become hardware planes.
 
 A `Layer` value is a handle, not the thing itself: an `Arc<Engine>`, a
 `NodeRef` into the scene arena, a Taffy node id, and an `Arc<ModelLayer>`.
-Cloning one is free and clones nothing — two `Layer`s with the same id *are*
+Cloning one is free and clones nothing: two `Layer`s with the same id *are*
 the same layer. That is why Otto passes them into `'static` closures and
 stores them in half a dozen structs without a second thought, and also why a
 stale handle to a removed layer is a real hazard (`Engine::is_layer_alive`
@@ -31,18 +31,18 @@ The `ModelLayer` behind the handle is a flat bag of properties
 | Geometry | `position`, `size`, `anchor_point`, `scale`, `rotation`, `display` |
 | Paint | `background_color`, `border_color`, `border_width`, `border_corner_radius`, `shadow_offset`, `shadow_radius`, `shadow_spread`, `shadow_color`, `shape` |
 | Composition | `opacity`, `blend_mode`, `image_filter`, `color_filter`, `clip_content`, `clip_children` |
-| Content | `draw_content` — a closure that paints into a Skia canvas |
+| Content | `draw_content`, a closure that paints into a Skia canvas |
 | Identity | `key`, `pointer_events` |
 
 The right mental model is Core Animation's `CALayer`. A layer does not know
 what it represents. It has no concept of "window" or "button"; it knows where
-it is, how it looks, and how to paint itself. All the meaning lives in Otto —
-in `WindowView`, `DockView`, `WindowSelectorView` — and those types are just
+it is, how it looks, and how to paint itself. All the meaning lives in Otto, in
+`WindowView`, `DockView` and `WindowSelectorView`, and those types are just
 code that *edits layers*.
 
 One consequence is worth stating early, because it explains a lot of Otto's
 structure: **a layer with no drawables is free.** No background, no border, no
-shadow, no content closure, normal blend mode, no clipping — lay-rs calls that
+shadow, no content closure, normal blend mode, no clipping. lay-rs calls that
 a *layout-only passthrough* and skips both repaint and its own geometry damage
 (`RenderLayer::is_layout_only_passthrough`). Container layers such as
 `workspaces_layer` or a window's `content_layer` cost a transform and nothing
@@ -54,7 +54,7 @@ Every layer exists twice, and keeping the two apart is the single most useful
 distinction on this page.
 
 **`ModelLayer` is what you write.** It is the declared intent: "position is
-(120, 40)", "opacity is 0.4". Its values are `Attribute<V>` cells — thread-safe,
+(120, 40)", "opacity is 0.4". Its values are `Attribute<V>` cells: thread-safe,
 cheap to read, each with a process-unique id.
 
 **`RenderLayer` is what gets drawn.** It is derived, once per frame, by the
@@ -71,7 +71,7 @@ The seam between them is where several recurring confusions live:
   `taffy_layout.location + model.position`. Almost every layer Otto creates
   sets `position: taffy::Position::Absolute`, which pins the layout location
   at the parent's origin and leaves `set_position` in full control. Layers
-  that *do* use flexbox — inside otto-kit views, the dock's icon row — get
+  that *do* use flexbox (inside otto-kit views, the dock's icon row) get
   their location from Taffy and treat `position` as a nudge.
 - **Reading back a property is not reading the screen.** `layer.position()`
   returns the model value, which mid-animation is the *target*, not the
@@ -100,19 +100,19 @@ remembers. That is the retained-mode bargain, and it is chosen deliberately:
   geometry, shadow and decoration while the client is between buffers, mid
   resize, or not painting at all.
 
-The price is real and shows up throughout Otto: there is now a *second* copy
+The price is real and shows up throughout Otto: there is a *second* copy
 of the truth, and it has to be kept in sync with the Wayland state without
-inventing work. Writers into the scene are unconditional — `set_position`
-schedules a change without comparing the old value — so every path that
+inventing work. Writers into the scene are unconditional (`set_position`
+schedules a change without comparing the old value), so every path that
 mirrors surface state into layers has to be idempotent by hand. See the damage
 section of [Render Loop](render_loop.md) for how `configure_surface_layer`
 hashes its inputs to avoid exactly that.
 
 ## A change is a transaction
 
-Setting a property does not mutate it in place. It builds a `ModelChange` —
-old value, new value, the `RenderableFlags` the change implies
-(`NEEDS_LAYOUT`, `NEEDS_PAINT`) — and schedules it on the engine:
+Setting a property does not mutate it in place. It builds a `ModelChange`
+holding the old value, the new value and the `RenderableFlags` the change
+implies (`NEEDS_LAYOUT`, `NEEDS_PAINT`), then schedules it on the engine:
 
 ```rust
 layer.set_position(Point { x, y }, None);                       // applies now
@@ -131,7 +131,7 @@ this codebase:
 
 **One in-flight transaction per property.** `schedule_change` keys transactions
 by the *attribute's* id and cancels any existing one for that value. A second
-`set_position` replaces the first — along with its `on_finish` handler, which
+`set_position` replaces the first, along with its `on_finish` handler, which
 is simply dropped. `src/shell/xdg.rs` carries a comment explaining that the
 fullscreen un-park deliberately hangs off the size *animation* rather than the
 position transaction, because a client commit repositioning the window
@@ -155,20 +155,20 @@ transaction is open and submit them together on commit
 Callbacks hang off either end: `on_start` / `on_update` / `on_finish` on a
 transaction, `on_animation_*` on an animation. Otto drives the xdg-shell
 configure sequence of a fullscreen transition from an `on_animation_update`
-handler — the client is being resized by the same curve that moves the layer.
+handler. The client is being resized by the same curve that moves the layer.
 
 ## How a layer gets its content
 
 A layer paints itself in a fixed order (`lay-rs/src/drawing/layer.rs`):
 
-1. **Background** — the shape filled with `background_color`. Under
+1. **Background**: the shape filled with `background_color`. Under
    `BlendMode::BackgroundBlur` this is drawn with Skia's `Luminosity` blend
    over the blurred backdrop, plus a faint noise image; that is the whole
    "frosted glass" material.
-2. **Drop shadow** — drawn *outside* the shape (`ClipOp::Difference`), which is
+2. **Drop shadow**: drawn *outside* the shape (`ClipOp::Difference`), which is
    why a leaked clip anywhere above erases it.
-3. **Content** — the draw closure, or the picture recorded from it.
-4. **Border** — stroked on the shape.
+3. **Content**: the draw closure, or the picture recorded from it.
+4. **Border**: stroked on the shape.
 
 The closure is the interesting part:
 
@@ -185,8 +185,8 @@ repainted.
 
 Otto uses this in two distinct ways.
 
-**Compositor-drawn content** — dock icons, the titlebar, the window shadow —
-is Skia drawing straight into the canvas, usually produced by a view (below).
+**Compositor-drawn content** (dock icons, the titlebar, the window shadow) is
+Skia drawing straight into the canvas, usually produced by a view (below).
 
 **Wayland surfaces** get a closure too, and notably *not* an image. On commit,
 `configure_surface_layer` (`src/workspaces/utils/mod.rs`) installs a closure
@@ -205,8 +205,8 @@ The indirection buys two things. The renderer imports buffers into
 `textures_storage` on its own schedule while the scene holds only an id, so
 re-installing the closure every commit does not invalidate the layer's cached
 picture. And the closure is the one place that knows the mapping from buffer
-pixels to layer coordinates — buffer scale, the viewport crop, the contents
-gravity — so it is the only place that can convert the client's buffer damage
+pixels to layer coordinates (buffer scale, the viewport crop, the contents
+gravity), so it is the only place that can convert the client's buffer damage
 into a rect the engine can use.
 
 When the damage source is outside the closure entirely, `Layer::add_damage(rect)`
@@ -215,7 +215,7 @@ also what mark a layer's *followers* for repaint.
 
 ## Composition: what a parent does
 
-Children are painted in child order — z-order is tree order, and
+Children are painted in child order: z-order is tree order, and
 `add_sublayer` / `prepend_sublayer` are how Otto restacks. Beyond order, a
 parent contributes exactly four things to its descendants:
 
@@ -231,7 +231,7 @@ parent contributes exactly four things to its descendants:
 `set_hidden(true)` is the blunt instrument, and it is not just a visibility
 flag: it sets Taffy `display: none` so the subtree stops participating in
 layout, and it invalidates the engine's hit-test and traversal caches. A
-subtree parked hidden costs nothing — which is how Otto keeps every workspace's
+subtree parked hidden costs nothing, which is how Otto keeps every workspace's
 windows in the tree at once.
 
 ## Caching: the picture and the image
@@ -239,7 +239,7 @@ windows in the tree at once.
 Two caches sit on every node, and they are not alternatives to each other.
 
 **Picture cache** (`picture_cached`, **on by default**) records the layer's
-drawing into a Skia `Picture` — a display list — and replays it. `do_repaint`
+drawing into a Skia `Picture` (a display list) and replays it. `do_repaint`
 re-records only when the node is flagged `NEEDS_PAINT`, when its *size*
 changed, or when there is no cache yet. Deliberately **not** on a move, a
 parent transform change, or an opacity change: the picture is recorded in the
@@ -248,8 +248,8 @@ or a fade costs a replay rather than a re-rasterisation. Sliding a workspace
 full of windows re-runs no draw closure at all.
 
 `set_picture_cached(false)` is therefore an *opt-out*, and Otto reaches for it
-where a layer's content is a live re-render of something else — exposé mirrors,
-the workspace-selector background, the XWayland mirror — because there the
+where a layer's content is a live re-render of something else (exposé mirrors,
+the workspace-selector background, the XWayland mirror), because there the
 cache would freeze a moving image.
 
 **Image cache** (`image_cached`, off by default) rasterises a whole subtree
@@ -259,10 +259,13 @@ It is the wrong answer for anything that should show a live backdrop blur from
 below, because the subtree is composited from its own buffer.
 
 **`content_opaque`** is a third, unrelated flag: a promise that the draw
-closure fills the layer's bounds with opaque pixels. Occlusion culling only
-treats a layer as an occluder when opacity is 1, the blend mode is `Normal`,
-the shape is a rectangle with square corners, *and* this flag is set — which is
-why client surface layers and the wallpaper set it explicitly.
+closure fills the layer's bounds with opaque pixels. Occlusion culling
+(`RenderLayer::is_fully_opaque`) treats a layer as an occluder only when its
+premultiplied opacity is 1, the blend mode is `Normal`, the shape is a
+`RoundRect` with every corner radius at 0, and the bounds are filled, either
+by an opaque `background_color` or by this flag. That is why client surface
+layers and the wallpaper set it explicitly: they paint through a closure, so
+nothing else can tell.
 
 Getting these wrong is the usual reason something is stale or slow, and all
 three are visible per-node in the scene debugger.
@@ -302,11 +305,11 @@ previews, the XWayland mirror, and the wallpaper reused as the exposé backdrop
 are all follower layers pointing at a live subtree.
 
 The mirror is a *rendering* of the source, not a reference to it, so it can sit
-anywhere in the tree at any size with its own transform — and the source keeps
+anywhere in the tree at any size with its own transform, and the source keeps
 being the only real copy. Two sharp edges come with that: `as_content` guards
 against recursion with a thread-local set (a follower may be a descendant of
 its leader), and repaint marking propagates from the leader node itself, never
-from its descendants — so a client commit deep inside a window's surface tree
+from its descendants, so a client commit deep inside a window's surface tree
 does not mark the mirror. [Exposé](expose.md) documents how Otto works around
 the second.
 
@@ -325,9 +328,9 @@ view.update_state(&new_model);   // hashes the model; no-op when unchanged
 `update_state` hashes the state and returns without touching the tree when the
 hash matches. That is load-bearing, not an optimisation: `update_decoration`
 runs on every commit of a decorated window, and re-rendering unconditionally
-would rebuild the titlebar's layers at the client's frame rate. The dock,
-workspace selector, window selector, background and context menus are all
-views.
+would rebuild the titlebar's layers at the client's frame rate. The workspace
+selector, window selector, background and context menus are all views; the
+dock is not, and `DockView` drives its layers directly.
 
 ## Pitfalls
 
@@ -337,7 +340,7 @@ views.
   they differ; use the `render_*` accessors when you mean the screen.
 - **Re-installing a draw closure does not invalidate the picture cache**, and
   neither does changing something the closure closes over. If content changed
-  without a property changing, say so — `add_damage`, `set_damage` or
+  without a property changing, say so: `add_damage`, `set_damage` or
   `redraw()`.
 - **An empty recording is not a cache hit.** lay-rs deliberately falls back to
   the closure when a recorded picture has zero ops, because a picture recorded

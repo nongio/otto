@@ -4,8 +4,8 @@ Otto is a **stacking** window manager by default: windows float, overlap, and go
 where you put them, with snap-to-half shortcuts, smart initial placement and
 animated state changes. Any workspace can be switched to a managed tiling
 layout, where windows share the screen in a tree of splits, and switched back
-to stacking again — one workspace at a time, so the others are unaffected. See
-[Tiling](tiling.md).
+to stacking again. This works one workspace at a time, so the others are
+unaffected. See [Tiling](tiling.md).
 
 ## Focus and raising
 
@@ -25,24 +25,25 @@ The focused window's name and menus appear in the [Top Bar](topbar.md).
 Drag a window by its title bar to move it; drag an edge or corner to resize.
 
 On a window Otto decorates, both are the compositor's own: the title bar starts
-the move, and a narrow strip along the window's four edges and corners — about
-six points wide, hit-tested ahead of everything else — starts a resize. Such a
-window draws no frame of its own and so never asks for a resize; the border is
-what gives it one. The cursor changes over it to name the edge you would grab.
+the move, and a narrow strip along the window's four edges and corners starts a
+resize. That strip is about six points wide, and hit-tested ahead of everything
+else. Such a window draws no frame of its own and so never asks for a resize;
+the border is what gives it one. The cursor changes over it to name the edge you
+would grab.
 
 On a window that draws its own decorations, both are driven by the application:
 Otto starts the move or resize when the app asks it to, which is what happens
 when you grab the parts of the window its toolkit designates for that.
 
 Dragging a **maximized** window unmaximizes it and keeps the grab point under
-your pointer, proportionally — so the window shrinks to its restored size around
+your pointer, proportionally. The window shrinks to its restored size around
 where you grabbed it rather than jumping away.
 
 There is no modifier-drag (`Alt`+drag) to move a window from anywhere yet.
 
 ### Drag to tile
 
-Hold `Ctrl` while dragging a window and Otto previews where it would land — a
+Hold `Ctrl` while dragging a window and Otto previews where it would land: a
 translucent rectangle over the target area, animating as you move between
 zones. Release to snap the window there; let go of `Ctrl` first and the drag
 stays an ordinary move.
@@ -59,12 +60,12 @@ off centre is enough to tile it to that side.
 ## Decorations
 
 Otto draws window decorations itself. A client that binds `xdg-decoration`
-without stating a preference — or that unsets the one it had — is told
+without stating a preference, or that unsets the one it had, is told
 *server-side*, and gets an Otto-drawn title bar. The compositor owns that strip:
 it is hit-tested before the client's surfaces, so dragging it moves the window
 and the controls work even when the application is busy.
 
-You get two controls by default, close and minimize. The third — the zoom dot —
+You get two controls by default, close and minimize. The third, the zoom dot,
 is off, because a double click on the title bar zooms a window anyway:
 
 ```toml
@@ -81,7 +82,7 @@ Clients that explicitly ask for *client-side* are honoured. GTK and Electron
 apps request it and keep drawing their own title bars, so those look like
 whatever the toolkit does.
 
-Otto answers on both decoration protocols — `xdg-decoration`, which Qt and KDE
+Otto answers on both decoration protocols: `xdg-decoration`, which Qt and KDE
 apps use, and KDE's older `org_kde_kwin_server_decoration`, which is the only
 one GTK applications look for. Ghostty's `window-decoration = server`, for
 instance, reaches Otto through the latter.
@@ -93,8 +94,8 @@ respond.
 ## Maximize
 
 `ToggleMaximizeWindow` (`Ctrl+Up` by default) maximizes the focused window to
-fill its monitor's usable area — that is, minus any exclusive zones claimed by
-the top bar or other panels. Pressing it again restores the previous geometry.
+fill its monitor's usable area, minus any exclusive zones claimed by the top bar
+or other panels. Pressing it again restores the previous geometry.
 
 The transition is animated: the window grows or shrinks into place rather than
 snapping.
@@ -112,7 +113,7 @@ These are one-shot geometry changes, not a managed tiling mode: nothing keeps
 the two windows in sync, and moving or resizing either one afterwards just
 works normally. Tiling a maximized window unmaximizes it first.
 
-The same three targets are reachable with the pointer — see
+The same three targets are reachable with the pointer. See
 [Drag to tile](#drag-to-tile).
 
 A workspace can also be put into a managed **tiling mode**, where every window
@@ -139,7 +140,7 @@ window stretches and funnels down into the dock's minimized-windows area.
 Clicking its thumbnail in the dock plays the animation in reverse.
 
 The animation itself has no settings; `dock.genie_scale` and `dock.genie_span`
-shape the dock's *icon magnification*, not this — see [Dock](dock.md).
+shape the dock's *icon magnification*, not this. See [Dock](dock.md).
 
 Minimized windows are excluded from Exposé.
 
@@ -164,7 +165,7 @@ leave placement to the compositor.
 ## Closing
 
 `CloseWindow` politely asks the focused window to close, the same as clicking
-its close button — the application can still prompt you about unsaved work.
+its close button. The application can still prompt you about unsaved work.
 There is no force-kill shortcut.
 
 `ApplicationSwitchQuit` (`Ctrl+Q` by default, while the app switcher is open)
@@ -179,7 +180,7 @@ boundary between two monitors moves it to the other monitor. See
 
 ## X11 applications
 
-X11 apps run under XWayland and are managed exactly like native ones — same
+X11 apps run under XWayland and are managed exactly like native ones: same
 focus, tiling, minimize and exposé behaviour.
 
 Two things get special handling:

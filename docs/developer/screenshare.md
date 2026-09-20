@@ -7,9 +7,9 @@ How frames get out of Otto and into Chrome, OBS, `grim` or `wf-recorder`.
 There are **two halves that never touch each other**, and most confusion about
 this subsystem comes from conflating them:
 
-- **Control plane** — D-Bus. Who is allowed to capture what. Creating sessions,
+- **Control plane**: D-Bus. Who is allowed to capture what. Creating sessions,
   picking a source, starting and stopping streams.
-- **Data plane** — GPU. Once a stream exists, frames are blitted from the
+- **Data plane**: GPU. Once a stream exists, frames are blitted from the
   compositor's framebuffer into a PipeWire buffer with no CPU involvement at all.
 
 The control plane is four processes deep, because that is what the portal
@@ -35,7 +35,7 @@ windowed mode.
 
 ## Control plane
 
-### 1. The D-Bus service — `src/screenshare/dbus_service.rs`
+### 1. The D-Bus service: `src/screenshare/dbus_service.rs`
 
 The compositor runs a zbus server on a dedicated tokio thread:
 
@@ -69,22 +69,22 @@ org.otto.ScreenCast.Stream
 node id comes back through `PipeWireNode()`.
 
 `RecordWindow`'s `window-id` is an `ext-foreign-toplevel-list-v1` identifier,
-exactly as returned by `ListWindows` — see
+exactly as returned by `ListWindows`. See
 [foreign-toplevel.md](foreign-toplevel.md).
 
 `OpenPipeWireRemote` is wired end to end but the compositor side
-(`GetPipeWireFd`) still returns an error — it is a TODO in
+(`GetPipeWireFd`) still returns an error: it is a TODO in
 `src/screenshare/mod.rs`. In practice apps connect to the PipeWire daemon
 themselves and use the node id, so this has not blocked anything.
 
-### 2. The sync/async bridge — `src/screenshare/mod.rs`
+### 2. The sync/async bridge: `src/screenshare/mod.rs`
 
 The compositor loop is synchronous (calloop); zbus is async. The bridge is a
 `calloop::channel`: the D-Bus thread sends a `CompositorCommand`, and the main
 loop handles it and mutates `state.screenshare_sessions`.
 
 **This is the first place to look when a D-Bus call appears to hang or do
-nothing** — nearly always the calloop side never received or handled the
+nothing**: nearly always the calloop side never received or handled the
 command.
 
 `CompositorCommand` also carries non-screenshare traffic (`FocusApp`,
@@ -103,7 +103,7 @@ pub enum StreamTarget {
 which is also the key into `ScreencastSession::streams`, as
 `output:<connector>` or `window:<identifier>`.
 
-### 3. PipeWire — `src/screenshare/pipewire_stream.rs`
+### 3. PipeWire: `src/screenshare/pipewire_stream.rs`
 
 `PipeWireStream` owns the stream and its buffer pool, running a PipeWire main
 loop on its own thread. It negotiates a video format, asks for **DMA-BUF**
@@ -129,8 +129,8 @@ pub struct StreamConfig {
 
 1. Otto renders the output as usual (Skia → GL framebuffer).
 2. If a stream exists for that output, it dequeues an available PipeWire buffer.
-3. It blits the framebuffer into that DMA-BUF with `Blit<Dmabuf>` — a plain
-   `glBlitFramebuffer`.
+3. It blits the framebuffer into that DMA-BUF with
+   `BlitCurrentFrame::blit_current_frame`, a plain `glBlitFramebuffer`.
 4. It tells PipeWire to queue the buffer.
 
 No CPU copy, no second render. Damage is forwarded where possible; the first
@@ -149,7 +149,7 @@ That choice has consequences worth knowing:
 
 - Nothing stacked above the shared window can leak into the capture.
 - The window keeps streaming while occluded, on another workspace, or minimized.
-- `lay-rs` scene decoration — shadows, rounded corners, blur — is **not** in the
+- `lay-rs` scene decoration (shadows, rounded corners, blur) is **not** in the
   capture. This is the client's raw content.
 - The size is fixed at `RecordWindow` time (even-rounded physical pixels) and
   then tracks the window: `PipeWireStream::request_size` is called every frame
@@ -169,7 +169,7 @@ Two supporting mechanisms make this work:
   it, so that output forces a composite and keeps painting while idle.
 
 Both call `crate::screenshare::window_for_identifier`, which takes
-`&Workspaces` and `&foreign_toplevels` **separately** rather than `&Otto` — the
+`&Workspaces` and `&foreign_toplevels` **separately** rather than `&Otto`: the
 render loop already holds a mutable borrow of `backend_data`, so only
 field-disjoint borrows compile there.
 
@@ -186,14 +186,14 @@ infrastructure:
 
 - Otto advertises **`linux_dmabuf`** alongside the SHM `buffer` event for v3+
   clients, so capable consumers negotiate a GPU dmabuf and skip CPU readback.
-- **Dmabuf clients** ride `BlitCurrentFrame::blit_current_frame` — the very
+- **Dmabuf clients** ride `BlitCurrentFrame::blit_current_frame`, the very
   same `glBlitFramebuffer` PipeWire screenshare uses. Zero CPU copy.
 - **SHM clients** (legacy `grim`, `wf-recorder` by default) fall back to
   `skia_surface.read_pixels`: synchronous and expensive, but paid only by the
   tools that need it. Replacing it with a blit-into-temp-dmabuf plus async PBO
   readback would bring it to parity.
 - The post-render hook is **gated on `!pending_screencopy_frames.is_empty()`**,
-  so it costs nothing when nobody is asking. It does **not** force renders —
+  so it costs nothing when nobody is asking. It does **not** force renders:
   pending frames piggyback on the next frame that happens for some other reason
   (scene damage, cursor, DnD).
 
@@ -213,7 +213,7 @@ This is the subtlest part of the subsystem, and the source of the
 "corrupted/mangled frames" class of bug.
 
 `build_format_params` (`src/screenshare/pipewire_stream.rs`) advertises
-`Argb8888` as **one `EnumFormat` pod per modifier** — LINEAR first, then every
+`Argb8888` as **one `EnumFormat` pod per modifier**: LINEAR first, then every
 EGL-reported modifier that survives a real GBM allocation test and comes back
 single-plane (Intel CCS aux-plane modifiers are excluded). Each pod fixes its
 modifier as a `MANDATORY` `Long`, rather than offering a single `DONT_FIXATE`
@@ -221,17 +221,17 @@ choice pod.
 
 That shape is required because `gst-plugin-pipewire` ≥ 1.2 only negotiates
 dmabuf through explicit DMA_DRM caps, and Intel's `vapostproc` importer only
-lists Y-tiled RGB formats — a LINEAR-only offer fails with "no more input
+lists Y-tiled RGB formats: a LINEAR-only offer fails with "no more input
 formats".
 
 On the consuming side, `parse_negotiated_format` reads a fixed `Long` modifier
 directly, or the default (first) value of a `Choice` pod. **An unreadable
-modifier is a hard error, never a silent fallback to LINEAR** — that fallback
-previously caused tiled buffers to be read as linear, i.e. visibly scrambled
-frames.
+modifier is a hard error, never a silent fallback to LINEAR**: falling back
+would read tiled buffers as linear, i.e. visibly scrambled frames.
 
-No SHM fallback pods are offered alongside DMA-BUF today, so non-DMA_DRM
-GStreamer pipelines cannot currently negotiate at all.
+SHM pods are only built when the backend reports no DMA-BUF modifiers at all;
+they are never offered alongside the DMA-BUF pods. So on a normal GPU session a
+non-DMA_DRM GStreamer pipeline cannot negotiate.
 
 Full rationale: [`specs/screenshare.md`](../../specs/screenshare.md).
 
@@ -242,12 +242,12 @@ Full rationale: [`specs/screenshare.md`](../../specs/screenshare.md).
 `SelectSources` in
 `components/xdg-desktop-portal-otto/src/portal/interface.rs` presents a single
 radio list combining every output and every window, rendered by otto-islands
-through the `org.otto.Dialog1` service — the same dialog the portal's Access
+through the `org.otto.Dialog1` service, the same dialog the portal's Access
 implementation uses. Option ids are `monitor:<connector>` and
 `window:<identifier>`.
 
-If no dialog renderer answers on the bus, monitor capture falls back to the
-pre-picker behaviour: a one-line connector-name override in
+If no dialog renderer answers on the bus, monitor capture falls back to picking
+an output without asking: a one-line connector-name override in
 `$XDG_CONFIG_HOME/otto/screencast-output` (or `~/.config/otto/screencast-output`),
 re-read on every call, otherwise the first output. A window is never
 auto-selected on that path.
@@ -260,15 +260,15 @@ auto-selected on that path.
 still exists and still matches the requested `types`.
 
 Chrome depends on this. Its window picker builds the preview in one session and
-then re-creates the session for the real capture — without a restorable token,
-the dialog opened a second time on top of a live share.
+then re-creates the session for the real capture, so without a restorable token
+the dialog would open a second time on top of a live share.
 
 Two things gate this and are easy to break:
 
 - The impl interface must export `version` under exactly that **lowercase**
   name (`#[zbus(property, name = "version")]`). zbus would otherwise derive
   `Version`, xdg-desktop-portal reads 0, and everything added after interface
-  version 1 is silently gated off — including `AvailableCursorModes` and the
+  version 1 is silently gated off, including `AvailableCursorModes` and the
   `restore_data` round-trip.
 - `AvailableSourceTypes` must include the `WINDOW` bit.
 
@@ -278,10 +278,10 @@ The backend's bus name is **user-wide**, and the session bus outlives the
 graphical session. A backend from an earlier login keeps
 `org.freedesktop.impl.portal.desktop.otto` until it is killed.
 
-The current backend claims the name with `ReplaceExisting | AllowReplacement`
-and exits when a newer instance takes over, so starting the new build is
-enough. A *pre-fix* backend refuses replacement and must be killed by hand —
-the new one then exits with a message saying so.
+The backend claims the name with `ReplaceExisting | AllowReplacement` and exits
+when a newer instance takes over, so starting the new build is usually enough.
+A backend that refuses replacement has to be killed by hand; the new one exits
+with a message saying so.
 
 ---
 
@@ -332,12 +332,12 @@ pw-dump   # then find the node id the portal returned
 
 ### Troubleshooting
 
-**No outputs in the share dialog** — the app is in a different D-Bus session.
+**No outputs in the share dialog**: the app is in a different D-Bus session.
 Check `echo $DBUS_SESSION_BUS_ADDRESS`, verify the portal is registered
 (`busctl --user list | grep otto`), and `source "$XDG_RUNTIME_DIR/dbus-session"`
 before launching.
 
-**Video freezes after a few seconds** — check PipeWire is alive
+**Video freezes after a few seconds**: check PipeWire is alive
 (`pgrep -x pipewire`), read `otto.log`, and make sure the user services are
 enabled:
 
@@ -345,13 +345,13 @@ enabled:
 systemctl --user enable --now pipewire.service pipewire-pulse.service wireplumber.service
 ```
 
-**Portal backend not found** — check the binary exists
+**Portal backend not found**: check the binary exists
 (`ls target/release/xdg-desktop-portal-otto`), read
 `components/xdg-desktop-portal-otto/portal.log`, and rebuild with
 `cargo build -p xdg-desktop-portal-otto --release`. Also check the stale bus
 name case above.
 
-**Cursor modes rejected** — the portal *frontend* caches the backend's property
+**Cursor modes rejected**: the portal *frontend* caches the backend's property
 values. Restart it after restarting the backend.
 
 ---
@@ -361,7 +361,7 @@ values. Restart it after restarting the backend.
 The two ends of the pipeline are not reachable from a test: the D-Bus service
 needs a session bus, and a stream needs a PipeWire daemon and a GPU. Everything
 between them is, and `tests/screenshare.rs` covers it against a headless
-compositor and real Wayland clients — source enumeration, window identity,
+compositor and real Wayland clients: source enumeration, window identity,
 stream sizing, the rejection paths of `RecordMonitor`/`RecordWindow`, and the
 `Captured` frame pacing a live capture forces.
 
@@ -384,7 +384,7 @@ without a daemon.
 | `src/screenshare/pipewire_stream.rs` | PipeWire stream, buffer pool, format/modifier negotiation |
 | `src/state/screencopy.rs` | `zwlr_screencopy_manager_v1` |
 | `src/state/window_throttle.rs` | Frame pacing, including the `Captured` state |
-| `src/skia_renderer.rs` | `Blit<Dmabuf>` — the shared GPU blit |
+| `src/renderer/mod.rs` | `BlitCurrentFrame`, the shared GPU blit |
 | `src/udev/render.rs` | Per-frame delivery, render triggers |
 | `tests/screenshare.rs` | Headless end-to-end tests for the control plane |
 | `src/winit.rs` | Starts the D-Bus service only; no frame delivery |
