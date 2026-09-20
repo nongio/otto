@@ -1,8 +1,8 @@
 # Dock
 
-The dock is Otto's task manager, pinned to one edge of the primary monitor —
+The dock is Otto's task manager, pinned to one edge of the primary monitor:
 the bottom by default, or either side. Unlike the top bar and the dynamic
-island, it is part of the compositor — there is nothing to start.
+island, it is part of the compositor, so there is nothing to start.
 
 ![The dock at the bottom of the screen: pinned application icons, a divider, and the wastebasket](images/dock.jpg)
 
@@ -11,12 +11,12 @@ island, it is part of the compositor — there is nothing to start.
 Four groups, in order along the dock (left to right, or top to bottom on a
 side dock):
 
-1. **Bookmarks** — launchers you pinned in the config.
-2. **Running applications** — one icon each, with a dot beside it on the
+1. **Bookmarks**: launchers you pinned in the config.
+2. **Running applications**: one icon each, with a dot beside it on the
    screen-edge side.
-3. **Places** — past the divider: the things that are locations rather than
+3. **Places**, past the divider: the things that are locations rather than
    applications. The Trash is there by default.
-4. **Minimized windows** — a thumbnail per minimized window, in a drawer that
+4. **Minimized windows**: a thumbnail per minimized window, in a drawer that
    opens when the first one arrives.
 
 Icons and names come from the application's `.desktop` entry, loaded in the
@@ -55,20 +55,20 @@ bookmarks = [
 | Field | Meaning |
 |-------|---------|
 | `desktop_id` | The `.desktop` file name. Required. |
-| `label` | Override the application's display name — the hover label, the app switcher and menus all use it. Optional. |
+| `label` | Override the application's display name; the hover label, the app switcher and menus all use it. Optional. |
 | `exec_args` | Extra arguments appended to the entry's `Exec` line. Optional. |
 
 Find desktop ids with `ls /usr/share/applications ~/.local/share/applications`.
 
-Bookmarks behave exactly like running apps once launched — same icon, same
+Bookmarks behave exactly like running apps once launched: same icon, same
 hover, same window cycling.
 
 ### Pinning and reordering without the config file
 
-Right-click any icon — a bookmark or a running app that is not yet in the
-dock — and pick **Keep in Dock** to pin it; the same entry, ticked, unpins it
-again. The menu also offers **Open** (for an app that is not running) and
-**Quit** (for one that is).
+Right-click any icon (a bookmark, or a running app that is not yet in the dock)
+and pick **Keep in Dock** to pin it; the same entry, ticked, unpins it again.
+The menu also offers **Open** (for an app that is not running) and **Quit**
+(for one that is).
 
 Drag an icon along the dock to reorder it. The icons it passes shuffle aside so
 the order you are about to commit is visible before you let go, and a press that
@@ -91,7 +91,7 @@ places = [{ desktop_id = "otto-trash.desktop" }]
 Set it to `[]` for a dock without a Trash.
 
 The Trash icon shows a **full wastebasket whenever the trash has anything in
-it**, and an empty one when it does not — whether or not the Trash window is
+it**, and an empty one when it does not, whether or not the Trash window is
 open, and whichever application did the deleting. Click it to open the Trash
 window; right-click it for **Empty Trash**, which opens that window with the
 question already asked.
@@ -99,7 +99,7 @@ question already asked.
 ### Another file manager's trash
 
 The Trash is a place like any other: a bookmark pointing at a desktop entry.
-Everything about it comes from that entry — the command a click runs, and the
+Everything about it comes from that entry: the command a click runs, and the
 actions in its right-click menu. So using another file manager's wastebasket is
 a matter of pointing the place at its desktop entry:
 
@@ -111,7 +111,7 @@ trash_path = "$XDG_DATA_HOME/Trash/files"
 ```
 
 `trash_desktop_id` says which place is the wastebasket, so its icon follows the
-can. `trash_path` says which directory that icon watches — it expands `~`,
+can. `trash_path` says which directory that icon watches. It expands `~`,
 `$HOME` and `$XDG_DATA_HOME`, and only affects the icon: Otto itself always
 throws files away to the freedesktop location.
 
@@ -122,7 +122,7 @@ you want, and name that. The dock offers whatever that file declares.
 ### An application's own actions
 
 The entries an application declares in its desktop file (`Actions=`) are
-offered at the top of its dock menu — a private window for a browser, Empty
+offered at the top of its dock menu: a private window for a browser, Empty
 Trash for the Trash. Nothing has to be configured for this: if the desktop
 entry has them, the dock shows them.
 
@@ -158,20 +158,20 @@ is changed from Settings, by dragging the dock handle, or in the config file.
 
 Only `size`, `position`, `autohide`, `magnification` and `bookmarks` are ever
 written back by the dock itself; everything else in `[dock]` stays exactly as
-you typed it. Older
-builds rewrote the whole table instead, leaving a copy of every value in
-`~/.config/otto/config.toml` — which then shadowed `/etc/otto/config.toml` and
-made editing the system config look like it did nothing. Otto never edits that file for
-you: at startup it logs a warning naming the leftover keys, and you delete the
-lines you did not write. It cannot tell a copied `colorize_intensity = 1.0`
-from one you typed, and guessing wrong would silently turn a setting off.
+you typed it. Older builds rewrote the whole table instead, leaving a copy of
+every value in `~/.config/otto/config.toml`, which then shadowed
+`/etc/otto/config.toml` and made editing the system config look like it did
+nothing. Otto never edits that file for you: at startup it logs a warning
+naming the leftover keys, and you delete the lines you did not write. It cannot
+tell a copied `colorize_intensity = 1.0` from one you typed, and guessing wrong
+would silently turn a setting off.
 
 ### Magnification
 
-Icons grow as the pointer approaches, with a Gaussian falloff — the icon under
-the pointer is largest and neighbours taper off. `genie_scale` is how much the icon
-under the pointer grows; `genie_span` is how sharply the curve falls off, so a
-*larger* value keeps the bump tighter around the pointer and a smaller one
+Icons grow as the pointer approaches, with a Gaussian falloff: the icon under
+the pointer is largest and neighbours taper off. `genie_scale` is how much the
+icon under the pointer grows; `genie_span` is how sharply the curve falls off,
+so a *larger* value keeps the bump tighter around the pointer and a smaller one
 spreads it over more neighbours. Both apply live.
 
 Set `magnification = false` for a flat dock with no hover scaling.
@@ -214,8 +214,8 @@ too.
 
 ## Badges and progress
 
-An icon can carry a small **badge** in its corner — a count drawn over the
-icon — and a **progress bar** across its foot.
+An icon can carry a small **badge** in its corner (a count drawn over the icon)
+and a **progress bar** across its foot.
 
 Badges are how unread notifications show up: `otto-islands` is the session's
 notification daemon, so it is the only thing that knows how many notifications
@@ -241,11 +241,11 @@ The dock lives on the **primary monitor only**. A per-monitor dock is not
 implemented.
 
 The primary monitor is the first physical output brought up, or whichever
-display profile sets `primary = true` — see [Display](display.md).
+display profile sets `primary = true`. See [Display](display.md).
 
 ## Not yet supported
 
 - Bookmarked folders and locations
 - Dragging an application into the dock from outside it (the Files window, a
-  launcher result) — pinning is the context menu's job
+  launcher result); pinning is the context menu's job
 - A per-monitor dock

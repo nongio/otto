@@ -1,6 +1,6 @@
 # Screen Sharing
 
-Otto shares your screen through the standard XDG Desktop Portal plus PipeWire —
+Otto shares your screen through the standard XDG Desktop Portal plus PipeWire,
 the same mechanism GNOME and KDE use. Browsers, video-call apps, OBS and
 Flatpak'd applications all work through it without knowing anything about Otto.
 
@@ -33,12 +33,12 @@ org.freedesktop.impl.portal.Settings=otto
 ```
 
 This routes screen capture and the appearance settings (light/dark) to Otto, and
-leaves everything else — file chooser, printing, notifications — to the GTK
+leaves everything else (file chooser, printing, notifications) to the GTK
 backend. A copy of this file ships as
 `/usr/share/doc/otto/portals.conf.example`.
 
 `org.freedesktop.impl.portal.Settings` is what makes applications follow your
-`theme_scheme` — see [Theming](theming.md).
+`theme_scheme`; see [Theming](theming.md).
 
 ### 3. Restart the portal
 
@@ -79,7 +79,7 @@ than left hanging — a screenshare that cannot ask fails closed.
 
 The dialog lists, in order:
 
-- every **monitor**, by connector name — including virtual outputs, so
+- every **monitor**, by connector name, including virtual outputs, so
   `virtual-1` is shareable like any other screen;
 - every open **window**, by its title (or its app id if it has none), with its
   application icon.
@@ -94,7 +94,7 @@ stream, and the size follows the window rather than the screen. A window Otto
 decorates shows a sharing indicator in its title bar while it is being
 captured.
 
-Only the window's identity is remembered — if it moves, is resized or changes
+Only the window's identity is remembered. If it moves, is resized or changes
 monitor mid-share, the stream follows it.
 
 ### Being asked only once
@@ -102,9 +102,9 @@ monitor mid-share, the stream follows it.
 Apps that ask for persistence get a **restore token**. The next time the same
 app starts a session it hands the token back and Otto re-uses the source that
 was already approved instead of prompting again. This matters in practice for
-Chrome, which creates a session twice — once for the preview inside its own
-picker, once for the real capture — and would otherwise ask you twice for the
-same share.
+Chrome. It creates a session twice, once for the preview inside its own picker
+and once for the real capture, and would otherwise ask you twice for the same
+share.
 
 A token written by another desktop's portal is rejected, and a token naming a
 source that no longer exists (an unplugged monitor, a closed window) falls back
@@ -160,7 +160,7 @@ Virtual output 'virtual-1' started (PipeWire node 42)
 gst-launch-1.0 pipewiresrc path=42 ! videoconvert ! autovideosink
 ```
 
-A virtual output is a real workspace you can drag windows onto — a "recording
+A virtual output is a real workspace you can drag windows onto: a "recording
 stage" separate from what you are looking at.
 
 ## Screenshots
@@ -181,14 +181,14 @@ Bind one to a key:
 "Print" = { run = { cmd = "sh", args = ["-c", "grim ~/Pictures/$(date +%s).png"] } }
 ```
 
-Applications that ask through the desktop portal — GTK and Qt screenshot tools,
-and sandboxed apps that cannot talk to Wayland directly — are answered too:
+Applications that ask through the desktop portal are answered too, whether GTK
+and Qt screenshot tools or sandboxed apps that cannot talk to Wayland directly.
 Otto captures the whole screen to `~/Pictures/Screenshots/` and returns the file.
 That path runs `grim`, so install it if you want portal screenshots to work.
 
 There is no built-in screenshot UI for selecting a region or a window
-interactively, and **per-window capture through screencopy is not implemented**
-— screencopy captures whole outputs or rectangles of them. Sharing a single
+interactively, and **per-window capture through screencopy is not implemented**:
+screencopy captures whole outputs or rectangles of them. Sharing a single
 window *is* available through the screen-sharing portal; see
 [Sharing one window](#sharing-one-window).
 
@@ -199,9 +199,9 @@ You can send an Otto output to an Apple TV using
 the very portal you just configured:
 
 1. Set up a non-interactive virtual output (AirPlay mirroring has no input
-   channel — it is view-only).
+   channel, so it is view-only).
 2. Run doubletake and pick your receiver.
-3. Choose that virtual output in Otto's share dialog — it is listed with the
+3. Choose that virtual output in Otto's share dialog; it is listed with the
    physical monitors.
 
 Otto does not implement the AirPlay protocol itself. The sender side requires
@@ -212,7 +212,7 @@ Otto) is not implemented either; UxPlay works as an independent application.
 
 ## Remote control
 
-Screen sharing is view-only. To *control* Otto remotely, use the RDP bridge —
+Screen sharing is view-only. To *control* Otto remotely, use the RDP bridge;
 see [Remote Desktop](remote-desktop.md).
 
 ## Screen sharing and power
@@ -237,12 +237,12 @@ node ids. For more detail, restart it with `RUST_LOG=debug`.
 **The permission dialog never appears.** `otto-islands` is not running. Start
 it (`[[exec_once]]`) and try again.
 
-**The wrong source is shared.** Pick it in the dialog — see
+**The wrong source is shared.** Pick it in the dialog; see
 [Choosing a source](#choosing-a-source). If no dialog appeared at all, Otto took
 the fallback path; see
 [When no dialog is reachable](#when-no-dialog-is-reachable).
 
-**The video is mangled — torn, sheared or wrongly coloured.** This is a dmabuf
+**The video is mangled: torn, sheared or wrongly coloured.** This is a dmabuf
 modifier negotiation problem between Otto and the consumer. Capture a log with:
 
 ```sh
@@ -257,7 +257,7 @@ backend are both on the session bus the sandbox sees.
 
 ## Not yet implemented
 
-- A graphical source picker with window thumbnails and region selection — the
+- A graphical source picker with window thumbnails and region selection; the
   consent dialog lists sources by name
 - Region capture (a rectangle of an output) through the portal
 - Multiple simultaneous outputs in one session (the first is used)

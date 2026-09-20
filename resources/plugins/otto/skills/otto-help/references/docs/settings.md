@@ -6,7 +6,7 @@ anything you don't have to.
 
 > **First version.** The app covers a good share of the configuration and is
 > meant for daily use, but not every option in `otto_config.toml` has a control
-> yet. Anything missing is still editable by hand — see
+> yet. Anything missing is still editable by hand. See
 > [Configuration](configuration.md).
 
 ## Opening it
@@ -31,7 +31,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 The compositor owns the configuration file; the app is a D-Bus client. It reads
 the schema Otto publishes and sets values, and a value you change in the app is
 written back to the config file. There is no file watcher, though: edit the file
-by hand while the app is open and the app will not notice — reopen it to see the
+by hand while the app is open and the app will not notice. Reopen it to see the
 change.
 
 Nearly everything applies the moment you change it: the Dock's size and
@@ -52,7 +52,7 @@ settings, and Otto has no display-identity scheme that survives a monitor moving
 to a different port or a dock reshuffle, so inventing a wire contract keyed on
 connector name now would have to be supported forever. Your changes apply to the
 session and are gone at restart. To make them stick, write them under
-`[displays.named.<connector>]` in the config file — see
+`[displays.named.<connector>]` in the config file. See
 [Display configuration](display.md).
 
 Scale is the exception: it is bound, but it is the global `screen_scale`, not a

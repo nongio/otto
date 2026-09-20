@@ -12,13 +12,13 @@ compositor itself knows nothing about RDP.
 
 ## Two ways to use it
 
-**Serve a physical screen** — mirror what is on your monitor:
+**Serve a physical screen**, mirroring what is on your monitor:
 
 ```sh
 otto-rdp --connector eDP-1 --listen 0.0.0.0:3389
 ```
 
-**Serve a virtual output** — a headless screen that exists only for the remote
+**Serve a virtual output**, a headless screen that exists only for the remote
 user, with its own workspaces and windows, independent of your physical
 displays. This is usually what you want.
 
@@ -36,7 +36,7 @@ interactive = true          # required for remote input
 `interactive = true` is what allows remote pointer and keyboard events to be
 aimed at that output. Without it the feed is view-only.
 
-Then name the output — the bridge discovers its PipeWire node itself:
+Then name the output, and the bridge discovers its PipeWire node itself:
 
 ```sh
 otto-rdp --output virtual-1 --listen 0.0.0.0:3389
@@ -65,7 +65,7 @@ otto-rdp [--output <name>] [--node <id> | --connector <name>] [options]
 | Flag | Meaning |
 |------|---------|
 | `--list` | List every output Otto exposes, with size and stream state, then exit |
-| `--node <id>` | Skip discovery and use this PipeWire node id directly. Rarely needed — `--output` finds it. |
+| `--node <id>` | Skip discovery and use this PipeWire node id directly. Rarely needed; `--output` finds it. |
 | `--connector <name>` | Capture a physical output instead, e.g. `eDP-1`. Mutually exclusive with `--node`; also becomes the default `--output`. |
 | `--output <name>` | Wayland output to aim input at. Defaults to `virtual-1`, or the `--connector` value. |
 | `--port <n>` | Listen port on `0.0.0.0`. Default `3389`. |
@@ -93,7 +93,7 @@ stays stable between runs and your client stops warning about a changed
 certificate. Pass `/cert:ignore` to FreeRDP the first time.
 
 Plain-RDP clients (`xfreerdp /sec:rdp`) cannot connect while TLS is on. Pass
-`--no-tls` to serve them instead — the transport is then unencrypted.
+`--no-tls` to serve them instead. The transport is then unencrypted.
 
 ## Video transport
 
@@ -105,9 +105,9 @@ The choice is made once per client, from the capabilities that client advertises
 when it connects, and does not change for the life of the connection.
 
 - A client advertising AVC support gets the H.264 path.
-- A client that sets `AVC_DISABLED` — which Microsoft's **mobile, iOS, Android
-  and Windows App clients all do**, since they do not implement H.264 — falls
-  back to bitmaps automatically.
+- A client that sets `AVC_DISABLED` falls back to bitmaps automatically.
+  Microsoft's **mobile, iOS, Android and Windows App clients all do**, since
+  they do not implement H.264.
 - A client that never opens the graphics channel at all also falls back, after a
   short grace period.
 
@@ -185,7 +185,7 @@ AVC420 and the fallback did not kick in. Retry with `--bitmap`.
 `--output` must name the output you are actually serving.
 
 **mstsc or the mobile app refuses to connect.** Check you have not passed
-`--no-tls` — those clients require TLS.
+`--no-tls`. Those clients require TLS.
 
 **The H.264 encoder fails to start.** Install `gst-plugins-bad` for VA-API and
 try `OTTO_RDP_H264_ENCODER=vah264lpenc`. Failing that, `--bitmap`.
@@ -197,6 +197,6 @@ resolution with `--desktop 2532x1170`.
 ## Not yet supported
 
 - Audio, clipboard, and drive or device redirection
-- Multi-monitor RDP sessions — one output per connection
+- Multi-monitor RDP sessions: one output per connection
 - Switching transport mid-connection
 - Any built-in access control

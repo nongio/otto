@@ -25,17 +25,17 @@ See [Autostart](autostart.md) for other ways to launch it.
   ← left zone ────────────────►      centre       ← right zone ───────►
 ```
 
-- **Left** — the focused application's name in bold, then its global menu.
-- **Centre** — deliberately empty, leaving room for the
+- **Left.** The focused application's name in bold, then its global menu.
+- **Centre.** Deliberately empty, leaving room for the
   [Dynamic Island](dynamic-island.md).
-- **Right** — system tray icons, then the clock.
+- **Right.** System tray icons, then the clock.
 
 The bar reserves its own height as an exclusive zone, so maximized windows and
 other panels stop below it rather than sliding underneath.
 
 ## Global application menus
 
-The left zone shows the focused window's menu — File, Edit, View and so on —
+The left zone shows the focused window's menu (File, Edit, View and so on),
 sourced over D-Bus using the `com.canonical.dbusmenu` protocol. This is the same
 mechanism Unity and KDE's global menu use.
 
@@ -62,12 +62,13 @@ Not every application exports a DBusMenu. When one does not, the left zone shows
 just the application's name and the app keeps drawing its own menu bar in its
 window.
 
-- **GTK 3/4 apps** — usually export automatically over the GTK application-menu
-  D-Bus interfaces.
-- **Qt/KDE apps** — need `appmenu-qt5` / the `AppMenu` platform theme plugin.
-- **Electron and browsers** — mostly do not export menus.
-- **X11 apps** — can export via `appmenu-gtk-module` and the `UNITY_MENUBAR`
-  path.
+- **GTK 3/4 apps.** These usually export automatically over the GTK
+  application-menu D-Bus interfaces.
+- **Qt/KDE apps.** These need `appmenu-qt5` / the `AppMenu` platform theme
+  plugin.
+- **Electron and browsers.** These mostly do not export menus.
+- **X11 apps.** These can export via `appmenu-gtk-module` and the
+  `UNITY_MENUBAR` path.
 
 The application name shown comes from the window's `app_id` mapped through the
 desktop entry database.
@@ -81,7 +82,7 @@ Nextcloud, Telegram, Slack, Steam, KeePassXC, network and volume applets.
 | Click | Effect |
 |-------|--------|
 | Left | Open the icon's context menu |
-| Right | Activate — usually raises the app's window |
+| Right | Activate; usually raises the app's window |
 | Middle | Secondary activate (app-defined) |
 
 Icons are ordered by registration
@@ -140,7 +141,7 @@ for secondary monitors is designed but not implemented.
 found the Wayland socket. Run it by hand from a terminal inside the session to
 see errors.
 
-**No menus for any app.** DBusMenu is opt-in per toolkit — see
+**No menus for any app.** DBusMenu is opt-in per toolkit. See
 [Getting an app to export its menu](#getting-an-app-to-export-its-menu) above.
 
 **A tray icon is missing.** It is probably XEmbed-only. Check whether the app

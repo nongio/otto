@@ -14,7 +14,7 @@ bus. [Orca] is the screen reader this is built and tested against.
   which applications are running; the app switcher reads out the entry you are
   moving to; workspaces are read with their names. The top bar reads its menus,
   its clock and each tray icon, and a notification is read as it arrives.
-- **Otto's own applications** — Settings, Files, the launcher — describe what
+- **Otto's own applications** (Settings, Files, the launcher) describe what
   they are showing, down to a file's kind and size and the contents of a
   preview.
 - **The keyboard reaches them.** Every control in an Otto application is a Tab
@@ -31,7 +31,7 @@ bus. [Orca] is the screen reader this is built and tested against.
 
 ## Using Otto's applications from the keyboard
 
-This works with or without a screen reader — it is ordinary keyboard operation,
+This works with or without a screen reader. It is ordinary keyboard operation,
 and the ring shows where you are.
 
 | Key | What it does |
@@ -65,7 +65,7 @@ Then start Orca from a terminal, the launcher, or your autostart:
 orca --replace
 ```
 
-Nothing else has to be configured — Otto publishes the accessibility interfaces
+Nothing else has to be configured. Otto publishes the accessibility interfaces
 whenever it is running a real session.
 
 Orca still needs Xwayland for some of its own machinery, so leave Otto's
@@ -93,14 +93,14 @@ interfaces.
 - In **Files**, the listing and the previews are described but the sidebar, the
   path bar and the toolbar are not yet: you can read a folder, but moving to
   another one needs the pointer.
-- In **Settings**, the arrangement diagram at the top of the Displays pane —
-  the one you drag screens around in — is not described, so choosing *which*
-  display the settings below apply to needs the pointer. Every other control in
-  the pane is reachable. The shortcut lines in the Keyboard pane are not
-  reachable yet either.
+- In **Settings**, the arrangement diagram at the top of the Displays pane, the
+  one you drag screens around in, is not described, so choosing *which* display
+  the settings below apply to needs the pointer. Every other control in the pane
+  is reachable. The shortcut lines in the Keyboard pane are not reachable yet
+  either.
 - A **nested Otto** (`otto --winit`, for development) does not publish its own
-  desktop — the session hosting it owns the accessibility bus and the key
-  grabs. Applications running inside it still describe themselves normally.
+  desktop: the session hosting it owns the accessibility bus and the key grabs.
+  Applications running inside it still describe themselves normally.
 
 ## If a screen reader is silent
 
@@ -114,7 +114,7 @@ interfaces.
 2. Check Otto is offering key grabs:
    `busctl --user introspect org.freedesktop.a11y.Manager /org/freedesktop/a11y/Manager`
    If the name is unowned, either `accessibility.enabled` is false or another
-   process claimed it first — check Otto's log for "Could not own the a11y
+   process claimed it first. Check Otto's log for "Could not own the a11y
    manager name".
 3. Check the application itself is on the bus with `accerciser`, which lists
    every accessible application. If it is not there, the problem is that

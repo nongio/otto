@@ -3,7 +3,7 @@
 A workspace is a full-screen page of windows. Otto arranges them in a
 horizontal row and slides between them.
 
-![The workspace selector above the window grid, with four named workspaces — Terminals, Documents, Internet, Music](images/workspaces.jpg)
+![The workspace selector above the window grid, with four named workspaces: Terminals, Documents, Internet, Music](images/workspaces.jpg)
 
 ## Per-monitor workspaces
 
@@ -12,7 +12,7 @@ on your laptop screen does not add one on the external monitor; switching to
 workspace 3 on one screen leaves the other where it is; and the two can have
 different numbers of workspaces.
 
-This applies to virtual outputs too — a screenshare or RDP output has its own
+This applies to virtual outputs too. A screenshare or RDP output has its own
 workspaces exactly like a physical monitor.
 
 Every monitor always has at least one workspace.
@@ -25,7 +25,7 @@ Every monitor always has at least one workspace.
 | Three-finger horizontal swipe | Slide between adjacent workspaces |
 | Click a preview in the workspace selector | Jump to that workspace |
 
-Keyboard and gesture switching both act on the **focused monitor** — the one
+Keyboard and gesture switching both act on the **focused monitor**, the one
 your pointer was last over.
 
 More than four workspaces? Add bindings with a higher `index`:
@@ -63,7 +63,7 @@ shows its own strip, listing only its own workspaces.
 The previews are live: they show the actual current content of each workspace,
 at that monitor's own size and scale, not a stale screenshot.
 
-Adding and removing are animated — a new preview grows in from zero width, and
+Adding and removing are animated: a new preview grows in from zero width, and
 a removed one fades out as its slot collapses, the remaining previews sliding
 across to close the gap before the workspace actually goes.
 
@@ -72,14 +72,14 @@ across to close the gap before the workspace actually goes.
 ### Removing a workspace
 
 - A monitor's last remaining workspace cannot be removed.
-- Windows on the removed workspace are **not** closed — they move to that
+- Windows on the removed workspace are **not** closed. They move to that
   monitor's current workspace.
 - A workspace holding a fullscreen window with content in it cannot be removed.
 
 ### Renaming a workspace
 
 Click a workspace's label a second time and it turns into a text field, with
-the current name selected — type to replace it, or click into the text to edit
+the current name selected. Type to replace it, or click into the text to edit
 it. Selection works as it does anywhere else: drag to select, double-click a
 word, triple-click everything, `Ctrl+A`, shift-arrows.
 
@@ -91,8 +91,8 @@ Clearing the name puts the default `Workspace N` back. Names are saved to your
 config file and come back on the next start, per monitor.
 
 The name is written into that workspace's own record, keyed by monitor and
-position, alongside anything else you have set on it — whether it tiles, and
-its gap override if you gave it one:
+position, alongside anything else you have set on it, such as whether it tiles
+and its gap override if you gave it one:
 
 ```toml
 [workspaces.entries."eDP-1:0"]
@@ -118,7 +118,7 @@ Open exposé, then **drag a window preview onto a workspace thumbnail** in the
 selector strip. Release, and the window moves to that workspace; the grid
 relaws out around the gap it left.
 
-Dropping outside any thumbnail cancels — the preview springs back to where it
+Dropping outside any thumbnail cancels. The preview springs back to where it
 came from.
 
 ## Moving windows between monitors
@@ -148,7 +148,7 @@ and removes the temporary one.
 
 ## Configuring
 
-Workspaces are not configured in TOML — there is no "number of workspaces"
+Workspaces are not configured in TOML: there is no "number of workspaces"
 setting. They are created and removed at runtime through the selector, and each
 monitor starts with one.
 
@@ -165,7 +165,7 @@ switch_bounce = 0.1     # 0.0 settles flat, higher overshoots and springs back
 
 That spring is what a keyboard shortcut, the workspace selector, and an app
 switcher (`Cmd+Tab`) selection whose window lives on another workspace all
-animate with — lower `switch_duration` for a snappier switch. A trackpad swipe
+animate with. Lower `switch_duration` for a snappier switch. A trackpad swipe
 keeps its own shorter spring, because it starts from wherever your fingers left
 the workspaces.
 

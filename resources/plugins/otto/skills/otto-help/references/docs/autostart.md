@@ -1,6 +1,6 @@
 # Autostarting Applications
 
-Otto supports three complementary approaches for launching applications automatically at startup. Choose the one that best fits your workflow — or combine them.
+Otto supports three complementary approaches for launching applications automatically at startup. Choose the one that best fits your workflow, or combine them.
 
 ## Config Reference
 
@@ -39,7 +39,7 @@ Each entry takes:
 | `cmd` | string | yes | Executable name (must be on `$PATH`) or absolute path |
 | `args` | array of strings | no | Command-line arguments (defaults to `[]`) |
 
-Entries are spawned non-blocking (fire-and-forget) in listed order. Otto calls `spawn()` sequentially but does not wait for any process to become ready before launching the next — there is no startup ordering or readiness guarantee between entries.
+Entries are spawned non-blocking (fire-and-forget) in listed order. Otto calls `spawn()` sequentially but does not wait for any process to become ready before launching the next. There is no startup ordering or readiness guarantee between entries.
 
 ### Environment
 
@@ -70,13 +70,13 @@ xdg_autostart = true
 
 ### Directory Scan Order
 
-Otto scans directories in this order — later entries override earlier ones by filename:
+Otto scans directories in this order, with later entries overriding earlier ones by filename:
 
-1. **System dirs** — each directory in `$XDG_CONFIG_DIRS` (defaults to `/etc/xdg`), with `/autostart` appended
+1. **System dirs**: each directory in `$XDG_CONFIG_DIRS` (defaults to `/etc/xdg`), with `/autostart` appended
    ```
    /etc/xdg/autostart/*.desktop
    ```
-2. **User dir** — `$XDG_CONFIG_HOME/autostart` (defaults to `~/.config/autostart`)
+2. **User dir**: `$XDG_CONFIG_HOME/autostart` (defaults to `~/.config/autostart`)
    ```
    ~/.config/autostart/*.desktop
    ```

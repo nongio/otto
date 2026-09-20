@@ -2,7 +2,7 @@
 
 Otto ships with defaults that try to be uncontroversial. This page is something
 else: the settings Otto's author actually runs, day to day, on a laptop. They
-are a starting point rather than a second set of defaults — copy the whole
+are a starting point rather than a second set of defaults. Copy the whole
 thing, or take the parts you like.
 
 Most of the page is about the **keyboard**, because a Super-as-primary layout is the
@@ -15,7 +15,7 @@ Everything here goes in `~/.config/otto/config.toml`. See
 ## A Super-first keyboard
 
 The goal is the muscle memory: `Cmd+C` copies, `Cmd+W` closes the window,
-`Cmd+Space` opens the launcher, `Cmd+Shift+4` takes a screenshot — while the
+`Cmd+Space` opens the launcher, `Cmd+Shift+4` takes a screenshot, while the
 real `Ctrl` key stays free for the terminal, so `^C` and `^W` still do what a
 shell expects.
 
@@ -41,7 +41,7 @@ mac_style_modifiers = true
 ```
 
 Without this, step 1 has an ugly side effect: Cmd and the real Ctrl key now
-produce the *same* event, so a `Ctrl+W` binding fires from both — and pressing
+produce the *same* event, so a `Ctrl+W` binding fires from both, and pressing
 `^W` to delete a word in a terminal closes the window instead.
 
 With it, Otto looks at the physical keycode behind the modifier and matches its
@@ -51,7 +51,7 @@ Cmd key. This is covered in more detail under
 [Mac-style modifiers](input.md#mac-style-modifiers).
 
 The setting defaults to following `xkb_options`, so step 1 alone usually
-implies it — set it explicitly anyway, so the config says what it means.
+implies it. Set it explicitly anyway, so the config says what it means.
 
 ### 3. Bind the shifted keysym, not the digit
 
@@ -80,7 +80,7 @@ layout, including ones where the digits sit behind different symbols:
 ```
 
 If you are on a non-US layout, run `scripts/show-keys.sh` and press the
-combination — it prints the keysym Otto will see, which is the name to bind.
+combination. It prints the keysym Otto will see, which is the name to bind.
 
 ### The full keyboard block
 
@@ -132,7 +132,7 @@ Read with the two `[input]` lines above, every `Ctrl+…` in that table is a
 
 Two things deliberately *not* bound: `Cmd+C`, `Cmd+V` and `Cmd+X` have no
 entries, because step 1 already delivers them to applications as copy, paste
-and cut — binding them in Otto would take them away. And nothing is bound to
+and cut; binding them in Otto would take them away. And nothing is bound to
 quit the session: `Logo+Q` and `Ctrl+Alt+Backspace` are always on, and neither
 is easy to press by accident.
 
@@ -151,7 +151,7 @@ keyboard_repeat_rate  = 30     # repeats per second, default 30
 ```
 
 These are top-level keys, not inside `[input]`. The default 300 ms delay starts
-repeating while you are still holding a key deliberately — around 400 ms is
+repeating while you are still holding a key deliberately. Around 400 ms is
 enough to stop `jj` in an editor turning into a run of `j`s, without feeling
 sluggish.
 
@@ -171,7 +171,7 @@ pointer_accel_speed = 0.0                  # -1.0 slowest, 1.0 fastest
 `scroll_speed` is the one worth changing. The default `1.0` passes scroll events
 through untouched, which on a high-resolution trackpad sends a page flying past
 on a short two-finger swipe. `0.25` is what makes a Wayland trackpad feel like a
-Mac one; if you mostly use a mouse wheel, leave it nearer `1.0` — the multiplier
+Mac one; if you mostly use a mouse wheel, leave it nearer `1.0`; the multiplier
 applies to both.
 
 The rest are already the shipped defaults, listed so you can see the set that
@@ -200,9 +200,8 @@ autohide = false
 ```
 
 `screen_scale = 2.0` suits a HiDPI laptop panel; on a 1080p external screen
-`1.0` or `1.5` is the sane choice — and if you have both,
-[Display](display.md) covers per-output scaling, which is what you actually
-want.
+`1.0` or `1.5` is the sane choice. If you have both, [Display](display.md)
+covers per-output scaling, which is what you actually want.
 
 A dock on the left keeps the full width of a laptop screen for windows.
 `magnification` is the zoom under the cursor.
@@ -222,8 +221,8 @@ real departures:
 
 ## See also
 
-- [Configuration](configuration.md) — where config files live and how they merge
-- [Keyboard Shortcuts](keyboard-shortcuts.md) — binding syntax and the complete action list
-- [Input](input.md) — every keyboard, touchpad and pointer option in full
-- [Display](display.md) — per-output scaling and monitor arrangement
-- [Theming](theming.md) — schemes, accent colors, fonts, wallpaper, icons
+- [Configuration](configuration.md): where config files live and how they merge
+- [Keyboard Shortcuts](keyboard-shortcuts.md): binding syntax and the complete action list
+- [Input](input.md): every keyboard, touchpad and pointer option in full
+- [Display](display.md): per-output scaling and monitor arrangement
+- [Theming](theming.md): schemes, accent colors, fonts, wallpaper, icons

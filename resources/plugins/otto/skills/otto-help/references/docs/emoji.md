@@ -32,10 +32,10 @@ query it starts with, so a binding can open it already narrowed.
 
 ## Using it
 
-Type to search. Every word you type has to begin a word of the emoji's name —
-`smil cat` finds the smiling cats — and a name that starts with what you typed
-ranks above one that merely contains it. Category names work too: `flags`
-lists every flag.
+Type to search. Every word you type has to begin a word of the emoji's name, so
+`smil cat` finds the smiling cats. A name that starts with what you typed ranks
+above one that merely contains it. Category names work too: `flags` lists every
+flag.
 
 With nothing typed, each category is a panel of its own, side by side. Scroll
 sideways with two fingers to move between categories and scroll up and down

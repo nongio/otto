@@ -18,7 +18,7 @@ then picks whichever axis has moved further. This means a slightly diagonal
 swipe still does what you meant, and small stray movements never trigger
 anything.
 
-Once the direction is decided, it holds for the rest of the gesture — you cannot
+Once the direction is decided, it holds for the rest of the gesture. You cannot
 turn a workspace swipe into an exposé by changing direction mid-way.
 
 ### Workspace switching
@@ -50,20 +50,20 @@ the grid, and the dock hides.
 
 | Gesture | Effect |
 |---------|--------|
-| Pinch **out** (spread) | Show desktop — windows slide away to the edges |
+| Pinch **out** (spread) | Show desktop; windows slide away to the edges |
 | Pinch **in** (close) | Bring the windows back |
 
 Like the swipes, this tracks your fingers rather than firing at a threshold, so
 you can pinch part-way to peek at the desktop and release to snap back.
 
 The four-finger pinch is ignored while a three-finger swipe is in progress, and
-while exposé is open — the two modes do not stack.
+while exposé is open. The two modes do not stack.
 
 ## Two-finger scroll
 
 Two-finger scrolling is ordinary scroll input forwarded to whatever is under
 the pointer. Natural (reversed) scrolling is on by default and configurable, as
-are speed and acceleration — see [Input](input.md).
+are speed and acceleration. See [Input](input.md).
 
 ## Tap and click
 
@@ -75,12 +75,12 @@ Tap-to-click is on by default:
 | 2 | Right |
 | 3 | Middle |
 
-Physical clicks use the `clickfinger` method by default — the same mapping,
+Physical clicks use the `clickfinger` method by default: the same mapping,
 using how many fingers rest on the pad rather than where you click. Switch to
 `buttonareas` (bottom-right corner = right click) in the config if you prefer.
 
 Tap-and-drag is enabled; drag lock is not. Otto also disables the touchpad while
-you type by default. All of this is configurable — see [Input](input.md).
+you type by default. All of this is configurable. See [Input](input.md).
 
 ## Keyboard equivalents
 
@@ -96,7 +96,7 @@ See [Keyboard Shortcuts](keyboard-shortcuts.md).
 
 ## Touchscreen
 
-Touch input is supported for ordinary interaction — tap, drag, and window
+Touch input is supported for ordinary interaction: tap, drag, and window
 move/resize requests from clients. The gestures above are touchpad-only.
 
 ## Troubleshooting
@@ -111,5 +111,5 @@ the momentum model are not configurable yet. `scroll_speed` and
 gestures.
 
 **A swipe switched workspaces when I meant exposé.** Start the swipe with a
-more deliberate vertical movement — the axis with the larger accumulated delta
+more deliberate vertical movement. The axis with the larger accumulated delta
 at the 5-pixel mark wins.

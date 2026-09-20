@@ -75,7 +75,7 @@ layer: a `wlr-layer-shell` client, not an Otto feature.
 
 The app switcher draws the same tinted icons as the dock, so a colourised dock
 does not leave the switcher looking like a different desktop. The colour and
-strength always come from `[dock]` — one desktop, one icon tint — and
+strength always come from `[dock]`: one desktop, one icon tint.
 `appswitcher.colorize_icons = false` opts the switcher out.
 
 ## A saturated tint
@@ -119,11 +119,11 @@ so what a light tint has to work with is the source icon's luminance.
 | `workspaces.switch_duration`, `workspaces.switch_bounce` | [Workspaces](workspaces.md#configuring) | How fast, and how springy, the scroll between workspaces is |
 
 Almost everything here applies live: the wallpaper, the accent colour, the
-colour scheme, corners, frosting, the controls side, the icon and cursor themes and every
-`dock.*` setting all change what is on screen as you save them. Only the
-interface font and the interface scale need a restart — the font is baked into
-caches shared with the client toolkits, and the scale reaches every output and
-every maximized window. The settings app puts a badge beside those two and
+colour scheme, corners, frosting, the controls side, the icon and cursor themes
+and every `dock.*` setting all change what is on screen as you save them. Only
+the interface font and the interface scale need a restart — the font is baked
+into caches shared with the client toolkits, and the scale reaches every output
+and every maximized window. The settings app puts a badge beside those two and
 nothing else.
 
 ## What Otto does not draw
@@ -132,12 +132,12 @@ Otto draws the dock, the top bar chrome, exposé and server-side window frames.
 Terminals, editors and status panels are separate clients and are themed on
 their own:
 
-- **Terminal** — [foot](https://codeberg.org/dnkl/foot) reads a palette from
+- **Terminal.** [foot](https://codeberg.org/dnkl/foot) reads a palette from
   `foot.ini`. Otto implements `ext-background-effect-v1`, so `blur=yes` next to
   an `alpha` gets the blur from the compositor.
-- **Panels and widgets** — [eww](https://github.com/elkowar/eww) and anything
+- **Panels and widgets.** [eww](https://github.com/elkowar/eww) and anything
   else speaking `wlr-layer-shell` sit on the desktop layer, behind windows and
   above the wallpaper. See [Desktop Widgets](desktop-widgets.md).
-- **GTK applications** — follow `theme_scheme` and the accent through the XDG
-  Settings portal automatically. `gtk_theme` in Otto's config is recorded but
+- **GTK applications.** These follow `theme_scheme` and the accent through the
+  XDG Settings portal automatically. `gtk_theme` in Otto's config is recorded but
   not applied; set your GTK theme the usual way.

@@ -37,9 +37,9 @@ Config files are read once, when the session starts: an edit takes effect on the
 
 ### Which file gets written
 
-Changes made from the Settings app — or from the desktop itself, such as dragging the dock handle — are written to the **highest-priority file that exists**, because that is the one whose values actually take effect. With no `otto_config.toml` around, that is `~/.config/otto/config.toml`, and it is created if it is not there yet. The system-wide `/etc/otto/config.toml` is never written.
+Changes made from the Settings app, or from the desktop itself such as dragging the dock handle, are written to the **highest-priority file that exists**, because that is the one whose values actually take effect. With no `otto_config.toml` around, that is `~/.config/otto/config.toml`, and it is created if it is not there yet. The system-wide `/etc/otto/config.toml` is never written.
 
-This is worth knowing when a setting appears not to stick. A leftover `otto_config.toml` in the directory the session was started from — the current directory is the home directory for a normal login, and the checkout for `cargo run` — overrides `~/.config/otto/config.toml` for every key it sets, and quietly becomes the file the Settings app edits. Otto logs a warning at startup when the writable file is not your own config; delete the stray file, or the keys it repeats, to go back to configuring from `~/.config/otto`.
+This is worth knowing when a setting appears not to stick. A leftover `otto_config.toml` in the directory the session was started from (the current directory is the home directory for a normal login, and the checkout for `cargo run`) overrides `~/.config/otto/config.toml` for every key it sets, and quietly becomes the file the Settings app edits. Otto logs a warning at startup when the writable file is not your own config; delete the stray file, or the keys it repeats, to go back to configuring from `~/.config/otto`.
 
 ## Getting Started
 
@@ -72,16 +72,16 @@ $EDITOR ~/.config/otto/config.toml
 | [Autostart](autostart.md) | exec_once, XDG autostart, systemd integration |
 | [Clipboard](clipboard.md) | Clipboard persistence and managers |
 
-For everything else — how to *use* the desktop rather than configure it — start
-from the [User Guide index](README.md).
+To *use* the desktop rather than configure it, start from the
+[User Guide index](README.md).
 
 ## Tips
 
-1. **Start with the example** — copy `otto_config.example.toml` to `~/.config/otto/config.toml` and modify as needed.
-2. **Use XDG paths** — `~/.config/otto/config.toml` persists across updates.
-3. **System-wide defaults** — administrators can set defaults in `/etc/otto/config.toml`.
-4. **Backend-specific settings** — use `otto_config.winit.toml` in the current directory for development/testing.
-5. **Scaling** — adjust `screen_scale` based on your display DPI (1.0 for 96 DPI, 2.0 for HiDPI).
+1. **Start with the example.** Copy `otto_config.example.toml` to `~/.config/otto/config.toml` and modify as needed.
+2. **Use XDG paths.** `~/.config/otto/config.toml` persists across updates.
+3. **System-wide defaults.** Administrators can set defaults in `/etc/otto/config.toml`.
+4. **Backend-specific settings.** Use `otto_config.winit.toml` in the current directory for development/testing.
+5. **Scaling.** Adjust `screen_scale` based on your display DPI (1.0 for 96 DPI, 2.0 for HiDPI).
 
 ## Troubleshooting
 
@@ -101,8 +101,8 @@ from the [User Guide index](README.md).
 
 **Keyboard shortcuts not working:**
 - Modifiers are `Ctrl`, `Alt`, `Shift` and `Logo` (aliases accepted, case-insensitive).
-- An unparsable trigger or action is **skipped with a warning**, not an error —
-  grep the log for `skipping shortcut`.
+- An unparsable trigger or action is **skipped with a warning**, not an error.
+  Grep the log for `skipping shortcut`.
 - Some shortcuts may conflict with an application's shortcut inhibitor.
 
 **Touchpad settings ignored:**

@@ -55,7 +55,7 @@ position = { x = 2256, y = 0 }
 | Field | Meaning |
 |-------|---------|
 | `name` | Optional friendly label |
-| `primary` | Mark this monitor as primary — where the dock and top bar go |
+| `primary` | Mark this monitor as primary: where the dock and top bar go |
 | `resolution` | Mode to set, in pixels |
 | `refresh_hz` | Refresh rate; combined with `resolution` to pick a mode |
 | `position` | Where the monitor sits in the desktop layout, in logical points |
@@ -73,7 +73,7 @@ refresh_hz = 60.0
 
 ### Generic profiles
 
-Match by connector prefix instead of exact name — handy for "any HDMI monitor I
+Match by connector prefix instead of exact name, handy for "any HDMI monitor I
 plug in":
 
 ```toml
@@ -96,7 +96,7 @@ one after it is placed immediately to the right of everything already placed.
 
 A configured `position` is honoured **as long as it does not overlap** another
 monitor's area. An overlapping position is rejected and that monitor falls back
-to automatic left-to-right placement — monitors are never allowed to overlap.
+to automatic left-to-right placement. Monitors are never allowed to overlap.
 
 Positions are recomputed from scratch whenever anything changes: a hotplug, a
 mode change, or waking from suspend. This keeps the layout consistent instead of
@@ -166,7 +166,7 @@ own exposé, its own workspace selector. Windows can be dragged onto it.
 
 ## Panels and exclusive zones
 
-Layer-shell clients — the top bar, docks, notification daemons — can reserve
+Layer-shell clients (the top bar, docks, notification daemons) can reserve
 space along a screen edge so maximized windows do not slide underneath. Otto
 caps how much any one client may claim:
 

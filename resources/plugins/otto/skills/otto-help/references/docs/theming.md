@@ -8,8 +8,8 @@ Otto's look is set entirely from the config file. There is no theme picker GUI.
 theme_scheme = "Light"   # or "Dark"
 ```
 
-This drives the compositor's own chrome — the dock, app switcher, exposé,
-workspace selector — and is also **exported to applications** through the XDG
+This drives the compositor's own chrome (the dock, app switcher, exposé,
+workspace selector) and is also **exported to applications** through the XDG
 Desktop Portal Settings interface as `org.freedesktop.appearance color-scheme`.
 
 That means GTK apps, Firefox, Chromium, Electron apps and the
@@ -18,7 +18,7 @@ second when you change it. No restart needed for clients that listen for the
 change signal.
 
 For this to work, the Otto portal backend must be selected for the Settings
-interface — see [Screen Sharing](screen-sharing.md#portal-setup), which covers
+interface. See [Screen Sharing](screen-sharing.md#portal-setup), which covers
 the same `portals.conf`.
 
 ```toml
@@ -35,7 +35,7 @@ accent_color = "blue"
 ```
 
 The accent tints selection borders in the workspace selector, the exposé window
-highlight, and the controls in Otto's own apps — toggles, sliders, focus rings
+highlight, and the controls in Otto's own apps: toggles, sliders, focus rings
 and selected rows. Applications outside Otto can follow it too: it is published
 as `accent-color` in the `org.freedesktop.appearance` portal namespace.
 
@@ -65,7 +65,7 @@ rounded_corners = true
 Rounds the corners of the dock, the top bar, Otto-drawn window decorations and
 the desktop's own panels. Set it to `false` for square corners throughout. It
 takes effect immediately: Otto repaints its own chrome, and the applications
-drawing their own — the top bar, and anything built on otto-kit — are told
+drawing their own (the top bar, and anything built on otto-kit) are told
 through the portal's `org.otto.desktop rounded-corners`, the same door
 `color-scheme` comes through.
 
@@ -77,13 +77,14 @@ frosting = true
 
 The translucent, blurred material behind the dock, the top bar, the launcher,
 the app switcher, the exposé labels, the OSD and the selectors. Set it to
-`false` and the same surfaces are drawn nearly opaque instead, and Otto
-stops blurring the desktop for them — which also saves the work of
-keeping those blurs fresh under a playing video. Menus are the most solid,
-since they open over whatever is on screen. The dock and the top bar let a
-little more of the wallpaper through, since nothing else passes under them. It takes effect immediately,
-by the same route as the corners: Otto repaints its own chrome, and the bar
-and the launcher are told through the portal's `org.otto.desktop frosting`.
+`false` and the same surfaces are drawn nearly opaque instead, and Otto stops
+blurring the desktop for them, which also saves the work of keeping those blurs
+fresh under a playing video. Menus are the most solid, since they open over
+whatever is on screen. The dock and the top bar let a little more of the
+wallpaper through, since nothing else passes under them. It takes effect
+immediately, by the same route as the corners: Otto repaints its own chrome,
+and the bar and the launcher are told through the portal's
+`org.otto.desktop frosting`.
 
 ## Wallpaper
 
@@ -118,7 +119,7 @@ args = ["-i", "/path/to/wallpaper.jpg", "-m", "fill"]
 font_family = "Inter"
 ```
 
-The font used by Otto's own UI — dock labels, exposé window titles, the app
+The font used by Otto's own UI: dock labels, exposé window titles, the app
 switcher. Applications use their own font settings; this does not change them.
 
 Otto ships with [Inter](https://rsms.me/inter/) as its default. Any font
@@ -156,7 +157,7 @@ screenshots use the
 [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme).
 
 Icons are looked up per the freedesktop icon theme specification, including
-inheritance — a theme that lacks an icon falls back to its parent.
+inheritance: a theme that lacks an icon falls back to its parent.
 
 ## Language
 
@@ -220,7 +221,7 @@ gdbus call --session --dest org.freedesktop.portal.Desktop \
 `1` means dark, `2` means light, `0` means no preference.
 
 **The wallpaper is a gradient instead of my image.** The path is wrong or
-unreadable. Check the log — Otto reports the failure and falls back to
+unreadable. Check the log. Otto reports the failure and falls back to
 `background_color`.
 
 ## Not yet supported

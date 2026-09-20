@@ -54,8 +54,8 @@ needs 1.96.0.
 | Binary | Role |
 |--------|------|
 | `otto` | The compositor itself |
-| `otto-bar` | [Top bar](topbar.md) — clock, tray, application menus |
-| `otto-islands` | [Dynamic island](dynamic-island.md) — notifications, activities, dialogs |
+| `otto-bar` | [Top bar](topbar.md): clock, tray, application menus |
+| `otto-islands` | [Dynamic island](dynamic-island.md): notifications, activities, dialogs |
 | `otto-lock` | [Screen locker](lock-screen.md) |
 | `otto-greeter` | [Login screen](login-greeter.md) client for greetd |
 | `otto-rdp` | [Remote desktop](remote-desktop.md) bridge |
@@ -63,7 +63,7 @@ needs 1.96.0.
 
 Packages also install `/etc/otto/config.toml` (a copy of
 `otto_config.example.toml`), a `wayland-sessions` entry so Otto appears in your
-display manager, the portal service files, and — on Arch and Fedora — the PAM
+display manager, the portal service files, and (on Arch and Fedora) the PAM
 service for `otto-lock`.
 
 ## Launching
@@ -94,7 +94,7 @@ when started from a bare TTY.
 
 | Flag | Effect |
 |------|--------|
-| `--login` | Run as a greeter host — see [Login Greeter](login-greeter.md) |
+| `--login` | Run as a greeter host; see [Login Greeter](login-greeter.md) |
 | `--probe` | Print the connectors, resolutions and refresh rates Otto can see, then exit |
 | `--systemd-notify` | Send `READY=1` and activate `graphical-session.target` (for `Type=notify` user units) |
 | `--version`, `--help` | As expected |
@@ -123,17 +123,17 @@ See [Autostart](autostart.md) for XDG autostart and systemd integration.
 
 Then, in rough order of how much you will miss them:
 
-1. **Keyboard shortcuts** — the shipped `/etc/otto/config.toml` defines them.
+1. **Keyboard shortcuts.** The shipped `/etc/otto/config.toml` defines them.
    If you write your own config from scratch, Otto starts with *no* bindings at
    all. See [Keyboard Shortcuts](keyboard-shortcuts.md).
-2. **Screen sharing** — needs `xdg-desktop-portal` installed and a
+2. **Screen sharing.** This needs `xdg-desktop-portal` installed and a
    `portals.conf` pointing at Otto. See [Screen Sharing](screen-sharing.md).
-3. **Screen locking** — needs `/etc/pam.d/otto-lock`. Debian and Ubuntu users
-   must install it manually. See [Lock Screen](lock-screen.md).
-4. **Lid and power button** — Otto handles these itself, which requires
+3. **Screen locking.** This needs `/etc/pam.d/otto-lock`. Debian and Ubuntu
+   users must install it manually. See [Lock Screen](lock-screen.md).
+4. **Lid and power button.** Otto handles these itself, which requires
    `HandleLidSwitch=ignore` and `HandlePowerKey=ignore` in `logind.conf`.
    See [Power Management](power-management.md).
-5. **Clipboard persistence** — Wayland loses clipboard contents when the source
+5. **Clipboard persistence.** Wayland loses clipboard contents when the source
    app exits. See [Clipboard](clipboard.md).
 
 ## Quitting

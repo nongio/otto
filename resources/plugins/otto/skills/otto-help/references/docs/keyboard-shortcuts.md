@@ -2,7 +2,7 @@
 
 Every shortcut in Otto is defined in your config file, under
 `[keyboard_shortcuts]`. There are no built-in bindings apart from two escape
-hatches (see [Always-on keys](#always-on-keys) below) — if your config has no
+hatches (see [Always-on keys](#always-on-keys) below). If your config has no
 `[keyboard_shortcuts]` table, Otto starts with no shortcuts at all.
 
 ## Default config
@@ -42,7 +42,7 @@ XF86AudioMute
 | `Logo` | `Super`, `Meta`, `Win`, `Command` |
 
 **Keys** are XKB keysym names. Letters are case-insensitive (`W` and `w` bind
-the same physical key — use `Shift+W` if you mean shifted). Otto also accepts a
+the same physical key; use `Shift+W` if you mean shifted). Otto also accepts a
 few friendly aliases for names people actually write:
 
 | You can write | XKB name |
@@ -57,7 +57,7 @@ Everything else uses the real keysym name: `Return`, `space`, `Tab`, `Prior`
 `scripts/show-keys.sh` to print the keysym for whatever you press.
 
 A trigger Otto cannot parse is **skipped with a warning in the log**, not an
-error — so a typo silently costs you that one binding. If a shortcut "does
+error, so a typo silently costs you that one binding. If a shortcut "does
 nothing", check the log first.
 
 Two triggers that resolve to the same key combination collide; the later one
@@ -84,7 +84,7 @@ There are four ways to write an action:
 "Logo+Shift+B" = { run = { cmd = "firefox", args = ["--private-window"] } }
 ```
 The command is spawned fire-and-forget. It is not run through a shell, so
-pipes, globs and `&&` do not work — call `sh -c` explicitly if you need them.
+pipes, globs and `&&` do not work. Call `sh -c` explicitly if you need them.
 
 **4. Open the user's default application for a role:**
 ```toml
@@ -116,7 +116,7 @@ desktop id or a plain command line.
 | Action | Effect |
 |--------|--------|
 | `Quit` | Exit Otto, ending the session |
-| `LockSession` | Launch the configured locker — see [Lock Screen](lock-screen.md) |
+| `LockSession` | Launch the configured locker; see [Lock Screen](lock-screen.md) |
 
 ### Windows
 
@@ -147,12 +147,13 @@ expect. [Tiling](tiling.md) covers the mode itself.
 | `ResizeGrowWidth` / `ResizeShrinkWidth` | Widen or narrow the focused cell by one `[tiling] resize_step`, taking from its neighbour |
 | `ResizeGrowHeight` / `ResizeShrinkHeight` | The same vertically |
 | `EqualizeContainer` | Give every cell in the focused container the same share |
-| `FloatingToggle` | Float the focused tile — it returns to the rectangle it had before it was tiled — or put a floating window back into the tree beside the focused cell |
+| `FloatingToggle` | Float the focused tile (it returns to the rectangle it had before it was tiled), or put a floating window back into the tree beside the focused cell |
 | `FocusModeToggle` | Move keyboard focus between the floating layer and the tiled one, landing on whichever window was last focused there |
 
 With `xkb_options = ["altwin:ctrl_win"]` (or `mac_style_modifiers`) set under
 `[input]`, the Cmd key reports as Control and a `Logo+…` binding can never
-match; bind these as `Ctrl+Alt+h` and so on instead — Cmd+Alt on the keyboard.
+match; bind these as `Ctrl+Alt+h` and so on instead, which is Cmd+Alt on the
+keyboard.
 
 A tile is resized with the pointer by dragging the window's own edge, so the
 keyboard and the pointer edit the same tree and can be mixed. `Escape` during
@@ -160,7 +161,7 @@ a titlebar drag out of a tree puts the window back where it came from.
 
 In a tiling workspace `TileWindowLeft` and `TileWindowRight` do not half-snap:
 they move focus left and right, since every position is already a slot. Gaps,
-the layout animation and the resize step are configured under `[tiling]` — see
+the layout animation and the resize step are configured under `[tiling]`; see
 `otto_config.example.toml`.
 
 ### Applications
@@ -205,7 +206,7 @@ make a scale or rotation stick.
 | `MediaPlayPause` / `MediaNext` / `MediaPrev` / `MediaStop` | Media player control (MPRIS) |
 
 Volume and brightness changes surface in the [dynamic island](dynamic-island.md)
-and can play a feedback sound — see [Audio](audio.md).
+and can play a feedback sound; see [Audio](audio.md).
 
 ### Debugging
 
@@ -226,13 +227,13 @@ dead end.
 |------|--------|
 | `Logo+Q` | Quit Otto immediately |
 | `Ctrl+Alt+Backspace` | Quit Otto immediately |
-| `Ctrl+Alt+F1`…`F12` | Switch virtual terminal — works even while locked |
-| `Ctrl+Alt+Escape` | Lock the session — works whatever holds the keyboard |
-| Power button | Runs `power_management.on_power_button` — see [Power Management](power-management.md) |
+| `Ctrl+Alt+F1`…`F12` | Switch virtual terminal; works even while locked |
+| `Ctrl+Alt+Escape` | Lock the session; works whatever holds the keyboard |
+| Power button | Runs `power_management.on_power_button`; see [Power Management](power-management.md) |
 
 `Ctrl+Alt+Escape` and the power button are read from raw hardware key codes, so
 they work regardless of your keyboard layout and regardless of which client has
-grabbed the keyboard — including a fullscreen game or a lock screen.
+grabbed the keyboard, including a fullscreen game or a lock screen.
 
 > If you are testing something over a remote session, note that `Logo+Q` and
 > `Ctrl+Alt+Backspace` will kill the compositor instantly. Avoid them.
@@ -294,7 +295,7 @@ The always-on keys above are never inhibited.
 
 ## Inside Otto's own applications
 
-Settings, Files and the launcher can be driven entirely from the keyboard —
+Settings, Files and the launcher can be driven entirely from the keyboard:
 `Tab` between controls, `Space` or `Enter` to operate one, arrows for sliders
 and lists, `Esc` to close a pop-up. None of it is configurable here: these keys
 belong to the application, not to the compositor, and they are the same in
@@ -304,6 +305,6 @@ which is also where to look if you use a screen reader.
 
 ## See also
 
-- [Touchpad Gestures](gestures.md) — the pointer-driven equivalents
-- [Input](input.md) — keyboard layout, XKB options, repeat rate
-- [Configuration](configuration.md) — where config files live
+- [Touchpad Gestures](gestures.md): the pointer-driven equivalents
+- [Input](input.md): keyboard layout, XKB options, repeat rate
+- [Configuration](configuration.md): where config files live

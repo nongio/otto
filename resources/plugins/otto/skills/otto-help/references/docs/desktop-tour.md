@@ -12,8 +12,8 @@ edge, or whichever edge you moved it to.
 
 ## The Dock
 
-The strip along the bottom edge — or down the left or right edge, if you move
-it there. It is part of the compositor, not a separate app.
+The strip along the bottom edge, or down the left or right edge if you move it
+there. It is part of the compositor, not a separate app.
 
 It holds three groups, in order along the dock: **bookmarked launchers** (apps
 you pinned in the config), **running applications**, and **minimized windows**.
@@ -27,25 +27,25 @@ you pinned in the config), **running applications**, and **minimized windows**.
 - An icon **bounces** while a launch is in progress, so you know the click
   registered before the window appears.
 - Clicking a minimized window restores it with the genie animation.
-- Right-clicking an icon opens a menu — open the app, quit it, or keep it in
+- Right-clicking an icon opens a menu: open the app, quit it, or keep it in
   the dock. Dragging an icon along the dock reorders it.
 - An icon can carry a **badge**: the count of notifications that app has
   outstanding, published by the dynamic island.
 
 The dock can auto-hide, move to either side edge, and have its size and
-magnification changed — from the config, from Settings, or by right-clicking its
-handle. See [Dock](dock.md).
+magnification changed. Do that from the config, from Settings, or by
+right-clicking its handle. See [Dock](dock.md).
 
 ## The Top Bar (`otto-bar`)
 
 A full-width panel pinned to the top edge of the primary monitor, with frosted
 glass blur and rounded bottom corners. Three zones:
 
-- **Left** — the focused application's name, followed by its global menu
+- **Left.** The focused application's name, followed by its global menu
   (File, Edit, View …) when the app exports one over DBusMenu. Click a title to
   drop the menu down; arrow keys navigate, Enter activates, Escape closes.
-- **Center** — deliberately empty. This is where the dynamic island lives.
-- **Right** — system tray icons (StatusNotifierItem) and the clock.
+- **Center.** Deliberately empty. This is where the dynamic island lives.
+- **Right.** System tray icons (StatusNotifierItem) and the clock.
 
 Tray icons respond to left-click (context menu), right-click (activate, usually
 raising the app's window) and middle-click (secondary activate).
@@ -61,9 +61,9 @@ the bar is empty and clicks pass through. It appears to show:
 - **Notifications.** Otto Islands is a full `org.freedesktop.Notifications`
   daemon, so ordinary desktop notifications land here. Each one is its own
   bubble; bubbles from the same app overlap into a deck.
-- **Live activities** — anything a program submits over D-Bus, such as a running
-  build or a backup.
-- **Permission dialogs** — the screen-sharing consent prompt and output pickers
+- **Live activities.** Anything a program submits over D-Bus, such as a
+  running build or a backup.
+- **Permission dialogs.** The screen-sharing consent prompt and output pickers
   render as an interactive island panel.
 
 Brightness and volume changes are *not* shown here; they get their own indicator
@@ -83,14 +83,14 @@ than cascading from the corner. Maximize and fullscreen are animated; minimize
 uses a genie effect that sucks the window into its dock icon.
 
 Decorations depend on what the application asks for. One that requests
-client-side decorations — GTK and Electron apps do — keeps drawing its own title
-bar. One that expresses no preference is told *server-side* and gets Otto's own
-title bar, window controls and resize borders. See
+client-side decorations keeps drawing its own title bar, as GTK and Electron
+apps do. One that expresses no preference is told *server-side* and gets Otto's
+own title bar, window controls and resize borders. See
 [Window Management](window-management.md).
 
 ## Workspaces
 
-Each monitor has its own independent set of workspaces. Switching is animated —
+Each monitor has its own independent set of workspaces. Switching is animated:
 the whole workspace slides horizontally. Drive it with `Ctrl+1`…`Ctrl+4`, or a
 three-finger horizontal swipe.
 
