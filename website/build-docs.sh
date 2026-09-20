@@ -421,3 +421,7 @@ fi
 
 echo "✓ Built User Guide: $OUTPUT_DIR/_index.md"
 echo "✓ Built Developer Guide: $DEV_OUT/ ($(ls "$DEV_OUT" | wc -l) pages)"
+
+# The pages exist now, so the search index can be built from them.
+"$SCRIPT_DIR/build-search.sh"
+echo "✓ Built search index: $SCRIPT_DIR/assets/pagefind/"

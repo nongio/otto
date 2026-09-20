@@ -32,7 +32,11 @@ jobs:
       - uses: actions/configure-pages@v5
         id: pages
 
-      - name: Build docs content
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build docs content and search index
         working-directory: website
         run: bash build-docs.sh
 
