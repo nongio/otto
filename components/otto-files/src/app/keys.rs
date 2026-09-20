@@ -445,14 +445,14 @@ impl FilesApp {
                 // a PDF — a key that stops working at the end would be worse
                 // than one that hands the listing back.
                 Keysym::Page_Down => {
-                    paginated = self.turn_peek_page(&mut browser, 1);
+                    paginated = browser.turn_peek_page(1);
                     if !paginated {
                         let step = browser.row_step();
                         browser.move_cursor(15 * step, shift)
                     }
                 }
                 Keysym::Page_Up => {
-                    paginated = self.turn_peek_page(&mut browser, -1);
+                    paginated = browser.turn_peek_page(-1);
                     if !paginated {
                         let step = browser.row_step();
                         browser.move_cursor(-15 * step, shift)

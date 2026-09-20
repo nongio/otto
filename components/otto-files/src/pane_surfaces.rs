@@ -1272,6 +1272,9 @@ fn peek_key(panel: Rect, generation: u64, session: &peek::Session) -> u64 {
         // Words landing on a picture, and a selection moving over them,
         // change what is drawn without moving anything else the key sees.
         ^ session.words_epoch.rotate_left(23)
+        // A page of a document rasterising changes what is drawn where the
+        // blank paper was, with the strip exactly where it was left.
+        ^ session.pages_epoch.rotate_left(29)
         ^ hash_selection(session).rotate_left(41)
         // A video changes what is drawn on every frame and every tick of its
         // clock, with nothing else about the panel moving.

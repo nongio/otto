@@ -5500,7 +5500,7 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
             // on the left when there is one: the name is centred, so it grows
             // towards both and has to be kept off both.
             let room = strip.width()
-                - if session.paged().is_some() {
+                - if session.paged(peek_content_rect(panel)).is_some() {
                     140.0
                 } else {
                     80.0
@@ -5517,7 +5517,7 @@ pub fn draw_peek(canvas: &Canvas, f: &Frame, session: &crate::peek::Session, res
         // only evidence that Page Down did anything is that the content
         // looks different — and on a document of similar-looking pages that
         // is no evidence at all.
-        if let Some((page, pages)) = session.paged() {
+        if let Some((page, pages)) = session.paged(peek_content_rect(panel)) {
             Label::new(otto_kit::t_owned!(
                 "peek-page-of",
                 page = page.to_string(),

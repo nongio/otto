@@ -406,6 +406,15 @@ struct Browser {
     /// Whether the recogniser is running on the previewed picture. Keeps
     /// the frame loop alive so the words paint when they land.
     peek_recognising: bool,
+    /// The pages of the open document whose pixels have been asked for and
+    /// have not arrived. A document scrolls with two pages of images held, so
+    /// the rest are fetched as they come into view — and each one only once,
+    /// however many frames go by before it lands.
+    peek_pages_pending: std::collections::HashSet<u32>,
+    /// Whether the open document's text layer has been asked for. One pass
+    /// per document: it reads the whole file, so a second would be the same
+    /// work for the same answer.
+    peek_text_asked: bool,
     /// Whether the cursor is the text beam because the pointer is over a
     /// recognised word on the panel. Tracked so the shape is set on the
     /// crossing rather than on every motion event.
@@ -583,6 +592,15 @@ struct Browser {
     /// the successor is chosen from the listing that is still on screen, and
     /// acted on against the one that replaces it.
     pending_pick: Option<(usize, Option<String>)>,
+    /// A pane the keyboard stepped into before its listing had arrived, and
+    /// which should take the cursor on its first row as soon as it does.
+    ///
+    /// Pressing Right on a folder makes its column the active one and puts the
+    /// cursor on the first entry — but the column is read on a worker, and a
+    /// folder reached from a file's selection has had no head start at all, so
+    /// the press usually beats the read. Without this the pane arrives with no
+    /// cursor in it, and the next arrow press has nothing to move.
+    entering: Option<usize>,
     /// Locations left behind by Back, most recent last. Forward pops them back.
     back: Vec<Location>,
     /// Locations left behind by Forward, most recent last. Back pops them back.
@@ -1443,3 +1461,7 @@ mod picture_info_tests {
         assert!(picture_info(&text).is_none());
     }
 }
+
+/// Stepping in and out of Miller columns from the keyboard.
+#[cfg(test)]
+mod columns_tests;

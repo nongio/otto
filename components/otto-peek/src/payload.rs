@@ -15,11 +15,11 @@ use std::io::{self, Write};
 
 pub use otto_kit::preview::{
     document::{Block, Span, SpanStyle},
-    Fact, Pixels, Preview as PreviewPayload, Row, Word,
+    Fact, Page, Pixels, Preview as PreviewPayload, Row, Word,
 };
 
 /// Wire magic. Bumped if the encoding below ever changes shape.
-const MAGIC: &[u8; 4] = b"OQV4";
+const MAGIC: &[u8; 4] = b"OQV5";
 
 /// Ceiling on any single length field. A corrupt worker must not be able to
 /// make the parent allocate a gigabyte because a length byte flipped.
@@ -34,6 +34,16 @@ pub const MAX_FRAMES: u32 = 4096;
 /// the most confident ones under the same bound, so a payload that exceeds
 /// it did not come from the recogniser.
 pub const MAX_WORDS: usize = 4096;
+
+/// The most words a *document* may carry over the wire — a whole PDF's text
+/// layer, rather than one picture's worth of recognised words. Generous
+/// enough for a long report and far short of what a flipped length byte
+/// could ask for; the decoder stops extracting at the same bound.
+pub const MAX_DOC_WORDS: usize = 200_000;
+
+/// The most pages a document may carry. Every page costs nine bytes and a
+/// slot in the strip whether or not it is ever rasterised, so this is high.
+pub const MAX_PAGES: usize = 65_536;
 
 /// The longest a single word's text may be. A recognised word is a token,
 /// not a line; anything longer is a corrupt length, not a word.
@@ -121,6 +131,10 @@ fn put_u32(out: &mut Vec<u8>, value: u32) {
 }
 
 fn put_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_f32(out: &mut Vec<u8>, value: f32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
@@ -240,6 +254,22 @@ pub fn encode(payload: &PreviewPayload) -> Vec<u8> {
             put_pixels(&mut out, pixels);
             put_u32(&mut out, *pages);
             put_u32(&mut out, *page);
+        }
+        PreviewPayload::Pages { pages, words } => {
+            out.push(7);
+            put_u32(&mut out, pages.len() as u32);
+            for page in pages {
+                put_f32(&mut out, page.width);
+                put_f32(&mut out, page.height);
+                match &page.pixels {
+                    Some(pixels) => {
+                        out.push(1);
+                        put_pixels(&mut out, pixels);
+                    }
+                    None => out.push(0),
+                }
+            }
+            put_words(&mut out, words);
         }
         PreviewPayload::Text {
             lines,
@@ -507,12 +537,20 @@ impl<'a> Cursor<'a> {
         ))
     }
 
+    fn f32(&mut self) -> Option<f32> {
+        Some(f32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+
     fn words(&mut self) -> Option<Vec<Word>> {
+        self.words_capped(MAX_WORDS)
+    }
+
+    fn words_capped(&mut self, max: usize) -> Option<Vec<Word>> {
         let count = self.len()?;
-        if count > MAX_WORDS {
+        if count > max {
             return None;
         }
-        let mut words = Vec::with_capacity(count);
+        let mut words = Vec::with_capacity(count.min(4096));
         for _ in 0..count {
             let text = self.string()?;
             if text.len() > MAX_WORD_TEXT {
@@ -584,6 +622,30 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
                 pixels,
                 pages: cursor.u32()?,
                 page: cursor.u32()?,
+            })
+        }
+        7 => {
+            let count = cursor.len()?;
+            if count > MAX_PAGES {
+                return None;
+            }
+            let mut pages = Vec::with_capacity(count.min(4096));
+            for _ in 0..count {
+                let width = cursor.f32()?;
+                let height = cursor.f32()?;
+                let pixels = match cursor.u8()? {
+                    0 => None,
+                    _ => Some(cursor.pixels()?),
+                };
+                pages.push(Page {
+                    width,
+                    height,
+                    pixels,
+                });
+            }
+            Some(PreviewPayload::Pages {
+                pages,
+                words: cursor.words_capped(MAX_DOC_WORDS)?,
             })
         }
         2 => {
@@ -664,6 +726,51 @@ pub fn decode(bytes: &[u8]) -> Option<PreviewPayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A document travels as its geometry, the pixels of whichever page was
+    /// rasterised, and one list of words for the whole strip.
+    #[test]
+    fn a_document_survives_the_wire_with_one_page_rasterised() {
+        let payload = PreviewPayload::Pages {
+            pages: vec![
+                Page::blank(612.0, 792.0),
+                Page {
+                    width: 792.0,
+                    height: 612.0,
+                    pixels: Some(Pixels {
+                        width: 2,
+                        height: 2,
+                        intrinsic_width: 2,
+                        intrinsic_height: 2,
+                        data: vec![7; 2 * 2 * 4],
+                        frame_delays: Vec::new(),
+                        words: Vec::new(),
+                    }),
+                },
+                Page::blank(612.0, 792.0),
+            ],
+            words: vec![Word {
+                text: "Appendix".into(),
+                left: 72,
+                top: 1_500,
+                width: 60,
+                height: 12,
+                confidence: 100,
+                block: 1,
+                paragraph: 3,
+                line: 9,
+            }],
+        };
+        let Some(PreviewPayload::Pages { pages, words }) = decode(&encode(&payload)) else {
+            panic!("a document did not come back as one");
+        };
+        assert_eq!(pages.len(), 3);
+        assert_eq!(pages[1].width, 792.0);
+        assert!(pages[0].pixels.is_none() && pages[2].pixels.is_none());
+        assert_eq!(pages[1].pixels.as_ref().expect("page two").data.len(), 16);
+        assert_eq!(words[0].text, "Appendix");
+        assert_eq!(words[0].top, 1_500);
+    }
 
     /// The pipe the worker writes and the buffer the parent takes over are
     /// two different code paths to the same payload, and an animation only

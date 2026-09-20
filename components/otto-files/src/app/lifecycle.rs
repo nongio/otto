@@ -572,6 +572,7 @@ impl App for FilesApp {
             self.start_peek(&mut browser);
         }
         self.follow_peek();
+        self.follow_peek_document();
         self.auto_palette();
 
         // With the columns in their own surfaces, a scroll is repainted there

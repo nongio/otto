@@ -504,6 +504,51 @@ impl A11yTree {
                     });
                 });
             }
+            Preview::Pages { pages, words } => {
+                // A document, read from the text layer the decoder found —
+                // which is the same text a sighted user can select, so the
+                // two halves of "the words on this page" agree. A scanned
+                // document with no text layer has no words, and is named and
+                // counted like the picture of paper that it is.
+                let lines: Vec<String> = if words.is_empty() {
+                    Vec::new()
+                } else {
+                    crate::preview::selection_text(
+                        words,
+                        crate::preview::WordSelection::new(0, words.len() - 1),
+                    )
+                    .lines()
+                    .map(str::to_owned)
+                    .collect()
+                };
+                let count = pages.len() as f64;
+                let name = name.to_owned();
+
+                self.group_with(
+                    id,
+                    Role::Document,
+                    |node| {
+                        node.set_bounds(bounds_of(bounds));
+                        node.set_label(name);
+                        node.set_description(crate::t_owned!("a11y-preview-pages", pages = count));
+                    },
+                    |tree| {
+                        for (index, line) in lines.into_iter().enumerate() {
+                            tree.node(
+                                FocusId::new(format!("preview-line-{index}")),
+                                Role::TextRun,
+                                |node| {
+                                    let line = format!("{line}\n");
+                                    let lengths: Vec<u8> =
+                                        line.chars().map(|c| c.len_utf8() as u8).collect();
+                                    node.set_value(line);
+                                    node.set_character_lengths(lengths);
+                                },
+                            );
+                        }
+                    },
+                );
+            }
             Preview::Text {
                 lines, truncated, ..
             } => {

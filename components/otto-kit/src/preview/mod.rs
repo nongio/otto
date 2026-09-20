@@ -58,6 +58,31 @@ pub struct Pixels {
     pub words: Vec<Word>,
 }
 
+/// One page of a [`Preview::Pages`] document.
+///
+/// The size is the page's own, in whatever unit the decoder measures pages in
+/// — points, for a PDF — and is what the strip is laid out from. It is known
+/// for every page from the moment the document is opened, which is what lets
+/// a fifty-page document scroll immediately with two pages rasterised.
+#[derive(Debug, Clone)]
+pub struct Page {
+    pub width: f32,
+    pub height: f32,
+    /// The rasterised page, once a host has asked for it and it has arrived.
+    pub pixels: Option<Pixels>,
+}
+
+impl Page {
+    /// A page whose size is known and whose pixels are not.
+    pub fn blank(width: f32, height: f32) -> Self {
+        Self {
+            width,
+            height,
+            pixels: None,
+        }
+    }
+}
+
 /// One recognised word: where it is on the decoded picture and what it says.
 ///
 /// `block`, `paragraph` and `line` are the recogniser's reading-order
@@ -221,6 +246,21 @@ impl Zoom {
         band: (0.0, 0.0),
     };
 
+    /// The top of the content, whatever its size and whatever box it is
+    /// drawn in: a document opens at its first page rather than half way
+    /// down it.
+    ///
+    /// An offset is measured from the *centre* of the box, so "the top" is a
+    /// different number for every document in every panel — and a session is
+    /// built before anything knows which panel it will be drawn in. Asking
+    /// for further than there is clears that up: every path that reads a zoom
+    /// clamps it first, and clamping this lands on exactly the top.
+    pub const TOP: Zoom = Zoom {
+        scale: 1.0,
+        offset: (0.0, f32::INFINITY),
+        band: (0.0, 0.0),
+    };
+
     /// The furthest in a preview goes. Past roughly this a decode meant for a
     /// panel is only showing its own resampling, so more zoom buys nothing.
     pub const MAX: f32 = 8.0;
@@ -266,6 +306,25 @@ pub enum Preview {
         pages: u32,
         /// Which page `pixels` holds, 1-based.
         page: u32,
+    },
+    /// A document of pages, stacked into one strip that scrolls.
+    ///
+    /// Distinct from [`Preview::Pixels`] because a document is not a picture
+    /// that happens to have more of itself elsewhere: every page's geometry is
+    /// known before any of them is rasterised, so the strip can be laid out,
+    /// scrolled and reported on ("page 4 of 30") while most of it is still
+    /// blank. A host fills pages in as they come into view and drops them
+    /// again when they leave; nothing here requires that all of them, or any
+    /// of them, have pixels.
+    Pages {
+        /// Every page, in order, however few of them are rasterised.
+        pages: Vec<Page>,
+        /// The document's text, in reading order, boxed in **strip
+        /// coordinates** — see [`strip_size`]. One list for the whole
+        /// document rather than one per page, because a selection dragged
+        /// down a column runs across a page break and the words either side
+        /// of it are neighbours in reading order.
+        words: Vec<Word>,
     },
     /// Text, already validated as UTF-8 and bounded by the decoder.
     Text {
@@ -317,7 +376,7 @@ pub const IMAGE_PADDING: f32 = 8.0;
 /// The padding this preview is laid out with.
 fn padding_for(preview: &Preview) -> f32 {
     match preview {
-        Preview::Pixels { .. } => IMAGE_PADDING,
+        Preview::Pixels { .. } | Preview::Pages { .. } => IMAGE_PADDING,
         _ => PADDING,
     }
 }
@@ -344,6 +403,79 @@ pub const SUBTITLE_BAND: f32 = 28.0;
 pub const FACT_BAND: f32 = 22.0;
 pub const CORNER_RADIUS: f32 = 8.0;
 
+/// Clear space between two pages of a strip, in strip units.
+///
+/// Enough that a page ends visibly rather than running into the next one,
+/// and not so much that scrolling spends its time on the gap.
+pub const PAGE_GAP: f32 = 14.0;
+
+/// The whole document as one thing: the width of its widest page, and the
+/// height of every page stacked with [`PAGE_GAP`] between them.
+///
+/// This is the **strip coordinate space** — the document's own units, with
+/// pages laid end to end. Words are boxed in it, hit-testing converts panel
+/// points into it, and the layout scales it into the panel. A page's own
+/// pixels never enter it, so a strip does not change size as pages are
+/// rasterised and dropped.
+pub fn strip_size(pages: &[Page]) -> (f32, f32) {
+    let width = pages
+        .iter()
+        .fold(0.0f32, |widest, page| widest.max(page.width));
+    let height: f32 = pages.iter().map(|page| page.height).sum();
+    let gaps = PAGE_GAP * pages.len().saturating_sub(1) as f32;
+    (width.max(1.0), (height + gaps).max(1.0))
+}
+
+/// Where page `index` sits in strip coordinates: centred across the strip,
+/// stacked down it.
+pub fn page_in_strip(pages: &[Page], index: usize) -> Rect {
+    let (strip_width, _) = strip_size(pages);
+    let top: f32 = pages[..index.min(pages.len())]
+        .iter()
+        .map(|page| page.height + PAGE_GAP)
+        .sum();
+    let Some(page) = pages.get(index) else {
+        return Rect::from_xywh(0.0, top, 0.0, 0.0);
+    };
+    Rect::from_xywh(
+        (strip_width - page.width) / 2.0,
+        top,
+        page.width,
+        page.height,
+    )
+}
+
+/// Words boxed in one page's own pixels, moved into the strip's coordinates.
+///
+/// A recogniser reads a *page image* and answers in its pixels; a selection
+/// runs down the whole document and is made in strip coordinates. This is the
+/// one conversion between them, so a page recognised at any size lands in the
+/// same place as one whose words came from the document's text layer.
+pub fn words_in_strip(
+    pages: &[Page],
+    index: usize,
+    words: &[Word],
+    source_width: u32,
+    source_height: u32,
+) -> Vec<Word> {
+    if source_width == 0 || source_height == 0 || index >= pages.len() {
+        return Vec::new();
+    }
+    let rect = page_in_strip(pages, index);
+    let sx = rect.width() / source_width as f32;
+    let sy = rect.height() / source_height as f32;
+    words
+        .iter()
+        .map(|word| Word {
+            left: (rect.left + word.left as f32 * sx).max(0.0) as u32,
+            top: (rect.top + word.top as f32 * sy).max(0.0) as u32,
+            width: (word.width as f32 * sx) as u32,
+            height: (word.height as f32 * sy) as u32,
+            ..word.clone()
+        })
+        .collect()
+}
+
 /// Geometry shared by drawing and hit-testing.
 #[derive(Debug, Clone)]
 pub struct PreviewLayout {
@@ -361,6 +493,11 @@ pub struct PreviewLayout {
     /// Zoom is measured against this, so a gesture means the same thing on a
     /// wide picture and a tall one.
     pub fit: Rect,
+    /// One rect per page, in panel coordinates, for a document. Every page
+    /// is in it, including the ones scrolled off either end — which is what
+    /// a host reads to decide which pages to ask for and which to drop.
+    /// Empty for everything else.
+    pub page_rects: Vec<Rect>,
     /// One rect per visible row, for listings. Empty otherwise.
     pub row_rects: Vec<Rect>,
     /// Every line of a wrapped document, visible or not — the count is what
@@ -405,18 +542,12 @@ fn inner_of(bounds: Rect, preview: &Preview) -> Rect {
 /// stores what this returns and drawing re-clamps it anyway, because the box
 /// changes size underneath a stored zoom whenever the window is resized.
 pub fn clamp_zoom(bounds: Rect, preview: &Preview, zoom: Zoom) -> Zoom {
-    let Preview::Pixels { pixels, .. } = preview else {
+    let inner = inner_of(bounds, preview);
+    let Some(fitted) = fitted_content(inner, preview) else {
         // Text, listings and cards are laid out to fit by construction. A
         // zoom on one is not clamped, it is refused.
         return Zoom::FIT;
     };
-    let inner = inner_of(bounds, preview);
-    let fitted = fit_up_to(
-        inner,
-        pixels.width as f32,
-        pixels.height as f32,
-        max_scale(pixels),
-    );
     let scale = if zoom.scale <= Zoom::SNAP {
         1.0
     } else {
@@ -521,6 +652,33 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
     let inner = inner_of(bounds, preview);
 
     match preview {
+        Preview::Pages { pages, .. } => {
+            let fitted = fitted_content(inner, preview).unwrap_or(inner);
+            let zoom = clamp_zoom(bounds, preview, zoom);
+            let content = zoomed(inner, fitted, zoom);
+            let (strip_width, strip_height) = strip_size(pages);
+            let page_rects = (0..pages.len())
+                .map(|index| {
+                    let page = page_in_strip(pages, index);
+                    Rect::from_ltrb(
+                        content.left + content.width() * page.left / strip_width,
+                        content.top + content.height() * page.top / strip_height,
+                        content.left + content.width() * page.right / strip_width,
+                        content.top + content.height() * page.bottom / strip_height,
+                    )
+                })
+                .collect();
+            PreviewLayout {
+                bounds,
+                content,
+                inner,
+                fit: fitted,
+                page_rects,
+                row_rects: Vec::new(),
+                doc_lines: Vec::new(),
+                visible_rows: 0,
+            }
+        }
         Preview::Pixels { pixels, .. } => {
             let fitted = fit_up_to(
                 inner,
@@ -534,6 +692,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 content: zoomed(inner, fitted, zoom),
                 inner,
                 fit: fitted,
+                page_rects: Vec::new(),
                 row_rects: Vec::new(),
                 doc_lines: Vec::new(),
                 visible_rows: 0,
@@ -553,6 +712,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 content: inner,
                 inner,
                 fit: inner,
+                page_rects: Vec::new(),
                 row_rects,
                 doc_lines: Vec::new(),
                 visible_rows: visible,
@@ -576,6 +736,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
                 content: inner,
                 inner,
                 fit: inner,
+                page_rects: Vec::new(),
                 row_rects: Vec::new(),
                 doc_lines: lines,
                 visible_rows: visible,
@@ -586,6 +747,7 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
             content: inner,
             inner,
             fit: inner,
+            page_rects: Vec::new(),
             row_rects: Vec::new(),
             doc_lines: Vec::new(),
             visible_rows: ((inner.height() / LINE_HEIGHT).floor().max(0.0)) as usize,
@@ -595,11 +757,74 @@ pub fn layout(bounds: Rect, preview: &Preview, first_row: usize, zoom: Zoom) -> 
             content: inner,
             inner,
             fit: inner,
+            page_rects: Vec::new(),
             row_rects: Vec::new(),
             doc_lines: Vec::new(),
             visible_rows: 0,
         },
     }
+}
+
+/// Where the content lands at [`Zoom::FIT`], for the previews that have a
+/// size of their own to be fitted. `None` for everything laid out to fit by
+/// construction, which is everything a zoom is refused for.
+fn fitted_content(inner: Rect, preview: &Preview) -> Option<Rect> {
+    match preview {
+        Preview::Pixels { pixels, .. } => Some(fit_up_to(
+            inner,
+            pixels.width as f32,
+            pixels.height as f32,
+            max_scale(pixels),
+        )),
+        Preview::Pages { pages, .. } if !pages.is_empty() => {
+            // A document rests at **one page in the box**: a glance says what
+            // the page is — its shape, its margins, where the text sits — and
+            // the rest of it is a scroll away. Filling the panel's width
+            // instead would crop the first page at the fold, which reads as a
+            // picture that did not fit rather than as a document.
+            //
+            // Fitting the *whole strip* is the other thing this is not: fifty
+            // pages shrunk into one box is fifty thumbnails nobody can read.
+            Some(fit_page(inner, pages))
+        }
+        _ => None,
+    }
+}
+
+/// How wide page `index` is drawn when the document rests in `bounds` — which
+/// is what a rasteriser should be asked for, and no more.
+///
+/// A page is drawn at a fraction of the panel's width, since it rests whole
+/// with a gutter either side. Rasterising a PDF is superlinear in width, so
+/// asking for the panel's width instead of the page's is not a little
+/// wasteful: on a photograph-heavy page it is the difference between a fifth
+/// of a second and two seconds.
+pub fn page_raster_width(bounds: Rect, pages: &[Page], index: usize) -> f32 {
+    let (strip_width, _) = strip_size(pages);
+    let strip = fit_page(bounds, pages);
+    let Some(page) = pages.get(index) else {
+        return strip.width();
+    };
+    page.width * strip.width() / strip_width
+}
+
+/// The whole strip, at the scale that puts the document's first page inside
+/// the box — so the strip itself usually runs a long way past it.
+///
+/// The width comes from the strip rather than from that page, so a landscape
+/// page later in a portrait document is inside the box too rather than
+/// hanging over its edges.
+fn fit_page(bounds: Rect, pages: &[Page]) -> Rect {
+    let (strip_width, strip_height) = strip_size(pages);
+    let first = page_in_strip(pages, 0);
+    if strip_width <= 0.0 || first.height() <= 0.0 {
+        return bounds;
+    }
+    let scale = (bounds.width() / strip_width).min(bounds.height() / first.height());
+    let (w, h) = (strip_width * scale, strip_height * scale);
+    let cx = bounds.center_x();
+    let cy = bounds.center_y();
+    Rect::from_ltrb(cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0)
 }
 
 /// The largest rect of the content's aspect ratio that fits inside `bounds`,
@@ -655,6 +880,7 @@ pub fn draw(
 ) {
     let geometry = layout(bounds, preview, first_row, zoom);
     match preview {
+        Preview::Pages { pages, .. } => draw_pages(canvas, &geometry, pages, theme),
         Preview::Pixels { pixels, .. } => draw_pixels(canvas, &geometry, pixels, first_row, theme),
         Preview::Text { lines, .. } => draw_text(canvas, &geometry, lines, first_row, theme),
         Preview::Document { .. } => document::draw(
@@ -688,6 +914,53 @@ pub fn draw(
             draw_unavailable(canvas, &geometry, reason, icon, theme, resolve_icon)
         }
     }
+}
+
+/// Paint the pages of a document down their strip.
+///
+/// A page that has not been rasterised is still drawn — as the paper it will
+/// be — so scrolling never runs into a hole where the next page should be,
+/// and so the strip's length is visible before its content is. The host sees
+/// the same rects in [`PreviewLayout::page_rects`] and asks for the pixels of
+/// the ones on screen.
+fn draw_pages(canvas: &Canvas, geometry: &PreviewLayout, pages: &[Page], theme: &Theme) {
+    canvas.save();
+    canvas.clip_rect(geometry.inner, None, true);
+
+    let mut paper = Paint::default();
+    paper.set_anti_alias(true);
+    paper.set_color(theme.fill_quaternary);
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    for (index, rect) in geometry.page_rects.iter().enumerate() {
+        // Off the top or the bottom of the panel: nothing to draw, and no
+        // image to hold on to for it.
+        if rect.bottom < geometry.inner.top || rect.top > geometry.inner.bottom {
+            continue;
+        }
+        let image = pages
+            .get(index)
+            .and_then(|page| page.pixels.as_ref())
+            .and_then(|pixels| pixels.to_image());
+        match image {
+            Some(image) => {
+                canvas.draw_image_rect_with_sampling_options(
+                    &image,
+                    None,
+                    *rect,
+                    skia_safe::sampling_options::SamplingOptions::from(
+                        skia_safe::sampling_options::CubicResampler::mitchell(),
+                    ),
+                    &paint,
+                );
+            }
+            None => {
+                canvas.draw_rect(*rect, &paper);
+            }
+        }
+    }
+    canvas.restore();
 }
 
 fn draw_pixels(
@@ -1083,6 +1356,90 @@ mod tests {
             frame_delays: Vec::new(),
             words: Vec::new(),
         }
+    }
+
+    fn document(pages: usize) -> Preview {
+        Preview::Pages {
+            pages: (0..pages).map(|_| Page::blank(612.0, 792.0)).collect(),
+            words: Vec::new(),
+        }
+    }
+
+    /// The strip is as wide as its widest page and as long as all of them,
+    /// with a gap between each pair — and the pages sit in it in order.
+    #[test]
+    fn pages_stack_down_the_strip_in_order() {
+        let pages = vec![
+            Page::blank(612.0, 792.0),
+            Page::blank(792.0, 612.0),
+            Page::blank(612.0, 792.0),
+        ];
+        let (width, height) = strip_size(&pages);
+        assert_eq!(width, 792.0, "the landscape page sets the width");
+        assert_eq!(height, 792.0 + 612.0 + 792.0 + 2.0 * PAGE_GAP);
+
+        let first = page_in_strip(&pages, 0);
+        let second = page_in_strip(&pages, 1);
+        assert_eq!(first.top, 0.0);
+        assert_eq!(second.top, 792.0 + PAGE_GAP);
+        assert_eq!(second.left, 0.0, "the widest page is flush across");
+        assert_eq!(first.center_x(), second.center_x(), "pages are centred");
+    }
+
+    /// A document rests showing its first page whole, with the rest of the
+    /// strip below the fold — and a single-page document is exactly that with
+    /// nothing below it.
+    #[test]
+    fn a_document_rests_on_a_whole_page() {
+        let bounds = Rect::from_xywh(0.0, 0.0, 600.0, 400.0);
+        let many = layout(bounds, &document(10), 0, Zoom::TOP);
+        assert_eq!(
+            many.page_rects.len(),
+            10,
+            "every page has a place, rasterised or not"
+        );
+        // The first page is at the top, and all of it is in the box.
+        let first = many.page_rects[0];
+        assert!((first.top - many.inner.top).abs() < 0.5);
+        assert!(first.height() <= many.inner.height() + 0.5);
+        assert!(first.width() <= many.inner.width() + 0.5);
+        assert!(
+            (first.height() - many.inner.height()).abs() < 0.5,
+            "and it fills the box it fits in"
+        );
+        assert!(
+            many.content.height() > many.inner.height() * 9.0,
+            "with nine more pages under it"
+        );
+
+        let one = layout(bounds, &document(1), 0, Zoom::TOP);
+        assert!(one.content.height() <= one.inner.height() + 0.5);
+        assert!(one.content.width() < one.inner.width());
+    }
+
+    /// A page recognised at its own pixel size lands where that page is in
+    /// the strip, so words from a recogniser and words from a text layer are
+    /// in the same coordinates.
+    #[test]
+    fn recognised_words_move_onto_the_strip() {
+        let pages = vec![Page::blank(612.0, 792.0), Page::blank(612.0, 792.0)];
+        let word = Word {
+            text: "Appendix".into(),
+            left: 612,
+            top: 792,
+            width: 1224,
+            height: 396,
+            confidence: 90,
+            block: 0,
+            paragraph: 0,
+            line: 0,
+        };
+        // A page rasterised at ten times its points, on the second page.
+        let moved = words_in_strip(&pages, 1, &[word], 6120, 7920);
+        let second = page_in_strip(&pages, 1);
+        assert_eq!(moved[0].left, 61);
+        assert_eq!(moved[0].top, second.top as u32 + 79);
+        assert_eq!(moved[0].width, 122);
     }
 
     #[test]

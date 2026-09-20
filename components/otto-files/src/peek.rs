@@ -19,7 +19,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
-use otto_kit::preview::{self, Pixels, Preview, Word, WordSelection, Zoom};
+use otto_kit::preview::{self, Page, Pixels, Preview, Word, WordSelection, Zoom};
 use otto_media_kit::transport::TransportHit;
 use otto_media_kit::{Frame, Options, Playback, Player, State};
 use otto_peek::decode::Request;
@@ -342,6 +342,10 @@ pub struct Session {
     /// Bumped when words land on the picture after it was drawn, so the
     /// panel's content key sees that there is now something to select.
     pub words_epoch: u64,
+    /// Bumped when a page of a document is rasterised, or dropped again. The
+    /// strip is where it was and is zoomed as it was; what changed is that a
+    /// page that was blank is now paper with printing on it.
+    pub pages_epoch: u64,
     /// When the recogniser was started on this picture, while it is still
     /// running. The badge in the panel's corner reads it: the picture is up
     /// before its words are, and a reader who cannot see that something is
@@ -352,14 +356,20 @@ pub struct Session {
 impl Session {
     /// Open a session on a decoded file, at fit and unscrolled.
     pub fn new(preview: Preview, name: String, anchor: Rect, opened_at: Instant) -> Self {
+        let zoom = match &preview {
+            Preview::Pages { .. } => Zoom::TOP,
+            _ => Zoom::FIT,
+        };
         Self {
             preview,
             name,
             first_row: 0,
             frame_shown_at: Instant::now(),
-            // Fit, whatever the last file was left at. A zoom belongs to the
-            // picture it was made on, not to the panel.
-            zoom: Zoom::FIT,
+            // Fit, whatever the last file was left at: a zoom belongs to the
+            // picture it was made on, not to the panel. A document opens at
+            // the top of its first page instead, which is the same thing —
+            // the beginning of what there is to look at.
+            zoom,
             pan: Pan::new(),
             anchor,
             opened_at,
@@ -371,6 +381,7 @@ impl Session {
             selection: None,
             selecting: false,
             words_epoch: 0,
+            pages_epoch: 0,
             recognising_since: None,
         }
     }
@@ -466,6 +477,7 @@ impl Session {
             selection: None,
             selecting: false,
             words_epoch: 0,
+            pages_epoch: 0,
             ..Self::new(preview, name, anchor, opened_at)
         }
     }
@@ -495,6 +507,15 @@ impl Session {
     pub fn words(&self) -> &[Word] {
         match &self.preview {
             Preview::Pixels { pixels, .. } => &pixels.words,
+            Preview::Pages { words, .. } => words,
+            _ => &[],
+        }
+    }
+
+    /// The document's pages, if this preview is one.
+    pub fn pages(&self) -> &[Page] {
+        match &self.preview {
+            Preview::Pages { pages, .. } => pages,
             _ => &[],
         }
     }
@@ -503,13 +524,43 @@ impl Session {
     /// preview is not a picture any more; a selection that was somehow made
     /// on the old words is dropped with them.
     pub fn attach_words(&mut self, words: Vec<Word>) {
-        if let Preview::Pixels { pixels, .. } = &mut self.preview {
-            pixels.words = words;
-            self.selection = None;
-            self.selecting = false;
-            self.words_epoch = self.words_epoch.wrapping_add(1);
+        match &mut self.preview {
+            Preview::Pixels { pixels, .. } => pixels.words = words,
+            Preview::Pages { words: held, .. } => *held = words,
+            _ => {
+                self.recognising_since = None;
+                return;
+            }
         }
+        self.selection = None;
+        self.selecting = false;
+        self.words_epoch = self.words_epoch.wrapping_add(1);
         self.recognising_since = None;
+    }
+
+    /// Take the text layer a second pass read out of the document: its words,
+    /// and the page geometry it measured them against.
+    ///
+    /// The sizes are adopted along with the words rather than only the words,
+    /// because the two have to agree — a selection boxed against one idea of
+    /// how big a page is, drawn against another, highlights the wrong line.
+    /// Pages already rasterised keep their pixels; they are the same pages,
+    /// measured again.
+    pub fn attach_text_layer(&mut self, measured: Vec<Page>, words: Vec<Word>) -> bool {
+        let Preview::Pages { pages, .. } = &mut self.preview else {
+            return false;
+        };
+        // A text layer read from a different document than the one on screen
+        // — the file changed under the second pass — is not merged.
+        if measured.len() != pages.len() {
+            return false;
+        }
+        for (page, measured) in pages.iter_mut().zip(measured) {
+            page.width = measured.width;
+            page.height = measured.height;
+        }
+        self.attach_words(words);
+        true
     }
 
     /// Say that the recogniser is running on this picture, from `now`.
@@ -667,18 +718,177 @@ impl Session {
     /// A page is not scroll state and not zoom state: it is *a different
     /// decode*. Turning one is asking the worker for another picture, which is
     /// why this only reports and the host does the turning.
-    pub fn paged(&self) -> Option<(u32, u32)> {
+    pub fn paged(&self, content: Rect) -> Option<(u32, u32)> {
         match &self.preview {
             Preview::Pixels { pages, page, .. } if *pages > 1 => Some((*page, *pages)),
+            Preview::Pages { pages, .. } if pages.len() > 1 => {
+                Some((self.showing_page(content) as u32 + 1, pages.len() as u32))
+            }
             _ => None,
         }
+    }
+
+    /// The page the panel is showing: the one with most of the viewport.
+    ///
+    /// A scrolled document is usually showing two pages at once, and "which
+    /// page is this" has one answer. Most of the box is that answer — it is
+    /// what a reader would say they were on.
+    pub fn showing_page(&self, content: Rect) -> usize {
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        let mut best = (0usize, 0.0f32);
+        for (index, rect) in layout.page_rects.iter().enumerate() {
+            let top = rect.top.max(layout.inner.top);
+            let bottom = rect.bottom.min(layout.inner.bottom);
+            let shown = bottom - top;
+            if shown > best.1 {
+                best = (index, shown);
+            }
+        }
+        best.0
+    }
+
+    /// Which pages are on screen, or near enough to be worth having ready.
+    /// Empty for everything that is not a document.
+    pub fn pages_in_view(&self, content: Rect) -> Vec<usize> {
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        layout
+            .page_rects
+            .iter()
+            .enumerate()
+            .filter(|(_, rect)| rect.bottom >= layout.inner.top && rect.top <= layout.inner.bottom)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// The pages worth holding pixels for: the ones on screen, and a couple
+    /// either side so scrolling back a page does not start a rasteriser.
+    ///
+    /// Wider than what is asked for, so a page that has just been passed is
+    /// kept rather than dropped and immediately wanted again.
+    fn pages_kept(&self, content: Rect) -> std::ops::RangeInclusive<usize> {
+        /// How far either side of the screen a page is kept.
+        const KEEP: usize = 2;
+        let visible = self.pages_in_view(content);
+        let first = visible.first().copied().unwrap_or(0);
+        let last = visible.last().copied().unwrap_or(first);
+        first.saturating_sub(KEEP)..=last + KEEP
+    }
+
+    /// What the panel wants rasterised: the 1-based page, and how wide to
+    /// rasterise it, nearest to the eye first.
+    ///
+    /// Reading goes downwards, so this looks further ahead than behind: a
+    /// page is asked for before it comes into view, and a scroll that arrives
+    /// on one that is already there arrives on a page rather than on paper.
+    /// A page whose pixels are too narrow for the size it is now drawn at —
+    /// the reader zoomed in — is asked for again at the size it needs.
+    pub fn pages_wanted(&self, content: Rect, scale: f32) -> Vec<PageRequest> {
+        /// How far ahead of the screen pages are fetched, and how far behind.
+        const AHEAD: usize = 2;
+        const BEHIND: usize = 1;
+        /// How much wider than its pixels a page may be drawn before it is
+        /// worth rasterising again. A page drawn a little larger than it was
+        /// decoded is resampled and looks it; one drawn a little smaller is
+        /// supersampled, which looks better than the decode did.
+        const TOO_SOFT: f32 = 1.25;
+
+        let pages = self.pages();
+        if pages.is_empty() {
+            return Vec::new();
+        }
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        let visible = self.pages_in_view(content);
+        let first = visible.first().copied().unwrap_or(0);
+        let last = visible.last().copied().unwrap_or(first);
+        let showing = self.showing_page(content) as i64;
+
+        let mut wanted: Vec<(usize, u32)> = (first.saturating_sub(BEHIND)
+            ..=(last + AHEAD).min(pages.len() - 1))
+            .filter_map(|index| {
+                let drawn = layout.page_rects.get(index)?.width() * scale;
+                let width = (drawn.ceil() as u32).clamp(MIN_PAGE_WIDTH, MAX_PAGE_WIDTH);
+                let enough = match &pages[index].pixels {
+                    // Never asked for, or asked for at a size the reader has
+                    // since zoomed past.
+                    Some(pixels) => (pixels.width as f32 * TOO_SOFT) >= drawn,
+                    None => false,
+                };
+                (!enough).then_some((index, width))
+            })
+            .collect();
+        wanted.sort_by_key(|(index, _)| (*index as i64 - showing).abs());
+        wanted
+            .into_iter()
+            .map(|(index, width)| PageRequest {
+                page: index as u32 + 1,
+                width,
+            })
+            .collect()
+    }
+
+    /// Put a rasterised page in its place in the strip, and let go of the
+    /// pages that have been scrolled well past.
+    ///
+    /// Holding every page a long scroll went over would be hundreds of
+    /// megabytes of images nobody is looking at; they are cheap to ask for
+    /// again, and asking again is what scrolling back does anyway.
+    pub fn attach_page(&mut self, page: u32, mut pixels: Pixels, content: Rect) -> bool {
+        let keep = self.pages_kept(content);
+        let Preview::Pages { pages, words } = &mut self.preview else {
+            return false;
+        };
+        let Some(index) = (page as usize).checked_sub(1).filter(|i| *i < pages.len()) else {
+            return false;
+        };
+
+        // Words recognised on the page image, for a document that has no text
+        // layer of its own. They are boxed in the page's pixels and the
+        // selection is made in the strip's coordinates, so they are moved
+        // before they are merged, and they replace whatever this page
+        // contributed before rather than piling up beside it.
+        if !pixels.words.is_empty() {
+            let mut recognised =
+                preview::words_in_strip(pages, index, &pixels.words, pixels.width, pixels.height);
+            for word in &mut recognised {
+                word.block = index as u32;
+            }
+            words.retain(|word| word.block != index as u32);
+            let at = words
+                .iter()
+                .position(|word| word.block > index as u32)
+                .unwrap_or(words.len());
+            words.splice(at..at, recognised);
+            self.selection = None;
+            self.selecting = false;
+            self.words_epoch = self.words_epoch.wrapping_add(1);
+        }
+        pixels.words = Vec::new();
+        pages[index].pixels = Some(pixels);
+        for (other, page) in pages.iter_mut().enumerate() {
+            if !keep.contains(&other) {
+                page.pixels = None;
+            }
+        }
+        self.pages_epoch = self.pages_epoch.wrapping_add(1);
+        true
+    }
+
+    /// Scroll a document to `page`, 1-based, putting its top edge at the top
+    /// of the box. Returns whether anything moved.
+    pub fn scroll_to_page(&mut self, page: u32, content: Rect) -> bool {
+        let index = (page.max(1) - 1) as usize;
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        let Some(rect) = layout.page_rects.get(index) else {
+            return false;
+        };
+        self.pan_by(0.0, layout.inner.top - rect.top, content)
     }
 
     /// The page a turn of `delta` lands on, or `None` when there is nothing to
     /// turn to: an unpaginated preview, or an end already reached. Stopping at
     /// both ends rather than wrapping, like every other end in the panel.
-    pub fn page_turn(&self, delta: i32) -> Option<u32> {
-        let (page, pages) = self.paged()?;
+    pub fn page_turn(&self, delta: i32, content: Rect) -> Option<u32> {
+        let (page, pages) = self.paged(content)?;
         let next = (page as i64 + delta as i64).clamp(1, pages as i64) as u32;
         (next != page).then_some(next)
     }
@@ -707,9 +917,13 @@ impl Session {
     /// Returns whether anything moved, so a host that repaints on demand does
     /// not repaint for a gesture that was already against the stop.
     pub fn pan_by(&mut self, dx: f32, dy: f32, content: Rect) -> bool {
+        // From where the content actually is, not from what is stored: a
+        // document opens asking to be further up than it can go (see
+        // [`Zoom::TOP`]), and adding to that would move nothing.
+        let from = otto_kit::preview::clamp_zoom(content, &self.preview, self.zoom);
         let asked = Zoom {
-            scale: self.zoom.scale,
-            offset: (self.zoom.offset.0 + dx, self.zoom.offset.1 + dy),
+            scale: from.scale,
+            offset: (from.offset.0 + dx, from.offset.1 + dy),
             // A placement is not a stretch: whatever band was in flight ends
             // here rather than being carried along by it.
             band: (0.0, 0.0),
@@ -847,7 +1061,10 @@ impl Session {
         // no length past its box — which leaves the views unscrollable and
         // draws no bars, exactly as if they were not there.
         let (viewport, length) = match &self.preview {
-            Preview::Pixels { .. } => {
+            // A document's strip is longer than its box by construction, so
+            // this is what scrolls one: the same two views, the same
+            // momentum, the same bars as a zoomed picture.
+            Preview::Pixels { .. } | Preview::Pages { .. } => {
                 let layout =
                     otto_kit::preview::layout(content, &self.preview, self.first_row, self.zoom);
                 (
@@ -939,6 +1156,20 @@ impl Session {
     }
 }
 
+/// A page to rasterise, and how wide to rasterise it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageRequest {
+    /// 1-based, as everything that names a page is.
+    pub page: u32,
+    /// In physical pixels: the width the page is drawn at now.
+    pub width: u32,
+}
+
+/// The narrowest a page is ever rasterised — below this the text on it is not
+/// text — and the widest, which is the rasteriser's own ceiling.
+const MIN_PAGE_WIDTH: u32 = 320;
+const MAX_PAGE_WIDTH: u32 = 2_048;
+
 /// What a panel shows while its decode is still running: the file's own icon,
 /// and a line saying the preview is opening.
 ///
@@ -1026,21 +1257,97 @@ fn to_opening(rect: Rect) -> opening::Rect {
 /// `panel` is the resting rect in logical pixels and `scale` the output's
 /// scale; the worker is asked for roughly twice that, so a scaled decode still
 /// has detail to show when the panel is looked at closely. `page` is 1-based
-/// and only means anything to paginated content — turning a PDF's page is a
-/// fresh decode, since the worker rasterises one page and holds no document
-/// between calls.
+/// and only means anything to paginated content.
 pub fn decode(path: &Path, panel: Rect, scale: f32, page: u32) -> Preview {
+    decode_with(path, panel, scale, page, false, false)
+}
+
+/// Rasterise one page of a document at exactly `width` physical pixels.
+///
+/// The width is the page's own drawn width rather than the panel's — a page
+/// rests whole in the panel with a gutter either side, and rasterising is
+/// superlinear in width, so asking for the panel's width is several times the
+/// work for pixels nothing draws.
+pub fn decode_page(path: &Path, page: u32, width: u32) -> Preview {
+    let request = Request {
+        page: page.max(1),
+        width,
+        // The rasteriser keeps the page's aspect ratio and takes its height
+        // from the width, so this only has to be out of the way.
+        height: width * 4,
+        oversample: 1.0,
+        name: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        ..Request::default()
+    };
+    otto_peek::decode_path(path, &request)
+}
+
+/// Decode a file for a host that **scrolls documents**: a paginated file comes
+/// back as the whole strip — every page's geometry, and the pixels of `page`
+/// — rather than as a picture of one page.
+///
+/// Everything else decodes exactly as it does for [`decode`], so the caller
+/// does not have to know which files are documents.
+pub fn decode_document(path: &Path, panel: Rect, scale: f32, page: u32) -> Preview {
+    decode_with(path, panel, scale, page, true, false)
+}
+
+/// The panel's content box in physical pixels, which is what a document is
+/// fitted into. Not oversampled: a page rests at a fraction of the panel's
+/// width, and asking for twice the panel is several times the rasterising for
+/// detail nothing shows.
+fn document_box(panel: Rect, scale: f32) -> (u32, u32) {
+    (
+        ((panel.width() * scale) as u32).clamp(64, 4096),
+        ((panel.height() * scale) as u32).clamp(64, 4096),
+    )
+}
+
+/// Read a document's own text, with a box for every word, in the strip's
+/// coordinates. A second pass over a file already on screen: it costs about a
+/// millisecond a page and carries no pixels at all.
+///
+/// `None` for a file with no text layer — a scan, or anything that is not a
+/// document — which is where the recogniser comes in instead.
+pub fn text_layer(path: &Path, panel: Rect, scale: f32) -> Option<(Vec<Page>, Vec<Word>)> {
+    match decode_with(path, panel, scale, 1, true, true) {
+        Preview::Pages { pages, words } if !words.is_empty() => Some((pages, words)),
+        _ => None,
+    }
+}
+
+fn decode_with(
+    path: &Path,
+    panel: Rect,
+    scale: f32,
+    page: u32,
+    document: bool,
+    text: bool,
+) -> Preview {
     /// The headroom the worker is asked for over the panel's own pixels, so a
     /// picture looked at closely has detail to show before the zoom asks
     /// again. Told to the worker as well as folded into the size, because an
     /// animation spends it on frames instead.
     const OVERSAMPLE: f32 = 2.0;
 
+    let (width, height) = if document {
+        document_box(panel, scale)
+    } else {
+        (
+            ((panel.width() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
+            ((panel.height() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
+        )
+    };
     let request = Request {
         page: page.max(1),
-        width: ((panel.width() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
-        height: ((panel.height() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
-        oversample: OVERSAMPLE,
+        document,
+        text,
+        width,
+        height,
+        oversample: if document { 1.0 } else { OVERSAMPLE },
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -1348,19 +1655,19 @@ mod tests {
         )
     }
 
-    /// A session on page `page` of a `pages`-page document — a PDF, as far as
-    /// the panel is concerned: a picture that knows it is one of several.
-    fn pdf_session(page: u32, pages: u32) -> Session {
-        let mut session = image_session(800, 1100);
-        if let Preview::Pixels {
-            pages: p, page: n, ..
-        } = &mut session.preview
-        {
-            *p = pages;
-            *n = page;
-        }
-        session.name = "report.pdf".into();
-        session
+    /// A session on a `pages`-page document, laid out as the strip the panel
+    /// scrolls: every page's geometry known, none of them rasterised.
+    fn pdf_session(pages: u32) -> Session {
+        let strip: Vec<Page> = (0..pages).map(|_| Page::blank(612.0, 792.0)).collect();
+        Session::new(
+            Preview::Pages {
+                pages: strip,
+                words: Vec::new(),
+            },
+            "report.pdf".into(),
+            Rect::new_empty(),
+            Instant::now(),
+        )
     }
 
     fn document_session() -> Session {
@@ -1618,23 +1925,192 @@ mod tests {
         );
     }
 
-    /// The page keys turn a PDF's pages and stop at both ends — and at an end
-    /// they report that they did nothing, which is what lets the host hand
-    /// the keystroke back to the listing rather than swallowing it.
+    /// The page keys move a document to the next page's top edge, and stop
+    /// at both ends — where they report that they did nothing, which is what
+    /// lets the host hand the keystroke back to the listing rather than
+    /// swallowing it.
     #[test]
     fn a_pdf_turns_its_pages_and_stops_at_both_ends() {
-        assert_eq!(pdf_session(1, 15).page_turn(1), Some(2));
-        assert_eq!(pdf_session(15, 15).page_turn(-1), Some(14));
+        let content = content();
+        let mut session = pdf_session(15);
+        assert_eq!(session.paged(content), Some((1, 15)));
+        assert_eq!(session.page_turn(1, content), Some(2));
+        assert_eq!(session.page_turn(-1, content), None);
 
-        assert_eq!(pdf_session(15, 15).page_turn(1), None);
-        assert_eq!(pdf_session(1, 15).page_turn(-1), None);
+        assert!(session.scroll_to_page(2, content));
+        assert_eq!(session.paged(content), Some((2, 15)));
+        assert_eq!(session.page_turn(-1, content), Some(1));
+
+        session.scroll_to_page(15, content);
+        assert_eq!(session.paged(content), Some((15, 15)));
+        assert_eq!(session.page_turn(1, content), None);
 
         // A single-page document is not paginated at all: its page keys were
         // never the preview's to take.
-        assert_eq!(pdf_session(1, 1).paged(), None);
-        assert_eq!(pdf_session(1, 1).page_turn(1), None);
-        // Neither is anything that is not a picture.
-        assert_eq!(text_session().page_turn(1), None);
+        assert_eq!(pdf_session(1).paged(content), None);
+        assert_eq!(pdf_session(1).page_turn(1, content), None);
+        // Neither is anything that is not a document.
+        assert_eq!(text_session().page_turn(1, content), None);
+    }
+
+    /// A document is one long strip that scrolls with the same views,
+    /// momentum and bars a zoomed picture is panned with — not a picture that
+    /// is replaced a page at a time.
+    #[test]
+    fn a_document_scrolls_its_pages_as_one_strip() {
+        let content = content();
+        let mut session = pdf_session(15);
+        assert!(
+            session.pannable(content),
+            "fifteen pages are longer than the box"
+        );
+
+        // A two-finger scroll moves it, and goes on moving it when the
+        // fingers lift.
+        let before = preview::clamp_zoom(content, &session.preview, session.zoom)
+            .offset
+            .1;
+        assert!(session.pan_wheel(0.0, 40.0, content, false, false));
+        let after = session.zoom.offset.1;
+        assert!(after < before, "the strip moved up: {after} from {before}");
+        session.pan_wheel(0.0, 0.0, content, true, false);
+        assert!(session.pan_animating(), "the fling is still running");
+
+        // And it stops at the end rather than scrolling past it.
+        session.pan_by(0.0, -1_000_000.0, content);
+        let layout = preview::layout(content, &session.preview, 0, session.zoom);
+        assert!(
+            layout.content.bottom <= layout.inner.bottom + 1.0,
+            "{:?} past {:?}",
+            layout.content,
+            layout.inner
+        );
+        assert_eq!(session.paged(content), Some((15, 15)));
+    }
+
+    /// Pages arrive as they are scrolled to, with the next ones asked for
+    /// before they are on screen — and the ones left far behind are let go
+    /// of: a three-hundred-page document is not three hundred images.
+    #[test]
+    fn pages_are_rasterised_before_they_are_reached_and_dropped_after() {
+        let content = content();
+        let mut session = pdf_session(40);
+        let wanted = session.pages_wanted(content, 2.0);
+        let pages: Vec<u32> = wanted.iter().map(|request| request.page).collect();
+        assert_eq!(pages.first(), Some(&1), "the page being read comes first");
+        assert!(
+            pages.contains(&2) && pages.contains(&3),
+            "and the pages about to be reached: {pages:?}"
+        );
+        assert!(!pages.contains(&40), "not one forty pages down");
+
+        // Asked for at the width it is drawn at, not the panel's.
+        let drawn = preview::layout(content, &session.preview, 0, session.zoom).page_rects[0];
+        assert_eq!(wanted[0].width, (drawn.width() * 2.0).ceil() as u32);
+
+        assert!(session.attach_page(1, flat_pixels(wanted[0].width, 792), content));
+        assert!(session.pages()[0].pixels.is_some());
+        assert!(
+            !session
+                .pages_wanted(content, 2.0)
+                .iter()
+                .any(|request| request.page == 1),
+            "a page that is there is not asked for again"
+        );
+
+        // Scrolled far away, the pages held for the top of the document are
+        // dropped when the next one lands.
+        session.scroll_to_page(30, content);
+        assert!(session.attach_page(30, flat_pixels(600, 792), content));
+        assert!(
+            session.pages()[0].pixels.is_none(),
+            "page one is behind us now"
+        );
+        assert!(session.pages()[29].pixels.is_some());
+    }
+
+    /// Zooming in past what a page was rasterised at asks for it again, wider
+    /// — and zooming back out does not, because a page drawn smaller than its
+    /// pixels is supersampled rather than soft.
+    #[test]
+    fn a_page_is_rasterised_again_when_it_is_zoomed_past() {
+        let content = content();
+        let mut session = pdf_session(4);
+        let width = session.pages_wanted(content, 1.0)[0].width;
+        session.attach_page(1, flat_pixels(width, 792), content);
+        assert!(!session
+            .pages_wanted(content, 1.0)
+            .iter()
+            .any(|request| request.page == 1));
+
+        session.zoom_to(3.0, (content.center_x(), content.center_y()), content);
+        let again = session.pages_wanted(content, 1.0);
+        let first = again
+            .iter()
+            .find(|request| request.page == session.showing_page(content) as u32 + 1)
+            .expect("the page being read is asked for again");
+        assert!(
+            first.width > width,
+            "{} is no wider than {width}",
+            first.width
+        );
+    }
+
+    /// The text layer lands on the strip it was measured against, and a drag
+    /// down the page selects the words in it.
+    #[test]
+    fn a_document_selects_the_text_the_file_carries() {
+        let content = content();
+        let mut session = pdf_session(2);
+        let measured = vec![Page::blank(612.0, 792.0), Page::blank(612.0, 792.0)];
+        let words = vec![
+            doc_word("Quarterly", 72, 96, 0, 0),
+            doc_word("report", 150, 96, 0, 0),
+            // On the second page, which starts one page and one gap down.
+            doc_word("Appendix", 72, 96 + 792 + 14, 1, 1),
+        ];
+        assert!(session.attach_text_layer(measured, words));
+        assert_eq!(session.words().len(), 3);
+
+        let layout = preview::layout(content, &session.preview, 0, session.zoom);
+        let word = layout.content.left + layout.content.width() * (72.0 + 20.0) / 612.0;
+        let line = layout.content.top
+            + layout.content.height() * (96.0 + 6.0) / preview::strip_size(session.pages()).1;
+        assert_eq!(
+            session.word_at(word, line, content),
+            Some(0),
+            "the first word is under the pointer"
+        );
+        assert!(session.select_pointer_down(word, line, content));
+        assert_eq!(session.selected_text().as_deref(), Some("Quarterly"));
+    }
+
+    /// One word of a document's text layer, boxed in the strip's points.
+    fn doc_word(text: &str, left: u32, top: u32, block: u32, line: u32) -> Word {
+        Word {
+            text: text.into(),
+            left,
+            top,
+            width: 60,
+            height: 12,
+            confidence: 100,
+            block,
+            paragraph: line,
+            line,
+        }
+    }
+
+    /// A page's worth of blank pixels.
+    fn flat_pixels(width: u32, height: u32) -> Pixels {
+        Pixels {
+            width,
+            height,
+            intrinsic_width: width,
+            intrinsic_height: height,
+            data: vec![255; (width * height * 4) as usize],
+            frame_delays: Vec::new(),
+            words: Vec::new(),
+        }
     }
 
     #[test]

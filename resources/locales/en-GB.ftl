@@ -1507,5 +1507,7 @@ a11y-settings = Settings
 # Quick Look's contents, when it is showing something with no pages.
 a11y-preview = Preview
 a11y-preview-page = Preview, page { $page } of { $pages }
+# A scrollable document of several pages.
+a11y-preview-pages = Preview, { $pages } pages
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = Preview, shortened
