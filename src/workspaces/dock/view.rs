@@ -1324,10 +1324,10 @@ impl DockView {
     }
 
     /// How far from its screen edge the dock can ever reach, in physical
-    /// pixels. The KMS strip that carries the dock plane is sized from this:
-    /// anything past the strip is cropped, so the envelope covers the largest
-    /// icon the dock can show, fully magnified, at the top of a launch bounce,
-    /// with its label balloon open above it.
+    /// pixels: the largest icon the dock can show, fully magnified, at the top
+    /// of a launch bounce, with its label balloon open above it. It sizes a
+    /// strip-shaped KMS plane for the dock, which nothing asks for today —
+    /// only the tests below still call it.
     pub fn plane_strip_thickness_px(&self) -> i32 {
         let scale = Config::with(|c| c.screen_scale) as f32;
         let position = self.position();

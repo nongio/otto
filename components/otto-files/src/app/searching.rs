@@ -290,9 +290,9 @@ impl Browser {
             return;
         };
 
-        // Restarted from scratch on every keystroke. The search debounces and
-        // abandons whatever the last one started, so holding a key down costs
-        // one query rather than one per character.
+        // Each run starts from scratch and abandons whatever the last one
+        // started, so a query refined while the first is still out costs the
+        // answer to the second alone.
         let request = match self.search_scope {
             model::SearchScope::Folder => {
                 let dir = self

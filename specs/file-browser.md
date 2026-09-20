@@ -481,8 +481,9 @@ The query runs on a worker and hands back one ranked, capped result set, which
 replaces whatever the pane held rather than appending to it. It is drained by
 `Browser::poll` on the UI thread, the same place finished directory reads land,
 and a superseded search is abandoned through a generation counter rather than
-interrupted — the same contract `Directory` already has. A query is debounced,
-so holding a key down costs one search rather than one per character. Until the
+interrupted — the same contract `Directory` already has. A search runs when
+Return is pressed, not on every keystroke, so refining a query while the first
+is still out costs the second answer alone. Until the
 answer lands the pane says it is working; it never invents rows to fill the
 gap. Navigating away before the answer lands — to a place, Home, a typed path,
 by any route — discards it: the results pane and its search die together, the
@@ -1316,8 +1317,10 @@ not one" — it has both answers and can.
 The type icon for an entry comes from the icon theme: the MIME type with `/`
 replaced by `-`, then the generic type (`text-x-generic` and friends), then the
 kind's fallback, then a final unknown-file icon. Resolution goes through
-otto-kit's `find_icon_in_theme` / `cached_file_icon`, never `named_icon_sized`,
-which reaches into `AppContext` and is unavailable off the client runtime.
+otto-kit's `cached_icon_chain_at`, which tries each name exactly rather than
+letting the first one succeed against a substitute, and never through
+`named_icon_sized`, which reaches into `AppContext` and is unavailable off the
+client runtime.
 
 ## Constraints & Edge Cases
 

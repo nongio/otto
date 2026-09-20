@@ -5,8 +5,8 @@
 
 ## Summary
 
-Text in a picture becomes text you can select, copy and search for. When Quick
-View shows a photograph of a sign, a screenshot, or a scanned page, the words
+Text in a picture becomes text you can select, copy and search for. When Peek
+shows a photograph of a sign, a screenshot, or a scanned page, the words
 in it can be dragged over and copied like the words of a text file, and Find
 in the file browser matches them. Recognition runs in the same sandboxed
 worker that decodes the image, using the system's `tesseract` if it is

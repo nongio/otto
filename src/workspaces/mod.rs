@@ -118,16 +118,16 @@ pub struct OutputWorkspaces {
     /// Empty (and skipped) whenever nothing is promoted.
     pub promoted_plane: Layer,
     /// Overlay UI plane: workspace selector, layer_shell_top,
-    /// layer_shell_overlay, OSD, DnD and popups — chrome above windows that
-    /// changes rarely. Dock and app switcher have their own planes.
+    /// layer_shell_overlay, the dock, OSD, DnD and popups — chrome above
+    /// windows that changes rarely. The app switcher has a plane of its own.
     pub overlay_plane: Layer,
     /// App-switcher plane: full-screen container (so the switcher centers
     /// itself with normal layout) rendered through a strip-sized viewport
     /// onto its own KMS plane. Above overlay_plane.
     pub switcher_plane: Layer,
-    /// Dock plane: full-screen container (dock positions itself bottom-center
-    /// with normal layout) rendered through a bottom-strip viewport onto its
-    /// own KMS plane. Topmost.
+    /// Dock container: full-screen (the dock positions itself bottom-centre
+    /// with normal layout), added to `overlay_plane` rather than carrying a
+    /// KMS plane of its own — the pixel-rate budget has no room for one.
     pub dock_plane: Layer,
     /// Session-lock plane: the blank and the locker's surface for this output.
     /// Above everything else, including the dock and fullscreen windows, and
