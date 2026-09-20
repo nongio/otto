@@ -12,8 +12,14 @@ the built-in ones. They get the same features:
   responsive.
 
 A script is any executable file, in any language, that reads and writes JSON.
-This page walks through building one, then describes everything a script can
-say.
+There are two tutorials:
+
+- **Duplicate**, below: the shortest command worth writing, in about 70 lines
+  of Python. Start here.
+- **[PDF from Pictures](files-pdf-command.md)**: two commands from one script,
+  progress while a long run works, and an argument you pick from a list.
+
+The [reference](#reference) after them describes everything a script can say.
 
 ## Tutorial: a Duplicate command
 
@@ -312,6 +318,7 @@ Answer with `{ "commands": [ … ] }`, where each command is:
 | `when` | no | When the command is offered; see below |
 | `arg` | no | Makes the command ask for text first; see below |
 | `undo` | no | The name of the undo step. Defaults to `title` |
+| `progress` | no | `true` to report progress while the command runs; see below |
 
 **`when`**. Files checks these conditions itself, without running the script.
 That's why opening the palette stays instant.
@@ -335,6 +342,7 @@ a larger selection. If this matters, check again in `run`.
 | `label` | The short name shown after the title in the list, as in `Duplicate › suffix`. Defaults to `name` |
 | `placeholder` | Dimmed text shown while the field is empty |
 | `initial` | Text the field starts with. If it has an extension, only the part before the extension is selected, so typing a new name keeps the extension |
+| `choices` | A set to pick from instead of a field to type in. Either a list of strings, or objects with `value`, `title` and an optional `subtitle`. The palette completes them |
 | `preview` | `true` to receive `preview` calls while the user types |
 
 A command without an `arg` runs as soon as it is chosen.
@@ -412,6 +420,27 @@ A non-zero exit means the run failed, and the last line of standard error is
 shown as the error. Anything the script did before failing is not recorded for
 undo.
 
+### Progress while a command runs
+
+A command that declares `"progress": true` is run in line mode. While it
+works, it may print one JSON object per line saying where it has got to:
+
+```json
+{ "done": 3, "total": 12, "item": "holiday.png" }
+```
+
+The last line that isn't one of those is the reply. Files turns the progress
+lines into the window's status line, the [island](dynamic-island.md) and the
+progress ring on the app's icon in the dock, so a script gets all three
+without knowing any of them exist.
+
+`total` may grow as the script finds more to do, and `0` means it doesn't know
+yet. Flush after each line: in Python, output that isn't a terminal is
+buffered, so without a flush every line arrives at the end.
+
+Without the declaration, a run's output is read as one JSON document, so a
+script that prints its result over several lines is unaffected.
+
 ### Translations
 
 Every text a person reads can be given once, or once per language:
@@ -445,21 +474,25 @@ Also check:
 
 ## More examples
 
-The Otto source tree includes two complete scripts in
+The Otto source tree includes three complete scripts in
 `components/otto-files/scripts/`:
 
 - **`zip`** — **Compress to Zip**: asks for an archive name and previews what
   goes in. Needs `zip`.
 - **`unzip`** — **Extract Archive**: offered only when every target is a
   `.zip`. Extracts each archive into a folder named after it. Needs `unzip`.
+- **`pdf`** — **PDF from Pictures** and **Searchable PDF from Pictures**:
+  turns a selection of pictures into one document, a page at a time. Built
+  step by step in [its own tutorial](files-pdf-command.md). Needs `img2pdf`
+  and `pikepdf`, and `tesseract` for the searchable one.
 
-Both are translated into Italian and show how to handle conflicts. To install
-them:
+All three are translated into Italian and show how to handle conflicts. To
+install them:
 
 ```sh
 mkdir -p ~/.config/otto/files-scripts
-cp components/otto-files/scripts/{zip,unzip} ~/.config/otto/files-scripts/
-chmod +x ~/.config/otto/files-scripts/{zip,unzip}
+cp components/otto-files/scripts/{zip,unzip,pdf} ~/.config/otto/files-scripts/
+chmod +x ~/.config/otto/files-scripts/{zip,unzip,pdf}
 ```
 
 ## Not there yet
@@ -467,5 +500,5 @@ chmod +x ~/.config/otto/files-scripts/{zip,unzip}
 - Undo covers only new and moved files. Changes a script makes in place, or
   files it deletes, can't be undone.
 - Commands can only use the four built-in groups.
-- A running script can't report progress or be cancelled.
+- A running script can report progress, but can’t be cancelled.
 - Scripts are read only when a window opens.

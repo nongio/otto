@@ -166,8 +166,9 @@ and undo, and they run in the background. If a command asks a question, the
 right-click menu opens the command palette at its prompt.
 
 [Custom Commands in Files](files-custom-commands.md) walks through writing one
-and describes everything a script can do. It also covers the two example
-scripts, **Compress to Zip** and **Extract Archive**.
+and describes everything a script can do, and
+[PDF from Pictures](files-pdf-command.md) builds a longer one that turns a
+selection of pictures into a document.
 
 ## Not there yet
 
