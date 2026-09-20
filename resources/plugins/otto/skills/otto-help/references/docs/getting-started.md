@@ -6,23 +6,21 @@ worth checking on first run.
 ## Installing
 
 Each block below installs the
-[latest release](https://github.com/nongio/otto/releases/latest). Copy it as
-it is: it works out which file it needs and pulls in the dependencies. Packages
-are built for x86_64.
+[latest release](https://github.com/nongio/otto/releases/latest). Copy it as it
+is: there is no version to fill in and the package manager pulls in the
+dependencies. Packages are built for x86_64.
 
 ### Debian / Ubuntu
 
 ```sh
-curl -fLO "$(curl -fsSL https://api.github.com/repos/nongio/otto/releases/latest \
-    | grep -o 'https://[^"]*amd64\.deb')"
-sudo apt install ./otto_*.deb
+curl -fLO https://github.com/nongio/otto/releases/latest/download/otto-amd64.deb
+sudo apt install ./otto-amd64.deb
 ```
 
 ### Fedora / RHEL
 
 ```sh
-sudo dnf install "$(curl -fsSL https://api.github.com/repos/nongio/otto/releases/latest \
-    | grep -o 'https://[^"]*x86_64\.rpm')"
+sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x86_64.rpm
 ```
 
 ### Arch Linux

@@ -526,30 +526,35 @@ jobs:
         with:
           name: otto-arch
           path: artifacts/arch
+      # A copy of each package under a name that never changes, so
+      # releases/latest/download/<name> is a working URL and the install
+      # instructions need no version in them. The versioned files stay.
+      - name: Copies under a stable name
+        run: |
+          cp artifacts/deb/*.deb artifacts/deb/otto-amd64.deb
+          cp artifacts/rpm/*.rpm artifacts/rpm/otto-x86_64.rpm
       - name: Create release body
         run: |
           cat > release_notes.md << 'EOF'
           ## Installation
 
-          ### Debian/Ubuntu (`.deb`)
+          ### Debian/Ubuntu
           ```bash
-          sudo dpkg -i otto_*.deb
-          sudo apt-get install -f  # Install dependencies
+          curl -fLO https://github.com/nongio/otto/releases/latest/download/otto-amd64.deb
+          sudo apt install ./otto-amd64.deb
           ```
 
-          ### Fedora/RHEL (`.rpm`)
+          ### Fedora/RHEL
           ```bash
-          sudo rpm -i otto-*.rpm
-          # or
-          sudo dnf install otto-*.rpm
+          sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x86_64.rpm
           ```
 
           ### Arch Linux
           ```bash
-          curl -O https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
+          curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD
           makepkg -si
           ```
-          If you already downloaded the tarball, place the PKGBUILD in the same directory and run `makepkg -si` — it will use the local file without re-downloading.
+          If you already downloaded the tarball, place the PKGBUILD in the same directory and run `makepkg -si`: it will use the local file without downloading again.
 
           ---
           EOF
