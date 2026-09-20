@@ -75,6 +75,10 @@ pinned to an upstream release, and `scripts/sync-spec.sh` is the only thing that
 may change it. Wire types come from the `ahp-types` crate at exactly the pinned
 protocol version; `tests/spec_pin.rs` fails if the two drift apart.
 
+How much of the protocol this service serves, and the one place Otto's design
+differs from the protocol's own doctrine, is in
+[`components/otto-agents/docs/spec-coverage.md`](../../components/otto-agents/docs/spec-coverage.md).
+
 ### In the workspace
 
 `components/otto-agents` is a member of the root Cargo workspace, like every
