@@ -292,6 +292,9 @@ done
 perl -i -pe '
     s{\]\(README\.md\)}{](/)}gi;
     s{\]\(images/([A-Za-z0-9_.-]+)\)}{](/images/$1)}g;
+    s{\]\(\.\./developer/README\.md\)}{](/developer/)}gi;
+    s{\]\(\.\./developer/([A-Za-z0-9_-]+)\.md#([^)]+)\)}{"](/developer/" . lc($1) . "/#$2)"}ge;
+    s{\]\(\.\./developer/([A-Za-z0-9_-]+)\.md\)}{"](/developer/" . lc($1) . "/)"}ge;
     s{\]\(([a-zA-Z0-9_-]+)\.md#([a-zA-Z0-9_-]+)\)}{](/$1/#$2)}g;
     s{\]\(([a-zA-Z0-9_-]+)\.md\)}{](/$1/)}g;
 ' "$OUTPUT_DIR"/*.md
@@ -395,6 +398,9 @@ done
 perl -i -pe '
     s{\]\(README\.md\)}{](/developer/)}gi;
     s{\]\(diagrams/([A-Za-z0-9_-]+\.svg)\)}{](/diagrams/$1)}g;
+    s{\]\(\.\./user/README\.md\)}{](/)}gi;
+    s{\]\(\.\./user/([A-Za-z0-9_-]+)\.md#([^)]+)\)}{"](/" . lc($1) . "/#$2)"}ge;
+    s{\]\(\.\./user/([A-Za-z0-9_-]+)\.md\)}{"](/" . lc($1) . "/)"}ge;
     s{\]\(\.\./\.\./([^)]*/)\)}{](https://github.com/nongio/otto/tree/main/$1)}g;
     s{\]\(\.\./\.\./([^)]+)\)}{](https://github.com/nongio/otto/blob/main/$1)}g;
     s{\]\(([A-Za-z0-9_-]+)\.md#([^)]+)\)}{"](/developer/" . lc($1) . "/#$2)"}ge;

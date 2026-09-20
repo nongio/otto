@@ -10,6 +10,11 @@ graph**, a tree of layers with positions, opacity, blur and animations, and
 hands the whole tree to the renderer as a single render element. Most of
 `src/workspaces/` is code that mutates that tree; almost none of it draws.
 
+For what Otto does rather than how, see the
+[User Guide](../user/README.md). Contributions of every size are welcome, from
+a bug report to a feature: the [issue tracker](https://github.com/nongio/otto/issues)
+is the place to start.
+
 ## Read these first
 
 | Page | What it covers |

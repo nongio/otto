@@ -78,5 +78,18 @@ versions: useful day to day, still filling in.
 | [Troubleshooting](troubleshooting.md) | Logs, common failures, and how to report a bug |
 | [Credits](credits.md) | The wallpapers, icons and fonts in Otto's screenshots, and who they belong to |
 
+## How it works, and helping build it
+
+There is a second guide for people who want to look inside: the
+[Developer Guide](../developer/README.md) covers how Otto is put together, from
+the scene graph and the render loop to the dock, exposé and the protocols it
+speaks. It is worth a read even if you never intend to write any code, since
+most of what the pages above describe is explained there.
+
+Otto is open to contributions of every size: running it and saying what broke,
+filing a bug, writing a page of documentation, picking up a feature. Start at
+the [issue tracker](https://github.com/nongio/otto/issues), or say hello first
+in one of the rooms below.
+
 Questions and feedback are welcome on [Discord](https://discord.gg/AdXkrYKuz) or in the Matrix room
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
