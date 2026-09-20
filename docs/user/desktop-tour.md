@@ -2,6 +2,8 @@
 
 A guided walk through everything Otto puts on screen, and what each piece is for.
 
+![The Otto desktop: the top bar with the focused application's name and the clock, two windows over the wallpaper, and the dock along the bottom](images/desktop-tour.jpg)
+
 ## The screen at a glance
 
 ```

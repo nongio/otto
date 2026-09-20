@@ -121,6 +121,8 @@ A few notes on the awkward cells:
   agent asks about, though, is its own business: one may ask before every edit
   and another only before running a command.
 
+  ![An agent laying out its plan for tidying a folder and waiting on a yes before it moves anything](images/ask-permission.gif)
+
 ## Pictures in an answer
 
 An agent can send a picture rather than describe one — a screenshot of the page

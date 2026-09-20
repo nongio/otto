@@ -462,6 +462,15 @@ main table {
    font-weight: 400;
 }
 
+/* A reference table with six columns cannot fit a phone, and left to itself it
+   widens the page instead — every paragraph then scrolls sideways along with
+   it. The table scrolls on its own. */
+main table {
+   display: block;
+   width: 100%;
+   overflow-x: auto;
+}
+
 main th {
    font-weight: 600;
 }
@@ -521,6 +530,10 @@ h2+p, h3+p {
 code {
    font-family: 'Otto-Mono';
    padding: 0 0.25em;
+   /* A config key or a flag inside a sentence has nowhere to break, so on a
+      phone one of them widens the whole page. Let them break mid-token; the
+      code blocks below scroll instead, and keep their lines intact. */
+   overflow-wrap: anywhere;
 }
 
 pre {
@@ -676,3 +689,29 @@ a:focus, button:focus {
    text-decoration: underline;
 }
 
+
+/* Screenshots are exported at 1600px wide. Without a cap they render at their
+   natural size, spill out of the column and put a scrollbar under the whole
+   page, so every image is held to the width of the prose it sits in. */
+main img {
+   display: block;
+   max-width: 100%;
+   width: auto;
+   height: auto;
+   margin: 0 auto;
+   border-radius: 8px;
+}
+
+/* An image alone in a paragraph is a figure, not a line of text: it gets the
+   paragraph's rhythm above and below but none of its inline spacing. */
+main p:has(> img:only-child) {
+   margin: 2.4em 0;
+   line-height: 0;
+}
+
+/* The developer guide's diagrams are line art that reads on white, so they keep
+   a light backing in the dark scheme rather than inverting to black-on-black. */
+main img[src*="/diagrams/"] {
+   background: #fff;
+   border-radius: 0;
+}
