@@ -131,8 +131,15 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
         .arg(request.width.to_string())
         .arg("--height")
         .arg(request.height.to_string())
+        .arg("--oversample")
+        .arg(format!("{:.4}", request.oversample))
         .arg("--page")
         .arg(request.page.to_string())
+        .args(if request.animate {
+            None
+        } else {
+            Some("--still")
+        })
         .arg("--zoom")
         .arg(format!("{:.4}", request.zoom))
         .arg("--name")
@@ -226,7 +233,9 @@ fn run(opened: Opened, request: &Request) -> PreviewPayload {
 
     let deadline = if request.ocr { OCR_DEADLINE } else { DEADLINE };
     let payload = match receiver.recv_timeout(deadline) {
-        Ok(Ok(bytes)) => payload::decode(&bytes).unwrap_or_else(|| {
+        // `decode_owned`, not `decode`: an animation's frames are the largest
+        // thing either process holds, and they are already in this buffer.
+        Ok(Ok(bytes)) => payload::decode_owned(bytes).unwrap_or_else(|| {
             payload::unavailable(otto_kit::t_owned!("quickview-error-previewer-unreadable"))
         }),
         Ok(Err(err)) => payload::unavailable(otto_kit::t_owned!(

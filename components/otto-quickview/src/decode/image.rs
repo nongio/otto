@@ -26,12 +26,29 @@ const MAX_DECODE_PIXELS: u64 = 64 * 1024 * 1024;
 /// and travels down a pipe, so the ceiling is on the whole strip rather than
 /// on one frame: a hundred frames of a modest GIF is more bytes than a single
 /// very large photograph, and it is the total the host has to hold.
-const MAX_ANIMATION_BYTES: u64 = 64 * 1024 * 1024;
+///
+/// Generous, because the alternative is what this used to do — carry a
+/// screen recording at a quarter of the size it is shown at, which reads as a
+/// blurred preview however well it is resampled. One animation is live at a
+/// time and the strip is freed with the preview, so the ceiling is a peak
+/// rather than a footprint, and the transfer is sized to it exactly (see
+/// [`crate::payload::decode_owned`]) so it is paid once rather than thrice.
+const MAX_ANIMATION_BYTES: u64 = 192 * 1024 * 1024;
 
 /// How small a frame may be shrunk to bring a long animation inside the
 /// budget. Past this the animation has stopped being a preview of anything,
 /// and the first frame — sharp, at the size that was asked for — says more.
 const MIN_ANIMATION_EDGE: i32 = 64;
+
+/// How far the size may be given up before frames are given up instead.
+/// Half the size the strip is shown at is about where a resampled frame stops
+/// reading as the picture and starts reading as a blur of it.
+const ANIMATION_SIZE_FLOOR: f32 = 0.5;
+
+/// The longest a carried frame may be left on screen when frames are being
+/// thinned. Past roughly ten a second an animation stops moving and starts
+/// stepping, which costs more than the size does.
+const MAX_CARRIED_DELAY_MS: u32 = 100;
 
 pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
     let bytes = match read_capped(file, request.budget.max_read) {
@@ -56,11 +73,17 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
     let target = target_size(intrinsic, request);
 
     // A GIF or an animated WEBP is played rather than sampled: the strip of
-    // frames comes back in one payload and the host runs the clock. Falling
-    // through on `None` is deliberate — an animation too long or too large to
-    // carry is still a picture, and its first frame is shown as one.
-    if let Some(payload) = animation(&mut codec, intrinsic, target) {
-        return payload;
+    // frames comes back in one payload and the host runs the clock. It is
+    // asked for at the size it will be *drawn* at rather than at the target,
+    // because the headroom the target carries is there to be zoomed into —
+    // and a zoom asks the worker again, while a strip that spent its budget
+    // on detail nobody is looking at has fewer frames for it. Falling through
+    // on `None` is deliberate: an animation too long or too large to carry is
+    // still a picture, and its first frame is shown as one.
+    if request.animate {
+        if let Some(payload) = animation(&mut codec, intrinsic, shown_size(intrinsic, request)) {
+            return payload;
+        }
     }
 
     // The codec picks the nearest sample size it can actually deliver, which is
@@ -132,7 +155,7 @@ pub fn raster(file: &mut File, request: &Request) -> PreviewPayload {
 /// same buffer is handed back to it as `prior_frame`. Each finished frame is
 /// then resampled down to the size the strip is carried at, so the budget is
 /// spent on the animation rather than on the decode.
-fn animation(codec: &mut Codec, intrinsic: ISize, target: ISize) -> Option<PreviewPayload> {
+fn animation(codec: &mut Codec, intrinsic: ISize, shown: ISize) -> Option<PreviewPayload> {
     let count = codec.get_frame_count();
     if count <= 1 || count > crate::payload::MAX_FRAMES as usize {
         return None;
@@ -143,7 +166,11 @@ fn animation(codec: &mut Codec, intrinsic: ISize, target: ISize) -> Option<Previ
         return None;
     }
 
-    let (size, stride) = fit_budget(fit_within(intrinsic, target), count)?;
+    let (size, stride) = fit_budget(
+        fit_within(intrinsic, shown),
+        count,
+        mean_delay(codec, count),
+    )?;
 
     let info = codec
         .info()
@@ -222,31 +249,69 @@ fn animation(codec: &mut Codec, intrinsic: ISize, target: ISize) -> Option<Previ
 /// resampled to, and how many source frames one carried frame stands for.
 ///
 /// A long recording — a screencast GIF runs to hundreds of frames — is past
-/// the budget several times over at the size a single picture would be shown
-/// at, and both ways of getting it back cost something. Halving the frame
-/// rate once is the cheaper of the two: a preview of a recording still reads
-/// at half its frames, while a quarter of the width is a picture of a
-/// picture. So one thinning step is spent first, and the rest comes off the
-/// size.
+/// the budget several times over at the size it is shown at, and both ways of
+/// getting it back cost something. Detail is the one the eye complains about
+/// first: a strip carried at a quarter of the size it is drawn at is a
+/// blurred preview whatever the frame rate, while the same recording a size
+/// down and playing every frame still reads as the thing it recorded. So the
+/// size comes off gently first, in eighths, and only once it has reached
+/// [`ANIMATION_SIZE_FLOOR`] are frames thinned — and then only while the gap
+/// between the frames that are kept stays under [`MAX_CARRIED_DELAY_MS`].
+/// Past both, size is all that is left to give.
+///
+/// `mean_delay` is what the source paces itself at, which is what decides how
+/// much thinning it can take: twelve frames a second can spare none.
 ///
 /// `None` when even the smallest frame this will settle for is past the
 /// budget, which the caller answers with a still first frame.
-fn fit_budget(fit: ISize, count: usize) -> Option<(ISize, usize)> {
-    let over = |size: ISize, stride: usize| {
-        pixel_count(size) * 4 * count.div_ceil(stride) as u64 > MAX_ANIMATION_BYTES
+fn fit_budget(fit: ISize, count: usize, mean_delay: u32) -> Option<(ISize, usize)> {
+    // The largest fraction of `fit` that `count / stride` frames fit inside
+    // the budget at, never grown past the size it is drawn at.
+    let largest = |stride: usize| {
+        let frames = count.div_ceil(stride).max(1) as f64;
+        let whole = (pixel_count(fit) * 4) as f64 * frames;
+        (MAX_ANIMATION_BYTES as f64 / whole).sqrt().min(1.0) as f32
     };
-    let mut size = fit;
-    let mut stride = 1;
-    if over(size, stride) {
-        stride = 2;
+    let at = |scale: f32| {
+        ISize::new(
+            ((fit.width as f32 * scale).floor() as i32).max(1),
+            ((fit.height as f32 * scale).floor() as i32).max(1),
+        )
+    };
+
+    // Detail first: if the whole animation fits at half the size it is drawn
+    // at or better, that is the answer and no frame is dropped.
+    let scale = largest(1);
+    if scale >= ANIMATION_SIZE_FLOOR {
+        return Some((at(scale), 1));
     }
-    while over(size, stride) {
-        if size.width <= MIN_ANIMATION_EDGE || size.height <= MIN_ANIMATION_EDGE {
-            return None;
+
+    // Then frames, for as long as the animation still moves.
+    let most = (MAX_CARRIED_DELAY_MS / mean_delay.max(1)).max(1) as usize;
+    for stride in 2..=most {
+        let scale = largest(stride);
+        if scale >= ANIMATION_SIZE_FLOOR {
+            return Some((at(scale), stride));
         }
-        size = ISize::new((size.width / 2).max(1), (size.height / 2).max(1));
     }
-    Some((size, stride))
+
+    // Past both. Whatever size the budget leaves, or — once a frame has
+    // stopped being a preview of anything — nothing at all.
+    let size = at(largest(most));
+    (size.width > MIN_ANIMATION_EDGE && size.height > MIN_ANIMATION_EDGE).then_some((size, most))
+}
+
+/// How long the average frame of this animation is shown, in milliseconds.
+///
+/// Read from the frame table rather than assumed, because it is the number
+/// that decides whether frames can be thinned at all, and a GIF's own idea of
+/// its pace ranges from three frames a second to fifty.
+fn mean_delay(codec: &mut Codec, count: usize) -> u32 {
+    let total: u64 = (0..count)
+        .filter_map(|index| codec.get_frame_info(index))
+        .map(|frame| frame.duration.max(0) as u64)
+        .sum();
+    (total / count.max(1) as u64).try_into().unwrap_or(u32::MAX)
 }
 
 /// `size` shrunk, aspect kept, until it fits in `bounds`. Never grown.
@@ -347,6 +412,25 @@ fn target_size(intrinsic: ISize, request: &Request) -> ISize {
     let zoom = request.zoom.max(1.0);
     let wanted_w = (request.width as f32 * zoom).ceil() as i32;
     let wanted_h = (request.height as f32 * zoom).ceil() as i32;
+    ISize::new(
+        wanted_w.clamp(1, intrinsic.width),
+        wanted_h.clamp(1, intrinsic.height),
+    )
+}
+
+/// The size the preview will actually be drawn at: the target with the still
+/// path's zoom headroom divided back out, and only then held to the source's
+/// own size — a small animation is drawn at its own size rather than at the
+/// box's, and dividing after the clamp would ask for half of it.
+fn shown_size(intrinsic: ISize, request: &Request) -> ISize {
+    let oversample = if request.oversample.is_finite() {
+        request.oversample.max(1.0)
+    } else {
+        1.0
+    };
+    let zoom = request.zoom.max(1.0);
+    let wanted_w = (request.width as f32 * zoom / oversample).ceil() as i32;
+    let wanted_h = (request.height as f32 * zoom / oversample).ceil() as i32;
     ISize::new(
         wanted_w.clamp(1, intrinsic.width),
         wanted_h.clamp(1, intrinsic.height),
@@ -514,19 +598,38 @@ mod tests {
     }
 
     #[test]
-    fn a_long_animation_gives_up_frames_before_it_gives_up_size() {
+    fn a_long_animation_gives_up_size_before_it_gives_up_frames() {
         // Short enough to carry whole: nothing is given up.
         assert_eq!(
-            fit_budget(ISize::new(400, 300), 20),
+            fit_budget(ISize::new(400, 300), 20, 40),
             Some((ISize::new(400, 300), 1))
         );
-        // A screencast's worth of frames at panel size is past the budget
-        // several times over. Half the frames go first, and only what is
-        // still over comes off the size.
-        let (size, stride) = fit_budget(ISize::new(900, 563), 143).expect("carried");
-        assert_eq!(stride, 2);
-        assert!(size.width < 900 && size.width >= 400, "kept {size:?}");
-        assert!(pixel_count(size) * 4 * 72 <= MAX_ANIMATION_BYTES);
+        // A screen recording's worth of frames at the size it is shown at is
+        // past the budget. At twelve frames a second it has none to spare, so
+        // what it gives up is size — and not more than half of it, which is
+        // what keeps the preview from reading as a blur.
+        let (size, stride) = fit_budget(ISize::new(900, 563), 143, 83).expect("carried");
+        assert_eq!(stride, 1, "a twelve-a-second animation may not be thinned");
+        assert!(size.width >= 450 && size.width < 900, "kept {size:?}");
+        assert!(pixel_count(size) * 4 * 143 <= MAX_ANIMATION_BYTES);
+        // And it spends what it is given: a size down from this would be
+        // past the budget.
+        let larger = ISize::new(size.width + size.width / 8, size.height + size.height / 8);
+        assert!(pixel_count(larger) * 4 * 143 > MAX_ANIMATION_BYTES);
+    }
+
+    /// The other way round for an animation that *can* spare frames: at fifty
+    /// a second, thinning is free and the size is worth more.
+    #[test]
+    fn a_fast_animation_is_thinned_rather_than_shrunk() {
+        let fit = ISize::new(1200, 900);
+        let (size, stride) = fit_budget(fit, 600, 20).expect("carried");
+        assert!(stride > 1, "a fifty-a-second animation can spare frames");
+        assert!(
+            size.width >= 600,
+            "and keeps at least half the size, kept {size:?}"
+        );
+        assert!(pixel_count(size) * 4 * 600u64.div_ceil(stride as u64) <= MAX_ANIMATION_BYTES);
     }
 
     #[test]

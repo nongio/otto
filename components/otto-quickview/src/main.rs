@@ -126,12 +126,16 @@ async fn main() {
             "--height" => {
                 request.height = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1200);
             }
+            "--still" => request.animate = false,
+            "--oversample" => {
+                request.oversample = rest.next().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+            }
             "--index" => {
                 index = rest.next().and_then(|v| v.parse().ok()).unwrap_or(0);
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: otto-quickview [--describe] [--render OUT.png] [--dark] [--index N] [--page N] [--zoom F] [--width W] [--height H] PATH..."
+                    "usage: otto-quickview [--describe] [--render OUT.png] [--dark] [--index N] [--page N] [--zoom F] [--width W] [--height H] [--oversample F] [--still] PATH..."
                 );
                 return;
             }

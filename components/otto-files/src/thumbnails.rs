@@ -303,6 +303,9 @@ pub fn fetch(job: &Job) -> Found {
     let request = otto_quickview::decode::Request {
         width: job.size.pixels(),
         height: job.size.pixels(),
+        // A tile in a listing shows one frame, so asking for an animation
+        // would buy a strip of hundreds and keep the first of them.
+        animate: false,
         name: job
             .path
             .file_name()

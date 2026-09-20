@@ -35,6 +35,15 @@ pub struct Request {
     /// decode still has detail to show.
     pub width: u32,
     pub height: u32,
+    /// How much detail headroom `width`/`height` carry over the size the
+    /// preview is drawn at. The still decoders spend it on zoom; an animation
+    /// divides it back out, because its budget buys frames rather than a
+    /// picture nobody is looking closely at.
+    pub oversample: f32,
+    /// Whether an animation should be carried as one. A caller that will only
+    /// ever draw the first frame — a thumbnail in a listing — asks for a
+    /// still, and is spared a strip of frames it would throw away.
+    pub animate: bool,
     /// 1-based page for paginated content.
     pub page: u32,
     /// Zoom factor being displayed. Past 1.0 the image decoders stop
@@ -73,6 +82,8 @@ impl Default for Request {
         Self {
             width: 1600,
             height: 1200,
+            oversample: 1.0,
+            animate: true,
             page: 1,
             zoom: 1.0,
             mime: String::new(),
@@ -282,6 +293,8 @@ pub fn parse_request(arguments: &[String]) -> Request {
             "--height" => request.height = value().parse().unwrap_or(request.height),
             "--page" => request.page = value().parse().unwrap_or(request.page),
             "--zoom" => request.zoom = value().parse().unwrap_or(request.zoom),
+            "--oversample" => request.oversample = value().parse().unwrap_or(request.oversample),
+            "--still" => request.animate = false,
             "--name" => request.name = value(),
             "--mime" => request.mime = value(),
             "--ocr" => request.ocr = true,

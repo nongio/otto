@@ -609,6 +609,27 @@ type:
   picture is never drawn larger than it is; an animation may be, up to the
   source's own size, since its frames are shrunk to fit the strip's budget
   rather than because the file is small.
+
+  A strip has a ceiling, because every frame is uncompressed and a screen
+  recording runs to hundreds of them. How that ceiling is spent is a quality
+  decision, and it goes to **detail first**: the strip is carried at the
+  largest fraction of the size it is drawn at that the whole animation fits
+  inside, and frames are thinned only once that fraction would fall below a
+  half — and then only while the gap between the frames that are kept stays
+  under a tenth of a second. A recording carried at a quarter
+  of the size it is shown at is a blurred preview however well it is
+  resampled, while the same recording a size down, playing every frame, still
+  reads as the thing it recorded. A strip is also asked for at the size it
+  will be *drawn* at rather than with the still path's zoom headroom: a zoom
+  asks the worker again, and detail nobody is looking at costs frames.
+  An animation that cannot be carried at all is shown as its first frame.
+
+  The ceiling is a peak rather than a footprint — one animation is live at a
+  time and the strip dies with the preview — so the transfer is built not to
+  multiply it: the worker writes the buffer straight to the pipe instead of
+  encoding a second copy of it, and the host takes the buffer out of the
+  bytes it read rather than copying it again. Without that, the worker's own
+  address-space limit is reached by the transfer rather than by the picture.
 - `Text` — bounded, validated UTF-8 with optional style spans.
 - `Rows` — a table (archive entries, directory listing): name, size, date, an
   icon key.

@@ -1030,10 +1030,17 @@ fn to_opening(rect: Rect) -> opening::Rect {
 /// fresh decode, since the worker rasterises one page and holds no document
 /// between calls.
 pub fn decode(path: &Path, panel: Rect, scale: f32, page: u32) -> Preview {
+    /// The headroom the worker is asked for over the panel's own pixels, so a
+    /// picture looked at closely has detail to show before the zoom asks
+    /// again. Told to the worker as well as folded into the size, because an
+    /// animation spends it on frames instead.
+    const OVERSAMPLE: f32 = 2.0;
+
     let request = Request {
         page: page.max(1),
-        width: ((panel.width() * scale * 2.0) as u32).clamp(64, 4096),
-        height: ((panel.height() * scale * 2.0) as u32).clamp(64, 4096),
+        width: ((panel.width() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
+        height: ((panel.height() * scale * OVERSAMPLE) as u32).clamp(64, 4096),
+        oversample: OVERSAMPLE,
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
