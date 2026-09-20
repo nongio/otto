@@ -112,6 +112,8 @@ Beyond notifications, any program can push an **activity** into the island over
 D-Bus — a long-running thing with a title and an icon. A build, a file transfer,
 a backup.
 
+![An activity on the island reading "Rendering lantern-turntable", with a Close button beside it](images/island-activity.gif)
+
 The interface is `org.otto.Island1` at `/org/otto/Island`:
 
 ```sh
