@@ -1041,31 +1041,27 @@ pub(crate) fn allocatable_modifiers(
     let mut modifiers: Vec<i64> = Vec::new();
     let order = std::iter::once(DRM_FORMAT_MOD_LINEAR).chain(candidates);
     for modifier in order {
-        if modifiers.contains(&(modifier as i64)) {
+        if modifier == DRM_FORMAT_MOD_INVALID || modifiers.contains(&(modifier as i64)) {
             continue;
         }
-        let bo = if modifier == DRM_FORMAT_MOD_INVALID {
-            if !keep_implicit {
-                continue;
-            }
-            gbm.create_buffer_object::<()>(
-                width,
-                height,
-                Fourcc::Argb8888,
-                GbmBufferFlags::RENDERING,
-            )
-        } else {
-            gbm.create_buffer_object_with_modifiers2::<()>(
-                width,
-                height,
-                Fourcc::Argb8888,
-                std::iter::once(modifier.into()),
-                GbmBufferFlags::RENDERING,
-            )
-        };
+        let bo = gbm.create_buffer_object_with_modifiers2::<()>(
+            width,
+            height,
+            Fourcc::Argb8888,
+            std::iter::once(modifier.into()),
+            GbmBufferFlags::RENDERING,
+        );
         if bo.is_ok_and(|bo| bo.plane_count() == 1) {
             modifiers.push(modifier as i64);
         }
+    }
+    if modifiers.is_empty()
+        && keep_implicit
+        && gbm
+            .create_buffer_object::<()>(width, height, Fourcc::Argb8888, GbmBufferFlags::RENDERING)
+            .is_ok()
+    {
+        modifiers.push(DRM_FORMAT_MOD_INVALID as i64);
     }
     modifiers
 }

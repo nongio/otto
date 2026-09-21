@@ -159,6 +159,12 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
   implicit modifier. A host with no explicit-modifier support (software GL, older
   drivers) advertises only the implicit one, and a LINEAR-only offer never links
   there.
+- A virtual output offers only modifiers Otto can render into: LINEAR first, then
+  the renderer's tiled modifiers, each kept only if a single-plane buffer with it
+  allocates for rendering. The implicit modifier is offered only when no explicit
+  one allocates, so a bridge never maps an implicit buffer that is really tiled.
+- A buffer the bridge cannot import is refused once per buffer pool, not retried
+  on every frame.
 
 ### Configuration
 
