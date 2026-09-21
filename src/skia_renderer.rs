@@ -1498,15 +1498,13 @@ impl Bind<Dmabuf> for SkiaRenderer {
 
         let target = SkiaTarget::Dmabuf(dmabuf.weak());
         self.current_target = Some(target.clone());
-        #[allow(clippy::mutable_key_type)]
-        let buffers = self.buffers.borrow_mut();
         let mut new_aux = None;
-        let fbo = buffers
-            .entry(target)
-            .or_insert_with(|| {
-                let image = egl_display.create_image_from_dmabuf(dmabuf).unwrap();
+        if !self.buffers.contains_key(&target) {
+            let fbo = {
+                let image = egl_display
+                    .create_image_from_dmabuf(dmabuf)
+                    .map_err(GlesError::BindBufferEGLError)?;
                 let mut texture = 0;
-                // .map_err(GlesError::BindBufferEGLError)?;
                 let size = dmabuf.size();
                 let width = size.w;
                 let height = size.h;
@@ -1556,8 +1554,24 @@ impl Bind<Dmabuf> for SkiaRenderer {
 
                     let status = self.gl.CheckFramebufferStatus(ffi::FRAMEBUFFER);
 
+                    // A driver can import a buffer it cannot draw into (NVIDIA
+                    // and LINEAR). Refuse the target rather than the session.
                     if status != ffi::FRAMEBUFFER_COMPLETE {
-                        panic!("Framebuffer incomplete for dmabuf: status 0x{:X}", status);
+                        tracing::warn!(
+                            "cannot render into dmabuf {:?} ({:x?}): framebuffer status 0x{:X}",
+                            dmabuf.format().code,
+                            dmabuf.format().modifier,
+                            status
+                        );
+                        self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+                        self.gl.DeleteFramebuffers(1, &fbo);
+                        self.gl.DeleteRenderbuffers(2, [rbo, depth_rbo].as_ptr());
+                        self.gl.DeleteTextures(1, &texture);
+                        smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                            **egl_display.get_display_handle(),
+                            image,
+                        );
+                        return Err(GlesError::FramebufferBindingError);
                     }
 
                     self.gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
@@ -1575,8 +1589,10 @@ impl Bind<Dmabuf> for SkiaRenderer {
                         height,
                     }
                 }
-            })
-            .clone();
+            };
+            self.buffers.insert(target.clone(), fbo);
+        }
+        let fbo = self.buffers[&target].clone();
         if let Some(aux) = new_aux {
             self.dmabuf_target_aux.insert(dmabuf.weak(), aux);
         }
