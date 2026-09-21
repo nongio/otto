@@ -195,6 +195,9 @@ settings-key-combination = Combinación de teclas
 settings-key-combination-detail = Ctrl, Alt, Shift o Logo unidos con +, seguidos de una tecla: Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = Sin asignar
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = Pulsa las teclas…
 
 
 ## Settings — Trackpad & Mouse

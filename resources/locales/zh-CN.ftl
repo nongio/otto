@@ -192,6 +192,9 @@ settings-key-combination = 组合键
 settings-key-combination-detail = Ctrl、Alt、Shift 或 Logo 以 + 相连，再加一个键：Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = 未指定
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = 请按下按键…
 
 
 ## Settings — Trackpad & Mouse

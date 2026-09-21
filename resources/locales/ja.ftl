@@ -191,6 +191,9 @@ settings-key-combination = キーの組み合わせ
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl、Alt、Shift、Logo を + でつなぎ、最後にキーを1つ：Ctrl+Shift+Return
 settings-key-combination-unassigned = 未設定
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = キーを押してください…
 
 
 ## Settings — Trackpad & Mouse

@@ -23,6 +23,7 @@ pub mod i18n;
 pub mod icon_theme;
 pub mod icons;
 pub mod input;
+pub mod key_capture;
 pub mod lottie;
 pub mod matching;
 pub mod maximize_button;

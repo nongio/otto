@@ -167,6 +167,85 @@ pub fn set_keys(index: usize, keys: String) {
     }
 }
 
+/// A line listening for its combination to be pressed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Recording {
+    pub index: usize,
+    /// The modifiers held so far, shown in the field until a key completes
+    /// the combination.
+    pub held: Modifiers,
+}
+
+/// The line listening for a combination, if any.
+///
+/// Process-wide for the same reason [`SHORTCUTS`] is, and so the draw can show
+/// the line listening without being handed the state.
+static RECORDING: RwLock<Option<Recording>> = RwLock::new(None);
+
+/// The line whose record button is listening, if any.
+pub fn recording() -> Option<Recording> {
+    *RECORDING.read().unwrap()
+}
+
+/// Start listening on `index`, or stop when `None`.
+pub fn set_recording(index: Option<usize>) {
+    *RECORDING.write().unwrap() = index.map(|index| Recording {
+        index,
+        held: Modifiers::default(),
+    });
+}
+
+/// Update the modifiers a listening line shows as held.
+pub fn set_held(held: Modifiers) {
+    if let Some(recording) = RECORDING.write().unwrap().as_mut() {
+        recording.held = held;
+    }
+}
+
+/// Held modifiers, in the order [`combination`] writes them.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub logo: bool,
+}
+
+impl Modifiers {
+    /// The modifiers as the leading part of a combination, `Ctrl+Shift+`,
+    /// which is what a listening field shows until a key completes it.
+    pub fn prefix(self) -> String {
+        [
+            (self.ctrl, "Ctrl"),
+            (self.alt, "Alt"),
+            (self.shift, "Shift"),
+            (self.logo, "Logo"),
+        ]
+        .into_iter()
+        .filter(|(held, _)| *held)
+        .map(|(_, name)| format!("{name}+"))
+        .collect()
+    }
+}
+
+/// A pressed combination written the way `parse_trigger` in
+/// `src/config/shortcuts.rs` reads it.
+///
+/// `key` is the xkb name of the keysym the press produced. Letters are
+/// written lower case: the compositor folds a letter's case before matching,
+/// and the shipped config spells them that way (`Ctrl+q`). Everything else
+/// keeps the name xkb gave it, since that is also what the compositor
+/// compares against — Shift+Tab arrives as `ISO_Left_Tab`, and a trigger
+/// written `Shift+Tab` would never match.
+pub fn combination(modifiers: Modifiers, key: &str) -> String {
+    let key = if key.len() == 1 && key.chars().all(|c| c.is_ascii_alphabetic()) {
+        key.to_ascii_lowercase()
+    } else {
+        key.to_string()
+    };
+    format!("{}{key}", modifiers.prefix())
+}
+
 /// The combination on a line, for opening its field on the value it shows.
 pub fn keys(index: usize) -> Option<String> {
     shortcuts()
@@ -245,5 +324,32 @@ pub fn build() -> Pane {
             // leaves the process.
             group(otto_kit::t!("settings-group-shortcuts"), shortcut_rows),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combination_matches_what_the_compositor_parses() {
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(combination(ctrl_shift, "Q"), "Ctrl+Shift+q");
+        assert_eq!(
+            combination(ctrl_shift, "ISO_Left_Tab"),
+            "Ctrl+Shift+ISO_Left_Tab"
+        );
+        assert_eq!(combination(Modifiers::default(), "Prior"), "Prior");
+        let all = Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            logo: true,
+        };
+        assert_eq!(combination(all, "Return"), "Ctrl+Alt+Shift+Logo+Return");
     }
 }

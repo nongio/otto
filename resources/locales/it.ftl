@@ -195,6 +195,9 @@ settings-key-combination = Combinazione di tasti
 settings-key-combination-detail = Ctrl, Alt, Shift o Logo uniti da +, poi un tasto: Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = Non assegnata
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = Premi i tasti…
 
 
 ## Settings — Trackpad & Mouse

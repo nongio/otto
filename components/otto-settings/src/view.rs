@@ -306,20 +306,21 @@ pub const SHORTCUT_KEYS_W: f32 = 168.0;
 const SHORTCUT_SELECT_W: f32 = 208.0;
 const SHORTCUT_GAP: f32 = 8.0;
 
-/// The three controls of a shortcut line — action pop-up, keys field, remove
-/// button — laid out between the row's leading and trailing edges.
+/// The controls of a shortcut line, laid out between the row's leading and
+/// trailing edges.
 ///
 /// Drawing and hit-testing both come through here, so a press can never land
 /// somewhere different from what was drawn.
-fn shortcut_rects(left: f32, right: f32, cy: f32) -> (Rect, Rect, Rect) {
+fn shortcut_rects(left: f32, right: f32, cy: f32) -> ShortcutRects {
     let remove = Rect::from_xywh(
         right - widgets::LINE_BUTTON,
         cy - widgets::LINE_BUTTON / 2.0,
         widgets::LINE_BUTTON,
         widgets::LINE_BUTTON,
     );
+    let record = remove.with_offset((-(SHORTCUT_GAP + widgets::LINE_BUTTON), 0.0));
     let keys = Rect::from_xywh(
-        remove.left - SHORTCUT_GAP - SHORTCUT_KEYS_W,
+        record.left - SHORTCUT_GAP - SHORTCUT_KEYS_W,
         cy - widgets::CONTROL_H / 2.0,
         SHORTCUT_KEYS_W,
         widgets::CONTROL_H,
@@ -330,7 +331,24 @@ fn shortcut_rects(left: f32, right: f32, cy: f32) -> (Rect, Rect, Rect) {
         (left + SHORTCUT_SELECT_W).min(keys.left - SHORTCUT_GAP),
         cy + dropdown::field::HEIGHT / 2.0,
     );
-    (action, keys, remove)
+    ShortcutRects {
+        action,
+        keys,
+        record,
+        remove,
+    }
+}
+
+/// Where each control of a shortcut line sits. See [`shortcut_rects`].
+struct ShortcutRects {
+    /// The pop-up picking the action.
+    action: Rect,
+    /// The field holding the combination.
+    keys: Rect,
+    /// The button that listens for the combination to be pressed.
+    record: Rect,
+    /// The "−" button.
+    remove: Rect,
 }
 
 /// The "+" button on the trailing line of the shortcuts group.
@@ -549,6 +567,8 @@ pub enum Pressed {
     RemoveFile(&'static str),
     /// A shortcut line's remove button.
     Remove(usize),
+    /// A shortcut line's record button.
+    Record(usize),
     /// The button that adds a shortcut line.
     Add,
 }
@@ -565,6 +585,8 @@ pub enum ShortcutHit {
     /// The key combination field, with the offset of the press inside it so
     /// the caret lands under the pointer.
     Keys { index: usize, offset_x: f32 },
+    /// The record button: listen for the combination to be pressed.
+    Record(usize),
     /// The "−" button: delete this line.
     Remove(usize),
     /// The "+" button: append one.
@@ -1353,9 +1375,17 @@ impl Settings {
 
         match &row.control {
             Control::Shortcut { index } => {
-                let (action, keys, remove) = shortcut_rects(left, right, cy);
+                let ShortcutRects {
+                    action,
+                    keys,
+                    record,
+                    remove,
+                } = shortcut_rects(left, right, cy);
                 if remove.contains(local) {
                     return Some(ShortcutHit::Remove(*index));
+                }
+                if record.contains(local) {
+                    return Some(ShortcutHit::Record(*index));
                 }
                 if keys.contains(local) {
                     return Some(ShortcutHit::Keys {
@@ -2256,12 +2286,18 @@ impl Settings {
     }
 
     /// One shortcut line: the action it runs, the combination that triggers
-    /// it, and the button that deletes it.
+    /// it, the button that records one, and the button that deletes it.
     fn render_shortcut(&self, canvas: &Canvas, index: usize, left: f32, right: f32, cy: f32) {
         let Some(line) = keyboard::lines().into_iter().nth(index) else {
             return;
         };
-        let (action, keys, remove) = shortcut_rects(left, right, cy);
+        let ShortcutRects {
+            action,
+            keys,
+            record,
+            remove,
+        } = shortcut_rects(left, right, cy);
+        let listening = keyboard::recording().filter(|recording| recording.index == index);
 
         dropdown::field::draw(
             canvas,
@@ -2278,6 +2314,13 @@ impl Settings {
         // While this line is being typed the toolkit's field owns the box —
         // it is the only thing that can draw a caret and a selection.
         match self.editing_field(crate::EditTarget::ShortcutKeys(index)) {
+            _ if listening.is_some() => widgets::listening_field(
+                canvas,
+                keys,
+                &listening.map(|l| l.held.prefix()).unwrap_or_default(),
+                otto_kit::t!("settings-key-combination-listening"),
+                &self.theme,
+            ),
             Some(input) => {
                 canvas.save();
                 canvas.translate((keys.left, keys.top));
@@ -2292,6 +2335,14 @@ impl Settings {
                 &self.theme,
             ),
         }
+
+        widgets::record_button(
+            canvas,
+            record,
+            listening.is_some(),
+            self.pressed == Some(Pressed::Record(index)),
+            &self.theme,
+        );
 
         widgets::line_button(
             canvas,

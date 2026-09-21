@@ -196,6 +196,9 @@ settings-key-combination = Комбінація клавіш
 settings-key-combination-detail = Ctrl, Alt, Shift або Logo, поєднані знаком +, а потім одна клавіша: Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = Не призначено
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = Натисніть клавіші…
 
 
 ## Settings — Trackpad & Mouse

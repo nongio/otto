@@ -570,6 +570,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         // or theme is made.
         let background_effect =
             crate::backdrop::init(&conn, &globals, surface_style_manager.is_some());
+        crate::key_capture::init(&conn, &globals);
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;
@@ -1265,11 +1266,14 @@ impl<A: App + 'static> KeyboardHandler for AppData<A> {
         // Tab moves the focus between the window's own controls before the
         // application sees the key — but only in a window that declared any,
         // so an application that handles Tab itself is unaffected.
-        if move_focus_for_key(&event) {
+        // A key capture wants the key itself, whatever it is — see
+        // [`crate::key_capture`].
+        let capturing = crate::key_capture::is_capturing();
+        if !capturing && move_focus_for_key(&event) {
             return;
         }
 
-        if self.close_focused_window_for_key(&event) {
+        if !capturing && self.close_focused_window_for_key(&event) {
             return;
         }
 

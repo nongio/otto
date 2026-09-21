@@ -428,6 +428,55 @@ pub fn line_button(canvas: &Canvas, rect: Rect, plus: bool, pressed: bool, theme
     }
 }
 
+/// The button that listens for a shortcut's combination to be pressed.
+///
+/// A dot at rest; while `listening` the button fills with the accent and the
+/// dot turns into a stop square, which is what pressing it again does.
+pub fn record_button(canvas: &Canvas, rect: Rect, listening: bool, pressed: bool, theme: &Theme) {
+    let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
+    let (cx, cy) = (rect.center_x(), rect.center_y());
+    if listening {
+        canvas.draw_rrect(rrect, &fill(theme.accent));
+        let side = 7.0;
+        canvas.draw_rrect(
+            RRect::new_rect_xy(
+                Rect::from_xywh(cx - side / 2.0, cy - side / 2.0, side, side),
+                1.5,
+                1.5,
+            ),
+            &fill(skia_safe::Color::WHITE),
+        );
+    } else {
+        canvas.draw_rrect(rrect, &fill(button_fill(pressed, theme)));
+        canvas.draw_rrect(rrect, &stroke(theme.fill_secondary, 1.0));
+        canvas.draw_circle(Point::new(cx, cy), 4.0, &fill(theme.text_primary));
+    }
+}
+
+/// A shortcut's key field while it listens: what has been held so far, or a
+/// prompt, framed in the accent so the line taking the keys stands out.
+pub fn listening_field(canvas: &Canvas, rect: Rect, held: &str, prompt: &str, theme: &Theme) {
+    let rrect = RRect::new_rect_xy(rect, 6.0, 6.0);
+    canvas.draw_rrect(rrect, &fill(theme.fill_quaternary));
+    canvas.draw_rrect(rrect, &stroke(theme.accent, 2.0));
+    canvas.save();
+    canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+    let (text, color) = if held.is_empty() {
+        (prompt, theme.text_secondary)
+    } else {
+        (held, theme.text_primary)
+    };
+    text_centered_y(
+        canvas,
+        text,
+        rect.left + 9.0,
+        rect.center_y(),
+        styles::SUBHEADLINE,
+        color,
+    );
+    canvas.restore();
+}
+
 const KEYCAP_GAP: f32 = 4.0;
 const KEYCAP_PAD: f32 = 7.0;
 
