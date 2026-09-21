@@ -619,6 +619,7 @@ pub fn run_udev() {
                 .insert_source(
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
                     move |_, _, data: &mut Otto<super::types::UdevData>| {
+                        data.tick_scene_without_connectors();
                         data.render_virtual_outputs();
                         data.kick_screencast_outputs();
                         smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
