@@ -140,27 +140,31 @@ pub fn spawn(
     target: TargetSize,
     tx: broadcast::Sender<Arc<Frame>>,
     latest: LatestFrame,
+    fps: f64,
 ) {
     std::thread::Builder::new()
         .name("pw-capture".into())
         .spawn(move || {
-            if let Err(e) = run(node_id, expected, tx, target, latest) {
+            if let Err(e) = run(node_id, expected, tx, target, latest, fps) {
                 tracing::error!("pipewire capture terminated: {e:#}");
             }
         })
         .expect("failed to spawn pipewire capture thread");
 }
 
-/// Cap the delivered frame rate. A remote desktop does not need the output's
+/// The bitmap path's frame rate. A remote desktop does not need the output's
 /// full 30 fps, and each 2880×1920 frame is ~22 MB — dropping frames *before*
 /// the copy keeps allocation churn (and downstream RDP encode/send buffering)
-/// from starving the machine. Overridable via OTTO_RDP_FPS.
-fn target_frame_interval() -> std::time::Duration {
+/// from starving the machine.
+pub const DEFAULT_FPS: f64 = 12.0;
+
+/// Cap the delivered frame rate at `fps`, or at OTTO_RDP_FPS when set.
+fn target_frame_interval(fps: f64) -> std::time::Duration {
     let fps = std::env::var("OTTO_RDP_FPS")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|f| *f > 0.0)
-        .unwrap_or(12.0);
+        .unwrap_or(fps);
     std::time::Duration::from_secs_f64(1.0 / fps)
 }
 
@@ -188,6 +192,7 @@ fn run(
     tx: broadcast::Sender<Arc<Frame>>,
     target: TargetSize,
     latest: LatestFrame,
+    fps: f64,
 ) -> anyhow::Result<()> {
     pw::init();
 
@@ -227,7 +232,7 @@ fn run(
         format: None,
         tx,
         last_emit: None,
-        min_interval: target_frame_interval(),
+        min_interval: target_frame_interval(fps),
         target,
         last_layout: None,
         latest,
