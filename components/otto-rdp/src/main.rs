@@ -32,6 +32,7 @@
 
 mod discover;
 mod egfx;
+mod gpu_import;
 mod h264;
 mod indicator;
 mod pipewire_capture;

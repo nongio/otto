@@ -29,6 +29,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 pipewire = "0.9"
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 libc = "0.2"
+# Reading back tiled dmabufs the CPU cannot map (gpu_import).
+khronos-egl = { version = "6", features = ["dynamic"] }
+gl = "0.14"
 memfd = "0.6"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
