@@ -329,6 +329,7 @@ mod tests {
             refresh_hz: 60.0,
             position: None,
             interactive: true,
+            primary: false,
         }
     }
 

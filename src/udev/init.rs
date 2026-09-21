@@ -539,7 +539,9 @@ pub fn run_udev() {
                     crate::virtual_output::VirtualOutputState::build_output(vout_config, position);
                 let global = output.create_global::<Otto<UdevData>>(&display_handle);
 
-                state.workspaces.map_output(&output, position);
+                state
+                    .workspaces
+                    .map_output_with_primary(&output, position, vout_config.primary);
 
                 match crate::virtual_output::VirtualOutputState::start(
                     output.clone(),

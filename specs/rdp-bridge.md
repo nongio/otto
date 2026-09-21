@@ -148,6 +148,18 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
 - `Stop Sharing` terminates the bridge: the client is disconnected, the listening
   port is closed, and the process exits.
 
+### Capture format negotiation
+
+- The bridge subscribes to the output's PipeWire node with a DMA-BUF format offer
+  that carries a DRM modifier property, because Otto's stream marks that property
+  MANDATORY: an offer with no modifier at all never intersects Otto's and the link
+  fails to negotiate.
+- The offer accepts both `DRM_FORMAT_MOD_LINEAR` (preferred — linear dmabufs stay
+  CPU-mappable, which the capture path relies on) and `DRM_FORMAT_MOD_INVALID`, the
+  implicit modifier. A host with no explicit-modifier support (software GL, older
+  drivers) advertises only the implicit one, and a LINEAR-only offer never links
+  there.
+
 ### Configuration
 
 - `OTTO_RDP_FPS` — target capture/encode frame rate. Default is 30 on the H.264
@@ -156,6 +168,9 @@ AVC420; the `--bitmap` flag forces the legacy path for every client.
 - `OTTO_RDP_H264_ENCODER` — selects the hardware H.264 encoder element. Default is
   the standard VAAPI H.264 encoder; an alternative low-power encoder may be named
   instead.
+- `OTTO_RDP_DUMP` — debug aid: writes the first captured frame to the named path as
+  a binary PPM and never writes again, so the capture path can be inspected with no
+  RDP client involved.
 
 ## Constraints & Edge Cases
 
