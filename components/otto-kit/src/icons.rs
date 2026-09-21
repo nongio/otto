@@ -274,6 +274,11 @@ fn guarded_lookup(
     }
 }
 
+/// What [`size_from_path`] answers for a `scalable` directory: an icon drawn
+/// at whatever size it is asked for, so no bitmap beats it and no ceiling
+/// applies to it.
+const SCALABLE: i32 = i32::MAX;
+
 /// The pixel size a themed icon's path implies: the numeric part of its
 /// directory (`apps/256`, `256x256/apps`), or no ceiling at all for a
 /// `scalable` one. A path with no size in it — `/usr/share/pixmaps` — is left
@@ -286,7 +291,7 @@ fn size_from_path(path: &str) -> Option<i32> {
         .find_map(|component| {
             let part = component.as_os_str().to_str()?;
             if part == "scalable" {
-                return Some(i32::MAX);
+                return Some(SCALABLE);
             }
             part.split(['x', '@']).next()?.parse::<i32>().ok()
         })
@@ -304,6 +309,14 @@ fn size_from_path(path: &str) -> Option<i32> {
 /// So walk the standard sizes down from the request and keep the biggest icon
 /// at or below it. The first probe that lands in a directory of its own size is
 /// the largest there is, so the walk stops there.
+///
+/// A `scalable` directory ends the walk wherever it turns up: it is drawn at
+/// whatever size is asked for, so nothing a bitmap directory holds can beat
+/// it. It is the one answer that is *not* held to `wanted`, which is why the
+/// ceiling below is checked after it rather than before — a theme that pairs
+/// one small bitmap directory with a scalable one (Adwaita's `places` is
+/// exactly that) would otherwise have its SVG thrown away for being "too
+/// big" and fall back to the bitmap.
 fn largest_at_or_below(wanted: i32, find: impl Fn(i32) -> Option<String>) -> Option<String> {
     let first = find(wanted)?;
     let mut best = match size_from_path(&first) {
@@ -317,6 +330,9 @@ fn largest_at_or_below(wanted: i32, find: impl Fn(i32) -> Option<String>) -> Opt
     {
         let Some(path) = find(probe) else { continue };
         let found = size_from_path(&path).unwrap_or(0);
+        if found == SCALABLE {
+            return Some(path);
+        }
         if found > best.0 && found <= wanted {
             best = (found, path);
         }
