@@ -695,6 +695,20 @@ files-undo-new-folder-with-selection = Nueva carpeta con la selección
 # redraws.
 bar-clock-format = %A %-d de %B  %H:%M
 
+## Top bar — battery
+
+bar-battery-percent = Batería { $percent } %
+bar-battery-remaining = Batería { $percent } % — quedan { $time }
+bar-battery-charging-time = Batería { $percent } % — { $time } para la carga completa
+bar-battery-full = Batería { $percent } % — carga completa
+bar-cpu-frequency = CPU { $avg } GHz de media, { $max } GHz de pico
+bar-cpu-governor = Gobernador: { $governor }
+bar-power-saver = Ahorro de energía
+bar-power-balanced = Equilibrado
+bar-power-performance = Rendimiento
+bar-power-settings = Configuración de energía…
+a11y-battery = Batería
+
 
 ## Settings — widgets
 ##

@@ -715,6 +715,20 @@ files-undo-new-folder-with-selection = створення папки з вибр
 # redraws.
 bar-clock-format = %A %-d %B %H:%M
 
+## Top bar — battery
+
+bar-battery-percent = Батарея { $percent } %
+bar-battery-remaining = Батарея { $percent } % — залишилося { $time }
+bar-battery-charging-time = Батарея { $percent } % — до повного заряду { $time }
+bar-battery-full = Батарея { $percent } % — повністю заряджена
+bar-cpu-frequency = ЦП: у середньому { $avg } ГГц, пік { $max } ГГц
+bar-cpu-governor = Регулятор: { $governor }
+bar-power-saver = Енергозбереження
+bar-power-balanced = Збалансований
+bar-power-performance = Продуктивність
+bar-power-settings = Налаштування живлення…
+a11y-battery = Батарея
+
 
 ## Settings — widgets
 ##

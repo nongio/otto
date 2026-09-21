@@ -661,6 +661,20 @@ files-undo-new-folder-with-selection = 選択項目から新規フォルダ
 # redraws.
 bar-clock-format = %-m月%-d日(%a)  %H:%M
 
+## Top bar — battery
+
+bar-battery-percent = バッテリー { $percent }%
+bar-battery-remaining = バッテリー { $percent }% — 残り { $time }
+bar-battery-charging-time = バッテリー { $percent }% — 満充電まで { $time }
+bar-battery-full = バッテリー { $percent }% — 充電完了
+bar-cpu-frequency = CPU 平均 { $avg } GHz、最大 { $max } GHz
+bar-cpu-governor = ガバナー: { $governor }
+bar-power-saver = 省電力
+bar-power-balanced = バランス
+bar-power-performance = パフォーマンス
+bar-power-settings = 電源設定…
+a11y-battery = バッテリー
+
 
 ## Settings — widgets
 ##

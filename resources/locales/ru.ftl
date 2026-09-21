@@ -720,6 +720,20 @@ files-undo-new-folder-with-selection = Создание папки с выбра
 # redraws.
 bar-clock-format = %A %-d %B  %H:%M
 
+## Top bar — battery
+
+bar-battery-percent = Батарея { $percent } %
+bar-battery-remaining = Батарея { $percent } % — осталось { $time }
+bar-battery-charging-time = Батарея { $percent } % — до полной зарядки { $time }
+bar-battery-full = Батарея { $percent } % — полностью заряжена
+bar-cpu-frequency = ЦП: в среднем { $avg } ГГц, пик { $max } ГГц
+bar-cpu-governor = Регулятор: { $governor }
+bar-power-saver = Энергосбережение
+bar-power-balanced = Сбалансированный
+bar-power-performance = Производительность
+bar-power-settings = Настройки питания…
+a11y-battery = Батарея
+
 
 ## Settings — widgets
 ##

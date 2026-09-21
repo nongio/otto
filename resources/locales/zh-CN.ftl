@@ -664,6 +664,20 @@ files-undo-new-folder-with-selection = 用所选项目新建文件夹
 # redraws.
 bar-clock-format = %-m月%-d日 %A  %H:%M
 
+## Top bar — battery
+
+bar-battery-percent = 电池 { $percent }%
+bar-battery-remaining = 电池 { $percent }% — 剩余 { $time }
+bar-battery-charging-time = 电池 { $percent }% — { $time } 后充满
+bar-battery-full = 电池 { $percent }% — 已充满
+bar-cpu-frequency = CPU 平均 { $avg } GHz，峰值 { $max } GHz
+bar-cpu-governor = 调速器：{ $governor }
+bar-power-saver = 节能
+bar-power-balanced = 平衡
+bar-power-performance = 性能
+bar-power-settings = 电源设置…
+a11y-battery = 电池
+
 
 ## Settings — widgets
 ##
