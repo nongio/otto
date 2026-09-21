@@ -8,9 +8,11 @@
 //!
 //! Buffer handling covers the data types Otto's stream produces:
 //! - `MemFd` / `MemPtr`: already mapped by pipewire-rs (`data.data()`).
-//! - `DmaBuf`: mapped manually with `mmap` — Otto allocates its virtual
-//!   output swapchain with linear-friendly modifiers, and consumers that
-//!   cannot negotiate modifiers get a mappable buffer.
+//! - `DmaBuf` with LINEAR or the implicit modifier: mapped manually with
+//!   `mmap`.
+//! - `DmaBuf` with a tiled modifier: imported into EGL and read back on the
+//!   GPU ([`crate::gpu_import`]). Offered only where the GPU can do that, and
+//!   the only thing on offer from a driver that cannot render LINEAR.
 
 use std::sync::Arc;
 
@@ -21,6 +23,11 @@ use spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use spa::param::video::VideoFormat;
 use spa::pod::{Pod, Property};
 use tokio::sync::broadcast;
+
+use crate::gpu_import::{GpuReader, DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888};
+
+const DRM_FORMAT_MOD_LINEAR: u64 = 0;
+const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
 
 /// One captured frame, tightly packed 4-byte-per-pixel BGRx.
 #[derive(Clone)]
@@ -170,6 +177,9 @@ struct StreamData {
     last_layout: Option<ServedLayout>,
     /// Newest frame, for clients that subscribe between two captures.
     latest: LatestFrame,
+    /// Reads tiled buffers back on the GPU; `None` where EGL is unavailable,
+    /// and then only mappable buffers are negotiated.
+    gpu: Option<GpuReader>,
 }
 
 fn run(
@@ -195,6 +205,24 @@ fn run(
         },
     )?;
 
+    let gpu = match GpuReader::new() {
+        Ok(gpu) => Some(gpu),
+        Err(e) => {
+            tracing::info!("no GPU frame import ({e:#}); taking CPU-mappable buffers only");
+            None
+        }
+    };
+    // Tiled modifiers after the mappable ones, which stay the default.
+    let mut modifiers = vec![DRM_FORMAT_MOD_LINEAR as i64, DRM_FORMAT_MOD_INVALID as i64];
+    if let Some(gpu) = &gpu {
+        for modifier in gpu.modifiers(DRM_FORMAT_ARGB8888) {
+            if !modifiers.contains(&(modifier as i64)) {
+                modifiers.push(modifier as i64);
+            }
+        }
+    }
+    tracing::info!("offering modifiers {modifiers:x?}");
+
     let data = StreamData {
         format: None,
         tx,
@@ -203,6 +231,7 @@ fn run(
         target,
         last_layout: None,
         latest,
+        gpu,
     };
 
     let _listener = stream
@@ -231,6 +260,10 @@ fn run(
                     info.size().width,
                     info.size().height
                 );
+                // A new format means a new buffer pool; fds may be reused.
+                if let Some(gpu) = data.gpu.as_mut() {
+                    gpu.forget_buffers();
+                }
                 data.format = Some(info);
             }
         })
@@ -289,7 +322,23 @@ fn run(
 
             let (dw, dh) = layout.desktop;
 
-            let pixels: Option<Vec<u8>> = if mapped_ok {
+            let modifier = info.modifier();
+            let tiled = modifier != DRM_FORMAT_MOD_LINEAR && modifier != DRM_FORMAT_MOD_INVALID;
+            let fourcc = match info.format() {
+                VideoFormat::BGRA => Some(DRM_FORMAT_ARGB8888),
+                VideoFormat::BGRx => Some(DRM_FORMAT_XRGB8888),
+                _ => None,
+            };
+
+            let pixels: Option<Vec<u8>> = if tiled {
+                let offset = d.chunk().offset();
+                match (data.gpu.as_mut(), fourcc) {
+                    (Some(gpu), Some(fourcc)) if raw_fd >= 0 => gpu
+                        .read(raw_fd as i64, offset, stride as u32, modifier, fourcc, width, height)
+                        .map(|px| compose_frame(&px, width, height, width as usize * 4, layout)),
+                    _ => None,
+                }
+            } else if mapped_ok {
                 d.data()
                     .map(|slice| compose_frame(slice, width, height, stride, layout))
             } else if raw_fd >= 0 {
@@ -365,7 +414,9 @@ fn run(
     // LINEAR is the preferred value, but a GPU stack with no explicit-modifier
     // support (software GL, older drivers) advertises only the implicit
     // DRM_FORMAT_MOD_INVALID — accept that too, or the link never forms.
-    // Linear dmabufs stay CPU-mappable, which the process callback relies on.
+    // Linear dmabufs stay CPU-mappable, which the process callback relies on;
+    // tiled ones follow when the GPU can read them back, for a producer that
+    // cannot render LINEAR.
     let obj = spa::pod::object!(
         spa::utils::SpaTypes::ObjectParamFormat,
         spa::param::ParamType::EnumFormat,
@@ -397,9 +448,8 @@ fn run(
             value: spa::pod::Value::Choice(spa::pod::ChoiceValue::Long(spa::utils::Choice(
                 spa::utils::ChoiceFlags::empty(),
                 spa::utils::ChoiceEnum::Enum {
-                    default: 0, // DRM_FORMAT_MOD_LINEAR
-                    // 0x00ff_ffff_ffff_ffff = DRM_FORMAT_MOD_INVALID (implicit)
-                    alternatives: vec![0, 0x00ff_ffff_ffff_ffff],
+                    default: DRM_FORMAT_MOD_LINEAR as i64,
+                    alternatives: modifiers,
                 },
             ))),
         },
