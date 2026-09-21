@@ -13,6 +13,9 @@ pub struct EglSurfaceResources {
     pub wl_egl_surface: wayland_egl::WlEglSurface,
     pub width: i32,
     pub height: i32,
+    /// `width`/`height` have not reached the `wl_egl_window` yet. See
+    /// [`SkiaSurface::resize`].
+    pub resize_pending: bool,
 }
 
 impl Drop for EglSurfaceResources {
@@ -59,6 +62,7 @@ impl SkiaSurface {
             wl_egl_surface,
             width,
             height,
+            resize_pending: false,
         };
         AppContext::insert_egl_resources(surface_id.clone(), resources);
 
@@ -69,11 +73,14 @@ impl SkiaSurface {
     }
 
     /// Resize the surface
+    ///
+    /// The `wl_egl_window` is resized on the next draw, around making this
+    /// surface current — see `initialize_skia_surface`.
     pub fn resize(&self, width: i32, height: i32) {
         AppContext::with_egl_resources(&self.surface_id, |res| {
             res.width = width;
             res.height = height;
-            res.wl_egl_surface.resize(width, height, 0, 0);
+            res.resize_pending = true;
         });
         // Invalidate cached surface so it gets recreated with new size
         *self.cached_surface.borrow_mut() = None;
@@ -129,6 +136,21 @@ impl SkiaSurface {
                 let egl =
                     khronos_egl::DynamicInstance::<khronos_egl::EGL1_4>::load_required().unwrap();
 
+                // A pending resize goes to the `wl_egl_window` both before and
+                // after the surface is made current, because the two EGL
+                // implementations only honour it on opposite sides:
+                // - Mesa takes the back buffer when the surface is made current
+                //   and ignores a resize while it holds one, so the size has to
+                //   land first. The second call is then a no-op.
+                // - NVIDIA's egl-wayland reallocates straight away only for a
+                //   current surface. Any other surface is reallocated inside its
+                //   next `eglSwapBuffers`, after that frame has been drawn into
+                //   the old buffer, which the compositor then stretches over
+                //   the new size.
+                if res.resize_pending {
+                    res.wl_egl_surface.resize(res.width, res.height, 0, 0);
+                }
+
                 // Make this surface's EGL surface current
                 egl.make_current(
                     ctx.egl_display(),
@@ -137,6 +159,11 @@ impl SkiaSurface {
                     Some(ctx.egl_context()),
                 )
                 .ok();
+
+                if res.resize_pending {
+                    res.wl_egl_surface.resize(res.width, res.height, 0, 0);
+                    res.resize_pending = false;
+                }
 
                 // CRITICAL: Disable vsync for THIS surface to prevent blocking
                 // Must be called AFTER make_current
