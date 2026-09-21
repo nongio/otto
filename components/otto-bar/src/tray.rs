@@ -26,6 +26,21 @@ static TRAY_CONNECTION: LazyLock<Mutex<Option<Connection>>> = LazyLock::new(|| M
 /// Pending context menu waiting to be rendered by the UI.
 static PENDING_MENU: LazyLock<Mutex<Option<PendingMenu>>> = LazyLock::new(|| Mutex::new(None));
 
+/// Layouts refetched because an item said its menu changed, oldest first.
+/// The UI applies the one for whichever menu it has open and drops the rest —
+/// their caches are already updated.
+static PENDING_REFRESHES: LazyLock<Mutex<Vec<PendingMenu>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Bumped when a refetched layout lands. Separate from `TRAY_GENERATION` so a
+/// menu changing does not rebuild the bar's icons.
+static MENU_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// How long to wait after a menu-changed signal before refetching. Applets
+/// announce a change as a burst — nm-applet sends `LayoutUpdated` and
+/// `ItemsPropertiesUpdated` back to back — and one fetch covers all of it.
+const MENU_REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// A context menu fetched from dbusmenu, ready for the UI to display.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -83,6 +98,16 @@ pub fn generation() -> u64 {
 /// Take the pending menu (if any) for rendering by the UI.
 pub fn take_pending_menu() -> Option<PendingMenu> {
     PENDING_MENU.lock().unwrap().take()
+}
+
+/// Changes whenever a tray item's menu has been refetched.
+pub fn menu_generation() -> u64 {
+    MENU_GENERATION.load(Ordering::Relaxed)
+}
+
+/// Take every refetched layout since the last call.
+pub fn take_pending_refreshes() -> Vec<PendingMenu> {
+    std::mem::take(&mut *PENDING_REFRESHES.lock().unwrap())
 }
 
 /// Activate a dbusmenu item by sending a "clicked" event.
@@ -597,6 +622,24 @@ async fn fetch_item(
         tokio::spawn(async move {
             prefetch_menu_layout(&conn_for_prefetch, &service, &mpath, state_for_prefetch).await;
         });
+
+        // And keep it current: the prefetch is a snapshot, and a network
+        // list or a toggle is stale the moment the applet changes it.
+        let service = bus_name.to_string();
+        let item_path = path.to_string();
+        let watch_path = menu_path.clone().unwrap_or_default();
+        let state_for_watch = state.clone();
+        let conn_for_watch = conn.clone();
+        tokio::spawn(async move {
+            watch_menu_signals(
+                &conn_for_watch,
+                &service,
+                &item_path,
+                &watch_path,
+                state_for_watch,
+            )
+            .await;
+        });
     }
 
     // Watch for property changes
@@ -626,6 +669,94 @@ async fn prefetch_menu_layout(conn: &Connection, service: &str, menu_path: &str,
         if let Some(item) = items.iter_mut().find(|i| i.service == service) {
             item.cached_layout = Some(layout);
         }
+    }
+}
+
+/// Refetch an item's menu whenever it announces a change.
+///
+/// dbusmenu has two change signals: `LayoutUpdated` when items come or go,
+/// `ItemsPropertiesUpdated` when a label, checkmark or enabled state moves.
+/// Both are answered the same way — refetch the whole layout — because a
+/// partial update would have to be merged into a tree the UI may be drawing,
+/// and a GetLayout is a few kilobytes.
+async fn watch_menu_signals(
+    conn: &Connection,
+    service: &str,
+    item_path: &str,
+    menu_path: &str,
+    state: TrayState,
+) {
+    use futures_util::FutureExt;
+
+    let Ok(builder) = crate::dbusmenu::DBusMenuProxy::builder(conn).destination(service) else {
+        return;
+    };
+    let Ok(builder) = builder.path(menu_path) else {
+        return;
+    };
+    let Ok(proxy) = builder.build().await else {
+        return;
+    };
+
+    let (Ok(mut layout_stream), Ok(mut props_stream)) = (
+        proxy.receive_layout_updated().await,
+        proxy.receive_items_properties_updated().await,
+    ) else {
+        return;
+    };
+
+    loop {
+        tokio::select! {
+            ev = layout_stream.next() => if ev.is_none() { break },
+            ev = props_stream.next() => if ev.is_none() { break },
+        }
+
+        // Let the rest of the burst arrive, then swallow it.
+        tokio::time::sleep(MENU_REFRESH_DEBOUNCE).await;
+        while let Some(Some(_)) = layout_stream.next().now_or_never() {}
+        while let Some(Some(_)) = props_stream.next().now_or_never() {}
+
+        // The item may have gone while we waited; its menu with it.
+        let still_here = state
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|i| i.service == service && i.path == item_path);
+        if !still_here {
+            break;
+        }
+
+        let layout = match crate::dbusmenu::fetch_menu(conn, service, menu_path).await {
+            Ok(layout) => layout,
+            Err(e) => {
+                tracing::debug!("dbusmenu refetch failed: {service}: {e}");
+                continue;
+            }
+        };
+
+        let scale = otto_kit::app_runner::context::AppContext::scale_factor().max(1);
+        precache_menu_icons(&layout.items, 16 * scale);
+
+        {
+            let mut items = state.lock().unwrap();
+            if let Some(item) = items
+                .iter_mut()
+                .find(|i| i.service == service && i.path == item_path)
+            {
+                item.cached_layout = Some(layout.clone());
+            }
+        }
+
+        PENDING_REFRESHES.lock().unwrap().push(PendingMenu {
+            service: service.to_string(),
+            item_path: item_path.to_string(),
+            menu_path: menu_path.to_string(),
+            layout,
+            anchor_x: 0,
+            anchor_y: 0,
+        });
+        MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
+        AppContext::request_wakeup();
     }
 }
 

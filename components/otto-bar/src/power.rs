@@ -615,6 +615,30 @@ async fn run_watcher() {
     }
 }
 
+/// A frequency in GHz to two places, with the locale's decimal separator:
+/// "2.80" in English, "2,80" in German. Passed to the catalogue already
+/// formatted, because Fluent's own number formatting has no locale data
+/// behind it here and would write a point everywhere.
+pub fn format_ghz(value: f64) -> String {
+    let posix = otto_kit::i18n::posix_locale();
+    let language = posix.split(['_', '-']).next().unwrap_or("");
+    let text = format!("{value:.2}");
+    if uses_decimal_comma(language) {
+        text.replace('.', ",")
+    } else {
+        text
+    }
+}
+
+/// Whether a language writes its decimals with a comma. Covers the
+/// catalogues Otto ships; anything else keeps the point.
+fn uses_decimal_comma(language: &str) -> bool {
+    matches!(
+        language,
+        "de" | "es" | "fr" | "it" | "pl" | "pt" | "ru" | "uk"
+    )
+}
+
 /// "2:14" — a duration the way a battery estimate is written. Returns None
 /// for an unknown estimate, which is what UPower reports while it works one
 /// out after a state change.
@@ -677,6 +701,16 @@ mod tests {
             ..a.clone()
         };
         assert!(!a.looks_same_as(&e));
+    }
+
+    #[test]
+    fn decimals_follow_the_language() {
+        for comma in ["de", "es", "fr", "it", "pl", "pt", "ru", "uk"] {
+            assert!(uses_decimal_comma(comma), "{comma}");
+        }
+        for point in ["en", "ja", "zh", ""] {
+            assert!(!uses_decimal_comma(point), "{point}");
+        }
     }
 
     #[test]

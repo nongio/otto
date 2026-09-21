@@ -82,7 +82,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 22. On hover, a tooltip is shown below the tray icon, sourced from the SNI `ToolTip` property.
 23. Left-click on a tray icon opens the dbusmenu context menu via `ContextMenu(x, y)` and renders it using the context menu system. Context menu behavior (selection, submenus, keyboard/mouse navigation) follows context-menus.md. Right-click calls the SNI `Activate(x, y)` method (typically raises the application window).
 24. Middle-click calls the SNI `SecondaryActivate(x, y)` method.
-25. The bar listens for `NewIcon`, `NewStatus`, and `NewToolTip` signals to update icons without polling.
+25. The bar listens for `NewIcon`, `NewStatus`, and `NewToolTip` signals to update icons without polling, and for dbusmenu's `LayoutUpdated` and `ItemsPropertiesUpdated` to keep each item's menu current. A burst of those signals — applets send the two back to back, and nm-applet sends several pairs during a scan — is answered with one `GetLayout`, 100 ms after the first. The refetched layout replaces the cached one, so the next open is current, and an open menu for that item is refreshed in place (see context-menus.md, Live Updates).
 26. Icons with `Status = Passive` may be hidden by user configuration (hidden icons tray, revealed on click of a chevron button).
 
 ### Battery (Right Zone)
@@ -93,7 +93,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 30. On a machine with no battery the indicator is not drawn. `show` overrides this in both directions.
 31. Readings are taken on UPower's property-change signals and on an interval; a reading that would draw the same glyph does not repaint. The percentage is compared as a whole number, which is the precision the indicator shows.
 32. Clicking the indicator opens a menu reporting the battery's percentage and time remaining, the CPU's average and peak frequency across all cores, and its governor. Each of the three is individually configurable. The CPU figures are read when the menu opens, not polled: `scaling_cur_freq` changes faster than a menu could usefully show.
-33. The menu lists selectable power profiles from the first backend available: power-profiles-daemon over D-Bus (under either of its two names), then commands configured as `[[battery.profiles]]`, then the kernel's governors read-only. A configured entry is check-marked when its stated `governor` or `epp` matches the live one; an entry stating neither is never check-marked. The read-only listing is shown disabled, so the menu still reports what the CPU is set to on a machine where nothing can change it.
+33. The menu lists selectable power profiles from the first backend available: power-profiles-daemon over D-Bus (under either of its two names), then commands configured as `[[battery.profiles]]`, then the kernel's governors read-only. A configured entry is check-marked when its stated `governor` or `epp` matches the live one; an entry stating neither is never check-marked. The read-only listing is shown disabled, so the menu still reports what the CPU is set to on a machine where nothing can change it. While the menu is open it follows changes: the tick moves when a profile switch lands and the charge line updates; the frequencies keep the values read when it opened.
 34. To an assistive technology the indicator is a button with a popup, labelled with the percentage and time remaining, and announced politely as it changes.
 
 ### Clock (Right Zone)

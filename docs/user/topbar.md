@@ -88,6 +88,11 @@ Nextcloud, Telegram, Slack, Steam, KeePassXC, network and volume applets.
 Icons are ordered by registration
 time, newest to the left.
 
+Menus stay current while they are open. When an applet changes its menu (a
+Wi-Fi scan finding a network, Bluetooth connecting a device), the bar fetches
+the new one and updates the menu in place, keeping your place in it. If the
+menu has grown or shrunk it is shown again at its new size, in the same spot.
+
 Legacy XEmbed tray icons (the old X11 system tray) are **not** supported; that
 standard has no Wayland equivalent. Apps that only do XEmbed will not appear.
 
@@ -134,7 +139,9 @@ Whichever of these is available, in order:
    change it.
 
 The CPU numbers are read when the menu opens, not on a timer: `scaling_cur_freq`
-moves faster than anything could usefully display.
+moves faster than anything could usefully display. Everything else follows
+along while the menu is open: select a profile and the tick moves once the
+switch lands, without reopening.
 
 ### Settings
 

@@ -93,6 +93,13 @@ Context menus are hierarchical popup menus that display items for user selection
 37. The menu is hidden by calling `hide()` or `hide_animated()`, which destroys all popup surfaces and resets internal state.
 38. Once hidden, the menu can be shown again (or destroyed and recreated).
 
+### Live Updates
+
+39. A menu's items can be replaced while it is open (`refresh`). This is for menus whose source changes under them — a tray applet's network list, a checkmark that moves when a setting lands — so the person sees the change without closing the menu.
+40. Across a refresh, open submenus and the highlight are kept by label, not by index. An item inserted above the highlight does not move the highlight onto its neighbour; an item that is gone clears the highlight rather than landing on another, so RETURN never acts on something the person did not point at. A submenu whose item is gone, or is no longer a submenu, closes.
+41. A popup's size is fixed at creation by its positioner. A refresh repaints in place while every open level keeps its size. A submenu that changes size closes, and hovering its parent reopens it at the new size. The root changing size is reported to the caller, which reopens the menu at the same anchor — it owns the positioner that says where.
+42. Refreshing a menu that is not shown stores the items for the next show.
+
 ## Constraints & Edge Cases
 
 - **No parent surface:** The menu cannot be shown without a valid parent surface and positioner.

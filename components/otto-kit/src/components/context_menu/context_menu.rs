@@ -33,6 +33,18 @@ fn scroll_at_depth(state: &ContextMenuState, depth: usize) -> f32 {
     }
 }
 
+/// What [`ContextMenu::refresh`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuRefresh {
+    /// Repainted in place.
+    Redrawn,
+    /// The root list no longer fits its popup. The new items are in place;
+    /// the caller has to close the menu and show it again to size it.
+    Resized,
+    /// Nothing was open. The items are stored for the next show.
+    NotShown,
+}
+
 type PopupStack = Rc<RefCell<Vec<Rc<RefCell<Option<PopupSurface>>>>>>;
 type ItemClickCallback = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
 type CloseCallback = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
@@ -1179,6 +1191,68 @@ impl ContextMenu {
             )
         };
         state_mut.set_scroll(target, overflow);
+    }
+
+    /// Replace the items of a menu that is already open, and repaint it.
+    ///
+    /// For a menu whose source keeps changing while it is shown — a tray
+    /// applet's network list, a checkmark that moved when a setting landed.
+    /// The highlight and any open submenus are kept by label; see
+    /// [`ContextMenuState::replace_items`].
+    ///
+    /// A popup's size is fixed when it is created: xdg-shell positions it
+    /// from the size given then. So a refresh can repaint in place only
+    /// while every open level keeps its size. A submenu that changes shape
+    /// is closed, and hovering its parent opens it again at the new size.
+    /// The root changing shape is reported as [`MenuRefresh::Resized`], and
+    /// the caller reopens the menu — it owns the positioner that says where.
+    pub fn refresh(&self, items: Vec<MenuItem>) -> MenuRefresh {
+        if !self.is_visible() {
+            self.state.borrow_mut().set_items(items);
+            return MenuRefresh::NotShown;
+        }
+
+        let style = self.style.borrow().clone();
+
+        if let Some(from) = self.state.borrow_mut().replace_items(items) {
+            Self::hide_submenus_from_static(&self.state, &self.popups, from);
+        }
+
+        // A list that got shorter may have been scrolled past its new end.
+        {
+            let mut state = self.state.borrow_mut();
+            let overflow = ContextMenuRenderer::overflow(state.items(), &style);
+            let scroll = state.scroll();
+            state.set_scroll(scroll, overflow);
+        }
+
+        let popups: Vec<_> = self.popups.borrow().clone();
+        for (depth, popup) in popups.iter().enumerate() {
+            let Some(current) = popup.borrow().as_ref().map(|p| p.dimensions()) else {
+                continue;
+            };
+            let wanted = {
+                let state = self.state.borrow();
+                let (w, h) =
+                    ContextMenuRenderer::measure_items(state.items_at_depth(depth), &style);
+                // Truncated the way `show_menu_at_depth` sized it, so an
+                // unchanged menu compares equal.
+                (w as i32, h as i32)
+            };
+
+            if wanted != current {
+                if depth == 0 {
+                    return MenuRefresh::Resized;
+                }
+                self.state.borrow_mut().close_submenus_from(depth - 1);
+                Self::hide_submenus_from_static(&self.state, &self.popups, depth);
+                break;
+            }
+
+            Self::render_menu_at_depth(&self.state, &style, popup, depth);
+        }
+
+        MenuRefresh::Redrawn
     }
 
     /// Put the highlight on one item of the root list, scroll it into view
