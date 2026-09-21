@@ -210,12 +210,16 @@ impl<BackendData: Backend> Otto<BackendData> {
                 // using lay-rs hit testing (matches visual position from Taffy layout)
                 // Sort by stacking order: Overlay above Top
                 let scale = output.current_scale().fractional_scale();
-                let phys = self.pointer.current_location().to_physical(scale);
+                let phys =
+                    (self.pointer.current_location() - output_geo.loc.to_f64()).to_physical(scale);
                 let mut found_layer_focus = false;
                 let mut layer_surfs: Vec<_> = self
                     .layer_surfaces
                     .values()
-                    .filter(|s| matches!(s.wlr_layer(), WlrLayer::Overlay | WlrLayer::Top))
+                    .filter(|s| {
+                        s.output() == output
+                            && matches!(s.wlr_layer(), WlrLayer::Overlay | WlrLayer::Top)
+                    })
                     .collect();
                 layer_surfs.sort_by_key(|s| match s.wlr_layer() {
                     WlrLayer::Overlay => 0,
@@ -226,8 +230,10 @@ impl<BackendData: Backend> Otto<BackendData> {
                     if lay_layer.cointains_point((phys.x as f32, phys.y as f32)) {
                         let ls = layer_shell_surf.layer_surface();
                         let render_pos = lay_layer.render_position();
-                        let layer_abs_pos: Point<f64, Logical> =
-                            Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                        let layer_abs_pos: Point<f64, Logical> = Point::from((
+                            render_pos.x as f64 / scale + output_geo.loc.x as f64,
+                            render_pos.y as f64 / scale + output_geo.loc.y as f64,
+                        ));
                         let relative_pos = self.pointer.current_location() - layer_abs_pos;
                         // Gate on the parent surface's input region so that
                         // subsurfaces outside it don't intercept events.
@@ -300,20 +306,28 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
 
             // Check if a Bottom/Background layer shell surface should receive keyboard focus
-            if let Some(output) = output.as_ref() {
+            if let Some((output, output_geo)) = output
+                .as_ref()
+                .and_then(|o| Some((o, self.workspaces.output_geometry(o)?)))
+            {
                 let scale = output.current_scale().fractional_scale();
-                let phys = self.pointer.current_location().to_physical(scale);
+                let phys =
+                    (self.pointer.current_location() - output_geo.loc.to_f64()).to_physical(scale);
                 for layer_shell_surf in self.layer_surfaces.values() {
                     let wlr = layer_shell_surf.wlr_layer();
-                    if !matches!(wlr, WlrLayer::Bottom | WlrLayer::Background) {
+                    if layer_shell_surf.output() != output
+                        || !matches!(wlr, WlrLayer::Bottom | WlrLayer::Background)
+                    {
                         continue;
                     }
                     let lay_layer = &layer_shell_surf.layer;
                     if lay_layer.cointains_point((phys.x as f32, phys.y as f32)) {
                         let ls = layer_shell_surf.layer_surface();
                         let render_pos = lay_layer.render_position();
-                        let layer_abs_pos: Point<f64, Logical> =
-                            Point::from((render_pos.x as f64 / scale, render_pos.y as f64 / scale));
+                        let layer_abs_pos: Point<f64, Logical> = Point::from((
+                            render_pos.x as f64 / scale + output_geo.loc.x as f64,
+                            render_pos.y as f64 / scale + output_geo.loc.y as f64,
+                        ));
                         let relative_pos = self.pointer.current_location() - layer_abs_pos;
                         if !point_in_surface_input_region(ls.wl_surface(), relative_pos) {
                             continue;
@@ -502,7 +516,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             let mut layer_surfs: Vec<_> = self
                 .layer_surfaces
                 .values()
-                .filter(|s| matches!(s.wlr_layer(), WlrLayer::Overlay | WlrLayer::Top))
+                .filter(|s| {
+                    s.output() == output
+                        && matches!(s.wlr_layer(), WlrLayer::Overlay | WlrLayer::Top)
+                })
                 .collect();
             layer_surfs.sort_by_key(|s| match s.wlr_layer() {
                 WlrLayer::Overlay => 0,
@@ -551,7 +568,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             let mut layer_surfs: Vec<_> = self
                 .layer_surfaces
                 .values()
-                .filter(|s| matches!(s.wlr_layer(), WlrLayer::Overlay | WlrLayer::Top))
+                .filter(|s| {
+                    s.output() == output
+                        && matches!(s.wlr_layer(), WlrLayer::Overlay | WlrLayer::Top)
+                })
                 .collect();
             layer_surfs.sort_by_key(|s| match s.wlr_layer() {
                 WlrLayer::Overlay => 0,
@@ -703,7 +723,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         if under.is_none() {
             for layer_shell_surf in self.layer_surfaces.values() {
                 let wlr = layer_shell_surf.wlr_layer();
-                if !matches!(wlr, WlrLayer::Bottom | WlrLayer::Background) {
+                if layer_shell_surf.output() != output
+                    || !matches!(wlr, WlrLayer::Bottom | WlrLayer::Background)
+                {
                     continue;
                 }
                 let lay_layer = &layer_shell_surf.layer;
