@@ -598,41 +598,13 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
 
                 let formats = vec![Fourcc::Argb8888];
 
-                const DRM_FORMAT_MOD_LINEAR: u64 = 0;
-                const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
-
-                // Every modifier we advertise must be allocatable AND
-                // single-plane: `send_buffer_params`/`add_buffer` describe one
-                // plane per buffer, so aux-plane modifiers (Intel CCS) cannot
-                // be represented even though EGL reports them.
-                let mut modifiers: Vec<i64> = Vec::new();
-                let mut probe = |modifier: u64| {
-                    if modifiers.contains(&(modifier as i64)) {
-                        return;
-                    }
-                    let ok = gbm
-                        .create_buffer_object_with_modifiers2::<()>(
-                            width,
-                            height,
-                            Fourcc::Argb8888,
-                            std::iter::once(modifier.into()),
-                            smithay::backend::allocator::gbm::GbmBufferFlags::RENDERING,
-                        )
-                        .map(|bo| bo.plane_count() == 1)
-                        .unwrap_or(false);
-                    if ok {
-                        modifiers.push(modifier as i64);
-                    }
-                };
-                // LINEAR first: keeps existing clients (OBS) negotiating
-                // exactly what they did before; tiled modifiers follow for
-                // clients whose importer cannot map linear (gst vapostproc).
-                probe(DRM_FORMAT_MOD_LINEAR);
-                for format in state.backend_data.get_format_modifiers(Fourcc::Argb8888) {
-                    if format != DRM_FORMAT_MOD_INVALID {
-                        probe(format);
-                    }
-                }
+                let modifiers = allocatable_modifiers(
+                    gbm,
+                    width,
+                    height,
+                    state.backend_data.get_format_modifiers(Fourcc::Argb8888),
+                    false,
+                );
                 tracing::info!("Screenshare dmabuf modifiers offered: {:x?}", modifiers);
 
                 pipewire_stream::BackendCapabilities {
@@ -1037,4 +1009,63 @@ where
     }
 
     Ok(())
+}
+
+/// The modifiers from `candidates` a stream can actually allocate its
+/// `width`×`height` ARGB8888 buffers with, LINEAR first.
+///
+/// Each one must allocate with `RENDERING` and come out single-plane:
+/// `send_buffer_params`/`add_buffer` describe one plane per buffer, so
+/// aux-plane modifiers (Intel CCS) cannot be represented even though EGL
+/// reports them. The allocation is also what catches a modifier the renderer
+/// lists but cannot draw into — NVIDIA imports LINEAR but refuses to render
+/// to it, and its GBM refuses the allocation the same way.
+///
+/// LINEAR leads so existing consumers (OBS, the RDP bridge's CPU path) keep
+/// negotiating what they always did; tiled modifiers follow for consumers
+/// that import on the GPU. The implicit modifier (`DRM_FORMAT_MOD_INVALID`)
+/// is kept only with `keep_implicit`, for a stack with no explicit-modifier
+/// support at all, where it is the only thing on offer.
+pub(crate) fn allocatable_modifiers(
+    gbm: &smithay::backend::allocator::gbm::GbmDevice<smithay::backend::drm::DrmDeviceFd>,
+    width: u32,
+    height: u32,
+    candidates: Vec<u64>,
+    keep_implicit: bool,
+) -> Vec<i64> {
+    use smithay::backend::allocator::{gbm::GbmBufferFlags, Fourcc};
+
+    const DRM_FORMAT_MOD_LINEAR: u64 = 0;
+    const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+
+    let mut modifiers: Vec<i64> = Vec::new();
+    let order = std::iter::once(DRM_FORMAT_MOD_LINEAR).chain(candidates);
+    for modifier in order {
+        if modifiers.contains(&(modifier as i64)) {
+            continue;
+        }
+        let bo = if modifier == DRM_FORMAT_MOD_INVALID {
+            if !keep_implicit {
+                continue;
+            }
+            gbm.create_buffer_object::<()>(
+                width,
+                height,
+                Fourcc::Argb8888,
+                GbmBufferFlags::RENDERING,
+            )
+        } else {
+            gbm.create_buffer_object_with_modifiers2::<()>(
+                width,
+                height,
+                Fourcc::Argb8888,
+                std::iter::once(modifier.into()),
+                GbmBufferFlags::RENDERING,
+            )
+        };
+        if bo.is_ok_and(|bo| bo.plane_count() == 1) {
+            modifiers.push(modifier as i64);
+        }
+    }
+    modifiers
 }

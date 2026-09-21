@@ -188,11 +188,23 @@ impl VirtualOutputState {
     ) -> Result<(Self, u32), String> {
         let damage_tracker = OutputDamageTracker::from_output(&output);
 
-        let capabilities = if gbm_device.is_some() {
+        let capabilities = if let Some(gbm) = gbm_device.as_ref() {
+            let modifiers = crate::screenshare::allocatable_modifiers(
+                gbm,
+                config.resolution.width,
+                config.resolution.height,
+                format_modifiers,
+                true,
+            );
+            tracing::info!(
+                "Virtual output '{}' dmabuf modifiers offered: {:x?}",
+                config.name,
+                modifiers
+            );
             BackendCapabilities {
-                supports_dmabuf: true,
+                supports_dmabuf: !modifiers.is_empty(),
                 formats: vec![Fourcc::Argb8888, Fourcc::Xrgb8888],
-                modifiers: format_modifiers.iter().map(|&m| m as i64).collect(),
+                modifiers,
             }
         } else {
             BackendCapabilities::default()
