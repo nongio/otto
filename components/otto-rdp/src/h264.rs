@@ -349,22 +349,87 @@ fn feed(
 ) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("h264-feed".into())
-        .spawn(move || loop {
-            let frame = match frames.blocking_recv() {
-                Ok(frame) => frame,
-                // Behind: the next receive is the newest frame, which is
-                // the only one worth encoding.
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            };
-            if (frame.width, frame.height) != (width, height) {
-                continue;
-            }
-            let buffer = gst::Buffer::from_slice(frame.data.clone());
-            if src.push_buffer(buffer).is_err() {
-                break;
+        .spawn(move || {
+            let mut warned_size = false;
+            loop {
+                let frame = match frames.blocking_recv() {
+                    Ok(frame) => frame,
+                    // Behind: the next receive is the newest frame, which is
+                    // the only one worth encoding.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                if (frame.width, frame.height) != (width, height) {
+                    if !warned_size {
+                        tracing::warn!(
+                            "captured {}x{} frames, but the encoder expects {width}x{height}; \
+                             skipping them",
+                            frame.width,
+                            frame.height
+                        );
+                        warned_size = true;
+                    }
+                    continue;
+                }
+                let buffer = gst::Buffer::from_slice(frame.data.clone());
+                // appsrc queues while the pipeline starts, so this fails only
+                // once it is torn down.
+                if let Err(e) = src.push_buffer(buffer) {
+                    tracing::info!("H.264 feed stopped: {e:?}");
+                    break;
+                }
             }
         })
         .context("spawning H.264 feed thread")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn frame() -> Arc<Frame> {
+        Arc::new(Frame {
+            width: 4,
+            height: 4,
+            data: vec![0u8; 4 * 4 * 4].into(),
+        })
+    }
+
+    /// A frame that reaches the feed before the pipeline is running must not
+    /// end the feed: the ones after it still have to be encoded.
+    #[test]
+    fn a_frame_before_playing_does_not_stop_the_feed() {
+        gst::init().unwrap();
+        let pipeline = gst::parse::launch(
+            "appsrc name=src format=time \
+             caps=video/x-raw,format=BGRA,width=4,height=4,framerate=0/1 \
+             ! appsink name=sink",
+        )
+        .unwrap()
+        .downcast::<gst::Pipeline>()
+        .unwrap();
+        let src = pipeline
+            .by_name("src")
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+            .unwrap();
+        let sink = pipeline
+            .by_name("sink")
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+            .unwrap();
+
+        let (tx, rx) = broadcast::channel(4);
+        assert!(tx.send(frame()).is_ok());
+        feed(src, rx, (4, 4)).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+        let _ = tx.send(frame());
+        let sample = sink.try_pull_sample(gst::ClockTime::from_seconds(2));
+        pipeline.set_state(gst::State::Null).unwrap();
+        assert!(sample.is_some(), "no frame was encoded after Playing");
+    }
 }
