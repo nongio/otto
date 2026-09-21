@@ -26,7 +26,7 @@ use wayland_client::Proxy;
 
 use crate::app_runner::AppContext;
 use crate::protocols::otto_surface_style_v1::OttoSurfaceStyleV1;
-use crate::surfaces::{SubsurfaceSurface, SurfaceError};
+use crate::surfaces::{BufferClaim, SubsurfaceSurface, SurfaceError};
 
 /// What [`PlacedSurface::paint`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,9 +158,10 @@ impl PlacedSurface {
             return Paint::Held;
         }
         self.key = Some(key);
+        if let Some(claim) = self.take_claim() {
+            self.surface.claim_with_next_buffer(claim);
+        }
         self.surface.draw(paint);
-        // Right behind the buffer, in the same flush.
-        self.claim();
         self.claim_waiting = false;
         Paint::Painted
     }
@@ -207,17 +208,33 @@ impl PlacedSurface {
     }
 
     /// Claim the current rect through the style, at the current scale.
+    /// Claim the current rect for the buffer already shown.
     fn claim(&mut self) {
+        let Some(claim) = self.take_claim() else {
+            return;
+        };
+        if let Some(style) = self.surface.layer() {
+            style.set_size(claim.width, claim.height);
+            if let Some((x, y)) = claim.position {
+                style.set_position(x, y);
+            }
+        }
+    }
+
+    /// The rect to claim, in pixels, unless it is claimed already. Records it
+    /// as claimed.
+    fn take_claim(&mut self) -> Option<BufferClaim> {
         let scale = scale();
         if self.claimed == Some((self.rect, scale)) {
-            return;
+            return None;
         }
         self.claimed = Some((self.rect, scale));
-        if let Some(style) = self.surface.layer() {
-            let px = |points: f32| (points * scale).round() as f64;
-            style.set_size(px(self.rect.width()), px(self.rect.height()));
-            style.set_position(px(self.rect.left), px(self.rect.top));
-        }
+        let px = |points: f32| (points * scale).round() as f64;
+        Some(BufferClaim {
+            width: px(self.rect.width()),
+            height: px(self.rect.height()),
+            position: Some((px(self.rect.left), px(self.rect.top))),
+        })
     }
 }
 

@@ -238,6 +238,11 @@ impl SubsurfaceSurface {
         self.base_surface.draw(draw_fn);
     }
 
+    /// See [`BaseWaylandSurface::claim_with_next_buffer`].
+    pub fn claim_with_next_buffer(&self, claim: super::common::BufferClaim) {
+        self.base_surface.claim_with_next_buffer(claim);
+    }
+
     /// Register a callback to be called on every compositor frame
     pub fn on_frame<F>(&self, callback: F)
     where

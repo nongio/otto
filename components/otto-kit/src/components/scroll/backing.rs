@@ -61,7 +61,7 @@ use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::app_runner::AppContext;
 use crate::protocols::otto_surface_style_v1::ClipMode;
-use crate::surfaces::{SubsurfaceSurface, SurfaceError};
+use crate::surfaces::{BufferClaim, SubsurfaceSurface, SurfaceError};
 use crate::theme::Theme;
 
 use super::band::{Band, BandView};
@@ -585,7 +585,7 @@ impl ScrollSurfaces {
             };
             if let Some(next) = self.band.refill(&band_view) {
                 self.band = next;
-                self.paint_band(content);
+                self.paint_band(state.offset(), content);
                 changed = true;
             }
         }
@@ -638,7 +638,7 @@ impl ScrollSurfaces {
 
     /// Paint the current band into the content surface, resizing its buffer to
     /// match. The canvas is translated so the closure draws in content space.
-    fn paint_band<F>(&mut self, content: F)
+    fn paint_band<F>(&mut self, offset: f32, content: F)
     where
         F: FnOnce(&Canvas, Rect),
     {
@@ -650,6 +650,12 @@ impl ScrollSurfaces {
             Axis::Vertical => (0.0, -self.band.origin()),
             Axis::Horizontal => (-self.band.origin(), 0.0),
         };
+        let (x, y) = self.oriented(self.band.surface_offset(offset), 0.0);
+        self.band_surface.claim_with_next_buffer(BufferClaim {
+            width: self.px(width),
+            height: self.px(height),
+            position: Some((self.px(x), self.px(y))),
+        });
         self.band_surface.draw(|canvas| {
             canvas.clear(Color::TRANSPARENT);
             canvas.save();
@@ -657,13 +663,6 @@ impl ScrollSurfaces {
             content(canvas, rect);
             canvas.restore();
         });
-        // Claimed behind the buffer that fits it, never ahead: the style
-        // applies a size the moment it arrives, and a size sent before the
-        // paint has the old band drawn stretched to it until the paint lands.
-        // The move that follows in `position_band` goes out in the same flush.
-        if let Some(style) = self.band_surface.layer() {
-            style.set_size(self.px(width), self.px(height));
-        }
         // A fresh buffer starts at the surface's own origin; wherever it was
         // standing before means nothing now.
         self.last_band_offset = None;
