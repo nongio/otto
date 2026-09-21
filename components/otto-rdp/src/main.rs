@@ -76,7 +76,7 @@ fn usage() -> ! {
                       \n\
          Env: OTTO_RDP_FPS (default 30 for H.264, 12 for bitmap),\n\
               OTTO_RDP_BITRATE (kbps, H.264 only),\n\
-              OTTO_RDP_H264_ENCODER (default vah264enc; e.g. vah264lpenc)"
+              OTTO_RDP_H264_ENCODER (default: vah264enc, else nvh264enc; e.g. vah264lpenc)"
     );
     std::process::exit(2);
 }
@@ -335,9 +335,36 @@ async fn main() -> anyhow::Result<()> {
             if shared_enc.wait_codec().await != egfx::Codec::Avc {
                 return; // client disabled AVC → bitmap fallback, no encoder
             }
-            let cfg = h264::Config::from_env(node, w as u32, h as u32);
+            let cfg = h264::Config::from_env(w as u32, h as u32);
+            let fps = cfg.fps;
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = h264::spawn(cfg, enc_tx, keyframe) {
+                let source = match h264::Encoder::detect() {
+                    Ok(h264::Encoder::VaApi(encoder)) => h264::Source::PipeWire { node, encoder },
+                    // NVENC is fed read-back frames: a capture of its own at the
+                    // native size and the encoder's rate, letterboxed by the
+                    // encode graph.
+                    Ok(h264::Encoder::Nvenc(encoder)) => {
+                        let (frames_tx, frames) = tokio::sync::broadcast::channel(2);
+                        pipewire_capture::spawn(
+                            node,
+                            size,
+                            pipewire_capture::TargetSize::native(),
+                            frames_tx,
+                            pipewire_capture::LatestFrame::new(),
+                            fps as f64,
+                        );
+                        h264::Source::Frames {
+                            frames,
+                            native: size,
+                            encoder,
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to start hardware H.264 encoder: {e:#}");
+                        return;
+                    }
+                };
+                if let Err(e) = h264::spawn(cfg, source, enc_tx, keyframe) {
                     tracing::error!("failed to start hardware H.264 encoder: {e:#}");
                 }
             });
@@ -353,7 +380,14 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             if shared_bmp.wait_codec().await == egfx::Codec::Bitmap {
                 tracing::info!("auto-fallback: starting bitmap capture for a non-AVC client");
-                pipewire_capture::spawn(node, size, target_bmp, frames_bmp, latest_bmp);
+                pipewire_capture::spawn(
+                    node,
+                    size,
+                    target_bmp,
+                    frames_bmp,
+                    latest_bmp,
+                    pipewire_capture::DEFAULT_FPS,
+                );
             }
         });
 
@@ -373,6 +407,7 @@ async fn main() -> anyhow::Result<()> {
             target.clone(),
             frames_tx.clone(),
             latest.clone(),
+            pipewire_capture::DEFAULT_FPS,
         );
         frames_tx
     };
