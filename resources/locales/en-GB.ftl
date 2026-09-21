@@ -683,6 +683,27 @@ files-month-dec = Dec
 # redraws.
 bar-clock-format = %A %-d %B  %H:%M
 
+## Top bar — battery
+
+# The battery indicator's menu. { $percent } is a whole number.
+bar-battery-percent = Battery { $percent }%
+# { $time } is a duration written as hours:minutes, e.g. 2:14.
+bar-battery-remaining = Battery { $percent }% — { $time } remaining
+bar-battery-charging-time = Battery { $percent }% — { $time } until full
+bar-battery-full = Battery { $percent }% — fully charged
+# { $avg } and { $max } are frequencies in GHz, already rounded, e.g. 2.80.
+bar-cpu-frequency = CPU { $avg } GHz average, { $max } GHz peak
+# { $governor } is the kernel's own name for the policy, e.g. powersave.
+bar-cpu-governor = Governor: { $governor }
+# The power-profiles-daemon profiles, which are the same three everywhere.
+bar-power-saver = Power Saver
+bar-power-balanced = Balanced
+bar-power-performance = Performance
+# Last entry in the battery menu.
+bar-power-settings = Power Settings…
+# What a screen reader calls the battery indicator.
+a11y-battery = Battery
+
 
 ## Settings — widgets
 ##

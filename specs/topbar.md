@@ -13,6 +13,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - Present the bar's own strings and its clock format in the user's language. Application names and menu entries come from the applications themselves and are shown as they arrive.
 - Host StatusNotifierItem (SNI) tray icons on the right, with tooltips and context menus.
 - Show a system clock on the far right.
+- Show the battery as a native element reading UPower, with a menu that reports the CPU's frequency and policy and selects a power profile.
 - Coexist with the Dynamic Island by leaving the horizontal center of the bar visually unoccupied.
 - Remain compositor-agnostic: use only standard Wayland protocols and D-Bus interfaces.
 - Support both native Wayland apps (menu via dbusmenu D-Bus) and XWayland legacy apps.
@@ -24,6 +25,8 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 - Hosting notifications or live activities — those belong to the Dynamic Island.
 - Embedding full window management controls (workspace switcher, window list) — those are dock/expose concerns.
 - Implementing a custom Wayland menu protocol — dbusmenu over D-Bus is sufficient for both Wayland and XWayland clients.
+- Publishing the bar's own status (battery, CPU) through SNI — the tray renders an icon and a tooltip, so a percentage sent that way could not be read without hovering. The bar reads UPower directly, as every other panel does.
+- Managing the CPU. The bar selects among profiles something else provides; it never writes to `sysfs` itself.
 
 ## Behavior
 
@@ -44,7 +47,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  [App Name]  [File] [Edit] [View] [Help]  ··· [island] ···  [icons]  [clock] │
+│  [App Name]  [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
 └──────────────────────────────────────────────────────────────────────────────┘
   ◄── Left zone ──────────────────►         ◄── Right zone ──────────────────►
                                    ◄Center►
@@ -52,7 +55,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 5. **Left zone** (left-aligned): application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
 6. **Center zone**: reserved empty space. No content is rendered here to leave visual room for the Dynamic Island.
-7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then clock.
+7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then the battery indicator, then the clock.
 
 ### Active Window Tracking
 
@@ -82,18 +85,29 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 25. The bar listens for `NewIcon`, `NewStatus`, and `NewToolTip` signals to update icons without polling.
 26. Icons with `Status = Passive` may be hidden by user configuration (hidden icons tray, revealed on click of a chevron button).
 
+### Battery (Right Zone)
+
+27. The battery indicator is drawn by the bar, from UPower's `DisplayDevice` — the aggregate device, so a machine with two cells reports one figure. Where UPower is not running, the percentage and charge state come from `/sys/class/power_supply`, without a time estimate, which sysfs does not carry.
+28. It draws as an outline that fills left to right in proportion to the charge, with a cap on the positive terminal and a bolt over the middle while charging. The fill is green above the low level, amber below it, red below the critical level; all three levels and colours are configurable, as is whether the fill is coloured at all.
+29. The percentage is written inside the glyph by default, beside it or not at all. When written inside it carries a halo in the background colour, because the digits cross the boundary between the fill and the empty track.
+30. On a machine with no battery the indicator is not drawn. `show` overrides this in both directions.
+31. Readings are taken on UPower's property-change signals and on an interval; a reading that would draw the same glyph does not repaint. The percentage is compared as a whole number, which is the precision the indicator shows.
+32. Clicking the indicator opens a menu reporting the battery's percentage and time remaining, the CPU's average and peak frequency across all cores, and its governor. Each of the three is individually configurable. The CPU figures are read when the menu opens, not polled: `scaling_cur_freq` changes faster than a menu could usefully show.
+33. The menu lists selectable power profiles from the first backend available: power-profiles-daemon over D-Bus (under either of its two names), then commands configured as `[[battery.profiles]]`, then the kernel's governors read-only. A configured entry is check-marked when its stated `governor` or `epp` matches the live one; an entry stating neither is never check-marked. The read-only listing is shown disabled, so the menu still reports what the CPU is set to on a machine where nothing can change it.
+34. To an assistive technology the indicator is a button with a popup, labelled with the percentage and time remaining, and announced politely as it changes.
+
 ### Clock (Right Zone)
 
-27. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
-28. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
+35. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
+36. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
 
 ### Animations & Visual Behavior
 
-29. When a new SNI icon registers, it slides in from the right with a spring animation.
-30. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
-31. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
-32. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
-33. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
+37. When a new SNI icon registers, it slides in from the right with a spring animation.
+38. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
+39. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
+40. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
+41. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
 
 ## Constraints & Edge Cases
 

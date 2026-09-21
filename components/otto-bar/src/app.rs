@@ -27,6 +27,8 @@ use crate::bar::{LeftPanel, RightPanel};
 const MENUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0000);
 /// The clock's.
 const CLOCK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0001);
+/// The battery indicator's.
+const BATTERY: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0002);
 
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
@@ -76,6 +78,7 @@ pub struct TopBarApp {
     last_tray_gen: u64,
     last_focus_gen: u64,
     last_appmenu_gen: u64,
+    last_power_gen: u64,
     /// Currently open tray context menu (only one at a time).
     open_menu: Option<OpenMenu>,
     /// Tray index awaiting an async dbusmenu fetch (keeps active highlight).
@@ -84,6 +87,8 @@ pub struct TopBarApp {
     open_app_menu: Option<OpenAppMenu>,
     /// Left panel item index awaiting an async submenu fetch.
     pending_app_menu_index: Option<usize>,
+    /// The power menu, when the battery indicator has one open.
+    open_power_menu: Option<ContextMenu>,
 }
 
 impl TopBarApp {
@@ -99,10 +104,12 @@ impl TopBarApp {
             last_tray_gen: 0,
             last_focus_gen: 0,
             last_appmenu_gen: 0,
+            last_power_gen: 0,
             open_menu: None,
             pending_menu_index: None,
             open_app_menu: None,
             pending_app_menu_index: None,
+            open_power_menu: None,
         }
     }
 
@@ -369,8 +376,179 @@ impl TopBarApp {
     }
 
     /// Handle a click on the right panel (tray icons).
+    /// Close the power menu, if one is open.
+    fn close_power_menu(&mut self) {
+        if let Some(menu) = self.open_power_menu.take() {
+            menu.hide_animated();
+        }
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+    }
+
+    /// Build and show the battery's menu: what the battery is doing, what the
+    /// CPU is doing, and the profiles that can be selected.
+    fn show_power_menu(&mut self) {
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
+        let cfg = battery_config();
+        let mut items: Vec<KitMenuItem> = Vec::new();
+
+        if cfg.show_battery_info {
+            let battery = crate::power::battery();
+            let percent = battery.percentage.round() as i64;
+            let label = match (
+                battery.state,
+                crate::power::format_duration(battery.seconds_left),
+            ) {
+                (crate::power::ChargeState::Charging, Some(left)) => {
+                    otto_kit::t_owned!(
+                        "bar-battery-charging-time",
+                        percent = percent as f64,
+                        time = left
+                    )
+                }
+                (crate::power::ChargeState::Discharging, Some(left)) => {
+                    otto_kit::t_owned!(
+                        "bar-battery-remaining",
+                        percent = percent as f64,
+                        time = left
+                    )
+                }
+                (crate::power::ChargeState::Full, _) => {
+                    otto_kit::t_owned!("bar-battery-full", percent = percent as f64)
+                }
+                // No estimate yet: UPower reports zero for a while after the
+                // cable moves, and an empty "· " reads as a bug.
+                _ => otto_kit::t_owned!("bar-battery-percent", percent = percent as f64),
+            };
+            items.push(KitMenuItem::action(label).disabled());
+        }
+
+        if cfg.show_cpu_info {
+            let cpu = crate::power::cpu();
+            if cpu.cores > 0 {
+                items.push(
+                    KitMenuItem::action(otto_kit::t_owned!(
+                        "bar-cpu-frequency",
+                        avg = format!("{:.2}", cpu.avg_ghz),
+                        max = format!("{:.2}", cpu.max_ghz)
+                    ))
+                    .disabled(),
+                );
+            }
+            if let Some(governor) = cpu.governor.as_deref() {
+                items.push(
+                    KitMenuItem::action(otto_kit::t_owned!(
+                        "bar-cpu-governor",
+                        governor = governor.to_string()
+                    ))
+                    .disabled(),
+                );
+            }
+        }
+
+        let profiles = crate::power::profiles();
+        if !profiles.entries.is_empty() {
+            if !items.is_empty() {
+                items.push(KitMenuItem::separator());
+            }
+            let selectable = profiles.backend != crate::power::Backend::ReadOnly;
+            for profile in &profiles.entries {
+                let mut item = KitMenuItem::action(&profile.label)
+                    .with_action_id(format!("profile:{}", profile.id));
+                if profile.active {
+                    // The check column is how a menu says "this one", and it
+                    // keeps the labels aligned whether or not one is ticked.
+                    item = item.with_icon(MenuItemIcon::Named("object-select-symbolic".into()));
+                }
+                if !selectable {
+                    // Nothing on this machine can switch — power-profiles-daemon
+                    // is absent or masked, and no commands are configured. The
+                    // list still says what the CPU is set to.
+                    item = item.disabled();
+                }
+                items.push(item);
+            }
+        }
+
+        if !cfg.settings_command.is_empty() {
+            if !items.is_empty() {
+                items.push(KitMenuItem::separator());
+            }
+            items.push(
+                KitMenuItem::action(otto_kit::t!("bar-power-settings"))
+                    .with_action_id("settings".to_string()),
+            );
+        }
+
+        if items.is_empty() {
+            return;
+        }
+
+        let menu = ContextMenu::new(items).on_item_click(move |action_id| {
+            if let Some(id) = action_id.strip_prefix("profile:") {
+                crate::power::activate_profile(id);
+            } else if action_id == "settings" {
+                let cfg = battery_config();
+                if let Some((program, args)) = cfg.settings_command.split_first() {
+                    if let Err(e) = std::process::Command::new(program).args(args).spawn() {
+                        tracing::warn!("battery.settings_command: {e}");
+                    }
+                }
+            }
+        });
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+
+        if let Some((ix, iy, iw, ih)) = self.right.battery_rect() {
+            positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        } else {
+            return;
+        }
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_power_menu = Some(menu);
+    }
+
     fn handle_right_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
+
+        // The battery owns its slice of the panel, so a click there is never
+        // also a click on the tray icon beside it.
+        if self.right.battery_at(x) {
+            let was_open = self.open_power_menu.is_some();
+            self.close_menu();
+            self.close_power_menu();
+            if !was_open && battery_config().menu {
+                self.show_power_menu();
+            }
+            return;
+        }
+        self.close_power_menu();
+
         let hit = self.right.tray_item_at(x);
 
         if let Some(index) = hit {
@@ -520,6 +698,7 @@ impl App for TopBarApp {
         crate::tray::spawn_tray_watcher();
         crate::focus::spawn_focus_watcher();
         crate::appmenu::spawn_appmenu_registrar();
+        crate::power::spawn_power_watcher();
 
         Ok(())
     }
@@ -684,6 +863,50 @@ impl App for TopBarApp {
             );
         }
 
+        // The battery is a button, because clicking it opens a menu — and it
+        // reads as a percentage, not as a picture of a battery.
+        if let Some((x, y, w, h)) = self.right.battery_rect() {
+            let battery = crate::power::battery();
+            let percent = battery.percentage.round() as i64;
+            let label = match (
+                battery.state,
+                crate::power::format_duration(battery.seconds_left),
+            ) {
+                (crate::power::ChargeState::Charging, Some(left)) => {
+                    otto_kit::t_owned!(
+                        "bar-battery-charging-time",
+                        percent = percent as f64,
+                        time = left
+                    )
+                }
+                (crate::power::ChargeState::Discharging, Some(left)) => {
+                    otto_kit::t_owned!(
+                        "bar-battery-remaining",
+                        percent = percent as f64,
+                        time = left
+                    )
+                }
+                (crate::power::ChargeState::Full, _) => {
+                    otto_kit::t_owned!("bar-battery-full", percent = percent as f64)
+                }
+                _ => otto_kit::t_owned!("bar-battery-percent", percent = percent as f64),
+            };
+            tree.control(
+                BATTERY,
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(label);
+                    node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                    node.add_action(Action::Click);
+                    // Announced as it changes, like the clock: a battery
+                    // reaching 10% is worth hearing without asking.
+                    node.set_live(otto_kit::accessibility::Live::Polite);
+                },
+            );
+        }
+
         // The clock reads as what it says, and is announced when it changes:
         // it is the one thing on the bar that moves on its own.
         let clock = Rect::from_xywh(
@@ -767,9 +990,24 @@ impl App for TopBarApp {
             self.close_app_menu();
             dirty = true;
         }
+        let power_menu_gone = self
+            .open_power_menu
+            .as_ref()
+            .is_some_and(|m| !m.is_visible());
+        if power_menu_gone {
+            self.close_power_menu();
+            dirty = true;
+        }
 
         // Check if clock text changed
         if self.right.clock.tick() {
+            dirty = true;
+        }
+
+        // The battery moved, or the cable went in or out.
+        let power_gen = crate::power::generation();
+        if power_gen != self.last_power_gen {
+            self.last_power_gen = power_gen;
             dirty = true;
         }
 

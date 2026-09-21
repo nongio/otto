@@ -16,7 +16,19 @@ pub struct LeftPanel {
     pub height: f32,
 }
 
-/// Right panel: tray icons + clock.
+/// Where the right panel's three parts sit, in panel coordinates.
+pub struct RightLayout {
+    /// Width of the clock, which is also where the battery ends.
+    #[allow(dead_code)]
+    pub clock_width: f32,
+    pub battery_x: f32,
+    /// Zero when there is no battery, or it is configured off.
+    pub battery_width: f32,
+    pub tray_x: f32,
+    pub tray_width: f32,
+}
+
+/// Right panel: tray icons + battery + clock.
 pub struct RightPanel {
     pub clock: Clock,
     pub tray_menu_state: MenuBarState,
@@ -267,24 +279,56 @@ impl RightPanel {
         }
     }
 
-    pub fn draw(&self, canvas: &Canvas) {
-        let theme = AppContext::current_theme();
+    /// Where everything in the right panel sits.
+    ///
+    /// Drawing, hit-testing and the rectangles handed to assistive
+    /// technologies all come through here, so a click, the menu it opens and
+    /// the box a screen reader highlights cannot drift apart.
+    pub fn layout(&self) -> RightLayout {
+        let clock_width = self.clock_width();
 
-        // Clock on the right edge
-        let clock_width = self.draw_clock(canvas, &theme);
-
-        // Tray icons to the left of the clock, with a gap
-        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 {
+        let battery_width = crate::battery::width();
+        let battery_gap = if battery_width > 0.0 {
             TRAY_CLOCK_GAP
         } else {
             0.0
         };
-        let tray_x = self.width - clock_width - gap - tray_width;
+        let battery_x = self.width - clock_width - battery_gap - battery_width;
+
+        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
+        let tray_gap = if tray_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
+        let tray_x = battery_x - tray_gap - tray_width;
+
+        RightLayout {
+            clock_width,
+            battery_x,
+            battery_width,
+            tray_x,
+            tray_width,
+        }
+    }
+
+    pub fn draw(&self, canvas: &Canvas) {
+        let theme = AppContext::current_theme();
+        let layout = self.layout();
+
+        // Right to left: clock on the edge, then the battery, then the tray.
+        self.draw_clock(canvas, &theme);
+
+        crate::battery::draw(canvas, layout.battery_x, self.height, &theme);
 
         canvas.save();
-        canvas.translate((tray_x, 0.0));
-        MenuBarRenderer::render(canvas, &self.tray_menu_state, &self.tray_style, tray_width);
+        canvas.translate((layout.tray_x, 0.0));
+        MenuBarRenderer::render(
+            canvas,
+            &self.tray_menu_state,
+            &self.tray_style,
+            layout.tray_width,
+        );
         canvas.restore();
     }
 
@@ -307,17 +351,32 @@ impl RightPanel {
         text_width + BAR_PADDING_H
     }
 
-    /// Compute the ideal panel width based on current clock text and tray icon count.
+    /// Compute the ideal panel width from the clock text, the battery and the
+    /// tray icon count.
     pub fn target_width(&self) -> f32 {
         let font = typography::styles::BODY_MEDIUM.font();
         let clock_text_width = font.measure_str(&self.clock.text, None).0;
-        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 {
+
+        let battery_width = crate::battery::width();
+        let battery_gap = if battery_width > 0.0 {
             TRAY_CLOCK_GAP
         } else {
             0.0
         };
-        let content = clock_text_width + BAR_PADDING_H * 2.0 + gap + tray_width;
+
+        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
+        let tray_gap = if tray_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
+
+        let content = clock_text_width
+            + BAR_PADDING_H * 2.0
+            + battery_gap
+            + battery_width
+            + tray_gap
+            + tray_width;
         content.max(MIN_RIGHT_WIDTH as f32)
     }
 
@@ -334,23 +393,37 @@ impl RightPanel {
             + BAR_PADDING_H
     }
 
+    /// Whether `x` (in panel coords) is on the battery indicator.
+    ///
+    /// The hit box is the drawn glyph plus half the gap on either side: the
+    /// glyph is 26 points of a 30-point bar, and a click that lands a pixel
+    /// above it is still a click on the battery.
+    pub fn battery_at(&self, x: f32) -> bool {
+        let layout = self.layout();
+        if layout.battery_width <= 0.0 {
+            return false;
+        }
+        let slack = TRAY_CLOCK_GAP / 2.0;
+        x >= layout.battery_x - slack && x <= layout.battery_x + layout.battery_width + slack
+    }
+
+    /// The battery indicator's bounding box in surface-local coords.
+    pub fn battery_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let layout = self.layout();
+        if layout.battery_width <= 0.0 {
+            return None;
+        }
+        Some((layout.battery_x, 0.0, layout.battery_width, self.height))
+    }
+
     pub fn tray_item_at(&self, x: f32) -> Option<usize> {
         if self.tray_menu_state.items().is_empty() {
             return None;
         }
 
-        let font = typography::styles::BODY_MEDIUM.font();
-        let clock_width = font.measure_str(&self.clock.text, None).0 + BAR_PADDING_H;
-        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-        let tray_x = self.width - clock_width - gap - tray_width;
-
-        let local_x = x - tray_x;
-        if local_x < 0.0 || local_x > tray_width {
+        let layout = self.layout();
+        let local_x = x - layout.tray_x;
+        if local_x < 0.0 || local_x > layout.tray_width {
             return None;
         }
 
@@ -384,17 +457,7 @@ impl RightPanel {
             self.tray_style.font_style(),
             self.tray_style.font_size,
         );
-        let clock_width = {
-            let cfont = typography::styles::BODY.font();
-            cfont.measure_str(&self.clock.text, None).0 + BAR_PADDING_H
-        };
-        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let gap = if tray_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-        let tray_x = self.width - clock_width - gap - tray_width;
+        let tray_x = self.layout().tray_x;
 
         let mut offset = self.tray_style.bar_padding_horizontal;
         for (i, item) in items.iter().enumerate() {
