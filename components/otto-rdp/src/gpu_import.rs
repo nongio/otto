@@ -6,7 +6,7 @@
 //! what lets the bridge take frames from a driver that cannot render into
 //! LINEAR at all (NVIDIA), and so has nothing else to offer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::os::fd::AsRawFd;
 
@@ -56,7 +56,11 @@ pub struct GpuReader {
     query_modifiers: QueryDmaBufModifiers,
     /// Keyed by the buffer's fd, which PipeWire keeps for the pool's life.
     imported: HashMap<i64, Imported>,
-    _node: std::fs::File,
+    /// Buffers of this pool that could not be imported, so they are not
+    /// retried, and warned about, on every frame.
+    refused: HashSet<i64>,
+    /// The render node the GBM device was made on, closed after it.
+    _node: Option<std::fs::File>,
 }
 
 impl GpuReader {
@@ -76,12 +80,52 @@ impl GpuReader {
         if gbm.is_null() {
             anyhow::bail!("gbm_create_device failed on {}", path.display());
         }
+        let reader = Self::on_device(gbm);
+        if reader.is_err() {
+            unsafe { gbm_device_destroy(gbm) };
+        }
+        let mut reader = reader?;
+        reader._node = Some(node);
+        tracing::info!("GPU frame import on {}", path.display());
+        Ok(reader)
+    }
 
+    /// Everything above the GBM device, which the caller destroys when this
+    /// fails.
+    fn on_device(gbm: *mut c_void) -> anyhow::Result<Self> {
         let egl = unsafe { egl::DynamicInstance::<egl::EGL1_5>::load_required() }
             .map_err(|e| anyhow!("loading libEGL: {e}"))?;
         let display =
             unsafe { egl.get_platform_display(PLATFORM_GBM_KHR, gbm, &[egl::ATTRIB_NONE]) }?;
         egl.initialize(display)?;
+        let (context, image_target, query_modifiers) = match Self::context_on(&egl, display) {
+            Ok(context) => context,
+            Err(e) => {
+                // Terminating releases whatever was made on the display.
+                let _ = egl.make_current(display, None, None, None);
+                let _ = egl.terminate(display);
+                return Err(e);
+            }
+        };
+        Ok(Self {
+            image_target,
+            query_modifiers,
+            egl,
+            display,
+            context,
+            gbm,
+            imported: HashMap::new(),
+            refused: HashSet::new(),
+            _node: None,
+        })
+    }
+
+    /// Make a GLES context current on `display` and look up the entry points
+    /// the reader needs.
+    fn context_on(
+        egl: &egl::DynamicInstance<egl::EGL1_5>,
+        display: egl::Display,
+    ) -> anyhow::Result<(egl::Context, ImageTargetTexture2D, QueryDmaBufModifiers)> {
         egl.bind_api(egl::OPENGL_ES_API)?;
         let config = egl
             .choose_first_config(
@@ -108,22 +152,16 @@ impl GpuReader {
             .get_proc_address("eglQueryDmaBufModifiersEXT")
             .ok_or_else(|| anyhow!("no eglQueryDmaBufModifiersEXT"))?;
 
-        tracing::info!("GPU frame import on {}", path.display());
-        Ok(Self {
-            // SAFETY: both were looked up by name for exactly these signatures.
-            image_target: unsafe {
+        // SAFETY: both were looked up by name for exactly these signatures.
+        Ok((
+            context,
+            unsafe {
                 std::mem::transmute::<extern "system" fn(), ImageTargetTexture2D>(image_target)
             },
-            query_modifiers: unsafe {
+            unsafe {
                 std::mem::transmute::<extern "system" fn(), QueryDmaBufModifiers>(query_modifiers)
             },
-            egl,
-            display,
-            context,
-            gbm,
-            imported: HashMap::new(),
-            _node: node,
-        })
+        ))
     }
 
     /// The modifiers of `fourcc` this GPU can import into a texture it can
@@ -174,8 +212,15 @@ impl GpuReader {
         width: u32,
         height: u32,
     ) -> Option<Vec<u8>> {
+        if self.refused.contains(&fd) {
+            return None;
+        }
         if !self.imported.contains_key(&fd) {
-            let imported = self.import(fd, offset, stride, modifier, fourcc, width, height)?;
+            let Some(imported) = self.import(fd, offset, stride, modifier, fourcc, width, height)
+            else {
+                self.refused.insert(fd);
+                return None;
+            };
             self.imported.insert(fd, imported);
         }
         let fbo = self.imported[&fd].fbo;
@@ -213,6 +258,7 @@ impl GpuReader {
 
     /// Drop every import, for a pool that is about to be replaced.
     pub fn forget_buffers(&mut self) {
+        self.refused.clear();
         for (_, imported) in self.imported.drain() {
             unsafe {
                 gl::DeleteFramebuffers(1, &imported.fbo);
