@@ -356,10 +356,7 @@ pub struct Session {
 impl Session {
     /// Open a session on a decoded file, at fit and unscrolled.
     pub fn new(preview: Preview, name: String, anchor: Rect, opened_at: Instant) -> Self {
-        let zoom = match &preview {
-            Preview::Pages { .. } => Zoom::TOP,
-            _ => Zoom::FIT,
-        };
+        let zoom = Zoom::resting(&preview);
         Self {
             preview,
             name,
@@ -367,8 +364,9 @@ impl Session {
             frame_shown_at: Instant::now(),
             // Fit, whatever the last file was left at: a zoom belongs to the
             // picture it was made on, not to the panel. A document opens at
-            // the top of its first page instead, which is the same thing —
-            // the beginning of what there is to look at.
+            // the top of its first page, and Markdown at its first line,
+            // instead — which is the same thing: the beginning of what there
+            // is to look at.
             zoom,
             pan: Pan::new(),
             anchor,
@@ -689,7 +687,8 @@ impl Session {
 
     /// Scroll a listing or a text preview by `rows`, stopping at both ends.
     ///
-    /// Images and cards do not scroll: they are laid out to fit, so there is
+    /// Documents scroll by the point instead, through the pan. Images and
+    /// cards do not scroll: they are laid out to fit, so there is
     /// nothing under the fold to reach. A zoomed image *does* have something
     /// under the fold, but that is a pan rather than a scroll — see
     /// [`Session::pan_wheel`], which the host reaches for first.
@@ -698,11 +697,7 @@ impl Session {
         let total = match &self.preview {
             Preview::Text { lines, .. } => lines.len(),
             Preview::Rows { rows, .. } => rows.len(),
-            // A document's rows are its *wrapped* lines, which only the layout
-            // knows: the same blocks are more lines in a narrow panel than in
-            // a wide one, so the count has to come from the geometry rather
-            // than from the payload.
-            Preview::Document { .. } => geometry.doc_lines.len(),
+            // A document scrolls by the point, through the pan.
             _ => return,
         };
         let visible = geometry.visible_rows;
@@ -896,14 +891,20 @@ impl Session {
     /// Whether a two-finger gesture over `panel` should move the picture
     /// rather than scroll the content.
     ///
-    /// False for everything but an image, and false for an image at fit: one
-    /// that fills no more than its box has nothing to pan to, so the gesture
-    /// must go on meaning exactly what it meant before there was a zoom.
+    /// True for a document, which is always scrolled through the pan — asking
+    /// its zoom would say "fit" whenever the scroll crosses the exact middle.
+    /// Otherwise false for everything but an image, and false for an image at
+    /// fit: one that fills no more than its box has nothing to pan to, so the
+    /// gesture must go on meaning exactly what it meant before there was a
+    /// zoom.
     /// Asked against the panel's content rect because a zoom clamped for one
     /// box is not clamped for another — resizing the window can leave a
     /// stored zoom with no slack left.
     pub fn pannable(&self, panel: Rect) -> bool {
-        !otto_kit::preview::clamp_zoom(panel, &self.preview, self.zoom).is_fit()
+        matches!(
+            self.preview,
+            Preview::Pages { .. } | Preview::Document { .. }
+        ) || !otto_kit::preview::clamp_zoom(panel, &self.preview, self.zoom).is_fit()
     }
 
     /// Drag a zoomed image by `dx`, `dy` in the panel's own pixels, stopping
@@ -1063,8 +1064,9 @@ impl Session {
         let (viewport, length) = match &self.preview {
             // A document's strip is longer than its box by construction, so
             // this is what scrolls one: the same two views, the same
-            // momentum, the same bars as a zoomed picture.
-            Preview::Pixels { .. } | Preview::Pages { .. } => {
+            // momentum, the same bars as a zoomed picture. So is a Markdown
+            // document's column of lines.
+            Preview::Pixels { .. } | Preview::Pages { .. } | Preview::Document { .. } => {
                 let layout =
                     otto_kit::preview::layout(content, &self.preview, self.first_row, self.zoom);
                 (
@@ -1965,27 +1967,34 @@ mod tests {
         assert_eq!(session.first_row, 5);
     }
 
-    /// A Markdown document is longer than its panel like any other text, and
-    /// scrolls the same way — by its *wrapped* lines, which only the layout
-    /// counts. Missing that arm left a document pinned to its first screen.
+    /// A Markdown document scrolls by the point, like a strip of pages:
+    /// a two-finger scroll of a few points moves it, where rounding to whole
+    /// rows left it pinned to its first screen on a touchpad.
     #[test]
-    fn a_document_scrolls_by_its_wrapped_lines() {
+    fn a_markdown_document_scrolls_by_the_point() {
         let content = content();
         let mut session = document_session();
+        assert!(session.pannable(content));
 
-        session.scroll_by(5, content);
-        assert_eq!(session.first_row, 5);
+        let top = |session: &Session| {
+            preview::layout(content, &session.preview, 0, session.zoom)
+                .content
+                .top
+        };
+        let inner = preview::layout(content, &session.preview, 0, session.zoom).inner;
+        assert!((top(&session) - inner.top).abs() < 0.5, "opens at the top");
 
-        // And it stops at the end rather than scrolling off it: the last
-        // screenful stays on screen.
-        session.scroll_by(100_000, content);
-        let lines = otto_kit::preview::layout(content, &session.preview, 0, session.zoom)
-            .doc_lines
-            .len();
-        assert!(
-            session.first_row > 0 && session.first_row < lines,
-            "{lines}"
-        );
+        assert!(session.pan_wheel(0.0, 3.0, content, false, false));
+        assert!(top(&session) < inner.top, "a small delta moved it");
+
+        // A pinch does not magnify text.
+        session.zoom_to(4.0, (content.center_x(), content.center_y()), content);
+        assert_eq!(session.zoom.scale, 1.0);
+
+        // And it stops at the end rather than scrolling past it.
+        session.pan_by(0.0, -1_000_000.0, content);
+        let layout = preview::layout(content, &session.preview, 0, session.zoom);
+        assert!((layout.content.bottom - layout.inner.bottom).abs() < 1.0);
     }
 
     /// The page keys move a document to the next page's top edge, and stop

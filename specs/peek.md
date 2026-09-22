@@ -432,12 +432,13 @@ the text sits on it — is most of what the glance is asking. Zoom is there for
 reading, and applies to the strip as a whole rather than to a page, so pinching
 in magnifies the document and leaves the reader on the passage they were on.
 
-A Markdown preview is one continuous flow, wrapped to the panel's width and
-scrolled by wheel or two-finger gesture like a text file.
-The unit it scrolls by is the *wrapped line*, which only the layout knows: the
-same blocks are more lines in a narrow panel than in a wide one, and a
-document's lines are not all one height, so both the total and how many fit come
-from the measured lines rather than from a nominal row height. Page Up/Down keep
+A Markdown preview is one continuous flow, wrapped to the panel's width into a
+single column of lines, and scrolled **by the point** with the same scroll views
+as a PDF's strip: the gesture glides on after the fingers lift and the bar
+fades in while it moves. It opens at its first line. Stepping by whole lines
+would round a touchpad's few-point deltas to nothing and leave the document
+pinned to its first screen. A pinch does not magnify it: the text is set at
+the panel's width, and there is no picture to enlarge. Page Up/Down keep
 meaning what they mean everywhere else — move the host's selection — because
 only paged content claims them.
 
