@@ -442,6 +442,14 @@ the panel's width, and there is no picture to enlarge. Page Up/Down keep
 meaning what they mean everywhere else — move the host's selection — because
 only paged content claims them.
 
+Links in a Markdown preview are live. The cursor turns into a hand over one,
+and a click opens it with the desktop's default handler, the same way
+double-clicking a file does. A URL opens as it is. A path opens the file it
+names, resolved against the document's own folder when it is relative. A link
+within the document (`#heading`) does nothing. The click counts when the button
+comes up over the link it went down on, so a press dragged off a link opens
+nothing.
+
 A link keeps its destination. The worker carries it in the payload beside the
 link's text, and the layout can say which link is under a point, so a host that
 has somewhere to send a URL has one to send. Peek itself opens nothing: it

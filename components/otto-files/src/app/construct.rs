@@ -73,7 +73,7 @@ impl Browser {
             peek_recognising: false,
             peek_pages_pending: std::collections::HashSet::new(),
             peek_text_asked: false,
-            peek_text_cursor: false,
+            peek_cursor: CursorShape::Default,
             ocr_seen: std::collections::HashSet::new(),
             ocr_queue: std::collections::VecDeque::new(),
             ocr_reading: std::collections::HashSet::new(),

@@ -812,6 +812,28 @@ fn fitted_content(inner: Rect, preview: &Preview) -> Option<Rect> {
     }
 }
 
+/// How far a document's column has been scrolled up past its box, plus
+/// whatever line a host stepping by the line has named.
+fn document_offset(geometry: &PreviewLayout, first_row: usize) -> f32 {
+    let stepped = geometry
+        .doc_lines
+        .get(first_row)
+        .map_or(0.0, |line| line.top);
+    stepped + geometry.inner.top - geometry.content.top
+}
+
+/// The link under a point of a Markdown preview laid out as `geometry`, in
+/// the same space as the bounds it was laid out in — the hit-test half of
+/// [`draw`] for a document.
+pub fn link_at(geometry: &PreviewLayout, first_row: usize, x: f32, y: f32) -> Option<&str> {
+    document::link_at_scrolled(
+        geometry.inner,
+        &geometry.doc_lines,
+        document_offset(geometry, first_row),
+        (x, y),
+    )
+}
+
 /// The wrapped lines as one column at the box's width, centred on the box
 /// the way every fitted rect is. Never shorter than the box, so a document
 /// that fits has no slack and rests at its top.
@@ -916,22 +938,14 @@ pub fn draw(
         Preview::Pages { pages, .. } => draw_pages(canvas, &geometry, pages, theme),
         Preview::Pixels { pixels, .. } => draw_pixels(canvas, &geometry, pixels, first_row, theme),
         Preview::Text { lines, .. } => draw_text(canvas, &geometry, lines, first_row, theme),
-        Preview::Document { .. } => {
-            // How far the column has been scrolled up past the box, plus
-            // whatever line a host stepping by the line has named.
-            let stepped = geometry
-                .doc_lines
-                .get(first_row)
-                .map_or(0.0, |line| line.top);
-            document::draw_scrolled(
-                canvas,
-                geometry.inner,
-                &geometry.doc_lines,
-                stepped + geometry.inner.top - geometry.content.top,
-                theme,
-                None,
-            )
-        }
+        Preview::Document { .. } => document::draw_scrolled(
+            canvas,
+            geometry.inner,
+            &geometry.doc_lines,
+            document_offset(&geometry, first_row),
+            theme,
+            None,
+        ),
         Preview::Rows { rows, .. } => {
             draw_rows(canvas, &geometry, rows, first_row, theme, resolve_icon)
         }

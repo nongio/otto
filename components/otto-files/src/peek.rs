@@ -15,7 +15,8 @@
 //! else. This module never interprets file bytes; it receives a validated
 //! [`Preview`] and draws it.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use otto_kit::components::scroll::{Axis, ScrollState, ScrollView};
@@ -351,6 +352,13 @@ pub struct Session {
     /// before its words are, and a reader who cannot see that something is
     /// still coming reads "no text here" instead of "not yet".
     pub recognising_since: Option<Instant>,
+    /// The folder the previewed file is in, which a Markdown document's
+    /// relative links are relative to. The host sets it; a session without
+    /// one follows only links that say where they go in full.
+    pub dir: Option<PathBuf>,
+    /// The link a press landed on, followed if the button comes up over the
+    /// same link — a press that drags off it is not a click.
+    pressed_link: Option<String>,
 }
 
 impl Session {
@@ -381,6 +389,8 @@ impl Session {
             words_epoch: 0,
             pages_epoch: 0,
             recognising_since: None,
+            dir: None,
+            pressed_link: None,
         }
     }
 
@@ -587,6 +597,38 @@ impl Session {
         }
         let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
         preview::word_at(&layout, &self.preview, x, y)
+    }
+
+    /// The link under a panel point, in a Markdown preview as it is drawn
+    /// in `content`.
+    pub fn link_at(&self, x: f32, y: f32, content: Rect) -> Option<String> {
+        if !matches!(self.preview, Preview::Document { .. }) {
+            return None;
+        }
+        let layout = preview::layout(content, &self.preview, self.first_row, self.zoom);
+        preview::link_at(&layout, self.first_row, x, y).map(str::to_owned)
+    }
+
+    /// A press over the panel: on a link it is taken, and held until the
+    /// button comes up. Returns whether the press was on a link.
+    pub fn link_pointer_down(&mut self, x: f32, y: f32, content: Rect) -> bool {
+        self.pressed_link = self.link_at(x, y, content);
+        self.pressed_link.is_some()
+    }
+
+    /// The button came up: what to open, if it came up over the link it
+    /// went down on.
+    pub fn link_pointer_up(&mut self, x: f32, y: f32, content: Rect) -> Option<OsString> {
+        let pressed = self.pressed_link.take()?;
+        if self.link_at(x, y, content).as_deref() != Some(pressed.as_str()) {
+            return None;
+        }
+        link_target(&pressed, self.dir.as_deref())
+    }
+
+    /// The pointer left the panel: a pressed link is no longer clicked.
+    pub fn link_pointer_leave(&mut self) {
+        self.pressed_link = None;
     }
 
     /// A press over the picture: on a word it starts a selection and is
@@ -1185,6 +1227,36 @@ fn waiting_preview(name: &str, is_dir: bool) -> Preview {
         reason: otto_kit::t_owned!("files-status-opening-preview"),
         icon: otto_peek::payload::icon_names_for(name, is_dir),
     }
+}
+
+/// What a Markdown link opens: a URL as it is, and a path — relative to
+/// `dir`, the document's own folder — as the file it names.
+///
+/// `None` for a link within the document (`#heading`), which has nowhere
+/// outside the panel to go, and for a relative path with no folder to
+/// resolve it against.
+pub fn link_target(href: &str, dir: Option<&Path>) -> Option<OsString> {
+    let href = href.trim();
+    if href.is_empty() || href.starts_with('#') {
+        return None;
+    }
+    let has_scheme = href.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    });
+    if has_scheme {
+        return Some(href.into());
+    }
+    // A path: what follows `#` or `?` is for a browser, not a file name.
+    let path = href.split(['#', '?']).next().unwrap_or_default();
+    let uri = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("{}/{path}", otto_peek::uri::path_to_uri(dir?))
+    };
+    otto_peek::uri::uri_to_path(&uri).map(PathBuf::into_os_string)
 }
 
 /// Where the panel rests, centred in a window of `width` × `height`.
@@ -1965,6 +2037,77 @@ mod tests {
 
         session.scroll_by(5, content);
         assert_eq!(session.first_row, 5);
+    }
+
+    /// A click on a Markdown link opens what it points to, including after
+    /// the document has been scrolled: the hit-test reads the same offset
+    /// the drawing does.
+    #[test]
+    fn a_click_on_a_markdown_link_opens_it() {
+        use otto_kit::preview::{Block, Span};
+
+        let content = content();
+        let paragraph = |n: usize| Block::Paragraph {
+            spans: vec![
+                Span::link(format!("link {n}"), format!("https://example.org/{n}")),
+                Span::plain(format!(" {}", "Words that wrap. ".repeat(20))),
+            ],
+        };
+        let mut session = Session::new(
+            Preview::Document {
+                blocks: (0..80).map(paragraph).collect(),
+                truncated: false,
+            },
+            "notes.md".into(),
+            Rect::new_empty(),
+            Instant::now(),
+        );
+        session.pan_by(0.0, -2_000.0, content);
+
+        // Find a link on screen by asking the layout where one is drawn.
+        let layout = preview::layout(content, &session.preview, 0, session.zoom);
+        let shift = layout.content.top - layout.inner.top;
+        let (line, run) = layout
+            .doc_lines
+            .iter()
+            .filter(|line| line.top + shift > 0.0)
+            .find_map(|line| {
+                line.runs
+                    .iter()
+                    .find(|r| r.href.is_some())
+                    .map(|r| (line, r))
+            })
+            .unwrap();
+        let x = layout.inner.left + run.x + run.width / 2.0;
+        let y = layout.inner.top + shift + line.top + line.height / 2.0;
+        let href = run.href.as_deref().unwrap().to_owned();
+
+        assert!(session.link_pointer_down(x, y, content));
+        assert_eq!(session.link_pointer_up(x, y, content), Some(href.into()));
+
+        // A press dragged off the link before the button comes up opens nothing.
+        assert!(session.link_pointer_down(x, y, content));
+        assert_eq!(session.link_pointer_up(x, y + 400.0, content), None);
+    }
+
+    #[test]
+    fn a_link_target_resolves_against_the_documents_folder() {
+        let dir = Some(Path::new("/home/me/My Notes"));
+        assert_eq!(
+            link_target("https://otto.dev/#top", dir),
+            Some("https://otto.dev/#top".into())
+        );
+        assert_eq!(
+            link_target("mailto:me@example.org", dir),
+            Some("mailto:me@example.org".into())
+        );
+        assert_eq!(
+            link_target("other%20note.md#section", dir),
+            Some("/home/me/My Notes/other note.md".into())
+        );
+        assert_eq!(link_target("/etc/hosts", None), Some("/etc/hosts".into()));
+        assert_eq!(link_target("#section", dir), None);
+        assert_eq!(link_target("other.md", None), None);
     }
 
     /// A Markdown document scrolls by the point, like a strip of pages:
