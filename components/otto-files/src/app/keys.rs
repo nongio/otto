@@ -32,6 +32,51 @@ impl FilesApp {
         let mods = *self.modifiers.lock().unwrap();
         let (ctrl, shift) = (mods.ctrl, mods.shift);
 
+        // The Open With chooser is a window of its own, and while it has the
+        // keyboard every key is its: the field, the list and its buttons.
+        let chooser_focused = {
+            use wayland_client::Proxy;
+            let window = self.open_with_window.borrow().clone();
+            window
+                .and_then(|window| window.wl_surface())
+                .is_some_and(|surface| AppContext::keyboard_focus() == Some(surface.id()))
+        };
+        if chooser_focused {
+            use open_with::OpenWithKey;
+            let key = match event.keysym {
+                Keysym::Up => Some(OpenWithKey::Up),
+                Keysym::Down => Some(OpenWithKey::Down),
+                Keysym::Return | Keysym::KP_Enter => Some(OpenWithKey::Enter),
+                Keysym::Escape => Some(OpenWithKey::Escape),
+                Keysym::Left => Some(OpenWithKey::Edit(TextInputKey::Left)),
+                Keysym::Right => Some(OpenWithKey::Edit(TextInputKey::Right)),
+                Keysym::Home => Some(OpenWithKey::Edit(TextInputKey::Home)),
+                Keysym::End => Some(OpenWithKey::Edit(TextInputKey::End)),
+                Keysym::BackSpace => Some(OpenWithKey::Edit(TextInputKey::Backspace)),
+                Keysym::Delete => Some(OpenWithKey::Edit(TextInputKey::Delete)),
+                Keysym::a if ctrl => Some(OpenWithKey::Edit(TextInputKey::SelectAll)),
+                Keysym::c if ctrl => Some(OpenWithKey::Edit(TextInputKey::Copy)),
+                Keysym::x if ctrl => Some(OpenWithKey::Edit(TextInputKey::Cut)),
+                Keysym::v if ctrl => {
+                    clipboard::text().map(|text| OpenWithKey::Edit(TextInputKey::Paste(text)))
+                }
+                _ if ctrl => None,
+                _ => event
+                    .utf8
+                    .as_ref()
+                    .and_then(|s| s.chars().next())
+                    .filter(|ch| !ch.is_control())
+                    .map(|ch| OpenWithKey::Edit(TextInputKey::Char(ch))),
+            };
+            if let Some(key) = key {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .open_with_key(key, KeyMods { shift, ctrl });
+            }
+            return;
+        }
+
         {
             let mut browser = self.state.lock().unwrap();
 
@@ -498,7 +543,9 @@ impl FilesApp {
                     // The panel is not modal, so Escape does not belong to it
                     // outright — it takes its turn in the same unwinding order
                     // as everything else that is up.
-                    if browser.info.is_some() {
+                    if browser.open_with.is_some() {
+                        browser.close_open_with();
+                    } else if browser.info.is_some() {
                         browser.close_info();
                     } else if browser.clear_peek_selection() {
                         // A stray drag does not cost the preview.

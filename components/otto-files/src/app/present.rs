@@ -480,4 +480,96 @@ impl FilesApp {
 
         Some(window)
     }
+
+    /// Bring the Open With chooser's window into line with the browser's
+    /// state, the way [`Self::sync_info_window`] does for Get Info — and for
+    /// the same reasons it is a window rather than a sheet.
+    pub(super) fn sync_open_with_window(&mut self) {
+        let (wanted, dirty) = {
+            let mut browser = self.state.lock().unwrap();
+            (
+                browser.open_with.is_some(),
+                std::mem::take(&mut browser.open_with_dirty),
+            )
+        };
+        let open = self.open_with_window.borrow().is_some();
+        match (wanted, open) {
+            (true, false) => {
+                let window = self.create_open_with_window();
+                *self.open_with_window.borrow_mut() = window;
+            }
+            (false, true) => {
+                let window = self.open_with_window.borrow_mut().take();
+                if let Some(window) = window {
+                    window.close();
+                }
+            }
+            _ => {}
+        }
+        if dirty {
+            let window = self.open_with_window.borrow().clone();
+            if let Some(window) = window {
+                window.request_frame();
+                AppContext::request_wakeup();
+            }
+        }
+    }
+
+    pub(super) fn create_open_with_window(&self) -> Option<Window> {
+        let mut window = Window::new(
+            otto_kit::t!("files-open-with-window-title"),
+            view::OPEN_WITH_W as i32,
+            view::OPEN_WITH_H as i32,
+        )
+        .ok()?;
+        window.set_min_size(view::OPEN_WITH_W as u32, view::OPEN_WITH_H as u32);
+        window.set_max_size(view::OPEN_WITH_W as u32, view::OPEN_WITH_H as u32);
+        window.set_background(skia_safe::Color::TRANSPARENT);
+        if let Some(surface) = window.surface() {
+            surface.xdg_window().set_app_id(app_id().to_string());
+            // The chooser answers for the browser's selection, so it stays
+            // with the browser: above it, and minimized along with it.
+            if let Some(parent) = self.window.as_ref().and_then(|w| w.surface()) {
+                surface.xdg_window().set_parent(Some(parent.xdg_window()));
+            }
+        }
+        if let Some(style) = window.surface_style() {
+            style.set_corner_radius(otto_kit::corners::radius(14.0) as f64);
+        }
+
+        let state = Arc::clone(&self.state);
+        window.on_draw(move |canvas| {
+            let mut browser = state.lock().unwrap();
+            let Some(session) = browser.open_with.as_mut() else {
+                return;
+            };
+            let theme = AppContext::current_theme();
+            let sheet = open_with::open_with_sheet();
+            view::draw_open_with(
+                canvas,
+                &theme,
+                sheet,
+                &view::OpenWithData {
+                    chooser: &session.chooser,
+                    scroll: &session.scroll.state,
+                    hover: session.hover,
+                    pressed: session.pressed,
+                    close_hovered: session.hover == Some(view::OpenWithHit::Close),
+                },
+            );
+            // The query's text and caret, over the field the view drew.
+            let field = view::open_with_search_rect(sheet);
+            let text_w = field.width() - view::OPEN_WITH_SEARCH_INSET - 8.0;
+            session.input.set_size(text_w, field.height());
+            canvas.save();
+            canvas.translate((field.left + view::OPEN_WITH_SEARCH_INSET, field.top));
+            session.input.render_at(canvas, text_w, field.height());
+            canvas.restore();
+        });
+
+        let state = Arc::clone(&self.state);
+        window.on_close_request(move || state.lock().unwrap().close_open_with());
+
+        Some(window)
+    }
 }

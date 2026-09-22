@@ -291,6 +291,21 @@ files-info-window-title = Informações
 ## Files — commands
 
 files-get-info = Obter informações
+files-open-with = Abrir com…
+files-open-with-window-title = Abrir com
+files-open-with-count =
+    { $count ->
+        [one] { $count } arquivo
+        [many] { $count } arquivos
+       *[other] { $count } arquivos
+    }
+files-open-with-mixed = Tipos de arquivo diferentes
+files-open-with-search = Pesquisar aplicativos
+files-open-with-default = Padrão
+files-open-with-other-apps = Outros aplicativos
+files-open-with-no-match = Nenhum aplicativo corresponde
+files-open-with-always = Sempre usar este aplicativo para “{ $kind }”
+files-open-with-not-remembered = Aberto, mas a escolha não foi salva: { $error }
 files-new-folder = Nova pasta
 files-move-to-trash = Mover para o lixo
 # $count is always two or more; the single-item case uses files-move-to-trash.

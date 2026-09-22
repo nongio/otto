@@ -291,6 +291,22 @@ files-info-window-title = Свойства
 ## Files — commands
 
 files-get-info = Свойства
+files-open-with = Открыть с помощью…
+files-open-with-window-title = Открыть с помощью
+files-open-with-count =
+    { $count ->
+        [one] { $count } файл
+        [few] { $count } файла
+        [many] { $count } файлов
+       *[other] { $count } файла
+    }
+files-open-with-mixed = Файлы разных типов
+files-open-with-search = Поиск приложений
+files-open-with-default = По умолчанию
+files-open-with-other-apps = Другие приложения
+files-open-with-no-match = Нет подходящих приложений
+files-open-with-always = Всегда использовать для типа «{ $kind }»
+files-open-with-not-remembered = Открыто, но выбор не сохранён: { $error }
 files-new-folder = Новая папка
 files-move-to-trash = Переместить в корзину
 # $count is always two or more; the single-item case uses files-move-to-trash.

@@ -212,6 +212,36 @@ impl FilesApp {
         });
     }
 
+    /// The Open With chooser's pointer. Registered once, like Get Info's.
+    pub(super) fn install_open_with_window_pointer(&self) {
+        let state = Arc::clone(&self.state);
+        let open_with_window = Rc::clone(&self.open_with_window);
+
+        AppContext::register_pointer_callback(move |events| {
+            use wayland_client::Proxy;
+            let window = open_with_window.borrow().clone();
+            let Some(window) = window else { return };
+            let Some(surface) = window.wl_surface() else {
+                return;
+            };
+            for event in events {
+                if event.surface.id() != surface.id() {
+                    continue;
+                }
+                let (x, y) = (event.position.0 as f32, event.position.1 as f32);
+                let drag = state.lock().unwrap().open_with_pointer(&event.kind, x, y);
+                if drag {
+                    if let PointerEventKind::Press { serial, .. } = event.kind {
+                        if let Some(seat) = AppContext::seat_state().seats().next() {
+                            window.start_move(&seat, serial);
+                        }
+                    }
+                }
+                AppContext::request_wakeup();
+            }
+        });
+    }
+
     /// Take drops: from another application, and from this window's own drags.
     ///
     /// The drag conversation is per-position — see [`otto_kit::dnd`] — so every
@@ -399,6 +429,7 @@ fn show_context_menu(
         let mut browser = click_state.lock().unwrap();
         match action_id {
             "open" => browser.open_selection(),
+            "open_with" => browser.open_with_selection(),
             "get_info" => browser.open_info(),
             "rename" => browser.start_rename(),
             "cut" => browser.copy_selection(true, serial),

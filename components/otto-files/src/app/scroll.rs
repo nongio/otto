@@ -104,6 +104,7 @@ impl Browser {
         self.pan.is_animating()
             || self.columns.iter().any(|c| c.scroll.is_animating())
             || self.palette_scroll.is_animating()
+            || self.open_with_scrolling()
             || self.peek_pan_animating()
     }
 

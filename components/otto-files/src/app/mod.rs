@@ -49,6 +49,7 @@ mod listing_pointer;
 mod menus;
 mod navigation;
 mod ocr;
+mod open_with;
 mod opening;
 mod palette_session;
 mod peek_session;
@@ -493,6 +494,11 @@ struct Browser {
     /// separate window with a separate buffer, so the browser's own `dirty`
     /// says nothing about it.
     info_dirty: bool,
+    /// The Open With chooser, when one is open. A window of its own, like
+    /// Get Info, and like it not modal.
+    open_with: Option<open_with::OpenWithSession>,
+    /// Set when the chooser's window has something new to show.
+    open_with_dirty: bool,
     /// Hover and press state of the traffic lights, so they reveal their
     /// glyphs under the pointer the way the compositor's own decoration does.
     controls: WindowControlsState,
@@ -1104,6 +1110,9 @@ struct FilesApp {
     /// each panel: callbacks cannot be taken off again, so registering one
     /// per opening would pile them up for the life of the process.
     info_window: Rc<RefCell<Option<Window>>>,
+    /// The Open With chooser's window, while one is open. Shared with its
+    /// pointer callback for the same reason as [`Self::info_window`].
+    open_with_window: Rc<RefCell<Option<Window>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,6 +1346,7 @@ fn run_app(
         pane_surfaces: None,
         window: None,
         info_window: Rc::new(RefCell::new(None)),
+        open_with_window: Rc::new(RefCell::new(None)),
         state: Arc::clone(&state),
         frost: None,
         opaque_region: None,

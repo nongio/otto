@@ -26,6 +26,7 @@ pub mod input;
 pub mod lottie;
 pub mod matching;
 pub mod maximize_button;
+pub mod mime_apps;
 mod portal_runtime;
 pub mod preview;
 pub mod protocols;

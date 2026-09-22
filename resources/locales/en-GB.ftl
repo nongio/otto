@@ -290,6 +290,20 @@ files-info-window-title = Info
 ## Files — commands
 
 files-get-info = Get Info
+files-open-with = Open With…
+files-open-with-window-title = Open With
+files-open-with-count =
+    { $count ->
+        [one] { $count } file
+       *[other] { $count } files
+    }
+files-open-with-mixed = Different kinds of file
+files-open-with-search = Search apps
+files-open-with-default = Default
+files-open-with-other-apps = Other Apps
+files-open-with-no-match = No apps match
+files-open-with-always = Always use this app for every { $kind }
+files-open-with-not-remembered = Opened, but couldn’t save the choice: { $error }
 files-new-folder = New Folder
 files-new-folder-with-selection = New Folder with Selection
 # $count is always two or more; the single-item case uses

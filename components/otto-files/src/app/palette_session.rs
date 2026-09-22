@@ -851,6 +851,7 @@ impl Browser {
                 self.navigate_to(&path);
             }
             id::OPEN => self.open_cursor_entry(),
+            id::OPEN_WITH => self.open_with_selection(),
             id::GET_INFO => self.open_info(),
             id::RENAME => self.rename_cursor_to(arg)?,
             id::NEW_FOLDER => self.new_folder_named(arg)?,

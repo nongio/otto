@@ -192,6 +192,31 @@ impl MimeDb {
         )
     }
 
+    /// `mime` and every type it descends from, nearest first.
+    ///
+    /// This is the order an application lookup walks: an app that registers
+    /// `text/x-rust` is a better answer for a Rust file than one that only
+    /// registers `text/plain`, and both are answers.
+    pub fn ancestors(&self, mime: &str) -> Vec<String> {
+        let mut out = vec![mime.to_string()];
+        let mut next = 0;
+        while next < out.len() {
+            if let Some(parents) = self.parents.get(&out[next]) {
+                for parent in parents {
+                    if !out.contains(parent) {
+                        out.push(parent.clone());
+                    }
+                }
+            }
+            next += 1;
+        }
+        // The implicit rule `is_subclass_of` answers for, spelled out.
+        if mime.starts_with("text/") && !out.iter().any(|m| m == "text/plain") {
+            out.push("text/plain".to_string());
+        }
+        out
+    }
+
     /// Every glob registered for `mime` or for any type descending from it.
     ///
     /// This is how a portal MIME filter becomes a set of name patterns — the
@@ -334,6 +359,21 @@ mod tests {
         let mut db = MimeDb::default();
         db.parse_subclasses("a/one a/two\na/two a/one\n");
         assert!(!db.is_subclass_of("a/one", "b/three"));
+        assert_eq!(db.ancestors("a/one"), ["a/one", "a/two"]);
+    }
+
+    #[test]
+    fn ancestors_run_nearest_first() {
+        let db = db();
+        let tarball = db.ancestors("application/x-compressed-tar");
+        assert_eq!(tarball[0], "application/x-compressed-tar");
+        assert!(tarball.contains(&"application/gzip".to_string()));
+        // Every text type reaches plain text, whether or not the database
+        // says so.
+        assert_eq!(
+            db.ancestors("text/x-nonsense"),
+            ["text/x-nonsense", "text/plain"]
+        );
     }
 
     #[test]

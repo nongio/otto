@@ -586,6 +586,7 @@ pub mod id {
     pub const GO_TO_PATH: &str = "go_to_path";
     pub const GO_TO_PLACE: &str = "go_to_place";
     pub const OPEN: &str = "open";
+    pub const OPEN_WITH: &str = "open_with";
     pub const GET_INFO: &str = "get_info";
     pub const RENAME: &str = "rename";
     pub const NEW_FOLDER: &str = "new_folder";
@@ -763,6 +764,21 @@ impl CommandProvider for Builtin {
                     Command::new(id::OPEN, otto_kit::t_owned!("common-open"), Group::Go)
                         .with_keywords(["launch", "enter"])
                         .with_shortcut("Ctrl+O"),
+                );
+            }
+            if !s.trash && s.has_target() && !s.cursor_is_dir {
+                out.push(
+                    Command::new(
+                        id::OPEN_WITH,
+                        otto_kit::t_owned!("files-open-with"),
+                        Group::Go,
+                    )
+                    .with_keywords([
+                        "application",
+                        "app",
+                        "program",
+                        "default",
+                    ]),
                 );
             }
         }

@@ -300,6 +300,69 @@ pub fn is_subclass_of(mime: &str, parent: &str) -> bool {
     database().is_subclass_of(mime, parent)
 }
 
+/// `mime` and every type it descends from, nearest first.
+pub fn ancestors(mime: &str) -> Vec<String> {
+    database().ancestors(mime)
+}
+
+/// What a type is called, in words: "PDF document" for `application/pdf`.
+///
+/// Read from the shared MIME database's per-type file, in the interface's
+/// language when the database has it, in English otherwise. `None` when no
+/// database describes the type.
+pub fn description(mime: &str) -> Option<String> {
+    let tag = crate::i18n::current_locale();
+    let languages = [
+        tag.clone(),
+        tag.split('-').next().unwrap_or(&tag).to_string(),
+    ];
+    // Highest priority first, the reverse of the order the globs load in.
+    mime_dirs().iter().rev().find_map(|dir| {
+        let text = std::fs::read_to_string(dir.join(format!("{mime}.xml"))).ok()?;
+        comment_in(&text, &languages)
+    })
+}
+
+/// The `<comment>` of a type file, in the first of `languages` it has, or its
+/// untranslated one.
+fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
+    let mut plain = None;
+    let mut translated: Vec<(usize, String)> = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<comment") {
+        let after = &rest[start + "<comment".len()..];
+        let (Some(open_end), Some(close)) = (after.find('>'), after.find("</comment>")) else {
+            break;
+        };
+        let attributes = &after[..open_end];
+        let body = unescape_xml(after[open_end + 1..close].trim());
+        match attributes.split_once("xml:lang=\"") {
+            Some((_, lang)) => {
+                let lang = lang.split('"').next().unwrap_or_default();
+                if let Some(rank) = languages.iter().position(|l| l.eq_ignore_ascii_case(lang)) {
+                    translated.push((rank, body));
+                }
+            }
+            None => plain = plain.or(Some(body)),
+        }
+        rest = &after[close..];
+    }
+    translated.sort_by_key(|(rank, _)| *rank);
+    translated
+        .into_iter()
+        .map(|(_, body)| body)
+        .next()
+        .or(plain)
+}
+
+fn unescape_xml(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
 /// Expand a MIME type into the set of name globs that match it, including
 /// those of its descendants. This is how a portal MIME filter becomes the
 /// name-based filter the picker actually applies.
@@ -395,6 +458,33 @@ pub fn icon_names(mime: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_type_is_described_in_the_nearest_language() {
+        let xml = r#"<mime-type type="application/pdf">
+  <comment>PDF document</comment>
+  <comment xml:lang="pt-BR">Documento PDF</comment>
+  <comment xml:lang="it">Documento PDF (it)</comment>
+  <comment xml:lang="de">PDF-Dokument &amp; mehr</comment>
+</mime-type>"#;
+        let langs = |tags: &[&str]| tags.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            comment_in(xml, &langs(&["it-IT", "it"])).as_deref(),
+            Some("Documento PDF (it)")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["pt-BR", "pt"])).as_deref(),
+            Some("Documento PDF")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["de-DE", "de"])).as_deref(),
+            Some("PDF-Dokument & mehr")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["en-GB", "en"])).as_deref(),
+            Some("PDF document")
+        );
+    }
 
     #[test]
     fn refine_lets_the_name_specialise_but_never_redirect() {

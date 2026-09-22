@@ -671,13 +671,13 @@ pill goes with it, in the row views the highlight band does.
   any other file, or reported as having none. Running a program by
   double-clicking it in a file manager is a well-known way to be tricked into
   running one.
-- A file with no association shows an "Open With" chooser listing applications
-  that declare support for its type, plus every other installed application
-  behind a disclosure. Choosing an application optionally sets it as the
-  default, which writes `mimeapps.list`.
 - A broken symlink reports that its target is missing, naming the target.
 
-`Open With` is always available on the context menu.
+The context menu offers **Open** for any single item, and **Open With…** when
+everything selected is a file. Open With brings up a chooser window listing
+the applications that can open the selection, the default first, with every
+other installed application folded under a heading; the choice is used once,
+or remembered as the type's default. See [open-with.md](open-with.md).
 
 ### Navigation history
 
