@@ -2009,6 +2009,24 @@ impl Otto<UdevData> {
         }
     }
 
+    /// Step the scene when no connector does. The engine is ticked from each
+    /// physical output's VBlank, so a session whose only outputs are virtual
+    /// (a headless box served over RDP) would otherwise never lay out or draw
+    /// its scene, and stream nothing but the cursor.
+    pub(super) fn tick_scene_without_connectors(&mut self) {
+        let has_connector = self
+            .backend_data
+            .backends
+            .values()
+            .any(|device| !device.surfaces.is_empty());
+        if has_connector {
+            return;
+        }
+        if self.scene_element.update() {
+            self.backend_data.damage_generation += 1;
+        }
+    }
+
     /// Render all virtual outputs into their PipeWire buffers.
     ///
     /// Called once per primary GPU render cycle. For each virtual output we:

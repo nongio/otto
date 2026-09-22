@@ -551,8 +551,13 @@ fn upload_keymap_str(
     use std::io::Write;
     let mut f = mfd.as_file();
     f.write_all(text.as_bytes())?;
-    f.write_all(&[0])?; // NUL terminator, as wl_keyboard keymaps expect
-    let len = text.len() as u32 + 1;
+    // The NUL terminator wl_keyboard keymaps expect, left out of the size:
+    // Otto hands the fd straight to `xkb_keymap_new_from_buffer`, and
+    // libxkbcommon before 1.5 reads a NUL inside the length as a token and
+    // rejects the keymap. The first key then kills the virtual keyboard with
+    // "key sent before keymap".
+    f.write_all(&[0])?;
+    let len = text.len() as u32;
 
     keyboard.keymap(
         wayland_client::protocol::wl_keyboard::KeymapFormat::XkbV1 as u32,

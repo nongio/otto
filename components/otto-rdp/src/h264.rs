@@ -1,10 +1,18 @@
 //! Hardware H.264 encoder for the EGFX / AVC420 path.
 //!
-//! Builds a GStreamer graph that pulls the virtual output straight off its
+//! With VA-API, a GStreamer graph pulls the virtual output straight off its
 //! PipeWire node and encodes it on the GPU:
 //!
 //! ```text
 //! pipewiresrc ! videorate ! vapostproc(NV12) ! vah264enc ! h264parse ! appsink
+//! ```
+//!
+//! NVIDIA has no VA-API encoder, and its tiled buffers reach no GStreamer
+//! source, so there the graph is fed the frames the capture has already read
+//! back ([`crate::pipewire_capture`]), and NVENC encodes them:
+//!
+//! ```text
+//! appsrc(BGRA) ! videoscale ! videorate ! nvh264enc ! h264parse ! appsink
 //! ```
 //!
 //! Each `appsink` sample is one H.264 access unit in Annex-B byte-stream form
@@ -14,14 +22,65 @@
 //! backlog (`max-buffers`/`drop`), and the EGFX side drops on backpressure, so
 //! the queue never grows without bound.
 //!
-//! Unlike the raw-bitmap path (`pipewire_capture.rs`), nothing is read back to
-//! the CPU or box-filtered here: the dmabuf goes GPU→encoder→small bitstream.
+//! On the VA-API path nothing is read back to the CPU or box-filtered: the
+//! dmabuf goes GPU→encoder→small bitstream. The NVENC path pays one readback
+//! per frame, which the capture does anyway.
+
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
+
+use crate::pipewire_capture::Frame;
+
+/// The hardware H.264 encoder this machine has, which decides where its
+/// frames come from.
+pub enum Encoder {
+    /// A VA-API element: takes the virtual output's dmabufs off PipeWire.
+    VaApi(String),
+    /// An NVENC element: fed the capture's read-back frames.
+    Nvenc(String),
+}
+
+impl Encoder {
+    /// `OTTO_RDP_H264_ENCODER` if set, else the first of `vah264enc` and
+    /// `nvh264enc` that GStreamer has.
+    pub fn detect() -> anyhow::Result<Self> {
+        gst::init().context("gstreamer init")?;
+        let classify = |name: String| {
+            if name.starts_with("nv") {
+                Self::Nvenc(name)
+            } else {
+                Self::VaApi(name)
+            }
+        };
+        if let Ok(name) = std::env::var("OTTO_RDP_H264_ENCODER") {
+            return Ok(classify(name));
+        }
+        ["vah264enc", "nvh264enc"]
+            .into_iter()
+            .find(|name| gst::ElementFactory::find(name).is_some())
+            .map(|name| classify(name.to_string()))
+            .ok_or_else(|| {
+                anyhow!("no hardware H.264 encoder: install gst-plugin-va (VA-API) or gst-plugins-bad's nvcodec (NVIDIA)")
+            })
+    }
+}
+
+/// Where the encoder's pictures come from.
+pub enum Source {
+    /// The virtual output's PipeWire node, read by `pipewiresrc`.
+    PipeWire { node: u32, encoder: String },
+    /// Frames already captured, tightly packed BGRA at `native` size.
+    Frames {
+        frames: broadcast::Receiver<Arc<Frame>>,
+        native: (u32, u32),
+        encoder: String,
+    },
+}
 
 /// One encoded access unit.
 pub struct EncodedFrame {
@@ -78,7 +137,6 @@ impl KeyframeRequester {
 /// aspect-fit into that size on the GPU (`vapostproc add-borders`), so the coded
 /// picture matches the client's expected desktop exactly.
 pub struct Config {
-    pub node_id: u32,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
@@ -88,7 +146,7 @@ pub struct Config {
 impl Config {
     /// fps, then bitrate, from the environment (`OTTO_RDP_FPS`,
     /// `OTTO_RDP_BITRATE` in kbps), with sensible hardware-encode defaults.
-    pub fn from_env(node_id: u32, width: u32, height: u32) -> Self {
+    pub fn from_env(width: u32, height: u32) -> Self {
         let fps = std::env::var("OTTO_RDP_FPS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
@@ -106,7 +164,6 @@ impl Config {
             .filter(|b| *b > 0)
             .unwrap_or(default_kbps);
         Self {
-            node_id,
             width,
             height,
             fps,
@@ -124,43 +181,71 @@ impl Config {
 /// the thread logs and exits, dropping `tx` so the receiver observes `None`.
 pub fn spawn(
     cfg: Config,
+    source: Source,
     tx: mpsc::UnboundedSender<EncodedFrame>,
     keyframe: KeyframeRequester,
 ) -> anyhow::Result<()> {
     gst::init().context("gstreamer init")?;
 
-    // `vah264enc` = VA-API (hardware) H.264; `vah264lpenc` is the low-power
-    // fixed-function variant. Overridable for boards where only one exists.
-    let encoder = std::env::var("OTTO_RDP_H264_ENCODER").unwrap_or_else(|_| "vah264enc".into());
     // Keyframe every ~2 s bounds how long a client that joins mid-stream (or
     // recovers from a dropped frame) waits for something decodable.
     let key_int_max = (cfg.fps * 2).max(1);
-
-    // `vapostproc` must consume the source's dmabuf DIRECTLY — Otto's virtual
-    // output advertises dmabuf-only formats with a MANDATORY LINEAR modifier
-    // (see pipewire_capture.rs), so any system-memory `video/x-raw` capsfilter
-    // between pipewiresrc and vapostproc never intersects ("no more input
-    // formats"). Convert+scale on the GPU, then rate-limit on the NV12 output.
-    // No B-frames (latency, and AVC420 is progressive); CBR keeps the RDP link
-    // at a predictable rate.
-    let desc = format!(
-        "pipewiresrc path={node} do-timestamp=true keepalive-time=1000 \
-           ! vapostproc add-borders=true \
-           ! video/x-raw,format=NV12,width={w},height={h},pixel-aspect-ratio=1/1 \
-           ! videorate \
-           ! video/x-raw,framerate={fps}/1 \
-           ! {encoder} name=enc rate-control=cbr bitrate={kbps} b-frames=0 key-int-max={kim} \
-           ! h264parse config-interval=-1 \
+    let tail = "h264parse config-interval=-1 \
            ! video/x-h264,stream-format=byte-stream,alignment=au \
-           ! appsink name=sink emit-signals=false sync=false max-buffers=3 drop=true",
-        node = cfg.node_id,
-        fps = cfg.fps,
-        w = cfg.width,
-        h = cfg.height,
-        encoder = encoder,
-        kbps = cfg.bitrate_kbps,
-        kim = key_int_max,
-    );
+           ! appsink name=sink emit-signals=false sync=false max-buffers=3 drop=true";
+
+    let (desc, encoder, frames) = match source {
+        // `vapostproc` must consume the source's dmabuf DIRECTLY — Otto's
+        // virtual output advertises dmabuf-only formats with a MANDATORY
+        // modifier (see pipewire_capture.rs), so any system-memory
+        // `video/x-raw` capsfilter between pipewiresrc and vapostproc never
+        // intersects ("no more input formats"). Convert+scale on the GPU, then
+        // rate-limit on the NV12 output. No B-frames (latency, and AVC420 is
+        // progressive); CBR keeps the RDP link at a predictable rate.
+        Source::PipeWire { node, encoder } => {
+            let desc = format!(
+                "pipewiresrc path={node} do-timestamp=true keepalive-time=1000 \
+                   ! vapostproc add-borders=true \
+                   ! video/x-raw,format=NV12,width={w},height={h},pixel-aspect-ratio=1/1 \
+                   ! videorate \
+                   ! video/x-raw,framerate={fps}/1 \
+                   ! {encoder} name=enc rate-control=cbr bitrate={kbps} b-frames=0 key-int-max={kim} \
+                   ! {tail}",
+                fps = cfg.fps,
+                w = cfg.width,
+                h = cfg.height,
+                kbps = cfg.bitrate_kbps,
+                kim = key_int_max,
+            );
+            (desc, encoder, None)
+        }
+        // NVENC takes BGRA in system memory and converts on the GPU itself.
+        // The frames arrive whenever the desktop changes; `videorate` holds
+        // the last one to a steady rate the encoder's GOP can count on.
+        Source::Frames {
+            frames,
+            native: (nw, nh),
+            encoder,
+        } => {
+            let desc = format!(
+                "appsrc name=src is-live=true do-timestamp=true format=time \
+                   caps=video/x-raw,format=BGRA,width={nw},height={nh},framerate=0/1 \
+                   ! videoscale add-borders=true \
+                   ! video/x-raw,width={w},height={h},pixel-aspect-ratio=1/1 \
+                   ! videorate \
+                   ! video/x-raw,framerate={fps}/1 \
+                   ! {encoder} name=enc rc-mode=cbr bitrate={kbps} bframes=0 gop-size={kim} \
+                     preset=low-latency-hq zerolatency=true \
+                   ! {tail}",
+                fps = cfg.fps,
+                w = cfg.width,
+                h = cfg.height,
+                kbps = cfg.bitrate_kbps,
+                kim = key_int_max,
+            );
+            (desc, encoder, Some((frames, (nw, nh))))
+        }
+    };
 
     tracing::info!(
         "starting H.264 pipeline: {}x{} @ {}fps, {} kbps, encoder {}",
@@ -173,7 +258,7 @@ pub fn spawn(
     tracing::debug!("gst pipeline: {desc}");
 
     let pipeline = gst::parse::launch(&desc)
-        .context("building the H.264 GStreamer pipeline (is gst-plugin-va installed?)")?
+        .context("building the H.264 GStreamer pipeline")?
         .downcast::<gst::Pipeline>()
         .map_err(|_| anyhow!("parsed pipeline was not a gst::Pipeline"))?;
 
@@ -204,6 +289,15 @@ pub fn spawn(
             })
             .build(),
     );
+
+    if let Some((frames, native)) = frames {
+        let src = pipeline
+            .by_name("src")
+            .context("appsrc 'src' missing from pipeline")?
+            .downcast::<gst_app::AppSrc>()
+            .map_err(|_| anyhow!("'src' was not an appsrc"))?;
+        feed(src, frames, native)?;
+    }
 
     pipeline
         .set_state(gst::State::Playing)
@@ -244,4 +338,98 @@ pub fn spawn(
         .context("spawning H.264 bus thread")?;
 
     Ok(())
+}
+
+/// Push every captured frame into `src` until the capture or the pipeline
+/// goes away. A frame of any other size than the caps promise is skipped.
+fn feed(
+    src: gst_app::AppSrc,
+    mut frames: broadcast::Receiver<Arc<Frame>>,
+    (width, height): (u32, u32),
+) -> anyhow::Result<()> {
+    std::thread::Builder::new()
+        .name("h264-feed".into())
+        .spawn(move || {
+            let mut warned_size = false;
+            loop {
+                let frame = match frames.blocking_recv() {
+                    Ok(frame) => frame,
+                    // Behind: the next receive is the newest frame, which is
+                    // the only one worth encoding.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                if (frame.width, frame.height) != (width, height) {
+                    if !warned_size {
+                        tracing::warn!(
+                            "captured {}x{} frames, but the encoder expects {width}x{height}; \
+                             skipping them",
+                            frame.width,
+                            frame.height
+                        );
+                        warned_size = true;
+                    }
+                    continue;
+                }
+                let buffer = gst::Buffer::from_slice(frame.data.clone());
+                // appsrc queues while the pipeline starts, so this fails only
+                // once it is torn down.
+                if let Err(e) = src.push_buffer(buffer) {
+                    tracing::info!("H.264 feed stopped: {e:?}");
+                    break;
+                }
+            }
+        })
+        .context("spawning H.264 feed thread")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn frame() -> Arc<Frame> {
+        Arc::new(Frame {
+            width: 4,
+            height: 4,
+            data: vec![0u8; 4 * 4 * 4].into(),
+        })
+    }
+
+    /// A frame that reaches the feed before the pipeline is running must not
+    /// end the feed: the ones after it still have to be encoded.
+    #[test]
+    fn a_frame_before_playing_does_not_stop_the_feed() {
+        gst::init().unwrap();
+        let pipeline = gst::parse::launch(
+            "appsrc name=src format=time \
+             caps=video/x-raw,format=BGRA,width=4,height=4,framerate=0/1 \
+             ! appsink name=sink",
+        )
+        .unwrap()
+        .downcast::<gst::Pipeline>()
+        .unwrap();
+        let src = pipeline
+            .by_name("src")
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+            .unwrap();
+        let sink = pipeline
+            .by_name("sink")
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+            .unwrap();
+
+        let (tx, rx) = broadcast::channel(4);
+        assert!(tx.send(frame()).is_ok());
+        feed(src, rx, (4, 4)).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+        let _ = tx.send(frame());
+        let sample = sink.try_pull_sample(gst::ClockTime::from_seconds(2));
+        pipeline.set_state(gst::State::Null).unwrap();
+        assert!(sample.is_some(), "no frame was encoded after Playing");
+    }
 }

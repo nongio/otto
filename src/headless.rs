@@ -1217,6 +1217,55 @@ impl HeadlessHandle {
         self.query(|state| state.outputs_json())
     }
 
+    /// Plug in a second `width`×`height` output at `(x, y)` in the global
+    /// layout, at the headless output's scale.
+    pub fn add_output(&self, name: &str, width: i32, height: i32, x: i32, y: i32) {
+        let name = name.to_string();
+        self.with_state(move |state| {
+            let mode = Mode {
+                size: (width, height).into(),
+                refresh: 60_000,
+            };
+            let output = Output::new(
+                name,
+                PhysicalProperties {
+                    size: (0, 0).into(),
+                    subpixel: Subpixel::Unknown,
+                    make: "Otto".into(),
+                    model: "Headless".into(),
+                    serial_number: "1".into(),
+                },
+            );
+            let _global = output.create_global::<Otto<HeadlessData>>(&state.display_handle);
+            let scale = crate::config::Config::with(|c| c.screen_scale);
+            output.change_current_state(
+                Some(mode),
+                None,
+                Some(smithay::output::Scale::Fractional(scale)),
+                Some((x, y).into()),
+            );
+            output.set_preferred(mode);
+            state.workspaces.map_output(&output, (x, y));
+        });
+    }
+
+    /// Namespace of the layer-shell surface the pointer would hit at the
+    /// global logical point `(x, y)`, if it would hit one.
+    pub fn layer_namespace_under(&self, x: f64, y: f64) -> Option<String> {
+        self.query(move |state| {
+            use smithay::reexports::wayland_server::Resource;
+            let (target, _) = state.surface_under((x, y).into())?;
+            let crate::focus::PointerFocusTarget::WlSurface(surface) = target else {
+                return None;
+            };
+            let root = smithay::wayland::compositor::get_parent(&surface).unwrap_or(surface);
+            state
+                .layer_surfaces
+                .get(&root.id())
+                .map(|s| s.namespace().to_string())
+        })
+    }
+
     /// The gap override on the current workspace, if it has one:
     /// `(inner, outer)`.
     pub fn workspace_gap_override(&self) -> Option<(i32, i32)> {

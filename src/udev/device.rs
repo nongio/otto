@@ -47,7 +47,7 @@ use smithay::backend::renderer::sync::SyncPoint;
 /// sizing in the workspaces layout pass). Free function over the two
 /// fields so callers can invoke it while other fields of `Otto` are
 /// mutably borrowed.
-fn sync_scene_size_to_outputs(
+pub(super) fn sync_scene_size_to_outputs(
     workspaces: &crate::workspaces::Workspaces,
     scene_element: &mut crate::render_elements::scene_element::SceneElement,
 ) {

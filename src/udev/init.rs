@@ -539,7 +539,26 @@ pub fn run_udev() {
                     crate::virtual_output::VirtualOutputState::build_output(vout_config, position);
                 let global = output.create_global::<Otto<UdevData>>(&display_handle);
 
-                state.workspaces.map_output(&output, position);
+                state
+                    .workspaces
+                    .map_output_with_primary(&output, position, vout_config.primary);
+                // The workspace model is sized by the primary output, which a
+                // connector sets when it comes up. A virtual output that is
+                // the primary has to do it itself, or the workspaces (windows,
+                // background) are laid out at zero size.
+                let is_primary = state
+                    .workspaces
+                    .primary_output()
+                    .is_some_and(|primary| primary.name() == output.name());
+                if let (true, Some(mode)) = (is_primary, output.current_mode()) {
+                    state
+                        .workspaces
+                        .set_screen_dimension(mode.size.w, mode.size.h);
+                    super::device::sync_scene_size_to_outputs(
+                        &state.workspaces,
+                        &mut state.scene_element,
+                    );
+                }
 
                 match crate::virtual_output::VirtualOutputState::start(
                     output.clone(),
@@ -617,6 +636,7 @@ pub fn run_udev() {
                 .insert_source(
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
                     move |_, _, data: &mut Otto<super::types::UdevData>| {
+                        data.tick_scene_without_connectors();
                         data.render_virtual_outputs();
                         data.kick_screencast_outputs();
                         smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)

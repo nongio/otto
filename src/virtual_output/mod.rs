@@ -4,11 +4,21 @@ pub struct VirtualOutputMarker {
     /// When true the output participates in pointer reach / focus /
     /// window placement like a physical screen (config `interactive`).
     pub interactive: bool,
+    /// Configured as the session's primary output (config `primary`).
+    pub primary: bool,
 }
 
 /// Returns true if the output is a virtual (PipeWire) output.
 pub fn is_virtual_output(output: &smithay::output::Output) -> bool {
     output.user_data().get::<VirtualOutputMarker>().is_some()
+}
+
+/// A virtual output configured as the session's primary output.
+pub fn is_primary_virtual_output(output: &smithay::output::Output) -> bool {
+    output
+        .user_data()
+        .get::<VirtualOutputMarker>()
+        .is_some_and(|m| m.primary)
 }
 
 /// A virtual output the pointer must NOT reach (non-interactive).
@@ -171,6 +181,7 @@ impl VirtualOutputState {
             .user_data()
             .insert_if_missing(|| VirtualOutputMarker {
                 interactive: config.interactive,
+                primary: config.primary,
             });
 
         output
@@ -188,11 +199,23 @@ impl VirtualOutputState {
     ) -> Result<(Self, u32), String> {
         let damage_tracker = OutputDamageTracker::from_output(&output);
 
-        let capabilities = if gbm_device.is_some() {
+        let capabilities = if let Some(gbm) = gbm_device.as_ref() {
+            let modifiers = crate::screenshare::allocatable_modifiers(
+                gbm,
+                config.resolution.width,
+                config.resolution.height,
+                format_modifiers,
+                true,
+            );
+            tracing::info!(
+                "Virtual output '{}' dmabuf modifiers offered: {:x?}",
+                config.name,
+                modifiers
+            );
             BackendCapabilities {
-                supports_dmabuf: true,
+                supports_dmabuf: !modifiers.is_empty(),
                 formats: vec![Fourcc::Argb8888, Fourcc::Xrgb8888],
-                modifiers: format_modifiers.iter().map(|&m| m as i64).collect(),
+                modifiers,
             }
         } else {
             BackendCapabilities::default()

@@ -56,6 +56,18 @@ pub struct BaseWaylandSurface {
     // which reports the whole buffer. Shared, so a clone of the surface (a
     // `Window` holds several) records it for the draw the surface performs.
     pub(super) frame_damage: Rc<std::cell::RefCell<Option<FrameDamage>>>,
+    // The style geometry the next draw's buffer is claimed at; see
+    // `claim_with_next_buffer`. Shared for the same reason as `frame_damage`.
+    pub(super) next_buffer_claim: Rc<std::cell::Cell<Option<BufferClaim>>>,
+}
+
+/// A surface-style size, and optionally a position, in pixels, for the
+/// buffer a surface's next draw produces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BufferClaim {
+    pub width: f64,
+    pub height: f64,
+    pub position: Option<(f64, f64)>,
 }
 
 /// What a surface's next draw is known to have changed.
@@ -113,6 +125,7 @@ impl BaseWaylandSurface {
             layer_node,
             dirty: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             frame_damage: Rc::new(std::cell::RefCell::new(None)),
+            next_buffer_claim: Rc::new(std::cell::Cell::new(None)),
         }
     }
 
@@ -279,6 +292,16 @@ impl BaseWaylandSurface {
             AppContext::request_throttled_frame(&self.wl_surface);
             AppContext::mark_accessibility_stale();
 
+            // Queued now, the claim goes out in the swap's own flush, just
+            // ahead of the buffer it describes.
+            if let (Some(style), Some(claim)) = (&self.surface_style, self.next_buffer_claim.take())
+            {
+                style.set_size(claim.width, claim.height);
+                if let Some((x, y)) = claim.position {
+                    style.set_position(x, y);
+                }
+            }
+
             // Present the frame. eglSwapBuffers attaches the buffer, damages it
             // and commits, so committing again here would only ask the
             // compositor to recomposite the output for a surface that has
@@ -317,6 +340,18 @@ impl BaseWaylandSurface {
             Some(FrameDamage::Rects(pending)) => pending.extend_from_slice(rects),
             None => *damage = Some(FrameDamage::Rects(rects.to_vec())),
         }
+    }
+
+    /// Claim a style size (and position) for the buffer the next draw produces.
+    ///
+    /// The style applies a size the moment it arrives, and the swap sends its
+    /// buffer on its own, so neither side of a draw is the place to send it:
+    /// before, the old buffer is drawn stretched to the new size; after, the
+    /// new buffer is drawn at the old one for a frame. Held here, it goes out
+    /// inside the next draw, together with the buffer it fits. A later claim
+    /// before that draw replaces this one.
+    pub fn claim_with_next_buffer(&self, claim: BufferClaim) {
+        self.next_buffer_claim.set(Some(claim));
     }
 
     /// Record that the next draw may change anything: it reports the whole

@@ -80,6 +80,14 @@ documented in `docs/developer/screenshare.md`.
     DMA-BUF).
   - A negotiated modifier value of `DRM_FORMAT_MOD_INVALID` is accepted and treated as
     "implicit modifier" DMA-BUF, distinct from a parse failure.
+- Buffer allocation uses the GBM entry point that belongs to the negotiated modifier: an
+  explicit modifier is allocated through the explicit-modifier call, while
+  `DRM_FORMAT_MOD_INVALID` — the implicit modifier — must be allocated through the
+  modifier-less one. Handing the implicit modifier to the explicit-modifier allocator fails
+  with `ENOSYS` on any stack with no explicit-modifier support at all (software GL, older
+  drivers) — which is exactly the stack that advertises only that modifier — so every buffer
+  fails to allocate and the stream keeps handing out unfilled buffers (a consumer sees a
+  zero/unknown data type) instead of failing loudly.
 
 ### Window identity
 

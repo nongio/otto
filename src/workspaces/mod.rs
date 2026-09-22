@@ -4602,6 +4602,20 @@ impl Workspaces {
     /// assigned to one is effectively invisible on the physical screen.
     pub fn default_client_output(&self) -> Option<&Output> {
         let real = |o: &&Output| !crate::virtual_output::is_virtual_output(o);
+        // A virtual output configured as the session's primary is the exception to
+        // the rule below: on a headless box (Otto served over RDP) it is the
+        // output being rendered, it holds the chrome containers, and it is the
+        // only output the pointer ever visits. Pinning chrome to a physical
+        // output there draws otto-bar and the launcher on the virtual screen
+        // but hit-tests them against a screen nobody can reach, so every click
+        // misses.
+        if let Some(primary) = self
+            .primary_output
+            .as_ref()
+            .filter(|o| crate::virtual_output::is_primary_virtual_output(o))
+        {
+            return Some(primary);
+        }
         self.focused_output()
             .filter(real)
             .or_else(|| self.primary_output.as_ref().filter(real))
