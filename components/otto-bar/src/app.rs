@@ -1157,8 +1157,17 @@ fn battery_label() -> String {
         (crate::power::ChargeState::Full, _) => {
             otto_kit::t_owned!("bar-battery-full", percent = percent)
         }
-        // No estimate yet: UPower reports zero for a while after the cable
-        // moves, and an empty "— remaining" reads as a bug.
+        // Charging, but UPower has not worked out how long for yet: say it is
+        // charging rather than show a bare percentage, which reads as on
+        // battery.
+        (crate::power::ChargeState::Charging, None) => {
+            otto_kit::t_owned!("bar-battery-charging", percent = percent)
+        }
+        (crate::power::ChargeState::Plugged, _) => {
+            otto_kit::t_owned!("bar-battery-plugged", percent = percent)
+        }
+        // No estimate yet on battery: UPower reports zero for a while after
+        // the cable moves, and an empty "— remaining" reads as a bug.
         _ => otto_kit::t_owned!("bar-battery-percent", percent = percent),
     }
 }

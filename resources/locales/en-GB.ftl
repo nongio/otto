@@ -694,6 +694,9 @@ bar-battery-percent = Battery { $percent }%
 bar-battery-remaining = Battery { $percent }% — { $time } remaining
 bar-battery-charging-time = Battery { $percent }% — { $time } until full
 bar-battery-full = Battery { $percent }% — fully charged
+bar-battery-charging = Battery { $percent }% — charging
+# On the charger, but held at a charge limit or waiting to start.
+bar-battery-plugged = Battery { $percent }% — plugged in, not charging
 # $avg and $max are frequencies in GHz, already rounded, e.g. 2.80.
 bar-cpu-frequency = CPU { $avg } GHz average, { $max } GHz peak
 # $governor is the kernel's own name for the policy, e.g. powersave.

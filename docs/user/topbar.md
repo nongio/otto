@@ -100,8 +100,11 @@ standard has no Wayland equivalent. Apps that only do XEmbed will not appear.
 ## Battery
 
 On a machine with a battery, the bar draws one: an outline that fills with the
-charge, green until 20%, amber to 10%, red below that, with a bolt over it
-while charging. The percentage is written inside the glyph.
+charge, green until 20%, amber to 10%, red below that. A bolt over it means
+it is charging; a plug means it is plugged in but not charging, because it is
+full or held at a charge limit. The percentage is written inside the glyph.
+The menu says the same in words, with how long until full when UPower has
+worked it out.
 
 The bar reads UPower itself rather than hosting a tray applet for this. The
 tray carries an icon and a tooltip, so a percentage published through it would

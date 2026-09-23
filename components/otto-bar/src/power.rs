@@ -42,6 +42,9 @@ pub enum ChargeState {
     Charging,
     Discharging,
     Full,
+    /// On the charger but not charging: held below full by a charge limit, or
+    /// waiting to start.
+    Plugged,
     #[default]
     Unknown,
 }
@@ -51,9 +54,13 @@ impl ChargeState {
     /// charged, 5 pending charge, 6 pending discharge.
     fn from_upower(raw: u32) -> Self {
         match raw {
-            1 | 5 => Self::Charging,
+            1 => Self::Charging,
             2 | 6 => Self::Discharging,
             4 => Self::Full,
+            // Pending charge is what a charge limit looks like: the cable is
+            // in and the battery is being held, not filled. A bolt there says
+            // something the machine is not doing.
+            5 => Self::Plugged,
             _ => Self::Unknown,
         }
     }
@@ -63,12 +70,18 @@ impl ChargeState {
             "Charging" => Self::Charging,
             "Discharging" => Self::Discharging,
             "Full" => Self::Full,
+            "Not charging" => Self::Plugged,
             _ => Self::Unknown,
         }
     }
 
     pub fn is_charging(self) -> bool {
         matches!(self, Self::Charging)
+    }
+
+    /// On the charger, whether or not any charge is going in.
+    pub fn is_plugged(self) -> bool {
+        matches!(self, Self::Charging | Self::Full | Self::Plugged)
     }
 }
 
@@ -670,19 +683,6 @@ pub fn format_duration(seconds: i64) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn upower_states_map_to_what_the_indicator_draws() {
-        assert_eq!(ChargeState::from_upower(1), ChargeState::Charging);
-        // Pending charge is still "plugged in and heading up" as far as the
-        // bolt is concerned.
-        assert_eq!(ChargeState::from_upower(5), ChargeState::Charging);
-        assert_eq!(ChargeState::from_upower(2), ChargeState::Discharging);
-        assert_eq!(ChargeState::from_upower(6), ChargeState::Discharging);
-        assert_eq!(ChargeState::from_upower(4), ChargeState::Full);
-        assert_eq!(ChargeState::from_upower(3), ChargeState::Unknown);
-        assert_eq!(ChargeState::from_upower(99), ChargeState::Unknown);
-    }
-
     fn supply(root: &std::path::Path, name: &str, files: &[(&str, &str)]) {
         let dir = root.join(name);
         std::fs::create_dir_all(&dir).unwrap();
@@ -732,6 +732,25 @@ mod tests {
         assert!(battery.present);
         assert_eq!(battery.percentage, 51.0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn upower_states_map_to_what_the_indicator_draws() {
+        assert_eq!(ChargeState::from_upower(1), ChargeState::Charging);
+        // Pending charge is a battery held at a charge limit: plugged in,
+        // but not charging, so no bolt.
+        assert_eq!(ChargeState::from_upower(5), ChargeState::Plugged);
+        assert!(ChargeState::Plugged.is_plugged());
+        assert!(!ChargeState::Plugged.is_charging());
+        assert_eq!(
+            ChargeState::from_sysfs("Not charging\n"),
+            ChargeState::Plugged
+        );
+        assert_eq!(ChargeState::from_upower(2), ChargeState::Discharging);
+        assert_eq!(ChargeState::from_upower(6), ChargeState::Discharging);
+        assert_eq!(ChargeState::from_upower(4), ChargeState::Full);
+        assert_eq!(ChargeState::from_upower(3), ChargeState::Unknown);
+        assert_eq!(ChargeState::from_upower(99), ChargeState::Unknown);
     }
 
     #[test]
