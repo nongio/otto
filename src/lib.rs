@@ -60,7 +60,7 @@ mod config;
 mod theme;
 
 /// Write the user's first configuration if they have none: the icon theme
-/// their other desktops use, and a dock of the apps that are installed.
+/// their other desktops use.
 ///
 /// Call before anything reads the configuration.
 pub fn prepare_first_run() {

@@ -5,50 +5,43 @@
 
 ## Summary
 
-The first time a user starts an Otto session, Otto writes them a configuration that fits the system it finds: the icon theme their other desktops use, and a dock of the applications that are installed. After that, the configuration belongs to the user and Otto never guesses again.
+A new user's first session starts with an icon theme that matches their other desktops, and a dock that already holds the everyday apps. The icon theme is detected once and written to the user's configuration. The dock comes from a fixed list in the system configuration.
 
 ## Goals
 
 - A new user's first session has a complete icon theme, not `hicolor` alone.
 - A new user's dock holds a file browser, settings, a terminal, a web browser, a text editor and a calculator, as far as the system has them.
-- The choices are written to the user's configuration file, where Settings shows them and the user can change them.
-- It happens exactly once per user.
+- The detected icon theme is written to the user's configuration file, where Settings shows it and the user can change it.
 
 ## Non-Goals
 
-- Following later changes made in another desktop. Once written, the values are the user's.
+- Following later changes made in another desktop. Once written, the icon theme is the user's.
 - Installing anything. Only apps and themes already on the system are used.
-- Keyboard shortcuts. They come from the system configuration.
+- Picking one app per job. On a system with both GNOME and KDE apps, the dock shows both.
 
 ## Behavior
 
-- **Trigger:** a session starts and the user's configuration file (`$XDG_CONFIG_HOME/otto/config.toml`) does not exist. A greeter session and a test session never trigger it.
-- **Result:** the file is created with `icon_theme` and `dock.bookmarks`. A value is left out when nothing suitable is found, so the system configuration's value applies instead.
-- **Icon theme:** the first installed theme found in:
+- **Dock:** the system configuration's `dock.bookmarks` lists Otto's Files and Settings, then the usual GNOME and KDE terminal, Firefox (also `firefox-esr`), Chromium, and the GNOME and KDE text editor and calculator. A listed app with no desktop file installed is skipped with a warning, so each system shows whichever of them it has. The skipped entry stays in the configuration and appears in the next session after the app is installed.
+- **Icon theme trigger:** a session starts and the user's configuration file (`$XDG_CONFIG_HOME/otto/config.toml`) does not exist. A greeter session and a test session never trigger it.
+- **Icon theme result:** the file is created holding `icon_theme`. When no theme is found, nothing is written and the system configuration's value applies.
+- **Icon theme source:** the first installed theme found in:
   1. the running desktop's own setting, when started from inside another desktop;
   2. a theme the user picked in any desktop: Plasma, GNOME, Cinnamon, MATE, Xfce, GTK's `settings.ini`, qt6ct, qt5ct;
   3. the distribution's defaults: GSettings overrides, then system-wide Plasma, Xfce and GTK settings;
   4. Breeze, then Adwaita.
-- **Dock:** one app per role, in this order: files, settings, terminal, browser, text editor, calculator. For each role, the first of:
-  1. Otto's own app (Files, Settings), when installed;
-  2. the user's default handler for the role's MIME type (`inode/directory`, `x-scheme-handler/terminal`, `x-scheme-handler/https`, `text/plain`);
-  3. a well-known app for the role;
-  4. any app in the role's freedesktop menu category (`FileManager`, `TerminalEmulator`, `WebBrowser`, `TextEditor`, `Calculator`).
-  
-  An app is eligible only when it opens its own window and is meant to show in menus (not `NoDisplay`, `Hidden` or `Terminal=true`), and is not restricted to other desktops through `OnlyShowIn`. A role nothing fills is left out.
 - **Failure:** if the file cannot be written, the session starts on the system configuration and a warning is logged. The next session tries again.
 
 ## Constraints & Edge Cases
 
-- It runs before anything reads the configuration, so the first session already uses the result.
-- A user who deletes their configuration file gets a new first run.
-- The dock written here replaces the system configuration's bookmarks for that user. Later changes to the system configuration's dock don't reach them.
+- Detection runs before anything reads the configuration, so the first session already uses the result.
+- A user who deletes their configuration file gets a new detection.
+- A user with no configuration file of their own, including one who used Otto before this existed, gets a detected icon theme in their next session.
 
 ## Rationale
 
+- A fixed dock list is predictable and easy to change, and a missing app costs nothing. Guessing apps from MIME defaults and menu categories took a lot of code to cover the same common cases.
 - No freedesktop standard records the user's icon theme, so each desktop's own settings are read. Distribution defaults are read from the files distributions use to brand their desktops, rather than from a per-distribution table.
-- Guessing once and writing the result keeps behaviour predictable. A theme that changes whenever another desktop's settings change would be confusing, and Settings would have nothing to show.
-- MIME defaults come before well-known apps, so a user who already chose a browser or editor elsewhere gets that one.
+- Writing the detected theme once keeps it predictable. A theme that changes whenever another desktop's settings change would be confusing, and Settings would have nothing to show.
 
 ## Open Questions
 

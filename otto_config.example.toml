@@ -353,10 +353,21 @@ autohide = false
 magnification = true
 
 # Pinned apps, by desktop file id. An id with no desktop file installed is
-# skipped with a warning, so listing apps you may not have is harmless.
+# skipped with a warning, so listing apps you may not have is harmless. The
+# default names the usual GNOME and KDE apps for each job, so a system shows
+# whichever of them it has.
 bookmarks = [
   { desktop_id = "otto-files.desktop" },
-  { desktop_id = "otto-settings.desktop" }
+  { desktop_id = "otto-settings.desktop" },
+  { desktop_id = "org.gnome.Console.desktop" },
+  { desktop_id = "org.kde.konsole.desktop" },
+  { desktop_id = "firefox.desktop" },
+  { desktop_id = "firefox-esr.desktop" },
+  { desktop_id = "chromium.desktop" },
+  { desktop_id = "org.gnome.TextEditor.desktop" },
+  { desktop_id = "org.kde.kate.desktop" },
+  { desktop_id = "org.gnome.Calculator.desktop" },
+  { desktop_id = "org.kde.kcalc.desktop" }
 ]
 
 # Places: the strip past the dock's divider, for the things that are locations
