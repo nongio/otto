@@ -496,17 +496,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                     .data_map
                     .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
                 );
-                let mut cached_state = states
-                    .cached_state
-                    .get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
-                let cached_state = cached_state.current();
-                let surface_geometry = cached_state.geometry.unwrap_or_default();
+                let geometry_loc = crate::shell::xdg_geometry_loc(states);
 
                 if let Some(data) = data {
                     let data = data.lock().unwrap();
                     if let Some(view) = data.view() {
                         location += view.offset.to_f64().to_physical(scale_factor);
-                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                        location -= geometry_loc.to_f64().to_physical(scale_factor);
                         smithay::wayland::compositor::TraversalAction::DoChildren((
                             location,
                             location,

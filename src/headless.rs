@@ -1584,6 +1584,41 @@ impl HeadlessHandle {
         })
     }
 
+    /// Where this window's toplevel `wl_surface` is drawn, in logical points:
+    /// the scene position of its surface layer.
+    pub fn window_surface_logical_origin(&self, title: &str) -> Option<(f64, f64)> {
+        let title = title.to_string();
+        self.query(move |state| {
+            use smithay::reexports::wayland_server::Resource;
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == title)
+                .cloned()?;
+            let surface = window.wl_surface()?;
+            let layer = state.surface_layers.get(&surface.id())?;
+            let scale = state
+                .workspaces
+                .outputs()
+                .find(|o| o.name() == OUTPUT_NAME)
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(1.0);
+            let pos = layer.render_position();
+            Some((pos.x as f64 / scale, pos.y as f64 / scale))
+        })
+    }
+
+    /// Where the hit test puts the origin of the `wl_surface` under this
+    /// logical point, in logical points — the offset Smithay subtracts to
+    /// give the client surface-local coordinates.
+    pub fn surface_origin_under(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        self.query(move |state| {
+            let (focus, origin) = state.surface_under((x, y).into())?;
+            matches!(focus, crate::focus::PointerFocusTarget::WlSurface(_))
+                .then_some((origin.x, origin.y))
+        })
+    }
+
     /// Whether this window is currently maximized.
     pub fn window_is_maximized(&self, title: &str) -> bool {
         let title = title.to_string();

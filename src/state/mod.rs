@@ -82,7 +82,7 @@ use smithay::{
         shell::{
             kde::decoration::KdeDecorationState,
             wlr_layer::WlrLayerShellState,
-            xdg::{decoration::XdgDecorationState, SurfaceCachedState, XdgShellState},
+            xdg::{decoration::XdgDecorationState, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
         socket::ListeningSocketSource,
@@ -1464,16 +1464,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             |surface, states, (location, _parent_location, _parent_id)| {
                 let mut location = *location;
                 let data = states.data_map.get::<RendererSurfaceStateUserData>();
-                let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-                let cached_state = cached_state.current();
-                let surface_geometry = cached_state.geometry.unwrap_or_default();
+                let geometry_loc = crate::shell::xdg_geometry_loc(states);
 
                 if let Some(data) = data {
                     let data = data.lock().unwrap();
 
                     if let Some(view) = data.view() {
                         location += view.offset.to_f64().to_physical(scale_factor);
-                        location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                        location -= geometry_loc.to_f64().to_physical(scale_factor);
                         // Pass current location as parent location for children, and current surface as parent ID
                         TraversalAction::DoChildren((location, location, Some(surface.id())))
                     } else {
@@ -1537,15 +1535,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 |surface, states, (location, _parent_location, _parent_id)| {
                     let mut location = *location;
                     let data = states.data_map.get::<RendererSurfaceStateUserData>();
-                    let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-                    let cached_state = cached_state.current();
-                    let surface_geometry = cached_state.geometry.unwrap_or_default();
+                    let geometry_loc = crate::shell::xdg_geometry_loc(states);
 
                     if let Some(data) = data {
                         let data = data.lock().unwrap();
                         if let Some(view) = data.view() {
                             location += view.offset.to_f64().to_physical(scale);
-                            location -= surface_geometry.loc.to_f64().to_physical(scale);
+                            location -= geometry_loc.to_f64().to_physical(scale);
                             TraversalAction::DoChildren((location, location, Some(surface.id())))
                         } else {
                             TraversalAction::SkipChildren
@@ -1689,11 +1685,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         parent_id: Option<smithay::reexports::wayland_server::backend::ObjectId>,
     ) -> Option<WindowViewSurface> {
         let id = surface.id();
-        let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-        let cached_state = cached_state.current();
-        let surface_geometry = cached_state
-            .geometry
-            .unwrap_or_default()
+        let geometry_loc = crate::shell::xdg_geometry_loc(states)
             .to_f64()
             .to_physical(scale);
         let mut surface_attributes = states.cached_state.get::<SurfaceAttributes>();
@@ -1719,8 +1711,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     phy_src_w: view.src.size.w as f32 * surface_attributes.buffer_scale as f32,
                     phy_src_h: view.src.size.h as f32 * surface_attributes.buffer_scale as f32,
 
-                    phy_dst_x: view.offset.x as f32 * scale as f32 - surface_geometry.loc.x as f32,
-                    phy_dst_y: view.offset.y as f32 * scale as f32 - surface_geometry.loc.y as f32,
+                    phy_dst_x: view.offset.x as f32 * scale as f32 - geometry_loc.x as f32,
+                    phy_dst_y: view.offset.y as f32 * scale as f32 - geometry_loc.y as f32,
                     phy_dst_w: view.dst.w as f32 * scale as f32,
                     phy_dst_h: view.dst.h as f32 * scale as f32,
                     texture_id,
@@ -2006,16 +1998,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     profiling::scope!("surface_tree_downward");
                     let mut location = *location;
                     let data = states.data_map.get::<RendererSurfaceStateUserData>();
-                    let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-                    let cached_state = cached_state.current();
-                    let surface_geometry = cached_state.geometry.unwrap_or_default();
+                    let geometry_loc = crate::shell::xdg_geometry_loc(states);
 
                     if let Some(data) = data {
                         let data = data.lock().unwrap();
 
                         if let Some(view) = data.view() {
                             location += view.offset.to_f64().to_physical(scale_factor);
-                            location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
+                            location -= geometry_loc.to_f64().to_physical(scale_factor);
                             TraversalAction::DoChildren((location, location, Some(surface.id())))
                         } else {
                             TraversalAction::SkipChildren

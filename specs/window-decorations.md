@@ -154,6 +154,14 @@ offset. Both the painted position and the pointer hit test resolve to that same
 point: a popup that responds anywhere other than where it is drawn is a bug,
 and the titlebar's height is the offset it shows up as.
 
+**A stale window geometry.** A decorated window's content is drawn from its
+*effective* window geometry: the rectangle the client set, clamped to the
+bounds of its surface tree, as xdg-shell defines it and as the hit test uses
+it. The rectangle as set can reach past the surface: winit sets one around its
+own fallback frame, drops the frame when Otto decorates, and never sets the
+geometry again; drawn from that rectangle, the content would sit one fallback
+frame below and right of where it takes the pointer.
+
 **Popups over the compositor's own strips.** A menu is free to hang past its
 parent window — off an edge, or back over the titlebar it opened from. The
 titlebar and the resize border belong to Otto and are hit-tested ahead of the
