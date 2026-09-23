@@ -412,6 +412,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
         let seat: Seat<Otto<BackendData>> = Seat::from_resource(&seat).unwrap();
+        self.apply_pending_raise();
         self.move_request_xdg(&surface, &seat, serial)
     }
 
@@ -423,6 +424,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         edges: xdg_toplevel::ResizeEdge,
     ) {
         let seat: Seat<Otto<BackendData>> = Seat::from_resource(&seat).unwrap();
+        self.apply_pending_raise();
         let sid = top_level.wl_surface().id();
         if let Some(touch) = seat.get_touch() {
             if touch.has_grab(serial) {
@@ -1318,6 +1320,8 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
     fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
         let seat: Seat<Otto<BackendData>> = Seat::from_resource(&seat).unwrap();
+        // The popup's window has to hold the keyboard before its grab is set.
+        self.apply_pending_raise();
         let kind = PopupKind::Xdg(surface);
         let popup_id = kind.wl_surface().id();
 
@@ -1555,6 +1559,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         if !pointer.has_grab(serial) {
             return;
         }
+        self.apply_pending_raise();
         let Some(start_data) = pointer.grab_start_data() else {
             return;
         };
@@ -1586,6 +1591,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         if !pointer.has_grab(serial) {
             return;
         }
+        self.apply_pending_raise();
         let Some(start_data) = pointer.grab_start_data() else {
             return;
         };

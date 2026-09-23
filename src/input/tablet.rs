@@ -139,7 +139,10 @@ impl crate::Otto<crate::udev::UdevData> {
                     let serial = SCOUNTER.next_serial();
                     tool.tip_down(serial, evt.time_msec());
 
-                    self.focus_window_under_cursor(serial);
+                    self.focus_window_under_cursor(
+                        serial,
+                        crate::input::pointer::RaiseTiming::Press,
+                    );
                 }
                 TabletToolTipState::Up => {
                     tool.tip_up(evt.time_msec());

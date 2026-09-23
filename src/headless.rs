@@ -1971,7 +1971,10 @@ impl Otto<HeadlessData> {
 
         // BTN_LEFT = 0x110
         if refocus && !self.workspaces.get_show_all() && pressed {
-            self.focus_window_under_cursor(serial);
+            self.focus_window_under_cursor(serial, crate::input::pointer::RaiseTiming::Release);
+        }
+        if !pressed {
+            self.apply_pending_raise();
         }
         let pointer = self.pointer.clone();
         pointer.button(

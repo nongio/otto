@@ -1,6 +1,6 @@
 use crate::{
     focus::{KeyboardFocusTarget, PointerFocusTarget},
-    shell::FullscreenSurface,
+    shell::{FullscreenSurface, WindowElement},
     state::Backend,
     Otto,
 };
@@ -19,6 +19,33 @@ use smithay::{
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
     },
 };
+
+/// The Linux input event code of the primary (left) mouse button.
+const BTN_LEFT: u32 = 0x110;
+
+/// When a press on a window behind others brings it forward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RaiseTiming {
+    /// At the press, before the client sees the button.
+    Press,
+    /// When the button comes up, unless the press started a drag.
+    ///
+    /// Used for the left button only, so a drag can start from a window
+    /// without bringing it forward. Other buttons raise at the press: a
+    /// context menu opened there needs its window to hold the keyboard.
+    Release,
+}
+
+impl RaiseTiming {
+    /// The timing for a press of `button`.
+    pub(crate) fn for_button(button: u32) -> Self {
+        if button == BTN_LEFT {
+            Self::Release
+        } else {
+            Self::Press
+        }
+    }
+}
 
 /// Check if a point (in surface-local logical coordinates) falls within the
 /// parent surface's input region.  Returns `true` when the region allows input
@@ -70,7 +97,10 @@ impl<BackendData: Backend> Otto<BackendData> {
         let state = wl_pointer::ButtonState::from(evt.state());
 
         if !self.workspaces.get_show_all() && wl_pointer::ButtonState::Pressed == state {
-            self.focus_window_under_cursor(serial);
+            self.focus_window_under_cursor(serial, RaiseTiming::for_button(button));
+        }
+        if wl_pointer::ButtonState::Released == state {
+            self.apply_pending_raise();
         }
         let pointer = self.pointer.clone();
         let button_state = state.try_into().unwrap();
@@ -127,8 +157,13 @@ impl<BackendData: Backend> Otto<BackendData> {
     }
 
     /// Update the focus on the topmost surface under the cursor in the current workspace
-    /// The window is raised and the keyboard focus is set to the window.
-    pub(crate) fn focus_window_under_cursor(&mut self, serial: Serial) {
+    /// The window is raised and the keyboard focus is set to the window, now
+    /// or when the button comes up, as `timing` says.
+    pub(crate) fn focus_window_under_cursor(&mut self, serial: Serial, timing: RaiseTiming) {
+        // A raise still waiting from an earlier press (another button went
+        // down before the first came up) is settled before this one.
+        self.apply_pending_raise();
+
         // A locked session has one keyboard focus, and the locker owns it. The
         // desktop is still there under the lock surface, so without this a click
         // anywhere on the lock screen would hand focus to whatever happens to be
@@ -290,10 +325,17 @@ impl<BackendData: Backend> Otto<BackendData> {
                             if w.is_fullscreen() {
                                 return;
                             }
-                            self.workspaces.focus_app_with_window(&id);
-
-                            self.set_keyboard_focus_on_window(&window);
-                            self.workspaces.update_workspace_model();
+                            // X11 windows are raised through the X server at
+                            // the press, and a panel holding the keyboard has
+                            // to lose it now so its menu closes.
+                            let defer = timing == RaiseTiming::Release
+                                && window.is_wayland()
+                                && layer_focused_at_press.is_none();
+                            if defer {
+                                self.pending_raise = Some(window.clone());
+                            } else {
+                                self.raise_and_focus_window(&window);
+                            }
                         }
                     }
 
@@ -378,6 +420,40 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
             }
         }
+    }
+
+    /// Raise `window`, make its app the active one and give it the keyboard.
+    fn raise_and_focus_window(&mut self, window: &WindowElement) {
+        let Some(id) = window.wl_surface().map(|s| s.id()) else {
+            return;
+        };
+        self.workspaces.focus_app_with_window(&id);
+        self.set_keyboard_focus_on_window(window);
+        self.workspaces.update_workspace_model();
+    }
+
+    /// Raise and focus the window a left press landed on, if one is waiting.
+    ///
+    /// Runs when the button comes up, and as soon as the press turns into
+    /// anything that needs the window in front (a move, a resize, a popup
+    /// grab). A press that starts a drag drops the raise instead, in
+    /// `dnd_requested`.
+    pub(crate) fn apply_pending_raise(&mut self) {
+        let Some(window) = self.pending_raise.take() else {
+            return;
+        };
+        if self.is_session_locked() || self.workspaces.get_show_all() || !window.alive() {
+            return;
+        }
+        let Some(id) = window.wl_surface().map(|s| s.id()) else {
+            return;
+        };
+        // Minimized or fullscreened between the press and the release.
+        match self.workspaces.get_window_for_surface(&id) {
+            Some(w) if !w.is_minimised() && !w.is_fullscreen() => {}
+            _ => return,
+        }
+        self.raise_and_focus_window(&window);
     }
 
     /// The top/overlay layer surface the pointer is over, if any, as its
