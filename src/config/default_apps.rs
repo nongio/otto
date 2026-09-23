@@ -30,6 +30,11 @@ pub fn resolve(
     None
 }
 
+/// The default handlers `mimeapps.list` names for `mime`, most preferred first.
+pub fn mime_defaults(mime: &str) -> Vec<String> {
+    MIMEAPPS_CACHE.query(mime).unwrap_or_default()
+}
+
 fn resolve_role(role: &str, config: &Config) -> Option<(String, Vec<String>)> {
     if role.ends_with(".desktop") {
         return desktop_id_to_command(role, &config.locales);
