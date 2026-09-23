@@ -264,6 +264,7 @@ assets = [
     # name. Kept as a link by preserve-symlinks.
     ["resources/bin/otto-ask", "usr/bin/", "777"],
     ["target/release/otto-media-worker", "usr/bin/", "755"],
+    ["resources/bin/otto-look", "usr/bin/", "755"],
     ["target/release/otto-greeter", "usr/bin/", "755"],
     ["target/release/otto-rdp", "usr/bin/", "755"],
     ["target/release/xdg-desktop-portal-otto", "usr/libexec/", "755"],
@@ -324,6 +325,7 @@ assets = [
     { source = "target/release/otto-msg", dest = "/usr/bin/otto-msg", mode = "755" },
     { source = "target/release/otto-agents", dest = "/usr/bin/otto-agents", mode = "755" },
     { source = "target/release/otto-media-worker", dest = "/usr/bin/otto-media-worker", mode = "755" },
+    { source = "resources/bin/otto-look", dest = "/usr/bin/otto-look", mode = "755" },
     { source = "resources/otto-files.desktop", dest = "/usr/share/applications/otto-files.desktop", mode = "644" },
     { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
     { source = "resources/otto-trash.desktop", dest = "/usr/share/applications/otto-trash.desktop", mode = "644" },
@@ -441,6 +443,7 @@ files = [
     ["resources/plugins/otto/skills/otto-help/references/**/*", "/usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
     ["target/release/otto-media-worker", "/usr/bin/otto-media-worker", "755"],
+    ["resources/bin/otto-look", "/usr/bin/otto-look", "755"],
     ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],
     ["README.md", "/usr/share/doc/otto/README.md", "644"],
     ["LICENSE", "/usr/share/licenses/otto/LICENSE", "644"],

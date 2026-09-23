@@ -37,6 +37,7 @@ for b in otto otto-bar otto-islands otto-lock otto-settings otto-files \
     check "/usr/bin/$b" exec
 done
 check /usr/libexec/xdg-desktop-portal-otto exec
+check /usr/bin/otto-look exec
 
 echo "== session and applications =="
 check /usr/share/wayland-sessions/otto.desktop

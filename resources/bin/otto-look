@@ -1,0 +1,209 @@
+#!/bin/sh
+# otto-look: install an Otto look and apply it to the running session.
+#
+#   otto-look install <name | folder | file | url>
+#
+# A look is a folder holding look.toml and any files it names by a relative
+# url. A bare name is a look in the otto-looks repository. Needs curl, tar,
+# sha256sum and busctl; unzip for a theme that ships as a zip.
+set -eu
+
+# OTTO_LOOK_DRY_RUN=1 prints what would be installed instead of installing
+# packages or running scripts; scripts/dry-run sets it.
+dry=${OTTO_LOOK_DRY_RUN:-}
+REPO_RAW=${OTTO_LOOKS_REPO:-https://raw.githubusercontent.com/nongio/otto-looks/main/looks}
+DATA=${XDG_DATA_HOME:-$HOME/.local/share}
+
+die() { echo "otto-look: $*" >&2; exit 1; }
+
+# Prints "section<TAB>key<TAB>type<TAB>value" for each key in a flat TOML file:
+# [tables] and key = "string" | integer | float | true | false, with comments.
+parse() {
+    awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    /^[ \t]*(#|$)/ { next }
+    /^[ \t]*\[/ { s = $0; gsub(/[][ \t]/, "", s); section = s; next }
+    {
+        eq = index($0, "=")
+        if (!eq) { printf "line %d: expected key = value\n", NR > "/dev/stderr"; exit 1 }
+        key = trim(substr($0, 1, eq - 1)); value = trim(substr($0, eq + 1))
+        if (value ~ /^"/) {
+            match(value, /^"([^"\\]|\\.)*"/)
+            value = substr(value, 2, RLENGTH - 2); gsub(/\\"/, "\"", value); type = "s"
+        } else {
+            sub(/[ \t]*#.*$/, "", value)
+            if (value == "true" || value == "false") type = "b"
+            else if (value ~ /^-?[0-9]+$/) type = "x"
+            else if (value ~ /^-?[0-9]+\.[0-9]+$/) type = "d"
+            else { printf "line %d: unsupported value for %s\n", NR, key > "/dev/stderr"; exit 1 }
+        }
+        printf "%s\t%s\t%s\t%s\n", section, key, type, value
+    }' "$1"
+}
+
+# get <section> <key>: the value, or nothing.
+get() { awk -F '\t' -v s="$1" -v k="$2" '$1 == s && $2 == k { print $4; exit }' "$work/def"; }
+
+# fetch <url> <sha256> <dest>: a relative url is a file in the look's own
+# folder, next to look.toml, and comes with the look, so it needs no sha256.
+# Anything from elsewhere does.
+fetch() {
+    case $1 in
+        *://*) curl -fsSL "$1" -o "$3" || die "cannot download $1"
+               [ -n "$2" ] || die "$1 has no sha256 in the definition" ;;
+        /* | ../*) die "$1 is outside the look's folder" ;;
+        *) case $base in
+               *://*) curl -fsSL "$base/$1" -o "$3" || die "cannot download $base/$1" ;;
+               *) [ -f "$base/$1" ] || die "the look has no $1"; cp "$base/$1" "$3" ;;
+           esac ;;
+    esac
+    [ -z "$2" ] || echo "$2  $3" | sha256sum -c --status - || die "$1 does not match its sha256"
+}
+
+set_setting() {
+    status=$(busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
+        Set sv "$1" "$2" "$3") || die "Otto refused $1"
+    case $status in *pending-restart*) echo "  $1 (after a restart)" ;; *) echo "  $1" ;; esac
+}
+
+# installed <theme>: whether an icon or cursor theme is already there.
+installed() {
+    for dir in "$DATA/icons" "$HOME/.icons" /usr/local/share/icons /usr/share/icons; do
+        [ -f "$dir/$1/index.theme" ] && return 0
+    done
+    return 1
+}
+
+# confirm <question>: yes only from a person at a terminal.
+confirm() {
+    [ -t 0 ] || return 1
+    printf '%s [y/N] ' "$1"; read -r answer
+    case $answer in [yY]*) return 0 ;; *) return 1 ;; esac
+}
+
+# install_theme <section>: make sure the section's icon or cursor theme is
+# installed. Already installed anywhere: nothing to do. Otherwise it comes
+# from its makers' own archive, pinned by sha256; nothing is mirrored.
+install_theme() {
+    theme=$(get "$1" theme); [ -n "$theme" ] || return 0
+    echo "$theme" > "$work/$1.theme"
+    installed "$theme" && return 0
+
+    url=$(get "$1" url)
+    [ -n "$url" ] || die "$theme is not installed, and the look has no url for it"
+    fetch "$url" "$(get "$1" sha256)" "$work/$1.archive"
+    mkdir "$work/$1"
+    case $url in
+        *.zip) unzip -q "$work/$1.archive" -d "$work/$1" ;;
+        *) tar -xf "$work/$1.archive" -C "$work/$1" --no-same-owner ;;
+    esac
+    found=$(find "$work/$1" -maxdepth 5 -type f -path "*/$theme/index.theme" | head -n 1)
+    # A source archive holds no built theme: `build` is the theme's own
+    # installer, run from the top of the source with DEST set to the
+    # icons folder.
+    build=$(get "$1" build)
+    if [ -z "$found" ] && [ -n "$build" ]; then
+        src=$(find "$work/$1" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+        if [ -n "$dry" ]; then echo "  would run: $build (from $url)"; return 0; fi
+        echo "$theme builds from its source with its own installer: $build"
+        confirm "Run it as you, not as root?" || die "$theme was not installed"
+        mkdir -p "$DATA/icons"
+        (cd "$src" && DEST="$DATA/icons" sh -c "$build")
+        installed "$theme" || die "$build ran but $theme is still not installed"
+        return 0
+    fi
+    [ -n "$found" ] || die "$url has no $theme/index.theme"
+    mkdir -p "$DATA/icons"
+    rm -rf "${DATA:?}/icons/$theme"
+    mv "$(dirname "$found")" "$DATA/icons/$theme"
+}
+
+# The look names its version and its author's GitHub username, and every
+# resource names who made it, where it comes from and its licence.
+check_credits() {
+    for key in version author; do
+        [ -n "$(get look "$key")" ] || die "[look] has no $key"
+    done
+    for section in wallpaper icons cursors; do
+        grep -q "^$section	" "$work/def" || continue
+        for key in author source licence; do
+            [ -n "$(get "$section" "$key")" ] || die "[$section] has no $key; every resource needs its credits"
+        done
+    done
+}
+
+credits() {
+    echo "Credits:"
+    for section in wallpaper icons cursors; do
+        author=$(get "$section" author); [ -n "$author" ] || continue
+        title=$(get "$section" title); [ -n "$title" ] || title=$(get "$section" theme)
+        echo "  $section: ${title:+$title, }by $author, $(get "$section" licence)"
+        echo "    $(get "$section" source)"
+        attribution=$(get "$section" attribution)
+        [ -z "$attribution" ] || echo "    $attribution"
+    done
+}
+
+install() {
+    source=$1
+    # A look is a folder with a look.toml; a bare name is one in the repository.
+    case $source in
+        *://* | *.toml) ;;
+        */*) [ -d "$source" ] && source="${source%/}/look.toml" ;;
+        *) if [ -d "$source" ]; then source="$source/look.toml"
+           else source="$REPO_RAW/$source/look.toml"; fi ;;
+    esac
+    work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+    case $source in
+        *://*) curl -fsSL "$source" -o "$work/look.toml" || die "cannot download $source"
+               base=${source%/*} ;;
+        *) [ -f "$source" ] || die "no such look: $source"
+           cp "$source" "$work/look.toml"; base=$(cd "$(dirname "$source")" && pwd) ;;
+    esac
+    parse "$work/look.toml" > "$work/def"
+    name=$(get look name); [ -n "$name" ] || die "the definition has no [look] name"
+    check_credits
+    id=$(printf '%s' "$name" | tr 'A-Z ' 'a-z-')
+    echo "Installing $name"
+
+    install_theme icons
+    install_theme cursors
+    url=$(get wallpaper url)
+    if [ -n "$url" ]; then
+        fetch "$url" "$(get wallpaper sha256)" "$work/wallpaper"
+        # An image CDN's url ends in a query and often no extension
+        # (images.unsplash.com/photo-…?fm=jpg): drop the query, and name the
+        # type from the file's first bytes.
+        name=${url##*/}; name=${name%%\?*}
+        case $name in
+            *.*) ;;
+            *) case $(head -c 4 "$work/wallpaper" | od -An -tx1 | tr -d ' \n') in
+                   ffd8*) name=$name.jpg ;;
+                   89504e47) name=$name.png ;;
+               esac ;;
+        esac
+        dir="$DATA/backgrounds/otto-looks/$id"; file="$dir/$name"
+        mkdir -p "$dir"; mv "$work/wallpaper" "$file"
+    fi
+
+    echo "Applying:"
+    [ -f "$work/icons.theme" ] && set_setting icon_theme s "$(cat "$work/icons.theme")"
+    [ -f "$work/cursors.theme" ] && set_setting cursor_theme s "$(cat "$work/cursors.theme")"
+    [ -n "$url" ] && set_setting background_image s "$file"
+    # A look that doesn't say where the dock goes or how it's tinted gets the
+    # plain dock, at the bottom and untinted, not whatever the last look left.
+    grep -q "^settings	dock.position	" "$work/def" ||
+        set_setting dock.position s bottom
+    grep -q "^settings	dock.colorize_icons	" "$work/def" ||
+        set_setting dock.colorize_icons b false
+    awk -F '\t' '$1 == "settings" { print $2 "\t" $3 "\t" $4 }' "$work/def" |
+        while IFS="$(printf '\t')" read -r key type value; do
+            set_setting "$key" "$type" "$value"
+        done
+    credits
+}
+
+case ${1:-} in
+    install) [ $# -eq 2 ] || die "usage: otto-look install <name | folder | file | url>"; install "$2" ;;
+    *) echo "usage: otto-look install <name | folder | file | url>" >&2; exit 2 ;;
+esac

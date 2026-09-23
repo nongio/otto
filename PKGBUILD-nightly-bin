@@ -48,6 +48,7 @@ package() {
     ln -s otto-launcher "$pkgdir/usr/bin/otto-agents"
     # Peek's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
+    install -Dm755 resources/bin/otto-look "$pkgdir/usr/bin/otto-look"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
 
     # Install documentation
