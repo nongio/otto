@@ -718,7 +718,7 @@ impl App for TopBarApp {
         self._spacer_surface = Some(spacer);
 
         crate::tray::spawn_tray_watcher();
-        crate::focus::spawn_focus_watcher();
+        otto_kit::utils::focus_watcher::spawn_focus_watcher();
         crate::appmenu::spawn_appmenu_registrar();
         crate::power::spawn_power_watcher();
 
@@ -1079,10 +1079,10 @@ impl App for TopBarApp {
         }
 
         // Check if focused app changed
-        let focus_gen = crate::focus::generation();
+        let focus_gen = otto_kit::utils::focus_watcher::generation();
         if focus_gen != self.last_focus_gen {
             self.last_focus_gen = focus_gen;
-            let focused = crate::focus::current_focused_app();
+            let focused = otto_kit::utils::focus_watcher::current_focused_app();
             let name = otto_kit::desktop_entry::display_name_for_app(&focused.app_id);
             // Close any open app menu when focus changes
             self.close_app_menu();

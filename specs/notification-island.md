@@ -181,6 +181,22 @@ Drawn straight into the bubble — there is no separate card background.
 
 The card **grows to fit**: its height is the one-line height plus a line for each extra body line, plus the action row when it has actions. Layout, drawing, and hit-testing all size the card through the same function, so a button is clickable exactly where it was painted.
 
+### Music
+
+Music is another island in the same row. It follows the same Mini/Compact/Expanded rules:
+- Music arrives and rests Compact. When no other island is open, hovered or
+  focused, music is the one Compact island and notification groups are Mini circles.
+- When a notification arrives or a group is hovered or clicked, music shrinks to
+  Mini to make room, and grows back once the row is free.
+- Music Mini: 3-bar equalizer in a circle.
+- Music Compact: album art + title + artist + equalizer.
+- Music Expanded: a card pinned to the top of the layer (y = 0) that grows
+  downward. It is never centred on `BAR_HEIGHT` — `COMPACT_H` is taller than the
+  bar, so centring puts the top of the panel above the layer, where it is clipped.
+- The equalizer is a child subsurface of the music pill, redrawn at ~24fps while
+  a track plays. It animates with the pill rather than snapping to its target, so
+  the bars stay inside the pill for the whole transition.
+
 ## D-Bus Integration
 
 - `org.otto.Island1` — custom API for creating arbitrary activities.

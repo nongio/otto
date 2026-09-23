@@ -71,11 +71,10 @@ pub struct NotificationAction {
 pub enum ActivitySource {
     DBus,
     Notification,
-    // Portal is reserved for the in-progress portal-access-dialog source;
-    // Internal is exercised only by dock_badges tests so far.
+    // Portal is reserved for the in-progress portal-access-dialog source.
     #[allow(dead_code)]
     Portal,
-    #[allow(dead_code)]
+    /// Published by otto-islands itself, like the music island.
     Internal,
 }
 

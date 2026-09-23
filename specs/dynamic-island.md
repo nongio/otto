@@ -145,6 +145,66 @@ presentation, click targets, decks, arrival behaviour and dock badges are
 specified in [notification-island](notification-island.md); the daemon contract
 itself is in [notification-daemon](notification-daemon.md).
 
+### Music activity
+
+When music is playing (detected via `playerctl`), the island creates a persistent
+live activity:
+- **Compact**: album art, title, artist and an 8-bar equaliser driven by PipeWire
+  audio levels.
+- **Expanded**: larger art, title and artist, the equaliser and a progress bar.
+- **Banner**: a full card with art, title and artist, previous/play-pause/next
+  controls and a progress bar.
+- **Minimal** (right surface): a 3-bar mini equaliser in the accent colour.
+
+The accent colour is extracted from the album art and used for the equaliser bars
+and the progress fill.
+
+Art comes from the MPRIS `mpris:artUrl` field, which is a URL, not a path:
+- `file://` (optionally `file://localhost/`): percent escapes are decoded before
+  the file is opened, so paths with spaces or non-ASCII characters still load.
+- `http://` / `https://`: fetched with a bounded timeout so an unreachable host
+  cannot stall the island's update thread.
+- Anything else is logged and falls back to the ♪ placeholder.
+
+Browsers publish the same track from two players (an engine player with little
+metadata and an integration shim that carries the art), so every player is queried
+and the entries for one track are merged. The transport controls drive that same
+player (`playerctl --player=…`), not whichever one playerctl would pick itself.
+
+The music island is not news: it arrives as a pill rather than opening to announce
+itself, and rests there. It drops to a dot only to make room, while another island is
+open, hovered or focused, and goes back to a pill once the row is free again.
+Assistive technologies can read it but it is not a live region, so a new track does
+not interrupt a screen reader. Clicking the open player outside its controls puts it
+back to a pill; nothing about it dismisses the music. Clicking the album art brings
+the player forward: first a window whose title holds the track title (the playing tab
+of a browser), then a window named after the player, then the player itself over MPRIS
+`Raise`, which lets a browser switch to the playing tab. The window is activated
+through `focus_watcher::activate_window` in otto-kit. It goes as soon as the player
+quits, and three seconds after a still-running player stops, so skipping tracks
+doesn't close and reopen it. playerctl is polled every 1.5 s, so noticing either can
+take that long.
+
+It is hidden, not dismissed, while the player's own window is focused
+(`focus_watcher` in otto-kit): the activity goes quiet and comes back as the same
+island. A window is the player's when its app_id matches a player name ("spotify"),
+or when its title holds the track title. The second rule is what covers browsers,
+whose player is named after the engine ("chromium") whatever the browser's app_id,
+and it hides the island only while the playing tab is the one showing. Track titles
+shorter than three characters don't match by title.
+
+An island is music by its `app_id` (`org.otto.music`), not by coming from inside
+otto-islands.
+
+The bars come from `audio_viz`: a PipeWire level meter on the default sink's monitor,
+an animator that turns one level into eight independently moving bars, and the bar
+drawing. They sit on a child subsurface of the island, redrawn at ~24 fps only while a
+track plays and the island is on screen, so the island buffer itself stays retained.
+The capture stream is open only for as long as the bars move: a connected stream keeps
+the sink running, so leaving it open would stop the sound card from suspending. The
+playerctl poll wakes the island only while a track plays or when something about it
+changed.
+
 ## Constraints & Edge Cases
 
 - **Multi-output:** the island appears on the primary output. Layer-shell scene
