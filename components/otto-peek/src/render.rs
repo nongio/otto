@@ -94,10 +94,7 @@ fn draw_card(
     // Unzoomed, always: this is the offline renderer, and there is nobody here
     // to pinch. A document opens at the top of its first page, which is where
     // a host opens one too.
-    let zoom = match preview {
-        Preview::Pages { .. } => preview::Zoom::TOP,
-        _ => preview::Zoom::FIT,
-    };
+    let zoom = preview::Zoom::resting(preview);
     preview::draw(canvas, content, preview, theme, 0, zoom, &resolve_icon);
     canvas.restore();
 }

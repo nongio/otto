@@ -324,24 +324,35 @@ impl Browser {
             .is_some_and(|session| session.word_at(point.x, point.y, content).is_some())
     }
 
-    /// Show the text beam over a word and the arrow elsewhere, changing the
-    /// shape only when the pointer crosses between the two.
+    /// Whether the pointer at `point` is over a link in a Markdown preview.
+    fn peek_over_link(&self, point: skia_safe::Point, panel: Rect) -> bool {
+        let content = view::peek_content_rect(panel);
+        self.peek
+            .as_ref()
+            .is_some_and(|session| session.link_at(point.x, point.y, content).is_some())
+    }
+
+    /// Show the hand over a link, the text beam over a word and the arrow
+    /// elsewhere, changing the shape only when the pointer crosses between
+    /// them.
     pub(super) fn sync_peek_cursor(&mut self, point: skia_safe::Point, panel: Rect) {
-        let over_word = self.peek_over_word(point, panel);
-        if over_word != self.peek_text_cursor {
-            self.peek_text_cursor = over_word;
-            AppContext::set_cursor_shape(if over_word {
-                CursorShape::Text
-            } else {
-                CursorShape::Default
-            });
+        let shape = if self.peek_over_link(point, panel) {
+            CursorShape::Pointer
+        } else if self.peek_over_word(point, panel) {
+            CursorShape::Text
+        } else {
+            CursorShape::Default
+        };
+        if shape != self.peek_cursor {
+            self.peek_cursor = shape;
+            AppContext::set_cursor_shape(shape);
         }
     }
 
-    /// The pointer left the panel: back to the arrow if it was the beam.
+    /// The pointer left the panel: back to the arrow if it was anything else.
     pub(super) fn reset_peek_cursor(&mut self) {
-        if self.peek_text_cursor {
-            self.peek_text_cursor = false;
+        if self.peek_cursor != CursorShape::Default {
+            self.peek_cursor = CursorShape::Default;
             AppContext::set_cursor_shape(CursorShape::Default);
         }
     }
@@ -606,6 +617,10 @@ impl Browser {
             return handled;
         }
         let (handled, moved) = match kind {
+            PeekPointer::Press if session.link_pointer_down(point.x, point.y, content) => {
+                // Held until the button comes up, which is when a link opens.
+                (true, false)
+            }
             PeekPointer::Press => {
                 let hit = session.pan_pointer_down(point.x, point.y, content);
                 // Not on a bar: a press on a word starts selecting, and a
@@ -621,9 +636,13 @@ impl Browser {
             PeekPointer::Release => {
                 session.pan_pointer_up();
                 session.select_pointer_up();
+                if let Some(target) = session.link_pointer_up(point.x, point.y, content) {
+                    self.open_in_default_app(target);
+                }
                 (false, false)
             }
             PeekPointer::Leave => {
+                session.link_pointer_leave();
                 session.pan_pointer_up();
                 session.pan_pointer_leave();
                 // A drag that leaves the panel keeps its selection: what was

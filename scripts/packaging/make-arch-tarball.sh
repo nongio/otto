@@ -44,6 +44,7 @@ done
 install -m644 LICENSE                  "$tmpdir/$PKGDIR/LICENSE"
 install -m644 README.md                "$tmpdir/$PKGDIR/README.md"
 install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
+install -Dm755 resources/bin/otto-look "$tmpdir/$PKGDIR/resources/bin/otto-look"
 
 # Desktop entries. otto-trash.desktop is the Trash window — otto-files behind
 # its own entry, so it gets its own icon in the dock and the applications

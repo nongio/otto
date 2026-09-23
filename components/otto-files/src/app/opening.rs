@@ -302,7 +302,7 @@ impl Browser {
         }
     }
 
-    /// Hand a file to whatever the desktop opens that type with.
+    /// Hand a file — or a URL — to whatever the desktop opens it with.
     ///
     /// `xdg-open` rather than resolving the association here: it is the
     /// desktop's own answer to this question, it already knows about
@@ -312,9 +312,9 @@ impl Browser {
     ///
     /// Detached, like a new window: stdio closed and reaped on a thread of its
     /// own, so the application outlives the browser that started it.
-    pub(super) fn open_in_default_app(&mut self, path: &Path) {
+    pub(super) fn open_in_default_app(&mut self, target: impl AsRef<std::ffi::OsStr>) {
         let spawned = std::process::Command::new("xdg-open")
-            .arg(path)
+            .arg(target)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

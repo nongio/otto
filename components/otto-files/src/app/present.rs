@@ -230,6 +230,9 @@ impl FilesApp {
             {
                 let mut browser = state.lock().unwrap();
                 browser.finish_peek(generation, anchor, name, preview, video);
+                if let Some(session) = browser.peek.as_mut() {
+                    session.dir = path.parent().map(Path::to_path_buf);
+                }
                 if needs_recognising {
                     browser.begin_reading(path.clone());
                     browser.start_peek_recognising(generation);

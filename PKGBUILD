@@ -1,12 +1,12 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-bin
-pkgver=1.4.0
+pkgver=1.4.1
 # Cargo's version (names the release tarball) and the git tag. They differ
 # from pkgver for a prerelease: '-' is illegal in pkgver, and pacman sorts
 # a '~' suffix *after* the plain version rather than before it.
-_ver=1.4.0
-_tag=v1.4.0
+_ver=1.4.1
+_tag=v1.4.1
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 url="https://github.com/nongio/otto"
@@ -14,7 +14,7 @@ license=("MIT")
 arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
-depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "gstreamer" "gst-plugins-base-libs")
+depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs")
 optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files")
 source=("https://github.com/nongio/otto/releases/download/$_tag/otto-$_ver-x86_64.tar.gz")
 sha256sums=("SKIP")
@@ -46,6 +46,7 @@ package() {
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"
     # Peek's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
+    install -Dm755 resources/bin/otto-look "$pkgdir/usr/bin/otto-look"
     install -Dm755 target/release/xdg-desktop-portal-otto "$pkgdir/usr/libexec/xdg-desktop-portal-otto"
     
     # Install documentation

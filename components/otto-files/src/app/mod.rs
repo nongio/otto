@@ -415,10 +415,10 @@ struct Browser {
     /// per document: it reads the whole file, so a second would be the same
     /// work for the same answer.
     peek_text_asked: bool,
-    /// Whether the cursor is the text beam because the pointer is over a
-    /// recognised word on the panel. Tracked so the shape is set on the
+    /// The cursor shape the panel last set: the hand over a link, the text
+    /// beam over a recognised word. Tracked so the shape is set on the
     /// crossing rather than on every motion event.
-    peek_text_cursor: bool,
+    peek_cursor: CursorShape,
     /// Pictures the background recognition pass has already considered in
     /// this window, whatever it decided.
     ocr_seen: std::collections::HashSet<PathBuf>,

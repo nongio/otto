@@ -3670,8 +3670,8 @@ fn draw_preview_stage(
                 first_row,
                 // The docked column is a glance, not a viewer: zooming
                 // belongs to Peek, which is the panel the user
-                // opened deliberately.
-                otto_kit::preview::Zoom::FIT,
+                // opened deliberately. A document shows its top.
+                otto_kit::preview::Zoom::resting(preview),
                 &|name, size| icons::cached_icon_chain_at(&[name], size, icons::FULL_COLOUR_SIZE),
             );
             stroke_image_frame(canvas, theme, stage, preview, first_row);

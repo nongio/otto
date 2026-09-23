@@ -31,6 +31,7 @@ install_debian() {
         libpipewire-0.3-dev \
         libfreetype-dev \
         libfontconfig-dev \
+        fonts-inter \
         libegl1-mesa-dev \
         libgl1-mesa-dev \
         libgles2-mesa-dev \
@@ -84,6 +85,7 @@ install_redhat() {
         pipewire-devel \
         freetype-devel \
         fontconfig-devel \
+        rsms-inter-fonts \
         mesa-libEGL-devel \
         mesa-libGL-devel \
         at-spi2-core
@@ -103,6 +105,7 @@ install_arch() {
         pipewire \
         freetype \
         fontconfig \
+        inter-font \
         mesa-libEGL \
         mesa-libGL \
         at-spi2-core

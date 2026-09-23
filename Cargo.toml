@@ -222,7 +222,7 @@ laye-rs = { git = "https://github.com/nongio/layers", branch = "feat/blur-cache"
 ] }
 
 [workspace.package]
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
 license = "MIT"
@@ -264,6 +264,7 @@ assets = [
     # name. Kept as a link by preserve-symlinks.
     ["resources/bin/otto-ask", "usr/bin/", "777"],
     ["target/release/otto-media-worker", "usr/bin/", "755"],
+    ["resources/bin/otto-look", "usr/bin/", "755"],
     ["target/release/otto-greeter", "usr/bin/", "755"],
     ["target/release/otto-rdp", "usr/bin/", "755"],
     ["target/release/xdg-desktop-portal-otto", "usr/libexec/", "755"],
@@ -312,7 +313,7 @@ post_install_script = "ln -sf otto-launcher /usr/bin/otto-ask"
 post_uninstall_script = "if [ \"$1\" -eq 0 ]; then rm -f /usr/bin/otto-ask; fi"
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
-version = "1.4.0"
+version = "1.4.1"
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
     { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },
@@ -324,6 +325,7 @@ assets = [
     { source = "target/release/otto-msg", dest = "/usr/bin/otto-msg", mode = "755" },
     { source = "target/release/otto-agents", dest = "/usr/bin/otto-agents", mode = "755" },
     { source = "target/release/otto-media-worker", dest = "/usr/bin/otto-media-worker", mode = "755" },
+    { source = "resources/bin/otto-look", dest = "/usr/bin/otto-look", mode = "755" },
     { source = "resources/otto-files.desktop", dest = "/usr/share/applications/otto-files.desktop", mode = "644" },
     { source = "resources/otto-settings.desktop", dest = "/usr/share/applications/otto-settings.desktop", mode = "644" },
     { source = "resources/otto-trash.desktop", dest = "/usr/share/applications/otto-trash.desktop", mode = "644" },
@@ -386,6 +388,7 @@ freetype = "*"
 fontconfig = "*"
 pixman = "*"
 google-noto-sans-fonts = "*"
+rsms-inter-fonts = "*"
 wireplumber = "*"
 
 [package.metadata.aur]
@@ -403,6 +406,7 @@ depends = [
     "fontconfig",
     "pixman",
     "noto-fonts",
+    "inter-font",
     "wireplumber",
     "gstreamer",
     "gst-plugins-base-libs",
@@ -439,6 +443,7 @@ files = [
     ["resources/plugins/otto/skills/otto-help/references/**/*", "/usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
     ["target/release/otto-media-worker", "/usr/bin/otto-media-worker", "755"],
+    ["resources/bin/otto-look", "/usr/bin/otto-look", "755"],
     ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],
     ["README.md", "/usr/share/doc/otto/README.md", "644"],
     ["LICENSE", "/usr/share/licenses/otto/LICENSE", "644"],

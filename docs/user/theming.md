@@ -180,6 +180,31 @@ German, English (GB and US), Spanish, French, Italian, Japanese, Polish,
 Portuguese (Brazil), Russian, Ukrainian and Simplified Chinese; anything else
 falls back to English.
 
+## Looks
+
+A look is a set of wallpaper, icon theme, cursor theme and settings (dock
+position and tint included) that belong together. `otto-look` installs one and
+applies it to the running session:
+
+```sh
+otto-look list                 # the published looks
+otto-look ember                # the latest version of Ember
+otto-look ember@1              # a given version
+otto-look ./my-look            # a look of your own: a folder holding look.toml,
+otto-look ./my-look.tar.gz     # that folder packed,
+otto-look https://example.org/looks/mine/look.toml   # or either one online
+```
+
+Published looks come from
+[nongio/otto-looks](https://github.com/nongio/otto-looks), each one a package
+checked against its digest. The wallpaper goes in
+`~/.local/share/backgrounds/otto-looks/`, and the settings apply at once and
+survive a restart. A theme that is not
+installed yet is downloaded from its makers, checked against the sha256 in the
+look, and installed for you alone, in `~/.local/share/icons`. `otto-look` never
+uses sudo. It needs `curl`, `tar`, `gzip`, `sha256sum` and `busctl`, plus `unzip` for a
+theme shipped as a zip, and prints the credits for each piece when it's done.
+
 ## A worked example
 
 A dark HiDPI setup:

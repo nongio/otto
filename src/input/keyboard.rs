@@ -118,6 +118,25 @@ pub fn app_switcher_hold_is_active(hold: Option<ModifiersState>, current: Modifi
     }
 }
 
+/// Whether `action` still fires while a modal layer surface holds the keyboard.
+///
+/// These are the shortcuts whose UI draws above the overlay layer — the app
+/// switcher, and the OSD for volume and brightness — so using them never
+/// leaves something hidden behind the modal.
+fn shows_above_modal_layers(action: &KeyAction) -> bool {
+    matches!(
+        action,
+        KeyAction::ApplicationSwitchNext
+            | KeyAction::ApplicationSwitchPrev
+            | KeyAction::ApplicationSwitchNextWindow
+            | KeyAction::VolumeUp
+            | KeyAction::VolumeDown
+            | KeyAction::VolumeMute
+            | KeyAction::BrightnessUp
+            | KeyAction::BrightnessDown
+    )
+}
+
 pub fn process_keyboard_shortcut(
     config: &Config,
     modifiers: ModifiersState,
@@ -283,7 +302,17 @@ impl<BackendData: Backend> Otto<BackendData> {
             return KeyAction::None;
         }
 
-        for layer in self.layer_shell_state.layer_surfaces().rev() {
+        // An open app switcher owns the keys until its modifier is released —
+        // the Tab that advances it and the release that commits it — even
+        // over a modal layer surface. Committing focuses a window, and a modal
+        // that loses the keyboard (the launcher) closes, so the switcher,
+        // being the later of the two, wins.
+        let modal_layers = if self.workspaces.app_switcher.alive() {
+            Vec::new()
+        } else {
+            self.layer_shell_state.layer_surfaces().rev().collect()
+        };
+        for layer in modal_layers {
             let data = with_states(layer.wl_surface(), |states| {
                 *states
                     .cached_state
@@ -300,11 +329,61 @@ impl<BackendData: Backend> Otto<BackendData> {
                 });
                 if let Some(surface) = surface {
                     keyboard.set_focus(self, Some(surface.into()), serial);
-                    keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
-                        FilterResult::Forward
-                    });
+                    // Every key is the surface's except the few shortcuts that
+                    // show something above it: the app switcher, and the
+                    // volume and brightness keys with their OSD.
+                    let mut suppressed_keys = self.suppressed_keys.clone();
+                    let mut pressed_modifiers = None;
+                    let action = keyboard
+                        .input(
+                            self,
+                            keycode,
+                            state,
+                            serial,
+                            time,
+                            |_, modifiers, handle| {
+                                let keysym = handle.modified_sym();
+                                if let KeyState::Pressed = state {
+                                    let action = Config::with(|config| {
+                                        let modifiers = shortcut_modifiers(
+                                            *modifiers,
+                                            cmd_held,
+                                            cmd_is_ctrl(config),
+                                        );
+                                        process_keyboard_shortcut(config, modifiers, keysym)
+                                    })
+                                    .filter(shows_above_modal_layers);
+                                    match action {
+                                        Some(action) => {
+                                            suppressed_keys.push(keysym);
+                                            pressed_modifiers = Some(*modifiers);
+                                            FilterResult::Intercept(action)
+                                        }
+                                        None => FilterResult::Forward,
+                                    }
+                                } else if suppressed_keys.contains(&keysym) {
+                                    suppressed_keys.retain(|k| *k != keysym);
+                                    FilterResult::Intercept(KeyAction::None)
+                                } else {
+                                    FilterResult::Forward
+                                }
+                            },
+                        )
+                        .unwrap_or(KeyAction::None);
+                    if let Some(modifiers) = pressed_modifiers.filter(|_| {
+                        matches!(
+                            action,
+                            KeyAction::ApplicationSwitchNext
+                                | KeyAction::ApplicationSwitchPrev
+                                | KeyAction::ApplicationSwitchNextWindow
+                        )
+                    }) {
+                        self.app_switcher_hold_modifiers =
+                            capture_app_switcher_hold_modifiers(modifiers);
+                    }
+                    self.suppressed_keys = suppressed_keys;
                     self.current_modifiers = keyboard.modifier_state();
-                    return KeyAction::None;
+                    return action;
                 };
             }
         }
