@@ -191,6 +191,9 @@ settings-key-combination = キーの組み合わせ
 # Alt, Shift, Logo or Ctrl+Shift+Return.
 settings-key-combination-detail = Ctrl、Alt、Shift、Logo を + でつなぎ、最後にキーを1つ：Ctrl+Shift+Return
 settings-key-combination-unassigned = 未設定
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = キーを押してください…
 
 
 ## Settings — Trackpad & Mouse
@@ -660,6 +663,21 @@ files-undo-new-folder-with-selection = 選択項目から新規フォルダ
 # whether seconds show is a user setting, and it changes how often the bar
 # redraws.
 bar-clock-format = %-m月%-d日(%a)  %H:%M
+
+## Top bar — battery
+
+bar-battery-percent = バッテリー { $percent }%
+bar-battery-remaining = バッテリー { $percent }% — 残り { $time }
+bar-battery-charging-time = バッテリー { $percent }% — 満充電まで { $time }
+bar-battery-full = バッテリー { $percent }% — 充電完了
+bar-battery-charging = バッテリー { $percent }% — 充電中
+bar-battery-plugged = バッテリー { $percent }% — 電源接続中、充電していません
+bar-cpu-frequency = CPU 平均 { $avg } GHz、最大 { $max } GHz
+bar-cpu-governor = ガバナー: { $governor }
+bar-power-saver = 省電力
+bar-power-balanced = バランス
+bar-power-performance = パフォーマンス
+bar-power-settings = 電源設定…
 
 
 ## Settings — widgets

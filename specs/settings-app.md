@@ -46,7 +46,7 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 - Activating a toggle from the keyboard does what clicking it does, including
   for a toggle the compositor has no setting for. Activating a text row starts
   an in-place edit with the caret at the end of the current text.
-- A shortcut line is three controls on one line rather than one, so it is
+- A shortcut line is four controls on one line rather than one, so it is
   neither described nor stopped on yet: announcing it as a single thing would
   misdescribe what is there. A pop-up can be focused but not opened from the
   keyboard, because its menu has no keyboard navigation.
@@ -459,9 +459,18 @@ pane.
 
 ### Shortcuts
 
-The keyboard pane lists every shortcut with its action. Recording a new
-shortcut captures the next key combination pressed, including modifiers, while
-suppressing that combination from reaching the rest of the system.
+The keyboard pane lists every shortcut with its action. A combination can be
+typed into its field, or recorded: the record button beside the field puts the
+line in a listening state, where the field shows the modifiers held so far and
+the next non-modifier key completes the combination, written the way the
+compositor's trigger parser reads it (`Ctrl+Shift+q`, `Logo+Return`).
+
+While a line listens, the app holds a `zwp_keyboard_shortcuts_inhibit_v1`
+inhibitor on its window, so the compositor's own shortcuts reach it instead of
+firing, and otto-kit's Tab focus and Cmd+W close step aside too. Escape on its
+own backs out without a change, Backspace on its own clears the line, and a
+click anywhere else, the record button again, or the window losing the
+keyboard stops listening.
 
 If a captured combination is already bound, the conflict is shown and the user
 chooses whether to reassign it. Reassigning clears the previous binding. A

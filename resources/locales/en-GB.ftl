@@ -194,6 +194,9 @@ settings-key-combination = Key combination
 settings-key-combination-detail = Ctrl, Alt, Shift or Logo joined by +, then one key: Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = Unassigned
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = Press keys…
 
 
 ## Settings — Trackpad & Mouse
@@ -682,6 +685,28 @@ files-month-dec = Dec
 # whether seconds show is a user setting, and it changes how often the bar
 # redraws.
 bar-clock-format = %A %-d %B  %H:%M
+
+## Top bar — battery
+
+# The battery indicator's menu. $percent is a whole number.
+bar-battery-percent = Battery { $percent }%
+# $time is a duration written as hours:minutes, e.g. 2:14.
+bar-battery-remaining = Battery { $percent }% — { $time } remaining
+bar-battery-charging-time = Battery { $percent }% — { $time } until full
+bar-battery-full = Battery { $percent }% — fully charged
+bar-battery-charging = Battery { $percent }% — charging
+# On the charger, but held at a charge limit or waiting to start.
+bar-battery-plugged = Battery { $percent }% — plugged in, not charging
+# $avg and $max are frequencies in GHz, already rounded, e.g. 2.80.
+bar-cpu-frequency = CPU { $avg } GHz average, { $max } GHz peak
+# $governor is the kernel's own name for the policy, e.g. powersave.
+bar-cpu-governor = Governor: { $governor }
+# The power-profiles-daemon profiles, which are the same three everywhere.
+bar-power-saver = Power Saver
+bar-power-balanced = Balanced
+bar-power-performance = Performance
+# Last entry in the battery menu.
+bar-power-settings = Power Settings…
 
 
 ## Settings — widgets

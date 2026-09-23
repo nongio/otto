@@ -19,7 +19,8 @@ use crate::model::{group, untitled, Control, Pane, Row};
 /// `Screen` and `Workspace` are missing because they are the two that need an
 /// `index` alongside the name, which a pop-up button cannot carry. So are the
 /// `run` and `open_default` forms, which are a command line rather than a
-/// choice.
+/// choice. A line loaded with one of those shows it as the compositor
+/// describes it (`Workspace 2`, `run kitty`); its pop-up offers only these.
 const BUILTIN_ACTIONS: &[&str] = &[
     "ApplicationSwitchNext",
     "ApplicationSwitchNextWindow",
@@ -28,22 +29,40 @@ const BUILTIN_ACTIONS: &[&str] = &[
     "BrightnessDown",
     "BrightnessUp",
     "CloseWindow",
+    "EqualizeContainer",
     "ExposeShowAll",
     "ExposeShowDesktop",
+    "FloatingToggle",
+    "FocusDown",
+    "FocusLeft",
+    "FocusModeToggle",
+    "FocusRight",
+    "FocusUp",
     "LockSession",
     "MediaNext",
     "MediaPlayPause",
     "MediaPrev",
     "MediaStop",
+    "MoveContainerDown",
+    "MoveContainerLeft",
+    "MoveContainerRight",
+    "MoveContainerUp",
     "Quit",
+    "ResizeGrowHeight",
+    "ResizeGrowWidth",
+    "ResizeShrinkHeight",
+    "ResizeShrinkWidth",
     "RotateOutput",
     "ScaleDown",
     "ScaleUp",
     "SceneSnapshot",
     "SkpSnapshot",
+    "SplitHorizontal",
+    "SplitVertical",
     "TileWindowLeft",
     "TileWindowRight",
     "ToggleDecorations",
+    "TilingToggle",
     "ToggleMaximizeWindow",
     "VolumeDown",
     "VolumeMute",
@@ -55,7 +74,7 @@ const BUILTIN_ACTIONS: &[&str] = &[
 /// A cap rather than an open list because every line's action pop-up needs a
 /// `DropdownMenu`, and a `DropdownMenu` can only be built at window setup —
 /// see `main.rs`. The pool is that size, so the list is too.
-pub const MAX_SHORTCUTS: usize = 24;
+pub const MAX_SHORTCUTS: usize = 96;
 
 /// One shortcut line: the action it runs and the combination that triggers it.
 #[derive(Clone)]
@@ -73,8 +92,9 @@ static SHORTCUTS: OnceLock<RwLock<Vec<Shortcut>>> = OnceLock::new();
 
 fn shortcuts() -> &'static RwLock<Vec<Shortcut>> {
     SHORTCUTS.get_or_init(|| {
-        // The set the shipped `otto_config.example.toml` binds. Nothing reads
-        // the user's own config yet — see the module docs on the group below.
+        // The set the shipped `otto_config.example.toml` binds, for when the
+        // compositor cannot be asked — offline, or one without
+        // `ListShortcuts`. Otherwise [`load`] replaces it at startup.
         RwLock::new(
             [
                 ("Quit", "Ctrl+Esc"),
@@ -96,6 +116,24 @@ fn shortcuts() -> &'static RwLock<Vec<Shortcut>> {
             .collect(),
         )
     })
+}
+
+/// Replace the lines with the shortcuts the compositor has in force.
+///
+/// Anything past [`MAX_SHORTCUTS`] is dropped, since the pane has no pop-up
+/// for it; the compositor still honours it.
+pub fn load(pairs: Vec<(String, String)>) {
+    if pairs.len() > MAX_SHORTCUTS {
+        eprintln!(
+            "{} shortcuts, showing the first {MAX_SHORTCUTS}",
+            pairs.len()
+        );
+    }
+    *shortcuts().write().unwrap() = pairs
+        .into_iter()
+        .take(MAX_SHORTCUTS)
+        .map(|(keys, action)| Shortcut { action, keys })
+        .collect();
 }
 
 /// The lines as they stand, for a pane build or a draw.
@@ -165,6 +203,85 @@ pub fn set_keys(index: usize, keys: String) {
     if let Some(line) = shortcuts().write().unwrap().get_mut(index) {
         line.keys = keys;
     }
+}
+
+/// A line listening for its combination to be pressed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Recording {
+    pub index: usize,
+    /// The modifiers held so far, shown in the field until a key completes
+    /// the combination.
+    pub held: Modifiers,
+}
+
+/// The line listening for a combination, if any.
+///
+/// Process-wide for the same reason [`SHORTCUTS`] is, and so the draw can show
+/// the line listening without being handed the state.
+static RECORDING: RwLock<Option<Recording>> = RwLock::new(None);
+
+/// The line whose record button is listening, if any.
+pub fn recording() -> Option<Recording> {
+    *RECORDING.read().unwrap()
+}
+
+/// Start listening on `index`, or stop when `None`.
+pub fn set_recording(index: Option<usize>) {
+    *RECORDING.write().unwrap() = index.map(|index| Recording {
+        index,
+        held: Modifiers::default(),
+    });
+}
+
+/// Update the modifiers a listening line shows as held.
+pub fn set_held(held: Modifiers) {
+    if let Some(recording) = RECORDING.write().unwrap().as_mut() {
+        recording.held = held;
+    }
+}
+
+/// Held modifiers, in the order [`combination`] writes them.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub logo: bool,
+}
+
+impl Modifiers {
+    /// The modifiers as the leading part of a combination, `Ctrl+Shift+`,
+    /// which is what a listening field shows until a key completes it.
+    pub fn prefix(self) -> String {
+        [
+            (self.ctrl, "Ctrl"),
+            (self.alt, "Alt"),
+            (self.shift, "Shift"),
+            (self.logo, "Logo"),
+        ]
+        .into_iter()
+        .filter(|(held, _)| *held)
+        .map(|(_, name)| format!("{name}+"))
+        .collect()
+    }
+}
+
+/// A pressed combination written the way `parse_trigger` in
+/// `src/config/shortcuts.rs` reads it.
+///
+/// `key` is the xkb name of the keysym the press produced. Letters are
+/// written lower case: the compositor folds a letter's case before matching,
+/// and the shipped config spells them that way (`Ctrl+q`). Everything else
+/// keeps the name xkb gave it, since that is also what the compositor
+/// compares against — Shift+Tab arrives as `ISO_Left_Tab`, and a trigger
+/// written `Shift+Tab` would never match.
+pub fn combination(modifiers: Modifiers, key: &str) -> String {
+    let key = if key.len() == 1 && key.chars().all(|c| c.is_ascii_alphabetic()) {
+        key.to_ascii_lowercase()
+    } else {
+        key.to_string()
+    };
+    format!("{}{key}", modifiers.prefix())
 }
 
 /// The combination on a line, for opening its field on the value it shows.
@@ -239,11 +356,38 @@ pub fn build() -> Pane {
                     .id("input.xkb_options"),
                 ],
             ),
-            // Editable, but not persisted: `[keyboard_shortcuts]` is a table in
-            // the config file, and the settings contract has no identifier for
-            // a list. Adding, removing and retyping lines all work; nothing
-            // leaves the process.
+            // Read from the compositor's merged config, editable, but not
+            // persisted: `[keyboard_shortcuts]` is a table, and the settings
+            // contract has no identifier for a list. Adding, removing and
+            // retyping lines all work; nothing leaves the process.
             group(otto_kit::t!("settings-group-shortcuts"), shortcut_rows),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combination_matches_what_the_compositor_parses() {
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(combination(ctrl_shift, "Q"), "Ctrl+Shift+q");
+        assert_eq!(
+            combination(ctrl_shift, "ISO_Left_Tab"),
+            "Ctrl+Shift+ISO_Left_Tab"
+        );
+        assert_eq!(combination(Modifiers::default(), "Prior"), "Prior");
+        let all = Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            logo: true,
+        };
+        assert_eq!(combination(all, "Return"), "Ctrl+Alt+Shift+Logo+Return");
     }
 }

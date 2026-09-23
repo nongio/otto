@@ -21,5 +21,27 @@ launcher-ask-cancelled = Canceled
 # 12-hour clock, month before day.
 bar-clock-format = %A, %B %-d  %-I:%M %p
 
+## Top bar — battery
+
+# The battery indicator's menu. $percent is a whole number.
+bar-battery-percent = Battery { $percent }%
+# $time is a duration written as hours:minutes, e.g. 2:14.
+bar-battery-remaining = Battery { $percent }% — { $time } remaining
+bar-battery-charging-time = Battery { $percent }% — { $time } until full
+bar-battery-full = Battery { $percent }% — fully charged
+bar-battery-charging = Battery { $percent }% — charging
+# On the charger, but held at a charge limit or waiting to start.
+bar-battery-plugged = Battery { $percent }% — plugged in, not charging
+# $avg and $max are frequencies in GHz, already rounded, e.g. 2.80.
+bar-cpu-frequency = CPU { $avg } GHz average, { $max } GHz peak
+# $governor is the kernel's own name for the policy, e.g. powersave.
+bar-cpu-governor = Governor: { $governor }
+# The power-profiles-daemon profiles, which are the same three everywhere.
+bar-power-saver = Power Saver
+bar-power-balanced = Balanced
+bar-power-performance = Performance
+# Last entry in the battery menu.
+bar-power-settings = Power Settings…
+
 # Month before day, and a comma after it.
 files-date-modified = { $month } { $day }, { $year } at { $time }

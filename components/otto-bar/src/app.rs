@@ -1,6 +1,6 @@
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::{
-    components::context_menu::ContextMenu,
+    components::context_menu::{ContextMenu, MenuRefresh},
     components::menu_item::{MenuItem as KitMenuItem, MenuItemIcon},
     protocols::otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity},
     surfaces::LayerShellSurface,
@@ -27,6 +27,8 @@ use crate::bar::{LeftPanel, RightPanel};
 const MENUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0000);
 /// The clock's.
 const CLOCK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0001);
+/// The battery indicator's.
+const BATTERY: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0002);
 
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
@@ -56,6 +58,22 @@ struct OpenMenu {
     menu: ContextMenu,
     /// Tray item index that owns this menu.
     tray_index: usize,
+    /// Which item's menu this is — how a refetched layout finds it. The
+    /// index alone is not enough: it shifts when another item registers.
+    service: String,
+    item_path: String,
+    /// id → label for resolving stale IDs at activation. Shared with the
+    /// click handler so a refresh can swap it along with the items.
+    id_labels: std::rc::Rc<std::cell::RefCell<HashMap<i32, String>>>,
+}
+
+/// The battery's menu while it is open.
+struct PowerMenu {
+    menu: ContextMenu,
+    /// The frequencies as they were when the menu opened. A refresh keeps
+    /// these rather than re-reading: a number that twitches under the cursor
+    /// every few seconds is harder to read than one that is a moment old.
+    cpu: crate::power::Cpu,
 }
 
 /// Tracks an open app menu popup from the left panel.
@@ -76,6 +94,8 @@ pub struct TopBarApp {
     last_tray_gen: u64,
     last_focus_gen: u64,
     last_appmenu_gen: u64,
+    last_power_gen: u64,
+    last_menu_gen: u64,
     /// Currently open tray context menu (only one at a time).
     open_menu: Option<OpenMenu>,
     /// Tray index awaiting an async dbusmenu fetch (keeps active highlight).
@@ -84,6 +104,8 @@ pub struct TopBarApp {
     open_app_menu: Option<OpenAppMenu>,
     /// Left panel item index awaiting an async submenu fetch.
     pending_app_menu_index: Option<usize>,
+    /// The power menu, when the battery indicator has one open.
+    open_power_menu: Option<PowerMenu>,
 }
 
 impl TopBarApp {
@@ -99,10 +121,13 @@ impl TopBarApp {
             last_tray_gen: 0,
             last_focus_gen: 0,
             last_appmenu_gen: 0,
+            last_power_gen: 0,
+            last_menu_gen: 0,
             open_menu: None,
             pending_menu_index: None,
             open_app_menu: None,
             pending_app_menu_index: None,
+            open_power_menu: None,
         }
     }
 
@@ -254,11 +279,18 @@ impl TopBarApp {
         let mp = pending.menu_path.clone();
 
         // Build id→label map for resolving stale IDs at activation time
-        let id_labels = build_id_label_map(&pending.layout.items);
+        let id_labels = std::rc::Rc::new(std::cell::RefCell::new(build_id_label_map(
+            &pending.layout.items,
+        )));
+        let labels_for_click = id_labels.clone();
 
         let menu = ContextMenu::new(kit_items).on_item_click(move |action_id| {
             if let Ok(id) = action_id.parse::<i32>() {
-                let label = id_labels.get(&id).cloned().unwrap_or_default();
+                let label = labels_for_click
+                    .borrow()
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_default();
                 crate::tray::activate_menu_item(&svc, &mp, id, &label);
             }
         });
@@ -299,7 +331,13 @@ impl TopBarApp {
             // Grab keyboard focus on the layer surface for arrow-key navigation
             surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
 
-            self.open_menu = Some(OpenMenu { menu, tray_index });
+            self.open_menu = Some(OpenMenu {
+                menu,
+                tray_index,
+                service: pending.service,
+                item_path: pending.item_path,
+                id_labels,
+            });
         }
     }
 
@@ -368,9 +406,171 @@ impl TopBarApp {
         }
     }
 
+    /// Close the power menu, if one is open.
+    fn close_power_menu(&mut self) {
+        if let Some(open) = self.open_power_menu.take() {
+            open.menu.hide_animated();
+        }
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+        if self.right.battery_active {
+            self.right.battery_active = false;
+            self.redraw_right();
+        }
+    }
+
+    /// Show the battery's menu, with the CPU's frequencies as they are now.
+    fn show_power_menu(&mut self, cpu: crate::power::Cpu) {
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
+        let items = power_menu_items(&cpu);
+        if items.is_empty() {
+            return;
+        }
+
+        let menu = ContextMenu::new(items).on_item_click(move |action_id| {
+            if let Some(id) = action_id.strip_prefix("profile:") {
+                crate::power::activate_profile(id);
+            } else if action_id == "settings" {
+                let cfg = battery_config();
+                if let Some((program, args)) = cfg.settings_command.split_first() {
+                    use std::os::unix::process::CommandExt;
+                    // Detached into its own process group with no stdio, and
+                    // reaped on a thread so each launch does not leave a
+                    // zombie behind until the bar exits.
+                    let spawned = std::process::Command::new(program)
+                        .args(args)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .process_group(0)
+                        .spawn();
+                    match spawned {
+                        Ok(mut child) => {
+                            std::thread::spawn(move || {
+                                let _ = child.wait();
+                            });
+                        }
+                        Err(e) => tracing::warn!("battery.settings_command: {e}"),
+                    }
+                }
+            }
+        });
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+
+        if let Some((ix, iy, iw, ih)) = self.right.battery_rect() {
+            positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        } else {
+            return;
+        }
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_power_menu = Some(PowerMenu { menu, cpu });
+        self.right.battery_active = true;
+        self.redraw_right();
+    }
+
+    /// The battery or a profile changed under an open power menu: move the
+    /// tick, update the charge line.
+    fn refresh_power_menu(&mut self) {
+        let Some(open) = self.open_power_menu.as_ref() else {
+            return;
+        };
+        // The governor is re-read — a profile switch changes it, and the line
+        // saying "powersave" under a tick on Performance would contradict
+        // itself. Only the frequencies keep their snapshot.
+        let mut cpu = crate::power::cpu();
+        cpu.avg_ghz = open.cpu.avg_ghz;
+        cpu.max_ghz = open.cpu.max_ghz;
+        cpu.cores = open.cpu.cores;
+
+        match open.menu.refresh(power_menu_items(&cpu)) {
+            MenuRefresh::Redrawn | MenuRefresh::NotShown => {}
+            // A line appeared or went — the time estimate arriving after the
+            // cable moved, say. Reopen at the new size, where it was.
+            MenuRefresh::Resized => {
+                let snapshot = open.cpu.clone();
+                self.close_power_menu();
+                self.show_power_menu(snapshot);
+            }
+        }
+    }
+
+    /// A tray item refetched its menu. If it is the one open, show the new
+    /// items in place; the refetch already refreshed the cache for next time.
+    fn refresh_tray_menu(&mut self, pending: crate::tray::PendingMenu) {
+        let Some(open) = self.open_menu.as_ref() else {
+            return;
+        };
+        if open.service != pending.service || open.item_path != pending.item_path {
+            return;
+        }
+
+        let items = convert_dbusmenu_items(&pending.layout.items);
+        if items.is_empty() {
+            // The applet emptied its menu. Nothing left to show.
+            self.close_menu();
+            return;
+        }
+        *open.id_labels.borrow_mut() = build_id_label_map(&pending.layout.items);
+
+        let outcome = open.menu.refresh(items);
+        tracing::debug!("tray menu of {} refreshed: {outcome:?}", pending.service);
+        match outcome {
+            MenuRefresh::Redrawn | MenuRefresh::NotShown => {}
+            // The list grew or shrank — a network appeared. A popup cannot
+            // change size in place, so it is shown again at the new one, in
+            // the same spot.
+            MenuRefresh::Resized => {
+                let tray_index = open.tray_index;
+                self.close_menu();
+                self.right.tray_menu_state.set_active(Some(tray_index));
+                self.show_pending_menu(pending, tray_index);
+            }
+        }
+    }
+
     /// Handle a click on the right panel (tray icons).
     fn handle_right_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
+
+        // The battery owns its slice of the panel, so a click there is never
+        // also a click on the tray icon beside it.
+        if self.right.battery_at(x) {
+            let was_open = self.open_power_menu.is_some();
+            self.close_menu();
+            self.close_power_menu();
+            if !was_open && battery_config().menu {
+                self.show_power_menu(crate::power::cpu());
+            }
+            return;
+        }
+        self.close_power_menu();
+
         let hit = self.right.tray_item_at(x);
 
         if let Some(index) = hit {
@@ -520,6 +720,7 @@ impl App for TopBarApp {
         crate::tray::spawn_tray_watcher();
         crate::focus::spawn_focus_watcher();
         crate::appmenu::spawn_appmenu_registrar();
+        crate::power::spawn_power_watcher();
 
         Ok(())
     }
@@ -568,6 +769,15 @@ impl App for TopBarApp {
             return;
         }
 
+        // Forward to the power menu: Escape closes it, arrows move through it.
+        if let Some(ref mut open) = self.open_power_menu {
+            open.menu.handle_key(key, state);
+            if !open.menu.is_visible() {
+                self.close_power_menu();
+            }
+            return;
+        }
+
         // Forward to open app menu
         if let Some(ref mut open) = self.open_app_menu {
             open.menu.handle_key(key, state);
@@ -602,6 +812,9 @@ impl App for TopBarApp {
         }
         if self.open_app_menu.is_some() {
             self.close_app_menu();
+        }
+        if self.open_power_menu.is_some() {
+            self.close_power_menu();
         }
     }
 
@@ -680,6 +893,26 @@ impl App for TopBarApp {
                 |node| {
                     node.set_label(label);
                     node.add_action(Action::Click);
+                },
+            );
+        }
+
+        // The battery is a button, because clicking it opens a menu — and it
+        // reads as a percentage, not as a picture of a battery.
+        if let Some((x, y, w, h)) = self.right.battery_rect() {
+            let label = battery_label();
+            tree.control(
+                BATTERY,
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(label);
+                    node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                    node.add_action(Action::Click);
+                    // Announced as it changes, like the clock: a battery
+                    // reaching 10% is worth hearing without asking.
+                    node.set_live(otto_kit::accessibility::Live::Polite);
                 },
             );
         }
@@ -767,10 +1000,45 @@ impl App for TopBarApp {
             self.close_app_menu();
             dirty = true;
         }
+        let power_menu_gone = self
+            .open_power_menu
+            .as_ref()
+            .is_some_and(|m| !m.menu.is_visible());
+        if power_menu_gone {
+            self.close_power_menu();
+            dirty = true;
+        }
 
         // Check if clock text changed
         if self.right.clock.tick() {
             dirty = true;
+        }
+
+        // The battery moved, or the cable went in or out.
+        let power_gen = crate::power::generation();
+        if power_gen != self.last_power_gen {
+            self.last_power_gen = power_gen;
+            self.refresh_power_menu();
+            dirty = true;
+        }
+
+        // A tray item refetched its menu because the applet changed it.
+        let menu_gen = crate::tray::menu_generation();
+        if menu_gen != self.last_menu_gen {
+            self.last_menu_gen = menu_gen;
+            // Several may have landed since the last wake; only the newest
+            // for the open menu matters.
+            let latest = crate::tray::take_pending_refreshes()
+                .into_iter()
+                .rev()
+                .find(|r| {
+                    self.open_menu
+                        .as_ref()
+                        .is_some_and(|o| o.service == r.service && o.item_path == r.item_path)
+                });
+            if let Some(pending) = latest {
+                self.refresh_tray_menu(pending);
+            }
         }
 
         // Check if tray items changed (also bumped when pending menu arrives)
@@ -903,6 +1171,108 @@ impl App for TopBarApp {
             }
         }
     }
+}
+
+/// The battery's state in words: the menu's first line and what a screen
+/// reader calls the indicator.
+fn battery_label() -> String {
+    let battery = crate::power::battery();
+    let percent = battery.percentage.round();
+    match (
+        battery.state,
+        crate::power::format_duration(battery.seconds_left),
+    ) {
+        (crate::power::ChargeState::Charging, Some(time)) => {
+            otto_kit::t_owned!("bar-battery-charging-time", percent = percent, time = time)
+        }
+        (crate::power::ChargeState::Discharging, Some(time)) => {
+            otto_kit::t_owned!("bar-battery-remaining", percent = percent, time = time)
+        }
+        (crate::power::ChargeState::Full, _) => {
+            otto_kit::t_owned!("bar-battery-full", percent = percent)
+        }
+        // Charging, but UPower has not worked out how long for yet: say it is
+        // charging rather than show a bare percentage, which reads as on
+        // battery.
+        (crate::power::ChargeState::Charging, None) => {
+            otto_kit::t_owned!("bar-battery-charging", percent = percent)
+        }
+        (crate::power::ChargeState::Plugged, _) => {
+            otto_kit::t_owned!("bar-battery-plugged", percent = percent)
+        }
+        // No estimate yet on battery: UPower reports zero for a while after
+        // the cable moves, and an empty "— remaining" reads as a bug.
+        _ => otto_kit::t_owned!("bar-battery-percent", percent = percent),
+    }
+}
+
+/// The battery menu's items. `cpu` is passed in rather than read here so a
+/// refresh can keep the frequencies the menu opened with.
+fn power_menu_items(cpu: &crate::power::Cpu) -> Vec<KitMenuItem> {
+    let cfg = battery_config();
+    let mut items: Vec<KitMenuItem> = Vec::new();
+
+    if cfg.show_battery_info {
+        items.push(KitMenuItem::action(battery_label()).disabled());
+    }
+
+    if cfg.show_cpu_info {
+        if cpu.cores > 0 {
+            items.push(
+                KitMenuItem::action(otto_kit::t_owned!(
+                    "bar-cpu-frequency",
+                    avg = crate::power::format_ghz(cpu.avg_ghz),
+                    max = crate::power::format_ghz(cpu.max_ghz)
+                ))
+                .disabled(),
+            );
+        }
+        if let Some(governor) = cpu.governor.as_deref() {
+            items.push(
+                KitMenuItem::action(otto_kit::t_owned!(
+                    "bar-cpu-governor",
+                    governor = governor.to_string()
+                ))
+                .disabled(),
+            );
+        }
+    }
+
+    let profiles = crate::power::profiles();
+    if !profiles.entries.is_empty() {
+        if !items.is_empty() {
+            items.push(KitMenuItem::separator());
+        }
+        let selectable = profiles.backend != crate::power::Backend::ReadOnly;
+        for profile in &profiles.entries {
+            let mut item = KitMenuItem::action(&profile.label)
+                .with_action_id(format!("profile:{}", profile.id));
+            if profile.active {
+                // The check column is how a menu says "this one", and it
+                // keeps the labels aligned whether or not one is ticked.
+                item = item.with_icon(MenuItemIcon::Named("object-select-symbolic".into()));
+            }
+            if !selectable {
+                // Nothing on this machine can switch — power-profiles-daemon
+                // is absent or masked, and no commands are configured. The
+                // list still says what the CPU is set to.
+                item = item.disabled();
+            }
+            items.push(item);
+        }
+    }
+
+    if !cfg.settings_command.is_empty() {
+        if !items.is_empty() {
+            items.push(KitMenuItem::separator());
+        }
+        items.push(
+            KitMenuItem::action(otto_kit::t!("bar-power-settings"))
+                .with_action_id("settings".to_string()),
+        );
+    }
+
+    items
 }
 
 /// Build a map from dbusmenu item id → label (raw, with mnemonics).

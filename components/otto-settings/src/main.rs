@@ -171,6 +171,16 @@ impl EditTarget {
     }
 }
 
+/// The modifiers a recorded combination is written with.
+fn held_modifiers(modifiers: Modifiers) -> keyboard::Modifiers {
+    keyboard::Modifiers {
+        ctrl: modifiers.ctrl,
+        alt: modifiers.alt,
+        shift: modifiers.shift,
+        logo: modifiers.logo,
+    }
+}
+
 /// The modifiers a text field cares about.
 #[derive(Clone, Copy, Default)]
 struct Mods {
@@ -646,6 +656,10 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Add)
         ),
+        view::Pressed::Record(index) => matches!(
+            settings.shortcut_hit(x, y, offset),
+            Some(view::ShortcutHit::Record(hit)) if hit == index
+        ),
     }
 }
 
@@ -665,9 +679,44 @@ fn activate(held: view::Pressed) {
         // back whatever the defaults carry, which for a wallpaper may well be
         // another image.
         view::Pressed::RemoveFile(id) => apply(id, settings_client::Value::Text(String::new())),
-        view::Pressed::Remove(index) => keyboard::remove(index),
+        view::Pressed::Remove(index) => {
+            // The lines below move up, so a listening index would now name a
+            // different shortcut.
+            stop_recording();
+            keyboard::remove(index);
+        }
         view::Pressed::Add => keyboard::add(),
+        // A second press on the listening line's button stops it.
+        view::Pressed::Record(index) => keyboard::set_recording(
+            (keyboard::recording().map(|recording| recording.index) != Some(index))
+                .then_some(index),
+        ),
     }
+}
+
+/// Hold a key capture while a shortcut line is listening, and only then.
+///
+/// `surface` is the window's: it is what the compositor stops answering its
+/// own shortcuts for.
+fn sync_key_capture(surface: &wl_surface::WlSurface) {
+    match (
+        keyboard::recording().is_some(),
+        otto_kit::key_capture::is_capturing(),
+    ) {
+        (true, false) => otto_kit::key_capture::start(surface),
+        (false, true) => otto_kit::key_capture::stop(),
+        _ => {}
+    }
+}
+
+/// Stop a shortcut line listening, and give the keys back.
+///
+/// Returns whether one was listening, so a caller can skip a repaint.
+fn stop_recording() -> bool {
+    let was = keyboard::recording().is_some();
+    keyboard::set_recording(None);
+    otto_kit::key_capture::stop();
+    was
 }
 
 /// Push one change to the compositor, reporting a refusal rather than letting
@@ -1604,6 +1653,9 @@ impl App for SettingsApp {
         let pressed_hit = self.pressed.clone();
         let hovered_preview = self.hovered_preview.clone();
         let redraw = window.clone();
+        // What a shortcut line's record button asks the compositor to stop
+        // answering its own shortcuts for.
+        let capture_surface = parent.clone();
         AppContext::register_pointer_callback(move |events| {
             for event in events {
                 // Only the window's own events: a popup of ours, or a drag
@@ -1674,6 +1726,18 @@ impl App for SettingsApp {
                         // nothing.
                         let shortcut = settings.shortcut_hit(x, y, offset);
 
+                        // A press anywhere but on the listening line's own
+                        // record button stops it listening; that button acts
+                        // on release, and its release is what stops it.
+                        let on_listening_button = matches!(
+                            (&shortcut, keyboard::recording()),
+                            (Some(ShortcutHit::Record(hit)), Some(recording))
+                                if *hit == recording.index
+                        );
+                        if !on_listening_button && stop_recording() {
+                            mark_pane_dirty(&pane_dirty);
+                        }
+
                         if let Some(hit) = shortcut {
                             // A shortcut line is not a text row, so the
                             // `same_field` check above — which only knows about
@@ -1739,6 +1803,10 @@ impl App for SettingsApp {
                                 }
                                 ShortcutHit::Add => {
                                     *pressed_hit.lock().unwrap() = Some(view::Pressed::Add);
+                                }
+                                ShortcutHit::Record(index) => {
+                                    *pressed_hit.lock().unwrap() =
+                                        Some(view::Pressed::Record(index));
                                 }
                             }
                             mark_pane_dirty(&pane_dirty);
@@ -1869,6 +1937,7 @@ impl App for SettingsApp {
                             let offset = pane_offset(&pane);
                             if released_on(&settings, held, x, y, offset) {
                                 activate(held);
+                                sync_key_capture(&capture_surface);
                             }
                             redraw.request_frame();
                         }
@@ -2116,6 +2185,14 @@ impl App for SettingsApp {
             shift: modifiers.shift,
             ctrl: modifiers.ctrl,
         };
+        // A listening line shows the modifiers held so far.
+        if keyboard::recording().is_some() {
+            keyboard::set_held(held_modifiers(modifiers));
+            mark_pane_dirty(&self.pane_dirty);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+        }
     }
 
     /// Keys go to the text field that has the keyboard, if there is one.
@@ -2186,6 +2263,37 @@ impl App for SettingsApp {
             if closed {
                 *self.open_picker.lock().unwrap() = None;
             }
+            mark_pane_dirty(&self.pane_dirty);
+            if let Some(window) = self.window.as_ref() {
+                window.request_frame();
+            }
+            return;
+        }
+
+        // A shortcut line is listening: the first key that is not a modifier
+        // completes its combination. Escape on its own backs out and Backspace
+        // on its own clears the line, the two answers a recorder has to leave
+        // room for — a shortcut on either bare key is not one worth having.
+        if let Some(recording) = keyboard::recording() {
+            if event.keysym.is_modifier_key() {
+                return;
+            }
+            let held = held_modifiers(AppContext::current_modifiers());
+            let bare = held == keyboard::Modifiers::default();
+            match event.keysym {
+                Keysym::Escape if bare => {}
+                Keysym::BackSpace if bare => keyboard::set_keys(recording.index, String::new()),
+                keysym => {
+                    // xkb's own name, which is what the compositor parses a
+                    // trigger's key with. A keysym without one cannot be
+                    // written down, so the line keeps listening.
+                    let Some(name) = keysym.name().map(|n| n.trim_start_matches("XK_")) else {
+                        return;
+                    };
+                    keyboard::set_keys(recording.index, keyboard::combination(held, name));
+                }
+            }
+            stop_recording();
             mark_pane_dirty(&self.pane_dirty);
             if let Some(window) = self.window.as_ref() {
                 window.request_frame();
@@ -2297,7 +2405,8 @@ impl App for SettingsApp {
     /// answered, so it is dropped rather than left blinking on a window that
     /// no longer has focus.
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, _surface: &wl_surface::WlSurface) {
-        if cancel_edit(&self.editing) {
+        // `|` rather than `||`: both have to be dropped.
+        if cancel_edit(&self.editing) | stop_recording() {
             mark_pane_dirty(&self.pane_dirty);
             if let Some(window) = self.window.as_ref() {
                 window.request_frame();
@@ -2499,6 +2608,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolved here, once, because the row that shows it is built on the draw
     // path — see `settings_client::resolve_config_path`.
     settings_client::resolve_config_path();
+    // The shortcuts the compositor actually loaded, in place of the shipped
+    // defaults the pane starts from.
+    if let Some(shortcuts) = settings_client::list_shortcuts() {
+        keyboard::load(shortcuts);
+    }
     if settings_client::is_online() {
         // Only worth watching once there is something to watch — an offline
         // store has no bus connection for a listener to subscribe on.

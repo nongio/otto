@@ -192,6 +192,9 @@ settings-key-combination = 组合键
 settings-key-combination-detail = Ctrl、Alt、Shift 或 Logo 以 + 相连，再加一个键：Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = 未指定
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = 请按下按键…
 
 
 ## Settings — Trackpad & Mouse
@@ -663,6 +666,21 @@ files-undo-new-folder-with-selection = 用所选项目新建文件夹
 # whether seconds show is a user setting, and it changes how often the bar
 # redraws.
 bar-clock-format = %-m月%-d日 %A  %H:%M
+
+## Top bar — battery
+
+bar-battery-percent = 电池 { $percent }%
+bar-battery-remaining = 电池 { $percent }% — 剩余 { $time }
+bar-battery-charging-time = 电池 { $percent }% — { $time } 后充满
+bar-battery-full = 电池 { $percent }% — 已充满
+bar-battery-charging = 电池 { $percent }% — 正在充电
+bar-battery-plugged = 电池 { $percent }% — 已接通电源，未在充电
+bar-cpu-frequency = CPU 平均 { $avg } GHz，峰值 { $max } GHz
+bar-cpu-governor = 调速器：{ $governor }
+bar-power-saver = 节能
+bar-power-balanced = 平衡
+bar-power-performance = 性能
+bar-power-settings = 电源设置…
 
 
 ## Settings — widgets

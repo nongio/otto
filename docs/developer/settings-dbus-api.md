@@ -92,6 +92,8 @@ AddVirtualOutput(name: s, width: u, height: u,
                  persist: b)           → u   PipeWire node id
 RemoveVirtualOutput(name: s)           → ()
 
+ListShortcuts()            → a(ss)     every shortcut in force, (trigger, action)
+
 ConfigPath()               → s         the file a change is written to
 ```
 
@@ -292,10 +294,10 @@ Reset("dock.size") → "applied"
 ## Open
 
 - Shortcuts are a keyed collection, not a scalar, and do not fit `Set(id,
-  value)` cleanly. They likely need their own methods
-  (`SetShortcut`/`ResetShortcut`/`ListShortcuts`) rather than an identifier per
-  binding. Deferred until the Keyboard pane is built; nothing else in the API
-  depends on the answer.
+  value)` cleanly. `ListShortcuts` reads them, merged across the config layers,
+  with each action described as one line (`FocusLeft`, `Workspace 2`,
+  `run kitty`, `open browser`). Writing them likely needs its own methods
+  (`SetShortcut`/`ResetShortcut`) rather than an identifier per binding.
 - Per-output display settings need a stable identity for a display, so
   settings follow the panel rather than the connector. That identity is not
   yet defined, so display identifiers are not final.

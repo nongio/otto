@@ -28,7 +28,7 @@ See [Autostart](autostart.md) for other ways to launch it.
 - **Left.** The focused application's name in bold, then its global menu.
 - **Centre.** Deliberately empty, leaving room for the
   [Dynamic Island](dynamic-island.md).
-- **Right.** System tray icons, then the clock.
+- **Right.** System tray icons, then the battery, then the clock.
 
 The bar reserves its own height as an exclusive zone, so maximized windows and
 other panels stop below it rather than sliding underneath.
@@ -88,8 +88,102 @@ Nextcloud, Telegram, Slack, Steam, KeePassXC, network and volume applets.
 Icons are ordered by registration
 time, newest to the left.
 
+Menus stay current while they are open. When an applet changes its menu (a
+Wi-Fi scan finding a network, Bluetooth connecting a device), the bar fetches
+the new one and updates the menu in place, keeping your place in it. If the
+menu has grown or shrunk it is shown again at its new size, in the same spot.
+
 Legacy XEmbed tray icons (the old X11 system tray) are **not** supported; that
 standard has no Wayland equivalent. Apps that only do XEmbed will not appear.
+
+
+## Battery
+
+On a machine with a battery, the bar draws one: an outline that fills with the
+charge, green until 20%, amber to 10%, red below that. A bolt over it means
+it is charging; a plug means it is plugged in but not charging, because it is
+full or held at a charge limit. The percentage is written inside the glyph.
+The menu says the same in words, with how long until full when UPower has
+worked it out.
+
+The bar reads UPower itself rather than hosting a tray applet for this. The
+tray carries an icon and a tooltip, so a percentage published through it would
+be a percentage nobody can see without hovering.
+
+Clicking it opens the power menu: what the battery is doing, what the CPU is
+doing, and the power profiles that can be selected.
+
+```
+┌──────────────────────────────────┐
+│ Battery 87% — 2:14 remaining     │
+│ CPU 1.10 GHz average, 3.79 peak  │
+│ Governor: powersave              │
+├──────────────────────────────────┤
+│ ✓ Power Saver                    │
+│   Balanced                       │
+│   Performance                    │
+├──────────────────────────────────┤
+│ Power Settings…                  │
+└──────────────────────────────────┘
+```
+
+### Where the profiles come from
+
+The first of these that applies:
+
+1. **`[[battery.profiles]]` entries** from the config file, each a command.
+   When you have written any, they are used even if power-profiles-daemon is
+   running: they are a statement about this machine. They are what to use when
+   something else manages the CPU — `auto-cpufreq` and power-profiles-daemon
+   conflict, and installing one masks the other. Set
+   `profile_backend = "power-profiles"` to prefer the daemon anyway.
+2. **power-profiles-daemon**, under either of its D-Bus names. This is the
+   usual case. Selecting a profile sets it, and polkit handles the permission.
+3. **Nothing.** The menu still lists the kernel's governors and ticks the live
+   one, greyed out, so it says what the CPU is set to even when it cannot
+   change it.
+
+The CPU numbers are read when the menu opens, not on a timer: `scaling_cur_freq`
+moves faster than anything could usefully display. Everything else follows
+along while the menu is open: select a profile and the tick moves once the
+switch lands, without reopening.
+
+### Settings
+
+```toml
+# ~/.config/otto/otto-bar.toml
+
+[battery]
+show = "auto"            # "auto" | true | false
+colored = true           # false draws the fill in the bar's text colour
+percentage = "inside"    # "inside" | "beside" | "off"
+low_level = 20
+critical_level = 10
+width = 28
+height = 13
+color_normal = "#34C759"
+color_low = "#FF9F0A"
+color_critical = "#FF3B30"
+color_charging = "#34C759"
+update_interval = 10     # seconds
+menu = true
+show_battery_info = true
+show_cpu_info = true
+settings_command = "otto-settings"
+
+# Only needed when power-profiles-daemon is not running. `governor` and `epp`
+# are optional: they say when the entry is the live one, and an entry that
+# states neither is never check-marked.
+[[battery.profiles]]
+label = "Power Saver"
+command = ["pkexec", "cpupower", "frequency-set", "-g", "powersave"]
+governor = "powersave"
+
+[[battery.profiles]]
+label = "Performance"
+command = ["pkexec", "cpupower", "frequency-set", "-g", "performance"]
+governor = "performance"
+```
 
 ## Clock
 
@@ -120,8 +214,8 @@ used — there is no merging, so a system file shadows a user one:
 2. `~/.config/otto/otto-bar.toml`
 3. `./otto-bar.toml` (development override in the working directory)
 
-`clock_format` is currently the only option. Bar height, colours and blur follow
-the compositor's theme.
+`clock_format` and the `[battery]` section are the options. Bar height, colours
+and blur follow the compositor's theme.
 
 ## Theming
 

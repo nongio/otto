@@ -89,6 +89,73 @@ impl ContextMenuState {
         self.items = items;
     }
 
+    /// Swap in a new item tree while the menu is open, keeping the person's
+    /// place in it.
+    ///
+    /// The source of a live menu rewrites it wholesale — a network list
+    /// re-sorted by signal strength, a checkmark that moved — so an index
+    /// means nothing across the swap. Open submenus and the highlight are
+    /// found again by label instead: the "Wi-Fi Networks" submenu stays open
+    /// wherever it now sits, and the highlighted network stays highlighted
+    /// when a stronger one lands above it.
+    ///
+    /// Returns the first popup depth that must close, because the submenu it
+    /// showed is gone. `None` when every open submenu survived.
+    pub fn replace_items(&mut self, items: Vec<MenuItem>) -> Option<usize> {
+        let label_at = |state: &Self, depth: usize, index: Option<usize>| {
+            index
+                .and_then(|i| state.items_at_depth(depth).get(i))
+                .and_then(|item| item.label())
+                .map(str::to_string)
+        };
+
+        // Read the path through the old tree before it is replaced: the
+        // labels are all that carries across.
+        let open_labels: Vec<Option<String>> = (0..self.open_submenu_by_depth.len())
+            .map(|d| label_at(self, d, self.open_submenu_at(d)))
+            .collect();
+        let selected_labels: Vec<Option<String>> = (0..=self.depth)
+            .map(|d| label_at(self, d, self.selected_at_depth(d)))
+            .collect();
+
+        self.items = items;
+
+        // Walk the open path again, depth by depth — each lookup runs against
+        // the path already re-found above it.
+        let mut closed_from = None;
+        for (depth, label) in open_labels.iter().enumerate() {
+            let Some(label) = label.as_deref() else {
+                break;
+            };
+            let found = self
+                .items_at_depth(depth)
+                .iter()
+                .position(|item| item.has_submenu() && item.label() == Some(label));
+            match found {
+                Some(index) => self.open_submenu_by_depth[depth] = Some(index),
+                None => {
+                    self.close_submenus_from(depth);
+                    // The submenu opened from `depth` lives one popup deeper.
+                    closed_from = Some(depth + 1);
+                    break;
+                }
+            }
+        }
+
+        // Then the highlight, at each depth still open.
+        for depth in 0..=self.depth {
+            let wanted = selected_labels.get(depth).cloned().flatten();
+            let found = wanted.and_then(|label| {
+                self.items_at_depth(depth)
+                    .iter()
+                    .position(|item| !item.is_separator() && item.label() == Some(label.as_str()))
+            });
+            self.select_at_depth(depth, found);
+        }
+
+        closed_from
+    }
+
     /// How far the list is scrolled, in logical points.
     pub fn scroll(&self) -> f32 {
         self.scroll
@@ -461,5 +528,92 @@ mod tests {
         state.close_all_submenus();
         assert_eq!(state.depth(), 0);
         assert!(!state.is_submenu_open(0, 2));
+    }
+    /// A wifi-style menu: a status line, then a submenu of networks.
+    fn networks(names: &[&str]) -> Vec<MenuItem> {
+        vec![
+            MenuItem::action("Connected"),
+            MenuItem::separator(),
+            MenuItem::submenu(
+                "Networks",
+                names.iter().map(|n| MenuItem::action(*n)).collect(),
+            ),
+            MenuItem::action("Settings"),
+        ]
+    }
+
+    #[test]
+    fn the_highlight_follows_its_label_when_an_item_lands_above_it() {
+        let mut state =
+            ContextMenuState::new(vec![MenuItem::action("Home"), MenuItem::action("Office")]);
+        state.select(Some(1)); // Office
+
+        // A stronger network sorts to the top.
+        let closed = state.replace_items(vec![
+            MenuItem::action("Cafe"),
+            MenuItem::action("Home"),
+            MenuItem::action("Office"),
+        ]);
+
+        assert_eq!(closed, None);
+        assert_eq!(state.selected(), Some(2), "still on Office, now third");
+    }
+
+    #[test]
+    fn an_open_submenu_stays_open_when_it_moves() {
+        let mut state = ContextMenuState::new(networks(&["Home", "Office"]));
+        state.open_submenu(0, 2); // Networks
+        state.select_at_depth(1, Some(1)); // Office
+
+        // An item appears above the submenu, and the list inside it grows.
+        let mut items = networks(&["Cafe", "Home", "Office"]);
+        items.insert(0, MenuItem::action("VPN"));
+        let closed = state.replace_items(items);
+
+        assert_eq!(closed, None);
+        assert!(state.is_submenu_open(0, 3), "Networks, one row lower");
+        assert_eq!(state.selected_at_depth(1), Some(2), "Office, inside it");
+        assert_eq!(state.depth(), 1);
+    }
+
+    #[test]
+    fn a_submenu_that_disappears_closes_and_says_which_popup() {
+        let mut state = ContextMenuState::new(networks(&["Home"]));
+        state.open_submenu(0, 2);
+
+        // The radio went off: no networks submenu at all.
+        let closed = state.replace_items(vec![
+            MenuItem::action("Wi-Fi is off"),
+            MenuItem::action("Settings"),
+        ]);
+
+        // The submenu opened from depth 0 is drawn in popup 1.
+        assert_eq!(closed, Some(1));
+        assert_eq!(state.depth(), 0);
+        assert!(!state.has_open_submenu_at(0));
+    }
+
+    #[test]
+    fn a_highlight_whose_item_is_gone_is_cleared_not_moved() {
+        let mut state =
+            ContextMenuState::new(vec![MenuItem::action("Home"), MenuItem::action("Office")]);
+        state.select(Some(1));
+
+        state.replace_items(vec![MenuItem::action("Home")]);
+
+        // Landing on a neighbour would make Enter act on something the
+        // person never pointed at.
+        assert_eq!(state.selected(), None);
+    }
+
+    #[test]
+    fn a_submenu_is_not_matched_by_an_action_with_its_label() {
+        let mut state = ContextMenuState::new(networks(&["Home"]));
+        state.open_submenu(0, 2);
+
+        // "Networks" is still there, but as a plain item — nothing to show.
+        let closed = state.replace_items(vec![MenuItem::action("Networks")]);
+
+        assert_eq!(closed, Some(1));
     }
 }

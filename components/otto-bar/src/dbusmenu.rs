@@ -15,7 +15,7 @@ use zbus::{proxy, Connection};
 
 #[proxy(interface = "com.canonical.dbusmenu")]
 #[allow(clippy::type_complexity)]
-trait DBusMenu {
+pub(crate) trait DBusMenu {
     /// Check if a menu item is about to show (allows app to update it).
     fn about_to_show(&self, id: i32) -> zbus::Result<bool>;
 

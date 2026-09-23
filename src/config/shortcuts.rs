@@ -247,6 +247,30 @@ fn parse_action(cfg: &ShortcutActionConfig) -> Result<ShortcutAction, ShortcutEr
     }
 }
 
+/// An action as one line of text, for a client listing the bindings.
+///
+/// A builtin is its name, which is also what a settings client offers as a
+/// choice. The forms that carry more than a name read the way they are
+/// written: `Workspace 2`, `run kitty --single-instance`, `open browser`.
+pub fn describe_action(cfg: &ShortcutActionConfig) -> String {
+    match cfg {
+        ShortcutActionConfig::BuiltinName(name) => name.clone(),
+        ShortcutActionConfig::BuiltinDetailed { builtin, index } => match index {
+            Some(index) => format!("{builtin} {index}"),
+            None => builtin.clone(),
+        },
+        ShortcutActionConfig::RunCommand { run } => std::iter::once(format!("run {}", run.cmd))
+            .chain(run.args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" "),
+        ShortcutActionConfig::OpenDefault { open_default } => match open_default {
+            OpenDefaultConfig::Role(role) | OpenDefaultConfig::Detailed { role, .. } => {
+                format!("open {role}")
+            }
+        },
+    }
+}
+
 /// Parse a bare builtin action name — used by the `/tmp/otto-action`
 /// debug trigger to execute shortcut actions remotely.
 pub fn parse_builtin_name(name: &str) -> Option<BuiltinAction> {
@@ -443,6 +467,41 @@ mod tests {
                 xkb::keysym_from_name(xkb_name, xkb::KEYSYM_NO_FLAGS),
                 "{written} should mean {xkb_name}"
             );
+        }
+    }
+
+    #[test]
+    fn actions_describe_as_they_are_written() {
+        let cases = [
+            (
+                ShortcutActionConfig::BuiltinName("FocusLeft".into()),
+                "FocusLeft",
+            ),
+            (
+                ShortcutActionConfig::BuiltinDetailed {
+                    builtin: "Workspace".into(),
+                    index: Some(2),
+                },
+                "Workspace 2",
+            ),
+            (
+                ShortcutActionConfig::RunCommand {
+                    run: RunCommandConfig {
+                        cmd: "kitty".into(),
+                        args: vec!["--single-instance".into()],
+                    },
+                },
+                "run kitty --single-instance",
+            ),
+            (
+                ShortcutActionConfig::OpenDefault {
+                    open_default: OpenDefaultConfig::Role("browser".into()),
+                },
+                "open browser",
+            ),
+        ];
+        for (cfg, expected) in cases {
+            assert_eq!(describe_action(&cfg), expected);
         }
     }
 

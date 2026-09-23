@@ -570,6 +570,14 @@ pub fn set(id: &str, value: Value) -> SetOutcome {
     }
 }
 
+/// Every keyboard shortcut in force, as (trigger, action) pairs, merged
+/// across the configuration layers. `None` offline, or from a compositor
+/// that does not serve `ListShortcuts`.
+pub fn list_shortcuts() -> Option<Vec<(String, String)>> {
+    let connection = CONNECTION.get()?.as_ref()?;
+    call(connection, "ListShortcuts", &()).ok()
+}
+
 static CONFIG_PATH: OnceLock<Option<String>> = OnceLock::new();
 
 /// Ask the compositor where a changed setting is written, once, and remember

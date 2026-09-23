@@ -182,6 +182,29 @@ impl SettingsInterface {
         Ok(status.wire_name().to_string())
     }
 
+    /// Every keyboard shortcut in force, as (trigger, action) pairs.
+    ///
+    /// The merged result of every configuration layer, as the compositor
+    /// loaded it, so a client shows what the keys actually do rather than what
+    /// one file says. Not part of the settings schema: shortcuts are a keyed
+    /// collection, not a scalar. Triggers come in the order they sort, which is
+    /// the order the compositor keeps them in; actions are described by
+    /// [`crate::config::shortcuts::describe_action`].
+    async fn list_shortcuts(&self) -> Vec<(String, String)> {
+        Config::with(|config| {
+            config
+                .keyboard_shortcuts
+                .iter()
+                .map(|(trigger, action)| {
+                    (
+                        trigger.clone(),
+                        crate::config::shortcuts::describe_action(action),
+                    )
+                })
+                .collect()
+        })
+    }
+
     /// Every output the compositor currently has, physical and virtual.
     ///
     /// Not part of the settings schema: outputs come and go with the hardware,

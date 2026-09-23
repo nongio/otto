@@ -196,6 +196,9 @@ settings-key-combination = Комбінація клавіш
 settings-key-combination-detail = Ctrl, Alt, Shift або Logo, поєднані знаком +, а потім одна клавіша: Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = Не призначено
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = Натисніть клавіші…
 
 
 ## Settings — Trackpad & Mouse
@@ -714,6 +717,21 @@ files-undo-new-folder-with-selection = створення папки з вибр
 # whether seconds show is a user setting, and it changes how often the bar
 # redraws.
 bar-clock-format = %A %-d %B %H:%M
+
+## Top bar — battery
+
+bar-battery-percent = Батарея { $percent } %
+bar-battery-remaining = Батарея { $percent } % — залишилося { $time }
+bar-battery-charging-time = Батарея { $percent } % — до повного заряду { $time }
+bar-battery-full = Батарея { $percent } % — повністю заряджена
+bar-battery-charging = Батарея { $percent } % — заряджається
+bar-battery-plugged = Батарея { $percent } % — підключена, не заряджається
+bar-cpu-frequency = ЦП: у середньому { $avg } ГГц, пік { $max } ГГц
+bar-cpu-governor = Регулятор: { $governor }
+bar-power-saver = Енергозбереження
+bar-power-balanced = Збалансований
+bar-power-performance = Продуктивність
+bar-power-settings = Налаштування живлення…
 
 
 ## Settings — widgets

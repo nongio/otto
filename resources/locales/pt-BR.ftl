@@ -195,6 +195,9 @@ settings-key-combination = Combinação de teclas
 settings-key-combination-detail = Ctrl, Alt, Shift ou Logo unidos por +, seguidos de uma tecla: Ctrl+Shift+Return
 # Shown in a shortcut's key field when no combination is set.
 settings-key-combination-unassigned = Não atribuído
+# Shown in a shortcut's key field while its record button waits for a
+# combination to be pressed.
+settings-key-combination-listening = Pressione as teclas…
 
 
 ## Settings — Trackpad & Mouse
@@ -694,6 +697,21 @@ files-undo-new-folder-with-selection = Nova pasta com a seleção
 # whether seconds show is a user setting, and it changes how often the bar
 # redraws.
 bar-clock-format = %A %-d %B  %H:%M
+
+## Top bar — battery
+
+bar-battery-percent = Bateria { $percent }%
+bar-battery-remaining = Bateria { $percent }% — { $time } restantes
+bar-battery-charging-time = Bateria { $percent }% — carga completa em { $time }
+bar-battery-full = Bateria { $percent }% — totalmente carregada
+bar-battery-charging = Bateria { $percent }% — carregando
+bar-battery-plugged = Bateria { $percent }% — conectada, sem carregar
+bar-cpu-frequency = CPU { $avg } GHz em média, pico de { $max } GHz
+bar-cpu-governor = Governador: { $governor }
+bar-power-saver = Economia de energia
+bar-power-balanced = Equilibrado
+bar-power-performance = Desempenho
+bar-power-settings = Configurações de energia…
 
 
 ## Settings — widgets
