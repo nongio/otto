@@ -386,6 +386,7 @@ freetype = "*"
 fontconfig = "*"
 pixman = "*"
 google-noto-sans-fonts = "*"
+rsms-inter-fonts = "*"
 wireplumber = "*"
 
 [package.metadata.aur]
@@ -403,6 +404,7 @@ depends = [
     "fontconfig",
     "pixman",
     "noto-fonts",
+    "inter-font",
     "wireplumber",
     "gstreamer",
     "gst-plugins-base-libs",
