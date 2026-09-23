@@ -6,6 +6,7 @@ use smithay::{
     desktop::layer_map_for_output,
     input::keyboard::{xkb, FilterResult, Keysym, ModifiersState},
     utils::{IsAlive, SERIAL_COUNTER as SCOUNTER},
+    wayland::seat::WaylandFocus,
     wayland::shell::wlr_layer::{
         KeyboardInteractivity, Layer as WlrLayer, LayerSurfaceCachedState,
     },
@@ -388,11 +389,13 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
-        let inhibited = self
-            .workspaces
-            .element_under(self.pointer.current_location())
-            .and_then(|(window, _)| {
-                let surface = window.wl_surface()?;
+        // The protocol ties an inhibitor to the surface with keyboard focus,
+        // not the one under the pointer: a shortcut recorder keeps receiving
+        // the compositor's own shortcuts after the mouse wanders off it.
+        let inhibited = keyboard
+            .current_focus()
+            .and_then(|focus| {
+                let surface = focus.wl_surface()?;
                 self.seat.keyboard_shortcuts_inhibitor_for_surface(&surface)
             })
             .map(|inhibitor| inhibitor.is_active())
