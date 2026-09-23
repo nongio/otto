@@ -406,7 +406,6 @@ impl TopBarApp {
         }
     }
 
-    /// Handle a click on the right panel (tray icons).
     /// Close the power menu, if one is open.
     fn close_power_menu(&mut self) {
         if let Some(open) = self.open_power_menu.take() {
@@ -555,6 +554,7 @@ impl TopBarApp {
         }
     }
 
+    /// Handle a click on the right panel (tray icons).
     fn handle_right_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
 

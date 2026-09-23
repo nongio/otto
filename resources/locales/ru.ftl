@@ -737,7 +737,6 @@ bar-power-saver = Энергосбережение
 bar-power-balanced = Сбалансированный
 bar-power-performance = Производительность
 bar-power-settings = Настройки питания…
-a11y-battery = Батарея
 
 
 ## Settings — widgets

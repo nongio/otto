@@ -18,9 +18,6 @@ pub struct LeftPanel {
 
 /// Where the right panel's three parts sit, in panel coordinates.
 pub struct RightLayout {
-    /// Width of the clock, which is also where the battery ends.
-    #[allow(dead_code)]
-    pub clock_width: f32,
     pub battery_x: f32,
     /// Zero when there is no battery, or it is configured off.
     pub battery_width: f32,
@@ -312,7 +309,6 @@ impl RightPanel {
         let tray_x = battery_x - tray_gap - tray_width;
 
         RightLayout {
-            clock_width,
             battery_x,
             battery_width,
             tray_x,

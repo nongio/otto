@@ -699,7 +699,6 @@ bar-power-saver = Energiesparen
 bar-power-balanced = Ausgeglichen
 bar-power-performance = Leistung
 bar-power-settings = Energieeinstellungen…
-a11y-battery = Akku
 
 
 ## Settings — widgets

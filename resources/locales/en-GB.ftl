@@ -707,8 +707,6 @@ bar-power-balanced = Balanced
 bar-power-performance = Performance
 # Last entry in the battery menu.
 bar-power-settings = Power Settings…
-# What a screen reader calls the battery indicator.
-a11y-battery = Battery
 
 
 ## Settings — widgets

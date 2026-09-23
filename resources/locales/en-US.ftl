@@ -42,8 +42,6 @@ bar-power-balanced = Balanced
 bar-power-performance = Performance
 # Last entry in the battery menu.
 bar-power-settings = Power Settings…
-# What a screen reader calls the battery indicator.
-a11y-battery = Battery
 
 # Month before day, and a comma after it.
 files-date-modified = { $month } { $day }, { $year } at { $time }

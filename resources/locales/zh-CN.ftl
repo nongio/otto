@@ -681,7 +681,6 @@ bar-power-saver = 节能
 bar-power-balanced = 平衡
 bar-power-performance = 性能
 bar-power-settings = 电源设置…
-a11y-battery = 电池
 
 
 ## Settings — widgets
