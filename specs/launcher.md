@@ -300,6 +300,11 @@ having done nothing.
 with the launcher, it closes. Before the first interaction it does not — that
 would be closing on the way up.
 
+**Shortcuts that still work.** The app switcher and the volume and brightness
+keys reach Otto while the launcher is up; nothing else does. Their OSD and
+switcher draw above the launcher. Committing the switcher focuses a window, the
+launcher loses the keyboard and closes, so the switcher, opened last, wins.
+
 **Changing state.** A window opening or closing while the launcher is up updates
 the list, keeping the selection on the same item where that item still exists.
 

@@ -29,6 +29,7 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 - A press on a popup owned by a Top or Overlay layer-shell surface (a bar menu) leaves keyboard focus where it is: it must not move to a window that happens to lie under the popup.
 - A press that lands on nothing focusable (empty desktop, the dock) while a Top layer-shell surface holds keyboard focus hands the keyboard back to the top window of the current workspace, or clears it when the workspace is empty. The panel then receives `wl_keyboard.leave`, which is how a bar learns the user clicked away from its menu. Overlay surfaces are modal and keep the keyboard.
 - A Top or Overlay layer-shell surface that commits `exclusive` keyboard interactivity is given the keyboard on that commit, each time it switches into `exclusive` from another mode. A repeated commit while it stays `exclusive` does not take the keyboard back from a window it was handed to.
+- While such a surface holds the keyboard it receives every key, except the app switcher, volume and brightness shortcuts, which Otto handles because their UI draws above the overlay layer. Once the app switcher is open it keeps the keys until its modifier is released.
 - Focus changes that are not pointer-driven — closing the focused window, the app switcher, cycling an application's windows — are specified in window-focus-navigation.
 
 ## Constraints & Edge Cases
