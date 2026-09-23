@@ -2608,6 +2608,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolved here, once, because the row that shows it is built on the draw
     // path — see `settings_client::resolve_config_path`.
     settings_client::resolve_config_path();
+    // The shortcuts the compositor actually loaded, in place of the shipped
+    // defaults the pane starts from.
+    if let Some(shortcuts) = settings_client::list_shortcuts() {
+        keyboard::load(shortcuts);
+    }
     if settings_client::is_online() {
         // Only worth watching once there is something to watch — an offline
         // store has no bus connection for a listener to subscribe on.

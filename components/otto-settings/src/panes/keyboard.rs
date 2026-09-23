@@ -19,7 +19,8 @@ use crate::model::{group, untitled, Control, Pane, Row};
 /// `Screen` and `Workspace` are missing because they are the two that need an
 /// `index` alongside the name, which a pop-up button cannot carry. So are the
 /// `run` and `open_default` forms, which are a command line rather than a
-/// choice.
+/// choice. A line loaded with one of those shows it as the compositor
+/// describes it (`Workspace 2`, `run kitty`); its pop-up offers only these.
 const BUILTIN_ACTIONS: &[&str] = &[
     "ApplicationSwitchNext",
     "ApplicationSwitchNextWindow",
@@ -28,22 +29,40 @@ const BUILTIN_ACTIONS: &[&str] = &[
     "BrightnessDown",
     "BrightnessUp",
     "CloseWindow",
+    "EqualizeContainer",
     "ExposeShowAll",
     "ExposeShowDesktop",
+    "FloatingToggle",
+    "FocusDown",
+    "FocusLeft",
+    "FocusModeToggle",
+    "FocusRight",
+    "FocusUp",
     "LockSession",
     "MediaNext",
     "MediaPlayPause",
     "MediaPrev",
     "MediaStop",
+    "MoveContainerDown",
+    "MoveContainerLeft",
+    "MoveContainerRight",
+    "MoveContainerUp",
     "Quit",
+    "ResizeGrowHeight",
+    "ResizeGrowWidth",
+    "ResizeShrinkHeight",
+    "ResizeShrinkWidth",
     "RotateOutput",
     "ScaleDown",
     "ScaleUp",
     "SceneSnapshot",
     "SkpSnapshot",
+    "SplitHorizontal",
+    "SplitVertical",
     "TileWindowLeft",
     "TileWindowRight",
     "ToggleDecorations",
+    "TilingToggle",
     "ToggleMaximizeWindow",
     "VolumeDown",
     "VolumeMute",
@@ -55,7 +74,7 @@ const BUILTIN_ACTIONS: &[&str] = &[
 /// A cap rather than an open list because every line's action pop-up needs a
 /// `DropdownMenu`, and a `DropdownMenu` can only be built at window setup —
 /// see `main.rs`. The pool is that size, so the list is too.
-pub const MAX_SHORTCUTS: usize = 24;
+pub const MAX_SHORTCUTS: usize = 96;
 
 /// One shortcut line: the action it runs and the combination that triggers it.
 #[derive(Clone)]
@@ -73,8 +92,9 @@ static SHORTCUTS: OnceLock<RwLock<Vec<Shortcut>>> = OnceLock::new();
 
 fn shortcuts() -> &'static RwLock<Vec<Shortcut>> {
     SHORTCUTS.get_or_init(|| {
-        // The set the shipped `otto_config.example.toml` binds. Nothing reads
-        // the user's own config yet — see the module docs on the group below.
+        // The set the shipped `otto_config.example.toml` binds, for when the
+        // compositor cannot be asked — offline, or one without
+        // `ListShortcuts`. Otherwise [`load`] replaces it at startup.
         RwLock::new(
             [
                 ("Quit", "Ctrl+Esc"),
@@ -96,6 +116,24 @@ fn shortcuts() -> &'static RwLock<Vec<Shortcut>> {
             .collect(),
         )
     })
+}
+
+/// Replace the lines with the shortcuts the compositor has in force.
+///
+/// Anything past [`MAX_SHORTCUTS`] is dropped, since the pane has no pop-up
+/// for it; the compositor still honours it.
+pub fn load(pairs: Vec<(String, String)>) {
+    if pairs.len() > MAX_SHORTCUTS {
+        eprintln!(
+            "{} shortcuts, showing the first {MAX_SHORTCUTS}",
+            pairs.len()
+        );
+    }
+    *shortcuts().write().unwrap() = pairs
+        .into_iter()
+        .take(MAX_SHORTCUTS)
+        .map(|(keys, action)| Shortcut { action, keys })
+        .collect();
 }
 
 /// The lines as they stand, for a pane build or a draw.
@@ -318,10 +356,10 @@ pub fn build() -> Pane {
                     .id("input.xkb_options"),
                 ],
             ),
-            // Editable, but not persisted: `[keyboard_shortcuts]` is a table in
-            // the config file, and the settings contract has no identifier for
-            // a list. Adding, removing and retyping lines all work; nothing
-            // leaves the process.
+            // Read from the compositor's merged config, editable, but not
+            // persisted: `[keyboard_shortcuts]` is a table, and the settings
+            // contract has no identifier for a list. Adding, removing and
+            // retyping lines all work; nothing leaves the process.
             group(otto_kit::t!("settings-group-shortcuts"), shortcut_rows),
         ],
     }
