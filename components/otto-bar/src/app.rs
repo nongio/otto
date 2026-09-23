@@ -437,8 +437,24 @@ impl TopBarApp {
             } else if action_id == "settings" {
                 let cfg = battery_config();
                 if let Some((program, args)) = cfg.settings_command.split_first() {
-                    if let Err(e) = std::process::Command::new(program).args(args).spawn() {
-                        tracing::warn!("battery.settings_command: {e}");
+                    use std::os::unix::process::CommandExt;
+                    // Detached into its own process group with no stdio, and
+                    // reaped on a thread so each launch does not leave a
+                    // zombie behind until the bar exits.
+                    let spawned = std::process::Command::new(program)
+                        .args(args)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .process_group(0)
+                        .spawn();
+                    match spawned {
+                        Ok(mut child) => {
+                            std::thread::spawn(move || {
+                                let _ = child.wait();
+                            });
+                        }
+                        Err(e) => tracing::warn!("battery.settings_command: {e}"),
                     }
                 }
             }
