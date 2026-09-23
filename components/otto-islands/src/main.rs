@@ -1,7 +1,10 @@
 mod activity;
+mod audio_viz;
 mod dbus_service;
 mod dialog;
 mod dock_overlays;
+mod mpris;
+mod music;
 mod notifications;
 mod renderer;
 mod state;
@@ -37,6 +40,7 @@ fn action_focus(id: u64, key: &str) -> otto_kit::focus::FocusId {
 use crate::dbus_service::{DialogService, IslandService, DBUS_NAME};
 use crate::dialog::{DialogHit, DialogId, DialogResponse, DialogView, Presence, Shape};
 use crate::dock_overlays::DockOverlays;
+use crate::music::MusicMonitor;
 use crate::renderer::{
     animate_to, apply_island_style, draw_content, set_size_and_position, COMPACT_H, MINI_H,
 };
@@ -64,6 +68,10 @@ const DESTROY_DELAY_SECS: f64 = 0.8;
 const CASCADE_STAGGER_SECS: f64 = 0.035;
 /// Width of the card's right-hand Close zone, used to hit-test a close click.
 const CARD_CLOSE_ZONE: f32 = 40.0;
+/// How long a pressed music control stays highlighted.
+const PRESS_FEEDBACK_MS: u128 = 300;
+/// Visualiser redraw interval while a track plays (~24 fps).
+const VISUALISER_FRAME_MS: u64 = 42;
 
 // ---------------------------------------------------------------------------
 // Island — one notification
@@ -80,6 +88,9 @@ enum IslandMode {
 #[derive(Clone, PartialEq)]
 struct IslandContent {
     mode: IslandMode,
+    /// For the music island: what the track looks like (title, artist,
+    /// whether art is loaded, playing, the control being pressed).
+    track: Option<(String, String, bool, bool, Option<music::MusicAction>)>,
     icon: String,
     title: String,
     progress: Option<f64>,
@@ -123,6 +134,25 @@ struct Island {
     body: String,
     /// How far along a running task is, cached for hit-testing and drawing.
     progress: Option<f64>,
+    /// Bars that move with the audio, on a child subsurface so they can
+    /// redraw at frame rate without touching the retained island buffer.
+    visualiser: Option<Visualiser>,
+}
+
+impl Island {
+    fn is_music(&self) -> bool {
+        self.app_id == music::MUSIC_APP_ID
+    }
+}
+
+/// An island's audio visualiser.
+struct Visualiser {
+    surface: SubsurfaceSurface,
+    /// Last layout target (w, h, cx, cy) relative to the island.
+    last_layout: Option<(f32, f32, f32, f32)>,
+    /// Whether the bars have been drawn for the current layout. A paused
+    /// track still shows them, still.
+    drawn: bool,
 }
 
 /// A presented Access-style dialog panel (one subsurface, drawn as a whole).
@@ -210,10 +240,18 @@ struct IslandApp {
     dialog_circle_x: f32,
     /// Unread-notification counts published onto the dock icons.
     dock_overlays: DockOverlays,
+    /// MPRIS playback and the audio level behind the music island.
+    music_monitor: MusicMonitor,
+    /// The music control last pressed, for press feedback.
+    music_pressed: Option<(music::MusicAction, std::time::Instant)>,
+    /// Last visualiser frame.
+    visualiser_last_frame: std::time::Instant,
+    /// Last redraw of the open music island (progress bar and clock).
+    music_last_full_redraw: std::time::Instant,
 }
 
 impl IslandApp {
-    fn new(state: SharedState) -> Self {
+    fn new(state: SharedState, music_monitor: MusicMonitor) -> Self {
         Self {
             state,
             layer_surface: None,
@@ -237,6 +275,10 @@ impl IslandApp {
             shift_held: false,
             dialog_circle_x: LAYER_W as f32 / 2.0,
             dock_overlays: DockOverlays::new(),
+            music_monitor,
+            music_pressed: None,
+            visualiser_last_frame: std::time::Instant::now(),
+            music_last_full_redraw: std::time::Instant::now(),
         }
     }
 
@@ -267,6 +309,24 @@ impl IslandApp {
             canvas.clear(skia_safe::Color::TRANSPARENT);
         });
         Some(surface)
+    }
+
+    /// Create the visualiser subsurface as a child of an island. The island
+    /// clips it, so the bars stay inside its shape while it animates.
+    fn create_visualiser(island: &SubsurfaceSurface) -> Option<Visualiser> {
+        let surface =
+            SubsurfaceSurface::new(island.wl_surface(), 0, 0, music::EQ_BUF_W, music::EQ_BUF_H)
+                .ok()?;
+        if let Some(ss) = surface.base_surface().surface_style() {
+            ss.set_contents_gravity(ContentsGravity::Center);
+            ss.set_anchor_point(0.5, 0.5);
+        }
+        surface.place_above(island.wl_surface());
+        Some(Visualiser {
+            surface,
+            last_layout: None,
+            drawn: false,
+        })
     }
 
     /// Queue a surface for destruction after animations have time to play.
@@ -321,6 +381,9 @@ impl IslandApp {
                 let island = self.islands.remove(i);
                 tracing::info!(app_id = %island.app_id, id = island.activity_id, "island removed");
                 renderer::animate_dismiss(&island.surface, 1.2);
+                if let Some(visualiser) = island.visualiser {
+                    self.defer_destroy(visualiser.surface);
+                }
                 self.defer_destroy(island.surface);
                 removed_island = true;
             }
@@ -335,6 +398,12 @@ impl IslandApp {
                 continue;
             };
             tracing::info!(app_id = %activity.app_id, id = activity.id, "island created");
+            let is_music = activity.app_id == music::MUSIC_APP_ID;
+            let visualiser = if is_music {
+                Self::create_visualiser(&surface)
+            } else {
+                None
+            };
             self.islands.push(Island {
                 activity_id: activity.id,
                 app_id: activity.app_id.clone(),
@@ -343,16 +412,17 @@ impl IslandApp {
                 mode: IslandMode::Mini,
                 created_at: activity.created_at,
                 // A new notification announces itself Expanded for a few
-                // seconds, then settles back into its app's stack.
-                peek_until: Some(
-                    std::time::Instant::now() + Duration::from_secs(ARRIVAL_READ_SECS),
-                ),
+                // seconds, then settles back into its app's stack. Music is
+                // not news: it arrives as a pill.
+                peek_until: (!is_music)
+                    .then(|| std::time::Instant::now() + Duration::from_secs(ARRIVAL_READ_SECS)),
                 last_layout: (0.0, 0.0, 0.0, 0.0),
                 last_content: None,
                 actions: activity.actions.clone(),
                 body: activity.body.clone(),
                 progress: activity.progress,
                 opened_by_user: false,
+                visualiser,
             });
             self.last_interaction = std::time::Instant::now();
         }
@@ -399,13 +469,19 @@ impl IslandApp {
         // ring still reads, so it takes its turn like everything else.
         let compact_id = self.hovered_island.or(self.focused_island).or(arriving);
 
+        // Music rests as a pill and only drops to a dot to make room for
+        // another island that is open or being looked at.
+        let row_is_free = compact_id.is_none()
+            && expand_id.is_none()
+            && !self.islands.iter().any(|i| i.mode == IslandMode::Expanded);
+
         for island in &mut self.islands {
             let id = Some(island.activity_id);
             if island.mode == IslandMode::Expanded && island.opened_by_user {
                 // User-opened: only user interaction (click / focus loss) closes it.
             } else if id == expand_id {
                 island.mode = IslandMode::Expanded;
-            } else if id == compact_id {
+            } else if id == compact_id || (row_is_free && island.is_music()) {
                 island.mode = IslandMode::Compact;
             } else {
                 island.mode = IslandMode::Mini;
@@ -489,6 +565,7 @@ impl IslandApp {
             for &idx in members {
                 let island = &self.islands[idx];
                 let (w, h) = match island.mode {
+                    _ if island.is_music() => music::MusicActivityRenderer::mode_size(island.mode),
                     IslandMode::Mini => (MINI_H, MINI_H),
                     IslandMode::Compact => (renderer::pill_width(&title_of(island)), COMPACT_H),
                     IslandMode::Expanded => {
@@ -591,6 +668,7 @@ impl IslandApp {
 
         // Redraw buffers whose content changed, then animate to the new layout.
         let layout_delay = if reposition_delay { 0.4 } else { 0.0 };
+        let music = self.music_renderer();
         for (idx, w, h, cx, cy) in targets {
             let cascade = row
                 .iter()
@@ -604,8 +682,21 @@ impl IslandApp {
             let Some(activity) = activity else { continue };
 
             let mode = self.islands[idx].mode;
+            let track = music
+                .as_ref()
+                .filter(|_| self.islands[idx].is_music())
+                .map(|mr| {
+                    (
+                        mr.title.clone(),
+                        mr.artist.clone(),
+                        mr.album_art.is_some(),
+                        mr.is_playing,
+                        mr.pressed,
+                    )
+                });
             let content = IslandContent {
                 mode,
+                track,
                 icon: activity.icon.clone(),
                 title: activity.title.clone(),
                 progress: activity.progress,
@@ -616,8 +707,14 @@ impl IslandApp {
                 h,
             };
             if self.islands[idx].last_content.as_ref() != Some(&content) {
+                let is_music = self.islands[idx].is_music();
                 let surface = &mut self.islands[idx].surface;
                 match mode {
+                    _ if is_music => draw_content(surface, w, h, |canvas| {
+                        if let Some(mr) = &music {
+                            mr.draw_without_eq(canvas, mode, w, h);
+                        }
+                    }),
                     IslandMode::Mini => draw_content(surface, w, h, |canvas| {
                         renderer::draw_mini(canvas, &activity.icon, activity.progress, w, h);
                     }),
@@ -661,6 +758,36 @@ impl IslandApp {
                     layout_delay + cascade,
                 );
                 self.islands[idx].last_layout = target;
+            }
+
+            // The bars move with their island: snapped to the target while the
+            // island is still springing, they would stick out of it.
+            if let Some(visualiser) = self.islands[idx].visualiser.as_mut() {
+                let (eq_w, eq_h, eq_x, eq_y) = music::MusicActivityRenderer::eq_layout(mode, w, h);
+                let eq_target = (eq_w, eq_h, eq_x + eq_w / 2.0, eq_y + eq_h / 2.0);
+                match visualiser.last_layout {
+                    Some(last) if last == eq_target => {}
+                    Some(_) => animate_to(
+                        &visualiser.surface,
+                        eq_target.0,
+                        eq_target.1,
+                        eq_target.2,
+                        eq_target.3,
+                        0.0,
+                        layout_delay + cascade,
+                    ),
+                    None => set_size_and_position(
+                        &visualiser.surface,
+                        eq_target.0,
+                        eq_target.1,
+                        eq_target.2,
+                        eq_target.3,
+                    ),
+                }
+                if visualiser.last_layout != Some(eq_target) {
+                    visualiser.drawn = false;
+                }
+                visualiser.last_layout = Some(eq_target);
             }
         }
 
@@ -887,6 +1014,37 @@ impl IslandApp {
             self.focused_island = Some(activity_id);
             let mut state = self.state.lock().unwrap();
             state.dirty = true;
+            return;
+        }
+
+        // The open music island is a player: a click on a control drives it,
+        // anywhere else puts it back to a pill. It never dismisses the music.
+        if self.islands[idx].is_music() {
+            let (w, h, cx, cy) = self.islands[idx].last_layout;
+            let action = music::MusicActivityRenderer::hit_test_expanded(
+                px - (cx - w / 2.0),
+                py - (cy - h / 2.0),
+                w,
+                h,
+            );
+            if action == Some(music::MusicAction::FocusPlayer) {
+                // The island hides while the player is focused, and comes back
+                // as a pill.
+                tracing::info!("music art clicked: focusing the player");
+                let island = &mut self.islands[idx];
+                island.mode = IslandMode::Compact;
+                island.opened_by_user = false;
+                self.music_monitor.focus_player();
+            } else if let Some(action) = action {
+                tracing::info!(?action, "music control clicked");
+                self.music_pressed = Some((action, std::time::Instant::now()));
+                self.music_monitor.control(action);
+            } else {
+                let island = &mut self.islands[idx];
+                island.mode = IslandMode::Compact;
+                island.opened_by_user = false;
+            }
+            self.state.lock().unwrap().dirty = true;
             return;
         }
 
@@ -1534,6 +1692,91 @@ impl IslandApp {
 // App trait implementation
 // ---------------------------------------------------------------------------
 
+impl IslandApp {
+    /// The music renderer, with the pressed control still highlighted.
+    fn music_renderer(&self) -> Option<music::MusicActivityRenderer> {
+        let mut mr = self.music_monitor.renderer()?;
+        mr.pressed = self
+            .music_pressed
+            .filter(|(_, at)| at.elapsed().as_millis() < PRESS_FEEDBACK_MS)
+            .map(|(action, _)| action);
+        Some(mr)
+    }
+
+    /// Whether a track is playing and its island is on screen, which is what
+    /// keeps the visualiser ticking.
+    fn music_playing_on_screen(&self) -> bool {
+        self.music_monitor.is_playing() && self.islands.iter().any(|i| i.visualiser.is_some())
+    }
+
+    /// Redraw the live parts of the music island: the bars at ~24 fps on their
+    /// own subsurface and, while it is open, the whole island once a second so
+    /// the progress bar and clock move. Everything else is retained.
+    fn redraw_music(&mut self, now: std::time::Instant) {
+        // A pressed control's highlight has to come off even when paused.
+        if self
+            .music_pressed
+            .is_some_and(|(_, at)| at.elapsed().as_millis() >= PRESS_FEEDBACK_MS)
+        {
+            self.music_pressed = None;
+            self.state.lock().unwrap().dirty = true;
+        }
+        let playing = self.music_playing_on_screen();
+        self.music_monitor.set_meter_active(playing);
+        let frame_due = playing
+            && now.duration_since(self.visualiser_last_frame)
+                >= Duration::from_millis(VISUALISER_FRAME_MS);
+        if frame_due {
+            self.visualiser_last_frame = now;
+            self.music_monitor.step_bars();
+        }
+        if let Some(mr) = self.music_monitor.renderer() {
+            for island in &mut self.islands {
+                let mode = island.mode;
+                let (w, h, _, _) = island.last_layout;
+                let Some(visualiser) = island.visualiser.as_mut() else {
+                    continue;
+                };
+                if !frame_due && visualiser.drawn {
+                    continue;
+                }
+                let (eq_w, eq_h, _, _) = music::MusicActivityRenderer::eq_layout(mode, w, h);
+                let buf_w = music::EQ_BUF_W as f32;
+                let buf_h = music::EQ_BUF_H as f32;
+                visualiser.surface.draw(|canvas| {
+                    canvas.clear(skia_safe::Color::TRANSPARENT);
+                    canvas.save();
+                    canvas.translate(((buf_w - eq_w) / 2.0, (buf_h - eq_h) / 2.0));
+                    mr.draw_eq_only(canvas, mode, eq_w, eq_h);
+                    canvas.restore();
+                });
+                visualiser.drawn = true;
+            }
+        }
+        if !playing {
+            return;
+        }
+
+        if now.duration_since(self.music_last_full_redraw) >= Duration::from_secs(1) {
+            self.music_last_full_redraw = now;
+            let Some(mr) = self.music_renderer() else {
+                return;
+            };
+            for island in &mut self.islands {
+                if !island.is_music() || island.mode != IslandMode::Expanded {
+                    continue;
+                }
+                let (w, h, _, _) = island.last_layout;
+                if w > 0.0 && h > 0.0 {
+                    draw_content(&mut island.surface, w, h, |canvas| {
+                        mr.draw_without_eq(canvas, IslandMode::Expanded, w, h);
+                    });
+                }
+            }
+        }
+    }
+}
+
 impl App for IslandApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let layer_surface =
@@ -1603,6 +1846,9 @@ impl App for IslandApp {
             let title = activity.title.clone();
             let body = activity.body.clone();
             let urgent = matches!(activity.priority, Priority::Critical | Priority::High);
+            // What is playing is there to be looked at, not announced: a new
+            // track every few minutes must not interrupt a screen reader.
+            let announce = !island.is_music();
             let progress = activity.progress;
             let actions: Vec<(String, String)> = activity
                 .actions
@@ -1623,7 +1869,9 @@ impl App for IslandApp {
                     ));
                     node.set_label(title);
                     node.set_description(body);
-                    node.set_live(if urgent {
+                    node.set_live(if !announce {
+                        otto_kit::accessibility::Live::Off
+                    } else if urgent {
                         otto_kit::accessibility::Live::Assertive
                     } else {
                         otto_kit::accessibility::Live::Polite
@@ -1743,6 +1991,10 @@ impl App for IslandApp {
             drop(state);
         }
 
+        // Create, update or dismiss the music activity to match the player.
+        self.music_monitor.sync_to_island(&self.state);
+        self.redraw_music(now);
+
         // Poll for withdrawn dialogs (caller aborted the request). This marks
         // state dirty when one is pruned so the panel is dismissed below.
         if self.dialog.is_some() {
@@ -1795,6 +2047,23 @@ impl App for IslandApp {
         if let Some(panel) = &self.dialog {
             deadlines.push(now + Duration::from_millis(500));
             deadlines.extend(panel.presence.deadline());
+        }
+        // A playing track animates the bars, so the loop has to tick; a
+        // stopped one is let go of once its grace period is over.
+        if self.music_playing_on_screen() {
+            deadlines.push(self.visualiser_last_frame + Duration::from_millis(VISUALISER_FRAME_MS));
+        }
+        deadlines.extend(self.music_monitor.grace_deadline());
+        // Bars still to draw for a new layout, and a press highlight to lift.
+        if self
+            .islands
+            .iter()
+            .any(|i| i.visualiser.as_ref().is_some_and(|v| !v.drawn))
+        {
+            deadlines.push(now);
+        }
+        if let Some((_, at)) = self.music_pressed {
+            deadlines.push(at + Duration::from_millis(PRESS_FEEDBACK_MS as u64));
         }
         // Waiting on the keyboard: look again soon, so the exclusive grab it
         // needs is dropped as soon as the focus has arrived.
@@ -2185,7 +2454,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::future::pending::<()>().await;
     });
 
-    let app = IslandApp::new(state);
+    otto_kit::utils::focus_watcher::spawn_focus_watcher();
+    let music_monitor = MusicMonitor::new(mpris::start_monitor(), audio_viz::LevelMeter::new());
+
+    let app = IslandApp::new(state, music_monitor);
     AppRunner::new(app).run()?;
 
     Ok(())
