@@ -280,13 +280,29 @@ async fn read_upower(proxy: &UPowerDeviceProxy<'_>) -> Option<Battery> {
 /// which sysfs does not carry: it has energy counters and a current, and
 /// turning those into a duration is what UPower is for.
 fn read_sysfs() -> Battery {
-    let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") else {
+    read_sysfs_in(std::path::Path::new("/sys/class/power_supply"))
+}
+
+fn read_sysfs_in(root: &std::path::Path) -> Battery {
+    let Ok(entries) = std::fs::read_dir(root) else {
         return Battery::default();
+    };
+    let read = |path: &std::path::Path, name: &str| {
+        std::fs::read_to_string(path.join(name))
+            .unwrap_or_default()
+            .trim()
+            .to_string()
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let kind = std::fs::read_to_string(path.join("type")).unwrap_or_default();
-        if kind.trim() != "Battery" {
+        if read(&path, "type") != "Battery" {
+            continue;
+        }
+        // A wireless mouse, keyboard or gamepad is a `Battery` too, marked
+        // `scope=Device`. On a desktop it is the only one there is, and its
+        // charge is not the machine's — UPower leaves it out of the
+        // DisplayDevice for the same reason.
+        if read(&path, "scope") == "Device" || read(&path, "present") == "0" {
             continue;
         }
         let Ok(capacity) = std::fs::read_to_string(path.join("capacity")) else {
@@ -665,6 +681,57 @@ mod tests {
         assert_eq!(ChargeState::from_upower(4), ChargeState::Full);
         assert_eq!(ChargeState::from_upower(3), ChargeState::Unknown);
         assert_eq!(ChargeState::from_upower(99), ChargeState::Unknown);
+    }
+
+    fn supply(root: &std::path::Path, name: &str, files: &[(&str, &str)]) {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (file, contents) in files {
+            std::fs::write(dir.join(file), format!("{contents}\n")).unwrap();
+        }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("otto-bar-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn a_desktop_with_a_wireless_mouse_has_no_battery() {
+        let root = scratch("desktop");
+        supply(&root, "ACAD", &[("type", "Mains")]);
+        supply(
+            &root,
+            "hidpp_battery_0",
+            &[("type", "Battery"), ("scope", "Device"), ("capacity", "80")],
+        );
+        assert!(!read_sysfs_in(&root).present);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_laptop_reports_its_own_battery_not_the_mouse() {
+        let root = scratch("laptop");
+        supply(
+            &root,
+            "hidpp_battery_0",
+            &[("type", "Battery"), ("scope", "Device"), ("capacity", "80")],
+        );
+        supply(
+            &root,
+            "BAT1",
+            &[
+                ("type", "Battery"),
+                ("present", "1"),
+                ("capacity", "51"),
+                ("status", "Discharging"),
+            ],
+        );
+        let battery = read_sysfs_in(&root);
+        assert!(battery.present);
+        assert_eq!(battery.percentage, 51.0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
