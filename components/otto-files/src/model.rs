@@ -1364,7 +1364,7 @@ pub enum OnConflict {
 /// Recorded per item rather than per operation because an operation is not
 /// all-or-nothing: a paste of ten files can move eight, skip one and fail on
 /// one, and only the eight that happened may be undone.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Change {
     /// Something that existed at `from` now lives at `to` — a move, a rename,
     /// a drag between directories. Undone by moving it back.

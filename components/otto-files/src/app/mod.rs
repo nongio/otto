@@ -93,13 +93,6 @@ const DOUBLE_CLICK_WINDOW: std::time::Duration = std::time::Duration::from_milli
 /// How far the pointer must travel, with the button still down, before a press
 /// on a row becomes a drag rather than a click. Below this a hand that shifts
 /// while clicking still selects, and a double-click still opens.
-/// How many operations back Ctrl+Z can reach.
-///
-/// Deep enough that undo is a thing you can lean on, shallow enough that the
-/// paths it holds cannot pile up: every step remembers where files went, and
-/// an unbounded stack would keep the whole session's worth alive.
-const UNDO_DEPTH: usize = 32;
-
 const DRAG_THRESHOLD: f32 = 6.0;
 
 /// Files landed somewhere — a paste, a drop, a restore out of the Trash.
@@ -126,20 +119,6 @@ const SOUND_DESTROYED: [&str; 3] = ["trash-empty", "item-deleted", "device-remov
 /// delete, and hearing the delete undone is worth more than hearing it as one
 /// more paste. The naming spec has nothing for it, so this is borrowed.
 const SOUND_RESTORED: [&str; 2] = ["complete", "device-added"];
-
-/// One undoable operation: what to call it, and everything it did.
-///
-/// Only operations that *change files* go on the stack — a move, a copy, a
-/// paste, a delete, a rename, a new folder. Selecting and navigating are not
-/// undoable and never were: Ctrl+Z that could take back a click would make
-/// the ones that take back a delete unreliable, because the user would never
-/// know which of the two the next press was going to reach.
-#[derive(Debug, Clone)]
-struct UndoStep {
-    /// Names the thing being taken back, for the status line: "Undid Move".
-    label: &'static str,
-    changes: Vec<model::Change>,
-}
 
 /// A rubber-band selection being dragged out over the icon grid.
 ///
@@ -361,9 +340,9 @@ struct Browser {
     /// The file operation running on a worker thread, if there is one. See
     /// [`Job`]: one at a time, and the window stays usable while it runs.
     job: Option<Job>,
-    /// Operations that changed files, newest last. Ctrl+Z pops one and puts
-    /// it back; see [`UndoStep`] for what does and does not go on here.
-    undo: Vec<UndoStep>,
+    /// Operations that changed files, shared with every other window; see
+    /// [`crate::undo_history`].
+    undo: crate::undo_history::UndoHistory,
     /// The open preview, if one is up.
     peek: Option<peek::Session>,
     /// The docked preview column's state, for the entry currently under a

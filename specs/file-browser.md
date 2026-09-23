@@ -887,6 +887,13 @@ progress, and can cancel it.
   empty. A permanent delete is not undoable and the undo action says so rather
   than being silently absent.
 
+  There is one stack for the whole session, shared by every browser window and
+  the Trash window. Ctrl+Z in any of them takes back the newest operation,
+  wherever it happened. A drag from one window into another is a single
+  operation, so nobody has to remember which window "has" it. The stack lives
+  in `$XDG_RUNTIME_DIR/otto/files-undo.json` under an exclusive `flock`, so it
+  ends with the session. Without a runtime directory each window keeps its own.
+
   Undoable means *changed a file*. Selecting, navigating, sorting and switching
   view are not on the stack: a Ctrl+Z that could spend itself taking back a
   click would make the ones that take back a delete unreliable, because the
