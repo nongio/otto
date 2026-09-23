@@ -33,9 +33,16 @@ pub struct RightPanel {
     pub clock: Clock,
     pub tray_menu_state: MenuBarState,
     pub tray_style: MenuBarStyle,
+    /// The power menu is open: the battery wears the same pill an open tray
+    /// item does.
+    pub battery_active: bool,
     pub width: f32,
     pub height: f32,
 }
+
+/// How far the open-menu pill reaches past the battery glyph on each side.
+/// Inside `TRAY_CLOCK_GAP`, so it never meets the tray's own pill.
+const BATTERY_PILL_PADDING: f32 = 5.0;
 
 /// Colours for a highlighted bar item (hover and active/open).
 ///
@@ -257,6 +264,7 @@ impl RightPanel {
             clock: Clock::new(),
             tray_menu_state: MenuBarState::new(),
             tray_style: tray_menu_style(),
+            battery_active: false,
             width: RIGHT_WIDTH as f32,
             height: BAR_HEIGHT as f32,
         }
@@ -319,7 +327,28 @@ impl RightPanel {
         // Right to left: clock on the edge, then the battery, then the tray.
         self.draw_clock(canvas, &theme);
 
-        crate::battery::draw(canvas, layout.battery_x, self.height, &theme);
+        if self.battery_active && layout.battery_width > 0.0 {
+            // The tray's pill, down to the colours and the corner: an open
+            // menu looks the same whichever item it belongs to.
+            let hl = highlight_colors();
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_color(hl.active);
+            let pill = skia_safe::Rect::from_xywh(
+                layout.battery_x - BATTERY_PILL_PADDING,
+                0.0,
+                layout.battery_width + BATTERY_PILL_PADDING * 2.0,
+                self.height,
+            );
+            let radius = self.tray_style.item_corner_radius;
+            canvas.draw_round_rect(pill, radius, radius, &paint);
+
+            let mut active_theme = theme.clone();
+            active_theme.text_primary = hl.on_active;
+            crate::battery::draw(canvas, layout.battery_x, self.height, &active_theme);
+        } else {
+            crate::battery::draw(canvas, layout.battery_x, self.height, &theme);
+        }
 
         canvas.save();
         canvas.translate((layout.tray_x, 0.0));

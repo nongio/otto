@@ -415,6 +415,10 @@ impl TopBarApp {
         if let Some(ref surface) = self.right_surface {
             surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         }
+        if self.right.battery_active {
+            self.right.battery_active = false;
+            self.redraw_right();
+        }
     }
 
     /// Show the battery's menu, with the CPU's frequencies as they are now.
@@ -471,6 +475,8 @@ impl TopBarApp {
         menu.show_for_layer(&surface.layer_surface(), &positioner);
         surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         self.open_power_menu = Some(PowerMenu { menu, cpu });
+        self.right.battery_active = true;
+        self.redraw_right();
     }
 
     /// The battery or a profile changed under an open power menu: move the
@@ -747,6 +753,15 @@ impl App for TopBarApp {
             return;
         }
 
+        // Forward to the power menu: Escape closes it, arrows move through it.
+        if let Some(ref mut open) = self.open_power_menu {
+            open.menu.handle_key(key, state);
+            if !open.menu.is_visible() {
+                self.close_power_menu();
+            }
+            return;
+        }
+
         // Forward to open app menu
         if let Some(ref mut open) = self.open_app_menu {
             open.menu.handle_key(key, state);
@@ -781,6 +796,9 @@ impl App for TopBarApp {
         }
         if self.open_app_menu.is_some() {
             self.close_app_menu();
+        }
+        if self.open_power_menu.is_some() {
+            self.close_power_menu();
         }
     }
 
