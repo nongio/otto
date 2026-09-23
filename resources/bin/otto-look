@@ -137,6 +137,23 @@ check_credits() {
     done
 }
 
+# A look sets how the desktop looks, nothing else: a [settings] key outside
+# these (the lock screen, the greeter, power, input) is refused before
+# anything is installed.
+check_settings() {
+    awk -F '\t' '$1 == "settings" { print $2 }' "$work/def" | while read -r key; do
+        case $key in
+            accent_color | background_color | cursor_size | font_family | frosting | \
+            rounded_corners | show_maximize_button | theme_scheme | window_controls_side | \
+            dock.position | dock.size | dock.magnification | dock.autohide | \
+            dock.colorize_icons | dock.colorize_color | dock.colorize_intensity | \
+            dock.genie_scale | dock.genie_span | \
+            appswitcher.colorize_icons) ;;
+            *) die "[settings] $key is not a look's to change" ;;
+        esac
+    done
+}
+
 credits() {
     echo "Credits:"
     for section in wallpaper icons cursors; do
@@ -214,6 +231,7 @@ install() {
     parse "$work/look.toml" > "$work/def"
     name=$(get look name); [ -n "$name" ] || die "the definition has no [look] name"
     check_credits
+    check_settings
     echo "Installing $name"
 
     install_theme icons
