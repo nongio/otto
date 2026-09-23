@@ -49,8 +49,9 @@ otto-bar looks for a TOML config file in this order:
 | `profile_backend`   | `"auto"`       | `"auto"`, `"power-profiles"`, `"commands"`          |
 | `settings_command`  | `"otto-settings"` | Menu's last entry; empty string hides it         |
 
-`[[battery.profiles]]` entries define the switchable profiles when
-power-profiles-daemon is absent or masked. Each takes `label`, `command`
+`[[battery.profiles]]` entries define the switchable profiles. When any are
+set they take precedence over power-profiles-daemon, unless `profile_backend`
+is `"power-profiles"`. Each takes `label`, `command`
 (string or argv array) and optionally `governor` / `epp`, which decide when the
 entry is check-marked.
 

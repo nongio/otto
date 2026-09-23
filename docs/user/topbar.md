@@ -129,14 +129,16 @@ doing, and the power profiles that can be selected.
 
 ### Where the profiles come from
 
-Whichever of these is available, in order:
+The first of these that applies:
 
-1. **power-profiles-daemon**, under either of its D-Bus names. This is the
+1. **`[[battery.profiles]]` entries** from the config file, each a command.
+   When you have written any, they are used even if power-profiles-daemon is
+   running: they are a statement about this machine. They are what to use when
+   something else manages the CPU — `auto-cpufreq` and power-profiles-daemon
+   conflict, and installing one masks the other. Set
+   `profile_backend = "power-profiles"` to prefer the daemon anyway.
+2. **power-profiles-daemon**, under either of its D-Bus names. This is the
    usual case. Selecting a profile sets it, and polkit handles the permission.
-2. **`[[battery.profiles]]` entries** from the config file, each a command. Use
-   these when the daemon is absent or masked, which it will be if something
-   else manages the CPU: `auto-cpufreq` and power-profiles-daemon conflict,
-   and installing one masks the other.
 3. **Nothing.** The menu still lists the kernel's governors and ticks the live
    one, greyed out, so it says what the CPU is set to even when it cannot
    change it.
