@@ -26,6 +26,9 @@ impl<BackendData: Backend> WaylandDndGrabHandler for Otto<BackendData> {
         serial: Serial,
         type_: GrabType,
     ) {
+        // The press that started this drag does not raise its window.
+        self.pending_raise = None;
+
         // Whatever the last drag left behind, now that its flight home or its
         // fade is over and its layers are no longer being looked at.
         if let Some(surface) = self.pending_dnd_cleanup.take() {

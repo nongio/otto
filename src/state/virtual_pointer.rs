@@ -379,7 +379,13 @@ where
                         state
                             .layers_engine
                             .pointer_move(&(cx as f32, cy as f32).into(), None);
-                        state.focus_window_under_cursor(serial);
+                        state.focus_window_under_cursor(
+                            serial,
+                            crate::input::pointer::RaiseTiming::for_button(button),
+                        );
+                    }
+                    if btn_state == ButtonState::Released {
+                        state.apply_pending_raise();
                     }
                     pointer.button(
                         state,

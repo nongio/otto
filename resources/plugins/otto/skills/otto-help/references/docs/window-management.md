@@ -10,7 +10,10 @@ unaffected. See [Tiling](tiling.md).
 ## Focus and raising
 
 Otto uses click-to-focus. Clicking anywhere in a window raises it to the top of
-the stack and gives it keyboard focus. Focus also follows:
+the stack and gives it keyboard focus. The window comes forward when you let go
+of the button, so you can drag a file or some text out of a window behind
+others and drop it in front: a drag leaves the window it started from where it
+was. Focus also follows:
 
 - clicking the app's icon in the [Dock](dock.md),
 - selecting it in the [App Switcher](expose-and-switcher.md) or

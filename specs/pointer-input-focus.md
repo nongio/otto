@@ -11,7 +11,7 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 
 - A pointer button press is always delivered to the surface that is visually under the cursor at press time.
 - Both the compositor's own UI layer (dock, islands, launcher, etc.) and application/Wayland surfaces resolve their focus consistently, against live on-screen positions.
-- Keyboard focus and window stacking follow the surface clicked, in the same interaction.
+- Keyboard focus and window stacking follow the surface clicked, in the same interaction, except that a drag started from a window behind others leaves it where it is.
 
 ## Non-Goals
 
@@ -24,6 +24,9 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 - When a pointer button is pressed, before the press is dispatched to any surface, Otto re-resolves the pointer focus at the cursor's live location — for both the compositor UI layer and application surfaces — so that the surface currently under the cursor becomes the pointer focus.
 - The press (and the subsequent release) are then delivered to that freshly-resolved surface.
 - On press over an application window (when not in a mode that suppresses it, such as show-all/expose), the window under the cursor is raised and given keyboard focus. Clicking a subsurface or popup gives keyboard focus to the owning top-level surface.
+- For the left button on a Wayland window, the raise and the keyboard focus wait for the release. The press itself is delivered at once, so the client can select and start a drag. If the press starts a drag (`wl_data_device.start_drag`), the raise is dropped: the source window keeps its place in the stack and the keyboard stays where it was. If the press turns into an interactive move or resize (client- or server-side decorations) or opens a popup with a grab, the raise happens right then, before the grab starts.
+- Other buttons, tablet tools and X11 windows raise at the press. So does a left press made while a Top or Overlay layer-shell surface holds the keyboard, so the panel loses it straight away.
+- A raise waiting for its release is skipped if the window has meanwhile closed, been minimized or gone fullscreen, or if the session has been locked or expose opened.
 - On press over a focusable Top or Overlay layer-shell surface, that surface receives keyboard focus instead, hit-tested against its live on-screen position and honoring its input region.
 - When the cursor is over empty space (no surface), the press resolves to no focus and is not delivered to any surface.
 - A press on a popup owned by a Top or Overlay layer-shell surface (a bar menu) leaves keyboard focus where it is: it must not move to a window that happens to lie under the popup.
@@ -44,6 +47,7 @@ Defines how Otto resolves which surface receives a pointer button event. Focus m
 
 - Pointer focus was historically refreshed only on motion events. A cursor held still while the scene changed underneath it left focus pointing at whatever was there before, causing presses to land on the wrong surface or none — perceived by users as "random missed clicks." Re-resolving focus at press time makes the delivered target match what the user sees.
 - Focus is resolved for the compositor UI layer and for application surfaces separately because they are tracked independently; refreshing only one would still drop clicks on the other.
+- Raising at the press brings a window forward before its client has even seen the button, so nothing can be dragged out of a window behind others: it covers the place the drag was meant to go. Waiting for the release keeps clicks behaving as before, a little later, and lets a drag leave its source where it was. Right and middle presses often open a context menu at the press, and that popup's grab needs its window to hold the keyboard, so they raise at once.
 
 ## Open Questions
 

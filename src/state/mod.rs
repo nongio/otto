@@ -285,6 +285,11 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// flies back to where the drag started and are swept up when the next drag
     /// begins. See [`crate::state::dnd_grab_handler`].
     pub pending_dnd_cleanup: Option<WlSurface>,
+    /// The window a left press landed on, to raise and focus when the button
+    /// comes up. Dropped if the press starts a drag, so a window behind others
+    /// can be dragged from without coming forward. See
+    /// [`Otto::apply_pending_raise`].
+    pub pending_raise: Option<crate::shell::WindowElement>,
     /// Where the drag icon sits relative to the cursor.
     ///
     /// A client anchors the icon by the point it was grabbed by — `wl_surface
@@ -1034,6 +1039,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             dnd_icon: None,
             dnd_layer_ids: Vec::new(),
             pending_dnd_cleanup: None,
+            pending_raise: None,
             dnd_icon_offset: (0, 0).into(),
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
