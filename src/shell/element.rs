@@ -3,7 +3,7 @@ use std::{
     fs,
     sync::{
         atomic::{AtomicBool, AtomicU8, AtomicUsize},
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -31,7 +31,7 @@ use smithay::{
     render_elements,
     utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Size},
     wayland::{
-        compositor::SurfaceData as WlSurfaceData,
+        compositor::{with_states, SurfaceData as WlSurfaceData},
         dmabuf::DmabufFeedback,
         seat::WaylandFocus,
         shell::xdg::{SurfaceCachedState, ToplevelSurface, XdgToplevelSurfaceData},
@@ -403,7 +403,21 @@ impl WindowElement {
     }
 
     pub fn on_commit(&self) {
-        self.0.window.on_commit()
+        self.0.window.on_commit();
+        // Record the geometry Smithay hit-tests with, so the scene draws the
+        // surface from the same origin (see `xdg_geometry_loc`).
+        let Some(surface) = self.0.window.wl_surface() else {
+            return;
+        };
+        let geometry = self.0.window.geometry();
+        with_states(&surface, |states| {
+            states
+                .data_map
+                .insert_if_missing_threadsafe(|| EffectiveGeometry(Mutex::new(geometry)));
+            if let Some(effective) = states.data_map.get::<EffectiveGeometry>() {
+                *effective.0.lock().unwrap() = geometry;
+            }
+        });
     }
 
     pub fn base_layer(&self) -> &Layer {
@@ -770,6 +784,31 @@ where
             .map(C::from)
             .collect()
         // }
+    }
+}
+
+/// A toplevel's window geometry as xdg-shell defines it: the rectangle the
+/// client set, clamped to the bounds of its surface tree. Kept on the
+/// surface by [`WindowElement::on_commit`].
+struct EffectiveGeometry(Mutex<Rectangle<i32, Logical>>);
+
+/// The origin of a surface's window geometry, which the scene subtracts to
+/// place the surface's content.
+///
+/// For a toplevel this is the effective geometry, the one Smithay's hit
+/// testing uses. The rectangle as set can reach past the surface: winit sets
+/// one around its fallback frame and keeps it after dropping the frame for
+/// server-side decorations. Popups and layer surfaces keep the value they set.
+pub fn xdg_geometry_loc(states: &WlSurfaceData) -> Point<i32, Logical> {
+    let geometry = states
+        .cached_state
+        .get::<SurfaceCachedState>()
+        .current()
+        .geometry;
+    match (geometry, states.data_map.get::<EffectiveGeometry>()) {
+        (Some(_), Some(effective)) => effective.0.lock().unwrap().loc,
+        (Some(geometry), None) => geometry.loc,
+        (None, _) => Point::default(),
     }
 }
 
