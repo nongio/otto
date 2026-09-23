@@ -21,7 +21,7 @@ A new user's first session starts with an icon theme that matches their other de
 
 ## Behavior
 
-- **Dock:** the system configuration's `dock.bookmarks` lists Otto's Files and Settings, then the GNOME and KDE terminals, Ghostty and Terminator, Firefox (also `firefox-esr`), Chromium, and the GNOME and KDE text editors, gVim, and the GNOME and KDE calculators. A listed app with no desktop file installed is skipped with a warning, so each system shows whichever of them it has. The skipped entry stays in the configuration and appears in the next session after the app is installed.
+- **Dock:** the system configuration's `dock.bookmarks` lists Otto's Files and Settings, then the GNOME and KDE terminals, Ghostty and Terminator, Firefox (also `firefox-esr`), Chromium, and GNOME Text Editor, gVim, and the GNOME and KDE calculators. A listed app with no desktop file installed is skipped with a warning, so each system shows whichever of them it has. The skipped entry stays in the configuration and appears in the next session after the app is installed.
 - **Icon theme trigger:** a session starts and the user's configuration file (`$XDG_CONFIG_HOME/otto/config.toml`) does not exist. A greeter session and a test session never trigger it.
 - **Icon theme result:** the file is created holding `icon_theme`. When no theme is found, nothing is written and the system configuration's value applies.
 - **Icon theme source:** the first installed theme found in:
