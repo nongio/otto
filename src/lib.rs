@@ -59,14 +59,6 @@ mod workspaces;
 mod config;
 mod theme;
 
-/// Write the user's first configuration if they have none: the icon theme
-/// their other desktops use.
-///
-/// Call before anything reads the configuration.
-pub fn prepare_first_run() {
-    config::first_run::prepare();
-}
-
 /// The user's preferred locales, most preferred first.
 ///
 /// Exposed so `main` can load the string catalogues before any chrome is

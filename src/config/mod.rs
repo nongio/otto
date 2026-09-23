@@ -6,7 +6,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod default_apps;
 pub mod file;
-pub mod first_run;
 pub mod shortcuts;
 
 use shortcuts::{build_bindings, RunCommandConfig, ShortcutBinding, ShortcutMap};

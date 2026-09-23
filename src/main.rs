@@ -94,14 +94,6 @@ async fn main() {
             .init();
     }
 
-    // A new user's configuration is written before anything reads it. Not for
-    // the greeter, which is nobody's session, nor for a test session.
-    if !otto::login::is_login_mode()
-        && !std::env::args().any(|a| a == "--headless" || a == "--probe")
-    {
-        otto::prepare_first_run();
-    }
-
     // Load the string catalogues before any chrome is built — the dock's
     // context menus are assembled during construction. `config.locales`
     // rather than the environment: it is the setting the user edits, and it
