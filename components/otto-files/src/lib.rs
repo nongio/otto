@@ -37,5 +37,6 @@ pub mod search;
 pub mod tasks;
 pub mod thumbcache;
 pub mod thumbnails;
+pub mod undo_history;
 pub mod view;
 pub mod watch;

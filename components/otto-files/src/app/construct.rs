@@ -89,7 +89,7 @@ impl Browser {
             trash_pressed: None,
             status: None,
             job: None,
-            undo: Vec::new(),
+            undo: crate::undo_history::UndoHistory::for_session(),
             info: None,
             info_text: None,
             info_error: None,

@@ -506,17 +506,12 @@ impl Browser {
     /// Called with every operation's outcome rather than only the clean ones:
     /// a paste that half worked still moved real files, and those are exactly
     /// the ones a user reaches for Ctrl+Z about.
-    pub(super) fn record_undo(&mut self, label: &'static str, changes: Vec<model::Change>) {
-        if changes.is_empty() {
-            return;
-        }
-        self.undo.push(UndoStep { label, changes });
-        if self.undo.len() > UNDO_DEPTH {
-            self.undo.remove(0);
-        }
+    pub(super) fn record_undo(&mut self, label: &str, changes: Vec<model::Change>) {
+        self.undo.push(label, changes);
     }
 
-    /// Ctrl+Z — take back the last operation that changed files.
+    /// Ctrl+Z — take back the last operation that changed files, in this
+    /// window or any other.
     pub(super) fn undo_last(&mut self) {
         let Some(step) = self.undo.pop() else {
             self.status = Some(otto_kit::t_owned!("files-nothing-to-undo"));
