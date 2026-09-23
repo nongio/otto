@@ -370,6 +370,9 @@ pub fn run_winit() {
     // Set initial screen dimensions before mapping output so update_workspaces_layout
     // can compute the correct scene size.
     state.workspaces.set_screen_dimension(size.w, size.h);
+    // Scene damage is clipped to this size; left at zero, nothing the scene
+    // alone changes (dock hover, animations) is ever repainted.
+    state.scene_element.set_size(size.w as f32, size.h as f32);
     state.workspaces.map_output(&output, (0, 0));
 
     #[cfg(feature = "xwayland")]
@@ -428,6 +431,7 @@ pub fn run_winit() {
                 // set_screen_dimension triggers update_workspaces_layout which resizes
                 // the scene root to cover all outputs' physical extents.
                 state.workspaces.set_screen_dimension(size.w, size.h);
+                state.scene_element.set_size(size.w as f32, size.h as f32);
             }
             WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),
             _ => (),
