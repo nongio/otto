@@ -439,6 +439,7 @@ files-no-such-folder = “{ $path }” non esiste
 files-rename-failed = Impossibile rinominare: { $error }
 files-new-folder-failed = Impossibile creare la cartella: { $error }
 files-open-failed = Impossibile aprire il file: { $error }
+files-open-app-broken = il comando di avvio dell’app non è valido
 files-new-window-failed = Impossibile aprire una nuova finestra: { $error }
 
 

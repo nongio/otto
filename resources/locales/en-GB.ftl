@@ -541,6 +541,7 @@ files-no-such-folder = There is no “{ $path }”
 files-rename-failed = Couldn’t rename: { $error }
 files-new-folder-failed = Couldn’t create folder: { $error }
 files-open-failed = Couldn’t open that file: { $error }
+files-open-app-broken = the app’s launch command is broken
 files-new-window-failed = Couldn’t open a new window: { $error }
 
 

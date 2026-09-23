@@ -443,6 +443,7 @@ files-no-such-folder = «{ $path }» не существует
 files-rename-failed = Не удалось переименовать: { $error }
 files-new-folder-failed = Не удалось создать папку: { $error }
 files-open-failed = Не удалось открыть файл: { $error }
+files-open-app-broken = команда запуска приложения повреждена
 files-new-window-failed = Не удалось открыть новое окно: { $error }
 
 

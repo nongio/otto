@@ -13,7 +13,8 @@
 //! line's field codes.
 
 use std::collections::{HashMap, HashSet};
-use std::io;
+use std::ffi::OsString;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use freedesktop_desktop_entry::DesktopEntry;
@@ -81,11 +82,6 @@ impl Associations {
             .map(|text| parse_list(&text))
             .collect();
         Self { apps, lists }
-    }
-
-    /// The application with this desktop file ID, if it is installed.
-    pub fn app(&self, id: &str) -> Option<&App> {
-        self.openable(id)
     }
 
     /// What opens `mime` by default: the user's or the system's choice, and
@@ -421,21 +417,37 @@ fn parse_list(text: &str) -> ListFile {
 ///
 /// When there is no home directory to write to, or the file cannot be
 /// written. The write goes to a temporary file first and is renamed into
-/// place, so a failure leaves the old file whole.
+/// place, so a failure leaves the old file whole. When the file is a symlink
+/// (a dotfiles manager's), the file it points to is the one rewritten, so the
+/// link survives.
 pub fn set_default(mime: &str, app_id: &str) -> io::Result<()> {
     let dir = config_home()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no config directory"))?;
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join("mimeapps.list");
+    let link = dir.join("mimeapps.list");
+    let path = match std::fs::canonicalize(&link) {
+        Ok(target) => target,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => link,
+        Err(err) => return Err(err),
+    };
     let current = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err),
     };
     let updated = with_default(&current, mime, app_id);
-    let temporary = dir.join(".mimeapps.list.otto-tmp");
-    std::fs::write(&temporary, updated)?;
-    std::fs::rename(&temporary, &path)
+    // Beside the file, so the rename stays on one filesystem, and named for
+    // this process, so two windows saving at once do not share one.
+    let temporary = path.with_file_name(format!(".mimeapps.list.{}.tmp", std::process::id()));
+    let written = std::fs::File::create(&temporary).and_then(|mut file| {
+        file.write_all(updated.as_bytes())?;
+        file.sync_all()
+    });
+    if let Err(err) = written.and_then(|()| std::fs::rename(&temporary, &path)) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// `text`, a `mimeapps.list` body, with `app_id` set as the default for
@@ -541,8 +553,12 @@ impl std::error::Error for OpenError {}
 ///
 /// Its `Exec=` line decides how the files are passed: `%F` and `%U` take them
 /// all in one process, `%f` and `%u` one each, so an application that takes a
-/// single file is started once per file. The processes are detached — stdio
-/// closed and reaped on a thread of their own — so they outlive the caller.
+/// single file is started once per file. Relative paths are made absolute
+/// first, since the application starts in a directory of its own choosing.
+///
+/// The processes are detached: stdio closed, a process group of their own so
+/// a signal to the caller's terminal does not reach them, and reaped on a
+/// thread so they outlive the caller.
 ///
 /// # Errors
 ///
@@ -550,11 +566,16 @@ impl std::error::Error for OpenError {}
 /// the program cannot be started. Nothing is started unless every command
 /// parses.
 pub fn open(app: &App, paths: &[PathBuf]) -> Result<(), OpenError> {
+    use std::os::unix::process::CommandExt;
+
     let exec = app.exec.as_deref().ok_or(OpenError::NoCommand)?;
     let commands = command_lines(exec, paths, app)?;
     for mut argv in commands {
         if app.terminal {
-            argv = in_terminal(argv);
+            let mut wrapped: Vec<OsString> =
+                terminal_command().into_iter().map(OsString::from).collect();
+            wrapped.append(&mut argv);
+            argv = wrapped;
         }
         let (program, args) = argv.split_first().ok_or(OpenError::NoCommand)?;
         let mut command = std::process::Command::new(program);
@@ -562,7 +583,8 @@ pub fn open(app: &App, paths: &[PathBuf]) -> Result<(), OpenError> {
             .args(args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::null())
+            .process_group(0);
         if let Some(dir) = app.working_dir.as_deref().filter(|dir| dir.is_dir()) {
             command.current_dir(dir);
         }
@@ -574,15 +596,23 @@ pub fn open(app: &App, paths: &[PathBuf]) -> Result<(), OpenError> {
     Ok(())
 }
 
-/// Wrap a command in a terminal: `$TERMINAL` if the session names one,
-/// otherwise the freedesktop terminal launcher.
-fn in_terminal(argv: Vec<String>) -> Vec<String> {
-    let mut wrapped = match non_empty_var("TERMINAL") {
-        Some(terminal) => vec![terminal, "-e".to_string()],
-        None => vec!["xdg-terminal-exec".to_string()],
-    };
-    wrapped.extend(argv);
-    wrapped
+/// The command that runs a `Terminal=true` entry's program in a terminal,
+/// to be followed by that program's argv.
+///
+/// `$TERMINAL` if the session names one, then the freedesktop terminal
+/// launcher, then the first common terminal installed.
+pub fn terminal_command() -> Vec<String> {
+    if let Some(terminal) = non_empty_var("TERMINAL") {
+        return vec![terminal, "-e".to_string()];
+    }
+    if program_exists("xdg-terminal-exec") {
+        return vec!["xdg-terminal-exec".to_string()];
+    }
+    let terminal = ["ghostty", "alacritty", "foot", "kitty"]
+        .into_iter()
+        .find(|candidate| program_exists(candidate))
+        .unwrap_or("xterm");
+    vec![terminal.to_string(), "-e".to_string()]
 }
 
 /// One argument of an `Exec=` line, after quoting is undone.
@@ -655,8 +685,16 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
 /// were given; exactly one otherwise, including when the line takes no files
 /// at all — the application is started without them, as the specification
 /// says it must be.
-fn command_lines(exec: &str, paths: &[PathBuf], app: &App) -> Result<Vec<Vec<String>>, OpenError> {
+fn command_lines(
+    exec: &str,
+    paths: &[PathBuf],
+    app: &App,
+) -> Result<Vec<Vec<OsString>>, OpenError> {
     let tokens = tokenize(exec)?;
+    let paths: Vec<PathBuf> = paths
+        .iter()
+        .map(|path| std::path::absolute(path).unwrap_or_else(|_| path.clone()))
+        .collect();
     let single = tokens.iter().any(|token| match token {
         Token::Text(text) => has_code(text, 'f') || has_code(text, 'u'),
         _ => false,
@@ -664,7 +702,7 @@ fn command_lines(exec: &str, paths: &[PathBuf], app: &App) -> Result<Vec<Vec<Str
     let groups: Vec<&[PathBuf]> = if single && paths.len() > 1 {
         paths.chunks(1).collect()
     } else {
-        vec![paths]
+        vec![&paths]
     };
 
     let mut lines = Vec::new();
@@ -672,12 +710,16 @@ fn command_lines(exec: &str, paths: &[PathBuf], app: &App) -> Result<Vec<Vec<Str
         let mut argv = Vec::new();
         for token in &tokens {
             match token {
-                Token::Files => argv.extend(files.iter().map(|p| p.to_string_lossy().into_owned())),
-                Token::Uris => argv.extend(files.iter().map(|p| crate::clipboard::path_to_uri(p))),
+                Token::Files => argv.extend(files.iter().map(|p| p.clone().into_os_string())),
+                Token::Uris => argv.extend(
+                    files
+                        .iter()
+                        .map(|p| crate::clipboard::path_to_uri(p).into()),
+                ),
                 Token::Icon => {
                     if let Some(icon) = &app.icon_name {
-                        argv.push("--icon".to_string());
-                        argv.push(icon.clone());
+                        argv.push("--icon".into());
+                        argv.push(icon.into());
                     }
                 }
                 Token::Text(text) => {
@@ -716,29 +758,32 @@ fn has_code(text: &str, code: char) -> bool {
 
 /// Expand the single-value field codes in one argument.
 ///
-/// Deprecated and unknown codes are dropped, as the specification asks.
-fn expand(text: &str, file: Option<&Path>, app: &App) -> String {
-    let mut out = String::new();
+/// Deprecated and unknown codes are dropped, as the specification asks. Paths
+/// go in as the bytes they are, so a name that is not UTF-8 still names the
+/// file.
+fn expand(text: &str, file: Option<&Path>, app: &App) -> OsString {
+    let mut out = OsString::new();
+    let mut literal = [0u8; 4];
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
         if c != '%' {
-            out.push(c);
+            out.push(c.encode_utf8(&mut literal));
             continue;
         }
         match chars.next() {
-            Some('%') => out.push('%'),
+            Some('%') => out.push("%"),
             Some('f') => {
                 if let Some(file) = file {
-                    out.push_str(&file.to_string_lossy());
+                    out.push(file);
                 }
             }
             Some('u') => {
                 if let Some(file) = file {
-                    out.push_str(&crate::clipboard::path_to_uri(file));
+                    out.push(crate::clipboard::path_to_uri(file));
                 }
             }
-            Some('c') => out.push_str(&app.name),
-            Some('k') => out.push_str(&app.entry_path.to_string_lossy()),
+            Some('c') => out.push(&app.name),
+            Some('k') => out.push(&app.entry_path),
             _ => {}
         }
     }
@@ -951,7 +996,11 @@ mod tests {
 
     fn lines(exec: &str, paths: &[&str]) -> Vec<Vec<String>> {
         let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-        command_lines(exec, &paths, &app("x.desktop", "X", &[])).unwrap()
+        command_lines(exec, &paths, &app("x.desktop", "X", &[]))
+            .unwrap()
+            .into_iter()
+            .map(|argv| argv.into_iter().map(|a| a.into_string().unwrap()).collect())
+            .collect()
     }
 
     #[test]
@@ -976,6 +1025,32 @@ mod tests {
             [["app", "--new-window"]]
         );
         assert_eq!(lines("app %f", &[]), [["app"]]);
+    }
+
+    #[test]
+    fn relative_paths_are_made_absolute() {
+        let cwd = std::env::current_dir().unwrap();
+        let expected = cwd.join("report.pdf");
+        assert_eq!(
+            lines("app %f", &["./report.pdf"]),
+            [["app", expected.to_str().unwrap()]]
+        );
+        let uri = crate::clipboard::path_to_uri(&expected);
+        assert_eq!(lines("app %U", &["report.pdf"]), [["app", uri.as_str()]]);
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_is_passed_as_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.txt"));
+        let argv = command_lines(
+            "app --file=%f %F",
+            std::slice::from_ref(&path),
+            &app("x.desktop", "X", &[]),
+        )
+        .unwrap();
+        assert_eq!(argv[0][1].as_bytes(), b"--file=/tmp/caf\xe9.txt");
+        assert_eq!(argv[0][2], path.into_os_string());
     }
 
     #[test]

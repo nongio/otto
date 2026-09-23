@@ -422,6 +422,7 @@ files-no-such-folder = 「{ $path }」はありません
 files-rename-failed = 名称変更できません：{ $error }
 files-new-folder-failed = フォルダを作成できません：{ $error }
 files-open-failed = そのファイルを開けません：{ $error }
+files-open-app-broken = アプリの起動コマンドが正しくありません
 files-new-window-failed = 新しいウインドウを開けません：{ $error }
 
 

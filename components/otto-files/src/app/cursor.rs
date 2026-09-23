@@ -190,7 +190,7 @@ impl Browser {
 
         self.opening = Some((depth, std::time::Instant::now()));
         self.dirty = true;
-        self.open_in_default_app(&entry.path);
+        self.open_file(&entry.path);
     }
 
     /// Go *into* the selection, and only that: a directory is descended, and

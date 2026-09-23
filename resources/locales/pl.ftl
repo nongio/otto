@@ -443,6 +443,7 @@ files-no-such-folder = Nie ma „{ $path }”
 files-rename-failed = Nie można zmienić nazwy: { $error }
 files-new-folder-failed = Nie można utworzyć folderu: { $error }
 files-open-failed = Nie można otworzyć tego pliku: { $error }
+files-open-app-broken = polecenie uruchamiające aplikację jest błędne
 files-new-window-failed = Nie można otworzyć nowego okna: { $error }
 
 

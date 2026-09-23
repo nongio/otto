@@ -444,6 +444,7 @@ files-no-such-folder = «{ $path }» не існує
 files-rename-failed = Не вдалося перейменувати: { $error }
 files-new-folder-failed = Не вдалося створити папку: { $error }
 files-open-failed = Не вдалося відкрити файл: { $error }
+files-open-app-broken = команда запуску застосунку пошкоджена
 files-new-window-failed = Не вдалося відкрити нове вікно: { $error }
 
 

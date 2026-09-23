@@ -24,6 +24,7 @@ impl Browser {
             siblings: visible.iter().map(|entry| entry.name.clone()).collect(),
             cursor_name: cursor.map(|entry| entry.name.clone()),
             cursor_is_dir: cursor.is_some_and(|entry| entry.is_dir),
+            selection_has_dir: self.selected_entries().iter().any(|entry| entry.is_dir),
             trash: self.trash,
             recent: self.recent,
             can_paste: !self.clipboard.is_empty()

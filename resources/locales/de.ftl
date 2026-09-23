@@ -432,6 +432,7 @@ files-no-such-folder = „{ $path }“ gibt es nicht
 files-rename-failed = Umbenennen nicht möglich: { $error }
 files-new-folder-failed = Ordner konnte nicht erstellt werden: { $error }
 files-open-failed = Datei konnte nicht geöffnet werden: { $error }
+files-open-app-broken = der Startbefehl der App ist fehlerhaft
 files-new-window-failed = Neues Fenster konnte nicht geöffnet werden: { $error }
 
 

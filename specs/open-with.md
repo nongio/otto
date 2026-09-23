@@ -14,9 +14,9 @@ listing the applications that can open the files and every other one installed.
 - Open the selection in an application other than the default.
 - Change which application a type opens with, from the place the user is when
   they notice.
-- Agree with the rest of the session: the default the chooser shows is the one a
-  double-click, `xdg-open` and every spec-following desktop component use, and a
-  remembered choice is written where they all read it.
+- Agree with the rest of Files: the default the chooser shows is the one a
+  double-click opens, and a remembered choice is written in the user's
+  `mimeapps.list`, where every spec-following desktop component reads it.
 
 ## Non-Goals
 
@@ -30,8 +30,8 @@ listing the applications that can open the files and every other one installed.
 ### Opening the chooser
 
 - **Open With…** is on the context menu whenever the selection is one or more
-  files and no folders. It is also a command in the palette, offered when the
-  target is not a folder.
+  files and no folders. It is also a command in the palette, offered on the
+  same condition.
 - It is not offered in the file picker, which answers one request and opens
   nothing.
 - In the Trash it is refused with the message a double-click there gives.
@@ -67,7 +67,8 @@ listing the applications that can open the files and every other one installed.
   dragged.
 - A checkbox, **Always use this app for every ⟨type⟩**, unticked. It is only
   offered when every file shares one type: one "always" cannot set two
-  defaults.
+  defaults. It is not offered for `application/octet-stream`, which every file
+  is underneath.
 - **Cancel** and **Open**. Open is disabled while no application is
   highlighted.
 
@@ -82,16 +83,22 @@ listing the applications that can open the files and every other one installed.
     `%f` or `%u` is started once per file; one with no file code is started
     once, with no files. `%i`, `%c`, `%k` and `%%` expand as the Desktop Entry
     specification says; deprecated codes are dropped.
-  - `Terminal=true` applications are started inside a terminal (`$TERMINAL -e`,
-    or `xdg-terminal-exec`). `Path=` is the working directory when it exists.
-  - The applications are detached and outlive the browser.
+  - Files are passed by absolute path, as the bytes their names are; `%u` and
+    `%U` get `file://` URIs.
+  - `Terminal=true` applications are started inside a terminal: `$TERMINAL -e`,
+    else `xdg-terminal-exec`, else the first of ghostty, alacritty, foot, kitty
+    installed, else xterm. The launcher uses the same choice. `Path=` is the
+    working directory when it exists.
+  - The applications are detached, in a process group of their own, and
+    outlive the browser.
 - If the application cannot be started, the chooser stays up and says why, so
   another can be picked.
 - With the box ticked, the application becomes the type's default: it is set in
   `[Default Applications]` of the user's `$XDG_CONFIG_HOME/mimeapps.list` and
   moved to the front of the type's `[Added Associations]`, leaving the rest of
-  the file as it was. A default that cannot be written does not stop the files
-  opening; the status line says the choice was not kept.
+  the file as it was. When that file is a symlink, the file it points to is
+  rewritten and the link kept. A default that cannot be written does not stop
+  the files opening; the status line says the choice was not kept.
 
 ## Constraints & Edge Cases
 
@@ -105,7 +112,11 @@ listing the applications that can open the files and every other one installed.
   copy of an entry — including a `Hidden=true` one — replaces the system's.
   Entries filtered out by `OnlyShowIn`/`NotShowIn`, or whose `TryExec` is not
   installed, are not offered.
-- A file whose name matches no type is treated as `application/octet-stream`.
+- A file's type is judged from its name and its first 4 KB together: a real
+  signature in the content wins unless the name only narrows it (a `.docx` is
+  a zip); content that is merely text, or matches no signature, defers to the
+  name; with neither, the content's guess (`#!` makes a shell script), else
+  `application/octet-stream`.
 - The installed applications are read when the chooser opens, not kept up to
   date: an application installed while it is up appears the next time.
 
@@ -118,14 +129,18 @@ listing the applications that can open the files and every other one installed.
   than a separate "Change All…" flow in Get Info: the decision is made where
   the user is looking at the choice, and the safe answer — just this once — is
   the one that needs no action.
-- The plain Open still goes through `xdg-open`. The chooser resolves
-  associations itself so it can list and tag them, and follows the same
-  specification `xdg-mime` does, so the default it shows is the one Open uses.
+- The plain Open resolves the default with the same associations and the same
+  reading of the file's type as the chooser, rather than going through
+  `xdg-open`. Outside a desktop `xdg-open` recognizes, it detects types and
+  picks defaults its own way (exact type only, first entry in
+  `mimeinfo.cache`), so the app tagged Default here would not be the one a
+  double-click started. `xdg-open` is still the fallback for a type nothing
+  installed claims, and for URLs.
 
 ## Open Questions
 
 - Should a double-click on a file with no associated application bring up the
-  chooser, instead of `xdg-open` failing quietly?
+  chooser, instead of falling back to `xdg-open`?
 - The chooser could back `org.freedesktop.impl.portal.AppChooser` in
   xdg-desktop-portal-otto, so sandboxed applications asking to open a file get
   the same window.

@@ -15,7 +15,8 @@ use std::path::PathBuf;
 use otto_kit::filetype;
 use otto_kit::mime_apps::{App, Associations};
 
-/// The type a file with no recognized name is, for looking up what opens it.
+/// The type of a file nothing identifies. Every file is one, so no choice
+/// is remembered for it.
 const UNKNOWN_TYPE: &str = "application/octet-stream";
 
 /// One line of the list.
@@ -72,13 +73,9 @@ impl Chooser {
 
         let mut mimes: Vec<String> = Vec::new();
         for path in &paths {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-            let mime = filetype::mime_for_name(&name)
-                .unwrap_or(UNKNOWN_TYPE)
-                .to_string();
+            // The same question a plain Open asks, so the default shown is
+            // the one it uses.
+            let mime = filetype::for_file(path).to_string();
             if !mimes.contains(&mime) {
                 mimes.push(mime);
             }
@@ -192,7 +189,9 @@ impl Chooser {
 
     /// Whether the box that remembers the choice is on offer at all.
     pub fn can_remember(&self) -> bool {
-        self.mime.is_some()
+        self.mime
+            .as_deref()
+            .is_some_and(|mime| mime != UNKNOWN_TYPE)
     }
 
     /// Replace the query, and put the highlight on the best match.
@@ -380,5 +379,8 @@ mod tests {
         c.always = false;
         c.toggle_always();
         assert!(!c.always, "mixed types have no single default to set");
+        c.mime = Some(UNKNOWN_TYPE.to_string());
+        c.toggle_always();
+        assert!(!c.always, "every file is octet-stream underneath");
     }
 }

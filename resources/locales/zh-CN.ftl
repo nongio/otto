@@ -422,6 +422,7 @@ files-no-such-folder = “{ $path }”不存在
 files-rename-failed = 无法重命名：{ $error }
 files-new-folder-failed = 无法创建文件夹：{ $error }
 files-open-failed = 无法打开该文件：{ $error }
+files-open-app-broken = 该应用的启动命令有误
 files-new-window-failed = 无法打开新窗口：{ $error }
 
 

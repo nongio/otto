@@ -5067,6 +5067,54 @@ pub fn info_titlebar_rect(sheet: Rect) -> Rect {
     Rect::from_ltrb(sheet.left, sheet.top, sheet.right, sheet.top + 40.0)
 }
 
+/// The red close dot a sheet wears, with the × its window's own traffic
+/// light reveals on hover.
+fn draw_close_dot(canvas: &Canvas, close: Rect, hovered: bool) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(0xFF, 0xFF, 0x5F, 0x57));
+    canvas.draw_circle(
+        Point::new(close.center_x(), close.center_y()),
+        close.width() / 2.0,
+        &paint,
+    );
+    if hovered {
+        let mut glyph = Paint::default();
+        glyph.set_anti_alias(true);
+        glyph.set_style(skia_safe::paint::Style::Stroke);
+        glyph.set_stroke_width((close.width() * 0.09).max(1.0));
+        glyph.set_stroke_cap(skia_safe::PaintCap::Round);
+        glyph.set_color(Color::from_argb(0xB0, 0x00, 0x00, 0x00));
+        let r = close.width() * 0.22;
+        let (cx, cy) = (close.center_x(), close.center_y());
+        canvas.draw_line((cx - r, cy - r), (cx + r, cy + r), &glyph);
+        canvas.draw_line((cx + r, cy - r), (cx - r, cy + r), &glyph);
+    }
+}
+
+/// A checkbox, ticked when `on`. The tick is drawn rather than themed.
+fn draw_checkbox(canvas: &Canvas, box_rect: Rect, on: bool, theme: &Theme) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(if on {
+        theme.material_selection_focused
+    } else {
+        theme.fill_tertiary
+    });
+    canvas.draw_rrect(RRect::new_rect_xy(box_rect, 4.0, 4.0), &paint);
+    if on {
+        paint.set_color(Color::WHITE);
+        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_stroke_width(1.8);
+        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+        let mut builder = PathBuilder::new();
+        builder.move_to(Point::new(box_rect.left + 3.5, box_rect.center_y()));
+        builder.line_to(Point::new(box_rect.center_x() - 0.5, box_rect.bottom - 4.0));
+        builder.line_to(Point::new(box_rect.right - 3.5, box_rect.top + 4.5));
+        canvas.draw_path(&builder.detach(), &paint);
+    }
+}
+
 /// The close button, top-left of the sheet, matching the window's own controls.
 pub fn info_close_rect(sheet: Rect) -> Rect {
     Rect::from_xywh(sheet.left + 14.0, sheet.top + 14.0, 12.0, 12.0)
@@ -5767,25 +5815,7 @@ pub fn draw_info(
 
     // Close control, in the same red as the window's own — and, on hover,
     // the same revealed × glyph as the window's own traffic lights.
-    let close = info_close_rect(sheet);
-    paint.set_color(Color::from_argb(0xFF, 0xFF, 0x5F, 0x57));
-    canvas.draw_circle(
-        Point::new(close.center_x(), close.center_y()),
-        close.width() / 2.0,
-        &paint,
-    );
-    if close_hovered {
-        let mut glyph = Paint::default();
-        glyph.set_anti_alias(true);
-        glyph.set_style(skia_safe::paint::Style::Stroke);
-        glyph.set_stroke_width((close.width() * 0.09).max(1.0));
-        glyph.set_stroke_cap(skia_safe::PaintCap::Round);
-        glyph.set_color(Color::from_argb(0xB0, 0x00, 0x00, 0x00));
-        let r = close.width() * 0.22;
-        let (cx, cy) = (close.center_x(), close.center_y());
-        canvas.draw_line((cx - r, cy - r), (cx + r, cy + r), &glyph);
-        canvas.draw_line((cx + r, cy - r), (cx - r, cy + r), &glyph);
-    }
+    draw_close_dot(canvas, info_close_rect(sheet), close_hovered);
 
     // Icon and name.
     let chain = if info.is_dir {
@@ -6006,27 +6036,7 @@ fn draw_permissions(
             let box_rect = perm_box_rect(sheet, who, what);
             let on = info.permission(who, what);
 
-            paint.set_style(skia_safe::paint::Style::Fill);
-            paint.set_color(if on {
-                theme.material_selection_focused
-            } else {
-                theme.fill_tertiary
-            });
-            canvas.draw_rrect(RRect::new_rect_xy(box_rect, 4.0, 4.0), &paint);
-
-            if on {
-                // A tick, drawn rather than themed.
-                paint.set_color(Color::WHITE);
-                paint.set_style(skia_safe::paint::Style::Stroke);
-                paint.set_stroke_width(1.8);
-                paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-                let mut builder = PathBuilder::new();
-                builder.move_to(Point::new(box_rect.left + 3.5, box_rect.center_y()));
-                builder.line_to(Point::new(box_rect.center_x() - 0.5, box_rect.bottom - 4.0));
-                builder.line_to(Point::new(box_rect.right - 3.5, box_rect.top + 4.5));
-                canvas.draw_path(&builder.detach(), &paint);
-                paint.set_style(skia_safe::paint::Style::Fill);
-            }
+            draw_checkbox(canvas, box_rect, on, theme);
         }
     }
 
@@ -6446,25 +6456,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
     canvas.draw_rrect(RRect::new_rect_xy(sheet, 14.0, 14.0), &paint);
 
     // The close control, the same one Get Info wears.
-    let close = info_close_rect(sheet);
-    paint.set_color(Color::from_argb(0xFF, 0xFF, 0x5F, 0x57));
-    canvas.draw_circle(
-        Point::new(close.center_x(), close.center_y()),
-        close.width() / 2.0,
-        &paint,
-    );
-    if data.close_hovered {
-        let mut glyph = Paint::default();
-        glyph.set_anti_alias(true);
-        glyph.set_style(skia_safe::paint::Style::Stroke);
-        glyph.set_stroke_width((close.width() * 0.09).max(1.0));
-        glyph.set_stroke_cap(skia_safe::PaintCap::Round);
-        glyph.set_color(Color::from_argb(0xB0, 0x00, 0x00, 0x00));
-        let r = close.width() * 0.22;
-        let (cx, cy) = (close.center_x(), close.center_y());
-        canvas.draw_line((cx - r, cy - r), (cx + r, cy + r), &glyph);
-        canvas.draw_line((cx + r, cy - r), (cx - r, cy + r), &glyph);
-    }
+    draw_close_dot(canvas, info_close_rect(sheet), data.close_hovered);
 
     // What is being opened.
     let refs: Vec<&str> = chooser.icon_names.iter().map(String::as_str).collect();
@@ -6632,24 +6624,7 @@ pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWi
             PERM_BOX,
             PERM_BOX,
         );
-        paint.set_color(if chooser.always {
-            theme.material_selection_focused
-        } else {
-            theme.fill_tertiary
-        });
-        canvas.draw_rrect(RRect::new_rect_xy(box_rect, 4.0, 4.0), &paint);
-        if chooser.always {
-            paint.set_color(Color::WHITE);
-            paint.set_style(skia_safe::paint::Style::Stroke);
-            paint.set_stroke_width(1.8);
-            paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-            let mut builder = PathBuilder::new();
-            builder.move_to(Point::new(box_rect.left + 3.5, box_rect.center_y()));
-            builder.line_to(Point::new(box_rect.center_x() - 0.5, box_rect.bottom - 4.0));
-            builder.line_to(Point::new(box_rect.right - 3.5, box_rect.top + 4.5));
-            canvas.draw_path(&builder.detach(), &paint);
-            paint.set_style(skia_safe::paint::Style::Fill);
-        }
+        draw_checkbox(canvas, box_rect, chooser.always, theme);
         let label = otto_kit::t_owned!(
             "files-open-with-always",
             kind = chooser.type_name.clone().unwrap_or_default()

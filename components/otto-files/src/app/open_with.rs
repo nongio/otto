@@ -8,9 +8,6 @@ use super::*;
 use crate::open_with::{Chooser, Row};
 use otto_kit::mime_apps;
 
-/// Two presses on the same row this close together are a double-click.
-const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
-
 /// An open chooser, with its field and what the pointer is doing to it.
 pub(super) struct OpenWithSession {
     pub(super) chooser: Chooser,
@@ -101,7 +98,7 @@ impl Browser {
         if let Err(err) = mime_apps::open(&app, &chooser.paths) {
             chooser.error = Some(otto_kit::t_owned!(
                 "files-open-failed",
-                error = err.to_string()
+                error = open_error_text(&err)
             ));
             self.open_with_dirty = true;
             return;
@@ -242,7 +239,7 @@ impl Browser {
                     Some(view::OpenWithHit::Row(index)) => {
                         let now = std::time::Instant::now();
                         let double = session.last_row_press.is_some_and(|(row, at)| {
-                            row == index && now.duration_since(at) < DOUBLE_CLICK
+                            row == index && now.duration_since(at) < DOUBLE_CLICK_WINDOW
                         });
                         session.last_row_press = Some((index, now));
                         let is_app =
@@ -275,6 +272,17 @@ impl Browser {
             }
         }
         false
+    }
+}
+
+/// Why an application did not start, in the interface's language where the
+/// reason is ours to word.
+pub(super) fn open_error_text(err: &mime_apps::OpenError) -> String {
+    match err {
+        mime_apps::OpenError::Spawn(err) => err.to_string(),
+        mime_apps::OpenError::NoCommand | mime_apps::OpenError::BadCommand(_) => {
+            otto_kit::t_owned!("files-open-app-broken")
+        }
     }
 }
 

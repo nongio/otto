@@ -155,6 +155,7 @@ the palette adds no new capability.
 | Go | Go to Path | path (completed against the filesystem) |
 | Go | Go to Place | choice of sidebar places |
 | Go | Open | — (acts on the cursor entry) |
+| Go | Open With… | — (files only; opens the chooser, see [open-with.md](open-with.md)) |
 | File | Get Info | — |
 | File | Run text recognition | — (pictures only, and only with a recogniser installed) |
 | File | Rename | new name (pre-filled with the current one, whole) |

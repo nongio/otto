@@ -247,6 +247,8 @@ pub struct Situation {
     pub cursor_name: Option<String>,
     /// Whether the cursor is on a directory.
     pub cursor_is_dir: bool,
+    /// Whether anything in the selection is a directory.
+    pub selection_has_dir: bool,
     /// This window is the Trash — a shell where most commands mean nothing.
     pub trash: bool,
     /// This window is showing Recent: a listing with no directory behind it,
@@ -285,6 +287,16 @@ impl Situation {
 
     fn has_target(&self) -> bool {
         self.target_count() > 0
+    }
+
+    /// Whether a command would act on files alone, with no folder among them.
+    fn targets_only_files(&self) -> bool {
+        let has_dir = if self.selection.is_empty() {
+            self.cursor_is_dir
+        } else {
+            self.selection_has_dir
+        };
+        self.has_target() && !has_dir
     }
 
     /// Whether at least one of the files a command would act on is a picture.
@@ -766,7 +778,7 @@ impl CommandProvider for Builtin {
                         .with_shortcut("Ctrl+O"),
                 );
             }
-            if !s.trash && s.has_target() && !s.cursor_is_dir {
+            if !s.trash && s.targets_only_files() {
                 out.push(
                     Command::new(
                         id::OPEN_WITH,
