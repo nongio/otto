@@ -3,6 +3,7 @@ mod audio_viz;
 mod dbus_service;
 mod dialog;
 mod dock_overlays;
+mod mpris;
 mod music;
 mod notifications;
 mod renderer;
@@ -1037,11 +1038,7 @@ impl IslandApp {
             } else if let Some(action) = action {
                 tracing::info!(?action, "music control clicked");
                 self.music_pressed = Some((action, std::time::Instant::now()));
-                if let (Some(player), Some(mr)) =
-                    (self.music_monitor.player(), self.music_monitor.renderer())
-                {
-                    music::execute_action(action, player, mr.duration_secs);
-                }
+                self.music_monitor.control(action);
             } else {
                 let island = &mut self.islands[idx];
                 island.mode = IslandMode::Compact;
@@ -2458,10 +2455,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     otto_kit::utils::focus_watcher::spawn_focus_watcher();
-    let music_monitor = MusicMonitor::new(
-        music::start_playerctl_monitor(),
-        audio_viz::LevelMeter::new(audio_viz::Target::DefaultSinkMonitor),
-    );
+    let music_monitor = MusicMonitor::new(mpris::start_monitor(), audio_viz::LevelMeter::new());
 
     let app = IslandApp::new(state, music_monitor);
     AppRunner::new(app).run()?;

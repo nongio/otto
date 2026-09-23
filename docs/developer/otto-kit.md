@@ -231,7 +231,7 @@ The `examples/` directory is the practical reference, around three dozen,
 one per component or surface pattern: `simple_app` (toplevel + menu),
 `window_with_titlebar`, `sidebar_window`, `form_controls_gallery`,
 `list_gallery`, `dropdown_gallery`, `titlebar_gallery`, `scroll_ab`,
-`blur_window`, `music_notch_layer` and `dock_application_layer` (layer-shell and
+`blur_window` and `dock_application_layer` (layer-shell and
 dock surfaces), plus probes like `output_probe` and `clip_children_probe`.
 
 Run any of them against a development compositor:

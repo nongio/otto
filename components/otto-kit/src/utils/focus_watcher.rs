@@ -44,8 +44,25 @@ static SEAT: Mutex<Option<WlSeat>> = Mutex::new(None);
 /// Every open window, for [`activate_window`] to pick from.
 static WINDOWS: Mutex<Vec<(ZwlrForeignToplevelHandleV1, FocusedApp)>> = Mutex::new(Vec::new());
 
-/// Activate the first window for which `matches(app_id, title)` holds.
-/// Returns whether one was found.
+/// Every open window, as of the last `done` event.
+///
+/// Empty until [`spawn_focus_watcher`] has run and the compositor has listed
+/// its windows.
+pub fn windows() -> Vec<FocusedApp> {
+    WINDOWS
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, app)| app.clone())
+        .collect()
+}
+
+/// Activate the first window for which `matches(app_id, title)` holds, through
+/// `zwlr_foreign_toplevel_handle_v1.activate` on the first seat.
+///
+/// Returns whether a window matched and the request was sent. It is `false`
+/// before [`spawn_focus_watcher`] has connected. The compositor decides whether
+/// to honour the request.
 pub fn activate_window(matches: impl Fn(&str, &str) -> bool) -> bool {
     let Some(conn) = CONTROL.get() else {
         return false;

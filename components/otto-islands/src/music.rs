@@ -1,22 +1,23 @@
-//! Music activity: an MPRIS bridge through playerctl, drawn with the audio
+//! Music activity: the MPRIS player the island shows, drawn with the audio
 //! visualiser.
 //!
-//! A background thread polls playerctl. While a track is loaded and its
-//! player's window isn't the focused one, [`MusicMonitor`] keeps a live
-//! activity on the island; when the track stops it goes away.
+//! [`mpris`](crate::mpris) follows the players. While a track is loaded,
+//! [`MusicMonitor`] keeps a live activity on the island, quiet while the
+//! player's own window is focused; when the track stops it goes away.
 
-use std::fs;
-use std::process::Command;
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use otto_kit::typography::TextStyle;
+use otto_kit::typography::{ellipsize, TextStyle};
 use otto_kit::utils::extract_accent_color;
+use otto_kit::utils::focus_watcher::{self, FocusedApp};
 use otto_kit::AppContext;
 use skia_safe::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 
 use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, BAR_COUNT};
+use crate::mpris::{self, Control, PlaybackInfo, SharedPlayback};
 use crate::state::SharedState;
 use crate::IslandMode;
 
@@ -35,9 +36,6 @@ pub enum MusicAction {
     FocusPlayer,
 }
 
-/// Title reported when nothing is loaded; the island treats it as "no track".
-const NO_MEDIA: &str = "No media";
-
 /// `app_id` the music activity is published under.
 pub const MUSIC_APP_ID: &str = "org.otto.music";
 /// Buffer for the equaliser child subsurface, sized for the largest bar mode.
@@ -48,6 +46,13 @@ const COMPACT_BARS: usize = 4;
 /// Seconds a track may be gone before the island lets go of it, so skipping
 /// to the next one doesn't close and reopen it.
 const GONE_GRACE_SECS: f64 = 3.0;
+/// Album art bigger than this, encoded, is not loaded.
+const MAX_ART_BYTES: u64 = 8 * 1024 * 1024;
+/// Album art wider or taller than this is not decoded.
+const MAX_ART_SIDE: i32 = 4096;
+/// Album art is kept at this size: it is never drawn bigger.
+const ART_PX: i32 = 256;
+const NEUTRAL_ACCENT: Color = Color::from_rgb(180, 180, 180);
 
 // ---------------------------------------------------------------------------
 // MusicActivityRenderer
@@ -187,8 +192,8 @@ impl MusicActivityRenderer {
         let mut ap = Paint::default();
         ap.set_anti_alias(true);
         ap.set_color(Color::from_argb(140, 170, 170, 170));
-        let artist = trim_to_width(&self.artist, &af, text_max_w.max(20.0));
-        canvas.draw_str(artist, (text_x, mid + 10.0), &af, &ap);
+        let artist = ellipsize(&af, &self.artist, text_max_w.max(20.0));
+        canvas.draw_str(&artist, (text_x, mid + 10.0), &af, &ap);
     }
 
     fn draw_open(&self, canvas: &Canvas, w: f32, h: f32) {
@@ -205,8 +210,8 @@ impl MusicActivityRenderer {
         let mut ap = Paint::default();
         ap.set_anti_alias(true);
         ap.set_color(Color::from_argb(150, 180, 180, 180));
-        let artist = trim_to_width(&self.artist, &af, rw.max(20.0));
-        canvas.draw_str(artist, (rx, pad + 27.0), &af, &ap);
+        let artist = ellipsize(&af, &self.artist, rw.max(20.0));
+        canvas.draw_str(&artist, (rx, pad + 27.0), &af, &ap);
 
         let prog_y = h - pad - 26.0;
         self.draw_progress_large(canvas, rx, prog_y, rw);
@@ -318,8 +323,8 @@ impl MusicActivityRenderer {
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(Color::from_argb(alpha, 255, 255, 255));
-        let label = trim_to_width(text, &f, max_w.max(20.0));
-        canvas.draw_str(label, (x, y), &f, &paint);
+        let label = ellipsize(&f, text, max_w.max(20.0));
+        canvas.draw_str(&label, (x, y), &f, &paint);
     }
 
     fn draw_play_pause_a(&self, canvas: &Canvas, cx: f32, cy: f32, size: f32, alpha: u8) {
@@ -396,51 +401,31 @@ fn compact_bars_width() -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// PlaybackInfo — shared between playerctl monitor and island
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-pub struct PlaybackInfo {
-    pub track_title: String,
-    pub track_artist: String,
-    pub art_url: String,
-    pub is_playing: bool,
-    pub progress: f32,
-    pub duration_secs: f32,
-    /// Every player the current track was read from. A browser publishes the
-    /// same track twice (engine and integration shim), and either name can be
-    /// the one that matches the focused window's app_id. The first is the one
-    /// the controls drive.
-    pub player_names: Vec<String>,
-}
-
-impl PlaybackInfo {
-    fn has_track(&self) -> bool {
-        !self.track_title.is_empty() && self.track_title != NO_MEDIA
-    }
-}
-
-pub type SharedPlayback = Arc<Mutex<PlaybackInfo>>;
-
-// ---------------------------------------------------------------------------
 // MusicMonitor — keeps the music activity in step with the player
 // ---------------------------------------------------------------------------
 
+/// Album art, loaded off the island's thread.
+struct Art {
+    /// The URL the island wants; a load for any other is discarded.
+    wanted: String,
+    image: Option<Image>,
+    accent: Color,
+    /// A load finished since the island last looked.
+    fresh: bool,
+}
+
 pub struct MusicMonitor {
-    pub playback: SharedPlayback,
+    playback: SharedPlayback,
     meter: LevelMeter,
     bars: BarAnimator,
-    /// Cached album art image + the URL it was loaded from
-    album_art: Option<Image>,
-    last_art_url: String,
-    accent_color: Color,
+    art: Arc<Mutex<Art>>,
     /// When the track disappeared, for the grace period before dismissing.
     gone_since: Option<std::time::Instant>,
     /// Island activity ID (None when no music activity exists)
     activity_id: Option<u64>,
-    /// What the island last drew the track from: artist, art and play state
-    /// change the pill without changing the activity, so they are diffed here.
-    last_track: Option<(String, String, bool)>,
+    /// The last track the island showed. It is still drawn while the grace
+    /// period of a stopped track runs out.
+    shown: Option<PlaybackInfo>,
 }
 
 impl MusicMonitor {
@@ -449,12 +434,15 @@ impl MusicMonitor {
             playback,
             meter,
             bars: BarAnimator::default(),
-            album_art: None,
-            last_art_url: String::new(),
-            accent_color: Color::from_rgb(180, 180, 180),
+            art: Arc::new(Mutex::new(Art {
+                wanted: String::new(),
+                image: None,
+                accent: NEUTRAL_ACCENT,
+                fresh: false,
+            })),
             activity_id: None,
             gone_since: None,
-            last_track: None,
+            shown: None,
         }
     }
 
@@ -475,36 +463,47 @@ impl MusicMonitor {
     /// Advance the bars one frame.
     pub fn step_bars(&mut self) {
         let Some(info) = self.info() else { return };
-        self.bars
-            .step(self.meter.level(), info.is_playing, &info.track_title);
+        self.bars.step(self.meter.level(), &info.track_title);
     }
 
-    /// Reload the album art when the track's art URL changed.
-    fn refresh_art(&mut self, info: &PlaybackInfo) {
-        if info.art_url == self.last_art_url {
-            return;
-        }
-        self.last_art_url = info.art_url.clone();
-        self.album_art = load_album_art(&info.art_url);
-        self.accent_color = match &self.album_art {
-            Some(art) => extract_accent_color(art),
-            None => Color::from_rgb(180, 180, 180),
+    /// Start loading the album art when the track's art URL changed. Returns
+    /// whether art finished loading since the last call, so the island redraws.
+    fn refresh_art(&mut self, url: &str) -> bool {
+        let Ok(mut art) = self.art.lock() else {
+            return false;
         };
-    }
-
-    /// Whether the player's own window is the focused one. The island then
-    /// stays out of the way: the player is already showing what it plays.
-    fn is_music_app_focused(info: &PlaybackInfo) -> bool {
-        let focused = otto_kit::utils::focus_watcher::current_focused_app();
-        player_owns_window(info, &focused.app_id, &focused.title)
+        if art.wanted != url {
+            art.wanted = url.to_string();
+            art.image = None;
+            art.accent = NEUTRAL_ACCENT;
+            art.fresh = false;
+            if !url.is_empty() {
+                let url = url.to_string();
+                let slot = self.art.clone();
+                thread::spawn(move || {
+                    let image = load_album_art(&url);
+                    let accent = image.as_ref().map_or(NEUTRAL_ACCENT, extract_accent_color);
+                    if let Ok(mut art) = slot.lock() {
+                        if art.wanted == url {
+                            art.image = image;
+                            art.accent = accent;
+                            art.fresh = true;
+                            AppContext::request_wakeup();
+                        }
+                    }
+                });
+            }
+            return true;
+        }
+        std::mem::take(&mut art.fresh)
     }
 
     /// Create, update or dismiss the music activity to match the player.
     pub fn sync_to_island(&mut self, state: &SharedState) {
         let Some(info) = self.info() else { return };
-        self.refresh_art(&info);
         let has_track = info.has_track();
-        let focused = has_track && Self::is_music_app_focused(&info);
+        let art_changed = has_track && self.refresh_art(&info.art_url);
+        let focused = has_track && player_is_focused(&info);
 
         let mut island = state.lock().unwrap();
         match (has_track, self.activity_id) {
@@ -524,26 +523,31 @@ impl MusicMonitor {
                 }
                 self.activity_id = Some(id);
                 self.gone_since = None;
+                self.shown = Some(info);
             }
             (true, Some(id)) => {
                 self.gone_since = None;
                 island.set_activity_quiet(id, focused);
                 island.update_activity(id, &info.track_title, -1.0);
-                let track = (
-                    info.track_artist.clone(),
-                    info.art_url.clone(),
-                    info.is_playing,
-                );
-                if self.last_track.as_ref() != Some(&track) {
-                    self.last_track = Some(track);
+                // Artist, art, play state and a seek while paused change the
+                // pill without changing the activity. While playing, the
+                // progress bar is redrawn on its own clock.
+                if art_changed
+                    || self
+                        .shown
+                        .as_ref()
+                        .is_none_or(|shown| looks_different(shown, &info))
+                {
                     island.dirty = true;
                 }
+                self.shown = Some(info);
             }
             // The player has quit: there is no next track to wait for.
             (false, Some(id)) if info.player_names.is_empty() => {
                 island.dismiss_activity(id);
                 self.activity_id = None;
                 self.gone_since = None;
+                self.shown = None;
             }
             (false, Some(id)) => {
                 let now = std::time::Instant::now();
@@ -553,6 +557,7 @@ impl MusicMonitor {
                         island.dismiss_activity(id);
                         self.activity_id = None;
                         self.gone_since = None;
+                        self.shown = None;
                     }
                     Some(_) => {}
                 }
@@ -567,67 +572,120 @@ impl MusicMonitor {
             .map(|since| since + Duration::from_secs_f64(GONE_GRACE_SECS))
     }
 
-    /// Bring the player forward. The window already showing the track comes
-    /// first, since a browser may have several; then a window named after the
-    /// player; then the player itself over MPRIS, which lets a browser switch
-    /// to the tab that is playing.
+    /// Bring the player forward: its own window, the one showing the track
+    /// if it has several; failing that, the window showing the track; failing
+    /// that, the player itself over MPRIS, which lets a browser switch to the
+    /// tab that is playing.
     pub fn focus_player(&self) {
-        let Some(info) = self.info() else { return };
-        use otto_kit::utils::focus_watcher::activate_window;
-        if activate_window(|app_id, title| {
-            !app_id.is_empty() && window_titled_after_track(&info, title)
-        }) || activate_window(|app_id, _| window_named_after_player(&info, app_id))
-        {
+        let Some(info) = self.shown.clone() else {
             return;
+        };
+        let windows = focus_watcher::windows();
+        let target = windows
+            .iter()
+            .filter(|w| window_named_after_player(&info, &w.app_id))
+            .max_by_key(|w| window_titled_after_track(&info, &w.title))
+            .or_else(|| {
+                windows
+                    .iter()
+                    .find(|w| window_titled_after_track(&info, &w.title))
+            });
+        if let Some(window) = target {
+            if focus_watcher::activate_window(|app_id, title| {
+                app_id == window.app_id && title == window.title
+            }) {
+                return;
+            }
         }
-        std::thread::spawn(move || match raise_over_mpris(&info.player_names) {
+        thread::spawn(move || match mpris::raise(&info) {
             Ok(true) => {}
-            Ok(false) => tracing::info!(players = ?info.player_names, "no window to focus for the player"),
-            Err(err) => tracing::warn!("raising the player over MPRIS failed: {err}"),
+            Ok(false) => {
+                tracing::info!(bus_name = %info.bus_name, "no window to focus for the player")
+            }
+            Err(error) => tracing::warn!(%error, "raising the player over MPRIS failed"),
         });
     }
 
-    /// The player the controls drive.
-    pub fn player(&self) -> Option<String> {
-        self.info()?.player_names.first().cloned()
+    /// Run a transport control on the player the island shows.
+    pub fn control(&self, action: MusicAction) {
+        let control = match action {
+            MusicAction::PlayPause => Control::PlayPause,
+            MusicAction::SkipNext => Control::Next,
+            MusicAction::SkipPrev => Control::Previous,
+            MusicAction::Seek(fraction) => Control::SeekTo(fraction),
+            MusicAction::FocusPlayer => return self.focus_player(),
+        };
+        if let Some(info) = &self.shown {
+            mpris::send(control, info);
+        }
     }
 
-    /// Get a renderer for the current state (if a track is loaded).
+    /// A renderer for the track the island shows, if any.
     pub fn renderer(&self) -> Option<MusicActivityRenderer> {
-        let info = self.info()?;
-        if !info.has_track() {
-            return None;
-        }
+        let info = self.shown.as_ref()?;
+        let (album_art, accent) = match self.art.lock() {
+            Ok(art) if art.wanted == info.art_url => (art.image.clone(), art.accent),
+            _ => (None, NEUTRAL_ACCENT),
+        };
         Some(MusicActivityRenderer {
-            title: info.track_title,
-            artist: info.track_artist,
-            album_art: self.album_art.clone(),
+            title: info.track_title.clone(),
+            artist: info.track_artist.clone(),
+            album_art,
             is_playing: info.is_playing,
             progress: info.progress,
             duration_secs: info.duration_secs,
-            accent: self.accent_color,
+            accent,
             levels: self.bars.levels(),
             pressed: None,
         })
     }
 }
 
-/// Whether the window with `app_id` and `title` is the one playing `info`.
+/// Whether the pill drawn from `shown` is out of date for `info`.
+fn looks_different(shown: &PlaybackInfo, info: &PlaybackInfo) -> bool {
+    shown.track_artist != info.track_artist
+        || shown.art_url != info.art_url
+        || shown.is_playing != info.is_playing
+        || (!info.is_playing && shown.progress != info.progress)
+}
+
+/// Whether the player's own window is the focused one. The island then stays
+/// out of the way: the player is already showing what it plays.
+fn player_is_focused(info: &PlaybackInfo) -> bool {
+    player_owns_window(
+        info,
+        &focus_watcher::current_focused_app(),
+        &focus_watcher::windows(),
+    )
+}
+
+/// Whether `window` is the one playing `info`, among the open `windows`.
 ///
-/// A player named like the window's app_id owns it ("spotify"). Browsers name
-/// their player after the engine ("chromium") whatever the browser is called,
-/// but a browser window is titled after its active tab, and a media tab is
-/// titled after what it plays, so a window whose title holds the track title
-/// is showing the track.
-fn player_owns_window(info: &PlaybackInfo, app_id: &str, title: &str) -> bool {
-    !app_id.is_empty()
-        && (window_named_after_player(info, app_id) || window_titled_after_track(info, title))
+/// An app whose window is named after the player ("spotify") owns only those
+/// windows. Browsers name their player after the engine ("chromium") whatever
+/// the browser is called, so when no window is named after the player, the
+/// window whose title holds the track title is the one showing it: a browser
+/// window is titled after its active tab, and a media tab after what it plays.
+fn player_owns_window(info: &PlaybackInfo, window: &FocusedApp, windows: &[FocusedApp]) -> bool {
+    if window.app_id.is_empty() {
+        return false;
+    }
+    if windows
+        .iter()
+        .any(|w| window_named_after_player(info, &w.app_id))
+    {
+        window_named_after_player(info, &window.app_id)
+    } else {
+        window_titled_after_track(info, &window.title)
+    }
 }
 
 fn window_named_after_player(info: &PlaybackInfo, app_id: &str) -> bool {
-    info.player_names
-        .iter()
-        .any(|name| !name.is_empty() && app_id.eq_ignore_ascii_case(name))
+    !app_id.is_empty()
+        && info
+            .player_names
+            .iter()
+            .any(|name| !name.is_empty() && app_id.eq_ignore_ascii_case(name))
 }
 
 fn window_titled_after_track(info: &PlaybackInfo, title: &str) -> bool {
@@ -635,260 +693,9 @@ fn window_titled_after_track(info: &PlaybackInfo, title: &str) -> bool {
     track.chars().count() >= 3 && title.contains(track)
 }
 
-/// Ask the player over MPRIS to show itself. playerctl names a player without
-/// its instance suffix ("chromium" for `org.mpris.MediaPlayer2.chromium.instance42`),
-/// so the bus name is looked up by prefix.
-fn raise_over_mpris(players: &[String]) -> zbus::Result<bool> {
-    let conn = zbus::blocking::Connection::session()?;
-    let dbus = zbus::blocking::fdo::DBusProxy::new(&conn)?;
-    let names = dbus.list_names()?;
-    for player in players.iter().filter(|p| !p.is_empty()) {
-        let exact = format!("org.mpris.MediaPlayer2.{player}");
-        let prefix = format!("{exact}.");
-        let Some(name) = names
-            .iter()
-            .find(|n| n.as_str() == exact || n.starts_with(&prefix))
-        else {
-            continue;
-        };
-        let proxy = zbus::blocking::Proxy::new(
-            &conn,
-            name.to_string(),
-            "/org/mpris/MediaPlayer2",
-            "org.mpris.MediaPlayer2",
-        )?;
-        if proxy.get_property::<bool>("CanRaise").unwrap_or(false) {
-            proxy.call_method("Raise", &())?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-// ---------------------------------------------------------------------------
-// Background threads
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Background threads
-// ---------------------------------------------------------------------------
-
-/// Field separator for the `playerctl` format string. ASCII unit separator, so
-/// it cannot collide with a track title.
-const FIELD_SEP: char = '\u{1f}';
-
-/// One MPRIS player as reported by `playerctl --all-players`.
-#[derive(Debug, Clone, Default, PartialEq)]
-struct PlayerEntry {
-    name: String,
-    status: String,
-    title: String,
-    artist: String,
-    art_url: String,
-    position: f64,
-    length: f64,
-}
-
-impl PlayerEntry {
-    fn parse(line: &str) -> Option<Self> {
-        let f: Vec<&str> = line.split(FIELD_SEP).collect();
-        if f.len() < 7 {
-            return None;
-        }
-        Some(Self {
-            name: f[0].to_string(),
-            status: f[1].to_string(),
-            title: f[2].to_string(),
-            artist: f[3].to_string(),
-            art_url: f[4].to_string(),
-            position: f[5].parse().unwrap_or(0.0),
-            length: f[6].parse().unwrap_or(0.0),
-        })
-    }
-
-    fn is_playing(&self) -> bool {
-        self.status.eq_ignore_ascii_case("playing")
-    }
-
-    fn is_stopped(&self) -> bool {
-        self.status.eq_ignore_ascii_case("stopped")
-    }
-
-    /// How much of the track this player actually describes. Browsers publish
-    /// the same track from two players: the engine (title only, everything
-    /// mashed into one string) and an integration shim that carries the art and
-    /// a separate artist. The richer one is the one worth showing.
-    fn richness(&self) -> u8 {
-        u8::from(!self.art_url.is_empty()) * 2
-            + u8::from(!self.artist.is_empty())
-            + u8::from(!self.title.is_empty())
-    }
-}
-
-/// Pick the player to display, merging duplicate entries for the same track.
-///
-/// `playerctl` without `--player` picks whichever player sorts first, which for
-/// a browser is the metadata-poor engine player — that is why album art went
-/// missing. Prefer a playing player, then the one describing the track best,
-/// then fill any gaps from the other entries for the same track.
-fn select_player(entries: Vec<PlayerEntry>) -> Option<PlayerEntry> {
-    let mut candidates: Vec<PlayerEntry> = if entries.iter().any(|e| e.is_playing()) {
-        entries.into_iter().filter(|e| e.is_playing()).collect()
-    } else {
-        entries
-    };
-    if candidates.is_empty() {
-        return None;
-    }
-
-    let best_idx = candidates
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, e)| e.richness())
-        .map(|(i, _)| i)?;
-    let mut best = candidates.swap_remove(best_idx);
-    let mut names = vec![best.name.clone()];
-
-    for other in candidates {
-        // Same duration means the same track, published twice.
-        if other.length != best.length || best.length == 0.0 {
-            continue;
-        }
-        if best.title.is_empty() {
-            best.title = other.title.clone();
-        }
-        if best.artist.is_empty() {
-            best.artist = other.artist.clone();
-        }
-        if best.art_url.is_empty() {
-            best.art_url = other.art_url.clone();
-        }
-        // The shim's position often does not advance; trust whichever is ahead.
-        best.position = best.position.max(other.position);
-        names.push(other.name);
-    }
-
-    best.name = names.join(",");
-    Some(best)
-}
-
-pub fn start_playerctl_monitor() -> SharedPlayback {
-    let shared = Arc::new(Mutex::new(PlaybackInfo {
-        track_title: NO_MEDIA.to_string(),
-        track_artist: String::new(),
-        art_url: String::new(),
-        is_playing: false,
-        progress: 0.0,
-        duration_secs: 0.0,
-        player_names: Vec::new(),
-    }));
-    let shared_for_thread = shared.clone();
-
-    let format = format!(
-        "{{{{playerName}}}}{s}{{{{status}}}}{s}{{{{title}}}}{s}{{{{artist}}}}{s}\
-         {{{{mpris:artUrl}}}}{s}{{{{position}}}}{s}{{{{mpris:length}}}}",
-        s = FIELD_SEP
-    );
-
-    thread::spawn(move || loop {
-        // Single playerctl call covering every player's metadata + status.
-        let output = Command::new("playerctl")
-            .args(["--all-players", "metadata", "--format", &format])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
-
-        let selected = output.as_deref().and_then(|out| {
-            select_player(
-                out.lines()
-                    .filter_map(PlayerEntry::parse)
-                    .collect::<Vec<_>>(),
-            )
-        });
-
-        // The island's event loop is fully retained — it sleeps until something
-        // wakes it. Nothing else knows a track appeared, changed or stopped, so
-        // this thread has to. Waking only on change keeps an idle desktop with
-        // no player asleep.
-        let mut wake = false;
-
-        if let Some(entry) = selected {
-            // When status is "Stopped", report "No media" so the island is
-            // dismissed after the grace period. Paused tracks keep their title.
-            let track_title = if entry.is_stopped() || entry.title.is_empty() {
-                NO_MEDIA.to_string()
-            } else {
-                entry.title.clone()
-            };
-            let length = if entry.length > 0.0 {
-                entry.length
-            } else {
-                1.0
-            };
-            let progress = (entry.position / length).clamp(0.0, 1.0) as f32;
-            let is_playing = entry.is_playing();
-
-            if let Ok(mut info) = shared_for_thread.lock() {
-                // A playing track keeps the island's clock and progress bar
-                // moving, so keep waking while one plays, not only on change.
-                wake = info.track_title != track_title
-                    || info.track_artist != entry.artist
-                    || info.art_url != entry.art_url
-                    || info.is_playing != is_playing
-                    || info.progress != progress
-                    || is_playing;
-                info.track_title = track_title;
-                info.track_artist = entry.artist;
-                info.art_url = entry.art_url;
-                info.is_playing = is_playing;
-                info.progress = progress;
-                info.duration_secs = (length / 1_000_000.0) as f32;
-                info.player_names = entry.name.split(',').map(str::to_string).collect();
-            }
-        } else if let Ok(mut info) = shared_for_thread.lock() {
-            // playerctl failed — no player running. Clear track info so the
-            // island is dismissed after the grace period.
-            wake = info.track_title != NO_MEDIA;
-            info.is_playing = false;
-            info.track_title = NO_MEDIA.to_string();
-            info.track_artist.clear();
-            info.player_names.clear();
-        }
-
-        if wake {
-            AppContext::request_wakeup();
-        }
-        thread::sleep(Duration::from_millis(1500));
-    });
-
-    shared
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Run a transport action on `player` through playerctl. Without `--player`,
-/// playerctl picks whichever player sorts first, which is not necessarily the
-/// one the island shows.
-pub fn execute_action(action: MusicAction, player: String, duration_secs: f32) {
-    let args: Vec<String> = match action {
-        MusicAction::PlayPause => vec!["play-pause".into()],
-        MusicAction::SkipNext => vec!["next".into()],
-        MusicAction::SkipPrev => vec!["previous".into()],
-        MusicAction::Seek(frac) if duration_secs > 0.0 => {
-            vec!["position".into(), format!("{:.1}", frac * duration_secs)]
-        }
-        MusicAction::Seek(_) | MusicAction::FocusPlayer => return,
-    };
-    thread::spawn(move || {
-        let _ = Command::new("playerctl")
-            .arg(format!("--player={player}"))
-            .args(&args)
-            .status();
-    });
-}
 
 fn font(size: f32) -> skia_safe::Font {
     TextStyle {
@@ -908,96 +715,116 @@ fn font_bold(size: f32) -> skia_safe::Font {
     .font()
 }
 
-/// Decode `%XX` escapes in a URL path. MPRIS `file://` art URLs are proper
-/// URLs, so any path with a space or a non-ASCII character (accented artist
-/// names, for instance) arrives percent-encoded and must be decoded before it
-/// can be opened.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
-                .ok()
-                .and_then(|h| u8::from_str_radix(h, 16).ok());
-            if let Some(byte) = hex {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Extract the filesystem path from a `file://` URL, decoding percent escapes.
-/// Accepts both `file:///path` and `file://localhost/path`.
-fn file_url_to_path(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("file://")?;
-    let path = rest.strip_prefix("localhost").unwrap_or(rest);
-    if !path.starts_with('/') {
-        return None;
-    }
-    Some(percent_decode(path))
-}
-
+/// Load album art from a `file://` or `https://` URL, scaled down to
+/// [`ART_PX`]. The URL comes from whatever the player publishes, which for a
+/// browser is the web page, so the size is capped before anything is decoded
+/// and only public hosts are fetched.
 fn load_album_art(url: &str) -> Option<Image> {
-    if url.is_empty() {
-        return None;
-    }
-
     let bytes = if url.starts_with("file://") {
-        let path = file_url_to_path(url)?;
-        match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::warn!(path, error = %e, "failed to read album art");
-                return None;
-            }
-        }
-    } else if url.starts_with("http://") || url.starts_with("https://") {
-        // Bounded: this runs on the island's update thread, so an unreachable
-        // host must not stall the UI.
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .new_agent();
-        match agent.get(url).call() {
-            Ok(resp) => resp.into_body().read_to_vec().ok()?,
-            Err(e) => {
-                tracing::warn!(url, error = %e, "failed to fetch album art");
-                return None;
-            }
-        }
+        read_art_file(url)
+    } else if url.starts_with("https://") {
+        fetch_art(url)
     } else {
-        tracing::warn!(url, "unsupported album art URL scheme");
-        return None;
-    };
-
-    let data = Data::new_copy(&bytes);
-    Image::from_encoded(data)
+        tracing::debug!(url, "unsupported album art URL");
+        None
+    }?;
+    decode_art(bytes)
 }
 
-fn trim_to_width<'a>(text: &'a str, font: &skia_safe::Font, max_width: f32) -> &'a str {
-    let (width, _) = font.measure_str(text, None);
-    if width <= max_width {
-        return text;
+fn read_art_file(url: &str) -> Option<Vec<u8>> {
+    let path = otto_kit::clipboard::uri_to_path(url)?;
+    // Only a regular file: a FIFO or a device would block or never end.
+    let file = std::fs::File::open(&path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
     }
-    // Find the longest prefix that fits (byte-boundary safe)
-    for end in (1..text.len()).rev() {
-        if !text.is_char_boundary(end) {
-            continue;
-        }
-        let sub = &text[..end];
-        let (w, _) = font.measure_str(sub, None);
-        if w <= max_width {
-            return sub;
+    let mut bytes = Vec::new();
+    file.take(MAX_ART_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_ART_BYTES).then_some(bytes)
+}
+
+fn fetch_art(url: &str) -> Option<Vec<u8>> {
+    if !is_public_host(url) {
+        tracing::debug!(url, "album art host is not public");
+        return None;
+    }
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
+        .new_agent();
+    match agent.get(url).call() {
+        Ok(response) => response
+            .into_body()
+            .with_config()
+            .limit(MAX_ART_BYTES)
+            .read_to_vec()
+            .ok(),
+        Err(error) => {
+            tracing::debug!(url, %error, "failed to fetch album art");
+            None
         }
     }
-    ""
+}
+
+/// Whether the host of `url` is not this machine or the local network, as far
+/// as the URL itself says.
+fn is_public_host(url: &str) -> bool {
+    use std::net::IpAddr;
+    let Some(rest) = url.split_once("://").map(|(_, rest)| rest) else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => host.split(':').next().unwrap_or_default(),
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+    {
+        return false;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            !(ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified())
+        }
+        Ok(IpAddr::V6(ip)) => {
+            let unique_local = (ip.segments()[0] & 0xfe00) == 0xfc00;
+            let link_local = (ip.segments()[0] & 0xffc0) == 0xfe80;
+            !(ip.is_loopback() || ip.is_unspecified() || unique_local || link_local)
+        }
+        Err(_) => true,
+    }
+}
+
+fn decode_art(bytes: Vec<u8>) -> Option<Image> {
+    let data = Data::new_copy(&bytes);
+    let size = skia_safe::Codec::from_data(data.clone())?.dimensions();
+    if size.width <= 0
+        || size.height <= 0
+        || size.width > MAX_ART_SIDE
+        || size.height > MAX_ART_SIDE
+    {
+        tracing::debug!(?size, "album art too large");
+        return None;
+    }
+    let image = Image::from_encoded(data)?;
+    let mut surface = skia_safe::surfaces::raster_n32_premul((ART_PX, ART_PX))?;
+    let sampling = skia_safe::SamplingOptions::new(
+        skia_safe::FilterMode::Linear,
+        skia_safe::MipmapMode::Linear,
+    );
+    surface.canvas().draw_image_rect_with_sampling_options(
+        &image,
+        None,
+        Rect::from_wh(ART_PX as f32, ART_PX as f32),
+        sampling,
+        &Paint::default(),
+    );
+    Some(surface.image_snapshot())
 }
 
 fn format_time_secs(total_secs: f32) -> String {
@@ -1007,6 +834,7 @@ fn format_time_secs(total_secs: f32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     fn playing(track: &str, players: &[&str]) -> PlaybackInfo {
         PlaybackInfo {
@@ -1016,7 +844,16 @@ mod tests {
             is_playing: true,
             progress: 0.0,
             duration_secs: 0.0,
+            bus_name: String::new(),
+            track_id: String::new(),
             player_names: players.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    fn window(app_id: &str, title: &str) -> FocusedApp {
+        FocusedApp {
+            app_id: app_id.into(),
+            title: title.into(),
         }
     }
 
@@ -1027,108 +864,95 @@ mod tests {
             MusicActivityRenderer::hit_test_expanded(h / 2.0, h / 2.0, w, h),
             Some(MusicAction::FocusPlayer)
         );
-        assert_eq!(MusicActivityRenderer::hit_test_expanded(4.0, 4.0, w, h), None);
+        assert_eq!(
+            MusicActivityRenderer::hit_test_expanded(4.0, 4.0, w, h),
+            None
+        );
     }
 
     #[test]
     fn window_named_after_the_player_owns_it() {
         let info = playing("Groove Waltz", &["spotify"]);
-        assert!(player_owns_window(&info, "Spotify", "Spotify Premium"));
-        assert!(!player_owns_window(&info, "otto-files", "Files"));
+        let spotify = window("Spotify", "Spotify Premium");
+        let files = window("otto-files", "Groove Waltz");
+        let open = [spotify.clone(), files.clone()];
+        assert!(player_owns_window(&info, &spotify, &open));
+        // A folder named after the track is not the player when the player
+        // has a window of its own.
+        assert!(!player_owns_window(&info, &files, &open));
     }
 
     #[test]
     fn browser_window_showing_the_track_owns_it() {
         let info = playing("Lofi beats to study to", &["chromium"]);
-        assert!(player_owns_window(
-            &info,
+        let playing_tab = window(
             "google-chrome",
-            "Lofi beats to study to - YouTube - Google Chrome"
-        ));
-        // Another tab of the same browser is not the player.
-        assert!(!player_owns_window(
-            &info,
-            "google-chrome",
-            "Pull Request #211 - Google Chrome"
-        ));
+            "Lofi beats to study to - YouTube - Google Chrome",
+        );
+        let other_tab = window("google-chrome", "Pull Request #211 - Google Chrome");
+        let open = [playing_tab.clone(), other_tab.clone()];
+        assert!(player_owns_window(&info, &playing_tab, &open));
+        assert!(!player_owns_window(&info, &other_tab, &open));
     }
 
     #[test]
     fn short_track_titles_do_not_match_by_title() {
         let info = playing("Go", &["chromium"]);
-        assert!(!player_owns_window(&info, "google-chrome", "Go - Google Chrome"));
-        assert!(!player_owns_window(&info, "", "Go"));
-    }
-
-    use super::*;
-
-    fn line(name: &str, status: &str, title: &str, artist: &str, art: &str, len: &str) -> String {
-        format!("{name}\u{1f}{status}\u{1f}{title}\u{1f}{artist}\u{1f}{art}\u{1f}0\u{1f}{len}")
-    }
-
-    #[test]
-    fn percent_escapes_are_decoded() {
-        assert_eq!(
-            file_url_to_path("file:///home/u/art%20dir/Beyonc%C3%A9.png").as_deref(),
-            Some("/home/u/art dir/Beyoncé.png")
-        );
-        assert_eq!(
-            file_url_to_path("file://localhost/tmp/cover.png").as_deref(),
-            Some("/tmp/cover.png")
-        );
-        assert_eq!(file_url_to_path("https://example.com/a.png"), None);
+        let chrome = window("google-chrome", "Go - Google Chrome");
+        assert!(!player_owns_window(
+            &info,
+            &chrome,
+            std::slice::from_ref(&chrome)
+        ));
+        assert!(!player_owns_window(&info, &window("", "Go"), &[]));
     }
 
     #[test]
-    fn browser_duplicate_players_are_merged() {
-        // Chromium publishes the track twice: the engine player has no art and
-        // no artist, the integration shim has both.
-        let entries = vec![
-            PlayerEntry::parse(&line(
-                "chromium",
-                "Playing",
-                "On Hold • The xx",
-                "",
-                "",
-                "224179773",
-            ))
-            .unwrap(),
-            PlayerEntry::parse(&line(
-                "plasma-browser-integration",
-                "Playing",
-                "On Hold",
-                "The xx",
-                "file:///tmp/art.png",
-                "224179773",
-            ))
-            .unwrap(),
-        ];
-        let picked = select_player(entries).unwrap();
-        assert_eq!(picked.art_url, "file:///tmp/art.png");
-        assert_eq!(picked.artist, "The xx");
-        assert_eq!(picked.title, "On Hold");
-        assert_eq!(picked.name, "plasma-browser-integration,chromium");
+    fn a_seek_while_paused_redraws() {
+        let mut shown = playing("Song", &["spotify"]);
+        shown.is_playing = false;
+        let mut sought = shown.clone();
+        sought.progress = 0.5;
+        assert!(looks_different(&shown, &sought));
+        // While playing the progress bar keeps its own clock.
+        shown.is_playing = true;
+        sought.is_playing = true;
+        assert!(!looks_different(&shown, &sought));
     }
 
     #[test]
-    fn playing_player_wins_over_paused() {
-        let entries = vec![
-            PlayerEntry::parse(&line("vlc", "Paused", "Old", "A", "file:///a.png", "100")).unwrap(),
-            PlayerEntry::parse(&line("spotify", "Playing", "New", "B", "", "200")).unwrap(),
-        ];
-        let picked = select_player(entries).unwrap();
-        assert_eq!(picked.title, "New");
-        assert_eq!(picked.name, "spotify");
+    fn only_public_hosts_are_fetched() {
+        assert!(is_public_host("https://i.scdn.co/image/ab67616d0000b273"));
+        for url in [
+            "https://localhost/a.png",
+            "https://127.0.0.1:8080/a.png",
+            "https://user@10.0.0.2/a.png",
+            "https://192.168.1.1/a.png",
+            "https://[::1]/a.png",
+            "https://printer.local/a.png",
+        ] {
+            assert!(!is_public_host(url), "{url}");
+        }
     }
 
     #[test]
-    fn unrelated_tracks_are_not_merged() {
-        let entries = vec![
-            PlayerEntry::parse(&line("a", "Playing", "One", "", "", "100")).unwrap(),
-            PlayerEntry::parse(&line("b", "Playing", "Two", "X", "file:///b.png", "999")).unwrap(),
-        ];
-        let picked = select_player(entries).unwrap();
-        assert_eq!(picked.title, "Two");
-        assert_eq!(picked.name, "b");
+    fn oversized_art_is_not_decoded() {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((MAX_ART_SIDE + 1, 1)).unwrap();
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .unwrap();
+        assert!(decode_art(png.as_bytes().to_vec()).is_none());
+    }
+
+    #[test]
+    fn art_is_kept_small() {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1000, 1000)).unwrap();
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .unwrap();
+        let art = decode_art(png.as_bytes().to_vec()).unwrap();
+        assert_eq!((art.width(), art.height()), (ART_PX, ART_PX));
     }
 }

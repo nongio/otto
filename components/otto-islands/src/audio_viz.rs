@@ -1,11 +1,8 @@
 //! Audio visualiser: a PipeWire level meter, the bar animation it drives and
 //! the bars themselves.
 //!
-//! The music island listens to the default sink's monitor. Anything else that
-//! plays audio under a known node name (an agent speaking, say) can be followed
-//! the same way with [`Target::NodeName`].
+//! The music island listens to whatever the default output plays.
 
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -14,35 +11,21 @@ use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 /// Number of bars an animator tracks. Every bar style draws from these.
 pub const BAR_COUNT: usize = 8;
 
-/// What a [`LevelMeter`] listens to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // DefaultSource and NodeName are for voice capture and playback.
-pub enum Target {
-    /// Everything the default output plays.
-    DefaultSinkMonitor,
-    /// The default input, a microphone.
-    DefaultSource,
-    /// One node by its `node.name`.
-    NodeName(String),
-}
-
-/// The loudness of a PipeWire node, 0.0 to 1.0, updated from a capture stream
+/// The loudness of the default output, 0.0 to 1.0, updated from a capture stream
 /// on its own thread.
 ///
 /// The stream exists only while the meter is active. A connected capture
 /// stream keeps its target running, so a meter left on would stop the sound
 /// card from ever suspending.
 pub struct LevelMeter {
-    target: Target,
     level: Arc<Mutex<f32>>,
     capture: Option<pipewire::channel::Sender<()>>,
 }
 
 impl LevelMeter {
-    /// A meter for `target`, not yet listening.
-    pub fn new(target: Target) -> Self {
+    /// A meter, not yet listening.
+    pub fn new() -> Self {
         Self {
-            target,
             level: Arc::new(Mutex::new(0.0)),
             capture: None,
         }
@@ -54,11 +37,10 @@ impl LevelMeter {
         match (active, self.capture.is_some()) {
             (true, false) => {
                 let (stop_tx, stop_rx) = pipewire::channel::channel();
-                let target = self.target.clone();
                 let level = self.level.clone();
                 thread::spawn(move || {
-                    if let Err(err) = run_capture(&target, level, stop_rx) {
-                        tracing::error!(?target, "PipeWire level meter failed: {err}");
+                    if let Err(error) = run_capture(level, stop_rx) {
+                        tracing::error!(%error, "PipeWire level meter failed");
                     }
                 });
                 self.capture = Some(stop_tx);
@@ -109,7 +91,6 @@ pub fn buffer_level(bytes: &[u8], channels: usize) -> Option<f32> {
 }
 
 fn run_capture(
-    target: &Target,
     shared_level: Arc<Mutex<f32>>,
     stop: pipewire::channel::Receiver<()>,
 ) -> Result<(), pipewire::Error> {
@@ -139,22 +120,9 @@ fn run_capture(
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
     };
-    // Where the stream connects. A sink monitor is chosen by node id, since
-    // the default sink moves; a named node is left to the session manager.
-    let mut target_id = None;
-    match target {
-        Target::DefaultSinkMonitor => {
-            props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
-            target_id = std::env::var("OTTO_ISLANDS_PW_TARGET")
-                .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .or_else(default_sink_node_id);
-        }
-        Target::DefaultSource => {}
-        Target::NodeName(name) => {
-            props.insert("target.object", name.as_str());
-        }
-    }
+    // Capturing a sink means its monitor. With no target the session manager
+    // links the default sink, and moves the stream when the default changes.
+    props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
 
     let stream = pw::stream::StreamBox::new(&core, "otto-islands-level-meter", props)?;
 
@@ -231,7 +199,7 @@ fn run_capture(
 
     stream.connect(
         spa::utils::Direction::Input,
-        target_id,
+        None,
         pw::stream::StreamFlags::AUTOCONNECT
             | pw::stream::StreamFlags::MAP_BUFFERS
             | pw::stream::StreamFlags::RT_PROCESS,
@@ -240,24 +208,6 @@ fn run_capture(
 
     mainloop.run();
     Ok(())
-}
-
-fn default_sink_node_id() -> Option<u32> {
-    let output = Command::new("wpctl")
-        .args(["inspect", "@DEFAULT_AUDIO_SINK@"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let first_line = text.lines().next()?.trim();
-    let id_token = first_line
-        .strip_prefix("id ")?
-        .split(',')
-        .next()
-        .map(str::trim)?;
-    id_token.parse::<u32>().ok()
 }
 
 /// Turns a single loudness reading into bars that each move on their own.
@@ -285,26 +235,20 @@ impl Default for BarAnimator {
 }
 
 impl BarAnimator {
-    /// Advance one frame. `active` is whether the source is playing: paused,
-    /// the bars keep a slow shimmer rather than vanishing.
-    pub fn step(&mut self, level: f32, active: bool, seed: &str) -> [f32; BAR_COUNT] {
+    /// Advance one frame.
+    pub fn step(&mut self, level: f32, seed: &str) -> [f32; BAR_COUNT] {
         if seed != self.seed {
             self.offsets = seed_offsets(seed);
             self.seed = seed.to_string();
         }
 
-        self.phase += if active { 0.35 } else { 0.08 };
-        let gain = if active { 1.4 } else { 0.35 };
-        let envelope = (level.clamp(0.0, 1.0) * gain).clamp(0.0, 1.0);
+        self.phase += 0.35;
+        let envelope = (level.clamp(0.0, 1.0) * 1.4).clamp(0.0, 1.0);
 
         const FREQ: [f32; BAR_COUNT] = [0.6, 1.1, 0.8, 1.4, 0.5, 1.25, 0.7, 1.0];
         for ((level, freq), offset) in self.levels.iter_mut().zip(FREQ).zip(self.offsets) {
             let wave = ((self.phase * freq + offset).sin() * 0.5) + 0.5;
-            let idle = if active {
-                0.08 + wave * 0.07
-            } else {
-                0.03 + wave * 0.03
-            };
+            let idle = 0.08 + wave * 0.07;
             let driven = envelope * (0.4 + wave * 0.5);
             let target = (idle + driven).clamp(0.0, 1.0);
             // Rise fast, fall slower, like a VU needle.
@@ -473,7 +417,7 @@ mod tests {
         let mut a = BarAnimator::default();
         let mut b = BarAnimator::default();
         for _ in 0..20 {
-            assert_eq!(a.step(0.6, true, "track"), b.step(0.6, true, "track"));
+            assert_eq!(a.step(0.6, "track"), b.step(0.6, "track"));
         }
     }
 
@@ -483,8 +427,8 @@ mod tests {
         let mut b = BarAnimator::default();
         let (mut la, mut lb) = ([0.0; BAR_COUNT], [0.0; BAR_COUNT]);
         for _ in 0..10 {
-            la = a.step(0.6, true, "one");
-            lb = b.step(0.6, true, "two");
+            la = a.step(0.6, "one");
+            lb = b.step(0.6, "two");
         }
         assert_ne!(la, lb);
     }
@@ -493,13 +437,13 @@ mod tests {
     fn silence_settles_to_a_low_shimmer() {
         let mut anim = BarAnimator::default();
         for _ in 0..30 {
-            anim.step(1.0, true, "loud");
+            anim.step(1.0, "loud");
         }
         let mut levels = anim.levels();
         for _ in 0..200 {
-            levels = anim.step(0.0, false, "loud");
+            levels = anim.step(0.0, "loud");
         }
-        assert!(levels.iter().all(|l| *l <= 0.07), "levels {levels:?}");
+        assert!(levels.iter().all(|l| *l <= 0.16), "levels {levels:?}");
     }
 
     #[test]
@@ -508,8 +452,8 @@ mod tests {
         let mut loud = BarAnimator::default();
         let (mut q, mut l) = ([0.0; BAR_COUNT], [0.0; BAR_COUNT]);
         for _ in 0..30 {
-            q = quiet.step(0.0, true, "t");
-            l = loud.step(0.9, true, "t");
+            q = quiet.step(0.0, "t");
+            l = loud.step(0.9, "t");
         }
         let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
         assert!(mean(&l) > mean(&q) * 2.0);
