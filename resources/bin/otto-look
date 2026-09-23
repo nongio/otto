@@ -1,17 +1,22 @@
 #!/bin/sh
 # otto-look: install an Otto look and apply it to the running session.
 #
-#   otto-look install <name | folder | file | url>
+#   otto-look <look>[@<version>]     the latest, or that version, of a look
+#                                    published from github.com/nongio/otto-looks
+#   otto-look list                   the published looks
+#   otto-look <folder | look.toml | look.tar.gz | url>
+#                                    a look of your own, while you make it
 #
 # A look is a folder holding look.toml and any files it names by a relative
-# url. A bare name is a look in the otto-looks repository. Needs curl, tar,
-# sha256sum and busctl; unzip for a theme that ships as a zip.
+# url; a published one is that folder packed as <look>.tar.gz, a package on
+# ghcr.io. Needs curl, tar, gzip, sha256sum and busctl; unzip for a theme
+# that ships as a zip.
 set -eu
 
 # OTTO_LOOK_DRY_RUN=1 prints what would be installed instead of installing
 # packages or running scripts; scripts/dry-run sets it.
 dry=${OTTO_LOOK_DRY_RUN:-}
-REPO_RAW=${OTTO_LOOKS_REPO:-https://raw.githubusercontent.com/nongio/otto-looks/main/looks}
+REGISTRY=${OTTO_LOOKS_REGISTRY:-ghcr.io/nongio/otto-looks}
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}
 
 die() { echo "otto-look: $*" >&2; exit 1; }
@@ -144,26 +149,71 @@ credits() {
     done
 }
 
+# fetch_package <look>[@<version>] <dest>: a published look from the
+# registry, by the digest its manifest names, checked against that digest.
+# Public packages need no login, only an anonymous token.
+fetch_package() {
+    look=${1%@*}; tag=latest
+    case $1 in *@*) tag=${1#*@} ;; esac
+    host=${REGISTRY%%/*}; repo=${REGISTRY#*/}/$look
+    # ghcr.io refuses a token for a package that doesn't exist or isn't public.
+    token=$(curl -fsS "https://$host/token?scope=repository:$repo:pull" 2>/dev/null |
+        sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || true
+    if [ -z "$token" ]; then
+        [ "$look" != index ] || die "no list of looks at $REGISTRY"
+        die "no look $look at $REGISTRY"
+    fi
+    # The manifest lists the config first and the file after "layers".
+    digest=$(curl -fsS -H "Authorization: Bearer $token" \
+        -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+        "https://$host/v2/$repo/manifests/$tag" 2>/dev/null | tr -d '\n' |
+        sed 's/.*"layers"//' | grep -o 'sha256:[0-9a-f]\{64\}' | head -n 1) || true
+    [ -n "$digest" ] || die "no look $1 at $REGISTRY"
+    curl -fsSL -H "Authorization: Bearer $token" "https://$host/v2/$repo/blobs/$digest" \
+        -o "$2" || die "cannot download $1"
+    echo "${digest#sha256:}  $2" | sha256sum -c --status - || die "$1 does not match its digest"
+}
+
+# list: the published looks, from the registry's index of them.
+list() {
+    work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+    fetch_package index "$work/index.tsv"
+    awk -F '\t' '{ printf "%-16s %-4s %s: %s\n", $1, $2, $3, $4 }' "$work/index.tsv"
+    echo
+    echo "Install one with: otto-look <look>"
+}
+
 install() {
     source=$1
-    # A look is a folder with a look.toml; a bare name is one in the repository.
-    case $source in
-        *://* | *.toml) ;;
-        */*) [ -d "$source" ] && source="${source%/}/look.toml" ;;
-        *) if [ -d "$source" ]; then source="$source/look.toml"
-           else source="$REPO_RAW/$source/look.toml"; fi ;;
-    esac
     work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+
+    # A packed look, published or not, is unpacked first.
+    case $source in
+        *://*.tar.gz) curl -fsSL "$source" -o "$work/look.tar.gz" || die "cannot download $source" ;;
+        *.tar.gz) [ -f "$source" ] || die "no such look: $source"; cp "$source" "$work/look.tar.gz" ;;
+        *://* | *.toml) ;;
+        */*) [ -d "$source" ] || die "no such look: $source"; source="${source%/}/look.toml" ;;
+        *) if [ -d "$source" ]; then source="$source/look.toml"
+           else fetch_package "$source" "$work/look.tar.gz"; fi ;;
+    esac
+    if [ -f "$work/look.tar.gz" ]; then
+        mkdir "$work/release"
+        tar -xzf "$work/look.tar.gz" -C "$work/release" --no-same-owner
+        source=$(find "$work/release" -maxdepth 2 -name look.toml | head -n 1)
+        [ -n "$source" ] || die "$1 holds no look.toml"
+    fi
+
     case $source in
         *://*) curl -fsSL "$source" -o "$work/look.toml" || die "cannot download $source"
                base=${source%/*} ;;
         *) [ -f "$source" ] || die "no such look: $source"
            cp "$source" "$work/look.toml"; base=$(cd "$(dirname "$source")" && pwd) ;;
     esac
+    # The look's id is its folder's name: looks/<id>/look.toml.
+    id=${base##*/}
     parse "$work/look.toml" > "$work/def"
     name=$(get look name); [ -n "$name" ] || die "the definition has no [look] name"
     check_credits
-    id=$(printf '%s' "$name" | tr 'A-Z ' 'a-z-')
     echo "Installing $name"
 
     install_theme icons
@@ -203,7 +253,13 @@ install() {
     credits
 }
 
-case ${1:-} in
-    install) [ $# -eq 2 ] || die "usage: otto-look install <name | folder | file | url>"; install "$2" ;;
-    *) echo "usage: otto-look install <name | folder | file | url>" >&2; exit 2 ;;
+case $# in
+    1) case $1 in
+           list) list; exit ;;
+           index | index@*) ;;
+           -*) ;;
+           *) install "$1"; exit ;;
+       esac ;;
 esac
+echo "usage: otto-look <look>[@<version>] | list | <folder | look.toml | look.tar.gz | url>" >&2
+exit 2
