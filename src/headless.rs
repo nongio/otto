@@ -522,19 +522,38 @@ impl HeadlessHandle {
         self.query(move |state| state.layers_engine.update(dt))
     }
 
-    /// Run the scene graph at 60fps until animations finish or `max_frames` is reached.
+    /// Run the scene graph at 60fps until it is at rest, or `max_frames` is
+    /// reached. Returns the number of frames that had damage.
     ///
-    /// Advances the engine timer by 16ms per frame (deterministic, no wall-clock sleep).
-    /// Returns the number of frames that had damage.
+    /// Advances the engine by 16ms per frame. The compositor loop ticks the
+    /// same engine on wall-clock time between these frames, so a frame here
+    /// can find nothing left to do because the loop's own tick just finished
+    /// the animation, while its follow-up (an `on_finish` that goes through
+    /// the event loop, say) is still queued. At rest therefore means two
+    /// frames in a row with no damage and no pending transaction, with a
+    /// turn of the loop between them to dispatch whatever was queued.
     pub fn settle(&self, max_frames: usize) -> usize {
         const DT: f32 = 1.0 / 60.0;
         let mut frames_with_damage = 0;
+        let mut quiet_frames = 0;
         for _ in 0..max_frames {
-            let has_damage = self.query(move |state| state.layers_engine.update(DT));
+            let (has_damage, busy) = self.query(move |state| {
+                let has_damage = state.layers_engine.update(DT);
+                (
+                    has_damage,
+                    state.layers_engine.pending_transactions_count() > 0,
+                )
+            });
             if has_damage {
                 frames_with_damage += 1;
+                quiet_frames = 0;
+            } else if busy {
+                quiet_frames = 0;
             } else {
-                break;
+                quiet_frames += 1;
+                if quiet_frames == 2 {
+                    break;
+                }
             }
         }
         frames_with_damage
@@ -2097,6 +2116,11 @@ fn run_headless_loop(
         .clone()
         .expect("Headless compositor must have a socket");
     info!(name = %socket_name, "Headless compositor ready");
+
+    // Commit the scene once before anyone can look at it: layer keys, sizes
+    // and the tree reach the render side only on an engine tick, so a query
+    // that ran before the loop's first turn would see a half-built scene.
+    state.scene_element.update();
 
     // Signal readiness
     ready_tx.send(socket_name).unwrap();
