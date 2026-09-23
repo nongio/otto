@@ -69,10 +69,18 @@ impl Browser {
             return items;
         }
 
-        if let [only] = entries.as_slice() {
-            if only.is_dir {
-                items.push(MenuItem::action(otto_kit::t!("common-open")).with_action_id("open"));
-            }
+        // Open, and Open With for files. A folder has no "with": opening one
+        // is going into it, here.
+        if let [_] = entries.as_slice() {
+            items.push(MenuItem::action(otto_kit::t!("common-open")).with_action_id("open"));
+        }
+        if self.picker.is_none() && !entries.is_empty() && entries.iter().all(|e| !e.is_dir) {
+            items.push(
+                MenuItem::action(otto_kit::t!("files-open-with")).with_action_id("open_with"),
+            );
+        }
+        if let [_] = entries.as_slice() {
+            items.push(MenuItem::separator());
             items.push(MenuItem::action(otto_kit::t!("files-get-info")).with_action_id("get_info"));
             items.push(MenuItem::action(otto_kit::t!("common-rename")).with_action_id("rename"));
         }

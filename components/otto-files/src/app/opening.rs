@@ -298,17 +298,33 @@ impl Browser {
         if self.picker.is_some() {
             self.picker_accept();
         } else {
-            self.open_in_default_app(&entry.path);
+            self.open_file(&entry.path);
         }
     }
 
-    /// Hand a file — or a URL — to whatever the desktop opens it with.
+    /// Open a file in the application its type opens with by default.
     ///
-    /// `xdg-open` rather than resolving the association here: it is the
-    /// desktop's own answer to this question, it already knows about
-    /// `mimeapps.list`, the portal and the fallbacks, and a file manager that
-    /// disagreed with the rest of the session about what opens a `.pdf` would
-    /// be the thing that was wrong.
+    /// Resolved here, with the same associations and the same reading of the
+    /// file's type that Open With shows, so the app marked Default there is
+    /// the one a double-click starts. A type nothing installed claims goes to
+    /// `xdg-open`, which may still know a fallback.
+    pub(super) fn open_file(&mut self, path: &std::path::Path) {
+        let associations = otto_kit::mime_apps::Associations::load();
+        let chain = otto_kit::filetype::ancestors(otto_kit::filetype::for_file(path));
+        let Some(app) = associations.default_for(&chain) else {
+            self.open_in_default_app(path);
+            return;
+        };
+        if let Err(err) = otto_kit::mime_apps::open(app, &[path.to_path_buf()]) {
+            self.status = Some(otto_kit::t_owned!(
+                "files-open-failed",
+                error = super::open_with::open_error_text(&err)
+            ));
+            self.dirty = true;
+        }
+    }
+
+    /// Hand a URL, or a file nothing here knows how to open, to `xdg-open`.
     ///
     /// Detached, like a new window: stdio closed and reaped on a thread of its
     /// own, so the application outlives the browser that started it.

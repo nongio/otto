@@ -21,6 +21,7 @@ pub mod command;
 pub mod dbus;
 pub mod model;
 pub mod ocrcache;
+pub mod open_with;
 pub mod palette;
 pub mod pane_surfaces;
 pub mod peek;

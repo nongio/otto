@@ -287,6 +287,19 @@ files-info-window-title = 情報
 ## Files — commands
 
 files-get-info = 情報を見る
+files-open-with = このアプリケーションで開く…
+files-open-with-window-title = このアプリケーションで開く
+files-open-with-count =
+    { $count ->
+       *[other] { $count } 個のファイル
+    }
+files-open-with-mixed = 異なる種類のファイル
+files-open-with-search = Appを検索
+files-open-with-default = デフォルト
+files-open-with-other-apps = その他のApp
+files-open-with-no-match = 一致するAppはありません
+files-open-with-always = 「{ $kind }」には常にこのAppを使用
+files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
 files-move-to-trash = ゴミ箱に入れる
 # $count is always two or more; the single-item case uses files-move-to-trash.
@@ -409,6 +422,7 @@ files-no-such-folder = 「{ $path }」はありません
 files-rename-failed = 名称変更できません：{ $error }
 files-new-folder-failed = フォルダを作成できません：{ $error }
 files-open-failed = そのファイルを開けません：{ $error }
+files-open-app-broken = アプリの起動コマンドが正しくありません
 files-new-window-failed = 新しいウインドウを開けません：{ $error }
 
 

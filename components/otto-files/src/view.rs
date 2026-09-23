@@ -5067,6 +5067,54 @@ pub fn info_titlebar_rect(sheet: Rect) -> Rect {
     Rect::from_ltrb(sheet.left, sheet.top, sheet.right, sheet.top + 40.0)
 }
 
+/// The red close dot a sheet wears, with the × its window's own traffic
+/// light reveals on hover.
+fn draw_close_dot(canvas: &Canvas, close: Rect, hovered: bool) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(0xFF, 0xFF, 0x5F, 0x57));
+    canvas.draw_circle(
+        Point::new(close.center_x(), close.center_y()),
+        close.width() / 2.0,
+        &paint,
+    );
+    if hovered {
+        let mut glyph = Paint::default();
+        glyph.set_anti_alias(true);
+        glyph.set_style(skia_safe::paint::Style::Stroke);
+        glyph.set_stroke_width((close.width() * 0.09).max(1.0));
+        glyph.set_stroke_cap(skia_safe::PaintCap::Round);
+        glyph.set_color(Color::from_argb(0xB0, 0x00, 0x00, 0x00));
+        let r = close.width() * 0.22;
+        let (cx, cy) = (close.center_x(), close.center_y());
+        canvas.draw_line((cx - r, cy - r), (cx + r, cy + r), &glyph);
+        canvas.draw_line((cx + r, cy - r), (cx - r, cy + r), &glyph);
+    }
+}
+
+/// A checkbox, ticked when `on`. The tick is drawn rather than themed.
+fn draw_checkbox(canvas: &Canvas, box_rect: Rect, on: bool, theme: &Theme) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(if on {
+        theme.material_selection_focused
+    } else {
+        theme.fill_tertiary
+    });
+    canvas.draw_rrect(RRect::new_rect_xy(box_rect, 4.0, 4.0), &paint);
+    if on {
+        paint.set_color(Color::WHITE);
+        paint.set_style(skia_safe::paint::Style::Stroke);
+        paint.set_stroke_width(1.8);
+        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+        let mut builder = PathBuilder::new();
+        builder.move_to(Point::new(box_rect.left + 3.5, box_rect.center_y()));
+        builder.line_to(Point::new(box_rect.center_x() - 0.5, box_rect.bottom - 4.0));
+        builder.line_to(Point::new(box_rect.right - 3.5, box_rect.top + 4.5));
+        canvas.draw_path(&builder.detach(), &paint);
+    }
+}
+
 /// The close button, top-left of the sheet, matching the window's own controls.
 pub fn info_close_rect(sheet: Rect) -> Rect {
     Rect::from_xywh(sheet.left + 14.0, sheet.top + 14.0, 12.0, 12.0)
@@ -5767,25 +5815,7 @@ pub fn draw_info(
 
     // Close control, in the same red as the window's own — and, on hover,
     // the same revealed × glyph as the window's own traffic lights.
-    let close = info_close_rect(sheet);
-    paint.set_color(Color::from_argb(0xFF, 0xFF, 0x5F, 0x57));
-    canvas.draw_circle(
-        Point::new(close.center_x(), close.center_y()),
-        close.width() / 2.0,
-        &paint,
-    );
-    if close_hovered {
-        let mut glyph = Paint::default();
-        glyph.set_anti_alias(true);
-        glyph.set_style(skia_safe::paint::Style::Stroke);
-        glyph.set_stroke_width((close.width() * 0.09).max(1.0));
-        glyph.set_stroke_cap(skia_safe::PaintCap::Round);
-        glyph.set_color(Color::from_argb(0xB0, 0x00, 0x00, 0x00));
-        let r = close.width() * 0.22;
-        let (cx, cy) = (close.center_x(), close.center_y());
-        canvas.draw_line((cx - r, cy - r), (cx + r, cy + r), &glyph);
-        canvas.draw_line((cx + r, cy - r), (cx - r, cy + r), &glyph);
-    }
+    draw_close_dot(canvas, info_close_rect(sheet), close_hovered);
 
     // Icon and name.
     let chain = if info.is_dir {
@@ -6006,27 +6036,7 @@ fn draw_permissions(
             let box_rect = perm_box_rect(sheet, who, what);
             let on = info.permission(who, what);
 
-            paint.set_style(skia_safe::paint::Style::Fill);
-            paint.set_color(if on {
-                theme.material_selection_focused
-            } else {
-                theme.fill_tertiary
-            });
-            canvas.draw_rrect(RRect::new_rect_xy(box_rect, 4.0, 4.0), &paint);
-
-            if on {
-                // A tick, drawn rather than themed.
-                paint.set_color(Color::WHITE);
-                paint.set_style(skia_safe::paint::Style::Stroke);
-                paint.set_stroke_width(1.8);
-                paint.set_stroke_cap(skia_safe::paint::Cap::Round);
-                let mut builder = PathBuilder::new();
-                builder.move_to(Point::new(box_rect.left + 3.5, box_rect.center_y()));
-                builder.line_to(Point::new(box_rect.center_x() - 0.5, box_rect.bottom - 4.0));
-                builder.line_to(Point::new(box_rect.right - 3.5, box_rect.top + 4.5));
-                canvas.draw_path(&builder.detach(), &paint);
-                paint.set_style(skia_safe::paint::Style::Fill);
-            }
+            draw_checkbox(canvas, box_rect, on, theme);
         }
     }
 
@@ -6260,6 +6270,400 @@ pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
             ICON_SIZE,
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Open With
+// ---------------------------------------------------------------------------
+//
+// A window of its own, built like Get Info: the file at the top, a search
+// field, the list of applications, then the box that remembers the choice and
+// the two buttons. Geometry first, drawing second, so the hit test reads the
+// same rects the paint does. See `specs/open-with.md`.
+
+/// The chooser's size, in logical points. Fixed, like Get Info's: the list
+/// scrolls rather than the window growing.
+pub const OPEN_WITH_W: f32 = 400.0;
+pub const OPEN_WITH_H: f32 = 540.0;
+/// One line of the list: an application or the heading.
+pub const OPEN_WITH_ROW_H: f32 = 34.0;
+const OPEN_WITH_PAD: f32 = 20.0;
+const OPEN_WITH_ICON: f32 = 24.0;
+const OPEN_WITH_BTN_W: f32 = 96.0;
+const OPEN_WITH_BTN_H: f32 = 30.0;
+
+/// What is under a point in the chooser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenWithHit {
+    Close,
+    /// The strip along the top, which drags the window.
+    Titlebar,
+    Search,
+    /// A line of the list, by index into the rows.
+    Row(usize),
+    Always,
+    Cancel,
+    Open,
+}
+
+/// Everything the chooser draws, gathered by the host.
+pub struct OpenWithData<'a> {
+    pub chooser: &'a crate::open_with::Chooser,
+    /// The list's scroll view: where it has scrolled to, how far it is
+    /// stretched past an end, and how much of its bar to show.
+    pub scroll: &'a ScrollState,
+    pub hover: Option<OpenWithHit>,
+    pub pressed: Option<OpenWithHit>,
+    pub close_hovered: bool,
+}
+
+pub fn open_with_search_rect(sheet: Rect) -> Rect {
+    Rect::from_xywh(
+        sheet.left + OPEN_WITH_PAD,
+        sheet.top + 108.0,
+        sheet.width() - OPEN_WITH_PAD * 2.0,
+        30.0,
+    )
+}
+
+/// Where the search text starts inside its field: clear of the magnifier.
+pub const OPEN_WITH_SEARCH_INSET: f32 = 28.0;
+
+pub fn open_with_list_rect(sheet: Rect) -> Rect {
+    Rect::from_ltrb(
+        sheet.left + OPEN_WITH_PAD,
+        sheet.top + 150.0,
+        sheet.right - OPEN_WITH_PAD,
+        sheet.bottom - 100.0,
+    )
+}
+
+/// The box and its label, as one target: a click on the words ticks it too.
+pub fn open_with_always_rect(sheet: Rect) -> Rect {
+    Rect::from_xywh(
+        sheet.left + OPEN_WITH_PAD,
+        sheet.bottom - 88.0,
+        sheet.width() - OPEN_WITH_PAD * 2.0,
+        22.0,
+    )
+}
+
+pub fn open_with_open_rect(sheet: Rect) -> Rect {
+    Rect::from_xywh(
+        sheet.right - OPEN_WITH_PAD - OPEN_WITH_BTN_W,
+        sheet.bottom - OPEN_WITH_PAD - OPEN_WITH_BTN_H,
+        OPEN_WITH_BTN_W,
+        OPEN_WITH_BTN_H,
+    )
+}
+
+pub fn open_with_cancel_rect(sheet: Rect) -> Rect {
+    let open = open_with_open_rect(sheet);
+    Rect::from_xywh(
+        open.left - 10.0 - OPEN_WITH_BTN_W,
+        open.top,
+        OPEN_WITH_BTN_W,
+        OPEN_WITH_BTN_H,
+    )
+}
+
+/// Row `index` of the list, in the list's own content space: the origin is
+/// the top of the first row, before any scroll.
+pub fn open_with_row_rect(list_width: f32, index: usize) -> Rect {
+    Rect::from_xywh(
+        0.0,
+        index as f32 * OPEN_WITH_ROW_H,
+        list_width,
+        OPEN_WITH_ROW_H,
+    )
+}
+
+/// How tall the list's content is with `rows` lines in it.
+pub fn open_with_content_h(rows: usize) -> f32 {
+    rows as f32 * OPEN_WITH_ROW_H
+}
+
+/// The scroll that shows row `index` whole, moving as little as it can.
+pub fn open_with_reveal(sheet: Rect, index: usize, scroll: f32) -> f32 {
+    let height = open_with_list_rect(sheet).height();
+    let top = index as f32 * OPEN_WITH_ROW_H;
+    let bottom = top + OPEN_WITH_ROW_H;
+    if top < scroll {
+        top
+    } else if bottom > scroll + height {
+        bottom - height
+    } else {
+        scroll
+    }
+}
+
+pub fn open_with_hit(
+    sheet: Rect,
+    x: f32,
+    y: f32,
+    rows: usize,
+    scroll: f32,
+    can_remember: bool,
+) -> Option<OpenWithHit> {
+    let point = Point::new(x, y);
+    if info_close_rect(sheet)
+        .with_outset((6.0, 6.0))
+        .contains(point)
+    {
+        return Some(OpenWithHit::Close);
+    }
+    if open_with_open_rect(sheet).contains(point) {
+        return Some(OpenWithHit::Open);
+    }
+    if open_with_cancel_rect(sheet).contains(point) {
+        return Some(OpenWithHit::Cancel);
+    }
+    if can_remember && open_with_always_rect(sheet).contains(point) {
+        return Some(OpenWithHit::Always);
+    }
+    if open_with_search_rect(sheet).contains(point) {
+        return Some(OpenWithHit::Search);
+    }
+    let list = open_with_list_rect(sheet);
+    if list.contains(point) {
+        let index = ((y - list.top + scroll) / OPEN_WITH_ROW_H).floor();
+        return (index >= 0.0 && (index as usize) < rows)
+            .then_some(OpenWithHit::Row(index as usize));
+    }
+    if info_titlebar_rect(sheet).contains(point) {
+        return Some(OpenWithHit::Titlebar);
+    }
+    None
+}
+
+/// An application's icon: its `Icon=` is a theme name or a file.
+fn app_icon(icon_name: Option<&str>, size: i32) -> Option<skia_safe::Image> {
+    match icon_name {
+        Some(path) if path.starts_with('/') => icons::cached_file_icon(path, size),
+        Some(name) => icons::cached_icon_chain(&[name, "application-x-executable"], size),
+        None => icons::cached_icon_chain(&["application-x-executable"], size),
+    }
+}
+
+pub fn draw_open_with(canvas: &Canvas, theme: &Theme, sheet: Rect, data: &OpenWithData<'_>) {
+    use crate::open_with::Row;
+
+    let chooser = data.chooser;
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    paint.set_color(content_ground());
+    canvas.draw_rrect(RRect::new_rect_xy(sheet, 14.0, 14.0), &paint);
+
+    // The close control, the same one Get Info wears.
+    draw_close_dot(canvas, info_close_rect(sheet), data.close_hovered);
+
+    // What is being opened.
+    let refs: Vec<&str> = chooser.icon_names.iter().map(String::as_str).collect();
+    if let Some(image) = icons::cached_icon_chain(&refs, 48) {
+        let dst = Rect::from_xywh(sheet.left + 24.0, sheet.top + 44.0, 48.0, 48.0);
+        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+    }
+    let text_x = sheet.left + 84.0;
+    Label::new(elide(&chooser.title, 34))
+        .with_style(styles::BODY_EMPHASIZED)
+        .with_color(theme.text_primary)
+        .centered_on(text_x, sheet.top + 60.0)
+        .render(canvas);
+    Label::new(
+        chooser
+            .type_name
+            .as_deref()
+            .unwrap_or_else(|| otto_kit::t!("files-open-with-mixed")),
+    )
+    .with_style(styles::CALLOUT)
+    .with_color(theme.text_secondary)
+    .centered_on(text_x, sheet.top + 80.0)
+    .render(canvas);
+
+    // The search field: the same recess and magnifier as the browser's own.
+    let field = open_with_search_rect(sheet);
+    paint.set_color(theme.fill_quaternary);
+    canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(1.0);
+    paint.set_color(accent(theme));
+    canvas.draw_rrect(RRect::new_rect_xy(field, 8.0, 8.0), &paint);
+    paint.set_style(skia_safe::paint::Style::Fill);
+    let mut glass = Paint::default();
+    glass.set_anti_alias(true);
+    glass.set_style(skia_safe::paint::Style::Stroke);
+    glass.set_stroke_width(1.3);
+    glass.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glass.set_color(theme.text_tertiary);
+    let (gx, gy) = (field.left + 14.0, field.center_y());
+    canvas.draw_circle((gx - 0.5, gy - 1.0), 4.5, &glass);
+    canvas.draw_line(
+        Point::new(gx + 2.8, gy + 2.4),
+        Point::new(gx + 5.6, gy + 5.2),
+        &glass,
+    );
+    if chooser.query.is_empty() {
+        Label::new(otto_kit::t!("files-open-with-search"))
+            .with_style(SEARCH_TEXT_STYLE)
+            .with_color(theme.text_tertiary)
+            .centered_on(
+                field.left + OPEN_WITH_SEARCH_INSET + SEARCH_PLACEHOLDER_NUDGE,
+                field.center_y(),
+            )
+            .render(canvas);
+    }
+
+    // The list.
+    let list = open_with_list_rect(sheet);
+    let rows = chooser.rows();
+    ScrollRenderer::draw(canvas, data.scroll, theme, |canvas, band| {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        for (index, row) in rows.iter().enumerate() {
+            let rect = open_with_row_rect(list.width(), index);
+            if rect.bottom < band.top || rect.top > band.bottom {
+                continue;
+            }
+            let highlighted = chooser.highlight == Some(index);
+            let hovered = data.hover == Some(OpenWithHit::Row(index));
+            if highlighted || hovered {
+                paint.set_color(if highlighted {
+                    theme.material_selection_focused
+                } else {
+                    theme.fill_quaternary
+                });
+                canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
+            }
+            let (primary, secondary) = if highlighted {
+                (Color::WHITE, Color::from_argb(0xC0, 0xFF, 0xFF, 0xFF))
+            } else {
+                (theme.text_primary, theme.text_tertiary)
+            };
+            match row {
+                Row::App { app, is_default } => {
+                    if let Some(image) = app_icon(app.icon_name.as_deref(), OPEN_WITH_ICON as i32) {
+                        let dst = Rect::from_xywh(
+                            rect.left + 8.0,
+                            rect.center_y() - OPEN_WITH_ICON / 2.0,
+                            OPEN_WITH_ICON,
+                            OPEN_WITH_ICON,
+                        );
+                        canvas.draw_image_rect(&image, None, dst, &Paint::default());
+                    }
+                    let tag = is_default.then(|| otto_kit::t!("files-open-with-default"));
+                    let tag_w = tag.map_or(0.0, |tag| {
+                        styles::CALLOUT.font().measure_str(tag, None).0 + 12.0
+                    });
+                    Label::new(&app.name)
+                        .with_style(styles::BODY)
+                        .with_color(primary)
+                        .with_width(rect.width() - 50.0 - tag_w)
+                        .centered_on(rect.left + 42.0, rect.center_y())
+                        .render(canvas);
+                    if let Some(tag) = tag {
+                        Label::new(tag)
+                            .with_style(styles::CALLOUT)
+                            .with_color(secondary)
+                            .centered_on(rect.right - tag_w, rect.center_y())
+                            .render(canvas);
+                    }
+                }
+                Row::Others { open } => {
+                    // A disclosure chevron: right when folded, down when not.
+                    let mut chevron = Paint::default();
+                    chevron.set_anti_alias(true);
+                    chevron.set_color(if highlighted {
+                        primary
+                    } else {
+                        theme.text_secondary
+                    });
+                    chevron.set_style(skia_safe::paint::Style::Stroke);
+                    chevron.set_stroke_width(1.6);
+                    chevron.set_stroke_cap(skia_safe::paint::Cap::Round);
+                    let (cx, cy) = (rect.left + 20.0, rect.center_y());
+                    let mut path = PathBuilder::new();
+                    if *open {
+                        path.move_to((cx - 4.0, cy - 2.0));
+                        path.line_to((cx, cy + 2.5));
+                        path.line_to((cx + 4.0, cy - 2.0));
+                    } else {
+                        path.move_to((cx - 2.0, cy - 4.0));
+                        path.line_to((cx + 2.5, cy));
+                        path.line_to((cx - 2.0, cy + 4.0));
+                    }
+                    canvas.draw_path(&path.detach(), &chevron);
+                    Label::new(otto_kit::t!("files-open-with-other-apps"))
+                        .with_style(styles::BODY_EMPHASIZED)
+                        .with_color(if highlighted {
+                            primary
+                        } else {
+                            theme.text_secondary
+                        })
+                        .centered_on(rect.left + 42.0, rect.center_y())
+                        .render(canvas);
+                }
+            }
+        }
+    });
+    if rows.is_empty() {
+        Label::new(otto_kit::t!("files-open-with-no-match"))
+            .with_style(styles::CALLOUT)
+            .with_color(theme.text_tertiary)
+            .centered_at(list.center_x(), list.top + 40.0)
+            .render(canvas);
+    }
+
+    // Remember the choice. Only offered for one type: with two, there is no
+    // single default a tick could set.
+    if chooser.can_remember() {
+        let row = open_with_always_rect(sheet);
+        let box_rect = Rect::from_xywh(
+            row.left + 4.0,
+            row.center_y() - PERM_BOX / 2.0,
+            PERM_BOX,
+            PERM_BOX,
+        );
+        draw_checkbox(canvas, box_rect, chooser.always, theme);
+        let label = otto_kit::t_owned!(
+            "files-open-with-always",
+            kind = chooser.type_name.clone().unwrap_or_default()
+        );
+        Label::new(&label)
+            .with_style(styles::BODY)
+            .with_color(theme.text_primary)
+            .with_width(row.width() - 30.0)
+            .centered_on(box_rect.right + 10.0, row.center_y())
+            .render(canvas);
+    }
+
+    // Why the last try did not work, in place, above the buttons.
+    if let Some(error) = chooser.error.as_deref() {
+        Label::new(elide(error, 48))
+            .with_style(styles::CALLOUT)
+            .with_color(Color::from_argb(0xFF, 0xD7, 0x3A, 0x2E))
+            .centered_on(sheet.left + OPEN_WITH_PAD, sheet.bottom - 60.0)
+            .render(canvas);
+    }
+
+    draw_footer_button(
+        canvas,
+        open_with_cancel_rect(sheet),
+        otto_kit::t!("common-cancel"),
+        theme.fill_secondary,
+        theme.text_primary,
+        data.pressed == Some(OpenWithHit::Cancel),
+        true,
+    );
+    draw_footer_button(
+        canvas,
+        open_with_open_rect(sheet),
+        otto_kit::t!("common-open"),
+        accent(theme),
+        Color::WHITE,
+        data.pressed == Some(OpenWithHit::Open),
+        chooser.selected().is_some(),
+    );
 }
 
 #[cfg(test)]

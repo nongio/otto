@@ -232,7 +232,7 @@ fn spawn(entry: &Entry) -> Result<(), String> {
     }
 
     if entry.terminal {
-        let mut wrapped = terminal_command();
+        let mut wrapped = otto_kit::mime_apps::terminal_command();
         wrapped.append(&mut parts);
         parts = wrapped;
     }
@@ -251,27 +251,6 @@ fn spawn(entry: &Entry) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("could not start {}: {err}", parts[0]))
-}
-
-/// `Terminal=true` entries are a command, not a command line: something has to
-/// supply the terminal to run them in.
-fn terminal_command() -> Vec<String> {
-    let terminal = std::env::var("TERMINAL").unwrap_or_default();
-    let terminal = if terminal.is_empty() {
-        ["ghostty", "alacritty", "foot", "kitty", "xterm"]
-            .into_iter()
-            .find(|candidate| which(candidate))
-            .unwrap_or("xterm")
-            .to_string()
-    } else {
-        terminal
-    };
-    vec![terminal, "-e".to_string()]
-}
-
-fn which(program: &str) -> bool {
-    std::env::var("PATH")
-        .is_ok_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
 /// Drop the `%f`/`%U`/… placeholders. The launcher opens applications with no

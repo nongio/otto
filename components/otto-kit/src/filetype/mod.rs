@@ -295,9 +295,138 @@ pub fn refine_opt(sniffed: Option<&'static str>, name: &str) -> Option<&'static 
     sniffed.map(|s| refine(s, name))
 }
 
+/// The type to choose an application by for the file at `path`.
+///
+/// This is the question "what opens this", which sits between the other two:
+/// the name is the file's type of record, but a file whose name says nothing
+/// (a script with no extension) or something its content contradicts (a
+/// `.txt` that is a PNG) should still open in something that can read it.
+/// So a real signature in the content wins unless the name only makes it
+/// more specific, as in [`refine`]; when the content has no signature, or is
+/// only recognizably text, the name decides; and with neither, the content's
+/// guess or `application/octet-stream`.
+///
+/// Reads at most the first 4 KB. A file that cannot be read is judged by its
+/// name alone.
+pub fn for_file(path: &std::path::Path) -> &'static str {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    let named = mime_for_name(&name);
+    let sniffed = leading_bytes(path).and_then(|head| sniff(&head));
+    match (sniffed, named) {
+        // `sniff` says text only as a last resort, after every signature
+        // failed, so any name outranks it.
+        (Some(TEXT), Some(named)) | (None, Some(named)) => named,
+        (Some(sniffed), _) => refine(sniffed, &name),
+        (None, None) => UNKNOWN,
+    }
+}
+
+/// The type of text that matched no signature, as [`sniff`] reports it.
+const TEXT: &str = "text/plain";
+
+/// The type of a file nothing identifies.
+const UNKNOWN: &str = "application/octet-stream";
+
+/// Up to the first 4 KB of a file, the most [`sniff`] looks at.
+fn leading_bytes(path: &std::path::Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(4096);
+    std::fs::File::open(path)
+        .ok()?
+        .take(4096)
+        .read_to_end(&mut head)
+        .ok()?;
+    Some(head)
+}
+
 /// Is `mime` the same as, or a descendant of, `parent`?
 pub fn is_subclass_of(mime: &str, parent: &str) -> bool {
     database().is_subclass_of(mime, parent)
+}
+
+/// `mime` and every type it descends from, nearest first.
+pub fn ancestors(mime: &str) -> Vec<String> {
+    database().ancestors(mime)
+}
+
+/// What a type is called, in words: "PDF document" for `application/pdf`.
+///
+/// Read from the shared MIME database's per-type file, in the interface's
+/// language when the database has it, in English otherwise. `None` when no
+/// database describes the type.
+pub fn description(mime: &str) -> Option<String> {
+    let tag = crate::i18n::current_locale();
+    let languages = [
+        tag.clone(),
+        tag.split('-').next().unwrap_or(&tag).to_string(),
+    ];
+    // Highest priority first, the reverse of the order the globs load in.
+    mime_dirs().iter().rev().find_map(|dir| {
+        let text = std::fs::read_to_string(dir.join(format!("{mime}.xml"))).ok()?;
+        comment_in(&text, &languages)
+    })
+}
+
+/// The `<comment>` of a type file, in the first of `languages` it has, or its
+/// untranslated one.
+fn comment_in(xml: &str, languages: &[String]) -> Option<String> {
+    let mut plain = None;
+    let mut translated: Vec<(usize, String)> = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<comment") {
+        let after = &rest[start + "<comment".len()..];
+        let (Some(open_end), Some(close)) = (after.find('>'), after.find("</comment>")) else {
+            break;
+        };
+        let attributes = &after[..open_end];
+        let body = unescape_xml(after[open_end + 1..close].trim());
+        match attributes.split_once("xml:lang=\"") {
+            Some((_, lang)) => {
+                let lang = lang.split('"').next().unwrap_or_default();
+                let bare = without_script(lang);
+                let rank = languages
+                    .iter()
+                    .position(|l| l.eq_ignore_ascii_case(lang) || l.eq_ignore_ascii_case(&bare));
+                if let Some(rank) = rank {
+                    translated.push((rank, body));
+                }
+            }
+            None => plain = plain.or(Some(body)),
+        }
+        rest = &after[close..];
+    }
+    translated.sort_by_key(|(rank, _)| *rank);
+    translated
+        .into_iter()
+        .map(|(_, body)| body)
+        .next()
+        .or(plain)
+}
+
+/// A language tag without its script subtag: `zh-Hans-CN` is `zh-CN`.
+///
+/// The MIME database tags its Chinese comments with the script, and the
+/// interface's locale is named without one.
+fn without_script(lang: &str) -> String {
+    lang.split('-')
+        .enumerate()
+        .filter(|(i, part)| {
+            !(*i == 1 && part.len() == 4 && part.chars().all(|c| c.is_ascii_alphabetic()))
+        })
+        .map(|(_, part)| part)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn unescape_xml(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 /// Expand a MIME type into the set of name globs that match it, including
@@ -395,6 +524,72 @@ pub fn icon_names(mime: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_type_is_described_in_the_nearest_language() {
+        let xml = r#"<mime-type type="application/pdf">
+  <comment>PDF document</comment>
+  <comment xml:lang="pt-BR">Documento PDF</comment>
+  <comment xml:lang="it">Documento PDF (it)</comment>
+  <comment xml:lang="de">PDF-Dokument &amp; mehr</comment>
+</mime-type>"#;
+        let langs = |tags: &[&str]| tags.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            comment_in(xml, &langs(&["it-IT", "it"])).as_deref(),
+            Some("Documento PDF (it)")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["pt-BR", "pt"])).as_deref(),
+            Some("Documento PDF")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["de-DE", "de"])).as_deref(),
+            Some("PDF-Dokument & mehr")
+        );
+        assert_eq!(
+            comment_in(xml, &langs(&["en-GB", "en"])).as_deref(),
+            Some("PDF document")
+        );
+    }
+
+    #[test]
+    fn a_script_tagged_translation_matches_a_locale_without_one() {
+        let xml = r#"<mime-type type="application/pdf">
+  <comment>PDF document</comment>
+  <comment xml:lang="zh-Hant-TW">PDF 文件</comment>
+  <comment xml:lang="zh-Hans-CN">PDF 文档</comment>
+</mime-type>"#;
+        let langs = vec!["zh-CN".to_string(), "zh".to_string()];
+        assert_eq!(comment_in(xml, &langs).as_deref(), Some("PDF 文档"));
+    }
+
+    #[test]
+    fn the_type_to_open_by_weighs_name_and_content() {
+        if database().mime_for_name("a.md").is_none() {
+            return; // no shared-mime-info installed
+        }
+        let dir = std::env::temp_dir().join(format!("otto-for-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            for_file(&path)
+        };
+        // Text says nothing the name does not: the name decides.
+        assert_eq!(file("notes.md", b"# Notes\n"), "text/markdown");
+        // No name to go by: the content does.
+        assert_eq!(
+            file("run", b"#!/bin/sh\necho hi\n"),
+            "application/x-shellscript"
+        );
+        // A real signature outranks a name it contradicts.
+        assert_eq!(file("photo.txt", b"\x89PNG\r\n\x1a\n...."), "image/png");
+        // Neither: nothing to choose by.
+        assert_eq!(file("blob", b"\x00\x01\x02"), UNKNOWN);
+        // Unreadable: the name alone.
+        assert_eq!(for_file(&dir.join("missing.pdf")), "application/pdf");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn refine_lets_the_name_specialise_but_never_redirect() {

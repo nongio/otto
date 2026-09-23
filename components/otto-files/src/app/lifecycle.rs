@@ -244,6 +244,7 @@ impl App for FilesApp {
         self.install_peek_pointer();
         self.install_palette_pointer();
         self.install_info_window_pointer();
+        self.install_open_with_window_pointer();
         self.install_pointer(&window, self.context_menu.clone().unwrap());
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
@@ -497,6 +498,8 @@ impl App for FilesApp {
             // The palette's list is a pane of its own, and its scroll is none
             // of the window's business: stepped here, shown by its surfaces.
             browser.tick_palette_scroll();
+            // The Open With chooser's list, likewise: its own window.
+            browser.tick_open_with_scroll();
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
@@ -599,6 +602,7 @@ impl App for FilesApp {
         }
 
         self.sync_info_window();
+        self.sync_open_with_window();
         self.advance_picker();
     }
 

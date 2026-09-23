@@ -288,6 +288,19 @@ files-info-window-title = 简介
 ## Files — commands
 
 files-get-info = 显示简介
+files-open-with = 打开方式…
+files-open-with-window-title = 打开方式
+files-open-with-count =
+    { $count ->
+       *[other] { $count } 个文件
+    }
+files-open-with-mixed = 多种文件类型
+files-open-with-search = 搜索应用程序
+files-open-with-default = 默认
+files-open-with-other-apps = 其他应用程序
+files-open-with-no-match = 没有匹配的应用程序
+files-open-with-always = 始终使用此应用程序打开“{ $kind }”
+files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
 files-move-to-trash = 移到废纸篓
 # $count is always two or more; the single-item case uses files-move-to-trash.
@@ -409,6 +422,7 @@ files-no-such-folder = “{ $path }”不存在
 files-rename-failed = 无法重命名：{ $error }
 files-new-folder-failed = 无法创建文件夹：{ $error }
 files-open-failed = 无法打开该文件：{ $error }
+files-open-app-broken = 该应用的启动命令有误
 files-new-window-failed = 无法打开新窗口：{ $error }
 
 

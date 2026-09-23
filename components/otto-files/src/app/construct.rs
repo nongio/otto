@@ -95,6 +95,8 @@ impl Browser {
             info_error: None,
             info_close_hovered: false,
             info_dirty: false,
+            open_with: None,
+            open_with_dirty: false,
             controls: WindowControlsState::new(),
             focused: true,
             blur_available: false,

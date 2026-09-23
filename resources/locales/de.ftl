@@ -290,6 +290,20 @@ files-info-window-title = Informationen
 ## Files — commands
 
 files-get-info = Informationen
+files-open-with = Öffnen mit…
+files-open-with-window-title = Öffnen mit
+files-open-with-count =
+    { $count ->
+        [one] { $count } Datei
+       *[other] { $count } Dateien
+    }
+files-open-with-mixed = Verschiedene Dateitypen
+files-open-with-search = Apps durchsuchen
+files-open-with-default = Standard
+files-open-with-other-apps = Andere Apps
+files-open-with-no-match = Keine passenden Apps
+files-open-with-always = Diese App immer für „{ $kind }“ verwenden
+files-open-with-not-remembered = Geöffnet, aber die Auswahl wurde nicht gespeichert: { $error }
 files-new-folder = Neuer Ordner
 files-move-to-trash = In den Papierkorb legen
 # $count is always two or more; the single-item case uses files-move-to-trash.
@@ -418,6 +432,7 @@ files-no-such-folder = „{ $path }“ gibt es nicht
 files-rename-failed = Umbenennen nicht möglich: { $error }
 files-new-folder-failed = Ordner konnte nicht erstellt werden: { $error }
 files-open-failed = Datei konnte nicht geöffnet werden: { $error }
+files-open-app-broken = der Startbefehl der App ist fehlerhaft
 files-new-window-failed = Neues Fenster konnte nicht geöffnet werden: { $error }
 
 

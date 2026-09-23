@@ -292,6 +292,22 @@ files-info-window-title = Інформація
 ## Files — commands
 
 files-get-info = Інформація
+files-open-with = Відкрити за допомогою…
+files-open-with-window-title = Відкрити за допомогою
+files-open-with-count =
+    { $count ->
+        [one] { $count } файл
+        [few] { $count } файли
+        [many] { $count } файлів
+       *[other] { $count } файлу
+    }
+files-open-with-mixed = Файли різних типів
+files-open-with-search = Пошук застосунків
+files-open-with-default = Типовий
+files-open-with-other-apps = Інші застосунки
+files-open-with-no-match = Немає відповідних застосунків
+files-open-with-always = Завжди використовувати для типу «{ $kind }»
+files-open-with-not-remembered = Відкрито, але вибір не збережено: { $error }
 files-new-folder = Нова папка
 files-move-to-trash = Перемістити в кошик
 # $count is always two or more; the single-item case uses files-move-to-trash.
@@ -428,6 +444,7 @@ files-no-such-folder = «{ $path }» не існує
 files-rename-failed = Не вдалося перейменувати: { $error }
 files-new-folder-failed = Не вдалося створити папку: { $error }
 files-open-failed = Не вдалося відкрити файл: { $error }
+files-open-app-broken = команда запуску застосунку пошкоджена
 files-new-window-failed = Не вдалося відкрити нове вікно: { $error }
 
 

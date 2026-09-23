@@ -247,6 +247,8 @@ pub struct Situation {
     pub cursor_name: Option<String>,
     /// Whether the cursor is on a directory.
     pub cursor_is_dir: bool,
+    /// Whether anything in the selection is a directory.
+    pub selection_has_dir: bool,
     /// This window is the Trash — a shell where most commands mean nothing.
     pub trash: bool,
     /// This window is showing Recent: a listing with no directory behind it,
@@ -285,6 +287,16 @@ impl Situation {
 
     fn has_target(&self) -> bool {
         self.target_count() > 0
+    }
+
+    /// Whether a command would act on files alone, with no folder among them.
+    fn targets_only_files(&self) -> bool {
+        let has_dir = if self.selection.is_empty() {
+            self.cursor_is_dir
+        } else {
+            self.selection_has_dir
+        };
+        self.has_target() && !has_dir
     }
 
     /// Whether at least one of the files a command would act on is a picture.
@@ -586,6 +598,7 @@ pub mod id {
     pub const GO_TO_PATH: &str = "go_to_path";
     pub const GO_TO_PLACE: &str = "go_to_place";
     pub const OPEN: &str = "open";
+    pub const OPEN_WITH: &str = "open_with";
     pub const GET_INFO: &str = "get_info";
     pub const RENAME: &str = "rename";
     pub const NEW_FOLDER: &str = "new_folder";
@@ -763,6 +776,21 @@ impl CommandProvider for Builtin {
                     Command::new(id::OPEN, otto_kit::t_owned!("common-open"), Group::Go)
                         .with_keywords(["launch", "enter"])
                         .with_shortcut("Ctrl+O"),
+                );
+            }
+            if !s.trash && s.targets_only_files() {
+                out.push(
+                    Command::new(
+                        id::OPEN_WITH,
+                        otto_kit::t_owned!("files-open-with"),
+                        Group::Go,
+                    )
+                    .with_keywords([
+                        "application",
+                        "app",
+                        "program",
+                        "default",
+                    ]),
                 );
             }
         }
