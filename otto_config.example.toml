@@ -361,11 +361,14 @@ bookmarks = [
   { desktop_id = "otto-settings.desktop" },
   { desktop_id = "org.gnome.Console.desktop" },
   { desktop_id = "org.kde.konsole.desktop" },
+  { desktop_id = "com.mitchellh.ghostty.desktop" },
+  { desktop_id = "terminator.desktop" },
   { desktop_id = "firefox.desktop" },
   { desktop_id = "firefox-esr.desktop" },
   { desktop_id = "chromium.desktop" },
   { desktop_id = "org.gnome.TextEditor.desktop" },
   { desktop_id = "org.kde.kate.desktop" },
+  { desktop_id = "gvim.desktop" },
   { desktop_id = "org.gnome.Calculator.desktop" },
   { desktop_id = "org.kde.kcalc.desktop" }
 ]
