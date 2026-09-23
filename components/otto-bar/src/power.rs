@@ -623,11 +623,13 @@ async fn run_watcher() {
     // and for anything the daemon forgets to announce.
     let mut changes = match proxy.as_ref() {
         Some(proxy) => proxy.receive_percentage_changed().await.boxed(),
-        None => futures_util::stream::empty().boxed(),
+        // Pending, not empty: an empty stream is ready at once, and `select!`
+        // would take it every pass instead of waiting for the interval.
+        None => futures_util::stream::pending().boxed(),
     };
     let mut states = match proxy.as_ref() {
         Some(proxy) => proxy.receive_state_changed().await.boxed(),
-        None => futures_util::stream::empty().boxed(),
+        None => futures_util::stream::pending().boxed(),
     };
 
     let interval = Duration::from_secs(battery_config().update_interval.max(1));
