@@ -826,10 +826,10 @@ pub struct Ask {
     attachments: Vec<PathBuf>,
     /// …but for those struck out, which stay listed and stay behind.
     struck: Vec<bool>,
-    /// What otto-gather has gathered, after the files above: it goes with
-    /// the next request too, but otto-gather keeps it, and changes to it go
+    /// What otto-stash has stashed, after the files above: it goes with
+    /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
-    gathered: Vec<(PathBuf, Attachment, bool)>,
+    stashed: Vec<(PathBuf, Attachment, bool)>,
     /// The open session is going to its terminal; `Some(true)` while a turn
     /// has to finish first.
     handing_over: Option<bool>,
@@ -886,7 +886,7 @@ impl Ask {
             sessions_listed: false,
             attachments: Vec::new(),
             struck: Vec::new(),
-            gathered: Vec::new(),
+            stashed: Vec::new(),
             handing_over: None,
             unreachable: None,
             run: None,
@@ -907,17 +907,17 @@ impl Ask {
         }
     }
 
-    /// What otto-gather has gathered now, each file with whether it is
+    /// What otto-stash has stashed now, each file with whether it is
     /// struck out.
-    pub fn set_gathered(&mut self, items: &[(PathBuf, bool)]) {
+    pub fn set_stashed(&mut self, items: &[(PathBuf, bool)]) {
         // Read once per change rather than on every layout: a text item's
         // file is read to show it.
         let known: HashMap<&Path, &Attachment> = self
-            .gathered
+            .stashed
             .iter()
             .map(|(file, attachment, _)| (file.as_path(), attachment))
             .collect();
-        let gathered = items
+        let stashed = items
             .iter()
             .map(|(file, struck)| {
                 let attachment = known
@@ -926,59 +926,59 @@ impl Ask {
                 (file.clone(), attachment, *struck)
             })
             .collect();
-        self.gathered = gathered;
+        self.stashed = stashed;
     }
 
     /// What goes with the next request, each with whether it is struck out:
-    /// the files attached, then what is gathered.
+    /// the files attached, then what is stashed.
     pub fn pending(&self) -> Vec<(Attachment, bool)> {
         self.attachments
             .iter()
             .zip(&self.struck)
             .map(|(file, struck)| (Attachment::for_file(file), *struck))
             .chain(
-                self.gathered
+                self.stashed
                     .iter()
                     .map(|(_, attachment, struck)| (attachment.clone(), *struck)),
             )
             .collect()
     }
 
-    /// Whether anything goes with the next request: attached or gathered,
+    /// Whether anything goes with the next request: attached or stashed,
     /// and not struck out.
     pub fn has_attachments(&self) -> bool {
         self.struck.iter().any(|struck| !struck)
-            || self.gathered.iter().any(|(_, _, struck)| !struck)
+            || self.stashed.iter().any(|(_, _, struck)| !struck)
     }
 
     /// Take the attachment at `index` in [`Self::pending`] off the next
-    /// request. A gathered one is otto-gather's to take out: its index in
-    /// the gathering is returned for that.
+    /// request. A stashed one is otto-stash's to take out: its index in
+    /// the stash is returned for that.
     pub fn remove_attachment(&mut self, index: usize) -> Option<usize> {
         if index < self.attachments.len() {
             self.attachments.remove(index);
             self.struck.remove(index);
             return None;
         }
-        let gathered = index - self.attachments.len();
-        (gathered < self.gathered.len()).then(|| {
-            self.gathered.remove(gathered);
-            gathered
+        let stashed = index - self.attachments.len();
+        (stashed < self.stashed.len()).then(|| {
+            self.stashed.remove(stashed);
+            stashed
         })
     }
 
     /// Strike the attachment at `index` in [`Self::pending`] out, or bring
-    /// it back. A gathered one is struck out in otto-gather too: its index
-    /// in the gathering is returned for that.
+    /// it back. A stashed one is struck out in otto-stash too: its index
+    /// in the stash is returned for that.
     pub fn toggle_attachment(&mut self, index: usize) -> Option<usize> {
         if let Some(struck) = self.struck.get_mut(index) {
             *struck = !*struck;
             return None;
         }
-        let gathered = index - self.attachments.len();
-        let (_, _, struck) = self.gathered.get_mut(gathered)?;
+        let stashed = index - self.attachments.len();
+        let (_, _, struck) = self.stashed.get_mut(stashed)?;
         *struck = !*struck;
-        Some(gathered)
+        Some(stashed)
     }
 
     /// How to open the session in a terminal, once there is a session and the
@@ -1516,21 +1516,21 @@ impl Ask {
         self.unreachable.as_deref()
     }
 
-    /// Hand `prompt` to the agent, with the files attached and gathered so
+    /// Hand `prompt` to the agent, with the files attached and stashed so
     /// far. The first request starts a session with the agent at `agent` in
     /// the list, or the service's default agent; later ones queue on the same
     /// session, and `agent` is ignored.
     ///
-    /// Returns whether what was gathered went with it, so the gathering can
+    /// Returns whether what was stashed went with it, so the stash can
     /// be told it is over.
     pub fn send(&mut self, prompt: &str, agent: Option<usize>) -> bool {
         let struck = std::mem::take(&mut self.struck);
-        let gathered = std::mem::take(&mut self.gathered);
-        let took_gathered = !gathered.is_empty();
+        let stashed = std::mem::take(&mut self.stashed);
+        let took_stashed = !stashed.is_empty();
         let attachments: Vec<PathBuf> = std::mem::take(&mut self.attachments)
             .into_iter()
             .zip(struck)
-            .chain(gathered.into_iter().map(|(file, _, struck)| (file, struck)))
+            .chain(stashed.into_iter().map(|(file, _, struck)| (file, struck)))
             .filter(|(_, struck)| !struck)
             .map(|(file, _)| file)
             .collect();
@@ -1574,7 +1574,7 @@ impl Ask {
             provider,
             attachments,
         });
-        took_gathered
+        took_stashed
     }
 
     /// The name of the frosted material the card wears: the running session's
@@ -3244,15 +3244,15 @@ mod tests {
     }
 
     #[test]
-    fn gathered_items_follow_the_attached_ones_and_stay_otto_gathers() {
+    fn stashed_items_follow_the_attached_ones_and_stay_otto_stashes() {
         let mut ask = offline();
         ask.attach([PathBuf::from("/tmp/attached.md")]);
-        ask.set_gathered(&[
+        ask.set_stashed(&[
             (PathBuf::from("/tmp/one.png"), false),
             (PathBuf::from("/tmp/two.png"), true),
         ]);
         assert_eq!(ask.pending().len(), 3);
-        // Changes to gathered items say where in the gathering they are.
+        // Changes to stashed items say where in the stash they are.
         assert_eq!(ask.toggle_attachment(0), None);
         assert_eq!(ask.toggle_attachment(2), Some(1));
         assert_eq!(ask.remove_attachment(1), Some(0));
@@ -3264,7 +3264,7 @@ mod tests {
             entries[0].attachments,
             [Attachment::File("/tmp/two.png".into())]
         );
-        // Nothing gathered, nothing for otto-gather to end.
+        // Nothing stashed, nothing for otto-stash to end.
         assert!(!ask.send("again", None));
     }
 

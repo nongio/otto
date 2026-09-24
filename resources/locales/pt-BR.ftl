@@ -394,7 +394,7 @@ files-column-original-location = Local original
 
 files-kind-folder = Pasta
 attachments-screen-region = Região da tela
-files-add-to-gathering = Adicionar à coleta
+files-add-to-stash = Adicionar à coleta
 files-kind-image = Imagem
 files-kind-movie = Filme
 files-kind-audio = Áudio

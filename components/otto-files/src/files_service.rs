@@ -1,8 +1,8 @@
 //! `org.otto.Files1` — what the rest of the desktop can ask a Files window.
 //!
 //! Today that is one question: which files are selected in the window that
-//! has the keyboard. otto-gather's shortcut is a compositor keybinding, so
-//! Files never sees the key press; gather asks here instead.
+//! has the keyboard. otto-stash's shortcut is a compositor keybinding, so
+//! Files never sees the key press; otto-stash asks here instead.
 //!
 //! Every browser window is its own process, so every one of them serves this
 //! interface. Each asks for the well-known name *without* `DoNotQueue`: one

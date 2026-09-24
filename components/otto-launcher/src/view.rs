@@ -235,7 +235,7 @@ pub struct Palette {
     /// same reason: the log is laid out again on every chunk of an answer, and
     /// each pass asks every picture how large it is.
     pictures: RefCell<HashMap<PathBuf, Option<Image>>>,
-    /// Attachments, as otto-gather's card shows them, with what was read
+    /// Attachments, as otto-stash's card shows them, with what was read
     /// about each file kept for the next layout.
     attachments: RefCell<AttachmentList>,
     dark: bool,

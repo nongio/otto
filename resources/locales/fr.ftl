@@ -394,7 +394,7 @@ files-column-original-location = Emplacement d’origine
 
 files-kind-folder = Dossier
 attachments-screen-region = Zone de l’écran
-files-add-to-gathering = Ajouter à la collecte
+files-add-to-stash = Ajouter à la collecte
 files-kind-image = Image
 files-kind-movie = Film
 files-kind-audio = Audio

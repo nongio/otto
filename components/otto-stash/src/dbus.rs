@@ -1,7 +1,7 @@
-//! `org.otto.Gather1` on the session bus: how shortcuts, Files and the region
-//! picker reach the gathering, and how Ask follows it.
+//! `org.otto.Stash1` on the session bus: how shortcuts, Files and the region
+//! picker reach the stash, and how Ask follows it.
 //!
-//! otto-gather owns the gathering. Ask shows it and changes it through
+//! otto-stash owns the stash. Ask shows it and changes it through
 //! these methods, and `Changed` tells it about every change.
 
 // Rust guideline compliant 2026-02-21
@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use zbus::export::futures_util::StreamExt;
 use zbus::fdo;
 
-pub use otto_kit::components::gathered::{Items, NAME, PATH};
+pub use otto_kit::components::stashed::{Items, NAME, PATH};
 
 /// Where Files says what is selected in its focused window.
 const FILES_NAME: &str = "org.otto.Files1";
@@ -29,36 +29,36 @@ pub type Done = Option<oneshot::Sender<()>>;
 /// A request from the bus, handled on the Wayland thread.
 #[derive(Debug)]
 pub enum Command {
-    /// Start gathering, and add what is selected: the focused field's text,
+    /// Start a stash, and add what is selected: the focused field's text,
     /// the files selected in Files, or the primary selection.
     Add(Done),
     /// Files answered: the files selected in its focused window, empty when
     /// none, or `None` when no Files window is in front. Sent by the bus
     /// task, not over the bus.
     AddFocusedFiles(Option<Vec<PathBuf>>, Done),
-    /// Add a file; starts gathering when it is not on.
+    /// Add a file; starts stash when it is not on.
     AddFile(PathBuf),
     /// Pick a screen region and add a capture of it.
     AddRegion,
     /// A region pick ended: the capture, or `None` when it was cancelled or
     /// failed. Sent by the picking thread, not over the bus.
     RegionCaptured(Option<PathBuf>),
-    /// Open Ask, which takes everything gathered.
+    /// Open Ask, which takes everything stashed.
     Send,
-    /// Everything gathered, as files.
+    /// Everything stashed, as files.
     Items(oneshot::Sender<Items>),
-    /// The bus client named here shows the gathering, so the card steps
+    /// The bus client named here shows the stash, so the card steps
     /// aside until it is released.
     Hold(String),
-    /// The client holding the gathering left the bus.
+    /// The client holding the stash left the bus.
     Release(String),
     /// Strike the item at the index out, or bring it back.
     Toggle(usize),
     /// Take the item at the index out.
     Remove(usize),
-    /// What is gathered went to Ask: the gathering is over.
+    /// What is stashed went to Ask: the stash is over.
     Sent,
-    /// Throw the gathering away.
+    /// Throw the stash away.
     Cancel,
 }
 
@@ -71,13 +71,13 @@ impl Service {
         self.commands
             .lock()
             .map(|commands| commands.clone())
-            .map_err(|_| fdo::Error::Failed("the gathering stopped".into()))
+            .map_err(|_| fdo::Error::Failed("the stash stopped".into()))
     }
 
     fn forward(&self, command: Command) -> fdo::Result<()> {
         self.sender()?
             .send(command)
-            .map_err(|_| fdo::Error::Failed("the gathering stopped".into()))
+            .map_err(|_| fdo::Error::Failed("the stash stopped".into()))
     }
 
     fn index(index: u32) -> fdo::Result<usize> {
@@ -85,9 +85,9 @@ impl Service {
     }
 }
 
-#[zbus::interface(name = "org.otto.Gather1")]
+#[zbus::interface(name = "org.otto.Stash1")]
 impl Service {
-    /// Returns once what was selected is in the gathering, or it turned out
+    /// Returns once what was selected is in the stash, or it turned out
     /// nothing was.
     async fn add(&self) -> fdo::Result<()> {
         let (done, added) = oneshot::channel();
@@ -117,18 +117,18 @@ impl Service {
         self.forward(Command::Cancel)
     }
 
-    /// Everything gathered, oldest first, as files: text as
+    /// Everything stashed, oldest first, as files: text as
     /// `selection-N.txt`, each with whether it is struck out.
     async fn items(&self) -> fdo::Result<Vec<(String, bool)>> {
         let (reply, items) = oneshot::channel();
         self.forward(Command::Items(reply))?;
         let items = items
             .await
-            .map_err(|_| fdo::Error::Failed("the gathering stopped".into()))?;
+            .map_err(|_| fdo::Error::Failed("the stash stopped".into()))?;
         Ok(to_wire(items))
     }
 
-    /// The caller shows the gathering: the card steps aside until the caller
+    /// The caller shows the stash: the card steps aside until the caller
     /// leaves the bus.
     async fn hold(
         &self,
@@ -145,7 +145,7 @@ impl Service {
             .await?;
         commands
             .send(Command::Hold(caller.clone()))
-            .map_err(|_| fdo::Error::Failed("the gathering stopped".into()))?;
+            .map_err(|_| fdo::Error::Failed("the stash stopped".into()))?;
         tokio::spawn(async move {
             while let Some(change) = owners.next().await {
                 if change.args().is_ok_and(|args| args.new_owner().is_none()) {
@@ -165,12 +165,12 @@ impl Service {
         self.forward(Command::Remove(Self::index(index)?))
     }
 
-    /// What is gathered went to Ask: the gathering is over.
+    /// What is stashed went to Ask: the stash is over.
     fn sent(&self) -> fdo::Result<()> {
         self.forward(Command::Sent)
     }
 
-    /// Everything gathered, after every change.
+    /// Everything stashed, after every change.
     #[zbus(signal)]
     async fn changed(
         emitter: &zbus::object_server::SignalContext<'_>,
@@ -186,7 +186,7 @@ fn to_wire(items: Items) -> Vec<(String, bool)> {
         .collect()
 }
 
-/// Tell whoever follows the gathering what is in it now.
+/// Tell whoever follows the stash what is in it now.
 ///
 /// # Errors
 ///
@@ -247,7 +247,7 @@ pub async fn focused_files() -> Option<Vec<PathBuf>> {
 ///
 /// # Errors
 ///
-/// When there is no session bus, or another otto-gather owns the name.
+/// When there is no session bus, or another otto-stash owns the name.
 pub async fn serve(commands: Sender<Command>) -> zbus::Result<zbus::Connection> {
     let service = Service {
         commands: Mutex::new(commands),
@@ -259,11 +259,11 @@ pub async fn serve(commands: Sender<Command>) -> zbus::Result<zbus::Connection> 
         .await
 }
 
-/// Call `method` with `body` on the running otto-gather.
+/// Call `method` with `body` on the running otto-stash.
 ///
 /// # Errors
 ///
-/// When otto-gather isn't running or refuses the request.
+/// When otto-stash isn't running or refuses the request.
 pub async fn call<B>(method: &str, body: &B) -> zbus::Result<()>
 where
     B: serde::Serialize + zbus::zvariant::DynamicType,
@@ -275,7 +275,7 @@ where
 }
 
 /// The shortcut that opens Ask, as "Ctrl+Alt+A", or failing that the one
-/// bound to `otto-gather send`; `None` when there is neither or Otto's
+/// bound to `otto-stash send`; `None` when there is neither or Otto's
 /// settings can't be asked.
 pub async fn send_shortcut() -> Option<String> {
     let bus = zbus::Connection::session().await.ok()?;
@@ -315,7 +315,7 @@ fn opens_ask(action: &str) -> bool {
     }
 }
 
-/// Whether a shortcut's action runs `otto-gather send`.
+/// Whether a shortcut's action runs `otto-stash send`.
 fn sends(action: &str) -> bool {
     let mut words = action.split_whitespace().rev();
     let (Some(command), Some(program)) = (words.next(), words.next()) else {
@@ -324,7 +324,7 @@ fn sends(action: &str) -> bool {
     command == "send"
         && std::path::Path::new(program)
             .file_name()
-            .is_some_and(|name| name == "otto-gather")
+            .is_some_and(|name| name == "otto-stash")
 }
 
 /// "Ctrl+Alt+Shift+g" as it reads on a keycap: "Ctrl+Alt+Shift+G".
@@ -347,10 +347,10 @@ mod tests {
 
     #[test]
     fn finds_the_send_shortcut() {
-        assert!(sends("run /home/me/.local/bin/otto-gather send"));
-        assert!(sends("run otto-gather send"));
-        assert!(!sends("run otto-gather cancel"));
-        assert!(!sends("run not-gather send"));
+        assert!(sends("run /home/me/.local/bin/otto-stash send"));
+        assert!(sends("run otto-stash send"));
+        assert!(!sends("run otto-stash cancel"));
+        assert!(!sends("run not-stash send"));
         assert_eq!(key_label("Ctrl+Alt+Shift+g"), "Ctrl+Alt+Shift+G");
         assert!(opens_ask("run otto-launcher --ask"));
         assert!(opens_ask("run /usr/bin/otto-ask"));

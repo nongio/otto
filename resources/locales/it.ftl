@@ -395,7 +395,7 @@ files-column-original-location = Posizione originale
 
 files-kind-folder = Cartella
 attachments-screen-region = Area dello schermo
-files-add-to-gathering = Aggiungi alla raccolta
+files-add-to-stash = Aggiungi alla raccolta
 files-kind-image = Immagine
 files-kind-movie = Filmato
 files-kind-audio = Audio

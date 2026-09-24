@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Stash
+Comment=Stash selections, files and screen regions to ask about
+Exec=otto-stash
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

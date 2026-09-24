@@ -389,7 +389,7 @@ files-column-original-location = Ursprünglicher Ort
 
 files-kind-folder = Ordner
 attachments-screen-region = Bildschirmbereich
-files-add-to-gathering = Zur Sammlung hinzufügen
+files-add-to-stash = Zur Sammlung hinzufügen
 files-kind-image = Bild
 files-kind-movie = Film
 files-kind-audio = Audio

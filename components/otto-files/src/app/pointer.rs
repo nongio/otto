@@ -434,7 +434,7 @@ fn show_context_menu(
             "rename" => browser.start_rename(),
             "cut" => browser.copy_selection(true, serial),
             "copy" => browser.copy_selection(false, serial),
-            "add_to_gathering" => browser.add_selection_to_gathering(),
+            "add_to_stash" => browser.add_selection_to_stash(),
             "paste" => browser.paste(),
             "trash" => browser.move_selected_to_trash(),
             "put_back" => browser.put_back_selection(),

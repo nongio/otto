@@ -186,7 +186,7 @@ members = [
     "components/otto-input-overlay",
     "components/otto-agents",
     "components/otto-agents-client",
-    "components/otto-gather",
+    "components/otto-stash",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",

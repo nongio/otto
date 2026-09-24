@@ -6,7 +6,7 @@
 
 An agent running under Otto can use the desktop the way you do: read what is
 selected in Files, run the commands you'd run from Files' command palette, arrange
-windows, read what you collected in the balloon ([0013](0013-gather.md)). What it
+windows, read what you collected in the balloon ([0013](0013-stash.md)). What it
 does through an app shows up in that app as if you had done it, names the agent
 that asked, and asks you first when it is destructive.
 
@@ -39,7 +39,7 @@ those interfaces that agents may use into MCP tools.
   (`acp.rs:708` passes none today). Every agent started from Ask or Sessions gets
   the desktop tools, whatever its harness, with nothing installed per harness.
 - **One gateway, all apps.** Tools are grouped by app (`files_selection`,
-  `files_trash`, `windows_focus`, `gather_items`, …). The gateway lists the apps' tools on the fly
+  `files_trash`, `windows_focus`, `stash_items`, …). The gateway lists the apps' tools on the fly
   and sends `notifications/tools/list_changed` when an app appears or goes.
 - **No MCP crate.** MCP over stdio is JSON-RPC over newline-delimited JSON:
   `initialize`, `tools/list`, `tools/call`, one notification. It is written by
@@ -104,7 +104,7 @@ Methods that change things take the usual trailing `a{sv} options` argument. A
 generic `origin` key names who asked, in words for the user: "Ask: tidy
 Downloads". Files puts it in the undo entry and the progress item.
 
-- Any caller can set it: the CLI sets "Terminal", the balloon sets "Gather".
+- Any caller can set it: the CLI sets "Terminal", the balloon sets "Stash".
 - The gateway sets it from its `--session` id and the session's title, which it
   reads from otto-agents. An agent can't set or change it: the gateway overwrites
   whatever `origin` the arguments carry.
@@ -201,7 +201,7 @@ gateway is another client of the same kind, for agents.
      only if the latest entry has that origin, and fails otherwise. The gateway
      always passes the session's origin, so an agent can take back its own
      actions ("undo that") but never one of yours.
-2. **The gathering service** from 0013: `Items`, `AddText`, `AddFile`. An agent
+2. **The stash service** from 0013: `Items`, `AddText`, `AddFile`. An agent
    can read what you collected and add to it.
 3. Later, whatever the desktop already has on the bus: notifications, the
    screenshot and region picker, settings (`org.otto.Settings`), windows.
@@ -219,7 +219,7 @@ gateway is another client of the same kind, for agents.
 4. **`org.otto.Files1`, actions.** `SelectMatching`, `OpenLocation`, `ShowItems`,
    `Trash` with `origin` in the undo entry, `UndoHistory` and `Undo` limited to
    the caller's own entries.
-5. **The gathering service's tools,** once 0013 has the service.
+5. **The stash service's tools,** once 0013 has the service.
 6. **Plugins.** `otto-agents plugins` registers the gateway with harnesses run on
    their own.
 

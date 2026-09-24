@@ -96,7 +96,7 @@ impl Panel {
             &parent,
             None,
             Layer::Overlay,
-            "otto-gather".into(),
+            "otto-stash".into(),
             qh,
             (),
         );

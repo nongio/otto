@@ -1,4 +1,4 @@
-//! What is gathered: selections read from the focused field and files handed
+//! What is stashed: selections read from the focused field and files handed
 //! in, kept in order until they are sent to Ask.
 
 // Rust guideline compliant 2026-02-21
@@ -32,12 +32,12 @@ impl Surrounding {
     }
 }
 
-/// One thing gathered: the attachment Ask shows it as.
+/// One thing stashed: the attachment Ask shows it as.
 pub use otto_kit::components::attachments::Attachment as Item;
 
-/// The items gathered so far, oldest first.
+/// The items stashed so far, oldest first.
 #[derive(Debug, Default)]
-pub struct Gathering {
+pub struct Stash {
     pub items: Vec<Item>,
     /// Per item, whether it is struck out: kept on the card, but not sent.
     struck: Vec<bool>,
@@ -48,12 +48,12 @@ pub struct Gathering {
     texts_added: u32,
 }
 
-impl Gathering {
-    /// Add `item`, unless it is already gathered: the same text, file or
-    /// region is gathered once. Adding again what was struck out brings it
-    /// back. Returns whether the gathering changed.
+impl Stash {
+    /// Add `item`, unless it is already stashed: the same text, file or
+    /// region is stashed once. Adding again what was struck out brings it
+    /// back. Returns whether the stash changed.
     pub fn add(&mut self, item: Item) -> bool {
-        if let Some(index) = self.items.iter().position(|gathered| *gathered == item) {
+        if let Some(index) = self.items.iter().position(|stashed| *stashed == item) {
             let struck = std::mem::take(&mut self.struck[index]);
             return struck;
         }
@@ -95,7 +95,7 @@ impl Gathering {
         }
     }
 
-    /// Everything gathered, as files for Ask, each with whether it is
+    /// Everything stashed, as files for Ask, each with whether it is
     /// struck out: text items in `dir` as `selection-N.txt`, written the
     /// first time they are handed over, files and regions as they are.
     ///
@@ -152,33 +152,33 @@ mod tests {
     }
 
     #[test]
-    fn the_same_item_is_gathered_once() {
-        let mut gathering = Gathering::default();
-        assert!(gathering.add(Item::Text("a".into())));
-        assert!(!gathering.add(Item::Text("a".into())));
-        assert!(gathering.add(Item::Text("b".into())));
-        assert!(!gathering.add(Item::Text("a".into())));
-        assert_eq!(gathering.items.len(), 2);
+    fn the_same_item_is_stashed_once() {
+        let mut stash = Stash::default();
+        assert!(stash.add(Item::Text("a".into())));
+        assert!(!stash.add(Item::Text("a".into())));
+        assert!(stash.add(Item::Text("b".into())));
+        assert!(!stash.add(Item::Text("a".into())));
+        assert_eq!(stash.items.len(), 2);
     }
 
     #[test]
     fn adding_a_struck_item_again_brings_it_back() {
-        let mut gathering = Gathering::default();
-        gathering.add(Item::Text("a".into()));
-        gathering.toggle(0);
-        assert!(gathering.add(Item::Text("a".into())));
-        assert!(!gathering.is_struck(0));
-        assert_eq!(gathering.items.len(), 1);
+        let mut stash = Stash::default();
+        stash.add(Item::Text("a".into()));
+        stash.toggle(0);
+        assert!(stash.add(Item::Text("a".into())));
+        assert!(!stash.is_struck(0));
+        assert_eq!(stash.items.len(), 1);
     }
 
     #[test]
     fn text_items_become_files_in_order() {
-        let dir = std::env::temp_dir().join(format!("otto-gather-test-{}", std::process::id()));
-        let mut gathering = Gathering::default();
-        gathering.add(Item::Text("first".into()));
-        gathering.add(Item::File("/tmp/shot.png".into()));
-        gathering.add(Item::Text("second".into()));
-        let files = gathering.hand_over(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!("otto-stash-test-{}", std::process::id()));
+        let mut stash = Stash::default();
+        stash.add(Item::Text("first".into()));
+        stash.add(Item::File("/tmp/shot.png".into()));
+        stash.add(Item::Text("second".into()));
+        let files = stash.hand_over(&dir).unwrap();
         assert_eq!(
             files,
             [
@@ -189,9 +189,9 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&files[2].0).unwrap(), "second");
         // A text keeps its file when the items before it go.
-        gathering.remove(0);
+        stash.remove(0);
         assert_eq!(
-            gathering.hand_over(&dir).unwrap()[1].0,
+            stash.hand_over(&dir).unwrap()[1].0,
             dir.join("selection-2.txt")
         );
         std::fs::remove_dir_all(&dir).unwrap();
@@ -199,15 +199,15 @@ mod tests {
 
     #[test]
     fn struck_items_are_handed_over_struck() {
-        let dir = std::env::temp_dir().join(format!("otto-gather-strike-{}", std::process::id()));
-        let mut gathering = Gathering::default();
-        gathering.add(Item::File("/tmp/a".into()));
-        gathering.add(Item::File("/tmp/b".into()));
-        gathering.add(Item::File("/tmp/c".into()));
-        gathering.toggle(1);
-        assert_eq!(gathering.included(), 2);
+        let dir = std::env::temp_dir().join(format!("otto-stash-strike-{}", std::process::id()));
+        let mut stash = Stash::default();
+        stash.add(Item::File("/tmp/a".into()));
+        stash.add(Item::File("/tmp/b".into()));
+        stash.add(Item::File("/tmp/c".into()));
+        stash.toggle(1);
+        assert_eq!(stash.included(), 2);
         assert_eq!(
-            gathering.hand_over(&dir).unwrap(),
+            stash.hand_over(&dir).unwrap(),
             [
                 (PathBuf::from("/tmp/a"), false),
                 (PathBuf::from("/tmp/b"), true),
@@ -215,13 +215,13 @@ mod tests {
             ]
         );
         // A second click brings it back.
-        gathering.toggle(1);
-        assert_eq!(gathering.included(), 3);
+        stash.toggle(1);
+        assert_eq!(stash.included(), 3);
         // Removing keeps the marks on the items that stay.
-        gathering.toggle(2);
-        gathering.remove(0);
-        assert!(!gathering.is_struck(0));
-        assert!(gathering.is_struck(1));
+        stash.toggle(2);
+        stash.remove(0);
+        assert!(!stash.is_struck(0));
+        assert!(stash.is_struck(1));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

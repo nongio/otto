@@ -380,7 +380,7 @@ files-column-original-location = 原始位置
 
 files-kind-folder = 文件夹
 attachments-screen-region = 屏幕区域
-files-add-to-gathering = 添加到收集
+files-add-to-stash = 添加到收集
 files-kind-image = 图像
 files-kind-movie = 影片
 files-kind-audio = 音频

@@ -613,7 +613,7 @@ pub mod id {
     pub const SELECT_MATCHING: &str = "select_matching";
     pub const MOVE_TO: &str = "move_to";
     pub const NEW_FOLDER_WITH_SELECTION: &str = "new_folder_with_selection";
-    pub const ADD_TO_GATHERING: &str = "add_to_gathering";
+    pub const ADD_TO_STASH: &str = "add_to_stash";
     pub const UNDO: &str = "undo";
     /// The three views, by name. Their ids double as the values
     /// [`CHANGE_VIEW`] takes, so there is one spelling of "grid".
@@ -904,14 +904,14 @@ impl CommandProvider for Builtin {
                         .with_placeholder("~/Documents"),
                     ),
                 );
-                if crate::gather::available() {
+                if crate::stash::available() {
                     out.push(
                         Command::new(
-                            id::ADD_TO_GATHERING,
-                            otto_kit::t_owned!("files-add-to-gathering"),
+                            id::ADD_TO_STASH,
+                            otto_kit::t_owned!("files-add-to-stash"),
                             Group::File,
                         )
-                        .with_keywords(["ask", "gather", "collect", "attach"])
+                        .with_keywords(["ask", "stash", "collect", "attach"])
                         .with_shortcut("Ctrl+G"),
                     );
                 }

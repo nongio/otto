@@ -380,7 +380,7 @@ files-column-original-location = 元の場所
 
 files-kind-folder = フォルダ
 attachments-screen-region = 画面の領域
-files-add-to-gathering = 収集に追加
+files-add-to-stash = 収集に追加
 files-kind-image = イメージ
 files-kind-movie = ムービー
 files-kind-audio = オーディオ

@@ -602,7 +602,7 @@ impl FilesApp {
                 // opening needs a chord of its own.
                 Keysym::o if ctrl => browser.open_cursor_entry(),
                 Keysym::g if ctrl && browser.picker.is_none() && !browser.trash => {
-                    browser.add_selection_to_gathering()
+                    browser.add_selection_to_stash()
                 }
                 Keysym::_1 if ctrl => {
                     browser.set_mode(ViewMode::List);

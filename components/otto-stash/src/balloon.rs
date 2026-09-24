@@ -1,4 +1,4 @@
-//! The "Ask about…" card: what is gathered, as Ask shows attachments, under
+//! The "Ask about…" card: what is stashed, as Ask shows attachments, under
 //! a title and over the shortcut that sends them to Ask.
 
 // Rust guideline compliant 2026-02-21
@@ -17,7 +17,7 @@ use otto_kit::skia::{
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 
-use crate::request::Gathering;
+use crate::request::Stash;
 
 // Everything in logical pixels.
 const WIDTH: f32 = 360.0;
@@ -41,9 +41,9 @@ const MIN_VIEW_H: f32 = 48.0;
 /// What a press on the card does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
-    /// Take the item at this index out of the gathering.
+    /// Take the item at this index out of the stash.
     Remove(usize),
-    /// Throw the whole gathering away.
+    /// Throw the whole stash away.
     Clear,
 }
 
@@ -67,7 +67,7 @@ pub struct Layout {
     items: Option<attachments::Layout>,
     /// Where the items show on the card.
     pub viewport: Rect,
-    /// The button that clears the gathering, when there is something to
+    /// The button that clears the stash, when there is something to
     /// clear.
     clear: Option<Rect>,
     /// How tall the items are, scrolled or not.
@@ -155,18 +155,18 @@ impl Balloon {
         paragraph
     }
 
-    /// Lay the card out for `gathering`, no taller than `max_height`: past
+    /// Lay the card out for `stash`, no taller than `max_height`: past
     /// that the items scroll between the title and the send shortcut. The
     /// item at `leaving.0` is on its way out, as much of it left as
     /// `leaving.1` says.
     pub fn layout(
         &mut self,
-        gathering: &Gathering,
+        stash: &Stash,
         leaving: Option<(usize, f32)>,
         max_height: f32,
     ) -> Layout {
         self.theme = Theme::for_scheme(current_color_scheme());
-        let items = gathering.items.as_slice();
+        let items = stash.items.as_slice();
         let (primary, secondary) = (self.theme.text_primary, self.theme.text_secondary);
 
         let mut fixed = Vec::new();
@@ -187,7 +187,7 @@ impl Balloon {
             );
             fixed.push((button, Point::new(button_x, PAD)));
 
-            let included = gathering.included();
+            let included = stash.included();
             let count = if included == items.len() {
                 included.to_string()
             } else {
@@ -203,7 +203,7 @@ impl Balloon {
         let listed: Vec<_> = items
             .iter()
             .enumerate()
-            .map(|(index, item)| (item, gathering.is_struck(index)))
+            .map(|(index, item)| (item, stash.is_struck(index)))
             .collect();
         let list = (!items.is_empty()).then(|| {
             let options = Options {
@@ -341,10 +341,10 @@ mod tests {
     #[test]
     fn remove_buttons_and_items_can_be_hit() {
         let mut balloon = Balloon::default();
-        let mut gathering = Gathering::default();
-        gathering.add(Item::Text("one".into()));
-        gathering.add(Item::Text("two".into()));
-        let layout = balloon.layout(&gathering, None, 800.0);
+        let mut stash = Stash::default();
+        stash.add(Item::Text("one".into()));
+        stash.add(Item::Text("two".into()));
+        let layout = balloon.layout(&stash, None, 800.0);
         // The newest leads, with its remove button beside its first line.
         let top = layout.viewport.top + HOVER_PAD;
         assert_eq!(
@@ -358,7 +358,7 @@ mod tests {
             layout.hit(PAD + INNER - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
             Some(Hit::Clear)
         );
-        let empty = balloon.layout(&Gathering::default(), None, 800.0);
+        let empty = balloon.layout(&Stash::default(), None, 800.0);
         assert_eq!(
             empty.hit(PAD + INNER - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
             None
@@ -368,11 +368,11 @@ mod tests {
     #[test]
     fn many_items_scroll_within_the_height() {
         let mut balloon = Balloon::default();
-        let mut gathering = Gathering::default();
+        let mut stash = Stash::default();
         for i in 0..30 {
-            gathering.add(Item::Text(format!("item {i}")));
+            stash.add(Item::Text(format!("item {i}")));
         }
-        let layout = balloon.layout(&gathering, None, 500.0);
+        let layout = balloon.layout(&stash, None, 500.0);
         assert!(layout.height <= 500.0);
         assert!(layout.body_length > layout.viewport.height());
         // Scrolled to the end, the oldest item is under the pointer at the

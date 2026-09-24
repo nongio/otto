@@ -2,7 +2,7 @@
 
 **Status:** draft
 **Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md),
-[gather.md](./gather.md)
+[stash.md](./stash.md)
 
 ## Summary
 
@@ -142,24 +142,24 @@ offered, since the longer is a keystroke further on.
 
 **Attachments.** What goes with the next request is listed at the foot of the
 log, above the field, before anything is typed: files attached when Ask was
-opened (`--file`, or Ask… in Files), then everything gathered (see
-[gather.md](./gather.md)). They are listed newest first, as the gathering card
+opened (`--file`, or Ask… in Files), then everything stashed (see
+[stash.md](./stash.md)). They are listed newest first, as the stash card
 lists them: selected text reads as the text itself, quoted and cut to a few
 lines; a screen region as its picture; a picture file as its picture under its
 name; any other file as its icon or thumbnail and its name, as in Files.
 Pointing at one highlights it and turns the pointer to a hand. A click on it
 strikes it out or brings it back: a struck attachment stays listed, dimmed,
 and does not go with the request. Its remove button takes it off. Striking
-out or removing a gathered item does the same in the gathering, and items
-gathered while Ask is up appear as they are added. Once sent, a request's
+out or removing a stashed item does the same in the stash, and items
+stashed while Ask is up appear as they are added. Once sent, a request's
 attachments are listed under its bubble in the order they went, without
 remove buttons, and a click on one opens it as Files would.
 
-`--selection` opens Ask with what is selected in the app in front gathered
+`--selection` opens Ask with what is selected in the app in front stashed
 first, read before the launcher takes the keyboard, alone or added to what is
-already gathered. While Ask or agents mode is up, the gathering card steps
+already stashed. While Ask or agents mode is up, the stash card steps
 aside; closed without sending, the card comes back. Sending a request while
-anything is gathered ends the gathering, struck items included.
+anything is stashed ends the stash, struck items included.
 
 **A request of attachments alone.** Enter with nothing typed sends a request
 when at least one attachment is not struck out: the attachments can be the

@@ -4,7 +4,7 @@
 **Wire contract:** `org.freedesktop.FileManager1` and `org.otto.Files1`, defined inline below
 **Related specs:** [file-picker.md](./file-picker.md), [peek.md](./peek.md),
 [launcher.md](./launcher.md), [context-menus.md](./context-menus.md),
-[settings-app.md](./settings-app.md), [gather.md](./gather.md)
+[settings-app.md](./settings-app.md), [stash.md](./stash.md)
 
 ## Summary
 
@@ -1247,15 +1247,15 @@ FocusedSelection() → as
 - Paths that are not valid UTF-8 are left out, since `s` cannot carry them
   faithfully.
 
-The gathering service uses it for `otto-gather add` (see
-[gather.md](./gather.md)): the shortcut is a compositor binding, so Files
+The stash service uses it for `otto-stash add` (see
+[stash.md](./stash.md)): the shortcut is a compositor binding, so Files
 never sees the key press and is asked instead.
 
-**Add to Gathering.** While `otto-gather` is running, the window offers
-**Add to Gathering** on its selection: in the context menu of selected items,
+**Add to Stash.** While `otto-stash` is running, the window offers
+**Add to Stash** on its selection: in the context menu of selected items,
 in the command palette, and on Ctrl+G. It adds the selected files to the
-gathering, in the order shown. Ctrl+G does nothing in a picker or in the
-Trash window, and with nothing selected none of them does anything. When `otto-gather` is not
+stash, in the order shown. Ctrl+G does nothing in a picker or in the
+Trash window, and with nothing selected none of them does anything. When `otto-stash` is not
 running, the menu and palette entries are not shown.
 
 ## Shared foundations

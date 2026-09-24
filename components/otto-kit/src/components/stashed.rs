@@ -1,13 +1,13 @@
-//! What otto-gather has gathered, followed from another app.
+//! What otto-stash has stashed, followed from another app.
 //!
-//! otto-gather owns the gathering: it keeps it until it is sent or its items
+//! otto-stash owns the stash: it keeps it until it is sent or its items
 //! are removed. An app that shows it, as Ask does, mirrors it through
-//! [`Gathered`] and asks otto-gather for every change, so the card and the
+//! [`Stashed`] and asks otto-stash for every change, so the card and the
 //! app never disagree. While an app follows it holding it, the card steps
 //! aside; it comes back when that app goes without sending.
 //!
 //! Items travel as files: text as `selection-N.txt` and screen regions as
-//! `region-N.png` in otto-gather's directory, which
+//! `region-N.png` in otto-stash's directory, which
 //! [`Attachment::for_file`](super::attachments::Attachment::for_file) reads
 //! back as what they are.
 
@@ -25,16 +25,16 @@ use zbus::message::Type;
 use zbus::names::BusName;
 use zbus::{MatchRule, MessageStream};
 
-pub const NAME: &str = "org.otto.Gather1";
-pub const PATH: &str = "/org/otto/Gather1";
+pub const NAME: &str = "org.otto.Stash1";
+pub const PATH: &str = "/org/otto/Stash1";
 
-/// Each gathered file, with whether it is struck out: kept, but not sent.
+/// Each stashed file, with whether it is struck out: kept, but not sent.
 pub type Items = Vec<(PathBuf, bool)>;
 
-/// How long otto-gather is given to add the selection.
+/// How long otto-stash is given to add the selection.
 const ADD_TIMEOUT: Duration = Duration::from_millis(800);
 
-/// A change asked of otto-gather.
+/// A change asked of otto-stash.
 #[derive(Debug)]
 enum Request {
     Toggle(u32),
@@ -42,27 +42,27 @@ enum Request {
     Sent,
 }
 
-/// otto-gather's gathering, as last reported, kept up to date on a thread
+/// otto-stash's stash, as last reported, kept up to date on a thread
 /// of its own.
 ///
 /// The thread reports through a socket [`Self::poll_fd`] for the app's poll
 /// loop; [`Self::pump`] takes the news in.
-pub struct Gathered {
+pub struct Stashed {
     requests: async_mpsc::UnboundedSender<Request>,
     updates: mpsc::Receiver<Items>,
     wake: UnixStream,
     items: Items,
 }
 
-impl Gathered {
-    /// Follow the gathering, holding it — the card steps aside — when
-    /// `hold` is set. Nothing is gathered while otto-gather isn't running;
+impl Stashed {
+    /// Follow the stash, holding it — the card steps aside — when
+    /// `hold` is set. Nothing is stashed while otto-stash isn't running;
     /// once it starts, it is followed from then on.
     ///
     /// With `add_selection`, what is selected in the focused app is added
-    /// first, once the gathering is held, so the card never shows for it.
-    /// That waits for otto-gather, briefly: it is called before the app's
-    /// own window takes the keyboard, while otto-gather can still read the
+    /// first, once the stash is held, so the card never shows for it.
+    /// That waits for otto-stash, briefly: it is called before the app's
+    /// own window takes the keyboard, while otto-stash can still read the
     /// selection from whatever has it.
     ///
     /// # Panics
@@ -82,7 +82,7 @@ impl Gathered {
             }
         };
         std::thread::Builder::new()
-            .name("otto-gather".into())
+            .name("otto-stash".into())
             .spawn(move || {
                 let runtime = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -90,18 +90,18 @@ impl Gathered {
                 {
                     Ok(runtime) => runtime,
                     Err(err) => {
-                        tracing::warn!(%err, "cannot follow otto-gather");
+                        tracing::warn!(%err, "cannot follow otto-stash");
                         return;
                     }
                 };
                 let added = add_selection.then_some(added_tx);
                 if let Err(err) = runtime.block_on(follow(hold, added, request_rx, report)) {
-                    tracing::debug!(%err, "stopped following otto-gather");
+                    tracing::debug!(%err, "stopped following otto-stash");
                 }
             })
-            .expect("cannot start following otto-gather");
+            .expect("cannot start following otto-stash");
         if add_selection && added.recv_timeout(ADD_TIMEOUT).is_err() {
-            tracing::warn!("otto-gather did not add the selection in time");
+            tracing::warn!("otto-stash did not add the selection in time");
         }
         Self {
             requests,
@@ -111,12 +111,12 @@ impl Gathered {
         }
     }
 
-    /// The socket that becomes readable when the gathering changed.
+    /// The socket that becomes readable when the stash changed.
     pub fn poll_fd(&self) -> RawFd {
         self.wake.as_raw_fd()
     }
 
-    /// Take the latest gathering in. Never blocks. Returns whether it
+    /// Take the latest stash in. Never blocks. Returns whether it
     /// changed.
     pub fn pump(&mut self) -> bool {
         let mut buffer = [0u8; 64];
@@ -136,7 +136,7 @@ impl Gathered {
         changed
     }
 
-    /// What is gathered, oldest first.
+    /// What is stashed, oldest first.
     pub fn items(&self) -> &[(PathBuf, bool)] {
         &self.items
     }
@@ -146,13 +146,13 @@ impl Gathered {
         self.request(index, Request::Toggle);
     }
 
-    /// Take the item at `index` out of the gathering.
+    /// Take the item at `index` out of the stash.
     pub fn remove(&self, index: usize) {
         self.request(index, Request::Remove);
     }
 
-    /// What is gathered was sent: the gathering is over. It is gone from
-    /// here at once rather than when otto-gather says so.
+    /// What is stashed was sent: the stash is over. It is gone from
+    /// here at once rather than when otto-stash says so.
     pub fn sent(&mut self) {
         if !self.items.is_empty() {
             self.items.clear();
@@ -167,8 +167,8 @@ impl Gathered {
     }
 }
 
-/// Follow the gathering until the app goes: hold it, report it now and on
-/// every change, pass requests on, and start over whenever otto-gather does.
+/// Follow the stash until the app goes: hold it, report it now and on
+/// every change, pass requests on, and start over whenever otto-stash does.
 async fn follow(
     hold: bool,
     added: Option<mpsc::Sender<()>>,
@@ -190,14 +190,14 @@ async fn follow(
 
     if dbus.name_has_owner(BusName::try_from(NAME)?).await? {
         if hold {
-            hold_gathering(&bus).await;
+            hold_stash(&bus).await;
         }
         if let Some(added) = added {
             if let Err(err) = bus
                 .call_method(Some(NAME), PATH, Some(NAME), "Add", &())
                 .await
             {
-                tracing::debug!(%err, "cannot add the selection to the gathering");
+                tracing::debug!(%err, "cannot add the selection to the stash");
             }
             let _ = added.send(());
         }
@@ -219,7 +219,7 @@ async fn follow(
                     None => bus.call_method(Some(NAME), PATH, Some(NAME), method, &()).await,
                 };
                 if let Err(err) = called {
-                    tracing::warn!(%err, method, "otto-gather refused");
+                    tracing::warn!(%err, method, "otto-stash refused");
                 }
             }
             Some(Ok(message)) = changes.next() => {
@@ -231,7 +231,7 @@ async fn follow(
                 let started = change.args().is_ok_and(|args| args.new_owner().is_some());
                 if started {
                     if hold {
-                        hold_gathering(&bus).await;
+                        hold_stash(&bus).await;
                     }
                     report_items(&bus, &report).await;
                 } else {
@@ -242,17 +242,17 @@ async fn follow(
     }
 }
 
-/// Hold the gathering: its card steps aside while this app is on the bus.
-async fn hold_gathering(bus: &zbus::Connection) {
+/// Hold the stash: its card steps aside while this app is on the bus.
+async fn hold_stash(bus: &zbus::Connection) {
     if let Err(err) = bus
         .call_method(Some(NAME), PATH, Some(NAME), "Hold", &())
         .await
     {
-        tracing::debug!(%err, "cannot hold the gathering");
+        tracing::debug!(%err, "cannot hold the stash");
     }
 }
 
-/// Report what is in the gathering now.
+/// Report what is in the stash now.
 async fn report_items(bus: &zbus::Connection, report: &impl Fn(Items)) {
     let items = async {
         let reply = bus
@@ -262,7 +262,7 @@ async fn report_items(bus: &zbus::Connection, report: &impl Fn(Items)) {
     };
     match items.await {
         Ok(items) => report(to_paths(items)),
-        Err(err) => tracing::debug!(%err, "cannot list the gathering"),
+        Err(err) => tracing::debug!(%err, "cannot list the stash"),
     }
 }
 

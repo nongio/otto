@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
 use otto_kit::components::attachments::ICON_SIZE;
-use otto_kit::components::gathered::Gathered;
 use otto_kit::components::scroll::{Axis, RowLayout, ScrollContent, ScrollPane};
+use otto_kit::components::stashed::Stashed;
 use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
@@ -173,9 +173,9 @@ struct Launcher {
 
     /// Ask mode's connection to otto-agents, and the request once it is made.
     ask: Option<Ask>,
-    /// What otto-gather has gathered, shown with the next request in its
+    /// What otto-stash has stashed, shown with the next request in its
     /// card's place; `None` outside asking.
-    gathered: Option<Gathered>,
+    stashed: Option<Stashed>,
     /// Makes the thumbnails attached files show, as Files does; started
     /// with the first one wanted.
     thumbnailer: Option<Thumbnailer>,
@@ -387,7 +387,7 @@ impl Launcher {
             parent_painted: false,
             settle_until: None,
             last_tick: Instant::now(),
-            gathered: None,
+            stashed: None,
             thumbnailer: None,
             ask,
             log: Vec::new(),
@@ -970,10 +970,10 @@ impl Launcher {
         self.relayout_log();
     }
 
-    /// Show what otto-gather has gathered with the next request.
-    fn show_gathered(&mut self) {
-        if let (Some(ask), Some(gathered)) = (self.ask.as_mut(), self.gathered.as_ref()) {
-            ask.set_gathered(gathered.items());
+    /// Show what otto-stash has stashed with the next request.
+    fn show_stashed(&mut self) {
+        if let (Some(ask), Some(stashed)) = (self.ask.as_mut(), self.stashed.as_ref()) {
+            ask.set_stashed(stashed.items());
         }
     }
 
@@ -990,7 +990,7 @@ impl Launcher {
     fn new_session(&mut self) {
         self.spring();
         self.ask = Some(Ask::open());
-        self.show_gathered();
+        self.show_stashed();
         self.picking = false;
         self.opened_session = None;
         self.return_to = None;
@@ -1021,7 +1021,7 @@ impl Launcher {
     fn back_to_sessions(&mut self) {
         self.spring();
         self.ask = Some(Ask::open());
-        self.show_gathered();
+        self.show_stashed();
         self.picking = true;
         // Back where the user was, once the list arrives: the session left.
         self.return_to = self.opened_session.take();
@@ -1059,8 +1059,8 @@ impl Launcher {
         }
         let first = !ask.running();
         if ask.send(&prompt, agent) {
-            if let Some(gathered) = self.gathered.as_mut() {
-                gathered.sent();
+            if let Some(stashed) = self.stashed.as_mut() {
+                stashed.sent();
             }
         }
         self.input.set_value("");
@@ -1415,17 +1415,17 @@ impl Launcher {
         let Some(ask) = self.ask.as_mut() else {
             return;
         };
-        // A gathered item is changed in otto-gather too, which owns it.
+        // A stashed item is changed in otto-stash too, which owns it.
         if hit.remove {
             if let Some(index) = ask.remove_attachment(hit.item) {
-                self.gathered
+                self.stashed
                     .as_ref()
-                    .inspect(|gathered| gathered.remove(index));
+                    .inspect(|stashed| stashed.remove(index));
             }
         } else if let Some(index) = ask.toggle_attachment(hit.item) {
-            self.gathered
+            self.stashed
                 .as_ref()
-                .inspect(|gathered| gathered.toggle(index));
+                .inspect(|stashed| stashed.toggle(index));
         }
         self.attachment_hover = None;
         self.relayout_log();
@@ -2901,8 +2901,8 @@ impl App for Launcher {
         }
 
         self.take_thumbnails();
-        if self.gathered.as_mut().is_some_and(Gathered::pump) {
-            self.show_gathered();
+        if self.stashed.as_mut().is_some_and(Stashed::pump) {
+            self.show_stashed();
             self.spring();
             self.relayout_log();
         }
@@ -2990,7 +2990,7 @@ impl App for Launcher {
             .iter()
             .filter_map(|s| s.poll_fd())
             .chain(self.ask.as_ref().map(Ask::poll_fd))
-            .chain(self.gathered.as_ref().map(Gathered::poll_fd))
+            .chain(self.stashed.as_ref().map(Stashed::poll_fd))
             .chain(self.thumbnailer.as_ref().map(Thumbnailer::poll_fd))
             .collect()
     }
@@ -3039,7 +3039,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // place of starting one. Either means asking.
             "--file" => files.extend(args.next().map(PathBuf::from)),
             "--session" => session = args.next(),
-            // Start from what is selected in the app in front, gathered.
+            // Start from what is selected in the app in front, stashed.
             "--selection" => {
                 scope = Scope::Ask;
                 with_selection = true;
@@ -3061,11 +3061,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let files: Vec<(PathBuf, bool)> = files.into_iter().map(|file| (file, false)).collect();
     // Held before the launcher's card appears, and the selection read while
     // the app in front still has the keyboard: the card takes it.
-    let gathered =
-        matches!(scope, Scope::Ask | Scope::Agents).then(|| Gathered::follow(true, with_selection));
+    let stashed =
+        matches!(scope, Scope::Ask | Scope::Agents).then(|| Stashed::follow(true, with_selection));
     let mut launcher = Launcher::new(&words.join(" "), scope);
     launcher.prepare_ask(files, session.as_deref());
-    launcher.gathered = gathered;
+    launcher.stashed = stashed;
     AppRunner::new(launcher).run()?;
     Ok(())
 }

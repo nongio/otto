@@ -398,7 +398,7 @@ files-column-original-location = Исходное расположение
 
 files-kind-folder = Папка
 attachments-screen-region = Область экрана
-files-add-to-gathering = Добавить в подборку
+files-add-to-stash = Добавить в подборку
 files-kind-image = Изображение
 files-kind-movie = Видео
 files-kind-audio = Аудио

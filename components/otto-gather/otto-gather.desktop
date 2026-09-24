@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Gathering
-Comment=Gather selections, files and screen regions to ask about
-Exec=otto-gather
-NoDisplay=true
-X-GNOME-Autostart-enabled=true

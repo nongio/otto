@@ -399,7 +399,7 @@ files-column-original-location = Початкове розташування
 
 files-kind-folder = Папка
 attachments-screen-region = Область екрана
-files-add-to-gathering = Додати до добірки
+files-add-to-stash = Додати до добірки
 files-kind-image = Зображення
 files-kind-movie = Відео
 files-kind-audio = Аудіо

@@ -1,29 +1,29 @@
-//! otto-gather: gather selections from any app into a balloon, then ask about
+//! otto-stash: stash selections from any app into a balloon, then ask about
 //! them in Ask (proof of concept, plan 0013).
 //!
-//! Run it once; it binds `zwp_input_method_v2`, owns `org.otto.Gather1` on
+//! Run it once; it binds `zwp_input_method_v2`, owns `org.otto.Stash1` on
 //! the session bus, and waits. Bind the commands to shortcuts:
 //!
-//! - `otto-gather add`: start gathering, and add what is selected: the text
+//! - `otto-stash add`: start a stash, and add what is selected: the text
 //!   in the focused field, or the files in a focused Files window. A balloon
-//!   lists what was gathered until it is sent or cancelled; it starts in the
+//!   lists what was stashed until it is sent or cancelled; it starts in the
 //!   top-right corner and can be dragged.
-//! - `otto-gather add-file PATH`: add a file.
-//! - `otto-gather add-region`: drag out a screen region and add a capture of
+//! - `otto-stash add-file PATH`: add a file.
+//! - `otto-stash add-region`: drag out a screen region and add a capture of
 //!   it (needs `slurp` and `grim`).
-//! - `otto-gather send`: open Ask. However Ask is opened, it shows what is
-//!   gathered in the balloon's place, following it over the bus, and the
-//!   gathering ends when Ask sends it. Closed without sending, Ask leaves it
+//! - `otto-stash send`: open Ask. However Ask is opened, it shows what is
+//!   stashed in the balloon's place, following it over the bus, and the
+//!   stash ends when Ask sends it. Closed without sending, Ask leaves it
 //!   and the balloon comes back.
-//! - `otto-gather cancel`: throw the gathering away.
+//! - `otto-stash cancel`: throw the stash away.
 //!
-//! Gathering never takes the keyboard, so the app keeps its selection and
+//! otto-stash never takes the keyboard, so the app keeps its selection and
 //! caret. Selections come from the focused field's surrounding text, or,
 //! when the field reports none (GTK3, Qt, terminals), from the primary
 //! selection.
 //!
 //! Environment:
-//! - `OTTO_GATHER_LAUNCHER`: the launcher to open (default `otto-launcher`).
+//! - `OTTO_STASH_LAUNCHER`: the launcher to open (default `otto-launcher`).
 
 mod balloon;
 mod dbus;
@@ -83,7 +83,7 @@ use crate::dbus::{Command, Items};
 use crate::drop::Drops;
 use crate::panel::{Panel, Shell};
 use crate::primary::Primary;
-use crate::request::{Gathering, Item, Surrounding};
+use crate::request::{Item, Stash, Surrounding};
 use otto_kit::components::attachments::ICON_SIZE;
 use otto_peek::thumbcache::Size;
 use otto_peek::thumbnailer::Thumbnailer;
@@ -94,7 +94,7 @@ const POOL_BYTES: usize = 512 * 256 * 4;
 const BALLOON_SCALE: i32 = 2;
 /// Linux's code for the left mouse button (`BTN_LEFT`).
 const BTN_LEFT: u32 = 0x110;
-/// The most primary-selection text gathered at once; the rest is dropped.
+/// The most primary-selection text stashed at once; the rest is dropped.
 const PRIMARY_MAX_BYTES: usize = 1 << 20;
 /// How long a removed item takes to shrink away.
 const LEAVE: Duration = Duration::from_millis(220);
@@ -106,7 +106,7 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "otto_gather=info".into()),
+                .unwrap_or_else(|_| "otto_stash=info".into()),
         )
         .init();
 
@@ -145,7 +145,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Run the gathering service until the compositor goes away.
+/// Run the stash service until the compositor goes away.
 fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
     let conn = Connection::connect_to_env()?;
     let (globals, event_queue) = registry_queue_init::<State>(&conn)?;
@@ -212,19 +212,14 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
     // Kept alive for as long as the service runs.
     let bus = runtime
         .block_on(dbus::serve(commands_tx.clone()))
-        .with_context(|| {
-            format!(
-                "cannot own {} (is otto-gather running already?)",
-                dbus::NAME
-            )
-        })?;
-    tracing::info!("otto-gather ready");
+        .with_context(|| format!("cannot own {} (is otto-stash running already?)", dbus::NAME))?;
+    tracing::info!("otto-stash ready");
     // Every change goes out in order, from one task.
     let (announcements, mut announced) = tokio::sync::mpsc::unbounded_channel::<Items>();
     runtime.spawn(async move {
         while let Some(items) = announced.recv().await {
             if let Err(error) = dbus::announce(&bus, items).await {
-                tracing::warn!(%error, "cannot announce the gathering");
+                tracing::warn!(%error, "cannot announce the stash");
             }
         }
     });
@@ -247,8 +242,8 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
         fading: None,
         pending: Field::default(),
         field: Field::default(),
-        gathering: None,
-        gathering_dir: PathBuf::new(),
+        stash: None,
+        stash_dir: PathBuf::new(),
         held_by: None,
         announcements,
         last_announced: Items::new(),
@@ -296,20 +291,20 @@ struct State {
     thumbnailer: Thumbnailer,
     shell: Shell,
     cursor_shape: Option<WpCursorShapeDeviceV1>,
-    /// The balloon's surface, for as long as something is being gathered.
+    /// The balloon's surface, for as long as something is being stashed.
     panel: Option<Panel>,
     /// The balloon fading away after it closed, destroyed once it has.
     fading: Option<Panel>,
     /// The field as announced, applied on the next `done`.
     pending: Field,
     field: Field,
-    /// `None` when not gathering.
-    gathering: Option<Gathering>,
-    /// Where the gathering's text is written for Ask.
-    gathering_dir: PathBuf,
-    /// The bus client showing the gathering in the card's place.
+    /// `None` when not stash.
+    stash: Option<Stash>,
+    /// Where the stash's text is written for Ask.
+    stash_dir: PathBuf,
+    /// The bus client showing the stash in the card's place.
     held_by: Option<String>,
-    /// Where changes to the gathering go out on the bus, and the last that
+    /// Where changes to the stash go out on the bus, and the last that
     /// did.
     announcements: tokio::sync::mpsc::UnboundedSender<Items>,
     last_announced: Items,
@@ -349,11 +344,11 @@ impl State {
                     .as_ref()
                     .and_then(Surrounding::selection)
                     .map(str::to_owned);
-                let gathering = self.start_gathering();
+                let stash = self.start_stash();
                 match selection {
                     Some(text) => {
                         tracing::info!(chars = text.chars().count(), "add selection");
-                        gathering.add(Item::Text(text));
+                        stash.add(Item::Text(text));
                     }
                     // Files has no text field to report; it says what is
                     // selected when asked.
@@ -377,28 +372,28 @@ impl State {
                 if files.is_empty() {
                     tracing::info!("nothing is selected in Files");
                 }
-                let gathering = self.start_gathering();
+                let stash = self.start_stash();
                 for file in files {
                     tracing::info!(path = %file.display(), "add selected file");
-                    gathering.add(Item::File(file));
+                    stash.add(Item::File(file));
                 }
             }
             Command::AddFile(path) => {
                 tracing::info!(path = %path.display(), "add file");
-                self.start_gathering().add(Item::File(path));
+                self.start_stash().add(Item::File(path));
             }
             Command::AddRegion => self.pick_region(),
             Command::RegionCaptured(path) => {
                 self.picking = false;
                 if let Some(path) = path {
                     tracing::info!(path = %path.display(), "add region");
-                    self.start_gathering().add(Item::Region(path));
+                    self.start_stash().add(Item::Region(path));
                 }
             }
-            // Ask shows what is gathered as it opens, as it does when opened
+            // Ask shows what is stashed as it opens, as it does when opened
             // any other way.
             Command::Send => {
-                if self.gathering.is_some() {
+                if self.stash.is_some() {
                     if let Err(error) = open_ask() {
                         tracing::error!(error = format!("{error:#}"), "cannot open Ask");
                     }
@@ -418,54 +413,52 @@ impl State {
                 }
             }
             Command::Toggle(index) => {
-                if let Some(gathering) = self.gathering.as_mut() {
-                    gathering.toggle(index);
+                if let Some(stash) = self.stash.as_mut() {
+                    stash.toggle(index);
                 }
             }
             Command::Remove(index) => self.remove_item(index),
             Command::Sent => {
-                if self.gathering.take().is_some() {
+                if self.stash.take().is_some() {
                     tracing::info!("sent to Ask");
                 }
             }
             Command::Cancel => {
-                if self.gathering.take().is_some() {
-                    tracing::info!("gathering thrown away");
+                if self.stash.take().is_some() {
+                    tracing::info!("stash thrown away");
                 }
             }
         }
         self.refresh();
     }
 
-    /// The gathering, started if there is none.
-    fn start_gathering(&mut self) -> &mut Gathering {
-        if self.gathering.is_none() {
-            tracing::info!("start gathering");
+    /// The stash, started if there is none.
+    fn start_stash(&mut self) -> &mut Stash {
+        if self.stash.is_none() {
+            tracing::info!("start a stash");
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis());
-            self.gathering_dir = runtime_dir().join("otto-gather").join(stamp.to_string());
+            self.stash_dir = runtime_dir().join("otto-stash").join(stamp.to_string());
         }
-        self.gathering.get_or_insert_with(Gathering::default)
+        self.stash.get_or_insert_with(Stash::default)
     }
 
-    /// Everything gathered, as files; nothing when the text can't be
+    /// Everything stashed, as files; nothing when the text can't be
     /// written.
     fn items(&self) -> Items {
-        let Some(gathering) = self.gathering.as_ref() else {
+        let Some(stash) = self.stash.as_ref() else {
             return Items::new();
         };
-        gathering
-            .hand_over(&self.gathering_dir)
-            .unwrap_or_else(|error| {
-                let dir = self.gathering_dir.display();
-                tracing::error!(%error, %dir, "cannot write the selections");
-                Items::new()
-            })
+        stash.hand_over(&self.stash_dir).unwrap_or_else(|error| {
+            let dir = self.stash_dir.display();
+            tracing::error!(%error, %dir, "cannot write the selections");
+            Items::new()
+        })
     }
 
     /// Take the item at `index` out; taking the last one out ends the
-    /// gathering.
+    /// stash.
     fn remove_item(&mut self, index: usize) {
         // On the card, it shrinks away first; see `on_frame`.
         if self.panel.is_some() && self.held_by.is_none() {
@@ -482,11 +475,7 @@ impl State {
                 }
                 None => index,
             };
-            if self
-                .gathering
-                .as_ref()
-                .is_some_and(|g| index < g.items.len())
-            {
+            if self.stash.as_ref().is_some_and(|g| index < g.items.len()) {
                 self.leaving = Some((index, Instant::now()));
                 self.hovering = None;
                 self.hovered_item = None;
@@ -500,10 +489,10 @@ impl State {
 
     /// Take the item at `index` out at once.
     fn remove_now(&mut self, index: usize) {
-        if let Some(gathering) = self.gathering.as_mut() {
-            gathering.remove(index);
-            if gathering.items.is_empty() {
-                self.gathering = None;
+        if let Some(stash) = self.stash.as_mut() {
+            stash.remove(index);
+            if stash.items.is_empty() {
+                self.stash = None;
             }
         }
         self.hovering = None;
@@ -517,11 +506,11 @@ impl State {
             return;
         }
         self.picking = true;
-        let dir = runtime_dir().join("otto-gather");
+        let dir = runtime_dir().join("otto-stash");
         let commands = self.commands.clone();
         // slurp and grim block until the user is done, so off this thread.
         let spawned = std::thread::Builder::new()
-            .name("otto-gather-region".into())
+            .name("otto-stash-region".into())
             .spawn(move || {
                 let path = region::capture(&dir)
                     .inspect_err(|error| {
@@ -612,7 +601,7 @@ impl State {
     }
 
     fn on_primary_read(&mut self, text: &str) {
-        let Some(gathering) = self.gathering.as_mut() else {
+        let Some(stash) = self.stash.as_mut() else {
             // Sent or cancelled while the app was still writing.
             return;
         };
@@ -621,7 +610,7 @@ impl State {
             return;
         }
         tracing::info!(chars = text.chars().count(), "add primary selection");
-        gathering.add(Item::Text(text.to_owned()));
+        stash.add(Item::Text(text.to_owned()));
         self.refresh();
     }
 
@@ -638,7 +627,7 @@ impl State {
         self.draw_panel();
     }
 
-    /// Tell whoever follows the gathering, if it changed.
+    /// Tell whoever follows the stash, if it changed.
     fn announce(&mut self) {
         let items = self.items();
         if items != self.last_announced {
@@ -647,16 +636,16 @@ impl State {
         }
     }
 
-    /// Show, redraw or remove the balloon to match the gathering. It stays
-    /// up from the first add until the gathering is sent or cancelled.
+    /// Show, redraw or remove the balloon to match the stash. It stays
+    /// up from the first add until the stash is sent or cancelled.
     fn refresh(&mut self) {
         self.announce();
         self.layout = None;
-        // Held, Ask shows the gathering in its place.
-        if self.gathering.is_none() {
+        // Held, Ask shows the stash in its place.
+        if self.stash.is_none() {
             self.leaving = None;
         }
-        if self.gathering.is_none() || self.picking || self.held_by.is_some() {
+        if self.stash.is_none() || self.picking || self.held_by.is_some() {
             self.close_panel();
             return;
         }
@@ -673,7 +662,7 @@ impl State {
 
     /// Draw the balloon, once the compositor has sized the overlay.
     fn draw_panel(&mut self) {
-        let (Some(gathering), Some(panel)) = (self.gathering.as_ref(), self.panel.as_mut()) else {
+        let (Some(stash), Some(panel)) = (self.stash.as_ref(), self.panel.as_mut()) else {
             return;
         };
         if !panel.configured() {
@@ -687,9 +676,7 @@ impl State {
                     // Ease in: it holds a moment, then goes.
                     (index, 1.0 - t * t)
                 });
-                let layout = self
-                    .balloon
-                    .layout(gathering, leaving, panel.max_card_height());
+                let layout = self.balloon.layout(stash, leaving, panel.max_card_height());
                 for path in self.balloon.thumbnails_wanted() {
                     self.thumbnailer.request(path);
                 }
@@ -804,8 +791,8 @@ impl State {
 
     /// Strike the item out, or bring it back.
     fn toggle_item(&mut self, index: usize) {
-        if let Some(gathering) = self.gathering.as_mut() {
-            gathering.toggle(index);
+        if let Some(stash) = self.stash.as_mut() {
+            stash.toggle(index);
             self.refresh();
         }
     }
@@ -867,14 +854,14 @@ impl State {
     }
 }
 
-/// Where gathered things are written: the user's runtime directory.
+/// Where stashed things are written: the user's runtime directory.
 fn runtime_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
-/// Open Ask. It shows what is gathered, following it over the bus.
+/// Open Ask. It shows what is stashed, following it over the bus.
 fn open_ask() -> anyhow::Result<()> {
-    let launcher = std::env::var("OTTO_GATHER_LAUNCHER").unwrap_or_else(|_| "otto-launcher".into());
+    let launcher = std::env::var("OTTO_STASH_LAUNCHER").unwrap_or_else(|_| "otto-launcher".into());
     tracing::info!(%launcher, "open Ask");
     // Not waited for: the launcher runs until it is closed. A thread reaps it
     // so it doesn't linger as a zombie.

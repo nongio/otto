@@ -2,7 +2,7 @@
 //!
 //! Selected text reads as itself; a screen region is its picture; a picture
 //! file is its picture under its name; any other file is its icon and name,
-//! as in Files. The same list is the otto-gather card, the files attached to
+//! as in Files. The same list is the otto-stash card, the files attached to
 //! a request in Ask, and the files that went with one in its log.
 //!
 //! [`AttachmentList`] lays a list out and paints it. It keeps what it has
@@ -63,8 +63,8 @@ const PREVIEW_SCALE: f32 = 2.0;
 /// The widest a list is expected to be, for sizing previews.
 const PREVIEW_MAX_W: f32 = 480.0;
 
-/// Where otto-gather writes what it gathers, under the runtime directory.
-pub const GATHER_DIR: &str = "otto-gather";
+/// Where otto-stash writes what it stashes, under the runtime directory.
+pub const STASH_DIR: &str = "otto-stash";
 
 /// One thing to ask about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,29 +80,29 @@ pub enum Attachment {
 impl Attachment {
     /// The attachment a file handed over stands for.
     ///
-    /// otto-gather hands text and screen regions over as files in
-    /// [`GATHER_DIR`]: `selection-N.txt` and `region-N.png`. Those read as
+    /// otto-stash hands text and screen regions over as files in
+    /// [`STASH_DIR`]: `selection-N.txt` and `region-N.png`. Those read as
     /// the text and the region they are; any other path is a file.
     pub fn for_file(path: &Path) -> Self {
-        match gather_dir() {
+        match stash_dir() {
             Some(dir) => Self::for_file_in(path, &dir),
             None => Self::File(path.to_owned()),
         }
     }
 
-    /// [`Self::for_file`], with otto-gather's directory at `gather_dir`.
-    fn for_file_in(path: &Path, gather_dir: &Path) -> Self {
-        let gathered = path.starts_with(gather_dir);
+    /// [`Self::for_file`], with otto-stash's directory at `stash_dir`.
+    fn for_file_in(path: &Path, stash_dir: &Path) -> Self {
+        let stashed = path.starts_with(stash_dir);
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        if gathered && name.starts_with("selection-") && name.ends_with(".txt") {
+        if stashed && name.starts_with("selection-") && name.ends_with(".txt") {
             if let Ok(text) = std::fs::read_to_string(path) {
                 return Self::Text(text);
             }
         }
-        if gathered && name.starts_with("region-") && name.ends_with(".png") {
+        if stashed && name.starts_with("region-") && name.ends_with(".png") {
             return Self::Region(path.to_owned());
         }
         Self::File(path.to_owned())
@@ -117,9 +117,9 @@ impl Attachment {
     }
 }
 
-/// otto-gather's directory: [`GATHER_DIR`] in the runtime directory.
-pub fn gather_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR").map(|runtime| PathBuf::from(runtime).join(GATHER_DIR))
+/// otto-stash's directory: [`STASH_DIR`] in the runtime directory.
+pub fn stash_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").map(|runtime| PathBuf::from(runtime).join(STASH_DIR))
 }
 
 /// How a list is laid out.
@@ -127,7 +127,7 @@ pub fn gather_dir() -> Option<PathBuf> {
 pub struct Options {
     /// How wide the list is, in points.
     pub width: f32,
-    /// Newest first, as a pile being gathered; otherwise in the order
+    /// Newest first, as a pile being stashed; otherwise in the order
     /// given, as a record of what went.
     pub newest_first: bool,
     /// Give each item a remove button.
@@ -1014,23 +1014,23 @@ mod tests {
     }
 
     #[test]
-    fn gathered_files_read_as_what_they_are() {
-        let gather = std::env::temp_dir().join(format!("attachments-test-{}", std::process::id()));
-        let dir = gather.join("123");
+    fn stashed_files_read_as_what_they_are() {
+        let stash = std::env::temp_dir().join(format!("attachments-test-{}", std::process::id()));
+        let dir = stash.join("123");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("selection-1.txt"), "hello").unwrap();
         assert_eq!(
-            Attachment::for_file_in(&dir.join("selection-1.txt"), &gather),
+            Attachment::for_file_in(&dir.join("selection-1.txt"), &stash),
             Attachment::Text("hello".into())
         );
         assert_eq!(
-            Attachment::for_file_in(&gather.join("region-9.png"), &gather),
-            Attachment::Region(gather.join("region-9.png"))
+            Attachment::for_file_in(&stash.join("region-9.png"), &stash),
+            Attachment::Region(stash.join("region-9.png"))
         );
         assert_eq!(
-            Attachment::for_file_in(Path::new("/tmp/selection-1.txt"), &gather),
+            Attachment::for_file_in(Path::new("/tmp/selection-1.txt"), &stash),
             Attachment::File("/tmp/selection-1.txt".into())
         );
-        std::fs::remove_dir_all(&gather).unwrap();
+        std::fs::remove_dir_all(&stash).unwrap();
     }
 }

@@ -1,4 +1,4 @@
-# 0013: Gather and ask (a balloon for context from anywhere)
+# 0013: Stash and ask (a balloon for context from anywhere)
 
 **Status:** Idea
 
@@ -24,7 +24,7 @@ nothing else collected and no agent involved, it is plain typing by voice.
 
 ## Flow
 
-1. **Start.** A shortcut starts a gathering session. A small indicator shows it is
+1. **Start.** A shortcut starts a stash session. A small indicator shows it is
    on, because while it is on the desktop is listening and collecting.
 2. **Collect.** Each source adds a chip to the balloon, in order, so the request
    reads as a timeline:
@@ -52,11 +52,11 @@ nothing else collected and no agent involved, it is plain typing by voice.
    - otherwise: **show** the answer, with Copy and Continue in Ask.
    A one-shot session is forgotten after delivery unless you continue it.
 
-Esc at any point throws the gathering away. Nothing is sent before you send.
+Esc at any point throws the stash away. Nothing is sent before you send.
 
 ## Shape
 
-- **One service owns the gathering.** A long-running user process (otto-dictate
+- **One service owns the stash.** A long-running user process (otto-dictate
   grown up) holds the chips, the capture stream and the balloon. Everything else is
   a trigger that talks to it: the shortcut, Files' Ask…, the region picker. It
   exposes a small D-Bus interface: start, pause, resume, add text, add file, add
@@ -108,7 +108,7 @@ with two halves.
   - `Selection()` returns the selected items of the focused Files window (paths,
     plus the folder it shows); `SelectionOf(window)` for a given one.
   - A `SelectionChanged` signal, so the balloon can show "3 files in Files" live.
-  - While gathering, the Files selection is a source like the text selection: the
+  - While stash, the Files selection is a source like the text selection: the
     same "add" shortcut picks it up when Files is focused. Ask… in the palette
     stays as one more way in.
 - **A few palette commands an agent can run:** select matching, move to trash,
@@ -130,21 +130,21 @@ with two halves.
 
 ### As built (proof of concept)
 
-- **otto-gather owns the gathering** and keeps it until it is sent, or its last
-  item is removed or it is cancelled. `org.otto.Gather1` has `Add`, `AddFile`,
+- **otto-stash owns the stash** and keeps it until it is sent, or its last
+  item is removed or it is cancelled. `org.otto.Stash1` has `Add`, `AddFile`,
   `AddRegion`, `Send` (opens Ask), `Cancel`, and for Ask: `Items() -> a(sb)`,
   a `Changed(a(sb))` signal, `Toggle(u)`, `Remove(u)`, `Sent()` and `Hold()`.
-  Items travel as files, text as `selection-N.txt` in the gathering's runtime
+  Items travel as files, text as `selection-N.txt` in the stash's runtime
   directory, each with whether it is struck out.
-- **Ask renders it.** The launcher in Ask mode follows the gathering, shows it
-  with the next request and forwards strikes and removals to otto-gather. `Hold`
+- **Ask renders it.** The launcher in Ask mode follows the stash, shows it
+  with the next request and forwards strikes and removals to otto-stash. `Hold`
   hides the card while the launcher is on the bus; closed without sending, the
-  card comes back. Sending calls `Sent`, which ends the gathering.
+  card comes back. Sending calls `Sent`, which ends the stash.
 - **`otto-launcher --selection`** calls `Add` before its card takes the keyboard,
-  so Ask opens with the selection gathered, alone or added to what is there.
+  so Ask opens with the selection stashed, alone or added to what is there.
 - **Files' selection** is read by `Add` when no text field reports one: Files
   serves `org.otto.Files1.FocusedSelection() -> as` in each window's process
-  (they queue for the name), and otto-gather asks every queued owner. Only the
+  (they queue for the name), and otto-stash asks every queued owner. Only the
   window with the keyboard answers, with an empty list when nothing is
   selected; the others fail. The primary selection is used only when no Files
   window answered, since it holds whatever was last selected in any app.
@@ -158,7 +158,7 @@ with two halves.
 2. **Selection replace.** Shortcut on a selection, type an instruction in the
    balloon, one-shot answer replaces the selection. Needs the one-shot call in
    otto-agents. This is the smallest useful agent flow.
-3. **Gathering.** Start, pause, resume; multiple chips; speech and selection as
+3. **Stash.** Start, pause, resume; multiple chips; speech and selection as
    sources; review while paused.
 4. **Region and files.** The region picker, drop onto the balloon, and
    `org.otto.Files1` selection: the Files selection as a source, and Ask… in the
@@ -171,11 +171,11 @@ with two halves.
    result.
 
 Each milestone ships on its own and gets a spec from `specs/SPEC-TEMPLATE.md`
-(`specs/gather.md`, name to be settled).
+(`specs/stash.md`, name to be settled).
 
 ## Privacy
 
-- The on indicator is always visible while gathering, and distinct from paused.
+- The on indicator is always visible while stashing, and distinct from paused.
 - The mic is open only while collecting, never while paused.
 - Every chip shows exactly what will be sent and can be removed.
 - Nothing leaves the machine before send; a local engine keeps speech local too.
@@ -184,14 +184,14 @@ Each milestone ships on its own and gets a spec from `specs/SPEC-TEMPLATE.md`
 
 - **Anchoring.** At the pointer or caret, fixed as an island, or a small fixed
   indicator that opens at the caret for review and delivery.
-- **Selection capture.** Every selection made while gathering, or only on an
+- **Selection capture.** Every selection made while stashing, or only on an
   explicit "add" key. Automatic is smoother but picks up noise.
-- **One or many.** A single gathering at a time, or several kept like drafts.
-- **Surviving a pause.** Does a paused gathering survive a lock or a restart.
+- **One or many.** A single stash at a time, or several kept like drafts.
+- **Surviving a pause.** Does a paused stash survive a lock or a restart.
 - **Speech as instruction or content.** "Last thing said is the prompt" is a
   guess; an explicit cue may be needed.
 - **Relation to Ask.** Is the balloon the small form of Ask (no new name), or its
   own thing. The Ask card already takes a prompt and files.
 - **Otto's commit path.** Protocol extension or D-Bus, and how it stays safe: only
-  the gathering service may use it, and only on the field that was focused when the
-  gathering started.
+  the stash service may use it, and only on the field that was focused when the
+  stash started.

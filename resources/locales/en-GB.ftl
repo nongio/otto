@@ -317,8 +317,8 @@ files-new-folder-with-count =
        *[other] New Folder with { $count } Items
     }
 files-move-to-trash = Move to Trash
-# Hands the selected files to the gathering balloon, to ask about in Ask.
-files-add-to-gathering = Add to Gathering
+# Hands the selected files to the stash balloon, to ask about in Ask.
+files-add-to-stash = Add to Stash
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
     { $count ->

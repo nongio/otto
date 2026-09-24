@@ -1,11 +1,11 @@
 [package]
-name = "otto-gather"
+name = "otto-stash"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Proof of concept: gather selections from any app into a balloon, then ask about them in Ask"
+description = "Proof of concept: stash selections from any app into a balloon, then ask about them in Ask"
 
 [dependencies]
 anyhow = "1"

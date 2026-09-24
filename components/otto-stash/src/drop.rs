@@ -1,4 +1,4 @@
-//! Files dropped on the balloon join the gathering.
+//! Files dropped on the balloon join the stash.
 //!
 //! The overlay takes the pointer only over the card, so a drag enters it
 //! only there, and whatever it carries as `text/uri-list` is taken.
@@ -93,7 +93,7 @@ impl Dispatch<WlDataDevice, ()> for State {
                     state.receive_drop(offer);
                 }
             }
-            // Selections aren't gathered from here: see `primary`.
+            // Selections aren't stashed from here: see `primary`.
             wl_data_device::Event::Selection { id: Some(offer) }
                 if state.drops.offer.as_ref() != Some(&offer) =>
             {

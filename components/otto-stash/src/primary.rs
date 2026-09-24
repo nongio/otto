@@ -1,7 +1,7 @@
 //! The primary selection: the text most recently selected in any app.
 //!
 //! It is read through wlr-data-control, which sees the selection without
-//! focus, so gathering can take text from apps whose text-input support
+//! focus, so stash can take text from apps whose text-input support
 //! doesn't report selections (GTK3, Qt, terminals).
 
 // Rust guideline compliant 2026-02-21
@@ -92,7 +92,7 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
             zwlr_data_control_device_v1::Event::PrimarySelection { id } => {
                 state.primary.replace(id);
             }
-            // The clipboard isn't gathered from.
+            // The clipboard isn't stashed from.
             zwlr_data_control_device_v1::Event::Selection { id: Some(offer) } => offer.destroy(),
             zwlr_data_control_device_v1::Event::Finished => {
                 tracing::warn!("the primary selection is no longer available");

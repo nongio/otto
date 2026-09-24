@@ -5544,25 +5544,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "otto-gather"
-version = "1.4.1"
-dependencies = [
- "anyhow",
- "otto-kit",
- "otto-peek",
- "serde",
- "smithay-client-toolkit",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-misc",
- "wayland-protocols-wlr",
- "zbus 4.4.0",
-]
-
-[[package]]
 name = "otto-greeter"
 version = "1.4.1"
 dependencies = [
@@ -5776,6 +5757,25 @@ dependencies = [
  "skia-safe",
  "smithay-client-toolkit",
  "xcursor",
+ "zbus 4.4.0",
+]
+
+[[package]]
+name = "otto-stash"
+version = "1.4.1"
+dependencies = [
+ "anyhow",
+ "otto-kit",
+ "otto-peek",
+ "serde",
+ "smithay-client-toolkit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
  "zbus 4.4.0",
 ]
 
