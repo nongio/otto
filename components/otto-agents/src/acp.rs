@@ -27,6 +27,7 @@ use crate::agent::{
     Backend, Decision, HistoryPart, HistoryTurn, Mode, SessionCommand, SessionEvent, SessionSpec,
     TurnOutcome, agent_info,
 };
+use crate::attached::Attached;
 use crate::config::{self, AgentConfig, PermissionPolicy, SkillDelivery};
 use crate::dialog;
 use crate::elicitation;
@@ -247,6 +248,9 @@ pub async fn run_session(
     // updated several times and may repeat its content, which would otherwise
     // show the same picture again on every update.
     let shown: Arc<Mutex<BTreeSet<(String, PathBuf)>>> = Arc::default();
+    // What this session's prompts attached, which the agent may read without
+    // asking; see [`crate::attached`].
+    let attached: Arc<Mutex<Attached>> = Arc::default();
     let ready = Arc::new(AtomicBool::new(false));
 
     let result = Client
@@ -291,9 +295,13 @@ pub async fn run_session(
                 let cwd = cwd.clone();
                 let events = events.clone();
                 let current_turn = Arc::clone(&current_turn);
+                let attached = Arc::clone(&attached);
                 async move |request: RequestPermissionRequest,
                             responder,
                             connection: ConnectionTo<Agent>| {
+                    if let Some(allowed) = lock(&attached).allow_read(&cwd, &request) {
+                        return responder.respond(allowed);
+                    }
                     if permissions.policy != PermissionPolicy::Ask {
                         return responder.respond(answer_by_policy(permissions.policy, &request));
                     }
@@ -367,6 +375,7 @@ pub async fn run_session(
             let modes = Arc::clone(&modes);
             let ready = Arc::clone(&ready);
             let images = images.clone();
+            let attached = Arc::clone(&attached);
             async move |connection: ConnectionTo<Agent>| {
                 // Forms are what the chat can ask; declaring them is what
                 // turns Claude's AskUserQuestion on.
@@ -476,6 +485,7 @@ pub async fn run_session(
                     &events,
                     &current_turn,
                     &modes,
+                    &attached,
                 )
                 .await
             }
@@ -768,7 +778,7 @@ fn withdraw_mode(events: &mpsc::UnboundedSender<SessionEvent>, modes: &Mutex<Mod
 }
 
 /// Runs prompts, cancellations and mode changes until the host closes the
-/// session.
+/// session. What each prompt attaches is recorded in `attached`.
 async fn drive(
     connection: &ConnectionTo<Agent>,
     session_id: SessionId,
@@ -776,6 +786,7 @@ async fn drive(
     events: &mpsc::UnboundedSender<SessionEvent>,
     current_turn: &Mutex<Option<String>>,
     modes: &Arc<Mutex<Modes>>,
+    attached: &Mutex<Attached>,
 ) -> Result<(), agent_client_protocol::Error> {
     let mut pending: Option<(String, PendingPrompt)> = None;
     loop {
@@ -790,6 +801,7 @@ async fn drive(
                         });
                         continue;
                     }
+                    lock(attached).add(&attachments);
                     *lock(current_turn) = Some(turn_id.clone());
                     // Attachments go as links, which every ACP agent accepts:
                     // the agent reads the files with its own tools. A request

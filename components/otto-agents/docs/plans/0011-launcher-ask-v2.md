@@ -106,6 +106,9 @@ the POC ask mode ([0010](0010-poc.md)), on branch `launcher-ask` in `../otto-4`.
   (`file://` URI, the file name as label). otto-agents passes it to the agent as an ACP
   `resource_link` content block, which every ACP agent accepts, and the agent reads the
   file with its own tools. Other attachment kinds are dropped with a warning.
+  Reading an attached file, or anything inside an attached folder, needs no permission:
+  the session answers that read request itself with "allow once" (`attached.rs`; see
+  `docs/developer/agents.md`). Writes and every other path still ask.
 - **"Ask…" in Files.** `components/otto-files/scripts/ask` is a files-script offering
   *Ask…* for any selection. It starts `otto-launcher --ask --file …` in a session of its
   own (`$OTTO_LAUNCHER` overrides the binary). Copy it to `~/.config/otto/files-scripts/`.

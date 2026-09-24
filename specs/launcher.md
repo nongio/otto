@@ -147,7 +147,9 @@ field are the agent's options in the agent's order, starting on the one the
 service picked (the narrowest allow, or a refusal when the agent asked for no
 to be the default); only when the service names none does the launcher fall
 back to the narrowest allow itself. Cancelling the turn withdraws the
-question rather than refusing it.
+question rather than refusing it. The agent reading a file sent with
+the request, or anything inside a folder sent with it, is never asked about:
+attaching it was the yes. Writing to it still is.
 
 **Answering the agent.** When the agent asks the person something — a choice,
 a value, a link to open (an input request in its turn) — and no permission
