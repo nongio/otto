@@ -1971,7 +1971,17 @@ impl HostState {
         };
         session.open_part = None;
         let chat_uri = session.chat.clone();
-        self.title_from_prompt(session_uri, &action.message.text);
+        // Nothing typed: the session is named for what was attached.
+        let title_from = if action.message.text.trim().is_empty() {
+            attachments(&action.message)
+                .iter()
+                .map(|attachment| attachment.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            action.message.text.clone()
+        };
+        self.title_from_prompt(session_uri, &title_from);
         let prompt = SessionCommand::Prompt {
             turn_id: action.turn_id.clone(),
             text: action.message.text.clone(),
@@ -1983,12 +1993,16 @@ impl HostState {
     }
 
     /// Only queued messages are supported; steering needs an agent that can
-    /// take input mid-turn.
+    /// take input mid-turn. A message needs something to ask: its text, or
+    /// what is attached to it on its own.
     fn check_queued(action: &ChatPendingMessageSetAction) -> Result<(), &'static str> {
         match action.kind {
             PendingMessageKind::Steering => Err("this host does not support steering messages yet"),
-            PendingMessageKind::Queued if action.message.text.trim().is_empty() => {
-                Err("a queued message needs text")
+            PendingMessageKind::Queued
+                if action.message.text.trim().is_empty()
+                    && attachments(&action.message).is_empty() =>
+            {
+                Err("a queued message needs text or an attachment")
             }
             PendingMessageKind::Queued => Ok(()),
         }
@@ -3127,6 +3141,47 @@ mod tests {
     use ahp_types::errors::json_rpc_error_codes;
 
     use super::*;
+
+    fn queued(text: &str, attached: &[&str]) -> ChatPendingMessageSetAction {
+        use ahp_types::state::{Message, MessageResourceAttachment};
+        let attachments = attached
+            .iter()
+            .map(|uri| {
+                MessageAttachment::Resource(MessageResourceAttachment {
+                    label: "a.png".into(),
+                    range: None,
+                    display_kind: None,
+                    meta: None,
+                    uri: (*uri).into(),
+                    size_hint: None,
+                    content_type: None,
+                    nonce: None,
+                    selection: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        ChatPendingMessageSetAction {
+            kind: PendingMessageKind::Queued,
+            id: "1".into(),
+            message: Message {
+                text: text.into(),
+                origin: MessageOrigin {
+                    kind: MessageKind::User,
+                },
+                attachments: (!attachments.is_empty()).then_some(attachments),
+                model: None,
+                agent: None,
+                meta: None,
+            },
+        }
+    }
+
+    #[test]
+    fn a_request_can_be_its_attachments_alone() {
+        assert!(HostState::check_queued(&queued("", &["file:///tmp/a.png"])).is_ok());
+        assert!(HostState::check_queued(&queued("hi", &[])).is_ok());
+        assert!(HostState::check_queued(&queued("  ", &[])).is_err());
+    }
     use crate::agent::EchoBackend;
 
     fn connect() -> (Arc<Host>, Connection, mpsc::UnboundedReceiver<Outgoing>) {

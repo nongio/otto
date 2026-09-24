@@ -792,8 +792,12 @@ async fn drive(
                     }
                     *lock(current_turn) = Some(turn_id.clone());
                     // Attachments go as links, which every ACP agent accepts:
-                    // the agent reads the files with its own tools.
-                    let prompt = std::iter::once(ContentBlock::Text(TextContent::new(text)))
+                    // the agent reads the files with its own tools. A request
+                    // of attachments alone has no text block: models refuse
+                    // an empty one.
+                    let text = (!text.trim().is_empty()).then(|| ContentBlock::Text(TextContent::new(text)));
+                    let prompt = text
+                        .into_iter()
                         .chain(attachments.into_iter().map(|attachment| {
                             ContentBlock::ResourceLink(ResourceLink::new(attachment.name, attachment.uri))
                         }))
