@@ -12,6 +12,17 @@ pub enum Movement {
     Line,
 }
 
+/// Speech being dictated at the caret: the words heard but not settled yet,
+/// and the equaliser that stands in for the caret while listening.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DictationMark {
+    /// Heard but not settled. Drawn dimmed at the caret, never part of the
+    /// value.
+    pub pending: String,
+    /// Each bar's height, 0.0 to 1.0, low band first.
+    pub levels: Vec<f32>,
+}
+
 /// Editing state of a single-line text field.
 ///
 /// Offsets are **byte** offsets into `value` and are always kept on `char`
@@ -37,6 +48,8 @@ pub struct TextInputState {
     /// Horizontal scroll offset in points, kept so the caret stays visible when
     /// the text is wider than the box. Owned by the renderer.
     pub scroll_px: f32,
+    /// Set while speech is dictated into the field.
+    pub dictation: Option<DictationMark>,
 }
 
 impl Default for TextInputState {
@@ -51,6 +64,7 @@ impl Default for TextInputState {
             password: false,
             max_chars: None,
             scroll_px: 0.0,
+            dictation: None,
         }
     }
 }
@@ -68,6 +82,12 @@ impl Hash for TextInputState {
         self.password.hash(state);
         self.max_chars.hash(state);
         self.scroll_px.to_bits().hash(state);
+        if let Some(mark) = &self.dictation {
+            mark.pending.hash(state);
+            for level in &mark.levels {
+                level.to_bits().hash(state);
+            }
+        }
     }
 }
 

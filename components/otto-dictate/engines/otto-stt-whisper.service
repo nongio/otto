@@ -1,0 +1,15 @@
+# Speech to text for otto-dictate: Whisper small.en on the GPU. English only.
+# Only one engine serves 127.0.0.1:8080 at a time; starting this one stops
+# otto-stt-parakeet.
+
+[Unit]
+Description=Otto speech to text (Whisper)
+Conflicts=otto-stt-parakeet.service otto-stt-crispasr.service
+
+[Service]
+ExecStart=%h/.local/share/otto-voice-poc/whisper.cpp/build-vulkan/bin/whisper-server -m %h/.local/share/otto-voice-poc/models/ggml-small.en-q5_1.bin --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target

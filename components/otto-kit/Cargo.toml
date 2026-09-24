@@ -30,6 +30,9 @@ usvg = "0.44.0"
 lazy_static = "1.4"
 libc = "0.2"
 pipewire = "0.9"
+# Dictation posts audio to a speech-to-text server.
+ureq = { version = "3", optional = true }
+serde_json = { version = "1", optional = true }
 freedesktop-desktop-entry = "0.7.5"
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
 # the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.
@@ -48,6 +51,8 @@ accesskit_unix = "0.22"
 default = []
 testing = ["rustix"]
 debugger = ["laye-rs/debugger"]
+# Speech into a text field: see `dictation`.
+dictation = ["dep:ureq", "dep:serde_json"]
 
 
 [dependencies.skia-safe]
