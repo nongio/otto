@@ -2,10 +2,11 @@
 #
 # A successful `docker build` is a passing test: every declared Requires is
 # checked to exist, dnf resolves them against the real repositories, then
-# verify-install.sh asserts the installed layout. Build from the repo root
-# with the .rpm already in target/generate-rpm:
+# verify-install.sh asserts the installed layout. scripts/packaging/test-installers.sh
+# stages the build context (the .rpm under target/generate-rpm, the
+# directories below) and runs it:
 #
-#   docker build -f scripts/packaging/Dockerfile.rpm .
+#   scripts/packaging/test-installers.sh rpm rpm-nightly
 #
 # An .rpm in target/generate-rpm-before is installed first, and the one
 # under test then has to *upgrade* it: that is how a nightly is checked

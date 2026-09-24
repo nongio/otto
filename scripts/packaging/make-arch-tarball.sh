@@ -47,9 +47,12 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 for b in "${BINARIES[@]}"; do
     if [ "$stand_in" = 1 ] && [ ! -e "target/release/$b" ]; then
-        mkdir -p target/release
-        printf '#!/bin/sh\necho "stand-in for %s"\n' "$b" > "target/release/$b"
-        chmod +x "target/release/$b"
+        # Into the staging directory only: a stub left in target/release
+        # would be packaged by a later build that did not rebuild it.
+        mkdir -p "$tmpdir/$PKGDIR/target/release"
+        printf '#!/bin/sh\necho "stand-in for %s"\n' "$b" > "$tmpdir/$PKGDIR/target/release/$b"
+        chmod 755 "$tmpdir/$PKGDIR/target/release/$b"
+        continue
     fi
     install -Dm755 "target/release/$b" "$tmpdir/$PKGDIR/target/release/$b"
 done

@@ -472,11 +472,13 @@ jobs:
     # Only main that passed its tests is worth a nightly: a commit that
     # fails `check` is not published, rather than handed to everyone on the
     # nightly channel. `check` is skipped when nothing Rust changed, which
-    # counts as passing; the other two never skip.
-    needs: [check, locales, ahp-conformance, build-arch, build-deb, build-rpm]
+    # counts as passing — but only when `changes` itself succeeded, since a
+    # failed classifier skips `check` too. The other two never skip.
+    needs: [changes, check, locales, ahp-conformance, build-arch, build-deb, build-rpm]
     if: >-
       ${{ !cancelled()
           && github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && needs.changes.result == 'success'
           && (needs.check.result == 'success' || needs.check.result == 'skipped')
           && needs.locales.result == 'success'
           && needs.ahp-conformance.result == 'success'
@@ -553,11 +555,6 @@ jobs:
           \`dnf downgrade\`, or \`makepkg -si\` from the release PKGBUILD on Arch.
           EOF
           cat notes.md
-      # The tag follows the build, so the release page's "Source code"
-      # links and its commit are the ones the packages were built from.
-      # Nothing triggers on it: only v* tags run this workflow.
-      - name: Move the nightly tag to this commit
-        run: git push --force origin "$GITHUB_SHA:refs/tags/nightly"
       - name: Publish nightly release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -575,6 +572,12 @@ jobs:
             nightly/otto-nightly-x86_64.rpm
           gh release upload nightly --clobber nightly/PKGBUILD-nightly-bin
           gh release edit nightly --prerelease --title Nightly --notes-file notes.md
+      # The tag follows the build, so the release page's "Source code"
+      # links and its commit are the ones the packages were built from. It
+      # moves last: a job that fails mid-upload leaves it on the build whose
+      # assets are up. Nothing triggers on it: only v* tags run this workflow.
+      - name: Move the nightly tag to this commit
+        run: git push --force origin "$GITHUB_SHA:refs/tags/nightly"
 
   validate-pkgbuild:
     needs: changes
@@ -622,10 +625,11 @@ jobs:
   
   release:
     # The same gate as the nightly: a tag whose tests fail gets no draft.
-    needs: [check, locales, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
+    needs: [changes, check, locales, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
     if: >-
       ${{ !cancelled()
           && startsWith(github.ref, 'refs/tags/v')
+          && needs.changes.result == 'success'
           && (needs.check.result == 'success' || needs.check.result == 'skipped')
           && needs.locales.result == 'success'
           && needs.ahp-conformance.result == 'success'

@@ -1,7 +1,8 @@
 # Build and install the binary Arch package the way a user does, from the
-# published release tarball.
+# published release tarball. scripts/packaging/test-installers.sh stages
+# the build context (the PKGBUILD, before/, any local tarball) and runs it:
 #
-#   docker build -f scripts/packaging/Dockerfile.arch-bin .
+#   scripts/packaging/test-installers.sh arch-bin arch-nightly arch-local
 #
 # This is the only test that exercises the *release tarball* rather than the
 # working tree: PKGBUILD's package() installs files out of the tarball CI

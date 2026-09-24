@@ -2,10 +2,10 @@
 #
 # A successful `docker build` is a passing test: apt resolves the declared
 # dependencies against the real archive, then verify-install.sh asserts the
-# installed layout. Build from the repo root with the .deb already in
-# target/debian:
+# installed layout. scripts/packaging/test-installers.sh stages the build
+# context (the .deb under target/debian, the directories below) and runs it:
 #
-#   docker build -f scripts/packaging/Dockerfile.deb .
+#   scripts/packaging/test-installers.sh deb deb-nightly
 #
 # BASE picks the distribution under test — the dependency names in
 # [package.metadata.deb] have to exist on every release we claim to support.

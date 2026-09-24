@@ -15,10 +15,15 @@ set -euo pipefail
 
 tarball="${1:?usage: make-nightly-pkgbuild.sh <tarball> [output-dir]}"
 outdir="${2:-$(dirname "$tarball")}"
+# Both relative to the caller, resolved before the cd below.
+tarball=$(cd "$(dirname "$tarball")" && pwd)/$(basename "$tarball")
+mkdir -p "$outdir"
+outdir=$(cd "$outdir" && pwd)
 
 cd "$(dirname "$0")/../.."
 
-pkgver=$(tar -xzOf "$tarball" --wildcards '*/VERSION')
+# The VERSION file at the tarball's top level, by exact path.
+pkgver=$(tar -xzOf "$tarball" "$(tar -tzf "$tarball" | head -1)VERSION")
 [ -n "$pkgver" ] || { echo "no VERSION file in $tarball" >&2; exit 1; }
 # What the tarball says it is has to be a pkgver makepkg accepts: no
 # hyphens, no colons, no whitespace.
@@ -27,10 +32,9 @@ case "$pkgver" in
 esac
 sha256=$(sha256sum "$tarball" | cut -d' ' -f1)
 
-mkdir -p "$outdir"
 # The template is read while the result is written: writing it over
 # itself would truncate it first, and publish an empty file.
-if [ "$(cd "$outdir" && pwd)" = "$PWD" ]; then
+if [ "$outdir" = "$PWD" ]; then
     echo "output directory is the repository root, which holds the template" >&2
     exit 1
 fi
