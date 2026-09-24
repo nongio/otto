@@ -33,6 +33,9 @@ usvg = "0.44.0"
 libc.workspace = true
 percent-encoding = "2.3"
 freedesktop-desktop-entry.workspace = true
+# Dictation posts audio to a speech-to-text server.
+ureq = { version = "3", optional = true }
+serde_json = { workspace = true, optional = true }
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
 # the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.
 fluent-bundle.workspace = true
@@ -50,6 +53,8 @@ accesskit_unix.workspace = true
 default = []
 testing = []
 debugger = ["laye-rs/debugger"]
+# Speech into a text field: see `dictation`.
+dictation = ["dep:ureq", "dep:serde_json"]
 
 
 [dependencies.skia-safe]

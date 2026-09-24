@@ -16,6 +16,8 @@ pub use otto_dbus as dbus;
 pub mod corners;
 pub mod desktop_appearance;
 pub mod desktop_entry;
+#[cfg(feature = "dictation")]
+pub mod dictation;
 pub mod dnd;
 pub mod filetype;
 pub mod focus;

@@ -1,11 +1,13 @@
-//! A client for whisper.cpp's `whisper-server`: one clip in, its text out.
+//! A client for whisper.cpp's `whisper-server` API: one clip in, its text
+//! out. Otto's Parakeet server answers the same API, and so does CrispASR,
+//! whose answer is JSON rather than WebVTT.
 
 // Rust guideline compliant 2026-02-21
 
 use std::time::Duration;
 
-use crate::capture::SAMPLE_RATE;
-use crate::stream::{is_marker, Word};
+use super::agreement::{is_marker, Word};
+use super::capture::SAMPLE_RATE;
 
 /// Where the recogniser lives and what language it listens for.
 #[derive(Debug, Clone)]
@@ -14,6 +16,10 @@ pub struct Engine {
     pub url: String,
     /// An ISO 639-1 code, or `auto` to let Whisper detect it.
     pub language: String,
+    /// How much a hotword is favoured, in log-probability per matching
+    /// token (CrispASR's `hotwords_boost`). Past about 6 it garbles the
+    /// words around a name.
+    pub hotwords_boost: f32,
 }
 
 /// Why a pass produced no words.
@@ -21,7 +27,7 @@ pub struct Engine {
 pub enum TranscribeError {
     /// The server could not be reached, timed out or answered with an error.
     Http(ureq::Error),
-    /// The server answered something other than WebVTT.
+    /// The server answered neither WebVTT nor JSON with timed words.
     Response,
 }
 
@@ -29,7 +35,7 @@ impl std::fmt::Display for TranscribeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Http(error) => write!(f, "{error}"),
-            Self::Response => write!(f, "the server's answer is not WebVTT"),
+            Self::Response => write!(f, "the server's answer has no timed words"),
         }
     }
 }
@@ -46,20 +52,55 @@ impl From<ureq::Error> for TranscribeError {
 const TIMEOUT: Duration = Duration::from_secs(20);
 /// Separates the parts of the multipart body; never occurs in a WAV header or
 /// the form values.
-const BOUNDARY: &str = "otto-dictate-7f3a9c1e5b";
+const BOUNDARY: &str = "otto-dictation-7f3a9c1e5b";
 
 impl Engine {
+    /// The engine the environment names, or the local server.
+    ///
+    /// - `OTTO_DICTATE_URL`: the server's `/inference` endpoint (default
+    ///   `http://127.0.0.1:8080/inference`).
+    /// - `OTTO_DICTATE_LANGUAGE`: an ISO 639-1 code or `auto` (default: from
+    ///   `LANG`).
+    /// - `OTTO_DICTATE_HOTWORDS_BOOST`: how much hotwords are favoured
+    ///   (default 4).
+    pub fn from_env() -> Self {
+        Self {
+            url: std::env::var("OTTO_DICTATE_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8080/inference".into()),
+            language: std::env::var("OTTO_DICTATE_LANGUAGE").unwrap_or_else(|_| system_language()),
+            hotwords_boost: std::env::var("OTTO_DICTATE_HOTWORDS_BOOST")
+                .ok()
+                .and_then(|boost| boost.parse().ok())
+                .unwrap_or(4.0),
+        }
+    }
+
     /// Transcribe `samples` (16 kHz mono f32) into timed words. `prompt` is
     /// the text said just before the clip, which keeps a clip that starts
-    /// mid-sentence in context.
+    /// mid-sentence in context. `hotwords`, comma separated, are names the
+    /// engine favours while decoding (CrispASR); others ignore them.
     ///
     /// # Errors
     ///
     /// Returns [`TranscribeError::Http`] when the server cannot be reached,
     /// times out or answers with an error status, and
     /// [`TranscribeError::Response`] when the answer is not WebVTT.
-    pub fn transcribe(&self, samples: &[f32], prompt: &str) -> Result<Vec<Word>, TranscribeError> {
-        let body = multipart(&wav(samples), &self.language, prompt);
+    pub fn transcribe(
+        &self,
+        samples: &[f32],
+        prompt: &str,
+        hotwords: &str,
+    ) -> Result<Vec<Word>, TranscribeError> {
+        let boost = self.hotwords_boost.to_string();
+        let body = multipart(
+            &wav(samples),
+            &[
+                ("language", &self.language),
+                ("prompt", prompt),
+                ("hotwords", hotwords),
+                ("hotwords_boost", &boost),
+            ],
+        );
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
             .build()
@@ -73,8 +114,19 @@ impl Engine {
             .send(&body[..])?
             .into_body()
             .read_to_string()?;
-        parse_words(&text).ok_or(TranscribeError::Response)
+        parse_words(&text)
+            .or_else(|| parse_json_words(&text))
+            .ok_or(TranscribeError::Response)
     }
+}
+
+/// `LANG=it_IT.UTF-8` → `it`; `auto` when it is unset or `C`.
+fn system_language() -> String {
+    std::env::var("LANG")
+        .ok()
+        .and_then(|lang| lang.get(..2).map(str::to_ascii_lowercase))
+        .filter(|code| code.chars().all(|c| c.is_ascii_lowercase()) && code != "c")
+        .unwrap_or_else(|| "auto".into())
 }
 
 /// The words of a WebVTT answer. Each cue gives a segment's start and end;
@@ -99,10 +151,7 @@ fn parse_words(vtt: &str) -> Option<Vec<Word>> {
             .collect::<Vec<_>>()
             .join(" ");
         let text = strip_markers(&text);
-        let pieces: Vec<&str> = text
-            .split_whitespace()
-            .filter(|w| !is_marker(w))
-            .collect();
+        let pieces: Vec<&str> = text.split_whitespace().filter(|w| !is_marker(w)).collect();
         let total: usize = pieces.iter().map(|w| w.chars().count()).sum();
         let mut done = 0usize;
         for piece in pieces {
@@ -116,6 +165,55 @@ fn parse_words(vtt: &str) -> Option<Vec<Word>> {
             done += len;
         }
     }
+    Some(words)
+}
+
+/// The words of a JSON answer. Either OpenAI's verbose form, with
+/// `segments[].words[]` of `word`, `start` and `end` in seconds, or
+/// CrispASR's, with `segments[].tokens[]` of `text`, `t0` and `t1` in
+/// milliseconds, where a token starting with a space starts a word.
+fn parse_json_words(json: &str) -> Option<Vec<Word>> {
+    let answer: serde_json::Value = serde_json::from_str(json).ok()?;
+    let segments = answer.get("segments")?.as_array()?;
+    let mut words: Vec<Word> = Vec::new();
+    for segment in segments {
+        if let Some(timed) = segment.get("words").and_then(|w| w.as_array()) {
+            for word in timed {
+                let text = word.get("word")?.as_str()?.trim();
+                if text.is_empty() || is_marker(text) {
+                    continue;
+                }
+                words.push(Word {
+                    text: format!(" {text}"),
+                    start: word.get("start")?.as_f64()? as f32,
+                    end: word.get("end")?.as_f64()? as f32,
+                });
+            }
+        } else if let Some(tokens) = segment.get("tokens").and_then(|t| t.as_array()) {
+            let mut current: Option<Word> = None;
+            for token in tokens {
+                let text = token.get("text")?.as_str()?;
+                let start = token.get("t0")?.as_f64()? as f32 / 1000.0;
+                let end = token.get("t1")?.as_f64()? as f32 / 1000.0;
+                match current.as_mut() {
+                    Some(word) if !text.starts_with(' ') => {
+                        word.text.push_str(text);
+                        word.end = end;
+                    }
+                    _ => {
+                        words.extend(current.take());
+                        current = Some(Word {
+                            text: format!(" {}", text.trim_start()),
+                            start,
+                            end,
+                        });
+                    }
+                }
+            }
+            words.extend(current);
+        }
+    }
+    words.retain(|w| !w.text.trim().is_empty() && !is_marker(&w.text));
     Some(words)
 }
 
@@ -171,15 +269,17 @@ fn wav(samples: &[f32]) -> Vec<u8> {
     out
 }
 
-fn multipart(wav: &[u8], language: &str, prompt: &str) -> Vec<u8> {
+fn multipart(wav: &[u8], fields: &[(&str, &str)]) -> Vec<u8> {
     let mut body = Vec::with_capacity(wav.len() + 1024);
-    for (name, value) in [
+    let fixed = [
         ("response_format", "vtt"),
         ("temperature", "0.0"),
         ("suppress_nst", "true"),
-        ("language", language),
-        ("prompt", prompt),
-    ] {
+    ];
+    for &(name, value) in fixed.iter().chain(fields) {
+        if value.is_empty() {
+            continue;
+        }
         body.extend_from_slice(
             format!(
                 "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
@@ -225,8 +325,29 @@ mod tests {
     }
 
     #[test]
+    fn json_answers_give_timed_words() {
+        let crisp = r#"{"segments":[{"t0":240,"t1":1040,"tokens":[
+            {"text":" And","t0":240,"t1":560},{"text":" so","t0":560,"t1":880},
+            {"text":",","t0":880,"t1":1040},{"text":" Ghost","t0":1100,"t1":1300},
+            {"text":"ty","t0":1300,"t1":1500}]}]}"#;
+        let words = parse_json_words(crisp).unwrap();
+        let texts: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, [" And", " so,", " Ghostty"]);
+        assert!((words[1].end - 1.04).abs() < 1e-6);
+
+        let openai = r#"{"segments":[{"words":[{"word":"Hello","start":0.1,"end":0.4},{"word":"[BLANK_AUDIO]","start":0.4,"end":1.0}]}]}"#;
+        let words = parse_json_words(openai).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, " Hello");
+        assert!(parse_json_words("not json").is_none());
+    }
+
+    #[test]
     fn marker_spans_are_removed_whole() {
-        assert_eq!(strip_markers("Hi *Sounds of a dead man* there [BLANK_AUDIO]"), "Hi  there ");
+        assert_eq!(
+            strip_markers("Hi *Sounds of a dead man* there [BLANK_AUDIO]"),
+            "Hi  there "
+        );
     }
 
     #[test]

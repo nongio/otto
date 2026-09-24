@@ -5198,6 +5198,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-dictate"
+version = "1.6.0"
+dependencies = [
+ "otto-kit",
+ "smithay-client-toolkit 0.19.2",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-client",
+ "wayland-protocols-misc",
+]
+
+[[package]]
 name = "otto-emoji"
 version = "1.6.0"
 dependencies = [
@@ -5308,12 +5320,14 @@ dependencies = [
  "percent-encoding",
  "resvg",
  "rustix 0.38.44",
+ "serde_json",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "unic-langid",
+ "ureq",
  "usvg",
  "wayland-backend",
  "wayland-client",
