@@ -1,0 +1,5 @@
+set(TARGET parakeet-server)
+add_executable(${TARGET} parakeet-server.cpp)
+target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../server)
+include(DefaultTargetOptions)
+target_link_libraries(${TARGET} PRIVATE parakeet ${CMAKE_THREAD_LIBS_INIT})
