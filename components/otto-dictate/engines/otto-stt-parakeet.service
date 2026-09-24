@@ -1,0 +1,16 @@
+# Speech to text for otto-dictate: NVIDIA Parakeet TDT 0.6B v3 on the GPU.
+# Detects the language itself (25 European languages) and times each word.
+# Only one engine serves 127.0.0.1:8080 at a time; starting this one stops
+# otto-stt-whisper.
+
+[Unit]
+Description=Otto speech to text (Parakeet)
+Conflicts=otto-stt-whisper.service
+
+[Service]
+ExecStart=%h/.local/share/otto-voice-poc/whisper.cpp/build-vulkan/bin/parakeet-server -m %h/.local/share/otto-voice-poc/models/ggml-parakeet-tdt-0.6b-v3-f16.bin --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target

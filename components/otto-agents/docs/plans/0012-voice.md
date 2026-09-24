@@ -40,6 +40,12 @@ saying, with the same bars moving to its voice.
   endpoint) or as a command. Piper and similar engines run as commands. Models are
   large and change quickly, and linking whisper.cpp would add a long C++ build to
   every Otto build.
+- **Parakeet is the default engine.** The dictation proof of concept tried both on
+  an Iris Xe through Vulkan. Parakeet TDT 0.6B v3 is more accurate than Whisper
+  small, detects the language itself and times each word, at the same speed. It
+  answers whisper.cpp's `/inference` API through a small server
+  (`components/otto-dictate/engines/parakeet-server`), because whisper.cpp ships
+  none for it, so the `whisper` provider covers both.
 - **Whisper sync, fed from PipeWire.** Whisper is synchronous: a whole clip goes in
   and text comes out, with no streaming protocol. Live text comes from a loop in
   `otto-voice` (`WhisperSync`) that owns the whole path from the mic to the text:
