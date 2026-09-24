@@ -24,10 +24,6 @@
 //! - `OTTO_DICTATE_WAV`: a 16 kHz mono WAV played in place of the microphone.
 
 mod balloon;
-mod bars;
-mod capture;
-mod stream;
-mod whisper;
 
 // Rust guideline compliant 2026-02-21
 
@@ -45,7 +41,9 @@ use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_surface};
+use wayland_client::protocol::{
+    wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_surface,
+};
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle, WEnum};
 use wayland_protocols_misc::zwp_input_method_v2::client::{
     zwp_input_method_keyboard_grab_v2::{self, ZwpInputMethodKeyboardGrabV2},
@@ -54,11 +52,9 @@ use wayland_protocols_misc::zwp_input_method_v2::client::{
     zwp_input_popup_surface_v2::{self, ZwpInputPopupSurfaceV2},
 };
 
+use otto_kit::dictation::{join, Agreement, Bars, Capture, Engine, Word, SAMPLE_RATE, WINDOW};
+
 use crate::balloon::Balloon;
-use crate::bars::Bars;
-use crate::capture::{Capture, SAMPLE_RATE};
-use crate::stream::{Agreement, Word};
-use crate::whisper::Engine;
 
 /// Initial size of the popup's buffer pool; it grows with the balloon.
 const POOL_BYTES: usize = 512 * 256 * 4;
@@ -77,6 +73,10 @@ const MIN_SAMPLES: usize = SAMPLE_RATE as usize / 2;
 const TRIM_AFTER: usize = SAMPLE_RATE as usize * 6;
 /// Characters of already settled text sent as the prompt of each pass.
 const PROMPT_CHARS: usize = 200;
+
+/// How long to wait before asking for the input method again after another
+/// one held it.
+const RETRY_BIND: Duration = Duration::from_secs(3);
 
 /// Linux evdev key codes the grab reacts to.
 const KEY_ESC: u32 = 1;
@@ -101,11 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let engine = Engine {
-        url: std::env::var("OTTO_DICTATE_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8080/inference".into()),
-        language: std::env::var("OTTO_DICTATE_LANGUAGE").unwrap_or_else(|_| system_language()),
-    };
+    let engine = Engine::from_env();
     tracing::info!(url = %engine.url, language = %engine.language, "otto-dictate starting");
 
     let conn = Connection::connect_to_env()?;
@@ -148,6 +144,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool,
         buffer: None,
         input_method,
+        manager,
+        seat,
+        retry_at: None,
         compositor,
         popup: None,
         grab: None,
@@ -165,15 +164,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         event_loop.dispatch(None, &mut state)?;
     }
-}
-
-/// `LANG=it_IT.UTF-8` → `it`; `auto` when it is unset or `C`.
-fn system_language() -> String {
-    std::env::var("LANG")
-        .ok()
-        .and_then(|lang| lang.get(..2).map(str::to_ascii_lowercase))
-        .filter(|code| code.chars().all(|c| c.is_ascii_lowercase()) && code != "c")
-        .unwrap_or_else(|| "auto".into())
 }
 
 fn socket_path() -> PathBuf {
@@ -266,25 +256,16 @@ impl Listening {
     }
 }
 
-/// `words` as text, with a space in front when it follows other text, unless
-/// it starts with punctuation.
-fn join(words: &[Word], after_text: bool) -> String {
-    let raw: String = words.iter().map(|w| w.text.as_str()).collect();
-    let text = raw.trim();
-    let glued = text.starts_with(|c: char| c.is_ascii_punctuation());
-    if after_text && !glued && !text.is_empty() {
-        format!(" {text}")
-    } else {
-        text.to_string()
-    }
-}
-
 struct State {
     qh: QueueHandle<State>,
     shm: Shm,
     pool: SlotPool,
     buffer: Option<Buffer>,
     input_method: ZwpInputMethodV2,
+    manager: ZwpInputMethodManagerV2,
+    seat: wl_seat::WlSeat,
+    /// When to ask for the input method again, after it was unavailable.
+    retry_at: Option<Instant>,
     compositor: wl_compositor::WlCompositor,
     /// The equaliser's surface, while listening. It is destroyed when the
     /// dictation ends rather than hidden, because Otto keeps showing an
@@ -343,7 +324,9 @@ impl State {
         self.grab = Some(self.input_method.grab_keyboard(&self.qh, ()));
         let surface = self.compositor.create_surface(&self.qh, ());
         surface.set_buffer_scale(POPUP_SCALE);
-        let popup = self.input_method.get_input_popup_surface(&surface, &self.qh, ());
+        let popup = self
+            .input_method
+            .get_input_popup_surface(&surface, &self.qh, ());
         self.popup = Some((surface, popup));
     }
 
@@ -355,7 +338,10 @@ impl State {
         let Some(capture) = listening.capture.take() else {
             return; // already finishing
         };
-        tracing::info!(seconds = capture.len() as f32 / SAMPLE_RATE as f32, "stop listening");
+        tracing::info!(
+            seconds = capture.len() as f32 / SAMPLE_RATE as f32,
+            "stop listening"
+        );
         listening.in_flight = true;
         let prompt = listening.prompt();
         // A pass still in flight covers a buffer the final one supersedes.
@@ -403,7 +389,9 @@ impl State {
             let words = if samples.len() < MIN_SAMPLES {
                 Ok(Vec::new())
             } else {
-                engine.transcribe(&samples, &prompt).map_err(|e| e.to_string())
+                engine
+                    .transcribe(&samples, &prompt, "")
+                    .map_err(|e| e.to_string())
             };
             tracing::debug!(
                 is_final,
@@ -438,7 +426,9 @@ impl State {
             let text = listening.text();
             tracing::info!(%text, "final");
             if !text.is_empty() {
-                let text = if self.field.needs_space() && !text.starts_with(|c: char| c.is_ascii_punctuation()) {
+                let text = if self.field.needs_space()
+                    && !text.starts_with(|c: char| c.is_ascii_punctuation())
+                {
                     format!(" {text}")
                 } else {
                     text
@@ -492,21 +482,33 @@ impl State {
 
     /// One timer tick; returns when the next one is due.
     fn tick(&mut self) -> Duration {
+        if self.retry_at.is_some_and(|at| Instant::now() >= at) {
+            self.retry_at = None;
+            self.input_method.destroy();
+            self.input_method = self.manager.get_input_method(&self.seat, &self.qh, ());
+        }
         let Some(listening) = self.listening.as_mut() else {
             return IDLE_TICK;
         };
         let recent = listening
             .capture
             .as_ref()
-            .map(|c| c.tail(bars::WINDOW))
+            .map(|c| c.tail(WINDOW))
             .unwrap_or_default();
-        let pass_due = listening.capture.as_ref().is_some_and(|c| c.len() >= MIN_SAMPLES)
+        let pass_due = listening
+            .capture
+            .as_ref()
+            .is_some_and(|c| c.len() >= MIN_SAMPLES)
             && !listening.in_flight
             && listening.last_sent.elapsed() >= PASS_EVERY;
         if pass_due {
             listening.in_flight = true;
             listening.last_sent = Instant::now();
-            let samples = listening.capture.as_ref().map(Capture::samples).unwrap_or_default();
+            let samples = listening
+                .capture
+                .as_ref()
+                .map(Capture::samples)
+                .unwrap_or_default();
             let prompt = listening.prompt();
             self.send(samples, prompt, false);
         }
@@ -530,7 +532,10 @@ impl State {
             b.height() == h && b.stride() == w * 4 && b.canvas(&mut self.pool).is_some()
         });
         if !reusable {
-            match self.pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888) {
+            match self
+                .pool
+                .create_buffer(w, h, w * 4, wl_shm::Format::Argb8888)
+            {
                 Ok((buffer, _)) => self.buffer = Some(buffer),
                 Err(error) => {
                     tracing::warn!(%error, "no buffer for the popup");
@@ -600,8 +605,12 @@ impl Dispatch<ZwpInputMethodV2, ()> for State {
                 }
             }
             zwp_input_method_v2::Event::Unavailable => {
-                tracing::error!("another input method is already bound; exiting");
-                std::process::exit(1);
+                // Another input method holds the seat; it may go, so ask
+                // again later rather than give up.
+                tracing::warn!("another input method is bound; trying again shortly");
+                state.end();
+                state.field = Field::default();
+                state.retry_at = Some(Instant::now() + RETRY_BIND);
             }
             _ => {}
         }

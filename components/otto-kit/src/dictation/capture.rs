@@ -68,6 +68,15 @@ impl Capture {
         })
     }
 
+    /// A capture that never hears anything.
+    #[cfg(test)]
+    pub(crate) fn silent() -> Self {
+        Self {
+            samples: Arc::new(Mutex::new(Vec::new())),
+            stop: None,
+        }
+    }
+
     /// Everything captured so far.
     pub fn samples(&self) -> Vec<f32> {
         self.samples.lock().map(|s| s.clone()).unwrap_or_default()
@@ -92,6 +101,11 @@ impl Capture {
     /// Number of samples captured so far.
     pub fn len(&self) -> usize {
         self.samples.lock().map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// Whether nothing was captured yet.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -127,7 +141,7 @@ fn run(
         *pw::keys::MEDIA_ROLE => "Communication",
         *pw::keys::APP_NAME => "Otto Dictation",
     };
-    let stream = pw::stream::StreamBox::new(&core, "otto-dictate", props)?;
+    let stream = pw::stream::StreamBox::new(&core, "otto-dictation", props)?;
 
     let _listener = stream
         .add_local_listener_with_user_data(samples)

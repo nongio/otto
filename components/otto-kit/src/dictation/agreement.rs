@@ -57,7 +57,8 @@ impl Agreement {
         if let Some(last) = settled.last() {
             self.settled_end = last.end;
         }
-        self.recent.extend(settled.iter().map(|w| normalise(&w.text)));
+        self.recent
+            .extend(settled.iter().map(|w| normalise(&w.text)));
         let excess = self.recent.len().saturating_sub(MAX_OVERLAP);
         self.recent.drain(..excess);
         self.previous = tentative.clone();

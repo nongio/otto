@@ -5,7 +5,7 @@
 
 use std::f32::consts::PI;
 
-use crate::capture::SAMPLE_RATE;
+use super::capture::SAMPLE_RATE;
 
 /// Samples analysed per frame: 32 ms at 16 kHz, a power of two so bins land
 /// on round frequencies (31.25 Hz apart).
@@ -71,7 +71,12 @@ impl Bars {
         let floors = self.floors.get_or_insert(db.map(|d| d.max(MIN_FLOOR_DB)));
         let mut targets = [REST; BANDS.len()];
         for ((target, floor), db) in targets.iter_mut().zip(floors.iter_mut()).zip(db) {
-            *floor = if db < *floor { db } else { *floor + FLOOR_RISE_DB }.max(MIN_FLOOR_DB);
+            *floor = if db < *floor {
+                db
+            } else {
+                *floor + FLOOR_RISE_DB
+            }
+            .max(MIN_FLOOR_DB);
             let t = ((db - *floor - ABOVE_FLOOR_DB) / RANGE_DB).clamp(0.0, 1.0);
             *target = REST + (1.0 - REST) * t;
         }
@@ -153,7 +158,9 @@ mod tests {
     #[test]
     fn a_tone_is_loudest_in_its_own_band() {
         let db = Bars::default().band_db(&sine(1500.0, 0.1)).unwrap();
-        let loudest = (0..db.len()).max_by(|a, b| db[*a].total_cmp(&db[*b])).unwrap();
+        let loudest = (0..db.len())
+            .max_by(|a, b| db[*a].total_cmp(&db[*b]))
+            .unwrap();
         assert_eq!(loudest, 3, "1.5 kHz is in the fourth band: {db:?}");
     }
 
@@ -163,7 +170,11 @@ mod tests {
         for _ in 0..24 * 10 {
             bars.step(&noise(0.05));
         }
-        assert!(bars.levels.iter().all(|l| *l < REST + 0.05), "{:?}", bars.levels);
+        assert!(
+            bars.levels.iter().all(|l| *l < REST + 0.05),
+            "{:?}",
+            bars.levels
+        );
     }
 
     #[test]
@@ -175,7 +186,11 @@ mod tests {
         for _ in 0..24 * 4 {
             bars.step(&noise(0.1));
         }
-        assert!(bars.levels.iter().all(|l| *l < REST + 0.05), "{:?}", bars.levels);
+        assert!(
+            bars.levels.iter().all(|l| *l < REST + 0.05),
+            "{:?}",
+            bars.levels
+        );
     }
 
     #[test]
@@ -184,11 +199,19 @@ mod tests {
         for _ in 0..24 * 3 {
             bars.step(&noise(0.005));
         }
-        let voiced: Vec<f32> = noise(0.005).iter().zip(sine(400.0, 0.2)).map(|(n, s)| n + s).collect();
+        let voiced: Vec<f32> = noise(0.005)
+            .iter()
+            .zip(sine(400.0, 0.2))
+            .map(|(n, s)| n + s)
+            .collect();
         for _ in 0..4 {
             bars.step(&voiced);
         }
         assert!(bars.levels[1] > 0.6, "400 Hz band: {:?}", bars.levels);
-        assert!(bars.levels[4] < 0.3, "top band stays low: {:?}", bars.levels);
+        assert!(
+            bars.levels[4] < 0.3,
+            "top band stays low: {:?}",
+            bars.levels
+        );
     }
 }

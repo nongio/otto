@@ -4,12 +4,14 @@
 
 // Rust guideline compliant 2026-02-21
 
-use otto_kit::typography::styles;
 use otto_kit::skia::font_style::{Slant, Weight, Width};
-use otto_kit::skia::textlayout::{FontCollection, Paragraph, ParagraphBuilder, ParagraphStyle, TextStyle};
+use otto_kit::skia::textlayout::{
+    FontCollection, Paragraph, ParagraphBuilder, ParagraphStyle, TextStyle,
+};
 use otto_kit::skia::{
     AlphaType, Color, ColorType, FontMgr, FontStyle, ImageInfo, Paint, PathBuilder, RRect, Rect,
 };
+use otto_kit::typography::styles;
 
 /// Everything in logical pixels.
 const TAIL_H: f32 = 6.0;
@@ -102,9 +104,13 @@ impl Balloon {
         scale: f32,
     ) {
         // ARGB8888 on little endian is B, G, R, A in memory.
-        let info = ImageInfo::new((width, height), ColorType::BGRA8888, AlphaType::Premul, None);
-        let Some(mut surface) =
-            otto_kit::skia::surfaces::wrap_pixels(&info, pixels, None, None)
+        let info = ImageInfo::new(
+            (width, height),
+            ColorType::BGRA8888,
+            AlphaType::Premul,
+            None,
+        );
+        let Some(mut surface) = otto_kit::skia::surfaces::wrap_pixels(&info, pixels, None, None)
         else {
             tracing::warn!("cannot draw into the popup buffer");
             return;
