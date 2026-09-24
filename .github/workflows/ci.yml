@@ -588,12 +588,15 @@ jobs:
     container:
       image: archlinux:latest
     steps:
+      # Before the checkout: without git on the PATH, actions/checkout
+      # downloads a tarball of the tree instead of cloning, and the nightly
+      # version below has no history to count.
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm base-devel git
       - name: Checkout sources
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install dependencies
-        run: pacman -Syu --noconfirm base-devel git
       - name: Setup build user
         run: |
           useradd -m builder
