@@ -4,6 +4,7 @@
 #
 #   install.sh             everything, Parakeet as the engine
 #   install.sh whisper     everything, Whisper as the engine
+#   install.sh crispasr    everything, CrispASR's prebuilt server as the engine
 #
 # Needs git, cmake, a C++ compiler, the Vulkan headers, glslc and spirv-headers.
 set -eu
@@ -32,12 +33,20 @@ fetch() {
 }
 fetch ggml-org/parakeet-GGUF ggml-parakeet-tdt-0.6b-v3-f16.bin
 fetch ggerganov/whisper.cpp ggml-small.en-q5_1.bin
+fetch cstr/parakeet-tdt-0.6b-v3-GGUF parakeet-tdt-0.6b-v3-q8_0.gguf
+
+# CrispASR ships a prebuilt Vulkan server; it takes hotwords per request.
+crispasr=https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.36/crispasr-linux-x86_64-vulkan.tar.gz
+[ -x "$data/crispasr-bin/crispasr-linux-x86_64-vulkan/crispasr" ] || {
+    mkdir -p "$data/crispasr-bin"
+    curl -fL --retry 3 "$crispasr" | tar -xz -C "$data/crispasr-bin"
+}
 
 cargo build --release --manifest-path "$repo/Cargo.toml" -p otto-dictate
 install -m755 "$repo/target/release/otto-dictate" "$HOME/.local/bin/otto-dictate"
 sed "s|^Exec=otto-dictate|Exec=$HOME/.local/bin/otto-dictate|" "$here/otto-dictate.desktop" > "$autostart/otto-dictate.desktop"
 
-cp "$here/otto-stt-parakeet.service" "$here/otto-stt-whisper.service" "$units/"
+cp "$here/otto-stt-parakeet.service" "$here/otto-stt-whisper.service" "$here/otto-stt-crispasr.service" "$units/"
 systemctl --user daemon-reload
-systemctl --user disable otto-stt-parakeet otto-stt-whisper 2>/dev/null || true
+systemctl --user disable otto-stt-parakeet otto-stt-whisper otto-stt-crispasr 2>/dev/null || true
 systemctl --user enable --now "otto-stt-$engine"
