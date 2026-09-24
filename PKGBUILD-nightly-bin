@@ -45,7 +45,6 @@ package() {
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
     # Aliases: the launcher opens in ask or agents mode under these names.
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"
-    ln -s otto-launcher "$pkgdir/usr/bin/otto-agents"
     # Peek's playback worker: otto-files looks for it beside itself.
     install -Dm755 target/release/otto-media-worker "$pkgdir/usr/bin/otto-media-worker"
     install -Dm755 resources/bin/otto-look "$pkgdir/usr/bin/otto-look"
