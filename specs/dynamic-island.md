@@ -154,6 +154,9 @@ activity for it:
 - **Expanded**: larger art, title and artist, eight bars, a progress bar with the
   elapsed and remaining time, and previous/play-pause/next controls.
 
+A track playing on another device shows a cast glyph in place of the bars (see
+below).
+
 The accent colour is extracted from the album art and used for the bars and the
 progress fill.
 
@@ -211,14 +214,31 @@ asks the player over MPRIS `Raise`, which lets a browser switch to the playing t
 An island is music by its `app_id` (`org.otto.music`), not by coming from inside
 otto-islands.
 
-The bars come from `audio_viz`: a PipeWire level meter on the monitor of the default
-output, an animator that turns one level into eight independently moving bars, and
-the bar drawing. The capture stream names no target, so the session manager links the
-default output and moves the stream when the default changes. The bars sit on a child
-subsurface of the island, redrawn at ~24 fps only while a track plays and the island
-is on screen, so the island buffer itself stays retained. The capture stream is open
-only for as long as the bars move: a connected stream keeps the output running, so
-leaving it open would stop the sound card from suspending.
+The bars come from `audio_viz`: a PipeWire level meter, an animator that turns one
+level into eight independently moving bars, and the bar drawing. The bars sit on a
+child subsurface of the island, redrawn at ~24 fps only while a track plays and the
+island is on screen, so the island buffer itself stays retained. The capture stream is
+open only for as long as the bars move: a connected stream keeps the output running,
+so leaving it open would stop the sound card from suspending.
+
+The meter listens to the player's own stream, so the bars move on whichever output
+the track plays: a Bluetooth or USB speaker that is not the default one included.
+`audio_route` follows every `Stream/Output/Audio` node in the PipeWire graph (its
+`application.*` properties and whether it is running) and matches the playing player
+against them:
+- By process: the stream's `application.process.id` is the player's D-Bus peer or a
+  descendant of it, as a browser's audio service is. A Flatpak's D-Bus peer is
+  `xdg-dbus-proxy`, not the app, so its PID is not used.
+- By name: the stream's application name, binary or app id equals one of the player's
+  names, or the last part of its reverse-DNS desktop entry.
+
+The newest running stream that matches is captured by `object.serial`
+(`target.object`). With no match but something else playing, the meter falls back to
+the default output's monitor. With nothing playing locally at all, the track plays on
+another device: a phone or a network speaker (Spotify Connect, a cast). After a second
+like that (a player reports Playing a moment before its stream runs) the bars give way
+to a still cast glyph in the accent colour, and the open island adds "Playing on
+another device". No capture stream is open then. A paused track keeps what it showed.
 
 ## Constraints & Edge Cases
 

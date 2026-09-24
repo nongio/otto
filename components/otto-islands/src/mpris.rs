@@ -46,6 +46,9 @@ pub struct PlaybackInfo {
     /// from (a browser publishes it twice, engine and integration shim) and
     /// their desktop entries. Any of them can match the app's window.
     pub player_names: Vec<String>,
+    /// The processes behind those players, where D-Bus reports the app itself
+    /// rather than a sandbox's proxy.
+    pub player_pids: Vec<u32>,
 }
 
 impl PlaybackInfo {
@@ -60,6 +63,7 @@ impl PlaybackInfo {
             bus_name: String::new(),
             track_id: String::new(),
             player_names: Vec::new(),
+            player_pids: Vec::new(),
         }
     }
 
@@ -177,6 +181,8 @@ struct PlayerEntry {
     /// `org.mpris.MediaPlayer2.chromium.instance42`.
     name: String,
     desktop_entry: String,
+    /// The owning process, unless it is a sandbox's D-Bus proxy.
+    pid: Option<u32>,
     status: String,
     title: String,
     artist: String,
@@ -184,6 +190,8 @@ struct PlayerEntry {
     track_id: String,
     position_us: i64,
     length_us: i64,
+    /// Processes of the other players merged into this one.
+    merged_pids: Vec<u32>,
 }
 
 impl PlayerEntry {
@@ -225,11 +233,24 @@ fn read_players(conn: &Connection) -> zbus::Result<Vec<PlayerEntry>> {
         }
         // A player that doesn't answer is left out; the others still show.
         match read_player(conn, bus_name.as_str()) {
-            Ok(entry) => entries.push(entry),
+            Ok(mut entry) => {
+                entry.pid = dbus
+                    .get_connection_unix_process_id(bus_name.as_ref())
+                    .ok()
+                    .filter(|&pid| !is_dbus_proxy(pid));
+                entries.push(entry);
+            }
             Err(error) => tracing::debug!(%bus_name, %error, "skipping MPRIS player"),
         }
     }
     Ok(entries)
+}
+
+/// Whether `pid` is a sandbox's D-Bus proxy (Flatpak's `xdg-dbus-proxy`),
+/// which answers for the app without being it.
+fn is_dbus_proxy(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .is_ok_and(|comm| comm.trim() == "xdg-dbus-proxy")
 }
 
 fn get_all(
@@ -373,6 +394,7 @@ fn select_player(entries: Vec<PlayerEntry>) -> Option<PlayerEntry> {
             best.desktop_entry
         };
         best.name = format!("{},{}", best.name, other.name);
+        best.merged_pids.extend(other.pid);
     }
     Some(best)
 }
@@ -391,6 +413,13 @@ fn playback_from(entry: Option<PlayerEntry>) -> PlaybackInfo {
     } else {
         entry.title.clone()
     };
+    let mut player_pids: Vec<u32> = entry
+        .pid
+        .into_iter()
+        .chain(entry.merged_pids.iter().copied())
+        .collect();
+    player_pids.sort_unstable();
+    player_pids.dedup();
     let (progress, duration_secs) = if entry.length_us > 0 {
         let progress = (entry.position_us as f64 / entry.length_us as f64).clamp(0.0, 1.0);
         (
@@ -410,6 +439,7 @@ fn playback_from(entry: Option<PlayerEntry>) -> PlaybackInfo {
         bus_name: entry.bus_name,
         track_id: entry.track_id,
         player_names,
+        player_pids,
     }
 }
 

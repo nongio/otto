@@ -4,11 +4,15 @@
 //! [`mpris`](crate::mpris) follows the players. While a track is loaded,
 //! [`MusicMonitor`] keeps a live activity on the island, quiet while the
 //! player's own window is focused; when the track stops it goes away.
+//!
+//! [`audio_route`](crate::audio_route) finds the stream the track plays on,
+//! which is what the bars listen to. A track playing on another device gets a
+//! glyph saying so in place of the bars.
 
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use otto_kit::typography::{ellipsize, TextStyle};
 use otto_kit::utils::extract_accent_color;
@@ -16,7 +20,8 @@ use otto_kit::utils::focus_watcher::{self, FocusedApp};
 use otto_kit::AppContext;
 use skia_safe::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 
-use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, BAR_COUNT};
+use crate::audio_route::{self, AudioStreams, Player, Route};
+use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, Source, BAR_COUNT};
 use crate::mpris::{self, Control, PlaybackInfo, SharedPlayback};
 use crate::state::SharedState;
 use crate::IslandMode;
@@ -53,6 +58,10 @@ const MAX_ART_SIDE: i32 = 4096;
 /// Album art is kept at this size: it is never drawn bigger.
 const ART_PX: i32 = 256;
 const NEUTRAL_ACCENT: Color = Color::from_rgb(180, 180, 180);
+/// How long a playing track must go without a local stream before the island
+/// says it plays on another device. A player starting up reports Playing a
+/// moment before its stream runs.
+const ELSEWHERE_SETTLE: Duration = Duration::from_secs(1);
 
 // ---------------------------------------------------------------------------
 // MusicActivityRenderer
@@ -67,6 +76,8 @@ pub struct MusicActivityRenderer {
     pub duration_secs: f32,
     pub accent: Color,
     pub levels: [f32; BAR_COUNT],
+    /// The track plays on another device: a glyph replaces the bars.
+    pub elsewhere: bool,
     /// Currently pressed control (for visual feedback).
     pub pressed: Option<MusicAction>,
 }
@@ -110,8 +121,12 @@ impl MusicActivityRenderer {
         }
     }
 
-    /// Draw only the bars. The canvas origin is the top-left of the bar area.
+    /// Draw only the bars, or what replaces them. The canvas origin is the
+    /// top-left of the bar area.
     pub fn draw_eq_only(&self, canvas: &Canvas, mode: IslandMode, w: f32, h: f32) {
+        if self.elsewhere {
+            return self.draw_elsewhere(canvas, mode, w, h);
+        }
         let style = match mode {
             IslandMode::Mini => BarStyle::Mini,
             IslandMode::Compact => BarStyle::Compact(COMPACT_BARS),
@@ -124,6 +139,44 @@ impl MusicActivityRenderer {
             self.accent,
             style,
         );
+    }
+
+    /// The glyph for a track on another device; the open island names it too.
+    fn draw_elsewhere(&self, canvas: &Canvas, mode: IslandMode, w: f32, h: f32) {
+        match mode {
+            IslandMode::Mini => {
+                let side = h * 0.45;
+                let rect = Rect::from_xywh((w - side) / 2.0, (h - side) / 2.0, side, side);
+                audio_viz::draw_elsewhere_glyph(canvas, rect, self.accent);
+            }
+            IslandMode::Compact => {
+                audio_viz::draw_elsewhere_glyph(
+                    canvas,
+                    Rect::from_xywh(0.0, 0.0, w, h),
+                    self.accent,
+                );
+            }
+            IslandMode::Expanded => {
+                let side = 14.0f32.min(h);
+                let top = (h - side) / 2.0;
+                audio_viz::draw_elsewhere_glyph(
+                    canvas,
+                    Rect::from_xywh(0.0, top, side, side),
+                    self.accent,
+                );
+                let text_x = side + 6.0;
+                let label_font = font(10.0);
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(Color::from_argb(170, 180, 180, 180));
+                let label = ellipsize(
+                    &label_font,
+                    otto_kit::t!("islands-music-elsewhere"),
+                    (w - text_x).max(20.0),
+                );
+                canvas.draw_str(&label, (text_x, h / 2.0 + 3.5), &label_font, &paint);
+            }
+        }
     }
 
     /// Hit test within the expanded player. `lx`, `ly` are local coords
@@ -417,6 +470,14 @@ struct Art {
 pub struct MusicMonitor {
     playback: SharedPlayback,
     meter: LevelMeter,
+    streams: AudioStreams,
+    /// Where the playing track's sound goes, with the stream snapshot and
+    /// player it was worked out for.
+    route: Option<(u64, Vec<u32>, Vec<String>, Route)>,
+    /// Since when the playing track has had no local stream.
+    elsewhere_since: Option<Instant>,
+    /// Whether the island shows the track as playing on another device.
+    elsewhere: bool,
     bars: BarAnimator,
     art: Arc<Mutex<Art>>,
     /// When the track disappeared, for the grace period before dismissing.
@@ -429,10 +490,14 @@ pub struct MusicMonitor {
 }
 
 impl MusicMonitor {
-    pub fn new(playback: SharedPlayback, meter: LevelMeter) -> Self {
+    pub fn new(playback: SharedPlayback, meter: LevelMeter, streams: AudioStreams) -> Self {
         Self {
             playback,
             meter,
+            streams,
+            route: None,
+            elsewhere_since: None,
+            elsewhere: false,
             bars: BarAnimator::default(),
             art: Arc::new(Mutex::new(Art {
                 wanted: String::new(),
@@ -455,9 +520,77 @@ impl MusicMonitor {
         self.playback.lock().is_ok_and(|info| info.is_playing)
     }
 
-    /// Listen to the audio only while the bars are on screen and moving.
+    /// Where the playing track's sound goes. Worked out again only when the
+    /// streams or the player changed.
+    fn current_route(&mut self, info: &PlaybackInfo) -> Route {
+        let (streams, generation) = self.streams.snapshot();
+        if let Some((cached_generation, pids, names, route)) = &self.route {
+            if *cached_generation == generation
+                && *pids == info.player_pids
+                && *names == info.player_names
+            {
+                return *route;
+            }
+        }
+        let route = audio_route::route(
+            Player {
+                pids: &info.player_pids,
+                names: &info.player_names,
+            },
+            &streams,
+            audio_route::parent_pid,
+        );
+        tracing::debug!(?route, players = ?info.player_names, "music route");
+        self.route = Some((
+            generation,
+            info.player_pids.clone(),
+            info.player_names.clone(),
+            route,
+        ));
+        route
+    }
+
+    /// Follow where the playing track's sound goes. Returns whether the island
+    /// switched between bars and the other-device glyph. A paused track keeps
+    /// what it showed: nothing plays locally then either way.
+    pub fn update_route(&mut self, now: Instant) -> bool {
+        let Some(info) = self.info().filter(|info| info.is_playing) else {
+            self.elsewhere_since = None;
+            return false;
+        };
+        let route = self.current_route(&info);
+        let elsewhere = if route == Route::Elsewhere {
+            let since = *self.elsewhere_since.get_or_insert(now);
+            now.duration_since(since) >= ELSEWHERE_SETTLE
+        } else {
+            self.elsewhere_since = None;
+            false
+        };
+        std::mem::replace(&mut self.elsewhere, elsewhere) != elsewhere
+    }
+
+    /// When a track with no local stream is due to show as playing elsewhere.
+    pub fn route_deadline(&self) -> Option<Instant> {
+        self.elsewhere_since
+            .filter(|_| !self.elsewhere)
+            .map(|since| since + ELSEWHERE_SETTLE)
+    }
+
+    /// Whether the track shows as playing on another device.
+    pub fn plays_elsewhere(&self) -> bool {
+        self.elsewhere
+    }
+
+    /// Listen to the track's stream while the bars are on screen and moving,
+    /// and to nothing otherwise.
     pub fn set_meter_active(&mut self, active: bool) {
-        self.meter.set_active(active);
+        let source = match self.route.as_ref().map(|(.., route)| *route) {
+            _ if !active => None,
+            Some(Route::Stream(serial)) => Some(Source::Stream(serial)),
+            Some(Route::Elsewhere) => None,
+            Some(Route::DefaultOutput) | None => Some(Source::DefaultOutput),
+        };
+        self.meter.listen(source);
     }
 
     /// Advance the bars one frame.
@@ -636,6 +769,7 @@ impl MusicMonitor {
             duration_secs: info.duration_secs,
             accent,
             levels: self.bars.levels(),
+            elsewhere: self.elsewhere,
             pressed: None,
         })
     }
@@ -847,6 +981,7 @@ mod tests {
             bus_name: String::new(),
             track_id: String::new(),
             player_names: players.iter().map(|p| p.to_string()).collect(),
+            player_pids: Vec::new(),
         }
     }
 

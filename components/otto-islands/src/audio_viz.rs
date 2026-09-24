@@ -1,7 +1,8 @@
 //! Audio visualiser: a PipeWire level meter, the bar animation it drives and
 //! the bars themselves.
 //!
-//! The music island listens to whatever the default output plays.
+//! The music island listens to the player's own stream when it can tell which
+//! one that is, and to the default output otherwise.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -11,15 +12,25 @@ use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 /// Number of bars an animator tracks. Every bar style draws from these.
 pub const BAR_COUNT: usize = 8;
 
-/// The loudness of the default output, 0.0 to 1.0, updated from a capture stream
-/// on its own thread.
+/// What a [`LevelMeter`] listens to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// The default output's monitor: everything played there.
+    DefaultOutput,
+    /// One application stream, by `object.serial`, on whichever output it
+    /// plays.
+    Stream(u32),
+}
+
+/// The loudness of a [`Source`], 0.0 to 1.0, updated from a capture stream on
+/// its own thread.
 ///
-/// The stream exists only while the meter is active. A connected capture
-/// stream keeps its target running, so a meter left on would stop the sound
-/// card from ever suspending.
+/// The stream exists only while the meter listens. A connected capture stream
+/// keeps its target running, so a meter left on would stop the sound card
+/// from ever suspending.
 pub struct LevelMeter {
     level: Arc<Mutex<f32>>,
-    capture: Option<pipewire::channel::Sender<()>>,
+    capture: Option<(Source, pipewire::channel::Sender<()>)>,
 }
 
 impl LevelMeter {
@@ -31,30 +42,28 @@ impl LevelMeter {
         }
     }
 
-    /// Open or close the capture stream. A PipeWire failure is logged and the
-    /// meter then reads silence.
-    pub fn set_active(&mut self, active: bool) {
-        match (active, self.capture.is_some()) {
-            (true, false) => {
-                let (stop_tx, stop_rx) = pipewire::channel::channel();
-                let level = self.level.clone();
-                thread::spawn(move || {
-                    if let Err(error) = run_capture(level, stop_rx) {
-                        tracing::error!(%error, "PipeWire level meter failed");
-                    }
-                });
-                self.capture = Some(stop_tx);
-            }
-            (false, true) => {
-                if let Some(stop) = self.capture.take() {
-                    let _ = stop.send(());
-                }
-                if let Ok(mut level) = self.level.lock() {
-                    *level = 0.0;
-                }
-            }
-            _ => {}
+    /// Listen to `source`, or stop with `None`. Changing the source replaces
+    /// the capture stream. A PipeWire failure is logged and the meter then
+    /// reads silence.
+    pub fn listen(&mut self, source: Option<Source>) {
+        if self.capture.as_ref().map(|(current, _)| *current) == source {
+            return;
         }
+        if let Some((_, stop)) = self.capture.take() {
+            let _ = stop.send(());
+        }
+        if let Ok(mut level) = self.level.lock() {
+            *level = 0.0;
+        }
+        let Some(source) = source else { return };
+        let (stop_tx, stop_rx) = pipewire::channel::channel();
+        let level = self.level.clone();
+        thread::spawn(move || {
+            if let Err(error) = run_capture(source, level, stop_rx) {
+                tracing::error!(%error, "PipeWire level meter failed");
+            }
+        });
+        self.capture = Some((source, stop_tx));
     }
 
     pub fn level(&self) -> f32 {
@@ -64,7 +73,7 @@ impl LevelMeter {
 
 impl Drop for LevelMeter {
     fn drop(&mut self) {
-        self.set_active(false);
+        self.listen(None);
     }
 }
 
@@ -91,6 +100,7 @@ pub fn buffer_level(bytes: &[u8], channels: usize) -> Option<f32> {
 }
 
 fn run_capture(
+    source: Source,
     shared_level: Arc<Mutex<f32>>,
     stop: pipewire::channel::Receiver<()>,
 ) -> Result<(), pipewire::Error> {
@@ -120,9 +130,15 @@ fn run_capture(
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
     };
-    // Capturing a sink means its monitor. With no target the session manager
-    // links the default sink, and moves the stream when the default changes.
-    props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
+    match source {
+        // Capturing a sink means its monitor. With no target the session
+        // manager links the default sink, and moves the stream when the
+        // default changes.
+        Source::DefaultOutput => props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true"),
+        // Linked to the application's output ports, beside its own link to
+        // whichever sink it plays on.
+        Source::Stream(serial) => props.insert("target.object", serial.to_string()),
+    }
 
     let stream = pw::stream::StreamBox::new(&core, "otto-islands-level-meter", props)?;
 
@@ -370,6 +386,61 @@ pub fn draw_bars(
             }
         }
     }
+}
+
+/// Draw the "playing on another device" glyph, a screen with waves coming
+/// off its corner, as big as fits centred in `rect`.
+pub fn draw_elsewhere_glyph(canvas: &Canvas, rect: Rect, colour: Color) {
+    use skia_safe::{PaintStyle, PathBuilder, Point};
+
+    // Drawn on a 24-unit grid.
+    let size = rect.width().min(rect.height());
+    let unit = size / 24.0;
+    let origin = Point::new(
+        rect.left + (rect.width() - size) / 2.0,
+        rect.top + (rect.height() - size) / 2.0,
+    );
+    let at = |x: f32, y: f32| Point::new(origin.x + x * unit, origin.y + y * unit);
+    let around_corner = |radius: f32| {
+        let corner = at(2.0, 21.0);
+        Rect::from_ltrb(
+            corner.x - radius * unit,
+            corner.y - radius * unit,
+            corner.x + radius * unit,
+            corner.y + radius * unit,
+        )
+    };
+
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(220, colour.r(), colour.g(), colour.b()));
+    paint.set_style(PaintStyle::Stroke);
+    paint.set_stroke_width(2.0 * unit);
+    paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+    paint.set_stroke_join(skia_safe::paint::Join::Round);
+
+    // The screen, open at the bottom-left where the waves are.
+    let mut frame = PathBuilder::new();
+    frame.move_to(at(2.0, 9.0));
+    frame.line_to(at(2.0, 5.0));
+    frame.quad_to(at(2.0, 3.0), at(4.0, 3.0));
+    frame.line_to(at(20.0, 3.0));
+    frame.quad_to(at(22.0, 3.0), at(22.0, 5.0));
+    frame.line_to(at(22.0, 19.0));
+    frame.quad_to(at(22.0, 21.0), at(20.0, 21.0));
+    frame.line_to(at(14.0, 21.0));
+    canvas.draw_path(&frame.detach(), &paint);
+
+    for radius in [7.5, 11.5] {
+        canvas.draw_arc(around_corner(radius), -90.0, 90.0, false, &paint);
+    }
+
+    paint.set_style(PaintStyle::Fill);
+    let mut dot = PathBuilder::new();
+    dot.move_to(at(2.0, 21.0));
+    dot.arc_to(around_corner(3.5), -90.0, 90.0, false);
+    dot.close();
+    canvas.draw_path(&dot.detach(), &paint);
 }
 
 #[cfg(test)]
