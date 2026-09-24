@@ -30,8 +30,6 @@ asked, without copying and pasting into the launcher.
 - Sending to an agent directly from the card. The card collects; Ask asks.
 - More than one stash at a time, or a stash that survives a restart of
   the service or the session.
-- Default key bindings. Otto binds none of the commands below until the
-  person binds them.
 
 ## Behavior
 
@@ -132,8 +130,9 @@ card takes the keyboard, then opens Ask with it. The selection joins whatever
 is already stashed, and the stash card never shows for it. The launcher
 waits for the add only briefly (under a second) before opening regardless.
 
-**Shortcuts.** Otto ships no bindings for these; the person binds each command
-in the compositor's shortcut configuration. A working set is:
+**Shortcuts.** The default configuration binds the first four, and starts
+otto-stash with the session. Each can be rebound in the compositor's shortcut
+configuration. The rest are suggestions:
 
 | Keys | Command |
 |------|---------|
@@ -202,6 +201,10 @@ signal Changed(items: a(sb))    after every change
 
 ## Rationale
 
+- **Default shortcuts ship.** Collecting has to be one key press from any app,
+  and a feature nobody can reach until they edit their config goes unused. The
+  keys sit on Ctrl+Alt, clear of the app shortcuts on Ctrl alone.
+
 - **Never taking the keyboard.** A selection is often lost when its window
   loses focus, and the point of stashing is to keep working in the app. The
   card is pointer-only for that reason.
@@ -226,6 +229,5 @@ signal Changed(items: a(sb))    after every change
 - Where the card lives while collecting: at the pointer or caret, fixed, or a
   small indicator that opens for review.
 - Whether a stash should survive a lock or a restart.
-- Whether Otto should bind default shortcuts, and which.
 - Whether the Esc key should throw the stash away, which needs the card to
   take the keyboard at least while it is pointed at.

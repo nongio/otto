@@ -58,6 +58,7 @@ build() {
     cargo build --release -p otto-files
     cargo build --release -p otto-launcher
     cargo build --release -p otto-emoji
+    cargo build --release -p otto-stash
     cargo build --release -p otto-peek
     cargo build --release -p otto-media-kit
     cargo build --release -p otto-msg
@@ -78,6 +79,7 @@ package() {
     install -Dm755 target/release/otto-files "$pkgdir/usr/bin/otto-files"
     install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
+    install -Dm755 target/release/otto-stash "$pkgdir/usr/bin/otto-stash"
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"

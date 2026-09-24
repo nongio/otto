@@ -69,6 +69,11 @@ args = []
 cmd = "otto-islands"
 args = []
 
+# Stash: the card that collects things to ask about in Ask.
+[[exec_once]]
+cmd = "otto-stash"
+args = []
+
 # Third-party helpers work the same way:
 #
 # [[exec_once]]
@@ -273,6 +278,11 @@ sound_enabled = true
 # App launcher (Otto's own launcher; --windows lists open windows instead of apps)
 "Ctrl+Space" = { run = { cmd = "otto-launcher", args = [] } }
 "Ctrl+period" = { run = { cmd = "otto-emoji", args = [] } }
+# Stash: collect the selection, files or a screen region, then hand them to Ask
+"Ctrl+Alt+g" = { run = { cmd = "otto-stash", args = ["add"] } }
+"Ctrl+Alt+Shift+r" = { run = { cmd = "otto-stash", args = ["add-region"] } }
+"Ctrl+Alt+Shift+g" = { run = { cmd = "otto-stash", args = ["send"] } }
+"Ctrl+Alt+Shift+c" = { run = { cmd = "otto-stash", args = ["cancel"] } }
 # "Logo+Space" = { run = { cmd = "dolphin", args = [] } }
 # "Logo+Shift+B" = { run = { cmd = "firefox", args = [] } }
 
