@@ -1,7 +1,8 @@
 # Launcher
 
 **Status:** draft
-**Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md)
+**Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md),
+[gather.md](./gather.md)
 
 ## Summary
 
@@ -139,6 +140,33 @@ fires on the first word only, so an ordinary sentence never sprouts grey text,
 and where one skill's name is the start of another's the shorter one is
 offered, since the longer is a keystroke further on.
 
+**Attachments.** What goes with the next request is listed at the foot of the
+log, above the field, before anything is typed: files attached when Ask was
+opened (`--file`, or Ask… in Files), then everything gathered (see
+[gather.md](./gather.md)). They are listed newest first, as the gathering card
+lists them: selected text reads as the text itself, quoted and cut to a few
+lines; a screen region as its picture; a picture file as its picture under its
+name; any other file as its icon or thumbnail and its name, as in Files.
+Pointing at one highlights it and turns the pointer to a hand. A click on it
+strikes it out or brings it back: a struck attachment stays listed, dimmed,
+and does not go with the request. Its remove button takes it off. Striking
+out or removing a gathered item does the same in the gathering, and items
+gathered while Ask is up appear as they are added. Once sent, a request's
+attachments are listed under its bubble in the order they went, without
+remove buttons, and a click on one opens it as Files would.
+
+`--selection` opens Ask with what is selected in the app in front gathered
+first, read before the launcher takes the keyboard, alone or added to what is
+already gathered. While Ask or agents mode is up, the gathering card steps
+aside; closed without sending, the card comes back. Sending a request while
+anything is gathered ends the gathering, struck items included.
+
+**A request of attachments alone.** Enter with nothing typed sends a request
+when at least one attachment is not struck out: the attachments can be the
+whole question. The agent receives the attachments with no text, and a new
+session made this way is named after what was attached. With nothing typed
+and nothing to send, Enter does nothing.
+
 **Allowing a tool.** When the agent asks permission to use a tool, the log
 shows who wants to do what and the tool call itself, and under it what the
 call would touch as the service reported it: the file, and an edit to it as
@@ -182,8 +210,8 @@ as a document: headings, emphasis, lists, quotes, code and links take the
 toolkit's document typography, and the markup itself is not shown. Each
 request sits at the right of the log in a rounded gray bubble, in regular
 weight and the theme's text colour, wrapped inside the bubble and no wider
-than its words need. Everything else — attached files, tool calls, notes, the
-status — stays plain text, and is set smaller than the conversation as well as
+than its words need. Tool calls, notes and the status stay plain
+text, and are set smaller than the conversation as well as
 dimmer, so what was asked and answered outranks the trace of how. Code, in a
 fenced block or inline, is set at the size of the prose around it: a monospaced
 face is enough to say it is code without shrinking it.
