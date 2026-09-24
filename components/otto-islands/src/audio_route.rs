@@ -8,9 +8,10 @@
 //! is hidden behind a sandbox, by name. The meter then captures that stream
 //! itself, so the bars follow the player to any speaker.
 //!
-//! A track that plays while nothing plays locally is on another device: a
-//! phone or a speaker driven over the network (Spotify Connect, a cast). The
-//! island says so instead of drawing bars that would never move.
+//! A track that plays while none of the player's streams runs is on another
+//! device: a phone or a speaker driven over the network (Spotify Connect, a
+//! cast), even when other apps play here. The island says so instead of
+//! drawing bars that would never move, or would move to someone else's sound.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -38,10 +39,8 @@ pub struct StreamNode {
 pub enum Route {
     /// The player's own stream, by `object.serial`.
     Stream(u32),
-    /// The player's stream is not recognised, but something plays locally:
-    /// the default output's monitor is the best guess.
-    DefaultOutput,
-    /// Nothing plays locally: the track is on another device.
+    /// None of the running streams is the player's: the track is on another
+    /// device. Whatever else plays locally is not the track.
     Elsewhere,
 }
 
@@ -77,11 +76,7 @@ pub fn route(
     {
         return Route::Stream(stream.serial);
     }
-    if streams.iter().any(|s| s.running) {
-        Route::DefaultOutput
-    } else {
-        Route::Elsewhere
-    }
+    Route::Elsewhere
 }
 
 /// The names to look for in a stream's properties: each player name, and the
@@ -376,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn a_paused_stream_is_not_the_one_playing() {
+    fn another_apps_sound_is_not_the_track() {
         let player = Player {
             pids: &[200],
             names: &names(&["spotify"]),
@@ -385,7 +380,7 @@ mod tests {
             stream(10, Some(200), &["spotify"], false),
             stream(11, Some(100), &["firefox"], true),
         ];
-        assert_eq!(route(player, &streams, parent_of), Route::DefaultOutput);
+        assert_eq!(route(player, &streams, parent_of), Route::Elsewhere);
     }
 
     #[test]
