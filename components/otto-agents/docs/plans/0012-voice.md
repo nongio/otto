@@ -4,56 +4,127 @@
 
 ## Goal
 
-You can talk to an agent and hear it answer. While you speak, your words appear in the
-launcher's field as they are recognised. While the agent speaks, the island shows what
-it is saying, with the equaliser from the music island moving to its voice. Both
-engines are services you choose in `agents.toml`, the same way agents are.
+You can talk to Otto and hear an agent answer.
+
+**First target: speech to text in the launcher.** You hold the mic key and speak.
+While you listen, an equaliser inside the field moves with your voice, and the words
+appear in the field live as they are recognised. You can edit the text, then send it.
+You pick the recognition engine in Otto's own config, and you can change it without a
+restart.
+
+After that, the agent answers aloud. While it speaks, the island shows what it is
+saying, with the same bars moving to its voice.
 
 ## Decisions
 
 - **Two pipelines, two owners.**
   - *Speech to text* runs in the **launcher**. It owns the field, the key that starts
-    listening and the moment the prompt is sent, so there is no round trip through the
-    service while you talk.
+    listening and the moment the prompt is sent, so there is no round trip through a
+    service while you talk. Dictation is a desktop feature, not an agent feature: it
+    fills the field whatever the field is for.
   - *Text to speech* runs in **otto-agents**. The service already sees every
     `ChatDelta`, keeps running when the launcher closes, and is the one place that
     knows when a turn ends. The launcher closing never cuts the agent off mid-sentence.
-- **One shared crate, `otto-voice`.** Capture, playback, WAV encoding, sentence
-  splitting and the provider clients live in a leaf crate that the launcher and the
-  service both use. It has no AHP or UI code.
+- **The STT engine is Otto config.** It lives in `config.toml` under
+  `[speech_to_text]`, with entries in the settings schema (`src/settings/schema.rs`),
+  so `org.otto.Settings` serves it and announces changes with `Changed`. The launcher
+  reads it over that interface and follows it live, so switching engines needs no
+  restart. `agents.toml` keeps only what the agents service owns (`[tts]`).
+- **One shared crate, `otto-voice`.** Capture, playback, WAV encoding, the level
+  meter, sentence splitting and the provider clients live in a leaf crate that the
+  launcher, islands and the service all use. It has no AHP, Wayland or Skia code.
+- **Bars are shared UI.** `BarAnimator` and `draw_bars` move from `otto-islands` into
+  otto-kit, so the launcher's field and the islands draw the same bars.
 - **Engines are external.** No speech models are linked into Otto. Whisper runs as a
   server (whisper.cpp `whisper-server`, faster-whisper, or any OpenAI-compatible
   endpoint) or as a command. Piper and similar engines run as commands. Models are
-  large and fast-moving, and linking whisper.cpp would add a long C++ build to every
-  Otto build.
-- **Whisper sync.** Recognition is synchronous: a whole clip goes in and text comes
-  out, with no streaming protocol. Live text in the field comes from re-sending the
-  rolling clip about once a second while you speak (as whisper.cpp's `stream` does).
-  The final pass on release replaces the partial text.
+  large and change quickly, and linking whisper.cpp would add a long C++ build to
+  every Otto build.
+- **Whisper sync, fed from PipeWire.** Whisper is synchronous: a whole clip goes in
+  and text comes out, with no streaming protocol. Live text comes from a loop in
+  `otto-voice` (`WhisperSync`) that owns the whole path from the mic to the text:
+  - A PipeWire capture stream (16 kHz mono f32) writes into a ring buffer holding the
+    utterance so far.
+  - About once a second while you speak, the loop encodes the buffer as WAV and sends
+    it to the recogniser. Only one request is in flight: if the engine is slower than
+    a second, the next pass waits and takes the longer clip.
+  - Each answer is a partial result for the launcher. On release, the loop sends the
+    whole clip one last time, and that answer is final.
+  - A clip longer than the engine handles well (30 s for Whisper) is cut at the last
+    quiet stretch. The part before the cut is final and later passes start after it.
+  - This is what whisper.cpp's `stream` does with SDL; here the audio comes from
+    PipeWire, so Otto chooses the source and the engine stays a plain server or
+    command.
+- **One capture stream while listening.** The same PipeWire stream drives the
+  equaliser: `buffer_level` on each buffer feeds the bars. There is no second stream
+  just for the meter.
 - **Audio through PipeWire.** The `pipewire` crate is already a workspace dependency.
   Capture asks for 16 kHz mono (Whisper's input). Playback is a stream with a fixed
   node name, `otto-agents-voice`, and `media.role = Communication`, so ducking and
   routing work like any other voice app, and islands can find the node by name.
-- **HTTP through `ureq`**, which the music island already brings in. No `reqwest`.
-- **Secrets never go in `agents.toml`** (0005). A hosted engine names its key with
-  `api_key_env`, or uses the credential store once 0005 lands.
+  - The island's `LevelMeter` captures only the monitor of the default sink today. It
+    opens its stream only while it is active, so the sound card can still suspend. It
+    gains a target so the voice island can follow a named node.
+  - Speech goes out through the default sink as well, so the music island's bars
+    move while the agent talks. See Open questions.
+- **HTTP through `ureq`**, which the music island already uses for album art. No
+  `reqwest`.
+- **Secrets never go in config files** (0005). A hosted engine names the environment
+  variable that holds its key with `api_key_env`, or uses the credential store once
+  0005 lands.
 - **The island shows the reply, not the prompt.** What you say goes in the field,
   where you can correct it before sending. What the agent says goes in the island,
   because the launcher may be closed by then.
 
 ## Configuration
 
-New top-level tables in `agents.toml`. `ConfigFile` is `deny_unknown_fields`, so both
-are added to it explicitly. Either table can be left out, which turns that half off.
+### Speech to text: Otto's `config.toml`
 
 ```toml
-[stt]
+[speech_to_text]
 provider = "whisper"               # whisper | openai | command
 url = "http://127.0.0.1:8080/inference"
-language = "auto"
-live = true                        # partial text while you speak
+language = "system"                # system | auto | an ISO 639-1 code: "en", "it", …
+live = true                        # text appears while you speak
 send_on_release = false            # true: release the key and the prompt goes
+```
 
+A hosted or OpenAI-compatible engine:
+
+```toml
+[speech_to_text]
+provider = "openai"
+url = "https://api.openai.com/v1/audio/transcriptions"
+model = "whisper-1"
+api_key_env = "OPENAI_API_KEY"
+```
+
+A command reads a WAV on stdin and prints the text:
+
+```toml
+[speech_to_text]
+provider = "command"
+command = ["whisper-cli", "-m", "~/.local/share/whisper/ggml-base.en.bin", "-nt", "-f", "-"]
+```
+
+- Leaving the table out turns dictation off: no mic button, and the key does nothing.
+- `language` is the language you speak:
+  - `system`, the default, takes the first of Otto's `locales` (`it_IT` → `it`).
+  - `auto` lets the engine detect it on each pass. This is slower, and a short
+    partial clip can be detected wrongly, so the final pass may change language.
+  - A code such as `en` fixes it.
+  - Every provider gets it: whisper.cpp's `language` form field, OpenAI's `language`
+    field, and `{language}` substituted in a command's arguments.
+  - Changing it takes effect on the next dictation, like every other key.
+- Every key is a schema entry (`speech_to_text.provider`, `speech_to_text.url`, …),
+  applied live. The schema honesty test covers them like the rest.
+- `api_key_env` holds a variable name, never a key. The launcher reads the variable
+  from its own environment.
+- `otto_config.example.toml` gains the table, commented out.
+
+### Text to speech: `agents.toml`
+
+```toml
 [tts]
 provider = "piper"                 # piper | openai | command
 command = ["piper", "--model", "~/.local/share/piper/en_GB-alba-medium.onnx", "--output-raw"]
@@ -61,122 +132,177 @@ sample_rate = 22050
 speak = "voice"                    # voice | always | never
 ```
 
-A hosted or OpenAI-compatible engine (OpenAI, Kokoro-FastAPI, LocalAI, a remote
-faster-whisper):
-
-```toml
-[tts]
-provider = "openai"
-url = "http://127.0.0.1:8880/v1/audio/speech"
-model = "kokoro"
-voice = "af_bella"
-api_key_env = "OPENAI_API_KEY"     # optional
-```
-
-- `whisper` posts a WAV to whisper.cpp's `/inference`; `openai` posts to
-  `/v1/audio/transcriptions` or `/v1/audio/speech`; `command` writes WAV to stdin and
-  reads text from stdout (STT), or writes text to stdin and reads raw PCM from stdout
-  (TTS).
+- `ConfigFile` is `deny_unknown_fields`, so `[tts]` is added to it explicitly.
 - `speak = "voice"` speaks a reply only when the prompt was spoken. That is the
   default, so typing never makes the desktop talk.
-- An agent may override the voice with `voice = "…"` in its `[[agents]]` entry, so
-  two agents sound different. Later, not in the first cut.
-- The `[stt]` and `[tts]` values are published in `RootState.config` like
-  `default_agent`, so the launcher reads the STT settings over AHP instead of parsing
-  the file itself.
-- `otto-agents doctor` checks each engine: the server answers, the command exists,
-  a one-word round trip works.
+- An agent may override the voice with `voice = "…"` in its `[[agents]]` entry.
+  Later, not in the first cut.
+- `otto-agents doctor` checks the engine: the command exists or the server answers,
+  and a one-word synthesis works.
+
+### Providers
+
+- `whisper` posts a WAV to whisper.cpp's `/inference`.
+- `openai` posts to `/v1/audio/transcriptions` or `/v1/audio/speech`.
+- `command` writes WAV to stdin and reads text from stdout (STT), or writes text to
+  stdin and reads raw PCM from stdout (TTS).
 
 ## Flow
 
-1. **Listening.** Hold the mic key in the launcher (or click the mic in the field). A
-   global shortcut opens the launcher already listening; it is a new `KeyAction`, so
-   it needs arms in `actions.rs` and both `input_handler.rs` paths.
-   - The field shows *Listening…* and a small level meter from the capture samples.
-   - With `live = true`, recognised text fills the field as it arrives, dimmed until
-     it is final.
+1. **Listening.** Hold the mic key in the launcher, or click the mic at the end of the
+   field. A global shortcut opens the launcher already listening. It is a new
+   `KeyAction`, so it needs arms in `actions.rs` and both `input_handler.rs` paths.
+   - The mic glyph at the trailing end of the field becomes the equaliser. The bars
+     move with the capture level at about 24 fps.
+   - With `live = true`, recognised text appears at the caret as it arrives, dimmed
+     until it is final. Text already in the field stays where it is.
    - Speaking while the agent talks stops the playback (barge-in): the launcher
      dispatches a stop to the service first.
-2. **Release.** The final pass replaces the partial text, and the field is an ordinary
-   field again: edit it, then Return. With `send_on_release = true` it is sent at once.
-   The message is tagged as spoken, so the service knows to answer aloud.
+2. **Release.** The final pass replaces the dimmed text, the bars settle back into the
+   mic glyph, and the field is an ordinary field again: edit it, then press Return.
+   With `send_on_release = true` it is sent at once. A prompt sent to an agent is
+   tagged as spoken, so the service knows to answer aloud.
 3. **Speaking.** The service buffers `ChatDelta` text for the turn, strips markdown,
    drops code blocks, tool output and reasoning, and cuts it into sentences. It
    synthesises sentence n+1 while sentence n plays, so the first words come after one
    sentence, not after the whole answer.
 4. **The island.** A live activity, app id `org.otto.agents.voice`, opens with the
-   first sentence and shows it as a caption. The equaliser follows the
-   `otto-agents-voice` node. The caption moves on sentence by sentence. Tapping the
-   island stops speaking; the activity closes a moment after `ChatTurnComplete` and
-   the last sentence.
+   first sentence and shows it as a caption. The bars follow the `otto-agents-voice`
+   node. The caption moves on sentence by sentence. Tapping the island stops
+   speaking; the activity closes a moment after `ChatTurnComplete` and the last
+   sentence.
 
 ## Milestones
 
+Milestones 2 to 4 are the first target. Each one merges on its own.
+
 ### 1. Land the music island
 
-`feat/music-island-on-main` is 148 commits behind `main` and conflicts in 17 hunks of
-`otto-islands/src/main.rs`, so it is re-applied by hand rather than merged. On the way
-in:
+Implemented on the `otto-voice` branch, on top of `main` (commits `4cc0cc6f` and
+`57c9516c`). It replaces the older `feat/island-music` branch, which polls
+`playerctl` and `wpctl` and is not carried forward. What is there:
 
-- Extract `otto-islands/src/audio_viz.rs` out of `music.rs`:
-  - `LevelMeter::spawn(target)`, with `Target::{DefaultSinkMonitor, DefaultSource,
-    NodeName(String)}`. The capture loop is already generic apart from the hard-coded
-    `MEDIA_ROLE=Music` and `STREAM_CAPTURE_SINK`.
-  - `BarAnimator::step(level, active, seed)`, the per-bar phases and easing now in
-    `MusicMonitor::tick`.
-  - `draw_bars(canvas, rect, levels, colour)`, from `draw_equalizer_*`.
-- The equaliser subsurface and its 24 fps pacing in `main.rs` key on "this island has
-  a visualiser", not on `IslandKind::Music`.
-- Music detection stops treating every `ActivitySource::Internal` activity as music.
-- Review `focus_watcher` (a second Wayland connection and global state) before it goes
-  into otto-kit.
-- Sync `specs/dynamic-island.md` and `specs/notification-island.md`.
+- `otto-islands/src/audio_viz.rs`:
+  - `LevelMeter::new()` and `set_active(bool)`. The meter captures the monitor of the
+    default sink and follows the default when it changes. The stream exists only
+    while the meter is active. `buffer_level(bytes, channels)` is the pure maths.
+  - `BarAnimator::step(level, seed)`: per-bar sines scaled by the level, with phases
+    seeded from the track title.
+  - `draw_bars(canvas, rect, levels, colour, BarStyle::{Mini, Compact(n), Large})`.
+- `otto-islands/src/mpris.rs` follows players over D-Bus (zbus): `NameOwnerChanged`,
+  `PropertiesChanged` and `Seeked`, plus a once-a-second position read while a track
+  plays. The transport controls and `Raise` are MPRIS calls. Album art loads off the
+  render thread.
+- `music.rs` owns `MusicMonitor` (playback, meter, bars) and `MusicActivityRenderer`.
+  An island counts as music by its `app_id` (`org.otto.music`), not by being
+  `ActivitySource::Internal`.
+- `main.rs`: each island has an optional `Visualiser`, a child subsurface redrawn at
+  ~24 fps by `redraw_music` while a track plays and the island is on screen. The
+  rest of the island is retained.
+- `focus_watcher` lives in otto-kit (`otto_kit::utils::focus_watcher`) and can
+  activate a window as well as read the focused one.
+- `specs/dynamic-island.md` and `specs/notification-island.md` are synced.
+- 24 unit tests across `audio_viz`, `mpris` and `music`.
 
-### 2. `otto-voice` crate and configuration
+Left before it merges:
 
-- Capture (16 kHz mono f32), playback (named node), WAV encoding by hand (a 44-byte
-  header, no crate), the sentence splitter and markdown stripper, the three provider
-  kinds for each direction.
-- `[stt]` / `[tts]` in `ConfigFile`, published in `RootState.config`, checked by
-  `doctor`.
-- The `AudioSource`, `AudioSink`, `Recogniser` and `Synthesiser` traits, with their
-  fakes, so every later milestone can be tested without audio or models (see
-  Testing).
+- A PR for the music island on its own, ahead of any voice work.
+- The manual pass from `specs/dynamic-island.md` on a live session.
+- Review `focus_watcher`: it opens a second Wayland connection and keeps global
+  state.
 
-### 3. Speech to text in the launcher
+### 2. `otto-voice` crate (capture and recognition) and shared bars
 
-- Mic key and mic button, the level meter, partial and final text in `TextInput`
-  (`set_value` then `refilter`).
-- A dimmed "not final yet" range in otto-kit's `TextInput`, if the field has no way
-  to show one today.
-- Tag spoken prompts on `ChatPendingMessageSet` with `_meta: { "otto.voice": true }` on
-  the `Message`. AHP's `Message._meta` is meant for exactly this kind of host context,
-  so no extension field is needed.
+- New crate `components/otto-voice`:
+  - `AudioSource` trait. The PipeWire source captures 16 kHz mono f32 from the
+    default source and hands out buffers. The test source reads a WAV file or a
+    sample vector.
+  - `LevelMeter` and `buffer_level` move here from `otto-islands`, with a target:
+    `Target::{DefaultSinkMonitor, DefaultSource, NodeName(String)}`.
+  - WAV encoding by hand (a 44-byte header, no crate).
+  - `Recogniser` trait with the `whisper`, `openai` and `command` providers, run off
+    the caller's thread with a timeout. Each request carries the language.
+  - `WhisperSync`: the capture → ring buffer → recogniser loop, with one request in
+    flight, partial and final results, and the cut at a quiet stretch. It takes an
+    `AudioSource` and a `Recogniser`, so it runs in tests on a WAV file and a
+    scripted recogniser.
+  - `SttConfig`, the parsed `[speech_to_text]` table, shared by the compositor
+    (which validates it) and the launcher (which uses it).
+- `BarAnimator`, `BarStyle` and `draw_bars` move to otto-kit. `BarAnimator` takes a
+  plain seed, so a mic with no track title still gets its own phases.
+- `otto-islands` switches to both, with no change in behaviour. Its tests move with
+  the code.
 
-### 4. Text to speech in otto-agents
+### 3. The engine in Otto's config
 
+- `[speech_to_text]` in `Config` (`src/config/mod.rs`), with its schema entries, all
+  applied live.
+- `org.otto.Settings` serves them through `Get` and `GetAll` and emits `Changed` when
+  they change. The launcher reads them at start and follows `Changed`.
+- `otto_config.example.toml`, and `docs/user/` configuration reference.
+- A Voice section in otto-settings is optional here. The schema makes it cheap, and
+  it can follow once the first target works.
+
+### 4. Speech to text in the launcher
+
+- **Listening state machine** (`otto-launcher/src/voice.rs`): idle → listening →
+  finishing → idle. It owns the capture stream, the rolling clip, the in-flight
+  recogniser request and the partial text. A newer partial result replaces an older
+  one, and a result that arrives after release is dropped unless it is the final one.
+- **The equaliser in the field.** The field is a lay-rs layer (`Palette::field`). The
+  bars get their own child layer at the field's trailing edge, where the mic glyph
+  sits, drawn with `draw_bars` in `BarStyle::Compact`. Only that small layer is
+  redrawn at ~24 fps, while the text layer stays retained. `TextInputStyle` reserves
+  trailing padding so text never runs under the bars.
+- **Live text in `TextInput`.** otto-kit's field gains a pending range: text drawn
+  dimmed at the caret, not part of `value()`, replaced wholesale by each partial and
+  committed by the final pass (`set_pending(text)`, `commit_pending()`,
+  `clear_pending()`). Typing during listening keeps what you typed and moves the
+  pending text after it. After a commit, the launcher refilters the list as it would
+  after typing.
+- **Keys and pointer.** The mic key held in the field, the mic glyph as a click
+  target, and the global `KeyAction` that opens the launcher already listening.
+- **Errors.** An unreachable engine, a failing command or a missing API key variable
+  shows as the field's placeholder and the bars stop. Nothing blocks the field.
+- **Spoken prompts.** A prompt sent to an agent after dictation carries
+  `_meta: { "otto.voice": true }` on its `Message` in `ChatPendingMessageSet`. AHP's
+  `Message._meta` is meant for this kind of host context, so no extension field is
+  needed. Nothing reads it until milestone 5.
+- **Docs.** `specs/voice.md` from the template, covering dictation, and a user page
+  on running whisper.cpp's server, added to `website/build-docs.sh`.
+
+### 5. Text to speech in otto-agents
+
+- `AudioSink`, the `Synthesiser` trait and its providers, the sentence splitter and
+  the markdown stripper go into `otto-voice`.
+- `[tts]` in `agents.toml`, checked by `doctor`.
 - A per-session speaker that folds chat actions, splits sentences, synthesises ahead
   and plays in order.
 - Stop and barge-in as an otto extension action, dispatched by the launcher and by
   the island.
 - One speaker at a time across sessions: a new spoken turn stops the old one.
 
-### 5. The voice island
+### 6. The voice island
 
 - `UpdateActivityBody(id, body)` on `org.otto.Island1`. Today `UpdateActivity` can
   change only the title and progress.
 - The caption shows the current sentence (it fits the three-line body limit, so no
   scrolling).
-- The equaliser from milestone 1 with `Target::NodeName("otto-agents-voice")`.
+- Generalise the visualiser, which is music-only today:
+  - The meter and `BarAnimator` move out of `MusicMonitor` into the `Visualiser`, one
+    per island, so two islands can animate at once from different sources. Music
+    keeps the default sink monitor; the voice island uses
+    `NodeName("otto-agents-voice")`.
+  - `Visualiser` is created for any island that asks for one, not on
+    `app_id == org.otto.music`. The frame loop in `redraw_music` becomes a
+    visualiser loop, and the bar layout comes from the island's renderer, not from
+    `MusicActivityRenderer::eq_layout`.
 - Tap to stop: islands calls the service's stop action.
 
-### 6. Documentation
+### 7. Documentation
 
-- `specs/voice.md` from the template; update `specs/dynamic-island.md`.
-- `docs/developer/agents.md` (the `[stt]` / `[tts]` tables) and a user page on
-  setting up whisper and piper, added to `website/build-docs.sh`.
-- An otto-settings pane is out of scope, as it is for agents in general (0004's open
-  question).
+- Extend `specs/voice.md` to the spoken answer; update `specs/dynamic-island.md`.
+- `docs/developer/agents.md` (the `[tts]` table) and a user page section on piper.
 
 ## Testing
 
@@ -198,17 +324,20 @@ pass on a live session.
 
 | Layer | Lives in | What it proves |
 |---|---|---|
-| Unit: text | `otto-voice` `#[cfg(test)]` | The sentence splitter handles abbreviations, decimals, lists, URLs and a sentence split across two `ChatDelta`s. The markdown stripper drops code blocks, links' targets, tables and tool output |
-| Unit: audio | `otto-voice` | The WAV header is byte-correct for 16 kHz mono (compared against a fixture). Resampling and f32 to s16 conversion keep level within tolerance |
-| Unit: config | `otto-agents` `config.rs` | `[stt]` / `[tts]` parse, unknown keys fail, a missing table turns that half off, `api_key_env` never lands in `RootState.config` |
-| Providers | `otto-voice/tests/providers.rs` | Each provider against the stub or script: the request carries the right fields and audio format, errors and timeouts surface as errors, a slow engine never blocks the caller |
+| Unit: audio | `otto-voice` | The WAV header is byte-correct for 16 kHz mono (compared against a fixture). Resampling and f32 to s16 conversion keep level within tolerance. `buffer_level` on silence, sines and multi-channel buffers (moved from islands) |
+| Unit: text | `otto-voice` | The sentence splitter handles abbreviations, decimals, lists, URLs and a sentence split across two `ChatDelta`s. The markdown stripper drops code blocks, links' targets, tables and tool output |
+| Providers | `otto-voice/tests/providers.rs` | Each provider against the stub or script: the request carries the right fields, audio format and language, errors and timeouts surface as errors, a slow engine never blocks the caller |
+| Whisper sync | `otto-voice` | With a WAV source and a scripted recogniser: a pass about once a second, never two requests in flight, a slow engine gets the longer clip next, release gives exactly one final result, a long clip is cut at a quiet stretch and the text on both sides survives |
+| Otto config | `src/config`, `src/settings/schema.rs` | `[speech_to_text]` parses, a missing table turns dictation off, a bad provider or language is rejected, `system` resolves from `locales`, every key has a schema entry applied live, `Changed` fires on a change |
+| Bars | otto-kit | `BarAnimator` deterministic per seed, settling to a shimmer on silence, rising with level (moved from islands). `draw_bars` pixel check with fixed levels for each style |
+| Launcher | `otto-launcher` `#[cfg(test)]` | The listening state machine with a scripted recogniser and a WAV source: partial replaces partial, the final pass replaces it, a late partial is dropped, typing during listening is kept, `send_on_release` sends once, an engine error reaches the placeholder, a config change swaps the engine, barge-in dispatches stop before capture starts |
+| Field bars | `otto-launcher` headless | While listening, a frame redraws the bars layer and not the text layer; the bars stay inside the trailing padding; the glyph comes back on release |
+| Text field | `otto-kit` `text_input` | The pending range: drawn dimmed, never part of `value()`, replaced by the next partial, committed by the final pass, kept after typed text; caret behaviour unchanged |
+| Config: TTS | `otto-agents` `config.rs` | `[tts]` parses, unknown keys fail, a missing table turns speech off, `api_key_env` never lands in `RootState.config` |
 | Speaker | `otto-agents/tests/voice.rs` | Against the echo backend with a fake synthesiser and a recording sink: a spoken prompt is answered aloud, a typed one is not (`speak = "voice"`), sentences play in order, sentence n+1 is synthesised before sentence n finishes, the first sentence plays before `ChatTurnComplete`, code is never spoken, stop and barge-in cut playback within one buffer, a new spoken turn stops the old one |
-| Doctor | `otto-agents/tests/voice.rs` | `doctor` reports a missing command, an unreachable server and a working round trip |
-| Launcher | `otto-launcher` `#[cfg(test)]` | The listening state machine with a scripted recogniser: partial text replaces partial text, the final pass replaces it, typing during listening is kept, `send_on_release` sends once, barge-in dispatches stop before capture starts |
-| Text field | `otto-kit` `text_input` | The not-final range: shown dimmed, cleared on the final pass, never part of `value()` until final, caret behaviour unchanged |
-| Level meter | `otto-islands` `audio_viz` | `LevelMeter`'s maths on synthetic sines and silence, `BarAnimator` deterministic for a fixed seed and settling to rest on silence |
-| Islands | `otto-islands` `#[cfg(test)]` | `UpdateActivityBody` changes the body and triggers a redraw; music detection ignores non-music `Internal` activities; a voice activity renders its caption and bars (pixel check with fixed levels, as the dock tests do) |
-| Round trip (opt-in) | `otto-voice/tests/round_trip.rs`, `OTTO_VOICE_E2E=1` | Real engines: the synthesiser speaks a fixed sentence, the recogniser transcribes it, and the words match after normalising. One test checks both halves and the config, and it is how to judge a new engine or voice |
+| Doctor | `otto-agents/tests/voice.rs` | `doctor` reports a missing command, an unreachable server and a working synthesis |
+| Islands | `otto-islands` `#[cfg(test)]` | `UpdateActivityBody` changes the body and triggers a redraw; a voice activity gets a visualiser without being music; it renders its caption and bars; two visualisers animate from different levels |
+| Round trip (opt-in) | `otto-voice/tests/round_trip.rs`, `OTTO_VOICE_E2E=1` | Real engines: a fixed WAV is transcribed and the words match after normalising. Once TTS exists, the synthesiser speaks a sentence and the recogniser hears it back. This is how to judge a new engine or voice |
 
 All of these except the round trip run in `scripts/ci.sh` and in CI's existing
 `cargo test --lib --workspace` and `cargo test -p otto-agents` steps. Any test asserting
@@ -216,21 +345,26 @@ English wording calls `i18n::pin_source_locale()` first.
 
 ### PipeWire
 
-The PipeWire paths (`AudioSource`, `AudioSink`, the islands `LevelMeter`) get one
-opt-in test, `OTTO_VOICE_PW=1`. It starts a private PipeWire and WirePlumber on a
-temporary runtime dir with a null sink, plays a tone through `AudioSink` on the
-`otto-agents-voice` node, and checks that `LevelMeter` with `Target::NodeName` sees
-it. It never touches the user's session audio.
+The PipeWire paths (`AudioSource`, `AudioSink`, `LevelMeter`) get one opt-in test,
+`OTTO_VOICE_PW=1`. It starts a private PipeWire and WirePlumber on a temporary runtime
+dir with a null sink and a null source. It feeds a tone to the source and checks that
+`AudioSource` captures it at 16 kHz mono. It plays a tone through `AudioSink` on the
+`otto-agents-voice` node and checks that `LevelMeter` with `Target::NodeName` sees it.
+It never touches the user's session audio.
 
 ### Manual pass
 
 On a live session, before each milestone merges:
-- Hold the key, speak, check the partial and final text; edit and send.
+- Hold the key and speak: the bars move with your voice, words appear dimmed as you
+  speak, and the final text replaces them on release. Edit and send.
+- Type a few words, then dictate: the typed words stay and the dictation follows.
+- Switch `speech_to_text.provider` while the launcher is open: the next dictation
+  uses the new engine.
+- Stop the engine: the field says so, nothing hangs.
 - An answer with code and a list: code is skipped, the island caption follows the
   speech, the bars move with the voice.
 - Talk over the agent: it stops at once. Tap the island: it stops.
 - Close the launcher mid-answer: speech carries on.
-- Stop the engines: the field and the island say so, nothing hangs.
 - Play music at the same time: the voice ducks it, and the music island and the voice
   island don't fight for the same place.
 
@@ -238,9 +372,16 @@ On a live session, before each milestone merges:
 
 ## Open questions
 
-- **Where the island gets its stop.** Islands calling otto-agents over AHP adds an
-  AHP client to islands. The alternative is a small D-Bus method on the service, as
-  otto-agents already speaks D-Bus to islands for questions.
+- **TTS config.** Speech to text is Otto config; should `[tts]` follow it into
+  `config.toml` so both engines are set in one place, with otto-agents reading it
+  over `org.otto.Settings`?
 - **Mic in use.** Should a small island mark the microphone as live while the launcher
   listens, for privacy? It would reuse `LevelMeter` with `Target::DefaultSource`.
+- **Where the island gets its stop.** Islands calling otto-agents over AHP adds an
+  AHP client to islands. The alternative is a small D-Bus method on the service, as
+  otto-agents already speaks D-Bus to islands for questions. Islands now keeps a
+  zbus session connection for MPRIS, so the D-Bus method is the cheaper choice.
+- **Music bars during speech.** Speech plays through the default sink, so the music
+  island's meter picks it up. Options: leave it, have the music meter skip the
+  `otto-agents-voice` node, or hide the music bars while the voice island is up.
 - **Wake word.** Out of scope; push-to-talk only.
