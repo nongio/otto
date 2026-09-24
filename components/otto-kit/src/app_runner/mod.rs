@@ -709,8 +709,6 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             self.app_data.deliver_key_repeat();
             self.conn.flush()?;
 
-            AppContext::update_windows();
-
             let ctx = AppContext::new(&self.app_data.context_data);
             // A watcher may have changed the theme since the last pass. It
             // runs off this thread, so this is where the app hears about it.
@@ -729,6 +727,12 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             if self.app_data.exit {
                 break;
             }
+
+            // After `on_update`: that is where an application paints its
+            // subsurfaces and sets its materials, and a window's first buffer
+            // is what maps it. Painted before, the window appears empty for
+            // as long as the first pass of `on_update` takes, then fills in.
+            AppContext::update_windows();
 
             // After `on_update`, so a tree describes the state the application
             // has just settled on rather than the previous pass's.
