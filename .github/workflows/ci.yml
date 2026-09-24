@@ -615,11 +615,15 @@ jobs:
       # where a file the PKGBUILD installs but the tarball leaves out fails,
       # rather than on the machine of the first person to run makepkg.
       - name: Build the nightly package from a stand-in tarball
+        # The tarball is assembled as root, which is who checked the
+        # repository out and whom actions/checkout marked it safe for;
+        # only makepkg needs the unprivileged user.
         run: |
           DIR=$PWD
-          su builder -c "cd $DIR && scripts/packaging/make-arch-tarball.sh --stand-in dist"
+          scripts/packaging/make-arch-tarball.sh --stand-in dist
           pkgver=$(sed -n 's/^pkgver=//p' dist/PKGBUILD-nightly-bin)
           cp dist/otto-nightly-x86_64.tar.gz "dist/otto-nightly-$pkgver-x86_64.tar.gz"
+          chown -R builder:builder dist
           su builder -c "cd $DIR/dist && makepkg --nodeps --noconfirm -p PKGBUILD-nightly-bin"
           ls dist/*.pkg.tar.zst
   
