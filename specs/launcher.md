@@ -1,7 +1,7 @@
 # Launcher
 
 **Status:** draft
-**Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md)
+**Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md), [dictation.md](./dictation.md)
 
 ## Summary
 
@@ -260,6 +260,15 @@ motion with Ctrl, select-all with Ctrl+A, deleting the previous word with
 Ctrl+W, and clearing the query with Ctrl+U. Ctrl+C, Ctrl+X and Ctrl+V copy, cut
 and paste against the system clipboard; a paste keeps only what fits on one
 line, and refilters as typing does.
+
+**Dictation.** Ctrl+D starts dictating into the field: an equaliser stands in
+for the caret, words heard but not settled show dimmed at it, and settled words
+are typed in and refilter the list. While dictating, Escape or Backspace
+cancels and removes what was dictated, Return stops and acts once the last
+words are in, modifier keys are ignored, and any other key, Ctrl+D included,
+stops. When picking from a list, the listed titles are the vocabulary that
+heard names are corrected to; ask mode has none. See
+[dictation.md](./dictation.md).
 
 **Pointer.** Over the log's words the pointer is a text cursor, because
 nothing else about painted text says it can be picked up. Moving the pointer
