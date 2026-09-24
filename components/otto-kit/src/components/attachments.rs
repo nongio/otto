@@ -51,8 +51,8 @@ const PICTURE_MIN_H: f32 = 60.0;
 /// A file's icon or thumbnail, as in a Files list row with two lines.
 pub const ICON_SIZE: f32 = 48.0;
 /// A selection's text: its size, line height and most lines shown.
-const TEXT_SIZE: f32 = 13.0;
-const TEXT_LINE_H: f32 = 19.0;
+const TEXT_SIZE: f32 = 15.0;
+const TEXT_LINE_H: f32 = 22.0;
 const TEXT_LINES: usize = 3;
 /// How much of a file is read to tell what it is.
 const PEEK_BYTES: u64 = 4096;
