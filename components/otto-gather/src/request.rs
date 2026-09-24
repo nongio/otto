@@ -49,11 +49,13 @@ pub struct Gathering {
 }
 
 impl Gathering {
-    /// Add `item`, unless it is the same as the last one: pressing the add
-    /// shortcut twice on one selection gathers it once.
+    /// Add `item`, unless it is already gathered: the same text, file or
+    /// region is gathered once. Adding again what was struck out brings it
+    /// back. Returns whether the gathering changed.
     pub fn add(&mut self, item: Item) -> bool {
-        if self.items.last() == Some(&item) {
-            return false;
+        if let Some(index) = self.items.iter().position(|gathered| *gathered == item) {
+            let struck = std::mem::take(&mut self.struck[index]);
+            return struck;
         }
         let number = if matches!(item, Item::Text(_)) {
             self.texts_added += 1;
@@ -150,13 +152,23 @@ mod tests {
     }
 
     #[test]
-    fn the_same_item_twice_in_a_row_is_gathered_once() {
+    fn the_same_item_is_gathered_once() {
         let mut gathering = Gathering::default();
         assert!(gathering.add(Item::Text("a".into())));
         assert!(!gathering.add(Item::Text("a".into())));
         assert!(gathering.add(Item::Text("b".into())));
+        assert!(!gathering.add(Item::Text("a".into())));
+        assert_eq!(gathering.items.len(), 2);
+    }
+
+    #[test]
+    fn adding_a_struck_item_again_brings_it_back() {
+        let mut gathering = Gathering::default();
+        gathering.add(Item::Text("a".into()));
+        gathering.toggle(0);
         assert!(gathering.add(Item::Text("a".into())));
-        assert_eq!(gathering.items.len(), 3);
+        assert!(!gathering.is_struck(0));
+        assert_eq!(gathering.items.len(), 1);
     }
 
     #[test]

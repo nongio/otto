@@ -27,6 +27,10 @@ const GAP: f32 = 16.0;
 /// The title: the launcher's field size, heavier.
 const TITLE_SIZE: f32 = 15.0;
 const TITLE_LINE_H: f32 = 20.0;
+/// Space between the count and the Clear button, and how far around the
+/// button a press still hits it.
+const COUNT_GAP: f32 = 12.0;
+const CLEAR_SLOP: f32 = 6.0;
 /// The card's corner radius, as the launcher's shows on screen.
 pub const RADIUS: f32 = 20.0;
 /// How solid the card is drawn when the compositor can't frost it.
@@ -39,6 +43,8 @@ const MIN_VIEW_H: f32 = 48.0;
 pub enum Hit {
     /// Take the item at this index out of the gathering.
     Remove(usize),
+    /// Throw the whole gathering away.
+    Clear,
 }
 
 /// Draws the card.
@@ -61,6 +67,9 @@ pub struct Layout {
     items: Option<attachments::Layout>,
     /// Where the items show on the card.
     pub viewport: Rect,
+    /// The button that clears the gathering, when there is something to
+    /// clear.
+    clear: Option<Rect>,
     /// How tall the items are, scrolled or not.
     pub body_length: f32,
     /// Size in logical pixels.
@@ -87,6 +96,12 @@ impl Layout {
     /// What a press at `(x, y)` on the card does, with the items scrolled by
     /// `offset`.
     pub fn hit(&self, x: f32, y: f32, offset: f32) -> Option<Hit> {
+        if self
+            .clear
+            .is_some_and(|c| (c.left..c.right).contains(&x) && (c.top..c.bottom).contains(&y))
+        {
+            return Some(Hit::Clear);
+        }
         let (items, x, y) = self.on_items(x, y, offset)?;
         items.remove_at(x, y).map(Hit::Remove)
     }
@@ -160,7 +175,18 @@ impl Balloon {
             &style(TITLE_SIZE, TITLE_LINE_H, 700, primary, false),
         );
         fixed.push((title, Point::new(PAD, PAD)));
+        let mut clear = None;
         if !items.is_empty() {
+            // Clear, at the right of the title, and the count before it.
+            let button = self.line("Clear", &style(13.0, TITLE_LINE_H, 500, secondary, false));
+            let button_w = button.max_intrinsic_width().ceil();
+            let button_x = PAD + INNER - button_w;
+            clear = Some(
+                Rect::from_xywh(button_x, PAD, button_w, TITLE_LINE_H)
+                    .with_outset((CLEAR_SLOP, CLEAR_SLOP)),
+            );
+            fixed.push((button, Point::new(button_x, PAD)));
+
             let included = gathering.included();
             let count = if included == items.len() {
                 included.to_string()
@@ -168,7 +194,7 @@ impl Balloon {
                 format!("{included} of {}", items.len())
             };
             let count = self.line(&count, &style(11.5, 18.0, 400, secondary, true));
-            let x = PAD + INNER - count.max_intrinsic_width().ceil();
+            let x = button_x - COUNT_GAP - count.max_intrinsic_width().ceil();
             fixed.push((count, Point::new(x, PAD + 1.0)));
         }
         // The items' highlights reach up into the gap under the title.
@@ -224,6 +250,7 @@ impl Balloon {
             fixed,
             items: list,
             viewport,
+            clear,
             body_length,
             width: WIDTH,
             height: (viewport.bottom + foot_h).ceil(),
@@ -326,6 +353,16 @@ mod tests {
         );
         assert_eq!(layout.item_at(PAD + 20.0, top + 11.0, 0.0), Some(1));
         assert_eq!(layout.hit(1.0, 1.0, 0.0), None);
+        // Clear sits at the right end of the title line.
+        assert_eq!(
+            layout.hit(PAD + INNER - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
+            Some(Hit::Clear)
+        );
+        let empty = balloon.layout(&Gathering::default(), None, 800.0);
+        assert_eq!(
+            empty.hit(PAD + INNER - 4.0, PAD + TITLE_LINE_H / 2.0, 0.0),
+            None
+        );
     }
 
     #[test]

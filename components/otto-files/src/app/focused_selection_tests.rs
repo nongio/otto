@@ -52,15 +52,20 @@ fn the_focused_window_answers_with_its_selected_paths() {
         .iter()
         .map(|name| dir.0.join(name).to_string_lossy().into_owned())
         .collect();
-    assert_eq!(browser.focused_selection(true), expected);
-    assert!(
-        browser.focused_selection(false).is_empty(),
-        "a window without the keyboard has nothing to say"
+    assert_eq!(browser.focused_selection(true), Some(expected));
+    assert_eq!(
+        browser.focused_selection(false),
+        None,
+        "a window without the keyboard does not answer"
     );
 }
 
 #[test]
 fn the_folder_being_viewed_is_not_a_selection() {
     let (browser, _dir) = browser_over(&["a.txt"]);
-    assert!(browser.focused_selection(true).is_empty());
+    assert_eq!(
+        browser.focused_selection(true),
+        Some(Vec::new()),
+        "the focused window answers, with nothing selected"
+    );
 }

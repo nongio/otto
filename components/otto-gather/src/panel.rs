@@ -22,6 +22,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use otto_kit::protocols::{
     otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1,
     otto_surface_style_v1::{BlendMode, ClipMode, ContentsGravity, OttoSurfaceStyleV1},
+    otto_timing_function_v1::Preset,
 };
 use otto_kit::theme::Theme;
 
@@ -42,6 +43,8 @@ const UNFROSTED_MIN_ALPHA: u8 = 0xF6;
 /// How the card's changes of size spring: the launcher's, for its card.
 const RESIZE_SECONDS: f64 = 0.34;
 const RESIZE_BOUNCE: f64 = 0.35;
+/// How long the card takes to fade away when it closes: the launcher's.
+pub const FADE_OUT: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// The compositor globals the balloon is made from.
 #[derive(Debug)]
@@ -298,6 +301,23 @@ impl Panel {
         region.destroy();
         // The position and the region are the parent's state.
         self.parent.commit();
+    }
+
+    /// Fade the card away. Returns whether it fades: without the
+    /// compositor's styles there is nothing to fade with, and the caller
+    /// destroys the panel at once.
+    pub fn fade_out(&self) -> bool {
+        let (Some(style), Some(styles)) = (self.style.as_ref(), self.styles.as_ref()) else {
+            return false;
+        };
+        let timing = styles.create_timing_function(&self.qh, ());
+        timing.set_preset(Preset::EaseInQuad);
+        let transaction = styles.begin_transaction(&self.qh, ());
+        transaction.set_duration(FADE_OUT.as_secs_f64());
+        transaction.set_timing_function(&timing);
+        style.set_opacity(0.0);
+        transaction.commit();
+        true
     }
 
     pub fn destroy(self) {

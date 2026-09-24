@@ -33,8 +33,9 @@ pub enum Command {
     /// the files selected in Files, or the primary selection.
     Add(Done),
     /// Files answered: the files selected in its focused window, empty when
-    /// none. Sent by the bus task, not over the bus.
-    AddFocusedFiles(Vec<PathBuf>, Done),
+    /// none, or `None` when no Files window is in front. Sent by the bus
+    /// task, not over the bus.
+    AddFocusedFiles(Option<Vec<PathBuf>>, Done),
     /// Add a file; starts gathering when it is not on.
     AddFile(PathBuf),
     /// Pick a screen region and add a capture of it.
@@ -195,12 +196,14 @@ pub async fn announce(bus: &zbus::Connection, items: Items) -> zbus::Result<()> 
     Service::changed(&emitter, to_wire(items)).await
 }
 
-/// The files selected in the Files window that has the keyboard; none when
-/// no Files window has it, or Files doesn't answer in time.
+/// The files selected in the Files window that has the keyboard, empty when
+/// nothing is selected in it; `None` when no Files window has the keyboard,
+/// or Files doesn't answer in time.
 ///
 /// Each Files window is a process of its own, queued for [`FILES_NAME`], so
-/// each is asked; at most one has the keyboard.
-pub async fn focused_files() -> Vec<PathBuf> {
+/// each is asked; at most one has the keyboard, and the others answer with
+/// an error.
+pub async fn focused_files() -> Option<Vec<PathBuf>> {
     let asked = tokio::time::timeout(FILES_TIMEOUT, async {
         let bus = zbus::Connection::session().await?;
         let dbus = fdo::DBusProxy::new(&bus).await?;
@@ -223,24 +226,18 @@ pub async fn focused_files() -> Vec<PathBuf> {
             }
         });
         let answers = zbus::export::futures_util::future::join_all(asks).await;
-        Ok::<_, zbus::Error>(
-            answers
-                .into_iter()
-                .filter_map(Result::ok)
-                .find(|paths| !paths.is_empty())
-                .unwrap_or_default(),
-        )
+        Ok::<_, zbus::Error>(answers.into_iter().find_map(Result::ok))
     })
     .await;
     match asked {
-        Ok(Ok(paths)) => paths.into_iter().map(PathBuf::from).collect(),
+        Ok(Ok(paths)) => paths.map(|paths| paths.into_iter().map(PathBuf::from).collect()),
         Ok(Err(error)) => {
             tracing::debug!(%error, "Files didn't say what is selected");
-            Vec::new()
+            None
         }
         Err(_) => {
             tracing::warn!("Files didn't say what is selected in time");
-            Vec::new()
+            None
         }
     }
 }

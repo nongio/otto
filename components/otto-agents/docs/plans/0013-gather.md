@@ -144,8 +144,10 @@ with two halves.
   so Ask opens with the selection gathered, alone or added to what is there.
 - **Files' selection** is read by `Add` when no text field reports one: Files
   serves `org.otto.Files1.FocusedSelection() -> as` in each window's process
-  (they queue for the name), and otto-gather asks every queued owner. Then the
-  primary selection.
+  (they queue for the name), and otto-gather asks every queued owner. Only the
+  window with the keyboard answers, with an empty list when nothing is
+  selected; the others fail. The primary selection is used only when no Files
+  window answered, since it holds whatever was last selected in any app.
 - **Dropping files** on the card adds them.
 
 ## Milestones

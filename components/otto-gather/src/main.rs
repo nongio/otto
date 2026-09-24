@@ -44,6 +44,7 @@ use otto_kit::clipboard::URI_LIST;
 use smithay_client_toolkit::delegate_shm;
 use smithay_client_toolkit::reexports::calloop::channel;
 use smithay_client_toolkit::reexports::calloop::generic::Generic;
+use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::calloop::{
     EventLoop, Interest, LoopHandle, Mode, PostAction,
 };
@@ -243,6 +244,7 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
         shell,
         cursor_shape,
         panel: None,
+        fading: None,
         pending: Field::default(),
         field: Field::default(),
         gathering: None,
@@ -296,6 +298,8 @@ struct State {
     cursor_shape: Option<WpCursorShapeDeviceV1>,
     /// The balloon's surface, for as long as something is being gathered.
     panel: Option<Panel>,
+    /// The balloon fading away after it closed, destroyed once it has.
+    fading: Option<Panel>,
     /// The field as announced, applied on the next `done`.
     pending: Field,
     field: Field,
@@ -364,9 +368,14 @@ impl State {
                 }
             }
             Command::AddFocusedFiles(files, done) => {
-                if files.is_empty() {
+                // Only when Files isn't the app in front: the primary
+                // selection is whatever was last selected anywhere.
+                let Some(files) = files else {
                     self.add_primary(done);
                     return self.refresh();
+                };
+                if files.is_empty() {
+                    tracing::info!("nothing is selected in Files");
                 }
                 let gathering = self.start_gathering();
                 for file in files {
@@ -825,11 +834,34 @@ impl State {
                 self.remove_item(index);
                 self.refresh();
             }
+            Hit::Clear => self.on_command(Command::Cancel),
         }
     }
 
     fn close_panel(&mut self) {
-        if let Some(panel) = self.panel.take() {
+        let Some(panel) = self.panel.take() else {
+            return;
+        };
+        if !panel.fade_out() {
+            panel.destroy();
+            return;
+        }
+        self.end_fade();
+        self.fading = Some(panel);
+        let faded =
+            self.loop_handle
+                .insert_source(Timer::from_duration(panel::FADE_OUT), |_, _, state| {
+                    state.end_fade();
+                    TimeoutAction::Drop
+                });
+        if faded.is_err() {
+            self.end_fade();
+        }
+    }
+
+    /// Destroy the balloon that faded away, if one is fading.
+    fn end_fade(&mut self) {
+        if let Some(panel) = self.fading.take() {
             panel.destroy();
         }
     }

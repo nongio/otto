@@ -9,8 +9,9 @@
 //! owns it and the rest wait in its queue, which makes
 //! `org.freedesktop.DBus.ListQueuedOwners("org.otto.Files1")` the list of
 //! every Files window on the bus. A caller asks each unique name in turn; at
-//! most one of them holds the keyboard, and only that one answers with
-//! anything. A name nobody may replace would hide every window but the
+//! most one of them holds the keyboard. That one answers, with an empty list
+//! when nothing is selected; the others answer with an error, so a caller
+//! can tell "Files has the keyboard" from "some other app has it". A name nobody may replace would hide every window but the
 //! first, and a signal broadcast would need a reply channel of its own.
 //!
 //! The bridge is the picker's (see `dbus.rs`): the zbus task parks a one-shot
@@ -27,8 +28,9 @@ use zbus::interface;
 pub const DBUS_NAME: &str = "org.otto.Files1";
 pub const DBUS_PATH: &str = "/org/otto/Files1";
 
-/// Where an answer goes: the call waiting on it.
-pub type Reply = oneshot::Sender<Vec<String>>;
+/// Where an answer goes: the call waiting on it. `None` when this window
+/// does not hold the keyboard.
+pub type Reply = oneshot::Sender<Option<Vec<String>>>;
 
 /// Questions the UI thread has not answered yet.
 #[derive(Default)]
@@ -58,13 +60,17 @@ struct FilesService {
 #[interface(name = "org.otto.Files1")]
 impl FilesService {
     /// Absolute paths of the items selected in this process's window, while
-    /// it holds the keyboard. Empty when it does not, or nothing is selected.
-    async fn focused_selection(&self) -> Vec<String> {
+    /// it holds the keyboard; empty when nothing is selected. Fails with
+    /// `org.freedesktop.DBus.Error.Failed` when the window does not hold the
+    /// keyboard.
+    async fn focused_selection(&self) -> zbus::fdo::Result<Vec<String>> {
         let (tx, rx) = oneshot::channel();
         self.queue.push(tx);
         // A dropped sender means the window closed before answering: nothing
         // of ours has the keyboard any more.
-        rx.await.unwrap_or_default()
+        rx.await.ok().flatten().ok_or_else(|| {
+            zbus::fdo::Error::Failed("this window does not have the keyboard".into())
+        })
     }
 }
 
