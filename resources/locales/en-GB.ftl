@@ -1448,6 +1448,11 @@ peek-error-timeout = this file took too long to preview
 
 ## Islands — notification card
 
+# Shown in the open music island in place of the level bars, when the
+# track plays on a phone or a network speaker and nothing plays on this
+# computer. Beside a small glyph, in about 200 px at 10 px.
+islands-music-elsewhere = Playing on another device
+
 # The button that dismisses a notification card. Drawn inside a fixed 40 px
 # column at 9 px, so it must fit in roughly 7 characters — a shorter word is
 # better than a truer one here.

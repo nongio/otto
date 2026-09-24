@@ -1456,6 +1456,8 @@ peek-error-timeout = questo file ha richiesto troppo tempo per l’anteprima
 
 ## Islands — notification card
 
+islands-music-elsewhere = In riproduzione su un altro dispositivo
+
 # The button that dismisses a notification card. Drawn inside a fixed 40 px
 # column at 9 px, so it must fit in roughly 7 characters — a shorter word is
 # better than a truer one here.

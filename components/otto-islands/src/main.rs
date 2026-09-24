@@ -1,4 +1,5 @@
 mod activity;
+mod audio_route;
 mod audio_viz;
 mod dbus_service;
 mod dialog;
@@ -1703,10 +1704,15 @@ impl IslandApp {
         Some(mr)
     }
 
-    /// Whether a track is playing and its island is on screen, which is what
-    /// keeps the visualiser ticking.
+    /// Whether a track is playing and its island is on screen.
     fn music_playing_on_screen(&self) -> bool {
         self.music_monitor.is_playing() && self.islands.iter().any(|i| i.visualiser.is_some())
+    }
+
+    /// Whether the bars are moving, which is what keeps the visualiser
+    /// ticking. A track on another device shows a still glyph instead.
+    fn music_bars_moving(&self) -> bool {
+        self.music_playing_on_screen() && !self.music_monitor.plays_elsewhere()
     }
 
     /// Redraw the live parts of the music island: the bars at ~24 fps on their
@@ -1721,9 +1727,17 @@ impl IslandApp {
             self.music_pressed = None;
             self.state.lock().unwrap().dirty = true;
         }
+        if self.music_monitor.update_route(now) {
+            for island in &mut self.islands {
+                if let Some(visualiser) = island.visualiser.as_mut() {
+                    visualiser.drawn = false;
+                }
+            }
+        }
         let playing = self.music_playing_on_screen();
-        self.music_monitor.set_meter_active(playing);
-        let frame_due = playing
+        let moving = self.music_bars_moving();
+        self.music_monitor.set_meter_active(moving);
+        let frame_due = moving
             && now.duration_since(self.visualiser_last_frame)
                 >= Duration::from_millis(VISUALISER_FRAME_MS);
         if frame_due {
@@ -2050,10 +2064,11 @@ impl App for IslandApp {
         }
         // A playing track animates the bars, so the loop has to tick; a
         // stopped one is let go of once its grace period is over.
-        if self.music_playing_on_screen() {
+        if self.music_bars_moving() {
             deadlines.push(self.visualiser_last_frame + Duration::from_millis(VISUALISER_FRAME_MS));
         }
         deadlines.extend(self.music_monitor.grace_deadline());
+        deadlines.extend(self.music_monitor.route_deadline());
         // Bars still to draw for a new layout, and a press highlight to lift.
         if self
             .islands
@@ -2455,7 +2470,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     otto_kit::utils::focus_watcher::spawn_focus_watcher();
-    let music_monitor = MusicMonitor::new(mpris::start_monitor(), audio_viz::LevelMeter::new());
+    let music_monitor = MusicMonitor::new(
+        mpris::start_monitor(),
+        audio_viz::LevelMeter::new(),
+        audio_route::AudioStreams::start(),
+    );
 
     let app = IslandApp::new(state, music_monitor);
     AppRunner::new(app).run()?;
