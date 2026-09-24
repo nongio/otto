@@ -9,7 +9,7 @@ description = "A keyboard-driven launcher for Otto — type to filter apps and w
 
 [dependencies]
 laye-rs.workspace = true
-otto-kit = { path = "../otto-kit" }
+otto-kit = { path = "../otto-kit", features = ["dictation"] }
 otto-md-kit = { path = "../otto-md-kit" }
 taffy = "0.5"
 tracing = "0.1"
