@@ -12,7 +12,7 @@ laye-rs.workspace = true
 # Ask mode, its chat and its log are otto-agents-kit's, shared with the
 # other apps that host a conversation.
 otto-agents-kit = { path = "../otto-agents-kit" }
-otto-kit = { path = "../otto-kit" }
+otto-kit = { path = "../otto-kit", features = ["dictation"] }
 otto-peek = { path = "../otto-peek" }
 taffy.workspace = true
 tracing.workspace = true
