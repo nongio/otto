@@ -1,8 +1,10 @@
+pub mod attachments;
 pub mod button;
 pub mod color_picker;
 pub mod container;
 pub mod context_menu;
 pub mod dropdown;
+pub mod gathered;
 pub mod icon;
 pub mod label;
 pub mod layer;

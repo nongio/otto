@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use otto_kit::preview::document;
 
-use crate::ask::Said;
+use crate::ask::{Attachment, Said};
 
 /// Height of one line of plain text in the log.
 pub const LINE_H: f32 = 21.0;
@@ -107,6 +107,14 @@ pub enum Kind {
         mode: String,
         hint: Option<String>,
     },
+    /// Attachments, each with whether it is struck out, drawn as the
+    /// attachment list draws them. `pending` ones are going with the next
+    /// request, and can be struck out or taken off; the others went with the
+    /// request above them.
+    Attachments {
+        items: Vec<(Attachment, bool)>,
+        pending: bool,
+    },
     /// A picture the agent sent, scaled into `width` by `height` at the left of
     /// the log, with [`IMAGE_PAD`] above and below it. A picture whose file
     /// cannot be read is a line of its own words instead, so this is only ever
@@ -145,6 +153,19 @@ impl Line {
                 said
             }
             Kind::Image { label, .. } => format!("picture: {label}"),
+            Kind::Attachments { items, .. } => items
+                .iter()
+                .map(|(item, _)| match item {
+                    Attachment::Text(text) => text.clone(),
+                    Attachment::File(path) | Attachment::Region(path) => {
+                        path.file_name().map_or_else(
+                            || path.display().to_string(),
+                            |name| name.to_string_lossy().into_owned(),
+                        )
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
             Kind::Document(lines) => lines
                 .iter()
                 .map(|line| line.runs.iter().map(|run| run.text.as_str()).collect())
@@ -165,8 +186,8 @@ pub fn length(lines: &[Line]) -> f32 {
 /// One request in the log.
 pub struct Block<'a> {
     pub prompt: &'a str,
-    /// The files that went with the request, said in one line.
-    pub attachments: Option<&'a str>,
+    /// What went with the request.
+    pub attachments: &'a [Attachment],
     /// What the agent answered, in order: Markdown and the pictures it sent.
     pub answer: &'a [Said],
     /// The tool calls the agent made, already allowed or refused.
@@ -197,18 +218,26 @@ pub struct Footer<'a> {
 /// Wraps the conversation into lines no wider than `width`: each request and
 /// its attachments, then its answer, tool calls, question and note, a blank
 /// line apart from the next request. The log closes with `status`, what the
-/// agent is doing now, one note line per line of it, and then `footer`.
+/// agent is doing now, one note line per line of it, then `pending`, what
+/// goes with the next request, and then `footer`.
 ///
 /// `measure` gives the width of a piece of plain text in a line's style.
 /// `picture` gives a picture file's own size in pixels, and `None` for one that
-/// cannot be read — which is drawn as its name instead.
+/// cannot be read — which is drawn as its name instead. `attachments` gives
+/// how tall a list of attachments is, pending or sent.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the whole log, and how to measure it"
+)]
 pub fn lay_out(
     blocks: &[Block],
     status: Option<&str>,
+    pending: &[(Attachment, bool)],
     footer: Option<Footer>,
     width: f32,
     measure: impl Fn(&str, Style) -> f32,
     picture: impl Fn(&Path) -> Option<(f32, f32)>,
+    attachments: impl Fn(&[(Attachment, bool)], bool) -> f32,
 ) -> Vec<Line> {
     let mut lines = Vec::new();
     let push = |lines: &mut Vec<Line>, text: &str, style: Style| {
@@ -221,8 +250,21 @@ pub fn lay_out(
             blank(&mut lines);
         }
         bubble(&mut lines, block.prompt, width, &measure);
-        if let Some(attachments) = block.attachments {
-            push(&mut lines, attachments, Style::Note);
+        if !block.attachments.is_empty() {
+            let items: Vec<_> = block
+                .attachments
+                .iter()
+                .map(|item| (item.clone(), false))
+                .collect();
+            let height = attachments(&items, false);
+            place(
+                &mut lines,
+                height,
+                Kind::Attachments {
+                    items,
+                    pending: false,
+                },
+            );
         }
         for said in block.answer {
             match said {
@@ -274,6 +316,19 @@ pub fn lay_out(
         for line in status.lines() {
             push(&mut lines, line, Style::Note);
         }
+    }
+    if !pending.is_empty() {
+        if !lines.is_empty() {
+            blank(&mut lines);
+        }
+        place(
+            &mut lines,
+            attachments(pending, true),
+            Kind::Attachments {
+                items: pending.to_vec(),
+                pending: true,
+            },
+        );
     }
     if let Some(footer) = footer {
         if !lines.is_empty() {
@@ -521,7 +576,10 @@ mod tests {
                 Kind::Text { text, style } => (text.clone(), Some(*style)),
                 Kind::Bubble { text, .. } => (text.clone(), Some(Style::Request)),
                 Kind::Steps { .. } => (line.text(), Some(Style::Note)),
-                Kind::Document(_) | Kind::Image { .. } | Kind::Footer { .. } => (line.text(), None),
+                Kind::Document(_)
+                | Kind::Image { .. }
+                | Kind::Footer { .. }
+                | Kind::Attachments { .. } => (line.text(), None),
             })
             .collect()
     }
@@ -562,7 +620,7 @@ mod tests {
     fn block<'a>(prompt: &'a str, answer: &'a [Said], note: Option<&'a str>) -> Block<'a> {
         Block {
             prompt,
-            attachments: None,
+            attachments: &[],
             answer,
             steps: &[],
             steps_expanded: false,
@@ -582,10 +640,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             Some("Working…"),
+            &[],
             None,
             20.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(
             styled(&lines),
@@ -607,7 +667,7 @@ mod tests {
         let action = ["build/".to_string(), "- old".to_string()];
         let blocks = [Block {
             prompt: "tidy up",
-            attachments: None,
+            attachments: &[],
             answer: words("Sure"),
             steps: &steps,
             steps_expanded: false,
@@ -620,10 +680,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             40.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(
             styled(&lines),
@@ -660,10 +722,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             40.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(
             styled(&lines),
@@ -681,26 +745,66 @@ mod tests {
 
     #[test]
     fn attachments_follow_their_request() {
+        let notes = [Attachment::File("/tmp/notes.md".into())];
         let blocks = [Block {
-            attachments: Some("Attached: notes.md"),
+            attachments: &notes,
             ..block("summarise", words("Done"), None)
         }];
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             40.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(
             styled(&lines),
             [
                 text("summarise", Style::Request),
-                text("Attached: notes.md", Style::Note),
+                doc("notes.md"),
                 doc("Done"),
             ]
         );
+    }
+
+    #[test]
+    fn what_goes_next_closes_the_log_over_the_footer() {
+        let blocks = [block("hi", words("Hello"), None)];
+        let pending = [
+            (Attachment::Text("look at this".into()), false),
+            (Attachment::File("/tmp/a.png".into()), true),
+        ];
+        let footer = Footer {
+            agent: "Claude",
+            mode: "Ask",
+            hint: None,
+        };
+        let lines = lay_out(
+            &blocks,
+            None,
+            &pending,
+            Some(footer),
+            40.0,
+            |text, _| chars(text),
+            no_pictures,
+            |items, pending| {
+                if pending {
+                    10.0 * items.len() as f32
+                } else {
+                    0.0
+                }
+            },
+        );
+        let last = &lines[lines.len() - 3];
+        assert!(matches!(
+            &last.kind,
+            Kind::Attachments { items, pending: true } if items[..] == pending[..]
+        ));
+        assert_eq!(last.height, 20.0);
+        assert!(matches!(lines[lines.len() - 1].kind, Kind::Footer { .. }));
     }
 
     #[test]
@@ -713,6 +817,7 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             5.0,
             |text, style| match style {
@@ -720,6 +825,7 @@ mod tests {
                 _ => chars(text),
             },
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(
             styled(&lines),
@@ -739,10 +845,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         let Kind::Document(doc) = &lines[1].kind else {
             panic!("the answer is a document");
@@ -762,7 +870,7 @@ mod tests {
     fn with_steps<'a>(steps: &'a [String], expanded: bool) -> Block<'a> {
         Block {
             prompt: "go",
-            attachments: None,
+            attachments: &[],
             answer: words(""),
             steps,
             steps_expanded: expanded,
@@ -783,10 +891,12 @@ mod tests {
         let lines = lay_out(
             &[with_steps(&steps, false)],
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         let Kind::Steps { lines: shown, .. } = &lines[1].kind else {
             panic!("the calls are a group");
@@ -801,10 +911,12 @@ mod tests {
         let lines = lay_out(
             &[with_steps(&steps, true)],
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         let Kind::Steps {
             lines: shown,
@@ -825,10 +937,12 @@ mod tests {
         let lines = lay_out(
             &[with_steps(&steps, false)],
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(styled(&lines)[1], text("only", Style::Note));
     }
@@ -843,10 +957,12 @@ mod tests {
         let lines = lay_out(
             &[block("go", words(""), None)],
             None,
+            &[],
             Some(footer),
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         let last = lines.last().expect("the footer is a line");
         let Kind::Footer { agent, mode, hint } = &last.kind else {
@@ -864,10 +980,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             width,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         let Kind::Bubble {
             lines: wrapped,
@@ -887,10 +1005,12 @@ mod tests {
         let lines = lay_out(
             &[block("bb", words(""), None)],
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         let Kind::Bubble { width: bubble, .. } = &lines[0].kind else {
             panic!("the request is a bubble");
@@ -908,10 +1028,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             200.0,
             |text, _| chars(text),
             |_| Some((400.0, 300.0)),
+            |_, _| 0.0,
         );
         let Kind::Image { width, height, .. } = &lines[1].kind else {
             panic!("the answer is a picture: {:?}", lines[1].kind);
@@ -923,10 +1045,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             200.0,
             |text, _| chars(text),
             |_| Some((40.0, 30.0)),
+            |_, _| 0.0,
         );
         let Kind::Image { width, height, .. } = &lines[1].kind else {
             panic!("the answer is a picture");
@@ -937,10 +1061,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             |_| Some((100.0, 1000.0)),
+            |_, _| 0.0,
         );
         let Kind::Image { width, height, .. } = &lines[1].kind else {
             panic!("the answer is a picture");
@@ -957,10 +1083,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             200.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(
             styled(&lines),
@@ -990,10 +1118,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             200.0,
             |text, _| chars(text),
             |_| Some((100.0, 50.0)),
+            |_, _| 0.0,
         );
         assert!(
             matches!(lines[2].kind, Kind::Image { .. }),
@@ -1012,10 +1142,12 @@ mod tests {
         let lines = lay_out(
             &blocks,
             None,
+            &[],
             None,
             400.0,
             |text, _| chars(text),
             no_pictures,
+            |_, _| 0.0,
         );
         assert_eq!(styled(&lines), [text("go", Style::Request)]);
     }

@@ -89,6 +89,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(otto_files::model::home_dir)
         .unwrap_or_else(|| PathBuf::from("/"));
 
+    otto_files::gather::watch();
     otto_files::app::run_browser(start)
 }
 

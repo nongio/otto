@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use layers::prelude::*;
 use layers::types::{Color as LayerColor, Point as LayerPoint, Size as LayerSize};
+use otto_kit::components::attachments::{AttachmentList, Options as AttachmentOptions, HOVER_PAD};
 use otto_kit::components::scroll::RowLayout;
 use otto_kit::components::text_input::{TextInput, TextInputStyle};
 use otto_kit::icons::named_icon_sized;
@@ -42,6 +43,7 @@ use otto_kit::typography::{draw_runs, get_font_with_fallback, measure_runs, styl
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Canvas, Color, Color4f, Font, FontStyle, Image, Paint, Rect, SamplingOptions};
 
+use crate::ask::Attachment;
 use crate::log::{Kind, Line, Style, BUBBLE_GAP, BUBBLE_PAD_X, BUBBLE_PAD_Y, FOOTER_H, IMAGE_PAD};
 use crate::selection::Span;
 use crate::source::{Activity, Item};
@@ -64,8 +66,6 @@ pub const LIST_TOP: f32 = FIELD_H + 1.0 + LIST_PAD;
 /// Corner radius of the card, applied by the compositor to the subsurface.
 pub const RADIUS: f32 = 10.0;
 const ICON: f32 = 28.0;
-/// The icon on a compact row, such as a file attached to an ask request.
-const SMALL_ICON: f32 = 18.0;
 /// The activity dot beside a row with no icon, such as an agent session.
 const DOT_RADIUS: f32 = 4.0;
 const ROW_INSET: f32 = 8.0;
@@ -235,7 +235,23 @@ pub struct Palette {
     /// same reason: the log is laid out again on every chunk of an answer, and
     /// each pass asks every picture how large it is.
     pictures: RefCell<HashMap<PathBuf, Option<Image>>>,
+    /// Attachments, as otto-gather's card shows them, with what was read
+    /// about each file kept for the next layout.
+    attachments: RefCell<AttachmentList>,
     dark: bool,
+}
+
+/// A pending attachment under the pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttachmentHit {
+    /// The log line the attachments are on.
+    pub line: usize,
+    /// Which attachment, by its index among them.
+    pub item: usize,
+    /// Whether the pointer is on its remove button.
+    pub remove: bool,
+    /// Whether it goes with the next request, rather than went with one.
+    pub pending: bool,
 }
 
 impl Palette {
@@ -287,6 +303,7 @@ impl Palette {
             moved: (0.0, 0.0),
             icons: RefCell::new(HashMap::new()),
             pictures: RefCell::new(HashMap::new()),
+            attachments: RefCell::new(AttachmentList::default()),
             dark,
         };
         palette.style();
@@ -562,6 +579,69 @@ impl Palette {
     }
 
     /// How wide `text` is in the ask log, drawn in `style`.
+    fn theme(&self) -> Theme {
+        if self.dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        }
+    }
+
+    /// Lay out attachments as the log shows them: pending ones as a pile to
+    /// strike out or take off, the newest in full; sent ones as a record.
+    fn lay_out_attachments(
+        &self,
+        items: &[(Attachment, bool)],
+        pending: bool,
+    ) -> otto_kit::components::attachments::Layout {
+        let listed: Vec<_> = items.iter().map(|(item, struck)| (item, *struck)).collect();
+        let options = AttachmentOptions {
+            width: LOG_W,
+            newest_first: pending,
+            removable: pending,
+        };
+        self.attachments
+            .borrow_mut()
+            .layout(&listed, options, &self.theme())
+    }
+
+    /// How tall a log line of attachments is, highlight room included.
+    /// The files in the attachments last laid out whose thumbnails are still
+    /// to be made; see [`AttachmentList::thumbnails_wanted`].
+    pub fn thumbnails_wanted(&self) -> Vec<std::path::PathBuf> {
+        self.attachments.borrow_mut().thumbnails_wanted()
+    }
+
+    /// Hand in the thumbnail of `path`, or that it has none.
+    pub fn set_thumbnail(&self, path: &std::path::Path, image: Option<skia_safe::Image>) {
+        self.attachments.borrow_mut().set_thumbnail(path, image);
+    }
+
+    pub fn attachments_height(&self, items: &[(Attachment, bool)], pending: bool) -> f32 {
+        self.lay_out_attachments(items, pending).height + 2.0 * HOVER_PAD
+    }
+
+    /// The pending attachment at `point`, in the log's content coordinates.
+    pub fn attachment_at(&self, lines: &[Line], point: (f32, f32)) -> Option<AttachmentHit> {
+        let (x, y) = point;
+        let (index, line) = lines
+            .iter()
+            .enumerate()
+            .find(|(_, line)| (line.top..line.top + line.height).contains(&y))?;
+        let Kind::Attachments { items, pending } = &line.kind else {
+            return None;
+        };
+        let layout = self.lay_out_attachments(items, *pending);
+        let (x, y) = (x - LOG_INSET, y - line.top - HOVER_PAD);
+        let item = layout.item_at(x, y)?;
+        Some(AttachmentHit {
+            line: index,
+            item,
+            remove: layout.remove_at(x, y) == Some(item),
+            pending: *pending,
+        })
+    }
+
     pub fn measure_log(&self, text: &str, style: Style) -> f32 {
         measure_runs(&self.log_font(style), text)
     }
@@ -663,7 +743,8 @@ impl Palette {
                 // the footer is the card talking about itself, not the
                 // conversation — but each is a line of the log all the same,
                 // so the numbering carries on past it.
-                Kind::Image { .. } | Kind::Footer { .. } => row += 1,
+                // Attachments are clicked, not selected.
+                Kind::Image { .. } | Kind::Footer { .. } | Kind::Attachments { .. } => row += 1,
             }
         }
         spans
@@ -744,6 +825,7 @@ impl Palette {
         selection: &[Rect],
         copy: Option<(usize, document::CopyButton)>,
         steps: Option<usize>,
+        attachment: Option<AttachmentHit>,
     ) {
         let prompt_font = self.log_font(Style::Prompt);
         let note_font = self.log_font(Style::Note);
@@ -861,6 +943,18 @@ impl Palette {
                         .map(|(_, button)| button);
                     document::draw_scrolled(canvas, content, doc, 0.0, &theme, copy);
                 }
+                Kind::Attachments { items, pending } => {
+                    let layout = self.lay_out_attachments(items, *pending);
+                    let hovered = attachment
+                        .filter(|hit| hit.line == index)
+                        .map(|hit| hit.item);
+                    canvas.save();
+                    canvas.translate((LOG_INSET, line.top + HOVER_PAD));
+                    self.attachments
+                        .borrow()
+                        .paint(canvas, &layout, &theme, hovered);
+                    canvas.restore();
+                }
                 Kind::Image {
                     path,
                     label,
@@ -910,21 +1004,16 @@ impl Palette {
 
     /// Paint the rows of `items` that fall inside `band`, in the list's
     /// content coordinates — row 0 at the top — for the list pane's band.
-    /// `labels` name each item's source. Items from `compact_source` are drawn
-    /// with smaller text and a smaller icon: they are there to be read, not
-    /// picked.
+    /// `labels` name each item's source.
     pub fn paint_rows(
         &self,
         canvas: &Canvas,
         band: Rect,
         items: &[&Item],
         labels: &[&'static str],
-        compact_source: Option<usize>,
     ) {
         let title_font = self.font(15.0, FontStyle::normal());
         let subtitle_font = self.font(11.5, FontStyle::normal());
-        let small_title_font = self.font(12.5, FontStyle::normal());
-        let small_subtitle_font = self.font(10.0, FontStyle::normal());
         let badge_font = self.font(10.5, FontStyle::normal());
         let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
         let theme = if self.dark {
@@ -935,12 +1024,6 @@ impl Palette {
         let layout = RowLayout::new(ROW_H, items.len());
         for index in layout.visible(band) {
             let item = items[index];
-            let compact = compact_source == Some(item.origin.source);
-            let (icon_size, title_font, subtitle_font) = if compact {
-                (SMALL_ICON, &small_title_font, &small_subtitle_font)
-            } else {
-                (ICON, &title_font, &subtitle_font)
-            };
             let icon = item
                 .icon
                 .as_deref()
@@ -953,7 +1036,6 @@ impl Palette {
             let draw = draw_row(
                 icon,
                 dot,
-                icon_size,
                 item.title.clone(),
                 item.subtitle.clone(),
                 labels.get(item.origin.source).copied().unwrap_or(""),
@@ -1027,7 +1109,6 @@ impl Palette {
 fn draw_row(
     icon: Option<Image>,
     dot: Option<Color>,
-    icon_size: f32,
     title: String,
     subtitle: Option<String>,
     badge: &'static str,
@@ -1042,14 +1123,12 @@ fn draw_row(
         paint.set_anti_alias(true);
 
         if let Some(image) = &icon {
-            let top = (height - icon_size) / 2.0;
-            // Centred in the space a full-size icon takes, so the text lines
-            // up with the rows around it.
-            let left = ROW_INSET + 8.0 + (ICON - icon_size) / 2.0;
+            let top = (height - ICON) / 2.0;
+            let left = ROW_INSET + 8.0;
             canvas.draw_image_rect_with_sampling_options(
                 image,
                 None,
-                Rect::from_xywh(left, top, icon_size, icon_size),
+                Rect::from_xywh(left, top, ICON, ICON),
                 SamplingOptions::default(),
                 &paint,
             );
@@ -1337,7 +1416,7 @@ mod tests {
         )];
         let blocks = [crate::log::Block {
             prompt: "how do I build it",
-            attachments: None,
+            attachments: &[],
             answer: &answer,
             steps: &steps,
             steps_expanded: false,
@@ -1350,10 +1429,12 @@ mod tests {
         let lines = crate::log::lay_out(
             &blocks,
             Some("Working…"),
+            &[],
             None,
             LOG_W,
             |text, style| palette.measure_log(text, style),
             |path| palette.picture_size(path),
+            |_, _| 0.0,
         );
         let spans = palette.log_spans(&lines);
         // All of it, copied, reads as the conversation does on screen: the
@@ -1415,7 +1496,7 @@ mod tests {
         ];
         let blocks = [crate::log::Block {
             prompt: "draw",
-            attachments: None,
+            attachments: &[],
             answer: &answer,
             steps: &[],
             steps_expanded: false,
@@ -1428,10 +1509,12 @@ mod tests {
         let lines = crate::log::lay_out(
             &blocks,
             None,
+            &[],
             None,
             LOG_W,
             |text, style| palette.measure_log(text, style),
             |path| palette.picture_size(path),
+            |_, _| 0.0,
         );
         assert!(
             matches!(lines[2].kind, Kind::Image { .. }),

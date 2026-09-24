@@ -379,6 +379,8 @@ files-column-original-location = 原始位置
 ## The Kind column. These name what a file is, as a user would say it.
 
 files-kind-folder = 文件夹
+attachments-screen-region = 屏幕区域
+files-add-to-gathering = 添加到收集
 files-kind-image = 图像
 files-kind-movie = 影片
 files-kind-audio = 音频
@@ -916,7 +918,6 @@ launcher-agents-error = 失败
 launcher-agents-none = 尚无智能体会话
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
-launcher-ask-attached = 附件：{ $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = 正在打开会话…
 launcher-ask-loading = 正在加载对话…

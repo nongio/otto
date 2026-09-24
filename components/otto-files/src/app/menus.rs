@@ -108,6 +108,13 @@ impl Browser {
             items.push(MenuItem::separator());
             items.push(MenuItem::action(otto_kit::t!("common-cut")).with_action_id("cut"));
             items.push(MenuItem::action(otto_kit::t!("common-copy")).with_action_id("copy"));
+            if crate::gather::available() {
+                items.push(MenuItem::separator());
+                items.push(
+                    MenuItem::action(otto_kit::t!("files-add-to-gathering"))
+                        .with_action_id(command::id::ADD_TO_GATHERING),
+                );
+            }
             items.push(MenuItem::separator());
             let label = if entries.len() == 1 {
                 otto_kit::t_owned!("files-move-to-trash")

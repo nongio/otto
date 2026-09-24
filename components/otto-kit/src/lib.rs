@@ -48,6 +48,9 @@ pub use components::container::{
 };
 pub use components::label::{Label, LabelBuilder, TextAlign};
 pub use components::layer::{surface::LayerSurface, Layer};
+/// Skia, for drawing what the toolkit's own components don't cover. Apps
+/// reach it through here instead of depending on `skia-safe` themselves.
+pub use skia_safe as skia;
 /// A Wayland object's identity, as the toolkit's own API uses it: surfaces are
 /// keyed by it throughout, so an application should not have to depend on
 /// `wayland-client` to name one.

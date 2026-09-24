@@ -91,7 +91,6 @@ fn main() {
                 skia_safe::Rect::from_wh(list.width(), list.height()),
                 &shown,
                 &labels,
-                None,
             );
             canvas.restore();
         }

@@ -51,10 +51,57 @@ pub mod opening;
 pub mod payload;
 pub mod sandbox;
 pub mod spawn;
+pub mod thumbcache;
+pub mod thumbnailer;
 pub mod uri;
 
 pub use otto_kit::preview::{Fact, Pixels, Preview, PreviewLayout, Row, Word};
 pub use spawn::{decode_path, open, Opened};
+
+/// A thumbnail of `path`, as Files shows one in place of its icon: the shared
+/// thumbnail cache's, or failing that one decoded in the sandbox. `None` for a
+/// file whose preview is not a picture (text, an archive), or one that can't
+/// be read.
+///
+/// `modified` is the file's modification time, which a cached thumbnail must
+/// match to count.
+///
+/// **Blocks.** It reads files and may spawn the sandboxed decode worker, so it
+/// belongs on a background thread. The host must call
+/// [`run_worker_if_requested`] at the top of `main`, since the worker is the
+/// host's own executable.
+pub fn thumbnail(
+    path: &std::path::Path,
+    modified: Option<std::time::SystemTime>,
+    size: thumbcache::Size,
+) -> Option<skia_safe::Image> {
+    if let Some(image) = thumbcache::lookup(path, modified, size) {
+        return Some(image);
+    }
+    // The same sandboxed decoder Peek uses, asked for a thumbnail-sized
+    // picture rather than a panel-sized one. Untrusted bytes are parsed in the
+    // worker, never here.
+    let request = decode::Request {
+        width: size.pixels(),
+        height: size.pixels(),
+        // A thumbnail shows one frame, so asking for an animation would buy a
+        // strip of hundreds and keep the first of them.
+        animate: false,
+        name: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    match decode_path(path, &request) {
+        Preview::Pixels { pixels, .. } => pixels.to_image(),
+        // Everything else a previewer can return — a text listing, an
+        // archive's contents, an unavailable file — is not a picture, and
+        // standing it in for one would put a grey card where the type icon
+        // says something useful.
+        _ => None,
+    }
+}
 
 /// Run the sandboxed decode worker if this process was started as one.
 ///

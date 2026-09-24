@@ -11,11 +11,13 @@
 //! entry scan is the only work at startup, and it is milliseconds.
 
 use std::os::fd::RawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
 use otto_kit::clipboard;
+use otto_kit::components::attachments::ICON_SIZE;
+use otto_kit::components::gathered::Gathered;
 use otto_kit::components::scroll::{Axis, RowLayout, ScrollContent, ScrollPane};
 use otto_kit::components::text_input::{
     KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
@@ -28,6 +30,8 @@ use otto_kit::protocols::otto_timing_function_v1::Preset;
 use otto_kit::surfaces::{LayerShellSurface, SubsurfaceSurface};
 use otto_kit::CursorShape;
 use otto_kit::{App, AppContext, AppRunner, ObjectId};
+use otto_peek::thumbcache::Size;
+use otto_peek::thumbnailer::Thumbnailer;
 use skia_safe::Rect;
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
@@ -40,15 +44,15 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 };
 
 use otto_launcher::apps::Apps;
-use otto_launcher::ask::{attached_text, Ask, Note, Status, Step, Terminal};
+use otto_launcher::ask::{Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
 use otto_launcher::input;
 use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
 use otto_launcher::selection::{self, Caret, Selection, Span};
 use otto_launcher::source::{rank, Item, Origin, Source};
 use otto_launcher::view::{
-    field_style, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H, LOG_W,
-    MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
+    field_style, AttachmentHit, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H,
+    LOG_W, MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
 };
 use otto_launcher::windows;
 
@@ -169,6 +173,12 @@ struct Launcher {
 
     /// Ask mode's connection to otto-agents, and the request once it is made.
     ask: Option<Ask>,
+    /// What otto-gather has gathered, shown with the next request in its
+    /// card's place; `None` outside asking.
+    gathered: Option<Gathered>,
+    /// Makes the thumbnails attached files show, as Files does; started
+    /// with the first one wanted.
+    thumbnailer: Option<Thumbnailer>,
     /// The ask log, laid out for the card.
     log: Vec<LogLine>,
     /// The answer and its status as plain text, for assistive technologies.
@@ -201,6 +211,12 @@ struct Launcher {
     /// The group of tool calls the pointer is over, as its log line, so it
     /// can say it is something to click.
     steps_hover: Option<usize>,
+    /// The attachment going with the next request that the pointer is over,
+    /// highlighted as something to click.
+    attachment_hover: Option<AttachmentHit>,
+    /// One pressed, and where: a release in the same spot strikes it out,
+    /// or takes it off when on its remove button.
+    attachment_press: Option<(AttachmentHit, f32, f32)>,
     /// The requests whose tool calls have been opened, by their place in the
     /// transcript. Everything else shows its last call and an ellipsis.
     steps_open: std::collections::HashSet<usize>,
@@ -283,11 +299,8 @@ impl Scope {
     }
 }
 
-/// Ask mode's rows: the agents, sessions or answers to pick from…
+/// Ask mode's rows: the agents, sessions or answers to pick from.
 const ASK_ROWS: usize = 0;
-/// …and, under them, the files going with the next request, which are only
-/// shown.
-const ATTACHMENT_ROWS: usize = 1;
 
 /// When the process started, for the startup timings. A launcher is judged on
 /// how long it takes to appear, so the stages that make up that time are
@@ -309,9 +322,8 @@ impl Launcher {
         // connection brings, and a badge on them would only repeat the mode.
         // Agents mode is ask mode that starts from a list of sessions.
         let ask = matches!(scope, Scope::Ask | Scope::Agents).then(|| {
-            // Two kinds of row, `ASK_ROWS` and `ATTACHMENT_ROWS`, neither
-            // badged.
-            labels.extend(["", ""]);
+            // One kind of row, `ASK_ROWS`, not badged.
+            labels.push("");
             Ask::open()
         });
 
@@ -375,6 +387,8 @@ impl Launcher {
             parent_painted: false,
             settle_until: None,
             last_tick: Instant::now(),
+            gathered: None,
+            thumbnailer: None,
             ask,
             log: Vec::new(),
             log_text: String::new(),
@@ -389,6 +403,8 @@ impl Launcher {
             log_cursor: CursorShape::Default,
             code_hover: None,
             steps_hover: None,
+            attachment_hover: None,
+            attachment_press: None,
             steps_open: std::collections::HashSet::new(),
             link_press: None,
             code_copied: None,
@@ -467,9 +483,6 @@ impl Launcher {
             } else {
                 ask.agent_rows(ASK_ROWS)
             };
-            if question.is_none() && input.is_none() && !self.picking {
-                self.rows.extend(ask.attachment_rows(ATTACHMENT_ROWS));
-            }
             let asked = question
                 .as_ref()
                 .map(|q| q.tool_call_id.clone())
@@ -610,9 +623,6 @@ impl Launcher {
                 }
             }
         }
-        // An attached file is not something to pick, so it is never shown
-        // picked.
-        let highlighted = !self.attachment_row(self.selected);
         let (Some(list), Some(palette)) = (self.list.as_mut(), self.palette.as_ref()) else {
             return;
         };
@@ -625,7 +635,7 @@ impl Launcher {
         list.set_hidden(false);
         list.set_viewport(viewport);
         list.set_highlight(
-            highlighted.then(|| Palette::highlight_rect(self.selected)),
+            Some(Palette::highlight_rect(self.selected)),
             palette.highlight_color(),
             HIGHLIGHT_RADIUS,
         );
@@ -634,7 +644,6 @@ impl Launcher {
             palette,
             items: &items,
             labels: &self.labels,
-            compact_source: self.ask.is_some().then_some(ATTACHMENT_ROWS),
             revision: self.list_revision,
         };
         self.list_busy = list.update(&content, &AppContext::current_theme());
@@ -673,6 +682,7 @@ impl Launcher {
             selection: &self.selection_rects,
             copy,
             steps: self.steps_hover,
+            attachment: self.attachment_hover,
             revision: self.log_revision,
         };
         self.log_busy = pane.update(&content, &AppContext::current_theme());
@@ -889,21 +899,13 @@ impl Launcher {
         !self.asked_question() && self.ask.as_ref().is_some_and(|ask| ask.input().is_some())
     }
 
-    /// Whether the row at `index` is an attached file.
-    fn attachment_row(&self, index: usize) -> bool {
-        self.ask.is_some()
-            && self
-                .row(index)
-                .is_some_and(|item| item.origin.source == ATTACHMENT_ROWS)
-    }
-
     /// Attach `files` to the first request, and open the session `session`
     /// names instead of starting one, when there is one.
-    fn prepare_ask(&mut self, files: Vec<PathBuf>, session: Option<&str>) {
+    fn prepare_ask(&mut self, files: Vec<(PathBuf, bool)>, session: Option<&str>) {
         let Some(ask) = self.ask.as_mut() else {
             return;
         };
-        ask.attach(files);
+        ask.attach_struck(files);
         if let Some(session) = session {
             ask.resume(session);
             self.follow_session();
@@ -968,6 +970,13 @@ impl Launcher {
         self.relayout_log();
     }
 
+    /// Show what otto-gather has gathered with the next request.
+    fn show_gathered(&mut self) {
+        if let (Some(ask), Some(gathered)) = (self.ask.as_mut(), self.gathered.as_ref()) {
+            ask.set_gathered(gathered.items());
+        }
+    }
+
     /// Spring the card's changes of size for a moment, as it springs open: the
     /// launcher is changing state, and what the new state shows may take a
     /// round trip to otto-agents to arrive.
@@ -981,6 +990,7 @@ impl Launcher {
     fn new_session(&mut self) {
         self.spring();
         self.ask = Some(Ask::open());
+        self.show_gathered();
         self.picking = false;
         self.opened_session = None;
         self.return_to = None;
@@ -1011,6 +1021,7 @@ impl Launcher {
     fn back_to_sessions(&mut self) {
         self.spring();
         self.ask = Some(Ask::open());
+        self.show_gathered();
         self.picking = true;
         // Back where the user was, once the list arrives: the session left.
         self.return_to = self.opened_session.take();
@@ -1034,17 +1045,24 @@ impl Launcher {
     /// field. The field empties for the next request, which queues behind
     /// whatever the agent is doing. The launcher stays up: closing it is
     /// always the user's call.
+    ///
+    /// Nothing typed is a request too when something is attached: the
+    /// attachments can be the whole question.
     fn send_ask(&mut self) {
         let prompt = self.input.value().trim().to_string();
         let agent = self.chosen_agent();
         let Some(ask) = self.ask.as_mut() else {
             return;
         };
-        if prompt.is_empty() {
+        if prompt.is_empty() && !ask.has_attachments() {
             return;
         }
         let first = !ask.running();
-        ask.send(&prompt, agent);
+        if ask.send(&prompt, agent) {
+            if let Some(gathered) = self.gathered.as_mut() {
+                gathered.sent();
+            }
+        }
         self.input.set_value("");
         if first {
             // The agent is chosen for the session now, so its list goes.
@@ -1100,14 +1118,26 @@ impl Launcher {
         let (Some(ask), Some(palette)) = (self.ask.as_ref(), self.palette.as_ref()) else {
             return;
         };
-        let Some(transcript) = ask.transcript() else {
-            return;
+        // What goes with the next request shows before anything is asked.
+        let pending = ask.pending();
+        let transcript = match ask.transcript() {
+            Some(transcript) => transcript,
+            None if !pending.is_empty() => Default::default(),
+            // Nothing asked and nothing left to send: the log goes, rather
+            // than keep showing what was just taken off.
+            None => {
+                if !self.log.is_empty() {
+                    self.log.clear();
+                    self.log_text.clear();
+                    self.log_spans.clear();
+                    self.log_selection = None;
+                    self.selection_rects.clear();
+                    self.log_revision = self.log_revision.wrapping_add(1);
+                    self.dirty = true;
+                }
+                return;
+            }
         };
-        let attached: Vec<Option<String>> = transcript
-            .entries
-            .iter()
-            .map(|entry| attached_text(&entry.attachments))
-            .collect();
         let notes: Vec<Option<String>> = transcript
             .entries
             .iter()
@@ -1135,28 +1165,25 @@ impl Launcher {
             .enumerate()
             .zip(&notes)
             .zip(&steps)
-            .zip(&attached)
             .zip(&inputs)
-            .map(
-                |(((((index, entry), note), steps), attached), inputs)| Block {
-                    prompt: &entry.prompt,
-                    attachments: attached.as_deref(),
-                    answer: &entry.answer,
-                    steps,
-                    steps_expanded: self.steps_open.contains(&index),
-                    inputs,
-                    question: entry
-                        .question
-                        .as_ref()
-                        .map(|question| (question.title.as_str(), question.detail.as_str())),
-                    action: entry
-                        .question
-                        .as_ref()
-                        .map(|question| question.action.as_slice())
-                        .unwrap_or(&[]),
-                    note: note.as_deref(),
-                },
-            )
+            .map(|((((index, entry), note), steps), inputs)| Block {
+                prompt: &entry.prompt,
+                attachments: &entry.attachments,
+                answer: &entry.answer,
+                steps,
+                steps_expanded: self.steps_open.contains(&index),
+                inputs,
+                question: entry
+                    .question
+                    .as_ref()
+                    .map(|question| (question.title.as_str(), question.detail.as_str())),
+                action: entry
+                    .question
+                    .as_ref()
+                    .map(|question| question.action.as_slice())
+                    .unwrap_or(&[]),
+                note: note.as_deref(),
+            })
             .collect();
         // The status closes the log; the agent and its mode sit under it.
         let status = transcript.status.as_ref().map(Status::text);
@@ -1169,10 +1196,12 @@ impl Launcher {
         self.log = lay_out(
             &blocks,
             status.as_deref(),
+            &pending,
             footer,
             LOG_W,
             |text, style| palette.measure_log(text, style),
             |path| palette.picture_size(path),
+            |items, pending| palette.attachments_height(items, pending),
         );
         self.log_text = self
             .log
@@ -1200,6 +1229,48 @@ impl Launcher {
         }
         self.log_revision = self.log_revision.wrapping_add(1);
         self.dirty = true;
+        self.request_thumbnails();
+    }
+
+    /// Ask for the thumbnails of attached files just laid out.
+    fn request_thumbnails(&mut self) {
+        let Some(palette) = self.palette.as_ref() else {
+            return;
+        };
+        let wanted = palette.thumbnails_wanted();
+        if wanted.is_empty() {
+            return;
+        }
+        if self.thumbnailer.is_none() {
+            match Thumbnailer::new(Size::for_box(ICON_SIZE, 2.0)) {
+                Ok(thumbnailer) => self.thumbnailer = Some(thumbnailer),
+                Err(err) => {
+                    tracing::warn!(%err, "cannot make thumbnails");
+                    return;
+                }
+            }
+        }
+        if let Some(thumbnailer) = self.thumbnailer.as_ref() {
+            for path in wanted {
+                thumbnailer.request(path);
+            }
+        }
+    }
+
+    /// Show the thumbnails made since the last pass.
+    fn take_thumbnails(&mut self) {
+        let (Some(thumbnailer), Some(palette)) = (self.thumbnailer.as_mut(), self.palette.as_ref())
+        else {
+            return;
+        };
+        let made = thumbnailer.take();
+        if made.is_empty() {
+            return;
+        }
+        for (path, image) in made {
+            palette.set_thumbnail(&path, image);
+        }
+        self.relayout_log();
     }
 
     /// Select `selection` in the log — or nothing, with `None` — and repaint
@@ -1301,6 +1372,63 @@ impl Launcher {
         self.steps_hover = hover;
         self.log_revision = self.log_revision.wrapping_add(1);
         self.dirty = true;
+    }
+
+    /// Follow the pointer over the attachments going with the next request,
+    /// so the one under it is highlighted.
+    fn hover_attachment(&mut self, point: Option<(f32, f32)>) {
+        let hover = point.and_then(|point| {
+            self.palette
+                .as_ref()
+                .and_then(|palette| palette.attachment_at(&self.log, point))
+        });
+        if hover.map(|hit| (hit.line, hit.item))
+            == self.attachment_hover.map(|hit| (hit.line, hit.item))
+        {
+            self.attachment_hover = hover;
+            return;
+        }
+        self.attachment_hover = hover;
+        self.log_revision = self.log_revision.wrapping_add(1);
+        self.dirty = true;
+    }
+
+    /// A click on an attachment going with the next request: on its remove
+    /// button it comes off, anywhere else it is struck out or brought back.
+    fn click_attachment(&mut self, hit: AttachmentHit) {
+        // One that went with a request opens, as it would in Files.
+        if !hit.pending {
+            let path = match self.log.get(hit.line).map(|line| &line.kind) {
+                Some(ask_log::Kind::Attachments { items, .. }) => items
+                    .get(hit.item)
+                    .and_then(|(item, _)| item.path().map(Path::to_path_buf)),
+                _ => None,
+            };
+            if let Some(path) = path {
+                let uri = otto_kit::clipboard::path_to_uri(&path);
+                if let Err(err) = input::open_link(&uri) {
+                    tracing::warn!(%err, path = %path.display(), "could not open the attachment");
+                }
+            }
+            return;
+        }
+        let Some(ask) = self.ask.as_mut() else {
+            return;
+        };
+        // A gathered item is changed in otto-gather too, which owns it.
+        if hit.remove {
+            if let Some(index) = ask.remove_attachment(hit.item) {
+                self.gathered
+                    .as_ref()
+                    .inspect(|gathered| gathered.remove(index));
+            }
+        } else if let Some(index) = ask.toggle_attachment(hit.item) {
+            self.gathered
+                .as_ref()
+                .inspect(|gathered| gathered.toggle(index));
+        }
+        self.attachment_hover = None;
+        self.relayout_log();
     }
 
     fn link_at(&self, point: Option<(f32, f32)>) -> Option<&str> {
@@ -1483,10 +1611,12 @@ impl Launcher {
         // The agents opening under the field, and the log above it, grow the
         // card with the spring it opens with. The material clips what is drawn
         // past its edge, so rows and log are uncovered as it grows rather than
-        // drawn outside it.
-        if self
-            .spring_until
-            .is_some_and(|until| Instant::now() < until)
+        // drawn outside it. Not before the card has opened: it arrives where
+        // it is, growing from the centre, rather than sliding into place.
+        if self.opened
+            && self
+                .spring_until
+                .is_some_and(|until| Instant::now() < until)
         {
             animate(SCALE_IN, Curve::Spring(BOUNCE), place);
         } else {
@@ -1644,8 +1774,6 @@ struct Rows<'a> {
     palette: &'a Palette,
     items: &'a [&'a Item],
     labels: &'a [&'static str],
-    /// The source whose rows are drawn small: the attached files, in ask mode.
-    compact_source: Option<usize>,
     revision: u64,
 }
 
@@ -1660,7 +1788,7 @@ impl ScrollContent for Rows<'_> {
 
     fn paint(&self, canvas: &skia_safe::Canvas, band: Rect) {
         self.palette
-            .paint_rows(canvas, band, self.items, self.labels, self.compact_source);
+            .paint_rows(canvas, band, self.items, self.labels);
     }
 }
 
@@ -1675,6 +1803,8 @@ struct LogRows<'a> {
     revision: u64,
     /// The log line of the group of tool calls under the pointer.
     steps: Option<usize>,
+    /// The attachment under the pointer.
+    attachment: Option<AttachmentHit>,
 }
 
 impl ScrollContent for LogRows<'_> {
@@ -1694,6 +1824,7 @@ impl ScrollContent for LogRows<'_> {
             self.selection,
             self.copy,
             self.steps,
+            self.attachment,
         );
     }
 }
@@ -2427,6 +2558,7 @@ impl App for Launcher {
                     let point = self.log_point(x, y);
                     self.hover_code(point);
                     self.hover_steps(point);
+                    self.hover_attachment(point);
                     // Over the log's words the pointer says so, because
                     // nothing else about painted text does; over a copy
                     // button it is a hand. Only when it changes: motion
@@ -2434,7 +2566,7 @@ impl App for Launcher {
                     // same cursor every time.
                     let on_button = self.code_hover.is_some_and(|(_, hit)| hit.on_button);
                     let over_link = self.link_at(point).is_some();
-                    let over_steps = self.steps_hover.is_some();
+                    let over_steps = self.steps_hover.is_some() || self.attachment_hover.is_some();
                     let over_text = point
                         .and_then(|point| selection::caret_at(&self.log_spans, point))
                         .is_some();
@@ -2506,6 +2638,17 @@ impl App for Launcher {
                         }
                         continue;
                     }
+                    // A press on an attachment going with the next request is
+                    // a click on it, if it is released there.
+                    if let Some(hit) = self.log_point(x, y).and_then(|point| {
+                        self.palette
+                            .as_ref()
+                            .and_then(|palette| palette.attachment_at(&self.log, point))
+                    }) {
+                        self.attachment_press = Some((hit, x, y));
+                        self.set_log_selection(None);
+                        continue;
+                    }
                     // A press on a group of tool calls opens or closes it,
                     // and is not also the start of a selection over the words
                     // it is on.
@@ -2556,6 +2699,20 @@ impl App for Launcher {
                         self.dragging = Some((x, y));
                     }
                 }
+                PointerEventKind::Release { .. } if self.attachment_press.is_some() => {
+                    const SLOP: f32 = 4.0;
+                    if let Some((hit, from_x, from_y)) = self.attachment_press.take() {
+                        let here = self.log_point(x, y).and_then(|point| {
+                            self.palette
+                                .as_ref()
+                                .and_then(|palette| palette.attachment_at(&self.log, point))
+                        });
+                        let still = (x - from_x).abs() <= SLOP && (y - from_y).abs() <= SLOP;
+                        if still && here == Some(hit) {
+                            self.click_attachment(hit);
+                        }
+                    }
+                }
                 PointerEventKind::Release { .. } if self.link_press.is_some() => {
                     self.selecting = None;
                     // A press and a release in the same spot is a click; one
@@ -2576,11 +2733,6 @@ impl App for Launcher {
                 }
                 PointerEventKind::Release { .. } if on_card => {
                     if let Some(row) = self.list_row_at(x, y) {
-                        // An attached file is only shown; clicking it does
-                        // nothing.
-                        if self.attachment_row(row) {
-                            return;
-                        }
                         self.selected = row;
                         // A click on an answer answers, whatever is typed.
                         if self.asked_question() {
@@ -2599,6 +2751,8 @@ impl App for Launcher {
                     self.log_cursor = CursorShape::Default;
                     self.hover_code(None);
                     self.hover_steps(None);
+                    self.hover_attachment(None);
+                    self.attachment_press = None;
                     if let Some(list) = self.list.as_mut() {
                         list.pointer_leave();
                     }
@@ -2746,6 +2900,12 @@ impl App for Launcher {
             self.engaged = true;
         }
 
+        self.take_thumbnails();
+        if self.gathered.as_mut().is_some_and(Gathered::pump) {
+            self.show_gathered();
+            self.spring();
+            self.relayout_log();
+        }
         match self.ask.as_mut().map(|ask| (ask.pump(), ask.running())) {
             Some((true, true)) => {
                 // The rows follow the agent's question as much as the log does.
@@ -2830,11 +2990,16 @@ impl App for Launcher {
             .iter()
             .filter_map(|s| s.poll_fd())
             .chain(self.ask.as_ref().map(Ask::poll_fd))
+            .chain(self.gathered.as_ref().map(Gathered::poll_fd))
+            .chain(self.thumbnailer.as_ref().map(Thumbnailer::poll_fd))
             .collect()
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Thumbnails are decoded by this same executable, started as a sandboxed
+    // worker; that start ends here.
+    otto_peek::run_worker_if_requested();
     STARTED.get_or_init(Instant::now);
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -2862,6 +3027,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut words: Vec<String> = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
     let mut session: Option<String> = None;
+    let mut with_selection = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--apps" | "-a" => scope = Scope::Apps,
@@ -2873,10 +3039,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // place of starting one. Either means asking.
             "--file" => files.extend(args.next().map(PathBuf::from)),
             "--session" => session = args.next(),
+            // Start from what is selected in the app in front, gathered.
+            "--selection" => {
+                scope = Scope::Ask;
+                with_selection = true;
+            }
             "--help" | "-h" => {
                 println!(
                     "usage: otto-launcher [--apps|--windows|--all|--ask|--agents] \
-                     [--file PATH]... [--session ID] [query]\n\
+                     [--file PATH]... [--session ID] [--selection] [query]\n\
                      otto-ask opens in --ask mode"
                 );
                 return Ok(());
@@ -2887,8 +3058,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if (!files.is_empty() || session.is_some()) && scope != Scope::Agents {
         scope = Scope::Ask;
     }
+    let files: Vec<(PathBuf, bool)> = files.into_iter().map(|file| (file, false)).collect();
+    // Held before the launcher's card appears, and the selection read while
+    // the app in front still has the keyboard: the card takes it.
+    let gathered =
+        matches!(scope, Scope::Ask | Scope::Agents).then(|| Gathered::follow(true, with_selection));
     let mut launcher = Launcher::new(&words.join(" "), scope);
     launcher.prepare_ask(files, session.as_deref());
+    launcher.gathered = gathered;
     AppRunner::new(launcher).run()?;
     Ok(())
 }
