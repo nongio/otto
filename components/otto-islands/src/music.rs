@@ -523,7 +523,7 @@ impl MusicMonitor {
     /// Where the playing track's sound goes. Worked out again only when the
     /// streams or the player changed.
     fn current_route(&mut self, info: &PlaybackInfo) -> Route {
-        let (streams, generation) = self.streams.snapshot();
+        let (streams, clients, generation) = self.streams.snapshot();
         if let Some((cached_generation, pids, names, route)) = &self.route {
             if *cached_generation == generation
                 && *pids == info.player_pids
@@ -538,6 +538,7 @@ impl MusicMonitor {
                 names: &info.player_names,
             },
             &streams,
+            &clients,
             audio_route::parent_pid,
         );
         tracing::debug!(?route, players = ?info.player_names, "music route");

@@ -12,6 +12,8 @@
 //! device: a phone or a speaker driven over the network (Spotify Connect, a
 //! cast), even when other apps play here. The island says so instead of
 //! drawing bars that would never move, or would move to someone else's sound.
+//! A player that is connected to PipeWire is local, only silent: a muted video
+//! opens no stream at all, and that is no reason to claim another device.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -39,8 +41,11 @@ pub struct StreamNode {
 pub enum Route {
     /// The player's own stream, by `object.serial`.
     Stream(u32),
-    /// None of the running streams is the player's: the track is on another
-    /// device. Whatever else plays locally is not the track.
+    /// The player is connected to the local audio graph but plays nothing,
+    /// as a muted video does.
+    Silent,
+    /// The player has no presence in the local audio graph: the track is on
+    /// another device. Whatever else plays locally is not the track.
     Elsewhere,
 }
 
@@ -51,21 +56,24 @@ pub struct Player<'a> {
     pub names: &'a [String],
 }
 
-/// Decide where `player`'s sound goes among `streams`. `parent_of` gives a
-/// process's parent, so a stream from a child of the player counts as its own.
+/// Decide where `player`'s sound goes among `streams`. `clients` are the
+/// processes connected to PipeWire. `parent_of` gives a process's parent, so a
+/// stream or client of a child of the player counts as its own.
 pub fn route(
     player: Player<'_>,
     streams: &[StreamNode],
+    clients: &[u32],
     parent_of: impl Fn(u32) -> Option<u32>,
 ) -> Route {
     let wanted = player_names(player.names);
+    let owns = |pid: u32| {
+        player
+            .pids
+            .iter()
+            .any(|&ancestor| descends_from(pid, ancestor, &parent_of))
+    };
     let belongs = |stream: &StreamNode| {
-        stream.pid.is_some_and(|pid| {
-            player
-                .pids
-                .iter()
-                .any(|&ancestor| descends_from(pid, ancestor, &parent_of))
-        }) || stream.names.iter().any(|name| wanted.contains(name))
+        stream.pid.is_some_and(owns) || stream.names.iter().any(|name| wanted.contains(name))
     };
     // The newest of the player's running streams: a browser may keep an old
     // one open for another tab.
@@ -76,7 +84,11 @@ pub fn route(
     {
         return Route::Stream(stream.serial);
     }
-    Route::Elsewhere
+    if streams.iter().any(belongs) || clients.iter().any(|&pid| owns(pid)) {
+        Route::Silent
+    } else {
+        Route::Elsewhere
+    }
 }
 
 /// The names to look for in a stream's properties: each player name, and the
@@ -120,8 +132,8 @@ pub fn parent_pid(pid: u32) -> Option<u32> {
     rest.split_whitespace().nth(1)?.parse().ok()
 }
 
-/// The audio output streams in the PipeWire graph, kept up to date on a
-/// thread of their own.
+/// The audio output streams and client processes in the PipeWire graph, kept
+/// up to date on a thread of their own.
 #[derive(Clone)]
 pub struct AudioStreams {
     shared: Arc<Mutex<Snapshot>>,
@@ -130,6 +142,8 @@ pub struct AudioStreams {
 #[derive(Default)]
 struct Snapshot {
     streams: Vec<StreamNode>,
+    /// `application.process.id` of every connected client.
+    clients: Vec<u32>,
     /// Bumped on every change, so a reader can tell a stale answer.
     generation: u64,
 }
@@ -148,11 +162,11 @@ impl AudioStreams {
         Self { shared }
     }
 
-    /// The streams and the snapshot's generation.
-    pub fn snapshot(&self) -> (Vec<StreamNode>, u64) {
+    /// The streams, the client processes and the snapshot's generation.
+    pub fn snapshot(&self) -> (Vec<StreamNode>, Vec<u32>, u64) {
         self.shared
             .lock()
-            .map(|s| (s.streams.clone(), s.generation))
+            .map(|s| (s.streams.clone(), s.clients.clone(), s.generation))
             .unwrap_or_default()
     }
 }
@@ -185,6 +199,7 @@ fn stream_node(
 
 fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
     use pipewire as pw;
+    use pw::client::{Client, ClientListener};
     use pw::node::{Node, NodeListener, NodeState};
     use pw::types::ObjectType;
 
@@ -196,24 +211,35 @@ fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
     let registry = core.get_registry_rc()?;
     let registry_weak = registry.downgrade();
 
-    // Bound nodes by global id; dropping one unbinds it.
-    struct Bound {
-        _node: Node,
-        _listener: NodeListener,
+    // Bound nodes and clients by global id; dropping one unbinds it.
+    enum Bound {
+        Node {
+            _node: Node,
+            _listener: NodeListener,
+        },
+        Client {
+            _client: Client,
+            _listener: ClientListener,
+        },
     }
     let bound: Rc<RefCell<HashMap<u32, Bound>>> = Rc::default();
     let nodes: Rc<RefCell<HashMap<u32, StreamNode>>> = Rc::default();
+    let clients: Rc<RefCell<HashMap<u32, u32>>> = Rc::default();
 
     let publish = {
         let shared = shared.clone();
         let nodes = nodes.clone();
+        let clients = clients.clone();
         move || {
-            let streams: Vec<StreamNode> = nodes.borrow().values().cloned().collect();
+            let mut streams: Vec<StreamNode> = nodes.borrow().values().cloned().collect();
+            streams.sort_by_key(|s| s.serial);
+            let mut pids: Vec<u32> = clients.borrow().values().copied().collect();
+            pids.sort_unstable();
+            pids.dedup();
             if let Ok(mut snapshot) = shared.lock() {
-                let mut sorted = streams;
-                sorted.sort_by_key(|s| s.serial);
-                if snapshot.streams != sorted {
-                    snapshot.streams = sorted;
+                if snapshot.streams != streams || snapshot.clients != pids {
+                    snapshot.streams = streams;
+                    snapshot.clients = pids;
                     snapshot.generation += 1;
                     AppContext::request_wakeup();
                 }
@@ -227,8 +253,49 @@ fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
         .global({
             let bound = bound.clone();
             let nodes = nodes.clone();
+            let clients = clients.clone();
             let publish = publish.clone();
             move |global| {
+                if global.type_ == ObjectType::Client {
+                    let Some(registry) = registry_weak.upgrade() else {
+                        return;
+                    };
+                    let client: Client = match registry.bind(global) {
+                        Ok(client) => client,
+                        Err(error) => {
+                            tracing::debug!(%error, id = global.id, "binding a client failed");
+                            return;
+                        }
+                    };
+                    let id = global.id;
+                    // The process id is in the info, not the global: a
+                    // PulseAudio client's global names pipewire-pulse.
+                    let listener = client
+                        .add_listener_local()
+                        .info({
+                            let clients = clients.clone();
+                            let publish = publish.clone();
+                            move |info| {
+                                let pid = info
+                                    .props()
+                                    .and_then(|props| props.get("application.process.id"))
+                                    .and_then(|pid| pid.parse().ok());
+                                if let Some(pid) = pid {
+                                    clients.borrow_mut().insert(id, pid);
+                                    publish();
+                                }
+                            }
+                        })
+                        .register();
+                    bound.borrow_mut().insert(
+                        id,
+                        Bound::Client {
+                            _client: client,
+                            _listener: listener,
+                        },
+                    );
+                    return;
+                }
                 if global.type_ != ObjectType::Node {
                     return;
                 }
@@ -274,7 +341,7 @@ fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
                     .insert(id, stream_node(serial, props, false));
                 bound.borrow_mut().insert(
                     id,
-                    Bound {
+                    Bound::Node {
                         _node: node,
                         _listener: listener,
                     },
@@ -285,10 +352,13 @@ fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
         .global_remove({
             let bound = bound.clone();
             let nodes = nodes.clone();
+            let clients = clients.clone();
             let publish = publish.clone();
             move |id| {
                 bound.borrow_mut().remove(&id);
-                if nodes.borrow_mut().remove(&id).is_some() {
+                let node = nodes.borrow_mut().remove(&id).is_some();
+                let client = clients.borrow_mut().remove(&id).is_some();
+                if node || client {
                     publish();
                 }
             }
@@ -335,7 +405,7 @@ mod tests {
             stream(10, Some(100), &["firefox"], true),
             stream(11, Some(200), &["spotify"], true),
         ];
-        assert_eq!(route(player, &streams, parent_of), Route::Stream(11));
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Stream(11));
     }
 
     #[test]
@@ -346,7 +416,7 @@ mod tests {
             names: &names(&["chromium"]),
         };
         let streams = [stream(10, Some(120), &["audio service"], true)];
-        assert_eq!(route(player, &streams, parent_of), Route::Stream(10));
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Stream(10));
     }
 
     #[test]
@@ -357,7 +427,7 @@ mod tests {
             names: &names(&["spotify", "com.spotify.Client"]),
         };
         let streams = [stream(10, Some(4242), &["spotify"], true)];
-        assert_eq!(route(player, &streams, parent_of), Route::Stream(10));
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Stream(10));
     }
 
     #[test]
@@ -367,7 +437,7 @@ mod tests {
             names: &names(&["org.mozilla.firefox"]),
         };
         let streams = [stream(10, None, &["firefox"], true)];
-        assert_eq!(route(player, &streams, parent_of), Route::Stream(10));
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Stream(10));
     }
 
     #[test]
@@ -380,7 +450,7 @@ mod tests {
             stream(10, Some(200), &["spotify"], false),
             stream(11, Some(100), &["firefox"], true),
         ];
-        assert_eq!(route(player, &streams, parent_of), Route::Elsewhere);
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Silent);
     }
 
     #[test]
@@ -389,9 +459,30 @@ mod tests {
             pids: &[200],
             names: &names(&["spotify"]),
         };
+        let streams = [stream(10, Some(100), &["firefox"], false)];
+        assert_eq!(route(player, &streams, &[100], parent_of), Route::Elsewhere);
+        assert_eq!(route(player, &[], &[], parent_of), Route::Elsewhere);
+    }
+
+    #[test]
+    fn a_player_with_an_idle_stream_is_silent() {
+        let player = Player {
+            pids: &[200],
+            names: &names(&["spotify"]),
+        };
         let streams = [stream(10, Some(200), &["spotify"], false)];
-        assert_eq!(route(player, &streams, parent_of), Route::Elsewhere);
-        assert_eq!(route(player, &[], parent_of), Route::Elsewhere);
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Silent);
+    }
+
+    #[test]
+    fn a_connected_player_with_no_stream_is_silent() {
+        // A muted video: Chromium's audio service is connected but opens
+        // no stream.
+        let player = Player {
+            pids: &[100],
+            names: &names(&["chromium"]),
+        };
+        assert_eq!(route(player, &[], &[120], parent_of), Route::Silent);
     }
 
     #[test]
@@ -404,7 +495,7 @@ mod tests {
             stream(10, Some(120), &["chromium"], true),
             stream(15, Some(120), &["chromium"], true),
         ];
-        assert_eq!(route(player, &streams, parent_of), Route::Stream(15));
+        assert_eq!(route(player, &streams, &[], parent_of), Route::Stream(15));
     }
 
     #[test]
