@@ -24,12 +24,16 @@ const BANDS: [(f32, f32); 5] = [
 /// How far above a band's noise floor, in dB, a sound starts to show and
 /// fills the bar.
 const ABOVE_FLOOR_DB: f32 = 6.0;
-const RANGE_DB: f32 = 30.0;
+const RANGE_DB: f32 = 40.0;
 /// How fast a band's noise floor creeps up towards a steady sound, in dB per
-/// frame (about 1.2 dB a second at 24 fps). It drops at once to anything
+/// frame (about 10 dB a second at 24 fps). It drops at once to anything
 /// quieter, so it settles on the background within a few seconds and speech,
 /// which comes and goes, stays above it.
-const FLOOR_RISE_DB: f32 = 0.05;
+const FLOOR_RISE_DB: f32 = 0.4;
+/// Lowest a noise floor goes. The first frames of a capture can be digital
+/// silence; a floor that followed them down would take the bars to the top
+/// for as long as it takes to climb back to the room.
+const MIN_FLOOR_DB: f32 = -70.0;
 /// Shortest a bar is drawn, as a fraction of the tallest.
 const REST: f32 = 0.1;
 
@@ -64,10 +68,10 @@ impl Bars {
         let Some(db) = self.band_db(samples) else {
             return;
         };
-        let floors = self.floors.get_or_insert(db);
+        let floors = self.floors.get_or_insert(db.map(|d| d.max(MIN_FLOOR_DB)));
         let mut targets = [REST; BANDS.len()];
         for ((target, floor), db) in targets.iter_mut().zip(floors.iter_mut()).zip(db) {
-            *floor = if db < *floor { db } else { *floor + FLOOR_RISE_DB };
+            *floor = if db < *floor { db } else { *floor + FLOOR_RISE_DB }.max(MIN_FLOOR_DB);
             let t = ((db - *floor - ABOVE_FLOOR_DB) / RANGE_DB).clamp(0.0, 1.0);
             *target = REST + (1.0 - REST) * t;
         }
@@ -158,6 +162,18 @@ mod tests {
         let mut bars = Bars::default();
         for _ in 0..24 * 10 {
             bars.step(&noise(0.05));
+        }
+        assert!(bars.levels.iter().all(|l| *l < REST + 0.05), "{:?}", bars.levels);
+    }
+
+    #[test]
+    fn silence_at_the_start_does_not_hold_the_bars_up() {
+        let mut bars = Bars::default();
+        for _ in 0..3 {
+            bars.step(&[0.0; WINDOW]);
+        }
+        for _ in 0..24 * 4 {
+            bars.step(&noise(0.1));
         }
         assert!(bars.levels.iter().all(|l| *l < REST + 0.05), "{:?}", bars.levels);
     }
