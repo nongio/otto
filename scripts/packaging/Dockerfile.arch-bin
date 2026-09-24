@@ -9,7 +9,13 @@
 # and nowhere else. That is exactly the break this image exists to catch.
 #
 # PKGBUILD_FILE selects the variant — PKGBUILD (otto-bin, a tagged release) or
-# PKGBUILD-nightly-bin (the rolling nightly tarball).
+# the pinned PKGBUILD-nightly-bin a nightly release publishes.
+#
+# A PKGBUILD in before/ is built and installed first, and the package under
+# test then has to replace it with a higher version: that is how the nightly
+# is checked against the release it was built from. pacman -U installs a
+# downgrade without complaint (with a warning), so the versions are compared
+# with vercmp afterwards.
 ARG BASE=archlinux:base-devel
 FROM ${BASE}
 
@@ -29,10 +35,11 @@ RUN sed -i '/^ *NoExtract/d' /etc/pacman.conf \
 # a broken depends() array.
 RUN useradd -m builder \
     && echo 'builder ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/builder \
-    && install -d -o builder /build
+    && install -d -o builder /build /build/before
 WORKDIR /build
 
 COPY ${PKGBUILD_FILE} /build/PKGBUILD
+COPY before/ /build/before/
 COPY scripts/packaging/verify-install.sh /usr/local/bin/verify-install.sh
 # A locally assembled tarball, when the context has one (the arch-local
 # target). makepkg prefers a source file already in the build directory over
@@ -41,17 +48,50 @@ COPY scripts/packaging/verify-install.sh /usr/local/bin/verify-install.sh
 COPY *.tar.g[z] /build/
 RUN chown -R builder:builder /build
 
+# The package being upgraded from, when there is one. Picked by name:
+# makepkg splits a -debug package off beside it, which is not under test.
+USER builder
+RUN if [ -f /build/before/PKGBUILD ]; then cd /build/before && makepkg -s --noconfirm; fi
+USER root
+RUN if [ -f /build/before/PKGBUILD ]; then \
+        bname=$(sed -n 's/^pkgname=//p' /build/before/PKGBUILD); \
+        pacman -U --noconfirm /build/before/"$bname"-[0-9]*.pkg.tar.zst && rm -rf /var/cache/pacman/pkg/*; \
+    fi
+
 # -s installs the declared dependencies from the repositories, so a
 # dependency that has been renamed or dropped upstream fails here.
 USER builder
 RUN makepkg -s --noconfirm
 
+# --ask=4 answers yes to removing a conflicting package — otto-bin when the
+# nightly is installed over it — which `makepkg -i` asks interactively and
+# --noconfirm alone answers no to.
 USER root
-RUN pacman -U --noconfirm /build/*.pkg.tar.zst && rm -rf /var/cache/pacman/pkg/*
+RUN pacman -U --noconfirm --ask=4 /build/"$(sed -n 's/^pkgname=//p' /build/PKGBUILD)"-[0-9]*.pkg.tar.zst \
+    && rm -rf /var/cache/pacman/pkg/*
+
+# What is installed has to be the package under test, by name and version,
+# and the "before" package has to be gone and to sort below it.
+RUN set -eu; \
+    name=$(sed -n 's/^pkgname=//p' /build/PKGBUILD); \
+    want=$(pacman -Qip /build/"$name"-[0-9]*.pkg.tar.zst | sed -n 's/^Version *: *//p'); \
+    have=$(pacman -Q "$name" | cut -d' ' -f2); \
+    echo "installed: $name $have"; \
+    [ "$have" = "$want" ] || { echo "expected $want to be installed"; exit 1; }; \
+    if [ -f /build/before/PKGBUILD ]; then \
+        bname=$(sed -n 's/^pkgname=//p' /build/before/PKGBUILD); \
+        before=$(pacman -Qip /build/before/"$bname"-[0-9]*.pkg.tar.zst | sed -n 's/^Version *: *//p'); \
+        [ "$(vercmp "$before" "$want")" = -1 ] \
+            || { echo "$want does not sort above $before"; exit 1; }; \
+        if [ "$bname" != "$name" ] && pacman -Q "$bname" >/dev/null 2>&1; then \
+            echo "$bname is still installed beside $name"; exit 1; \
+        fi; \
+        echo "upgraded: $bname $before -> $name $want"; \
+    fi
 
 ARG SKIP_RUN=0
 RUN OTTO_SKIP_RUN=$SKIP_RUN bash /usr/local/bin/verify-install.sh arch
 
 # Removal must leave nothing behind; config.toml and otto-lock.pam are in
 # backup(), so pacman saves them as .pacsave rather than deleting them.
-RUN pacman -R --noconfirm otto-bin 2>/dev/null || pacman -R --noconfirm otto-nightly-bin
+RUN pacman -R --noconfirm "$(sed -n 's/^pkgname=//p' /build/PKGBUILD)"
