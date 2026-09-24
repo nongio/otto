@@ -152,7 +152,7 @@ const QUOTE_INSET: f32 = 14.0;
 /// Padding inside a code block's tinted panel.
 const CODE_PAD: f32 = 8.0;
 const CODE_RADIUS: f32 = 6.0;
-/// The copy button in a code block's top-right corner: its square, the icon
+/// The copy button in a code block's bottom-right corner: its square, the icon
 /// inside it, and how far it sits in from the panel's edges.
 const COPY_BUTTON: f32 = 22.0;
 const COPY_ICON: f32 = 14.0;
@@ -215,7 +215,7 @@ impl CodeBlock {
     pub fn copy_button(&self, width: f32) -> Rect {
         Rect::from_xywh(
             width - COPY_INSET - COPY_BUTTON,
-            self.top + COPY_INSET,
+            self.top + self.height - COPY_INSET - COPY_BUTTON,
             COPY_BUTTON,
             COPY_BUTTON,
         )
@@ -1085,8 +1085,8 @@ mod tests {
             ),
             None
         );
-        // Scrolled so the second block sits where the first was.
-        let scrolled = code[1].top - code[0].top;
+        // Scrolled so the second block ends where the first did.
+        let scrolled = (code[1].top + code[1].height) - (code[0].top + code[0].height);
         assert_eq!(
             code_at(content, &lines, scrolled, on_button).map(|hit| hit.block),
             Some(1)
