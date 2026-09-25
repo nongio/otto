@@ -2,16 +2,13 @@ use smithay::{
     backend::{
         allocator::format::FormatSet,
         drm::DrmNode,
-        renderer::{
-            multigpu::{gbm::GbmGlesBackend, GpuManager},
-            ImportDma,
-        },
+        renderer::{multigpu::GpuManager, ImportDma},
     },
     reexports::wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
     wayland::dmabuf::DmabufFeedbackBuilder,
 };
 
-use crate::skia_renderer::SkiaRenderer;
+use crate::renderer::active::RendererApi;
 
 use super::types::{DrmSurfaceDmabufFeedback, GbmDrmCompositor};
 
@@ -44,16 +41,22 @@ pub fn strip_clear_color_modifiers(formats: FormatSet) -> FormatSet {
 ///
 /// The scanout feedback is limited to formats that can also be rendered to,
 /// ensuring a fallback render path exists if direct scanout fails.
-pub fn get_surface_dmabuf_feedback(
+pub fn get_surface_dmabuf_feedback<A: RendererApi>(
     primary_gpu: DrmNode,
     render_node: DrmNode,
-    gpus: &mut GpuManager<GbmGlesBackend<SkiaRenderer, smithay::backend::drm::DrmDeviceFd>>,
+    gpus: &mut GpuManager<A::GraphicsApi>,
     composition: &GbmDrmCompositor,
 ) -> Option<DrmSurfaceDmabufFeedback> {
-    let primary_formats =
-        strip_clear_color_modifiers(gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats());
-    let render_formats =
-        strip_clear_color_modifiers(gpus.single_renderer(&render_node).ok()?.dmabuf_formats());
+    let primary_formats = strip_clear_color_modifiers(
+        A::single_renderer(gpus, &primary_gpu)
+            .ok()?
+            .dmabuf_formats(),
+    );
+    let render_formats = strip_clear_color_modifiers(
+        A::single_renderer(gpus, &render_node)
+            .ok()?
+            .dmabuf_formats(),
+    );
 
     let all_render_formats = primary_formats
         .iter()
@@ -81,17 +84,28 @@ pub fn get_surface_dmabuf_feedback(
     let builder = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), primary_formats);
     let render_feedback = builder
         .clone()
-        .add_preference_tranche(render_node.dev_id(), None, render_formats.clone())
+        .add_preference_tranche(
+            render_node.dev_id(),
+            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Sampling,
+            render_formats.clone(),
+            3u32..=6,
+        )
         .build()
         .unwrap();
 
     let scanout_feedback = builder
         .add_preference_tranche(
             surface.device_fd().dev_id().unwrap(),
-            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
+            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout,
             planes_formats,
+            4u32..=6,
         )
-        .add_preference_tranche(render_node.dev_id(), None, render_formats)
+        .add_preference_tranche(
+            render_node.dev_id(),
+            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Sampling,
+            render_formats,
+            3u32..=6,
+        )
         .build()
         .unwrap();
 

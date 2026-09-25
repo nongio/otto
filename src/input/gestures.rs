@@ -13,7 +13,7 @@ use smithay::{
 };
 
 #[cfg(feature = "udev")]
-impl crate::Otto<crate::udev::UdevData> {
+impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<A>> {
     pub(crate) fn on_gesture_swipe_begin<B: InputBackend>(
         &mut self,
         evt: B::GestureSwipeBeginEvent,
@@ -37,7 +37,7 @@ impl crate::Otto<crate::udev::UdevData> {
             self,
             &GestureSwipeBeginEvent {
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
                 fingers: evt.fingers(),
             },
         );
@@ -129,7 +129,7 @@ impl crate::Otto<crate::udev::UdevData> {
         pointer.gesture_swipe_update(
             self,
             &GestureSwipeUpdateEvent {
-                time: evt.time_msec(),
+                time: evt.time(),
                 delta,
             },
         );
@@ -159,7 +159,7 @@ impl crate::Otto<crate::udev::UdevData> {
             self,
             &GestureSwipeEndEvent {
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
                 cancelled: evt.cancelled(),
             },
         );
@@ -185,7 +185,7 @@ impl crate::Otto<crate::udev::UdevData> {
             self,
             &GesturePinchBeginEvent {
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
                 fingers: evt.fingers(),
             },
         );
@@ -217,7 +217,7 @@ impl crate::Otto<crate::udev::UdevData> {
         pointer.gesture_pinch_update(
             self,
             &GesturePinchUpdateEvent {
-                time: evt.time_msec(),
+                time: evt.time(),
                 delta: evt.delta(),
                 scale: evt.scale(),
                 rotation: evt.rotation(),
@@ -237,7 +237,7 @@ impl crate::Otto<crate::udev::UdevData> {
             self,
             &GesturePinchEndEvent {
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
                 cancelled: evt.cancelled(),
             },
         );
@@ -250,7 +250,7 @@ impl crate::Otto<crate::udev::UdevData> {
             self,
             &GestureHoldBeginEvent {
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
                 fingers: evt.fingers(),
             },
         );
@@ -263,7 +263,7 @@ impl crate::Otto<crate::udev::UdevData> {
             self,
             &GestureHoldEndEvent {
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
                 cancelled: evt.cancelled(),
             },
         );

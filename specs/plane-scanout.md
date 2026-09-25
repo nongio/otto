@@ -410,6 +410,11 @@ Tier 2's mechanics:
   reason to demote, and by then the current workspace is the new one: the
   window would otherwise land there, hidden behind that workspace's windows
   and missing from its own.
+- A promoted window that closes is demoted before its fade-out starts, while
+  its view is still registered and its workspace still lists it, so the
+  reparent lands at its z-order. The fading layer then lives in the windows
+  tree; the plane bookkeeping is left to the backend's next
+  `set_promoted_window`, which sees the window gone and repaints both planes.
 - The plane buffer is the subtree's own bounds — shadow safe area included —
   cropped to the output, and it is re-allocated whenever the window resizes.
   A resize drops every swapchain slot, so the resize must happen before the

@@ -57,9 +57,33 @@ pub struct SettingSpec {
     /// wire and in the file. This is what a client shows in its place.
     /// Empty means the tokens are already presentable.
     pub choice_labels: &'static [&'static str],
+    /// Entries of `choices` this build cannot take, such as a renderer that
+    /// was not compiled in. They stay listed so a client can say why they are
+    /// missing, and `validate` refuses them: storing one would hand the next
+    /// start a value it cannot honour.
+    pub unavailable_choices: &'static [&'static str],
+    /// The backends (as [`crate::state::Backend::backend_name`] names them)
+    /// the setting has any effect under. Empty means all of them.
+    pub backends: &'static [&'static str],
 }
 
 impl SettingSpec {
+    /// The entries of `choices` this session cannot take: the ones this build
+    /// left out, plus a renderer that was asked for but could not come up on
+    /// this machine, so the session fell back (see
+    /// [`crate::udev::vulkan_fallback`]).
+    pub fn unavailable_now(&self) -> Vec<&'static str> {
+        let mut out = self.unavailable_choices.to_vec();
+        #[cfg(feature = "vulkan")]
+        if self.id == "rendering.renderer"
+            && crate::udev::vulkan_fallback().is_some()
+            && !out.contains(&"vulkan")
+        {
+            out.push("vulkan");
+        }
+        out
+    }
+
     /// The configuration section the setting lives in — everything before the
     /// last dot, empty for a top-level key.
     pub fn section(&self) -> &'static str {
@@ -89,6 +113,12 @@ impl SettingSpec {
                     "`{}` must be one of {}, got `{text}`",
                     self.id,
                     self.choices.join(", ")
+                )));
+            }
+            if self.unavailable_now().contains(&text) {
+                return Err(Invalid::Unavailable(format!(
+                    "`{}` cannot be `{text}` here",
+                    self.id
                 )));
             }
         }
@@ -125,11 +155,13 @@ impl SettingSpec {
     }
 }
 
-/// Why a value was rejected. The two cases are distinguishable on the bus.
+/// Why a value was rejected. The cases are distinguishable on the bus.
 #[derive(Debug)]
 pub enum Invalid {
     Type(String),
     Range(String),
+    /// A listed choice this build cannot take.
+    Unavailable(String),
 }
 
 /// The row for `id`, if there is one.
@@ -156,6 +188,8 @@ const fn spec(
         step: None,
         choices: &[],
         choice_labels: &[],
+        unavailable_choices: &[],
+        backends: &[],
     }
 }
 
@@ -275,6 +309,21 @@ const ACCENT_COLOR_LABELS: &[&str] = &[
     "settings-choice-accent-brown",
     "settings-choice-accent-graphite",
 ];
+
+/// The renderers the tty backend knows, and their names. Product names, so
+/// they pass through untranslated.
+const RENDERER_CHOICES: &[&str] = &["gl", "vulkan"];
+const RENDERER_LABELS: &[&str] = &["OpenGL", "Vulkan"];
+
+/// The renderers this build cannot draw with: Vulkan needs the `vulkan`
+/// feature, and a build without it exits at startup when asked for it. A
+/// build with it can still lack Vulkan on the machine; that case is added at
+/// runtime by [`SettingSpec::unavailable_now`].
+const RENDERER_UNAVAILABLE: &[&str] = if cfg!(feature = "vulkan") {
+    &[]
+} else {
+    &["vulkan"]
+};
 
 /// Everything `org.otto.Settings` describes.
 ///
@@ -811,6 +860,20 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Arguments passed to the greeter.",
         Restart,
     ),
+    // ---- Rendering -------------------------------------------------------
+    SettingSpec {
+        unavailable_choices: RENDERER_UNAVAILABLE,
+        backends: &["udev"],
+        ..labelled_choice(
+            "rendering.renderer",
+            "Renderer",
+            "The GPU API Otto draws with in a login session. Windowed \
+             sessions always use OpenGL.",
+            Restart,
+            RENDERER_CHOICES,
+            RENDERER_LABELS,
+        )
+    },
     // ---- Window management ----------------------------------------------
     spec(
         "appswitcher.follow_cursor",
@@ -971,6 +1034,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A choice the build cannot take is refused rather than stored for a
+    /// start that would fail on it, and every listed exception is a choice.
+    #[test]
+    fn unavailable_choices_are_refused() {
+        for spec in SETTINGS {
+            for choice in spec.unavailable_choices {
+                assert!(
+                    spec.choices.contains(choice),
+                    "`{}` marks `{choice}` unavailable but does not offer it",
+                    spec.id
+                );
+                assert!(matches!(
+                    spec.validate(&SettingValue::Str((*choice).to_string())),
+                    Err(Invalid::Unavailable(_))
+                ));
+            }
+        }
+
+        let renderer = lookup("rendering.renderer").expect("the renderer is in the schema");
+        assert!(renderer.validate(&SettingValue::Str("gl".into())).is_ok());
+        assert_eq!(
+            renderer
+                .validate(&SettingValue::Str("vulkan".into()))
+                .is_ok(),
+            cfg!(feature = "vulkan")
+        );
     }
 
     #[test]

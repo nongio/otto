@@ -10,7 +10,7 @@ pub use model::WindowDecorationModel;
 pub use model::WindowViewBaseModel;
 pub use model::WindowViewSurface;
 pub use resize_view::{resize_edges_at, WindowResizeView};
-pub use view::WindowView;
+pub use view::{WindowView, CLOSE_FADE};
 
 #[cfg(test)]
 mod drag_damage_tests {

@@ -23,6 +23,7 @@
 //! region, OR when the popup subtree changed; the fresh snapshot's unique_id is
 //! what makes the consumers re-render.
 
+use crate::renderer::active::RendererApi;
 use std::sync::Arc;
 
 use layers::drawing::{render_node_tree, vibrancy_color_filter};
@@ -362,9 +363,9 @@ fn popup_interest_rects(
 /// overlay composite also folds in the popup subtree (see `draw_popups`). The
 /// bg plane must already be rendered by the caller.
 #[allow(clippy::too_many_arguments)] // plane-state plumbing, all of it per-frame
-pub(super) fn update_backdrop_and_upper_planes(
+pub(super) fn update_backdrop_and_upper_planes<A: RendererApi>(
     surface: &mut SurfaceData,
-    renderer: &mut UdevRenderer<'_>,
+    renderer: &mut UdevRenderer<'_, A>,
     output: &Output,
     expose_active: bool,
     overlay_active: bool,
@@ -843,7 +844,7 @@ pub(super) fn update_backdrop_and_upper_planes(
                 for (dmabuf, rect) in promoted {
                     use smithay::backend::renderer::ImportDma as _;
                     let img = match renderer.as_mut().import_dmabuf(dmabuf, None) {
-                        Ok(tex) => tex.image,
+                        Ok(tex) => Into::<crate::renderer::SkiaTextureImage>::into(tex).image,
                         Err(e) => {
                             tracing::debug!(
                                 target: "otto::planes",

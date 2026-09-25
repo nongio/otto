@@ -654,6 +654,15 @@ impl WorkspaceSelectorView {
         self.editing.read().unwrap().as_ref().map(|e| e.index)
     }
 
+    /// The name typed so far in the rename editor, if one is open.
+    pub fn editing_value(&self) -> Option<String> {
+        self.editing
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|e| e.input.value().to_string())
+    }
+
     /// Open the in-place editor on `index`, pre-filled with its current name
     /// and fully selected — typing replaces the name, as everywhere else.
     fn start_editing(&self, index: usize, name: String) {

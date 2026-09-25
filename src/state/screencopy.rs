@@ -19,7 +19,10 @@ use smithay::{
 };
 
 use crate::{
-    renderer::BlitCurrentFrame,
+    renderer::{
+        active::{RendererApi, SkiaDeviceRenderer},
+        BlitCurrentFrame,
+    },
     state::{Backend, Otto},
     udev::UdevRenderer,
 };
@@ -296,10 +299,10 @@ where
 /// Called from the render loop after the output has been rendered.
 /// Dmabuf clients ride the screenshare GPU blit path (zero CPU copy);
 /// SHM clients fall back to the legacy synchronous read_pixels path.
-pub fn complete_screencopy_for_output(
+pub fn complete_screencopy_for_output<A: RendererApi>(
     pending: &mut Vec<PendingScreencopy>,
     output: &Output,
-    renderer: &mut UdevRenderer<'_>,
+    renderer: &mut UdevRenderer<'_, A>,
 ) {
     let indices: Vec<usize> = pending
         .iter()
@@ -315,8 +318,14 @@ pub fn complete_screencopy_for_output(
     for i in indices.into_iter().rev() {
         let p = pending.remove(i);
         let success = match &p.buffer {
-            CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf(renderer, &p, dmabuf, output),
-            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer.as_mut(), &p, buffer, output, false),
+            CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf::<A>(renderer, &p, dmabuf, output),
+            CaptureBuffer::Shm(buffer) => {
+                let surface = renderer
+                    .as_mut()
+                    .current_surface()
+                    .map(|s| s.surface.clone());
+                copy_to_shm(surface, &p, buffer, output, false)
+            }
         };
 
         if success {
@@ -371,7 +380,10 @@ pub fn complete_screencopy_for_output_skia(
                     }
                 }
             }
-            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer, &p, buffer, output, true),
+            CaptureBuffer::Shm(buffer) => {
+                let surface = renderer.current_skia_renderer().map(|s| s.surface.clone());
+                copy_to_shm(surface, &p, buffer, output, true)
+            }
         };
 
         if success {
@@ -414,8 +426,8 @@ fn capture_rects(
     (src, dst)
 }
 
-fn copy_to_dmabuf(
-    renderer: &mut UdevRenderer<'_>,
+fn copy_to_dmabuf<A: RendererApi>(
+    renderer: &mut UdevRenderer<'_, A>,
     p: &PendingScreencopy,
     dmabuf: &Dmabuf,
     output: &Output,
@@ -431,17 +443,18 @@ fn copy_to_dmabuf(
     }
 }
 
+/// Reads the capture region of `surface`, the frame just rendered, into an
+/// SHM buffer.
 fn copy_to_shm(
-    renderer: &mut crate::skia_renderer::SkiaRenderer,
+    surface: Option<layers::skia::Surface>,
     p: &PendingScreencopy,
     buffer: &WlBuffer,
     output: &Output,
     flip_y: bool,
 ) -> bool {
-    let Some(skia_renderer) = renderer.current_skia_renderer() else {
+    let Some(mut skia_surface) = surface else {
         return false;
     };
-    let mut skia_surface = skia_renderer.surface.clone();
     let scale = output.current_scale().fractional_scale();
 
     let result = shm::with_buffer_contents(buffer, |ptr, len, buf_data| {

@@ -13,7 +13,7 @@ use smithay::{
 use crate::{input::KeyAction, state::Backend, Otto};
 
 #[cfg(feature = "udev")]
-use crate::udev::UdevData;
+use crate::{renderer::active::RendererApi, udev::UdevData};
 
 #[cfg(feature = "udev")]
 use smithay::{
@@ -21,7 +21,7 @@ use smithay::{
         input::{Device, DeviceCapability},
         session::Session,
     },
-    wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait},
+    input::tablet::{TabletDescriptor, TabletSeatTrait},
 };
 
 #[cfg(any(feature = "winit", feature = "x11"))]
@@ -226,7 +226,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 }
 
 #[cfg(feature = "udev")]
-impl Otto<UdevData> {
+impl<A: RendererApi> Otto<UdevData<A>> {
     pub fn process_input_event<B: InputBackend>(
         &mut self,
         dh: &DisplayHandle,
@@ -264,7 +264,7 @@ impl Otto<UdevData> {
                             &smithay::input::pointer::MotionEvent {
                                 location,
                                 serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                                time: 0,
+                                time: smithay::backend::input::InputTime::from_millis(0),
                             },
                         );
                         pointer.frame(self);
@@ -307,7 +307,7 @@ impl Otto<UdevData> {
                             &smithay::input::pointer::MotionEvent {
                                 location: pointer_location,
                                 serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                                time: 0,
+                                time: smithay::backend::input::InputTime::from_millis(0),
                             },
                         );
                         pointer.frame(self);
@@ -352,7 +352,7 @@ impl Otto<UdevData> {
                             &smithay::input::pointer::MotionEvent {
                                 location: pointer_location,
                                 serial: smithay::utils::SERIAL_COUNTER.next_serial(),
-                                time: 0,
+                                time: smithay::backend::input::InputTime::from_millis(0),
                             },
                         );
                         pointer.frame(self);
@@ -524,7 +524,7 @@ impl Otto<UdevData> {
                 if device.has_capability(DeviceCapability::TabletTool) {
                     self.seat
                         .tablet_seat()
-                        .add_tablet::<Self>(dh, &TabletDescriptor::from(&device));
+                        .add_wp_tablet(dh, &TabletDescriptor::from(&device));
                 }
             }
             InputEvent::DeviceRemoved { device }

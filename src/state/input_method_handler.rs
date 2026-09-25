@@ -1,5 +1,4 @@
 use smithay::{
-    delegate_input_method_manager, delegate_pointer_constraints,
     desktop::{PopupKind, PopupManager},
     input::pointer::PointerHandle,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -43,8 +42,6 @@ impl<BackendData: Backend> InputMethodHandler for Otto<BackendData> {
     }
 }
 
-delegate_input_method_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
-
 impl<BackendData: Backend> PointerConstraintsHandler for Otto<BackendData> {
     fn cursor_position_hint(
         &mut self,
@@ -67,4 +64,3 @@ impl<BackendData: Backend> PointerConstraintsHandler for Otto<BackendData> {
         }
     }
 }
-delegate_pointer_constraints!(@<BackendData: Backend + 'static> Otto<BackendData>);

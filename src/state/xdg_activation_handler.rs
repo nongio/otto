@@ -4,7 +4,6 @@ use smithay::{
     backend::input::{
         ButtonState, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerButtonEvent,
     },
-    delegate_xdg_activation,
     reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
     wayland::xdg_activation::{
         XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
@@ -70,4 +69,3 @@ impl<BackendData: Backend> XdgActivationHandler for Otto<BackendData> {
         }
     }
 }
-delegate_xdg_activation!(@<BackendData: Backend + 'static> Otto<BackendData>);

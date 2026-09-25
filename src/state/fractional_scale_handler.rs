@@ -1,5 +1,4 @@
 use smithay::{
-    delegate_fractional_scale,
     desktop::utils::surface_primary_scanout_output,
     reexports::wayland_server::Resource,
     wayland::{
@@ -62,4 +61,3 @@ impl<BackendData: Backend> FractionalScaleHandler for Otto<BackendData> {
         });
     }
 }
-delegate_fractional_scale!(@<BackendData: Backend + 'static> Otto<BackendData>);

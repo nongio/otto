@@ -6,6 +6,7 @@
 // - Direct scanout optimization
 // - Screenshare integration
 
+use crate::renderer::active::{RendererApi, SkiaDeviceRenderer};
 use std::{
     io,
     time::{Duration, Instant},
@@ -60,7 +61,7 @@ use crate::state::Otto;
 //     >,
 // >;
 
-impl Otto<UdevData> {
+impl<A: RendererApi> Otto<UdevData<A>> {
     pub(super) fn frame_finish(
         &mut self,
         dev_id: DrmNode,
@@ -792,13 +793,16 @@ impl Otto<UdevData> {
         let render_node = surface.render_node;
         let primary_gpu = self.backend_data.primary_gpu;
         let mut renderer = if primary_gpu == render_node {
-            self.backend_data.gpus.single_renderer(&render_node)
+            A::single_renderer(&mut self.backend_data.gpus, &render_node)
         } else {
             let format = surface.compositor.format();
 
-            self.backend_data
-                .gpus
-                .renderer(&primary_gpu, &render_node, format)
+            A::renderer(
+                &mut self.backend_data.gpus,
+                &primary_gpu,
+                &render_node,
+                format,
+            )
         }
         .unwrap();
 
@@ -1334,7 +1338,7 @@ impl Otto<UdevData> {
             }
         };
 
-        let result = render_output_frame(
+        let result = render_output_frame::<A>(
             surface,
             &mut renderer,
             &all_window_elements,
@@ -1781,9 +1785,11 @@ impl Otto<UdevData> {
                 } // Close for session loop
             }
         }
+        drop(renderer);
 
         {
             self.workspaces.refresh_space();
+            self.reap_closed_windows();
             // Pick up any tiling tree a close, minimize or workspace move left
             // dirty; a no-op flag read when nothing changed.
             self.flush_tiling_relayout();
@@ -1894,7 +1900,7 @@ impl Otto<UdevData> {
         &mut self,
         node: DrmNode,
         crtc: crtc::Handle,
-        evt_handle: LoopHandle<'static, Otto<UdevData>>,
+        evt_handle: LoopHandle<'static, Otto<UdevData<A>>>,
     ) {
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -1910,8 +1916,8 @@ impl Otto<UdevData> {
 
         let node = surface.render_node;
         let result = {
-            let mut renderer = self.backend_data.gpus.single_renderer(&node).unwrap();
-            initial_render(surface, &mut renderer)
+            let mut renderer = A::single_renderer(&mut self.backend_data.gpus, &node).unwrap();
+            initial_render::<A>(surface, &mut renderer)
         };
 
         if let Err(err) = result {
@@ -2054,7 +2060,7 @@ impl Otto<UdevData> {
                 continue;
             }
 
-            let mut renderer = match self.backend_data.gpus.single_renderer(&primary_gpu) {
+            let mut renderer = match A::single_renderer(&mut self.backend_data.gpus, &primary_gpu) {
                 Ok(r) => r,
                 Err(e) => {
                     warn!("render_virtual_outputs: failed to get renderer: {e}");
@@ -2398,9 +2404,9 @@ impl Otto<UdevData> {
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::mutable_key_type)] // ObjectId as HashMap key — see window_throttle.rs
-pub(super) fn render_output_frame<'a>(
+pub(super) fn render_output_frame<'a, A: RendererApi>(
     surface: &'a mut SurfaceData,
-    renderer: &mut UdevRenderer<'a>,
+    renderer: &mut UdevRenderer<'a, A>,
     window_elements: &[&WindowElement],
     output: &Output,
     pointer_location: Point<f64, Logical>,
@@ -2715,7 +2721,7 @@ pub(super) fn render_output_frame<'a>(
             // composite when needed, render the middle plane, and hand the
             // composite to the blur-bearing upper planes (see
             // `udev::backdrop` for the full design notes).
-            super::backdrop::update_backdrop_and_upper_planes(
+            super::backdrop::update_backdrop_and_upper_planes::<A>(
                 surface,
                 renderer,
                 output,
@@ -2735,13 +2741,13 @@ pub(super) fn render_output_frame<'a>(
             // transparent strip would waste a plane), then overlay chrome
             // (bar, islands, dock, OSD, popups).
             if switcher_active {
-                push_ready(
+                push_ready::<A>(
                     &surface.switcher_dmabuf_element,
                     &mut workspace_render_elements,
                 );
             }
             if overlay_active {
-                push_ready(
+                push_ready::<A>(
                     &surface.overlay_dmabuf_element,
                     &mut workspace_render_elements,
                 );
@@ -2749,7 +2755,7 @@ pub(super) fn render_output_frame<'a>(
 
             if expose_active {
                 // Expose replaces the windows plane while it's visible.
-                push_ready(
+                push_ready::<A>(
                     &surface.expose_dmabuf_element,
                     &mut workspace_render_elements,
                 );
@@ -2780,7 +2786,7 @@ pub(super) fn render_output_frame<'a>(
                     if let Some(el) = &surface.window_dmabuf_element {
                         el.render(renderer.as_mut());
                     }
-                    push_ready(
+                    push_ready::<A>(
                         &surface.window_dmabuf_element,
                         &mut workspace_render_elements,
                     );
@@ -2900,7 +2906,7 @@ pub(super) fn render_output_frame<'a>(
                 }
 
                 if windows_plane_has_content {
-                    push_ready(
+                    push_ready::<A>(
                         &surface.windows_dmabuf_element,
                         &mut workspace_render_elements,
                     );
@@ -2908,7 +2914,7 @@ pub(super) fn render_output_frame<'a>(
             }
 
             // Background on primary plane (bottom).
-            push_ready(
+            push_ready::<A>(
                 &surface.scene_dmabuf_element,
                 &mut workspace_render_elements,
             );
@@ -3034,7 +3040,7 @@ pub(super) fn render_output_frame<'a>(
     // attached to each plane dmabuf and the kernel waits for it; the CPU only
     // blocks when that fails.
     let plane_sync_t = std::time::Instant::now();
-    renderer.as_mut().flush_planes_for_scanout();
+    renderer.as_mut().flush_planes();
     crate::render_phase_stats::record_plane_sync(plane_sync_t.elapsed());
 
     let render_frame_t = std::time::Instant::now();
@@ -3151,7 +3157,7 @@ pub(super) fn render_output_frame<'a>(
         // asked for a frame on this output. Internally branches between the
         // GPU dmabuf blit (reusing the screenshare path) and SHM read_pixels.
         if !pending_screencopy.is_empty() {
-            crate::state::screencopy::complete_screencopy_for_output(
+            crate::state::screencopy::complete_screencopy_for_output::<A>(
                 pending_screencopy,
                 output,
                 renderer,
@@ -3171,9 +3177,9 @@ pub(super) fn render_output_frame<'a>(
     })
 }
 
-pub(super) fn initial_render(
+pub(super) fn initial_render<A: RendererApi>(
     surface: &mut SurfaceData,
-    renderer: &mut UdevRenderer<'_>,
+    renderer: &mut UdevRenderer<'_, A>,
 ) -> Result<(), SwapBuffersError> {
     surface
         .compositor

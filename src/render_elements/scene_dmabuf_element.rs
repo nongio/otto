@@ -30,10 +30,7 @@ use smithay::{
     utils::{Buffer as BufferCoord, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{
-    skia_renderer::{PlaneTextureRelease, SkiaRenderer},
-    udev::UdevRenderer,
-};
+use crate::renderer::{active::SkiaDeviceRenderer, FrameSurface};
 
 // ── Slot-local SkiaSurface ─────────────────────────────────────────────────
 //
@@ -79,20 +76,21 @@ struct SlotSurface {
     /// Thread that created the surface. The GL/Skia state is thread-affine;
     /// all access AND the drop must happen on this thread.
     owner: std::thread::ThreadId,
-    /// Frees the texture and EGLImage behind `surface`. Declared after it,
-    /// so the Skia surface is gone before its texture is queued for deletion.
-    _gl: PlaneTextureRelease,
+    /// Frees the GPU image behind `surface` (the renderer's plane texture
+    /// release token). Declared after it, so the Skia surface is gone before
+    /// its image is queued for deletion.
+    _release: Box<dyn std::any::Any>,
 }
 
 impl SlotSurface {
-    fn new(surface: SkiaSurface, gl: PlaneTextureRelease) -> Self {
+    fn new(surface: SkiaSurface, release: Box<dyn std::any::Any>) -> Self {
         static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         Self {
             id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             surface: UnsafeCell::new(surface),
             last_commit: std::cell::Cell::new(None),
             owner: std::thread::current().id(),
-            _gl: gl,
+            _release: release,
         }
     }
 }
@@ -460,7 +458,7 @@ impl SceneDmabufElement {
     ///
     /// Returns `true` if a new frame was rendered, `false` if skipped
     /// (no subtree damage, no swapchain, no free slot, or surface creation failed).
-    pub fn render(&self, renderer: &mut SkiaRenderer) -> bool {
+    pub fn render(&self, renderer: &mut impl SkiaDeviceRenderer) -> bool {
         // Timing wrapper: under plane decomposition this call is where the
         // Skia work for a plane buffer happens, so it's the only place the
         // per-plane cost is visible. Only a real re-render is recorded — the
@@ -473,7 +471,7 @@ impl SceneDmabufElement {
         rendered
     }
 
-    fn render_inner(&self, renderer: &mut SkiaRenderer) -> bool {
+    fn render_inner(&self, renderer: &mut impl SkiaDeviceRenderer) -> bool {
         let mut inner = self.inner.lock().unwrap();
 
         // Skip re-render when a valid dmabuf already exists and there is nothing
@@ -699,10 +697,10 @@ impl SceneDmabufElement {
 
         // Create a SkiaSurface for this slot on first use.
         if slot.userdata().get::<SlotSurface>().is_none() {
-            match renderer.create_surface_from_dmabuf(&dmabuf) {
-                Ok((surface, gl)) => {
+            match renderer.create_plane_surface(&dmabuf) {
+                Ok((surface, release)) => {
                     slot.userdata()
-                        .insert_if_missing(|| SlotSurface::new(surface, gl));
+                        .insert_if_missing(|| SlotSurface::new(surface, release));
                 }
                 Err(e) => {
                     tracing::warn!(target: "otto::planes", "SceneDmabufElement: surface error: {e:?}");
@@ -1183,28 +1181,26 @@ impl Element for SceneDmabufElement {
 
 // ── RenderElement impls ────────────────────────────────────────────────────
 
-impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
+impl<R: FrameSurface> RenderElement<R> for SceneDmabufElement {
     fn draw(
         &self,
-        frame: &mut <UdevRenderer<'renderer> as RendererSuper>::Frame<'_, '_>,
+        frame: &mut <R as RendererSuper>::Frame<'_, '_>,
         src: Rectangle<f64, BufferCoord>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-        opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
+        _opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), <R as RendererSuper>::Error> {
         tracing::debug!(
             target: "otto::planes",
             "plane demoted to GPU composite: {} dst={dst:?}",
             self.label,
         );
-        RenderElement::<SkiaRenderer>::draw(self, frame.as_mut(), src, dst, damage, opaque_regions)
-            .map_err(|e| e.into())
+        self.draw_composite(R::frame_surface(frame).canvas(), src, dst, damage);
+        Ok(())
     }
 
-    fn underlying_storage(
-        &self,
-        _renderer: &mut UdevRenderer<'renderer>,
-    ) -> Option<UnderlyingStorage<'_>> {
+    fn underlying_storage(&self, _renderer: &mut R) -> Option<UnderlyingStorage<'_>> {
         let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
         let inner = self.inner.lock().unwrap();
         if crate::debug_hooks::toggle("/tmp/otto-bgdbg") {
@@ -1225,24 +1221,23 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
     }
 }
 
-impl RenderElement<SkiaRenderer> for SceneDmabufElement {
-    fn draw<'frame>(
+impl SceneDmabufElement {
+    /// Draws the current slot's content into `canvas` at `dst`.
+    ///
+    /// The GPU-composite fallback: this element did not get a hardware plane
+    /// this frame, so Smithay composites it into the primary swapchain. A
+    /// no-op here would make the whole plane's content vanish (black)
+    /// whenever plane assignment fails.
+    fn draw_composite(
         &self,
-        frame: &mut <SkiaRenderer as RendererSuper>::Frame<'frame, 'frame>,
+        canvas: &layers::skia::Canvas,
         src: Rectangle<f64, BufferCoord>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-        _opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
-        // GPU-composite fallback: this element did not get a hardware plane
-        // this frame, so Smithay composites it into the primary swapchain.
-        // Blit the current slot's rendered content — a no-op here makes the
-        // whole plane's content vanish (black) whenever assignment fails.
+    ) {
         let Some(image) = self.snapshot() else {
-            return Ok(());
+            return;
         };
-        let mut surface = frame.skia_surface.clone();
-        let canvas = surface.canvas();
         let src_rect = layers::skia::Rect::from_xywh(
             src.loc.x as f32,
             src.loc.y as f32,
@@ -1287,19 +1282,6 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
             }
             canvas.restore_to_count(save);
         }
-        Ok(())
-    }
-
-    fn underlying_storage(&self, _renderer: &mut SkiaRenderer) -> Option<UnderlyingStorage<'_>> {
-        let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
-        let keepalive = self
-            .inner
-            .lock()
-            .unwrap()
-            .current_slot
-            .clone()
-            .map(|s| s as Arc<dyn std::any::Any + Send + Sync>);
-        Some(UnderlyingStorage::Dmabuf(dmabuf, keepalive))
     }
 }
 

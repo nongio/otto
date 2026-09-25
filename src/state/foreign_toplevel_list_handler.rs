@@ -1,6 +1,5 @@
-use smithay::{
-    delegate_foreign_toplevel_list,
-    wayland::foreign_toplevel_list::{ForeignToplevelListHandler, ForeignToplevelListState},
+use smithay::wayland::foreign_toplevel_list::{
+    ForeignToplevelListHandler, ForeignToplevelListState,
 };
 
 use super::{Backend, Otto};
@@ -10,5 +9,3 @@ impl<BackendData: Backend> ForeignToplevelListHandler for Otto<BackendData> {
         &mut self.foreign_toplevel_list_state
     }
 }
-
-delegate_foreign_toplevel_list!(@<BackendData: Backend + 'static> Otto<BackendData>);

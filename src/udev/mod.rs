@@ -14,9 +14,11 @@ pub mod planes;
 pub mod render;
 pub mod schedule;
 pub mod types;
+#[cfg(feature = "vulkan")]
+pub mod vulkan_api;
 
 // Re-export public API
-pub use init::run_udev;
+pub use init::{run_selected, run_udev, vulkan_fallback};
 
 // Re-export public types
 pub use types::{
@@ -24,11 +26,11 @@ pub use types::{
     SUPPORTED_FORMATS_8BIT_ONLY,
 };
 
-use crate::renderer::{SkiaTexture, SkiaTextureImage};
-use crate::{
-    skia_renderer::SkiaRenderer,
-    state::{Backend, Otto},
+use crate::renderer::{
+    active::{RendererApi, SkiaDeviceRenderer},
+    SkiaTextureImage,
 };
+use crate::state::{Backend, Otto};
 
 #[cfg(feature = "fps_ticker")]
 use smithay::backend::renderer::ImportMem;
@@ -36,15 +38,10 @@ use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
         drm::{DrmDevice, DrmDeviceFd, DrmNode},
-        renderer::{
-            multigpu::{gbm::GbmGlesBackend, MultiTexture},
-            utils::import_surface,
-            ImportDma,
-        },
+        renderer::{multigpu::MultiTexture, utils::import_surface, ImportDma},
         session::{libseat::LibSeatSession, Session},
         udev::UdevBackend,
     },
-    delegate_dmabuf, delegate_drm_lease, delegate_drm_syncobj,
     input::pointer::CursorImageStatus,
     output::Output,
     reexports::{
@@ -63,7 +60,25 @@ use smithay::{
     },
 };
 
-impl DmabufHandler for Otto<UdevData> {
+/// The DRM devices of `backend_data`, when it is the udev backend's.
+///
+/// For code that holds the backend data type-erased, whichever renderer the
+/// backend runs on.
+pub fn drm_backends(
+    backend_data: &dyn std::any::Any,
+) -> Option<&std::collections::HashMap<DrmNode, types::BackendData>> {
+    if let Some(data) = backend_data.downcast_ref::<UdevData<crate::renderer::active::GlApi>>() {
+        return Some(&data.backends);
+    }
+    #[cfg(feature = "vulkan")]
+    if let Some(data) = backend_data.downcast_ref::<UdevData<crate::renderer::active::VulkanApi>>()
+    {
+        return Some(&data.backends);
+    }
+    None
+}
+
+impl<A: RendererApi> DmabufHandler for Otto<UdevData<A>> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.backend_data.dmabuf_state.as_mut().unwrap().0
     }
@@ -74,29 +89,24 @@ impl DmabufHandler for Otto<UdevData> {
         dmabuf: Dmabuf,
         notifier: ImportNotifier,
     ) {
-        if self
-            .backend_data
-            .gpus
-            .single_renderer(&self.backend_data.primary_gpu)
+        if A::single_renderer(&mut self.backend_data.gpus, &self.backend_data.primary_gpu)
             .and_then(|mut renderer| renderer.import_dmabuf(&dmabuf, None))
             .is_ok()
         {
-            let _ = notifier.successful::<Otto<UdevData>>();
+            let _ = notifier.successful::<Otto<UdevData<A>>>();
         } else {
             notifier.failed();
         }
     }
 }
-delegate_dmabuf!(Otto<UdevData>);
 
-impl smithay::wayland::drm_syncobj::DrmSyncobjHandler for Otto<UdevData> {
+impl<A: RendererApi> smithay::wayland::drm_syncobj::DrmSyncobjHandler for Otto<UdevData<A>> {
     fn drm_syncobj_state(&mut self) -> Option<&mut smithay::wayland::drm_syncobj::DrmSyncobjState> {
         self.backend_data.syncobj_state.as_mut()
     }
 }
-delegate_drm_syncobj!(Otto<UdevData>);
 
-impl Backend for UdevData {
+impl<A: RendererApi> Backend for UdevData<A> {
     const HAS_RELATIVE_MOTION: bool = true;
     const HAS_GESTURES: bool = true;
 
@@ -132,7 +142,7 @@ impl Backend for UdevData {
         if let Err(ref err) = early {
             tracing::warn!("Early buffer import failed: {}", err);
         }
-        let mut r = self.gpus.single_renderer(&self.primary_gpu).unwrap();
+        let mut r = A::single_renderer(&mut self.gpus, &self.primary_gpu).unwrap();
         compositor::with_states(surface, |states| {
             let import_res = import_surface(&mut r, states);
             if let Err(ref err) = import_res {
@@ -148,12 +158,23 @@ impl Backend for UdevData {
         let id = self.context_id.as_ref().cloned()?;
         let tex = surface.texture::<MultiTexture>(id.clone());
         if let Some(multitexture) = tex {
-            // Convert ContextId<MultiTexture> to ContextId<SkiaTexture>
-            let skia_id: smithay::backend::renderer::ContextId<SkiaTexture> = id.map();
-            let texture = multitexture.get::<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>(&skia_id);
+            // Convert ContextId<MultiTexture> to the renderer's texture context
+            let skia_id: smithay::backend::renderer::ContextId<A::Texture> = id.map();
+            let texture = multitexture.get::<A::GraphicsApi>(&skia_id);
             return texture.map(|t| t.into());
         }
         None
+    }
+    fn hold_surface_texture(
+        &self,
+        surface: &smithay::backend::renderer::utils::RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        let id = self.context_id.as_ref().cloned()?;
+        let multitexture = surface.texture::<MultiTexture>(id.clone())?;
+        let skia_id: smithay::backend::renderer::ContextId<A::Texture> = id.map();
+        multitexture
+            .get::<A::GraphicsApi>(&skia_id)
+            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
     }
     fn set_cursor(&mut self, _image: &CursorImageStatus) {
         // No-op: cursor rendering handled directly in render_surface
@@ -178,9 +199,8 @@ impl Backend for UdevData {
         }
     }
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext> {
-        let r = self.gpus.single_renderer(&self.primary_gpu).unwrap();
-        let r = r.as_ref();
-        r.context.clone()
+        let r = A::single_renderer(&mut self.gpus, &self.primary_gpu).unwrap();
+        r.as_ref().skia_context()
     }
 
     fn gbm_device(
@@ -211,7 +231,7 @@ impl Backend for UdevData {
 
     fn render_format(&mut self) -> Option<(u32, u64)> {
         // Get the renderer and query its render formats
-        let renderer = self.gpus.single_renderer(&self.primary_gpu).ok()?;
+        let renderer = A::single_renderer(&mut self.gpus, &self.primary_gpu).ok()?;
         let formats = renderer.dmabuf_formats();
 
         // Find ARGB8888 or XRGB8888 format (common render formats)
@@ -229,7 +249,7 @@ impl Backend for UdevData {
 
     fn get_format_modifiers(&mut self, fourcc: smithay::backend::allocator::Fourcc) -> Vec<u64> {
         // Get all modifiers supported for the given format
-        let renderer = match self.gpus.single_renderer(&self.primary_gpu) {
+        let renderer = match A::single_renderer(&mut self.gpus, &self.primary_gpu) {
             Ok(r) => r,
             Err(_) => return vec![],
         };
@@ -248,7 +268,7 @@ impl Backend for UdevData {
     }
 }
 
-impl DrmLeaseHandler for Otto<UdevData> {
+impl<A: RendererApi> DrmLeaseHandler for Otto<UdevData<A>> {
     fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {
         self.backend_data
             .backends
@@ -324,8 +344,6 @@ impl DrmLeaseHandler for Otto<UdevData> {
         backend.active_leases.retain(|l| l.id() != lease);
     }
 }
-
-delegate_drm_lease!(Otto<UdevData>);
 
 pub fn probe_displays() {
     #[allow(clippy::disallowed_macros)]

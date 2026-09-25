@@ -62,17 +62,17 @@ otto-kit = { path = "components/otto-kit" }
 laye-rs.workspace = true
 
 [dependencies.smithay-drm-extras]
-# fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
+# fork: upstream master + dmabuf-scanout + xwm focus + the Vulkan device layer
 git = "https://github.com/nongio/smithay"
-branch = "feat/dmabuf-scanout"
-# local development: path = "../smithay/smithay-drm-extras"
+branch = "feat/vulkan-device"
+# local development: path = "../smithay-latest/smithay-drm-extras"
 optional = true
 
 [dependencies.smithay]
-# fork: includes dmabuf-scanout + xwm focus (set_input_focus/set_active_window)
+# fork: upstream master + dmabuf-scanout + xwm focus + the Vulkan device layer
 git = "https://github.com/nongio/smithay"
-branch = "feat/dmabuf-scanout"
-# local development: path = "../smithay"
+branch = "feat/vulkan-device"
+# local development: path = "../smithay-latest"
 default-features = false
 features = [
     "backend_winit",
@@ -96,7 +96,7 @@ version = "0.12.0"
 
 [features]
 perf-counters = []
-default = ["egl", "winit", "udev", "renderer_sync", "xwayland"]
+default = ["egl", "winit", "udev", "renderer_sync", "xwayland", "vulkan"]
 dev = ["debug", "profile", "debugger", "debug-hooks"]
 # File-driven live toggles and command files under /tmp (see src/debug_hooks.rs).
 debug-hooks = []
@@ -139,6 +139,8 @@ profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracy-mem = ["profile-with-tracy"]
 headless = []
+# Skia on Vulkan for the udev backend; winit and x11 stay on GL.
+vulkan = ["udev"]
 renderer_sync = []
 
 [dev-dependencies]
@@ -208,17 +210,17 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# On the feat/blur-cache branch (nongio/layers#28) for kept blurred backdrops,
-# clipped damage and opaque regions, until it is released; before that,
-# pinned to v1.17.0 (nongio/layers#27), which takes the transaction locks
-# in one order, ending the deadlock that left the compositor black at login.
+# Pinned to v1.18.1 (nongio/layers#28, #29, blur fade-in fix): kept blurred backdrops, clipped
+# damage, opaque regions and the Vulkan render target; v1.17.0 (#27) takes the
+# transaction locks in one order, ending the deadlock that left the
+# compositor black at login.
 # v1.16.0 (#26) keeps the backdrop blur from sampling past a layer's bounds and
 # carries the cancelled-change re-sync (#25). v1.15.0 brought
 # `Layer::set_blur_bounds` (#24).
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", branch = "feat/blur-cache", features = [
+laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.18.1", features = [
     "export-taffy",
 ] }
 

@@ -22,6 +22,11 @@ pub struct WindowViewSurface {
     pub(crate) texture_id: Option<u32>,
     pub(crate) commit: CommitCounter,
     pub(crate) transform: Transform,
+    /// Whether the client declared the whole surface opaque (an opaque
+    /// region covering it, or a buffer without alpha). Only then may its
+    /// layer occlude what lies beneath it; a transparent surface claiming
+    /// opacity would cull everything under it out of the frame.
+    pub(crate) fully_opaque: bool,
 }
 impl fmt::Debug for WindowViewSurface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -40,6 +45,7 @@ impl fmt::Debug for WindowViewSurface {
             .field("offset_y", &self.log_offset_y)
             .field("commit", &self.commit)
             .field("transform", &self.transform)
+            .field("fully_opaque", &self.fully_opaque)
             .finish()
     }
 }
@@ -135,6 +141,7 @@ impl Hash for WindowViewSurface {
         self.phy_dst_w.to_bits().hash(state);
         self.phy_dst_h.to_bits().hash(state);
         self.log_offset_x.to_bits().hash(state);
+        self.fully_opaque.hash(state);
         self.log_offset_y.to_bits().hash(state);
     }
 }

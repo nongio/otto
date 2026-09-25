@@ -226,6 +226,7 @@ pub fn set<B: Backend + 'static>(
         Ok(()) => {}
         Err(Invalid::Type(message)) => return Err(SetError::InvalidType(message)),
         Err(Invalid::Range(message)) => return Err(SetError::OutOfRange(message)),
+        Err(Invalid::Unavailable(message)) => return Err(SetError::Unsupported(message)),
     }
 
     if spec.apply == Apply::Unsupported {
@@ -452,6 +453,23 @@ pub fn announce(changes: &[(String, SettingValue)]) {
     }
 }
 
+static BACKEND: OnceLock<&'static str> = OnceLock::new();
+
+/// Record which backend this session runs on, so the schema can say which
+/// settings have an effect here. Set once, when the compositor starts.
+pub fn set_backend(name: &'static str) {
+    let _ = BACKEND.set(name);
+}
+
+/// Whether `spec` has any effect under the running backend. A session that
+/// has not recorded one (a unit test) counts as every backend.
+fn applies_here(spec: &SettingSpec) -> bool {
+    spec.backends.is_empty()
+        || BACKEND
+            .get()
+            .is_none_or(|backend| spec.backends.contains(backend))
+}
+
 /// The schema as the bus serves it: one dictionary per setting.
 pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
     schema::SETTINGS
@@ -514,6 +532,23 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
                     SettingValue::StrList(
                         spec.choice_labels.iter().map(|c| choice_label(c)).collect(),
                     ),
+                );
+            }
+            let unavailable = spec.unavailable_now();
+            if !unavailable.is_empty() {
+                put(
+                    &mut entry,
+                    "unavailable_choices",
+                    SettingValue::StrList(unavailable.iter().map(|c| c.to_string()).collect()),
+                );
+            }
+            // Only for a setting tied to some backends, so a client reads a
+            // missing key as "applies".
+            if !spec.backends.is_empty() {
+                put(
+                    &mut entry,
+                    "applies_here",
+                    SettingValue::Bool(applies_here(spec)),
                 );
             }
             entry
@@ -769,5 +804,34 @@ mod tests {
         for spec in schema::SETTINGS {
             assert!(described.iter().any(|id| id == spec.id));
         }
+    }
+
+    /// The renderer tells a client what this build and this session can do
+    /// with it, and nothing else carries those keys.
+    #[test]
+    fn describe_says_where_the_renderer_applies() {
+        let entries = describe();
+        let entry_for = |id: &str| {
+            entries
+                .iter()
+                .find(|entry| {
+                    entry
+                        .get("id")
+                        .and_then(|value| <&str>::try_from(&**value).ok())
+                        == Some(id)
+                })
+                .expect("described")
+        };
+
+        let renderer = entry_for("rendering.renderer");
+        assert!(renderer.contains_key("applies_here"));
+        assert_eq!(
+            renderer.contains_key("unavailable_choices"),
+            !cfg!(feature = "vulkan")
+        );
+
+        let dock = entry_for("dock.size");
+        assert!(!dock.contains_key("applies_here"));
+        assert!(!dock.contains_key("unavailable_choices"));
     }
 }

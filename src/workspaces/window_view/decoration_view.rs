@@ -207,7 +207,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowDecorat
         &self,
         data: &mut crate::Otto<Backend>,
         _serial: smithay::utils::Serial,
-        _time: u32,
+        _time: smithay::backend::input::InputTime,
     ) {
         // The pointer can leave the bar without a last motion off the
         // controls — straight onto the client surface below, or out of the

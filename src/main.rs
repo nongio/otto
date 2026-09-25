@@ -4,6 +4,8 @@ static POSSIBLE_BACKENDS: &[&str] = &[
     #[cfg(feature = "udev")]
     "--tty-udev   Run otto on a tty using udev (requires root or logind).",
     #[cfg(feature = "udev")]
+    "             --renderer gl|vulkan picks the GPU api (default: [rendering] renderer).",
+    #[cfg(feature = "udev")]
     "--probe      Probe available displays and resolutions, then exit.",
     #[cfg(feature = "x11")]
     "--x11        Run otto as an X11 client.",
@@ -54,6 +56,7 @@ async fn main() {
         Some(other)
             if !other.starts_with("--winit")
                 && !other.starts_with("--tty-udev")
+                && !other.starts_with("--renderer")
                 && !other.starts_with("--probe")
                 && !other.starts_with("--x11")
                 && !other.starts_with("--headless")
@@ -125,9 +128,19 @@ async fn main() {
     #[cfg(feature = "profile-with-puffin")]
     profiling::puffin::set_scopes_on(true);
 
-    let arg = ::std::env::args()
-        .skip(1)
-        .find(|a| a != "--systemd-notify" && a != "--login");
+    let args: Vec<String> = ::std::env::args().skip(1).collect();
+    let renderer_value = args.iter().position(|a| a == "--renderer").map(|i| i + 1);
+    let arg = args
+        .iter()
+        .enumerate()
+        .find(|(i, a)| {
+            *a != "--systemd-notify"
+                && *a != "--login"
+                && *a != "--renderer"
+                && !a.starts_with("--renderer=")
+                && Some(*i) != renderer_value
+        })
+        .map(|(_, a)| a.clone());
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {
@@ -139,7 +152,7 @@ async fn main() {
         Some("--tty-udev") => {
             tracing::info!("Starting otto on a tty using udev");
             std::env::set_var("OTTO_BACKEND", "tty-udev");
-            otto::udev::run_udev();
+            run_udev(&args);
         }
         #[cfg(feature = "udev")]
         Some("--probe") => {
@@ -190,7 +203,7 @@ async fn main() {
                 {
                     tracing::info!("No Wayland session detected, starting with tty-udev backend");
                     std::env::set_var("OTTO_BACKEND", "tty-udev");
-                    otto::udev::run_udev();
+                    run_udev(&args);
                 }
                 #[cfg(not(feature = "udev"))]
                 {
@@ -199,6 +212,23 @@ async fn main() {
                 }
             }
         }
+    }
+}
+
+/// Runs the udev backend on the renderer `--renderer` names, or else the one
+/// `[rendering] renderer` in the config names.
+///
+/// Exits with status 1 when the renderer cannot run in this build.
+#[cfg(feature = "udev")]
+fn run_udev(args: &[String]) {
+    let from_cli = args
+        .iter()
+        .position(|a| a == "--renderer")
+        .map(|i| args.get(i + 1).map(String::as_str).unwrap_or_default())
+        .or_else(|| args.iter().find_map(|a| a.strip_prefix("--renderer=")));
+    if let Err(err) = otto::udev::run_selected(from_cli) {
+        tracing::error!(target: "otto::udev", "{err}");
+        std::process::exit(1);
     }
 }
 

@@ -7,7 +7,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{skia_renderer::SkiaRenderer, udev::UdevRenderer};
+use crate::renderer::FrameSurface;
 
 #[derive(Debug, Clone)]
 pub struct SkiaElement {
@@ -66,18 +66,29 @@ impl Element for SkiaElement {
     }
 }
 
-impl RenderElement<SkiaRenderer> for SkiaElement {
-    fn draw<'frame>(
+impl<R: FrameSurface> RenderElement<R> for SkiaElement {
+    fn draw(
         &self,
-        frame: &mut <SkiaRenderer as RendererSuper>::Frame<'frame, 'frame>,
+        frame: &mut <R as RendererSuper>::Frame<'_, '_>,
         _src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
-        let mut canvas = frame.skia_surface.clone();
-        let canvas = canvas.canvas();
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
+    ) -> Result<(), <R as RendererSuper>::Error> {
+        self.draw_on(R::frame_surface(frame).canvas(), dst, damage);
+        Ok(())
+    }
+}
 
+impl SkiaElement {
+    /// Draws the damaged part of the element into `canvas` at `dst`.
+    fn draw_on(
+        &self,
+        canvas: &layers::skia::Canvas,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+    ) {
         let instances = damage
             .iter()
             .map(|rect| {
@@ -148,20 +159,5 @@ impl RenderElement<SkiaRenderer> for SkiaElement {
             canvas.restore();
         }
         canvas.restore_to_count(save_count);
-        Ok(())
-    }
-}
-
-impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SkiaElement {
-    fn draw(
-        &self,
-        frame: &mut <UdevRenderer<'renderer> as RendererSuper>::Frame<'_, '_>,
-        src: Rectangle<f64, Buffer>,
-        dst: Rectangle<i32, Physical>,
-        damage: &[Rectangle<i32, Physical>],
-        opaque_regions: &[Rectangle<i32, Physical>],
-    ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        RenderElement::<SkiaRenderer>::draw(self, frame.as_mut(), src, dst, damage, opaque_regions)
-            .map_err(|e| e.into())
     }
 }

@@ -3,17 +3,17 @@
 // Handles session setup, GPU initialization, libinput configuration,
 // and the main event loop for the udev backend.
 
-use std::{collections::HashMap, sync::atomic::Ordering, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{atomic::Ordering, OnceLock},
+    time::Duration,
+};
 
 use smithay::{
     backend::{
         drm::{DrmNode, NodeType},
-        egl::context::ContextPriority,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
-        renderer::{
-            multigpu::{gbm::GbmGlesBackend, GpuManager},
-            ImportDma, ImportMemWl, Renderer,
-        },
+        renderer::{multigpu::GpuManager, ImportDma, ImportMemWl, Renderer},
         session::{libseat::LibSeatSession, Event as SessionEvent, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
@@ -24,6 +24,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::Config,
+    renderer::active::RendererApi,
     state::{Backend, Otto},
 };
 
@@ -76,10 +77,131 @@ fn configure_libinput_devices(
     }
 }
 
-/// Main entry point for the udev backend
+/// Why the session draws with OpenGL although Vulkan was asked for; unset
+/// when Vulkan was not requested or came up.
+static VULKAN_FALLBACK: OnceLock<String> = OnceLock::new();
+
+/// Why this session fell back from Vulkan to OpenGL, if it did.
+///
+/// Settings reads it to report Vulkan as unavailable on this machine instead
+/// of offering a choice the next start would silently replace.
+pub fn vulkan_fallback() -> Option<&'static str> {
+    VULKAN_FALLBACK.get().map(String::as_str)
+}
+
+/// Why `requested` cannot be the session's renderer: `Some` when it is Vulkan
+/// and the probe of the primary GPU failed, so the session runs on OpenGL.
+///
+/// A session that exits at startup because its renderer cannot come up is a
+/// greeter loop the user can only leave from a tty, so a Vulkan that does not
+/// work on this machine is a warning and a fallback, never an exit.
+fn fallback_reason(
+    requested: crate::config::RendererKind,
+    probe: Result<(), String>,
+) -> Option<String> {
+    match (requested, probe) {
+        (crate::config::RendererKind::Vulkan, Err(reason)) => Some(reason),
+        _ => None,
+    }
+}
+
+/// The seat the session will sit on, before it exists: what the login manager
+/// exported, or libseat's default.
+#[cfg(feature = "vulkan")]
+fn seat_name() -> String {
+    std::env::var("XDG_SEAT").unwrap_or_else(|_| "seat0".to_string())
+}
+
+/// Checks that Vulkan can drive the primary GPU of `seat`.
+#[cfg(feature = "vulkan")]
+fn probe_vulkan(seat: &str) -> Result<(), String> {
+    let node = primary_gpu_node(seat);
+    super::vulkan_api::probe(node).map_err(|err| err.to_string())
+}
+
+/// Runs the udev backend on the renderer named `cli`, or else on the one the
+/// config's `[rendering] renderer` names.
+///
+/// Vulkan is probed on the primary GPU first; when it cannot come up there the
+/// session runs on OpenGL instead and logs why (see [`vulkan_fallback`]).
+///
+/// # Errors
+///
+/// Fails, before anything starts, when `cli` names no renderer or names one
+/// this build does not include.
+pub fn run_selected(cli: Option<&str>) -> Result<(), String> {
+    use crate::config::RendererKind;
+
+    let kind = match cli {
+        Some(name) => RendererKind::from_name(name)
+            .ok_or_else(|| format!("unknown renderer {name:?}: expected gl or vulkan"))?,
+        None => Config::current().rendering.renderer,
+    };
+    #[cfg(feature = "vulkan")]
+    let kind = match kind {
+        RendererKind::Vulkan => match fallback_reason(kind, probe_vulkan(&seat_name())) {
+            Some(reason) => {
+                warn!(
+                    target: "otto::udev",
+                    "Vulkan renderer requested but unavailable on the primary GPU ({reason}); \
+                     using OpenGL"
+                );
+                let _ = VULKAN_FALLBACK.set(reason);
+                RendererKind::Gl
+            }
+            None => kind,
+        },
+        RendererKind::Gl => kind,
+    };
+    match kind {
+        RendererKind::Gl => run_udev::<crate::renderer::active::GlApi>(),
+        #[cfg(feature = "vulkan")]
+        RendererKind::Vulkan => run_udev::<crate::renderer::active::VulkanApi>(),
+        #[cfg(not(feature = "vulkan"))]
+        RendererKind::Vulkan => {
+            return Err(
+                "the vulkan renderer needs a build with the `vulkan` feature \
+                        (cargo build --features vulkan)"
+                    .to_string(),
+            )
+        }
+    }
+    Ok(())
+}
+
+/// The DRM node the session renders on: `ANVIL_DRM_DEVICE`, else the render
+/// node of the seat's primary GPU, else the first GPU of the seat.
+///
+/// # Panics
+///
+/// Panics when `ANVIL_DRM_DEVICE` is not a DRM node, udev cannot be read, or
+/// the seat has no GPU: none of these is a session that can go on.
+fn primary_gpu_node(seat: &str) -> DrmNode {
+    if let Ok(var) = std::env::var("ANVIL_DRM_DEVICE") {
+        return DrmNode::from_path(var).expect("Invalid drm device path");
+    }
+    primary_gpu(seat)
+        .unwrap()
+        .and_then(|x| {
+            DrmNode::from_path(x)
+                .ok()?
+                .node_with_type(NodeType::Render)?
+                .ok()
+        })
+        .unwrap_or_else(|| {
+            all_gpus(seat)
+                .unwrap()
+                .into_iter()
+                .find_map(|x| DrmNode::from_path(x).ok())
+                .expect("No GPU!")
+        })
+}
+
+/// Main entry point for the udev backend, rendering with `A`.
 ///
 /// Initializes the session, GPU, input devices, and runs the main event loop.
-pub fn run_udev() {
+pub fn run_udev<A: RendererApi>() {
+    info!(target: "otto::udev", "renderer: {}", A::NAME);
     let mut event_loop = EventLoop::try_new().unwrap();
     let display = Display::new().unwrap();
     let mut display_handle = display.handle();
@@ -98,29 +220,10 @@ pub fn run_udev() {
     /*
      * Initialize the compositor
      */
-    let primary_gpu = if let Ok(var) = std::env::var("ANVIL_DRM_DEVICE") {
-        DrmNode::from_path(var).expect("Invalid drm device path")
-    } else {
-        primary_gpu(session.seat())
-            .unwrap()
-            .and_then(|x| {
-                DrmNode::from_path(x)
-                    .ok()?
-                    .node_with_type(NodeType::Render)?
-                    .ok()
-            })
-            .unwrap_or_else(|| {
-                all_gpus(session.seat())
-                    .unwrap()
-                    .into_iter()
-                    .find_map(|x| DrmNode::from_path(x).ok())
-                    .expect("No GPU!")
-            })
-    };
+    let primary_gpu = primary_gpu_node(&session.seat());
     info!("Using {} as primary gpu.", primary_gpu);
 
-    let gpus =
-        GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High)).unwrap();
+    let gpus = GpuManager::new(A::graphics_api()).unwrap();
 
     // // Context ID will be obtained after devices are initialized
     let data = UdevData {
@@ -287,7 +390,7 @@ pub fn run_udev() {
                 {
                     let _ = backend.drm.activate(false);
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
-                        lease_global.resume::<Otto<UdevData>>();
+                        lease_global.resume::<Otto<UdevData<A>>>();
                     }
                     for surface in backend.surfaces.values_mut() {
                         if let Err(err) = surface.compositor.surface().reset_state() {
@@ -315,25 +418,22 @@ pub fn run_udev() {
     }
 
     // Now that devices are added, set the context_id
-    if let Ok(renderer) = state.backend_data.gpus.single_renderer(&primary_gpu) {
-        state.backend_data.context_id = Some(renderer.context_id());
+    match A::single_renderer(&mut state.backend_data.gpus, &primary_gpu) {
+        Ok(renderer) => state.backend_data.context_id = Some(renderer.context_id()),
+        Err(err) => {
+            error!("No renderer on the primary GPU {primary_gpu}: {err}");
+            std::process::exit(1);
+        }
     }
 
     state.shm_state.update_formats(
-        state
-            .backend_data
-            .gpus
-            .single_renderer(&primary_gpu)
+        A::single_renderer(&mut state.backend_data.gpus, &primary_gpu)
             .unwrap()
             .shm_formats(),
     );
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
-    let mut renderer = state
-        .backend_data
-        .gpus
-        .single_renderer(&primary_gpu)
-        .unwrap();
+    let mut renderer = A::single_renderer(&mut state.backend_data.gpus, &primary_gpu).unwrap();
 
     #[cfg(feature = "fps_ticker")]
     {
@@ -364,13 +464,11 @@ pub fn run_udev() {
 
     #[cfg(feature = "egl")]
     {
-        use smithay::backend::renderer::ImportEgl;
-
         info!(
             ?primary_gpu,
             "Trying to initialize EGL Hardware Acceleration",
         );
-        match renderer.bind_wl_display(&display_handle) {
+        match A::bind_wl_display(&mut renderer, &display_handle) {
             Ok(_) => info!("EGL hardware-acceleration enabled"),
             Err(err) => info!(?err, "Failed to initialize EGL hardware-acceleration"),
         }
@@ -380,12 +478,15 @@ pub fn run_udev() {
     // Strip the clear-color CCS modifiers Otto can't sample (see
     // feedback::strip_clear_color_modifiers) so clients fall back to renderable ones.
     let dmabuf_formats = super::feedback::strip_clear_color_modifiers(renderer.dmabuf_formats());
+    drop(renderer);
     let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
         .build()
         .unwrap();
     let mut dmabuf_state = DmabufState::new();
-    let global = dmabuf_state
-        .create_global_with_default_feedback::<Otto<UdevData>>(&display_handle, &default_feedback);
+    let global = dmabuf_state.create_global_with_default_feedback::<Otto<UdevData<A>>>(
+        &display_handle,
+        &default_feedback,
+    );
     state.backend_data.dmabuf_state = Some((dmabuf_state, global));
 
     // Expose explicit sync (wp_linux_drm_syncobj) if supported by primary GPU
@@ -403,7 +504,7 @@ pub fn run_udev() {
                 let import_device = backend.drm.device_fd().clone();
                 if supports_syncobj_eventfd(&import_device) {
                     let syncobj_state =
-                        DrmSyncobjState::new::<Otto<UdevData>>(&display_handle, import_device);
+                        DrmSyncobjState::new::<Otto<UdevData<A>>>(&display_handle, import_device);
                     state.backend_data.syncobj_state = Some(syncobj_state);
                     info!("Explicit sync (wp_linux_drm_syncobj) enabled");
                 } else {
@@ -422,7 +523,7 @@ pub fn run_udev() {
             // Update the per drm surface dmabuf feedback
             backend_data.surfaces.values_mut().for_each(|surface_data| {
                 surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
-                    get_surface_dmabuf_feedback(
+                    get_surface_dmabuf_feedback::<A>(
                         primary_gpu,
                         surface_data.render_node,
                         gpus,
@@ -537,7 +638,7 @@ pub fn run_udev() {
 
                 let output =
                     crate::virtual_output::VirtualOutputState::build_output(vout_config, position);
-                let global = output.create_global::<Otto<UdevData>>(&display_handle);
+                let global = output.create_global::<Otto<UdevData<A>>>(&display_handle);
 
                 state
                     .workspaces
@@ -589,7 +690,7 @@ pub fn run_udev() {
                             e
                         );
                         state.workspaces.unmap_output(&output);
-                        display_handle.remove_global::<Otto<UdevData>>(global);
+                        display_handle.remove_global::<Otto<UdevData<A>>>(global);
                     }
                 }
             }
@@ -603,7 +704,7 @@ pub fn run_udev() {
                 .handle
                 .insert_source(
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
-                    move |_, _, data: &mut Otto<super::types::UdevData>| {
+                    move |_, _, data: &mut Otto<super::types::UdevData<A>>| {
                         crate::debug_gesture::tick(data);
                         smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
                     },
@@ -635,7 +736,7 @@ pub fn run_udev() {
                 .handle
                 .insert_source(
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
-                    move |_, _, data: &mut Otto<super::types::UdevData>| {
+                    move |_, _, data: &mut Otto<super::types::UdevData<A>>| {
                         data.tick_scene_without_connectors();
                         data.render_virtual_outputs();
                         data.kick_screencast_outputs();
@@ -682,7 +783,7 @@ pub fn run_udev() {
                     .handle()
                     .insert_source(
                         Generic::new(stdout, Interest::READ, CalloopMode::Level),
-                        move |_, stdout, data: &mut Otto<UdevData>| {
+                        move |_, stdout, data: &mut Otto<UdevData<A>>| {
                             let mut buf = [0u8; 4096];
                             let mut hit = false;
                             loop {
@@ -784,5 +885,32 @@ pub fn run_udev() {
             crate::surface_style::send_desktop_frames(&mut state);
             display_handle.flush_clients().unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fallback_reason;
+    use crate::config::RendererKind;
+
+    #[test]
+    fn vulkan_falls_back_when_the_probe_fails() {
+        assert_eq!(
+            fallback_reason(RendererKind::Vulkan, Err("no loader".into())),
+            Some("no loader".to_string())
+        );
+    }
+
+    #[test]
+    fn a_working_vulkan_is_kept() {
+        assert_eq!(fallback_reason(RendererKind::Vulkan, Ok(())), None);
+    }
+
+    #[test]
+    fn gl_ignores_the_probe() {
+        assert_eq!(
+            fallback_reason(RendererKind::Gl, Err("irrelevant".into())),
+            None
+        );
     }
 }

@@ -26,7 +26,6 @@ use smithay::{
         winit::{self, WinitEvent, WinitGraphicsBackend},
         SwapBuffersError,
     },
-    delegate_dmabuf,
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -35,7 +34,7 @@ use smithay::{
         wayland_server::{protocol::wl_surface, Display},
         winit::{
             dpi::{LogicalSize, Size},
-            platform::pump_events::PumpStatus,
+            event_loop::pump_events::PumpStatus,
             window::WindowAttributes,
         },
     },
@@ -183,7 +182,6 @@ impl DmabufHandler for Otto<WinitData> {
         }
     }
 }
-delegate_dmabuf!(Otto<WinitData>);
 
 impl Backend for WinitData {
     fn seat_name(&self) -> String {
@@ -208,6 +206,15 @@ impl Backend for WinitData {
         let tex = render_surface.texture::<SkiaTexture>(id);
         tex.map(|t| t.clone().into())
     }
+    fn hold_surface_texture(
+        &self,
+        render_surface: &RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        let id = self.context_id.clone();
+        render_surface
+            .texture::<SkiaTexture>(id)
+            .map(|t| Box::new(t.clone()) as Box<dyn std::any::Any + Send>)
+    }
     fn set_cursor(&mut self, _image: &CursorImageStatus) {}
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext> {
         let r = self.backend.renderer();
@@ -229,7 +236,7 @@ pub fn run_winit() {
         match winit::init_from_attributes_with_gl_attr::<SkiaRenderer>(
             WindowAttributes::default()
                 .with_title("Otto".to_string())
-                .with_inner_size(Size::new(window_size))
+                .with_surface_size(Size::new(window_size))
                 .with_visible(true),
             GlAttributes {
                 version: (3, 0),
@@ -466,7 +473,7 @@ pub fn run_winit() {
 
             // Set window cursor for named cursors (for window manager integration)
             if let CursorImageStatus::Named(cursor) = *cursor_guard {
-                backend.window().set_cursor(cursor);
+                backend.window().set_cursor(cursor.into());
             }
 
             #[cfg(feature = "fps_ticker")]
@@ -829,6 +836,7 @@ pub fn run_winit() {
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
+            state.reap_closed_windows();
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();

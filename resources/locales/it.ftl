@@ -129,6 +129,10 @@ settings-display-refresh-detail = Hertz — la frequenza con cui lo stream ricev
 settings-display-resolution = Risoluzione
 settings-display-scale = Scala del monitor
 settings-display-scale-detail = Si applica al prossimo accesso. La scrivania non si aggiorna dinamicamente
+settings-renderer = Motore di rendering
+settings-renderer-detail = Riguarda la sessione avviata dalla schermata di accesso. Le sessioni in finestra usano sempre OpenGL. Si applica al prossimo accesso.
+settings-renderer-no-vulkan-detail = Vulkan non è disponibile qui, quindi Otto disegna con OpenGL.
+settings-renderer-windowed-detail = Le sessioni in finestra usano sempre OpenGL. Si può cambiare da una sessione avviata dalla schermata di accesso.
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Nessun monitor
@@ -973,6 +977,10 @@ schema-login-greeter-command-label = Comando della schermata di accesso
 schema-login-greeter-command-description = Il programma di accesso avviato in modalità login.
 schema-login-greeter-args-label = Argomenti della schermata di accesso
 schema-login-greeter-args-description = Argomenti passati alla schermata di accesso.
+
+# --- rendering ---
+schema-rendering-renderer-label = Motore di rendering
+schema-rendering-renderer-description = L’API GPU con cui Otto disegna in una sessione avviata dalla schermata di accesso. Le sessioni in finestra usano sempre OpenGL.
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Il selettore segue il puntatore

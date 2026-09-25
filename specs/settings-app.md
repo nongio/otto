@@ -175,11 +175,13 @@ These are `live` too. Reporting them as needing a restart would be as wrong as
 the opposite mistake: it puts a badge on a change that is already in force, and
 a badge the user can catch lying is a badge they stop reading.
 
-Only `screen_scale`, `font_family`, `gtk_theme`, the display language and
-`login.greeter_*` require a restart. The scale reaches the outputs, the bar and
-every maximized window's geometry, and nothing reconciles those; the font is
-baked into caches shared with the client toolkits; the language is read before
-anything is built; the greeter runs before this session exists. Marking a
+Only `screen_scale`, `font_family`, `gtk_theme`, the display language,
+`login.greeter_*` and `rendering.renderer` require a restart. The scale reaches
+the outputs, the bar and every maximized window's geometry, and nothing
+reconciles those; the font is baked into caches shared with the client
+toolkits; the language is read before anything is built; the greeter runs
+before this session exists; the renderer is created once, when the backend
+brings the GPU up. Marking a
 setting `live` is a promise that it takes effect, and marking one `restart` is
 a promise that a restart is what it takes.
 
@@ -583,6 +585,28 @@ This protects against a mode the display cannot in fact show.
 the next start, which the app reports. A modeset made from under a running
 session cannot be undone if the display does not come back, so the confirm
 timeout above has to exist before the live path does.*
+
+Below the display's own rows the pane offers the renderer
+(`rendering.renderer`): OpenGL or Vulkan, the GPU API a login session draws
+with. It is a restart setting, and its helper text says it applies to the
+login session, that windowed sessions always use OpenGL, and that it takes
+effect after the next login. Two cases leave nothing to choose, and the row
+then states what Otto draws with instead of offering a menu:
+
+- The compositor serves the setting with `applies_here: false`: this session
+  runs on a windowed backend (`--winit`, `--x11`), which always draws with
+  OpenGL. The note says so and points to a login session.
+- The compositor lists `vulkan` in `unavailable_choices`: either the build
+  has no Vulkan renderer, or this session asked for Vulkan and could not bring
+  it up on the primary GPU, so it fell back to OpenGL. OpenGL is the only one
+  left, and the note says Vulkan isn't available here. A menu never offers an
+  unavailable choice, and the compositor refuses one with `Unsupported`: a
+  GL-only build asked for Vulkan exits at startup, and a build with it would
+  only fall back again.
+
+A login session asked for Vulkan that cannot come up does not exit; it warns
+(`otto::udev`) and draws with OpenGL for the whole session, so a wrong choice
+here never locks the user out at the greeter.
 
 An output that disconnects while the pane is open disappears from the canvas;
 the configuration recorded for it is retained so reconnecting restores it.

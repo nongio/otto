@@ -1396,4 +1396,210 @@ mod headless_tests {
 
         handle.stop();
     }
+
+    // ── Closing windows fade out ─────────────────────────────────────────
+
+    /// Map a window with a subsurface and return its id, plus the scene
+    /// nodes of the root and subsurface layers.
+    fn map_window_with_subsurface(
+        handle: &HeadlessHandle,
+        client: &mut TestClient,
+        title: &'static str,
+    ) -> (
+        std::sync::Arc<std::sync::Mutex<otto_kit::testing::TestToplevel>>,
+        (
+            wayland_client::protocol::wl_surface::WlSurface,
+            wayland_client::protocol::wl_subsurface::WlSubsurface,
+            otto_kit::testing::ShmBuffer,
+        ),
+    ) {
+        let toplevel = client.create_toplevel(title, 400, 300);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        let parent = toplevel.lock().unwrap().surface.clone();
+        let sub = client.create_subsurface(&parent, 20, 20, 100, 100);
+        toplevel.lock().unwrap().commit_frame();
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(100));
+        (toplevel, sub)
+    }
+
+    /// Every client that quits destroys its toplevel and its surfaces in one
+    /// flush. The window keeps drawing its last frame while it fades, so the
+    /// surface layers (root and subsurface) must outlive the surfaces and
+    /// go together with the window layer once the fade has ended.
+    #[test]
+    #[serial]
+    fn closing_window_keeps_its_content_while_it_fades() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+        let (toplevel, (sub_surface, sub_subsurface, _sub_buffer)) =
+            map_window_with_subsurface(&handle, &mut client, "fading");
+        settle_animations(&handle);
+
+        let (window_id, root_node, sub_node) = handle.query(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "fading")
+                .expect("window mapped");
+            let root = state
+                .surface_layers
+                .get(&window.id())
+                .expect("root surface layer")
+                .id();
+            let sub = state
+                .surface_layers
+                .iter()
+                .find(|(id, _)| **id != window.id())
+                .map(|(_, layer)| layer.id())
+                .expect("subsurface layer");
+            (window.id(), root, sub)
+        });
+
+        // Quit the way a client does: role objects first, then the surfaces.
+        {
+            let top = toplevel.lock().unwrap();
+            top.toplevel.as_ref().unwrap().destroy();
+            top.xdg_surface.as_ref().unwrap().destroy();
+            sub_subsurface.destroy();
+            sub_surface.destroy();
+            top.surface.destroy();
+        }
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(30));
+        handle.tick(1.0 / 60.0);
+
+        let (closing, view_alive, content_children, root_alive, sub_alive, root_children) = handle
+            .query(move |state| {
+                let closing = state.workspaces.closing_window_views();
+                let view = closing
+                    .iter()
+                    .find(|(id, _)| *id == window_id)
+                    .map(|(_, view)| view.clone());
+                let engine = &state.layers_engine;
+                (
+                    closing.len(),
+                    view.as_ref().is_some_and(|v| v.is_alive()),
+                    view.as_ref()
+                        .map(|v| v.content_layer.children_nodes())
+                        .unwrap_or_default(),
+                    engine.is_layer_alive(&root_node),
+                    engine.is_layer_alive(&sub_node),
+                    engine
+                        .get_layer(&root_node)
+                        .map(|l| l.children_nodes())
+                        .unwrap_or_default(),
+                )
+            });
+        assert_eq!(closing, 1, "the closed window is fading out");
+        assert!(view_alive, "the window layer is still in the scene");
+        assert!(
+            content_children.contains(&root_node) && root_alive,
+            "the root surface layer stays under the content layer during the fade"
+        );
+        assert!(
+            root_children.contains(&sub_node) && sub_alive,
+            "the subsurface layer stays under the root during the fade"
+        );
+
+        // The fade ends, and the next loop turn reaps the whole subtree.
+        settle_animations(&handle);
+        handle.wait(Duration::from_millis(50));
+        handle.tick(1.0 / 60.0);
+        let (closing, root_alive, sub_alive) = handle.query(move |state| {
+            (
+                state.workspaces.closing_window_views().len(),
+                state.layers_engine.is_layer_alive(&root_node),
+                state.layers_engine.is_layer_alive(&sub_node),
+            )
+        });
+        assert_eq!(closing, 0, "the window is reaped once faded");
+        assert!(
+            !root_alive && !sub_alive,
+            "the surface layers go with the window layer"
+        );
+
+        handle.stop();
+    }
+
+    /// A window on its own plane closes: its layer must be back under the
+    /// workspace's windows container before the fade starts, or it fades in
+    /// the plane container the next promotion assumes empty.
+    #[test]
+    #[serial]
+    fn closing_promoted_window_fades_in_the_windows_tree() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+        let (toplevel, (sub_surface, sub_subsurface, _sub_buffer)) =
+            map_window_with_subsurface(&handle, &mut client, "promoted");
+        settle_animations(&handle);
+
+        let (window_id, output_name, window_node) = handle.query(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "promoted")
+                .expect("window mapped");
+            let output = state
+                .workspaces
+                .output_workspaces
+                .keys()
+                .next()
+                .expect("an output")
+                .clone();
+            let view = state
+                .workspaces
+                .get_window_view(&window.id())
+                .expect("window view");
+            assert!(
+                state
+                    .workspaces
+                    .set_promoted_window(&output, Some(&window.id())),
+                "promotion changes the plane assignment"
+            );
+            let ows = &state.workspaces.output_workspaces[&output];
+            assert!(
+                ows.promoted_plane
+                    .children_nodes()
+                    .contains(&view.window_layer.id()),
+                "the window layer moved into the plane container"
+            );
+            (window.id(), output, view.window_layer.id())
+        });
+
+        {
+            let top = toplevel.lock().unwrap();
+            top.toplevel.as_ref().unwrap().destroy();
+            top.xdg_surface.as_ref().unwrap().destroy();
+            sub_subsurface.destroy();
+            sub_surface.destroy();
+            top.surface.destroy();
+        }
+        let _ = client.roundtrip();
+        handle.wait(Duration::from_millis(30));
+
+        let (closing, in_plane, in_windows) = handle.query(move |state| {
+            let closing = state
+                .workspaces
+                .closing_window_views()
+                .iter()
+                .any(|(id, _)| *id == window_id);
+            let ows = &state.workspaces.output_workspaces[&output_name];
+            let in_plane = ows.promoted_plane.children_nodes().contains(&window_node);
+            let in_windows = ows.workspace_views[ows.current_workspace]
+                .windows_layer
+                .children_nodes()
+                .contains(&window_node);
+            (closing, in_plane, in_windows)
+        });
+        assert!(closing, "the closed window is fading out");
+        assert!(!in_plane, "the fading layer left the plane container");
+        assert!(
+            in_windows,
+            "the fading layer is back under the windows container"
+        );
+
+        handle.stop();
+    }
 }

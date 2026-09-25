@@ -484,3 +484,13 @@ colorize_icons = true
 # `default_border pixel`. A floating window in a tiling workspace keeps its
 # full titlebar under all three, and so does a window that draws its own.
 # decoration = "minimal"
+
+[rendering]
+# The GPU api Otto draws with on a tty (the --tty-udev backend): "gl" or
+# "vulkan". Vulkan is in the default build and is experimental: it composites
+# every output into a single plane for now. When Vulkan cannot start on the
+# primary GPU (no loader, no driver for it, or one older than Vulkan 1.3) the
+# session falls back to "gl" and logs why. `otto --tty-udev --renderer vulkan`
+# overrides this for one session. Read at startup; the windowed backends
+# always use GL.
+# renderer = "gl"

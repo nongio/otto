@@ -129,6 +129,10 @@ settings-display-refresh-detail = Hercios: cada cuánto se envía un fotograma a
 settings-display-resolution = Resolución
 settings-display-scale = Escala de la pantalla
 settings-display-scale-detail = Se aplica en el siguiente inicio de sesión. El escritorio no se reajusta en vivo
+settings-renderer = Renderizador
+settings-renderer-detail = Afecta a la sesión iniciada desde la pantalla de bienvenida. Las sesiones en ventana siempre usan OpenGL. Se aplica en el siguiente inicio de sesión.
+settings-renderer-no-vulkan-detail = Vulkan no está disponible aquí, así que Otto dibuja con OpenGL.
+settings-renderer-windowed-detail = Las sesiones en ventana siempre usan OpenGL. Se cambia desde una sesión iniciada en la pantalla de bienvenida.
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Sin pantallas
@@ -967,6 +971,10 @@ schema-login-greeter-command-label = Comando de la pantalla de bienvenida
 schema-login-greeter-command-description = El programa de bienvenida que se lanza en modo de inicio de sesión.
 schema-login-greeter-args-label = Argumentos de la pantalla de bienvenida
 schema-login-greeter-args-description = Argumentos que se pasan a la pantalla de bienvenida.
+
+# --- rendering ---
+schema-rendering-renderer-label = Renderizador
+schema-rendering-renderer-description = La API de GPU con la que Otto dibuja en una sesión iniciada desde la pantalla de bienvenida. Las sesiones en ventana siempre usan OpenGL.
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = El selector sigue al puntero

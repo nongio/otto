@@ -20,11 +20,6 @@ use smithay::{
         },
         utils::{RendererSurfaceState, RendererSurfaceStateUserData},
     },
-    delegate_compositor, delegate_cursor_shape, delegate_keyboard_shortcuts_inhibit,
-    delegate_layer_shell, delegate_output, delegate_pointer_gestures, delegate_presentation,
-    delegate_relative_pointer, delegate_shm, delegate_text_input_manager, delegate_viewporter,
-    delegate_virtual_keyboard_manager, delegate_xdg_dialog, delegate_xdg_foreign,
-    delegate_xdg_shell,
     desktop::{
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
@@ -465,7 +460,6 @@ pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
 pub mod session_lock_handler;
-pub mod virtual_keyboard_handler;
 pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
@@ -553,19 +547,13 @@ impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Otto<BackendData>
 
 impl<BackendData: Backend> XdgDialogHandler for Otto<BackendData> {}
 
+smithay::delegate_dispatch2!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
 impl<BackendData: Backend> XdgForeignHandler for Otto<BackendData> {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
         &mut self.xdg_foreign_state
     }
 }
-
-delegate_compositor!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_output!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_shm!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_cursor_shape!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_text_input_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_keyboard_shortcuts_inhibit!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_virtual_keyboard_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 // wlr-virtual-pointer-unstable-v1 delegates. Hand-rolled because Smithay
 // doesn't ship a virtual-pointer module; the impls live in
@@ -585,13 +573,6 @@ smithay::reexports::wayland_server::delegate_dispatch!(
     [smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::server::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1: virtual_pointer::VirtualPointerUserData]
     => virtual_pointer::VirtualPointerManagerState
 );
-delegate_pointer_gestures!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_relative_pointer!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_viewporter!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_xdg_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_layer_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
-smithay::delegate_session_lock!(@<BackendData: Backend + 'static> Otto<BackendData>);
-smithay::delegate_idle_inhibit!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibitHandler
     for Otto<BackendData>
@@ -604,9 +585,6 @@ impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibit
         self.idle_inhibitors.remove(&surface);
     }
 }
-delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_xdg_dialog!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 // Gamma control protocol delegation
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
@@ -672,6 +650,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // own store; fill it before anything renders so the titlebar controls
         // start out the configured colour rather than otto-kit's fallback.
         crate::theme::publish_accent();
+
+        // The settings schema says which settings reach this kind of session.
+        crate::settings::set_backend(backend_data.backend_name());
 
         let clock = Clock::new();
 
@@ -1261,6 +1242,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             &self.display_handle,
             None,
             cursor_env,
+            std::iter::empty::<String>(),
             true,
             Stdio::null(),
             Stdio::null(),
@@ -1661,6 +1643,58 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// The last frame of a closing window: strong handles on the textures of
+    /// every surface in `surface`'s tree, and the surfaces themselves.
+    ///
+    /// Empty when no surface has a texture (never committed, already
+    /// unmapped, or a backend without a renderer), so the caller can tell
+    /// whether there is a last frame worth keeping on screen.
+    pub fn hold_surface_tree_textures(
+        &self,
+        surface: &WlSurface,
+    ) -> crate::workspaces::ClosingFrame {
+        let mut held = crate::workspaces::ClosingFrame::default();
+        if !surface.is_alive() {
+            return held;
+        }
+        smithay::wayland::compositor::with_surface_tree_downward(
+            surface,
+            (),
+            |_, _, _| TraversalAction::DoChildren(()),
+            |surface, states, _| {
+                held.surfaces.push(surface.id());
+                let Some(render_surface) = states.data_map.get::<RendererSurfaceStateUserData>()
+                else {
+                    return;
+                };
+                let render_surface = render_surface.lock().unwrap();
+                if let Some(texture) = self.backend_data.hold_surface_texture(&render_surface) {
+                    held.textures.push(texture);
+                }
+            },
+            |_, _, _| true,
+        );
+        held
+    }
+
+    /// Remove the layers of closed windows whose fade-out has ended, and
+    /// the last frames kept for their surfaces.
+    ///
+    /// Called once per event-loop iteration by the backends. A stored
+    /// texture is keyed by surface, and a client may have put a new window
+    /// on the same wl_surface within the fade: an entry is only dropped
+    /// when nothing live (a surface layer, a window view) is drawing it.
+    pub fn reap_closed_windows(&mut self) {
+        for surface_id in self.workspaces.reap_closed_windows() {
+            if self.surface_layers.contains_key(&surface_id)
+                || self.workspaces.get_window_view(&surface_id).is_some()
+            {
+                continue;
+            }
+            crate::textures_storage::remove(&surface_id);
+        }
+    }
+
     pub fn cleanup_dnd_layers(&mut self, dnd_surface: &WlSurface) {
         // Remove all layers created for this DnD surface tree
         let mut to_remove = Vec::new();
@@ -1724,6 +1758,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     texture_id,
                     commit: render_surface.current_commit(),
                     transform: surface_attributes.buffer_transform.into(),
+                    fully_opaque: render_surface.opaque_regions().is_some_and(|regions| {
+                        let full = utils::Rectangle::from_size(view.dst);
+                        regions.iter().any(|r| r.contains_rect(full))
+                    }),
                 };
                 return Some(wvs);
             }
@@ -2592,7 +2630,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Unset pointer grab if active
         if let Some(pointer) = self.seat.get_pointer() {
             if pointer.is_grabbed() {
-                pointer.unset_grab(self, serial, 0);
+                pointer.unset_grab(
+                    self,
+                    serial,
+                    smithay::backend::input::InputTime::from_millis(0),
+                );
             }
         }
 
@@ -2621,7 +2663,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             &smithay::input::pointer::MotionEvent {
                 location: pointer_location,
                 serial,
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         pointer.frame(self);
@@ -2630,13 +2672,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            if let Some(backends) =
+                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
             {
                 use crate::udev::UdevOutputId;
                 let output_id = output.user_data().get::<UdevOutputId>()?;
-                let backend = udev_data.backends.get(&output_id.device_id)?;
+                let backend = backends.get(&output_id.device_id)?;
                 let drm_fd = backend.drm.device_fd();
                 crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
             } else {
@@ -2661,17 +2702,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            if let Some(backends) =
+                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
             {
                 use crate::udev::UdevOutputId;
                 let output_id = output
                     .user_data()
                     .get::<UdevOutputId>()
                     .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let _ = udev_data
-                    .backends
+                let _ = backends
                     .get(&output_id.device_id)
                     .ok_or_else(|| "Backend not found".to_string())?;
 
@@ -2735,17 +2774,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            if let Some(backends) =
+                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
             {
                 use crate::udev::UdevOutputId;
                 let output_id = output
                     .user_data()
                     .get::<UdevOutputId>()
                     .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let backend = udev_data
-                    .backends
+                let backend = backends
                     .get(&output_id.device_id)
                     .ok_or_else(|| "Backend not found".to_string())?;
                 let drm_fd = backend.drm.device_fd();
@@ -2862,6 +2899,7 @@ pub fn post_repaint<'a>(
                 surface,
                 output,
                 states,
+                None,
                 render_element_states,
                 default_primary_scanout_output_compare,
             );
@@ -2900,6 +2938,7 @@ pub fn post_repaint<'a>(
                 surface,
                 output,
                 states,
+                None,
                 render_element_states,
                 default_primary_scanout_output_compare,
             );
@@ -2956,7 +2995,11 @@ pub fn take_presentation_feedback<'a>(
             &mut output_presentation_feedback,
             surface_primary_scanout_output,
             |surface, _| {
-                surface_presentation_feedback_flags_from_states(surface, render_element_states)
+                surface_presentation_feedback_flags_from_states(
+                    surface,
+                    None,
+                    render_element_states,
+                )
             },
         );
     });
@@ -2995,6 +3038,19 @@ pub trait Backend {
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);
     fn texture_for_surface(&self, surface: &RendererSurfaceState) -> Option<SkiaTextureImage>;
+    /// A strong handle on the renderer texture of `surface`, kept alive for as
+    /// long as the box is.
+    ///
+    /// The Skia image the surface layer draws only borrows the GPU texture;
+    /// once the client's buffer is gone the renderer frees it and the image
+    /// samples freed memory. A closing window that keeps drawing its last
+    /// frame holds this until its fade-out has ended.
+    fn hold_surface_texture(
+        &self,
+        _surface: &RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
     fn set_cursor(&mut self, image: &CursorImageStatus); //, renderer: &mut SkiaRenderer);
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext>;
     fn request_redraw(&mut self) {}

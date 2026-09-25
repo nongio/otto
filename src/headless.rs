@@ -11,7 +11,6 @@ use std::{
 
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::utils::RendererSurfaceState},
-    delegate_dmabuf,
     input::pointer::CursorImageStatus,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -59,6 +58,17 @@ impl Backend for HeadlessData {
     fn texture_for_surface(&self, _surface: &RendererSurfaceState) -> Option<SkiaTextureImage> {
         None
     }
+    /// No renderer, so no texture to hold; a token stands in for the buffer
+    /// of a surface that has one, so a closing window fades out here the way
+    /// it does on a real backend and tests can watch it.
+    fn hold_surface_texture(
+        &self,
+        surface: &RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        surface
+            .buffer()
+            .map(|_| Box::new(()) as Box<dyn std::any::Any + Send>)
+    }
     fn set_cursor(&mut self, _image: &CursorImageStatus) {}
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext> {
         None
@@ -80,7 +90,6 @@ impl DmabufHandler for Otto<HeadlessData> {
         notifier.failed();
     }
 }
-delegate_dmabuf!(Otto<HeadlessData>);
 
 /// Configuration for the headless compositor instance.
 pub struct HeadlessConfig {
@@ -1949,7 +1958,7 @@ impl Otto<HeadlessData> {
             &MotionEvent {
                 location: pos,
                 serial,
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         pointer.frame(self);
@@ -2002,7 +2011,7 @@ impl Otto<HeadlessData> {
                 button: 0x110,
                 state: button_state,
                 serial,
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         pointer.frame(self);
@@ -2159,6 +2168,7 @@ fn run_headless_loop(
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
+            state.reap_closed_windows();
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();

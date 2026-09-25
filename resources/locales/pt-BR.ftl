@@ -129,6 +129,10 @@ settings-display-refresh-detail = Hertz — a frequência com que o fluxo recebe
 settings-display-resolution = Resolução
 settings-display-scale = Escala do monitor
 settings-display-scale-detail = Aplicada no próximo login. A área de trabalho não se reorganiza em tempo real
+settings-renderer = Renderizador
+settings-renderer-detail = Vale para a sessão iniciada pela tela de login. Sessões em janela sempre usam OpenGL. Entra em vigor no próximo login.
+settings-renderer-no-vulkan-detail = Vulkan não está disponível aqui, então o Otto desenha com OpenGL.
+settings-renderer-windowed-detail = Sessões em janela sempre usam OpenGL. Dá para mudar isso em uma sessão iniciada pela tela de login.
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Nenhum monitor
@@ -968,6 +972,10 @@ schema-login-greeter-command-label = Comando da tela de login
 schema-login-greeter-command-description = O programa da tela de login iniciado no modo de login.
 schema-login-greeter-args-label = Argumentos da tela de login
 schema-login-greeter-args-description = Argumentos passados à tela de login.
+
+# --- rendering ---
+schema-rendering-renderer-label = Renderizador
+schema-rendering-renderer-description = A API de GPU que o Otto usa para desenhar em uma sessão iniciada pela tela de login. Sessões em janela sempre usam OpenGL.
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = O alternador segue o ponteiro

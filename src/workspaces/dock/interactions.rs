@@ -94,7 +94,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for DockView {
             self.set_active_label(self.hovered_label());
         }
     }
-    fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {
+    fn on_leave(&self, _serial: smithay::utils::Serial, _time: smithay::backend::input::InputTime) {
         // A drag in flight keeps the icon lifted, and the dock magnified where
         // it last was, until the button comes back up — wherever the pointer
         // has wandered off to.

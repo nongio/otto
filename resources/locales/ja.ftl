@@ -128,6 +128,10 @@ settings-display-refresh-detail = Hertz — ストリームにフレームが送
 settings-display-resolution = 解像度
 settings-display-scale = ディスプレイスケール
 settings-display-scale-detail = 次回のログインから適用されます。デスクトップはその場では組み直されません
+settings-renderer = レンダラー
+settings-renderer-detail = ログイン画面から開始したセッションが対象です。ウインドウ内のセッションでは常にOpenGLを使用します。次回のログインから適用されます。
+settings-renderer-no-vulkan-detail = ここではVulkanを利用できないため、OttoはOpenGLで描画します。
+settings-renderer-windowed-detail = ウインドウ内のセッションでは常にOpenGLを使用します。変更はログイン画面から開始したセッションで行えます。
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = ディスプレイなし
@@ -934,6 +938,10 @@ schema-login-greeter-command-label = グリーターのコマンド
 schema-login-greeter-command-description = ログインモードで起動するグリーター。
 schema-login-greeter-args-label = グリーターの引数
 schema-login-greeter-args-description = グリーターに渡す引数。
+
+# --- rendering ---
+schema-rendering-renderer-label = レンダラー
+schema-rendering-renderer-description = ログイン画面から開始したセッションでOttoが描画に使うGPU API。ウインドウ内のセッションでは常にOpenGLを使用します。
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = スイッチャーがポインタに追従

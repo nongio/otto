@@ -302,7 +302,10 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 }
             }
         }
-        let removed_surface_ids = self.workspaces.unmap_window(&id);
+        // The client is dropping its buffers with the toplevel; hold them so
+        // the window can fade out showing its last frame.
+        let held = self.hold_surface_tree_textures(toplevel.wl_surface());
+        let removed_surface_ids = self.workspaces.unmap_window_fading(&id, held);
 
         // Notify foreign toplevel list that this toplevel is closed
         if let Some(handle) = self.foreign_toplevels.remove(&id) {
@@ -1398,7 +1401,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                                 .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
                     {
                         // Same as above: stale pointer grab from a previous popup session.
-                        pointer.unset_grab(self, serial, 0);
+                        pointer.unset_grab(
+                            self,
+                            serial,
+                            smithay::backend::input::InputTime::from_millis(0),
+                        );
                     }
                     pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
                 }
@@ -2262,12 +2269,18 @@ impl<BackendData: Backend> Otto<BackendData> {
 
     /// Destroy the layer associated with a surface
     /// Removes from surface_layers hashmap and marks for deletion in layers_engine
+    ///
+    /// The layer of a surface whose window is fading out is only forgotten
+    /// here: the fade still draws it, and it goes with the window layer once
+    /// the fade has ended (`Workspaces::reap_closed_windows`).
     pub(crate) fn destroy_layer_for_surface(
         &mut self,
         surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
     ) {
         if let Some(layer) = self.surface_layers.remove(surface_id) {
-            self.layers_engine.mark_for_delete(layer.id);
+            if !self.workspaces.is_closing_surface(surface_id) {
+                self.layers_engine.mark_for_delete(layer.id);
+            }
         }
         self.surface_layer_parents.remove(surface_id);
         crate::surface_config_cache::invalidate(surface_id);

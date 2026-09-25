@@ -256,7 +256,11 @@ impl<BackendData: Backend> Otto<BackendData> {
         self.tiling_drag_cancel();
         if let Some(pointer) = self.seat.get_pointer() {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            pointer.unset_grab(self, serial, 0);
+            pointer.unset_grab(
+                self,
+                serial,
+                smithay::backend::input::InputTime::from_millis(0),
+            );
         }
     }
 

@@ -1,20 +1,20 @@
 #[cfg(feature = "udev")]
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Event, InputBackend, ProximityState, TabletToolButtonEvent,
-        TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState,
+        AbsolutePositionEvent, Event, InputBackend, InputTime, ProximityState,
+        TabletToolButtonEvent, TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent,
+        TabletToolTipState,
     },
-    input::pointer::MotionEvent,
+    input::{
+        pointer::MotionEvent,
+        tablet::{self, TabletDescriptor, TabletSeatTrait},
+    },
     reexports::wayland_server::DisplayHandle,
     utils::SERIAL_COUNTER as SCOUNTER,
-    wayland::{
-        seat::WaylandFocus,
-        tablet_manager::{TabletDescriptor, TabletSeatTrait},
-    },
 };
 
 #[cfg(feature = "udev")]
-impl crate::Otto<crate::udev::UdevData> {
+impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<A>> {
     pub(crate) fn on_tablet_tool_axis<B: InputBackend>(&mut self, evt: B::TabletToolAxisEvent) {
         let tablet_seat = self.seat.tablet_seat();
 
@@ -29,7 +29,6 @@ impl crate::Otto<crate::udev::UdevData> {
 
             let pointer = self.pointer.clone();
             let under = self.surface_under(pointer_location);
-            let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&evt.device()));
             let tool = tablet_seat.get_tool(&evt.tool());
 
             pointer.motion(
@@ -38,37 +37,33 @@ impl crate::Otto<crate::udev::UdevData> {
                 &MotionEvent {
                     location: pointer_location,
                     serial: SCOUNTER.next_serial(),
-                    time: 0,
+                    time: InputTime::from_millis(0),
                 },
             );
 
-            if let (Some(tablet), Some(tool)) = (tablet, tool) {
-                if evt.pressure_has_changed() {
-                    tool.pressure(evt.pressure());
-                }
-                if evt.distance_has_changed() {
-                    tool.distance(evt.distance());
-                }
-                if evt.tilt_has_changed() {
-                    tool.tilt(evt.tilt());
-                }
-                if evt.slider_has_changed() {
-                    tool.slider_position(evt.slider_position());
-                }
-                if evt.rotation_has_changed() {
-                    tool.rotation(evt.rotation());
-                }
-                if evt.wheel_has_changed() {
-                    tool.wheel(evt.wheel_delta(), evt.wheel_delta_discrete());
-                }
+            if let Some(tool) = tool {
+                let frame = tablet::tool::AxisFrame {
+                    pressure: evt.pressure_has_changed().then(|| evt.pressure()),
+                    distance: evt.distance_has_changed().then(|| evt.distance()),
+                    tilt: evt.tilt_has_changed().then(|| evt.tilt()),
+                    rotation: evt.rotation_has_changed().then(|| evt.rotation()),
+                    slider: evt.slider_has_changed().then(|| evt.slider_position()),
+                    wheel: evt
+                        .wheel_has_changed()
+                        .then(|| (evt.wheel_delta(), evt.wheel_delta_discrete())),
+                };
 
+                tool.axis(self, frame);
                 tool.motion(
-                    pointer_location,
-                    under.and_then(|(f, loc)| f.wl_surface().map(|s| (s.into_owned(), loc))),
-                    &tablet,
-                    SCOUNTER.next_serial(),
-                    evt.time_msec(),
+                    self,
+                    under,
+                    &tablet::tool::MotionEvent {
+                        location: pointer_location,
+                        serial: SCOUNTER.next_serial(),
+                        time: evt.time(),
+                    },
                 );
+                tool.frame(self, evt.time());
             }
 
             pointer.frame(self);
@@ -106,26 +101,44 @@ impl crate::Otto<crate::udev::UdevData> {
                 &MotionEvent {
                     location: pointer_location,
                     serial: SCOUNTER.next_serial(),
-                    time: 0,
+                    time: InputTime::from_millis(0),
                 },
             );
             pointer.frame(self);
 
-            if let (Some(under), Some(tablet), Some(tool)) = (
-                under.and_then(|(f, loc)| f.wl_surface().map(|s| (s.into_owned(), loc))),
-                tablet,
-                tool,
-            ) {
+            if let (Some(tablet), Some(tool)) = (tablet, tool) {
+                let frame = tablet::tool::AxisFrame {
+                    pressure: evt.pressure_has_changed().then(|| evt.pressure()),
+                    distance: evt.distance_has_changed().then(|| evt.distance()),
+                    tilt: evt.tilt_has_changed().then(|| evt.tilt()),
+                    rotation: evt.rotation_has_changed().then(|| evt.rotation()),
+                    slider: evt.slider_has_changed().then(|| evt.slider_position()),
+                    wheel: evt
+                        .wheel_has_changed()
+                        .then(|| (evt.wheel_delta(), evt.wheel_delta_discrete())),
+                };
+
                 match evt.state() {
                     ProximityState::In => tool.proximity_in(
-                        pointer_location,
+                        self,
                         under,
-                        &tablet,
-                        SCOUNTER.next_serial(),
-                        evt.time_msec(),
+                        tablet,
+                        &tablet::tool::ProximityInEvent {
+                            location: pointer_location,
+                            axis: Some(frame),
+                            serial: SCOUNTER.next_serial(),
+                            time: evt.time(),
+                        },
                     ),
-                    ProximityState::Out => tool.proximity_out(evt.time_msec()),
+                    ProximityState::Out => tool.proximity_out(
+                        self,
+                        &tablet::tool::ProximityOutEvent {
+                            serial: SCOUNTER.next_serial(),
+                            time: evt.time(),
+                        },
+                    ),
                 }
+                tool.frame(self, evt.time());
             }
         }
     }
@@ -134,10 +147,16 @@ impl crate::Otto<crate::udev::UdevData> {
         let tool = self.seat.tablet_seat().get_tool(&evt.tool());
 
         if let Some(tool) = tool {
+            let serial = SCOUNTER.next_serial();
             match evt.tip_state() {
                 TabletToolTipState::Down => {
-                    let serial = SCOUNTER.next_serial();
-                    tool.tip_down(serial, evt.time_msec());
+                    tool.down(
+                        self,
+                        &tablet::tool::DownEvent {
+                            serial,
+                            time: evt.time(),
+                        },
+                    );
 
                     self.focus_window_under_cursor(
                         serial,
@@ -145,9 +164,16 @@ impl crate::Otto<crate::udev::UdevData> {
                     );
                 }
                 TabletToolTipState::Up => {
-                    tool.tip_up(evt.time_msec());
+                    tool.up(
+                        self,
+                        &tablet::tool::UpEvent {
+                            serial,
+                            time: evt.time(),
+                        },
+                    );
                 }
             }
+            tool.frame(self, evt.time());
         }
     }
 
@@ -156,11 +182,15 @@ impl crate::Otto<crate::udev::UdevData> {
 
         if let Some(tool) = tool {
             tool.button(
-                evt.button(),
-                evt.button_state(),
-                SCOUNTER.next_serial(),
-                evt.time_msec(),
+                self,
+                &tablet::tool::ButtonEvent {
+                    serial: SCOUNTER.next_serial(),
+                    button: evt.button(),
+                    state: evt.button_state(),
+                    time: evt.time(),
+                },
             );
+            tool.frame(self, evt.time());
         }
     }
 }

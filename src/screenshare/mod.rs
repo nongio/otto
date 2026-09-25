@@ -935,7 +935,7 @@ where
         };
         damage.loc -= dst.loc;
         element
-            .draw(&mut frame, src, dst, &[damage], &[])
+            .draw(&mut frame, src, dst, &[damage], &[], None)
             .map_err(|e| format!("Failed to draw element: {:?}", e))?;
     }
 
@@ -1000,7 +1000,7 @@ where
             if let Some(mut damage) = output_rect.intersection(dst) {
                 damage.loc -= dst.loc;
                 element
-                    .draw(&mut cursor_frame, src, dst, &[damage], &[])
+                    .draw(&mut cursor_frame, src, dst, &[damage], &[], None)
                     .map_err(|e| format!("Failed to draw cursor element: {:?}", e))?;
             }
         }

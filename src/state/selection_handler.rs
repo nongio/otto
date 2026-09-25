@@ -1,12 +1,9 @@
 #[cfg(feature = "xwayland")]
 use std::os::fd::OwnedFd;
 
-use smithay::{
-    delegate_primary_selection,
-    wayland::selection::{
-        primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
-        SelectionHandler,
-    },
+use smithay::wayland::selection::{
+    primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
+    SelectionHandler,
 };
 #[cfg(feature = "xwayland")]
 use smithay::{
@@ -57,5 +54,3 @@ impl<BackendData: Backend> PrimarySelectionHandler for Otto<BackendData> {
         &mut self.primary_selection_state
     }
 }
-
-delegate_primary_selection!(@<BackendData: Backend + 'static> Otto<BackendData>);

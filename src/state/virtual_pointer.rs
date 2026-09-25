@@ -236,7 +236,8 @@ where
                     _ => return,
                 };
                 let frame = pending.axis.take().unwrap_or_else(|| {
-                    AxisFrame::new(0).source(smithay::backend::input::AxisSource::Wheel)
+                    AxisFrame::new(smithay::backend::input::InputTime::from_millis(0))
+                        .source(smithay::backend::input::AxisSource::Wheel)
                 });
                 pending.axis = Some(frame.value(smithay_axis, value));
             }
@@ -255,7 +256,9 @@ where
                     }
                     _ => smithay::backend::input::AxisSource::Wheel,
                 };
-                let frame = pending.axis.take().unwrap_or_else(|| AxisFrame::new(0));
+                let frame = pending.axis.take().unwrap_or_else(|| {
+                    AxisFrame::new(smithay::backend::input::InputTime::from_millis(0))
+                });
                 pending.axis = Some(frame.source(smithay_src));
             }
             zwlr_virtual_pointer_v1::Request::AxisStop { time: _, axis } => {
@@ -267,7 +270,9 @@ where
                     wl_pointer::Axis::HorizontalScroll => Axis::Horizontal,
                     _ => return,
                 };
-                let frame = pending.axis.take().unwrap_or_else(|| AxisFrame::new(0));
+                let frame = pending.axis.take().unwrap_or_else(|| {
+                    AxisFrame::new(smithay::backend::input::InputTime::from_millis(0))
+                });
                 pending.axis = Some(frame.stop(smithay_axis));
             }
             zwlr_virtual_pointer_v1::Request::AxisDiscrete {
@@ -284,7 +289,9 @@ where
                     wl_pointer::Axis::HorizontalScroll => Axis::Horizontal,
                     _ => return,
                 };
-                let frame = pending.axis.take().unwrap_or_else(|| AxisFrame::new(0));
+                let frame = pending.axis.take().unwrap_or_else(|| {
+                    AxisFrame::new(smithay::backend::input::InputTime::from_millis(0))
+                });
                 pending.axis = Some(
                     frame
                         .value(smithay_axis, value)
@@ -325,7 +332,7 @@ where
                         &MotionEvent {
                             location: new_location,
                             serial,
-                            time: 0,
+                            time: smithay::backend::input::InputTime::from_millis(0),
                         },
                     );
                     // Mirror the real-input path: track which output the
@@ -393,7 +400,7 @@ where
                             button,
                             state: btn_state,
                             serial,
-                            time,
+                            time: smithay::backend::input::InputTime::from_millis(time),
                         },
                     );
                     match btn_state {

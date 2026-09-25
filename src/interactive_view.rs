@@ -34,10 +34,16 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
     }
     fn on_axis(&self, _event: &smithay::input::pointer::AxisFrame) {}
     fn on_enter(&self, _event: &smithay::input::pointer::MotionEvent) {}
-    fn on_leave(&self, _serial: smithay::utils::Serial, _time: u32) {}
+    fn on_leave(&self, _serial: smithay::utils::Serial, _time: smithay::backend::input::InputTime) {
+    }
     /// Same event as [`ViewInteractions::on_leave`], for views that have to
     /// touch compositor state on the way out — clearing a hover, say. Both run.
-    fn on_leave_with_data(&self, _data: &mut Otto<B>, _serial: smithay::utils::Serial, _time: u32) {
+    fn on_leave_with_data(
+        &self,
+        _data: &mut Otto<B>,
+        _serial: smithay::utils::Serial,
+        _time: smithay::backend::input::InputTime,
+    ) {
     }
     fn on_frame(&self) {}
     fn on_gesture_hold_begin(&self, _event: &smithay::input::pointer::GestureHoldBeginEvent) {}
@@ -69,7 +75,6 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
         _seat: &smithay::input::Seat<Otto<B>>,
         _data: &mut Otto<B>,
         _event: &smithay::input::touch::UpEvent,
-        _seq: smithay::utils::Serial,
     ) {
     }
     fn on_down(
@@ -77,7 +82,6 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
         _seat: &smithay::input::Seat<Otto<B>>,
         _data: &mut Otto<B>,
         _event: &smithay::input::touch::DownEvent,
-        _seq: smithay::utils::Serial,
     ) {
     }
 
@@ -86,7 +90,6 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
         _seat: &smithay::input::Seat<Otto<B>>,
         _data: &mut Otto<B>,
         _event: &smithay::input::touch::OrientationEvent,
-        _seq: smithay::utils::Serial,
     ) {
     }
     fn on_shape(
@@ -94,16 +97,9 @@ pub trait ViewInteractions<B: Backend>: Sync + Send {
         _seat: &smithay::input::Seat<Otto<B>>,
         _data: &mut Otto<B>,
         _event: &smithay::input::touch::ShapeEvent,
-        _seq: smithay::utils::Serial,
     ) {
     }
-    fn on_cancel(
-        &self,
-        _seat: &smithay::input::Seat<Otto<B>>,
-        _data: &mut Otto<B>,
-        _seq: smithay::utils::Serial,
-    ) {
-    }
+    fn on_cancel(&self, _seat: &smithay::input::Seat<Otto<B>>, _data: &mut Otto<B>) {}
 }
 pub trait CloneBoxInteractions<B: Backend>: ViewInteractions<B> {
     fn clone_box(&self) -> Box<dyn CloneBoxInteractions<B>>;
@@ -265,7 +261,7 @@ impl<B: Backend> PointerTarget<Otto<B>> for InteractiveView<B> {
         _seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
         serial: smithay::utils::Serial,
-        time: u32,
+        time: smithay::backend::input::InputTime,
     ) {
         self.view.on_leave(serial, time);
         self.view.on_leave_with_data(data, serial, time);
@@ -304,7 +300,7 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for InteractiveView<B> {
         key: smithay::input::keyboard::KeysymHandle<'_>,
         _state: smithay::backend::input::KeyState,
         _serial: smithay::utils::Serial,
-        _time: u32,
+        _time: smithay::backend::input::InputTime,
     ) {
         self.view.on_key(&key, _state);
         self.view.on_key_with_data(&key, _state, _data);
@@ -334,32 +330,29 @@ impl<B: Backend> TouchTarget<Otto<B>> for InteractiveView<B> {
         seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::UpEvent,
-        seq: smithay::utils::Serial,
     ) {
-        self.view.on_up(seat, data, event, seq);
+        self.view.on_up(seat, data, event);
     }
     fn down(
         &self,
         seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::DownEvent,
-        seq: smithay::utils::Serial,
     ) {
-        self.view.on_down(seat, data, event, seq);
+        self.view.on_down(seat, data, event);
     }
     fn motion(
         &self,
         seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::MotionEvent,
-        seq: smithay::utils::Serial,
     ) {
         self.view.on_motion(
             seat,
             data,
             &MotionEvent {
                 location: event.location,
-                serial: seq,
+                serial: smithay::utils::SERIAL_COUNTER.next_serial(),
                 time: event.time,
             },
         );
@@ -368,7 +361,7 @@ impl<B: Backend> TouchTarget<Otto<B>> for InteractiveView<B> {
         &self,
         _seat: &smithay::input::Seat<Otto<B>>,
         _data: &mut Otto<B>,
-        _seq: smithay::utils::Serial,
+        _marker: smithay::input::touch::FrameMarker,
     ) {
         self.view.on_frame();
     }
@@ -377,25 +370,32 @@ impl<B: Backend> TouchTarget<Otto<B>> for InteractiveView<B> {
         seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: smithay::utils::Serial,
     ) {
-        self.view.on_orientation(seat, data, event, seq);
+        self.view.on_orientation(seat, data, event);
     }
     fn shape(
         &self,
         seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: smithay::utils::Serial,
     ) {
-        self.view.on_shape(seat, data, event, seq);
+        self.view.on_shape(seat, data, event);
     }
     fn cancel(
         &self,
         seat: &smithay::input::Seat<Otto<B>>,
         data: &mut Otto<B>,
-        seq: smithay::utils::Serial,
+        _marker: smithay::input::touch::FrameMarker,
     ) {
-        self.view.on_cancel(seat, data, seq);
+        self.view.on_cancel(seat, data);
+    }
+    /// Views are rebuilt per event and keep no frame history, so every
+    /// frame and cancel reaches them.
+    fn last_frame(
+        &self,
+        _seat: &smithay::input::Seat<Otto<B>>,
+        _data: &mut Otto<B>,
+    ) -> Option<smithay::input::touch::FrameMarker> {
+        None
     }
 }

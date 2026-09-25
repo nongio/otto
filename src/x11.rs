@@ -26,7 +26,6 @@ use smithay::{
         vulkan::{version::Version, Instance, PhysicalDevice},
         x11::{WindowBuilder, X11Backend, X11Event, X11Surface},
     },
-    delegate_dmabuf,
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -108,7 +107,6 @@ impl DmabufHandler for Otto<X11Data> {
         }
     }
 }
-delegate_dmabuf!(Otto<X11Data>);
 
 impl Backend for X11Data {
     fn seat_name(&self) -> String {
