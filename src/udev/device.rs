@@ -28,7 +28,11 @@ use smithay::{
 use smithay_drm_extras::drm_scanner::DrmScanEvent;
 use tracing::{debug, error, info, warn};
 
-use crate::{config::Config, state::Otto};
+use crate::{
+    config::Config,
+    renderer::active::{RendererApi, SkiaDeviceRenderer},
+    state::Otto,
+};
 
 use super::{
     feedback::get_surface_dmabuf_feedback,
@@ -62,34 +66,7 @@ pub(super) fn sync_scene_size_to_outputs(
     }
 }
 
-/// The render node that renders for the DRM device `node`.
-///
-/// Asked of EGL on the GL renderer, which also resolves devices without a
-/// render node of their own; falls back to `node` itself.
-#[cfg(not(feature = "vulkan"))]
-fn render_node_of(node: DrmNode, gbm: &GbmDevice<DrmDeviceFd>) -> DrmNode {
-    use smithay::backend::egl::{EGLDevice, EGLDisplay};
-
-    // SAFETY: the display is only used to query its device.
-    unsafe { EGLDisplay::new(gbm.clone()) }
-        .ok()
-        .and_then(|display| EGLDevice::device_for_display(&display).ok())
-        .and_then(|device| device.try_get_render_node().ok().flatten())
-        .unwrap_or(node)
-}
-
-/// The render node that renders for the DRM device `node`, or `node` itself
-/// when it has none.
-#[cfg(feature = "vulkan")]
-fn render_node_of(node: DrmNode, _gbm: &GbmDevice<DrmDeviceFd>) -> DrmNode {
-    use smithay::backend::drm::NodeType;
-
-    node.node_with_type(NodeType::Render)
-        .and_then(Result::ok)
-        .unwrap_or(node)
-}
-
-impl Otto<UdevData> {
+impl<A: RendererApi> Otto<UdevData<A>> {
     /// Handles addition of a new DRM device
     pub(super) fn device_added(
         &mut self,
@@ -128,13 +105,10 @@ impl Otto<UdevData> {
             )
             .unwrap();
 
-        let render_node = render_node_of(node, &gbm);
+        let render_node = A::render_node_of(node, &gbm);
 
-        self.backend_data
-            .gpus
-            .as_mut()
-            .add_node(render_node, gbm.clone())
-            .map_err(DeviceAddError::AddNode)?;
+        A::add_node(self.backend_data.gpus.as_mut(), render_node, gbm.clone())
+            .map_err(|err| DeviceAddError::AddNode(Box::new(err)))?;
 
         self.backend_data.backends.insert(
             node,
@@ -146,12 +120,15 @@ impl Otto<UdevData> {
                 non_desktop_connectors: Vec::new(),
                 render_node,
                 surfaces: HashMap::new(),
-                leasing_global: DrmLeaseState::new::<Otto<UdevData>>(&self.display_handle, &node)
-                    .map_err(|err| {
-                        warn!(?err, "Failed to initialize drm lease global for: {}", node);
-                        err
-                    })
-                    .ok(),
+                leasing_global: DrmLeaseState::new::<Otto<UdevData<A>>>(
+                    &self.display_handle,
+                    &node,
+                )
+                .map_err(|err| {
+                    warn!(?err, "Failed to initialize drm lease global for: {}", node);
+                    err
+                })
+                .ok(),
                 active_leases: Vec::new(),
             },
         );
@@ -222,13 +199,10 @@ impl Otto<UdevData> {
         // drop the backends on this side
         if let Some(mut backend_data) = self.backend_data.backends.remove(&node) {
             if let Some(mut leasing_global) = backend_data.leasing_global.take() {
-                leasing_global.disable_global::<Otto<UdevData>>();
+                leasing_global.disable_global::<Otto<UdevData<A>>>();
             }
 
-            self.backend_data
-                .gpus
-                .as_mut()
-                .remove_node(&backend_data.render_node);
+            A::remove_node(self.backend_data.gpus.as_mut(), &backend_data.render_node);
 
             self.handle.remove(backend_data.registration_token);
 
@@ -251,12 +225,10 @@ impl Otto<UdevData> {
             return;
         };
 
-        let mut renderer = self
-            .backend_data
-            .gpus
-            .single_renderer(&device.render_node)
-            .unwrap();
-        let render_formats = renderer.as_mut().dmabuf_render_formats();
+        let mut renderer =
+            A::single_renderer(&mut self.backend_data.gpus, &device.render_node).unwrap();
+        let render_formats = renderer.as_mut().render_formats();
+        drop(renderer);
 
         let output_name = format!(
             "{}-{}",
@@ -310,7 +282,7 @@ impl Otto<UdevData> {
                 .non_desktop_connectors
                 .push((connector.handle(), crtc));
             if let Some(lease_state) = device.leasing_global.as_mut() {
-                lease_state.add_connector::<Otto<UdevData>>(
+                lease_state.add_connector::<Otto<UdevData<A>>>(
                     connector.handle(),
                     output_name,
                     format!("{} {}", make, model),
@@ -508,7 +480,7 @@ impl Otto<UdevData> {
                 let global = suspended.global.unwrap_or_else(|| {
                     suspended
                         .output
-                        .create_global::<Otto<UdevData>>(&self.display_handle)
+                        .create_global::<Otto<UdevData<A>>>(&self.display_handle)
                 });
                 (suspended.output, global)
             }
@@ -524,7 +496,7 @@ impl Otto<UdevData> {
                     },
                 );
                 advertise_modes(&output);
-                let global = output.create_global::<Otto<UdevData>>(&self.display_handle);
+                let global = output.create_global::<Otto<UdevData<A>>>(&self.display_handle);
                 (output, global)
             }
         };
@@ -652,24 +624,24 @@ impl Otto<UdevData> {
             // GPU's EGL context; a cross-device import per plane per frame is
             // unreliable). Anything else renders as a single scene element.
             //
-            // The Vulkan renderer composites everything into the primary
-            // plane for now: plane slots are not fenced for scanout on it.
-            let planes_enabled = !cfg!(feature = "vulkan")
+            // Some renderers composite everything into the primary plane
+            // (see `RendererApi::PLANES_SUPPORTED`).
+            let planes_enabled = A::PLANES_SUPPORTED
                 && !surface_is_legacy
                 && overlay_count >= 3
                 && device_render_node == self.backend_data.primary_gpu;
             if !planes_enabled {
                 tracing::info!(
                     target: "otto::planes",
-                    "plane decomposition disabled for {}: legacy={} overlays={} primary_gpu={} vulkan={}",
+                    "plane decomposition disabled for {}: legacy={} overlays={} primary_gpu={} renderer={}",
                     output.name(),
                     surface_is_legacy,
                     overlay_count,
                     device_render_node == self.backend_data.primary_gpu,
-                    cfg!(feature = "vulkan"),
+                    A::NAME,
                 );
             }
-            let dmabuf_feedback = get_surface_dmabuf_feedback(
+            let dmabuf_feedback = get_surface_dmabuf_feedback::<A>(
                 self.backend_data.primary_gpu,
                 device_render_node,
                 &mut self.backend_data.gpus,
@@ -678,6 +650,7 @@ impl Otto<UdevData> {
 
             let surface_data = SurfaceData {
                 dh: self.display_handle.clone(),
+                remove_global: |dh, global| dh.remove_global::<Otto<UdevData<A>>>(global),
                 device_id: node,
                 render_node: device_render_node,
                 global: Some(global),
@@ -890,7 +863,8 @@ impl Otto<UdevData> {
                 .take_suspended_output(&output_name)
                 .and_then(|suspended| suspended.global)
             {
-                self.display_handle.remove_global::<Otto<UdevData>>(global);
+                self.display_handle
+                    .remove_global::<Otto<UdevData<A>>>(global);
             }
 
             let output = self

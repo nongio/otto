@@ -14,7 +14,7 @@ use smithay::{
 };
 
 #[cfg(feature = "udev")]
-impl crate::Otto<crate::udev::UdevData> {
+impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<A>> {
     pub(crate) fn on_tablet_tool_axis<B: InputBackend>(&mut self, evt: B::TabletToolAxisEvent) {
         let tablet_seat = self.seat.tablet_seat();
 

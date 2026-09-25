@@ -13,7 +13,7 @@ use smithay::{
 };
 
 #[cfg(feature = "udev")]
-impl crate::Otto<crate::udev::UdevData> {
+impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<A>> {
     pub(crate) fn on_gesture_swipe_begin<B: InputBackend>(
         &mut self,
         evt: B::GestureSwipeBeginEvent,

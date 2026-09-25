@@ -19,7 +19,10 @@ use smithay::{
 };
 
 use crate::{
-    renderer::BlitCurrentFrame,
+    renderer::{
+        active::{RendererApi, SkiaDeviceRenderer},
+        BlitCurrentFrame,
+    },
     state::{Backend, Otto},
     udev::UdevRenderer,
 };
@@ -296,10 +299,10 @@ where
 /// Called from the render loop after the output has been rendered.
 /// Dmabuf clients ride the screenshare GPU blit path (zero CPU copy);
 /// SHM clients fall back to the legacy synchronous read_pixels path.
-pub fn complete_screencopy_for_output(
+pub fn complete_screencopy_for_output<A: RendererApi>(
     pending: &mut Vec<PendingScreencopy>,
     output: &Output,
-    renderer: &mut UdevRenderer<'_>,
+    renderer: &mut UdevRenderer<'_, A>,
 ) {
     let indices: Vec<usize> = pending
         .iter()
@@ -315,11 +318,11 @@ pub fn complete_screencopy_for_output(
     for i in indices.into_iter().rev() {
         let p = pending.remove(i);
         let success = match &p.buffer {
-            CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf(renderer, &p, dmabuf, output),
+            CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf::<A>(renderer, &p, dmabuf, output),
             CaptureBuffer::Shm(buffer) => {
                 let surface = renderer
                     .as_mut()
-                    .current_skia_renderer()
+                    .current_surface()
                     .map(|s| s.surface.clone());
                 copy_to_shm(surface, &p, buffer, output, false)
             }
@@ -423,8 +426,8 @@ fn capture_rects(
     (src, dst)
 }
 
-fn copy_to_dmabuf(
-    renderer: &mut UdevRenderer<'_>,
+fn copy_to_dmabuf<A: RendererApi>(
+    renderer: &mut UdevRenderer<'_, A>,
     p: &PendingScreencopy,
     dmabuf: &Dmabuf,
     output: &Output,

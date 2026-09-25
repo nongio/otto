@@ -15,7 +15,7 @@ use smithay::{
             DrmDeviceFd, DrmNode,
         },
         renderer::{
-            multigpu::{GpuManager, MultiRenderer, MultiTexture},
+            multigpu::{GpuManager, MultiTexture},
             ContextId,
         },
         session::libseat::LibSeatSession,
@@ -34,7 +34,7 @@ use smithay::{
 };
 use smithay_drm_extras::drm_scanner::DrmScanner;
 
-use crate::renderer::active;
+use crate::renderer::active::RendererApi;
 
 // Supported pixel formats for rendering, in preference order.
 // Argb8888 maps to GL_BGRA_EXT which is Skia's native kN32 (BGRA8888) — no
@@ -44,8 +44,7 @@ pub const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Abgr2101010, Fourcc::Argb8888
 
 pub const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 
-/// Multi-GPU renderer type for udev backend
-pub type UdevRenderer<'a> = MultiRenderer<'a, 'a, active::GraphicsApi, active::GraphicsApi>;
+pub use crate::renderer::active::UdevRenderer;
 
 /// DRM compositor using GBM allocation
 pub type GbmDrmCompositor = DrmCompositor<
@@ -63,14 +62,14 @@ pub struct UdevOutputId {
     pub is_laptop_panel: bool,
 }
 
-/// Main udev backend data
-pub struct UdevData {
+/// Main udev backend data, running on the renderer `A`.
+pub struct UdevData<A: RendererApi> {
     pub session: LibSeatSession,
     pub(super) dh: DisplayHandle,
     pub(super) dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     pub(super) syncobj_state: Option<smithay::wayland::drm_syncobj::DrmSyncobjState>,
     pub(super) primary_gpu: DrmNode,
-    pub(super) gpus: GpuManager<active::GraphicsApi>,
+    pub(super) gpus: GpuManager<A::GraphicsApi>,
     pub backends: HashMap<DrmNode, BackendData>,
     /// Every libinput device currently on the seat, kept so an `input.*`
     /// change can reconfigure the hardware that is already connected.
@@ -127,6 +126,9 @@ pub struct BackendData {
 /// Per-surface rendering data
 pub struct SurfaceData {
     pub(super) dh: DisplayHandle,
+    /// Removes `global` from `dh`; it names the compositor state type,
+    /// which depends on the renderer the backend runs on.
+    pub(super) remove_global: fn(&DisplayHandle, GlobalId),
     pub(super) device_id: DrmNode,
     pub(super) render_node: DrmNode,
     pub(super) global: Option<GlobalId>,
@@ -415,8 +417,7 @@ pub struct SurfaceData {
 impl Drop for SurfaceData {
     fn drop(&mut self) {
         if let Some(global) = self.global.take() {
-            self.dh
-                .remove_global::<crate::state::Otto<UdevData>>(global);
+            (self.remove_global)(&self.dh, global);
         }
     }
 }
@@ -439,7 +440,7 @@ pub enum DeviceAddError {
     #[error("Failed to access drm node: {0}")]
     DrmNode(smithay::backend::drm::CreateDrmNodeError),
     #[error("Failed to add device to GpuManager: {0}")]
-    AddNode(active::AddNodeError),
+    AddNode(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Skia GPU surface + context for the cross-plane backdrop composite.

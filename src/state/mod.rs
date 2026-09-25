@@ -2613,13 +2613,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn get_gamma_size(&self, output: &Output) -> Option<u32> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            if let Some(backends) =
+                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
             {
                 use crate::udev::UdevOutputId;
                 let output_id = output.user_data().get::<UdevOutputId>()?;
-                let backend = udev_data.backends.get(&output_id.device_id)?;
+                let backend = backends.get(&output_id.device_id)?;
                 let drm_fd = backend.drm.device_fd();
                 crate::udev::gamma::get_gamma_size(drm_fd, output_id.crtc).ok()
             } else {
@@ -2644,17 +2643,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            if let Some(backends) =
+                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
             {
                 use crate::udev::UdevOutputId;
                 let output_id = output
                     .user_data()
                     .get::<UdevOutputId>()
                     .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let _ = udev_data
-                    .backends
+                let _ = backends
                     .get(&output_id.device_id)
                     .ok_or_else(|| "Backend not found".to_string())?;
 
@@ -2718,17 +2715,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Result<(), String> {
         #[cfg(feature = "udev")]
         {
-            use crate::udev::UdevData;
-            if let Some(udev_data) =
-                (&self.backend_data as &dyn std::any::Any).downcast_ref::<UdevData>()
+            if let Some(backends) =
+                crate::udev::drm_backends(&self.backend_data as &dyn std::any::Any)
             {
                 use crate::udev::UdevOutputId;
                 let output_id = output
                     .user_data()
                     .get::<UdevOutputId>()
                     .ok_or_else(|| "Output has no UdevOutputId".to_string())?;
-                let backend = udev_data
-                    .backends
+                let backend = backends
                     .get(&output_id.device_id)
                     .ok_or_else(|| "Backend not found".to_string())?;
                 let drm_fd = backend.drm.device_fd();

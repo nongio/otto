@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::Config,
+    renderer::active::RendererApi,
     state::{Backend, Otto},
 };
 
@@ -72,10 +73,11 @@ fn configure_libinput_devices(
     }
 }
 
-/// Main entry point for the udev backend
+/// Main entry point for the udev backend, rendering with `A`.
 ///
 /// Initializes the session, GPU, input devices, and runs the main event loop.
-pub fn run_udev() {
+pub fn run_udev<A: RendererApi>() {
+    info!(target: "otto::udev", "renderer: {}", A::NAME);
     let mut event_loop = EventLoop::try_new().unwrap();
     let display = Display::new().unwrap();
     let mut display_handle = display.handle();
@@ -115,7 +117,7 @@ pub fn run_udev() {
     };
     info!("Using {} as primary gpu.", primary_gpu);
 
-    let gpus = GpuManager::new(crate::renderer::active::graphics_api()).unwrap();
+    let gpus = GpuManager::new(A::graphics_api()).unwrap();
 
     // // Context ID will be obtained after devices are initialized
     let data = UdevData {
@@ -282,7 +284,7 @@ pub fn run_udev() {
                 {
                     let _ = backend.drm.activate(false);
                     if let Some(lease_global) = backend.leasing_global.as_mut() {
-                        lease_global.resume::<Otto<UdevData>>();
+                        lease_global.resume::<Otto<UdevData<A>>>();
                     }
                     for surface in backend.surfaces.values_mut() {
                         if let Err(err) = surface.compositor.surface().reset_state() {
@@ -310,7 +312,7 @@ pub fn run_udev() {
     }
 
     // Now that devices are added, set the context_id
-    match state.backend_data.gpus.single_renderer(&primary_gpu) {
+    match A::single_renderer(&mut state.backend_data.gpus, &primary_gpu) {
         Ok(renderer) => state.backend_data.context_id = Some(renderer.context_id()),
         Err(err) => {
             error!("No renderer on the primary GPU {primary_gpu}: {err}");
@@ -319,20 +321,13 @@ pub fn run_udev() {
     }
 
     state.shm_state.update_formats(
-        state
-            .backend_data
-            .gpus
-            .single_renderer(&primary_gpu)
+        A::single_renderer(&mut state.backend_data.gpus, &primary_gpu)
             .unwrap()
             .shm_formats(),
     );
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
-    let mut renderer = state
-        .backend_data
-        .gpus
-        .single_renderer(&primary_gpu)
-        .unwrap();
+    let mut renderer = A::single_renderer(&mut state.backend_data.gpus, &primary_gpu).unwrap();
 
     #[cfg(feature = "fps_ticker")]
     {
@@ -363,13 +358,11 @@ pub fn run_udev() {
 
     #[cfg(feature = "egl")]
     {
-        use smithay::backend::renderer::ImportEgl;
-
         info!(
             ?primary_gpu,
             "Trying to initialize EGL Hardware Acceleration",
         );
-        match renderer.bind_wl_display(&display_handle) {
+        match A::bind_wl_display(&mut renderer, &display_handle) {
             Ok(_) => info!("EGL hardware-acceleration enabled"),
             Err(err) => info!(?err, "Failed to initialize EGL hardware-acceleration"),
         }
@@ -379,12 +372,15 @@ pub fn run_udev() {
     // Strip the clear-color CCS modifiers Otto can't sample (see
     // feedback::strip_clear_color_modifiers) so clients fall back to renderable ones.
     let dmabuf_formats = super::feedback::strip_clear_color_modifiers(renderer.dmabuf_formats());
+    drop(renderer);
     let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
         .build()
         .unwrap();
     let mut dmabuf_state = DmabufState::new();
-    let global = dmabuf_state
-        .create_global_with_default_feedback::<Otto<UdevData>>(&display_handle, &default_feedback);
+    let global = dmabuf_state.create_global_with_default_feedback::<Otto<UdevData<A>>>(
+        &display_handle,
+        &default_feedback,
+    );
     state.backend_data.dmabuf_state = Some((dmabuf_state, global));
 
     // Expose explicit sync (wp_linux_drm_syncobj) if supported by primary GPU
@@ -402,7 +398,7 @@ pub fn run_udev() {
                 let import_device = backend.drm.device_fd().clone();
                 if supports_syncobj_eventfd(&import_device) {
                     let syncobj_state =
-                        DrmSyncobjState::new::<Otto<UdevData>>(&display_handle, import_device);
+                        DrmSyncobjState::new::<Otto<UdevData<A>>>(&display_handle, import_device);
                     state.backend_data.syncobj_state = Some(syncobj_state);
                     info!("Explicit sync (wp_linux_drm_syncobj) enabled");
                 } else {
@@ -421,7 +417,7 @@ pub fn run_udev() {
             // Update the per drm surface dmabuf feedback
             backend_data.surfaces.values_mut().for_each(|surface_data| {
                 surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
-                    get_surface_dmabuf_feedback(
+                    get_surface_dmabuf_feedback::<A>(
                         primary_gpu,
                         surface_data.render_node,
                         gpus,
@@ -536,7 +532,7 @@ pub fn run_udev() {
 
                 let output =
                     crate::virtual_output::VirtualOutputState::build_output(vout_config, position);
-                let global = output.create_global::<Otto<UdevData>>(&display_handle);
+                let global = output.create_global::<Otto<UdevData<A>>>(&display_handle);
 
                 state
                     .workspaces
@@ -588,7 +584,7 @@ pub fn run_udev() {
                             e
                         );
                         state.workspaces.unmap_output(&output);
-                        display_handle.remove_global::<Otto<UdevData>>(global);
+                        display_handle.remove_global::<Otto<UdevData<A>>>(global);
                     }
                 }
             }
@@ -602,7 +598,7 @@ pub fn run_udev() {
                 .handle
                 .insert_source(
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
-                    move |_, _, data: &mut Otto<super::types::UdevData>| {
+                    move |_, _, data: &mut Otto<super::types::UdevData<A>>| {
                         crate::debug_gesture::tick(data);
                         smithay::reexports::calloop::timer::TimeoutAction::ToDuration(interval)
                     },
@@ -634,7 +630,7 @@ pub fn run_udev() {
                 .handle
                 .insert_source(
                     smithay::reexports::calloop::timer::Timer::from_duration(interval),
-                    move |_, _, data: &mut Otto<super::types::UdevData>| {
+                    move |_, _, data: &mut Otto<super::types::UdevData<A>>| {
                         data.tick_scene_without_connectors();
                         data.render_virtual_outputs();
                         data.kick_screencast_outputs();
@@ -681,7 +677,7 @@ pub fn run_udev() {
                     .handle()
                     .insert_source(
                         Generic::new(stdout, Interest::READ, CalloopMode::Level),
-                        move |_, stdout, data: &mut Otto<UdevData>| {
+                        move |_, stdout, data: &mut Otto<UdevData<A>>| {
                             let mut buf = [0u8; 4096];
                             let mut hit = false;
                             loop {

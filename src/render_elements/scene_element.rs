@@ -18,7 +18,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{renderer::active, skia_renderer::SkiaRenderer, udev::UdevRenderer};
+use crate::renderer::FrameSurface;
 
 #[derive(Clone)]
 pub struct SceneElement {
@@ -362,33 +362,17 @@ impl Element for SceneElement {
     }
 }
 
-impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneElement {
+impl<R: FrameSurface> RenderElement<R> for SceneElement {
     fn draw(
         &self,
-        frame: &mut <UdevRenderer<'renderer> as RendererSuper>::Frame<'_, '_>,
+        frame: &mut <R as RendererSuper>::Frame<'_, '_>,
         _src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
-    ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        let frame: &mut active::Frame<'_> = frame.as_mut();
-        self.draw_scene(frame.skia_surface.canvas(), dst, damage);
-        Ok(())
-    }
-}
-
-impl RenderElement<SkiaRenderer> for SceneElement {
-    fn draw<'frame>(
-        &self,
-        frame: &mut <SkiaRenderer as RendererSuper>::Frame<'frame, 'frame>,
-        _src: Rectangle<f64, Buffer>,
-        dst: Rectangle<i32, Physical>,
-        damage: &[Rectangle<i32, Physical>],
-        _opaque_regions: &[Rectangle<i32, Physical>],
-        _cache: Option<&smithay::utils::user_data::UserDataMap>,
-    ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
-        self.draw_scene(frame.skia_surface.canvas(), dst, damage);
+    ) -> Result<(), <R as RendererSuper>::Error> {
+        self.draw_scene(R::frame_surface(frame).canvas(), dst, damage);
         Ok(())
     }
 }

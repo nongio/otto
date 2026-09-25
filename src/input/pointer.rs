@@ -1064,7 +1064,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 }
 
 #[cfg(feature = "udev")]
-impl crate::Otto<crate::udev::UdevData> {
+impl<A: crate::renderer::active::RendererApi> crate::Otto<crate::udev::UdevData<A>> {
     pub(crate) fn on_pointer_move<B: InputBackend>(
         &mut self,
         _dh: &smithay::reexports::wayland_server::DisplayHandle,

@@ -139,7 +139,7 @@ async fn main() {
         Some("--tty-udev") => {
             tracing::info!("Starting otto on a tty using udev");
             std::env::set_var("OTTO_BACKEND", "tty-udev");
-            otto::udev::run_udev();
+            run_udev();
         }
         #[cfg(feature = "udev")]
         Some("--probe") => {
@@ -190,7 +190,7 @@ async fn main() {
                 {
                     tracing::info!("No Wayland session detected, starting with tty-udev backend");
                     std::env::set_var("OTTO_BACKEND", "tty-udev");
-                    otto::udev::run_udev();
+                    run_udev();
                 }
                 #[cfg(not(feature = "udev"))]
                 {
@@ -200,6 +200,15 @@ async fn main() {
             }
         }
     }
+}
+
+/// Runs the udev backend on the renderer this build was made for.
+#[cfg(feature = "udev")]
+fn run_udev() {
+    #[cfg(feature = "vulkan")]
+    otto::udev::run_udev::<otto::renderer::active::VulkanApi>();
+    #[cfg(not(feature = "vulkan"))]
+    otto::udev::run_udev::<otto::renderer::active::GlApi>();
 }
 
 /// Keep a copy of every panic in `$XDG_STATE_HOME/otto/panic.log`.

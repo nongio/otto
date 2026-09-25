@@ -13,7 +13,7 @@ use smithay::{
 use crate::{input::KeyAction, state::Backend, Otto};
 
 #[cfg(feature = "udev")]
-use crate::udev::UdevData;
+use crate::{renderer::active::RendererApi, udev::UdevData};
 
 #[cfg(feature = "udev")]
 use smithay::{
@@ -226,7 +226,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
 }
 
 #[cfg(feature = "udev")]
-impl Otto<UdevData> {
+impl<A: RendererApi> Otto<UdevData<A>> {
     pub fn process_input_event<B: InputBackend>(
         &mut self,
         dh: &DisplayHandle,

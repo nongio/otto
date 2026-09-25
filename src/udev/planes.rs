@@ -2,6 +2,7 @@
 //! for the per-purpose scene buffers, per-frame node wiring, and the
 //! push-if-ready helper used when building the frame's element list.
 
+use crate::renderer::active::RendererApi;
 use std::sync::Arc;
 
 use layers::prelude::Engine;
@@ -383,9 +384,9 @@ pub(super) fn fit_plane(
 /// Pushed even when nothing new was rendered this frame: the existing
 /// dmabuf stays on the plane and Smithay sees an unchanged commit_counter
 /// → empty damage → no page-flip.
-pub(super) fn push_ready<'a>(
+pub(super) fn push_ready<'a, A: RendererApi>(
     el: &Option<SceneDmabufElement>,
-    out: &mut Vec<WorkspaceRenderElements<'a, UdevRenderer<'a>>>,
+    out: &mut Vec<WorkspaceRenderElements<'a, UdevRenderer<'a, A>>>,
 ) {
     if let Some(el) = el.as_ref() {
         if el.current_dmabuf().is_some() {

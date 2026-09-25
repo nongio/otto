@@ -37,10 +37,27 @@ use smithay::{
     utils::{Physical, Rectangle},
 };
 
-use crate::{
-    skia_renderer::{SkiaRenderer, SkiaTarget},
-    udev::UdevRenderer,
-};
+use crate::skia_renderer::{SkiaRenderer, SkiaTarget};
+
+/// A renderer whose frames draw into a [`SkiaSurface`].
+///
+/// Otto's render elements draw through Skia; this hands them the surface of
+/// whichever frame they are given, so one element implementation serves the
+/// GL renderer, the Vulkan renderer and the udev multi-GPU renderers.
+pub trait FrameSurface: smithay::backend::renderer::Renderer {
+    /// The surface `frame` draws into.
+    fn frame_surface<'s, 'frame, 'buffer: 'frame>(
+        frame: &'s mut Self::Frame<'frame, 'buffer>,
+    ) -> &'s mut SkiaSurface;
+}
+
+impl FrameSurface for SkiaRenderer {
+    fn frame_surface<'s, 'frame, 'buffer: 'frame>(
+        frame: &'s mut Self::Frame<'frame, 'buffer>,
+    ) -> &'s mut SkiaSurface {
+        &mut frame.skia_surface
+    }
+}
 
 /// Trait for blitting the currently bound framebuffer to a destination dmabuf
 pub trait BlitCurrentFrame {
@@ -178,18 +195,51 @@ impl SkiaRenderer {
     }
 }
 
-impl BlitCurrentFrame for UdevRenderer<'_> {
-    type Error = active::Error;
+/// Implements [`FrameSurface`] and [`BlitCurrentFrame`] for the udev
+/// multi-GPU renderer over the multi-GPU api `$api`, whose device renderer
+/// fails with `$error`.
+#[cfg(feature = "udev")]
+macro_rules! udev_multi_renderer {
+    ($api:ty, $error:ty) => {
+        impl FrameSurface
+            for smithay::backend::renderer::multigpu::MultiRenderer<'_, '_, $api, $api>
+        {
+            fn frame_surface<'s, 'frame, 'buffer: 'frame>(
+                frame: &'s mut Self::Frame<'frame, 'buffer>,
+            ) -> &'s mut SkiaSurface {
+                &mut frame.as_mut().skia_surface
+            }
+        }
 
-    #[profiling::function]
-    fn blit_current_frame(
-        &mut self,
-        dst_dmabuf: &mut smithay::backend::allocator::dmabuf::Dmabuf,
-        src: Rectangle<i32, Physical>,
-        dst: Rectangle<i32, Physical>,
-    ) -> Result<(), Self::Error> {
-        let renderer = self.as_mut();
-        renderer.blit_current_frame(dst_dmabuf, src, dst)?;
-        Ok(())
-    }
+        impl BlitCurrentFrame
+            for smithay::backend::renderer::multigpu::MultiRenderer<'_, '_, $api, $api>
+        {
+            type Error = $error;
+
+            #[profiling::function]
+            fn blit_current_frame(
+                &mut self,
+                dst_dmabuf: &mut smithay::backend::allocator::dmabuf::Dmabuf,
+                src: Rectangle<i32, Physical>,
+                dst: Rectangle<i32, Physical>,
+            ) -> Result<(), Self::Error> {
+                self.as_mut().blit_current_frame(dst_dmabuf, src, dst)
+            }
+        }
+    };
 }
+
+#[cfg(feature = "udev")]
+udev_multi_renderer!(
+    smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<
+        SkiaRenderer,
+        smithay::backend::drm::DrmDeviceFd,
+    >,
+    GlesError
+);
+
+#[cfg(feature = "vulkan")]
+udev_multi_renderer!(
+    crate::udev::vulkan_api::GbmVulkanBackend,
+    vulkan::SkiaVkError
+);

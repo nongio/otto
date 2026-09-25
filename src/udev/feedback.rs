@@ -8,7 +8,7 @@ use smithay::{
     wayland::dmabuf::DmabufFeedbackBuilder,
 };
 
-use crate::renderer::active;
+use crate::renderer::active::RendererApi;
 
 use super::types::{DrmSurfaceDmabufFeedback, GbmDrmCompositor};
 
@@ -41,16 +41,22 @@ pub fn strip_clear_color_modifiers(formats: FormatSet) -> FormatSet {
 ///
 /// The scanout feedback is limited to formats that can also be rendered to,
 /// ensuring a fallback render path exists if direct scanout fails.
-pub fn get_surface_dmabuf_feedback(
+pub fn get_surface_dmabuf_feedback<A: RendererApi>(
     primary_gpu: DrmNode,
     render_node: DrmNode,
-    gpus: &mut GpuManager<active::GraphicsApi>,
+    gpus: &mut GpuManager<A::GraphicsApi>,
     composition: &GbmDrmCompositor,
 ) -> Option<DrmSurfaceDmabufFeedback> {
-    let primary_formats =
-        strip_clear_color_modifiers(gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats());
-    let render_formats =
-        strip_clear_color_modifiers(gpus.single_renderer(&render_node).ok()?.dmabuf_formats());
+    let primary_formats = strip_clear_color_modifiers(
+        A::single_renderer(gpus, &primary_gpu)
+            .ok()?
+            .dmabuf_formats(),
+    );
+    let render_formats = strip_clear_color_modifiers(
+        A::single_renderer(gpus, &render_node)
+            .ok()?
+            .dmabuf_formats(),
+    );
 
     let all_render_formats = primary_formats
         .iter()
