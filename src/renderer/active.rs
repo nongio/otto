@@ -176,6 +176,10 @@ pub trait SkiaDeviceRenderer {
     /// Surface of the frame rendered last.
     fn current_surface(&mut self) -> Option<&SkiaSurface>;
 
+    /// Records that this frame renders into `dmabuf` for scanout, so
+    /// [`Self::flush_planes`] can fence that write for the KMS commit.
+    fn note_scanout_write(&mut self, dmabuf: &Dmabuf);
+
     /// Makes the plane buffers rendered this frame safe to scan out.
     fn flush_planes(&mut self);
 }
@@ -201,6 +205,10 @@ impl SkiaDeviceRenderer for SkiaRenderer {
 
     fn current_surface(&mut self) -> Option<&SkiaSurface> {
         self.current_skia_renderer()
+    }
+
+    fn note_scanout_write(&mut self, dmabuf: &Dmabuf) {
+        self.note_scanout_write(dmabuf);
     }
 
     fn flush_planes(&mut self) {
@@ -331,6 +339,10 @@ mod vulkan {
         fn current_surface(&mut self) -> Option<&SkiaSurface> {
             self.current_skia_renderer()
         }
+
+        /// The Vulkan renderer waits for its plane writes on the CPU in
+        /// `flush_planes`, so there is nothing to record per buffer.
+        fn note_scanout_write(&mut self, _dmabuf: &Dmabuf) {}
 
         fn flush_planes(&mut self) {
             self.flush_planes_for_scanout();
