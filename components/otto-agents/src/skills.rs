@@ -467,6 +467,27 @@ pub fn agent_file<'a>(plugins: &'a [Plugin], name: &str) -> Option<(String, &'a 
     })
 }
 
+/// The flags that give a Claude Code started in a terminal what the service's
+/// Claude has through [`claude_session_meta`]: the same plugins, and the
+/// plugin agent it runs as. Without them, a session entered in a terminal has
+/// lost both — Claude says its agent is "no longer available" and carries on
+/// as itself.
+pub fn claude_cli_args(plugins: &[Plugin], run_as: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = plugins
+        .iter()
+        .flat_map(|plugin| {
+            [
+                "--plugin-dir".to_string(),
+                plugin.dir.to_string_lossy().into_owned(),
+            ]
+        })
+        .collect();
+    if let Some(agent) = run_as {
+        args.extend(["--agent".to_string(), agent.to_string()]);
+    }
+    args
+}
+
 /// Where agents with skill discovery look for skills: `~/.agents/skills`, the
 /// directory the Agent Skills convention names and Copilot, Codex and Claude
 /// read. `None` without a home directory.

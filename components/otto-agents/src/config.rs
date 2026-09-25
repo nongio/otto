@@ -259,12 +259,15 @@ impl Config {
 /// already in, when the agent has one. `written` says whether the agent has a
 /// history for the session: an unwritten one takes
 /// [`AgentConfig::enter_new`], since resuming by an id the harness has never
-/// seen fails.
+/// seen fails. `extra` goes straight after the program: the flags that give
+/// the harness in the terminal what the service gave its own copy, such as
+/// the plugins Claude loads ([`crate::skills::claude_cli_args`]).
 pub fn enter_command(
     agent: &AgentConfig,
     agent_session: &str,
     cwd: &Path,
     written: bool,
+    extra: &[String],
 ) -> Option<Vec<String>> {
     let enter = match (written, agent.enter_new.is_empty()) {
         (false, false) => &agent.enter_new,
@@ -274,30 +277,32 @@ pub fn enter_command(
         return None;
     }
     let cwd = cwd.to_string_lossy();
-    Some(
-        enter
-            .iter()
-            .map(|arg| {
-                arg.replace("{session}", agent_session)
-                    .replace("{cwd}", &cwd)
-            })
-            .collect(),
-    )
+    let mut words: Vec<String> = enter
+        .iter()
+        .map(|arg| {
+            arg.replace("{session}", agent_session)
+                .replace("{cwd}", &cwd)
+        })
+        .collect();
+    words.splice(1..1, extra.iter().cloned());
+    Some(words)
 }
 
 /// The command that opens `agent_session` of `agent` in `terminal`, in `cwd`,
-/// when both a terminal and the agent's enter command are configured.
+/// when both a terminal and the agent's enter command are configured. `extra`
+/// is as [`enter_command`] takes it.
 pub fn terminal_command(
     terminal: &[String],
     agent: &AgentConfig,
     agent_session: &str,
     cwd: &Path,
     written: bool,
+    extra: &[String],
 ) -> Option<Vec<String>> {
     if terminal.is_empty() {
         return None;
     }
-    let enter = enter_command(agent, agent_session, cwd, written)?;
+    let enter = enter_command(agent, agent_session, cwd, written, extra)?;
     let cwd = cwd.to_string_lossy();
     Some(
         terminal
@@ -521,7 +526,7 @@ mod tests {
         .unwrap();
         let cwd = Path::new("/home/me");
         assert_eq!(
-            terminal_command(&config.terminal, &config.agents[0], "abc", cwd, true),
+            terminal_command(&config.terminal, &config.agents[0], "abc", cwd, true, &[]),
             Some(
                 [
                     "ghostty",
@@ -536,12 +541,12 @@ mod tests {
             )
         );
         assert_eq!(
-            terminal_command(&config.terminal, &config.agents[1], "abc", cwd, true),
+            terminal_command(&config.terminal, &config.agents[1], "abc", cwd, true, &[]),
             None,
             "an agent without a resume command has nothing to open"
         );
         assert_eq!(
-            terminal_command(&[], &config.agents[0], "abc", cwd, true),
+            terminal_command(&[], &config.agents[0], "abc", cwd, true, &[]),
             None,
             "nor does a missing terminal"
         );
@@ -570,21 +575,36 @@ mod tests {
         .unwrap();
         let cwd = Path::new("/home/me");
         assert_eq!(
-            enter_command(&config.agents[0], "abc", cwd, false),
+            enter_command(&config.agents[0], "abc", cwd, false, &[]),
             Some(["claude", "--session-id", "abc"].map(String::from).to_vec()),
             "an unwritten session cannot be resumed by id"
         );
         assert_eq!(
-            enter_command(&config.agents[0], "abc", cwd, true),
+            enter_command(&config.agents[0], "abc", cwd, true, &[]),
             Some(["claude", "--resume", "abc"].map(String::from).to_vec())
         );
         assert_eq!(
-            enter_command(&config.agents[1], "abc", cwd, false),
+            enter_command(&config.agents[1], "abc", cwd, false, &[]),
             Some(["plain", "--resume", "abc"].map(String::from).to_vec()),
             "without one of its own, an agent is entered the one way it has"
         );
         assert_eq!(
-            terminal_command(&config.terminal, &config.agents[0], "abc", cwd, false),
+            enter_command(
+                &config.agents[0],
+                "abc",
+                cwd,
+                true,
+                &["--agent".into(), "otto:otto".into()]
+            ),
+            Some(
+                ["claude", "--agent", "otto:otto", "--resume", "abc"]
+                    .map(String::from)
+                    .to_vec()
+            ),
+            "the extra flags go straight after the program"
+        );
+        assert_eq!(
+            terminal_command(&config.terminal, &config.agents[0], "abc", cwd, false, &[]),
             Some(
                 ["ghostty", "-e", "claude", "--session-id", "abc"]
                     .map(String::from)

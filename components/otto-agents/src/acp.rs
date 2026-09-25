@@ -71,6 +71,21 @@ impl AcpBackend {
             images: ImageCache::open(),
         }
     }
+
+    /// The flags an agent's enter command needs to pick a session up the way
+    /// the service runs it: for an agent on the Claude route, the plugins and
+    /// the plugin agent its sessions run as. Nothing for any other.
+    fn enter_args(&self, agent: &AgentConfig) -> Vec<String> {
+        if agent.skills != SkillDelivery::Claude {
+            return Vec::new();
+        }
+        let run_as = agent
+            .agent
+            .as_deref()
+            .and_then(|name| skills::agent_file(&self.plugins, name))
+            .map(|(run_as, _)| run_as);
+        skills::claude_cli_args(&self.plugins, run_as.as_deref())
+    }
 }
 
 /// How a session answers its agent's permission requests.
@@ -190,7 +205,8 @@ impl Backend for AcpBackend {
         written: bool,
     ) -> Option<Vec<String>> {
         let agent = self.agents.iter().find(|agent| agent.id == provider)?;
-        config::terminal_command(&self.terminal, agent, agent_session, cwd, written)
+        let extra = self.enter_args(agent);
+        config::terminal_command(&self.terminal, agent, agent_session, cwd, written, &extra)
     }
 
     fn enter(
@@ -201,7 +217,8 @@ impl Backend for AcpBackend {
         written: bool,
     ) -> Option<Vec<String>> {
         let agent = self.agents.iter().find(|agent| agent.id == provider)?;
-        config::enter_command(agent, agent_session, cwd, written)
+        let extra = self.enter_args(agent);
+        config::enter_command(agent, agent_session, cwd, written, &extra)
     }
 }
 
