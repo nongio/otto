@@ -2292,12 +2292,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             title: window.xdg_title(),
             active: is_focused,
             dark: Config::with(|c| matches!(c.theme_scheme, crate::theme::ThemeScheme::Dark)),
-            // Maximized and fullscreen windows sit flush against the screen
-            // edges, so their frame — and with it the bar — squares off. A
-            // tile's corners follow the decoration it wears: square under
-            // normal and none, a smaller radius under minimal, the same one
-            // otto-kit gives its own frames.
-            corner_radius: if window.is_maximized() || fullscreen {
+            // A fullscreen window, or a maximized one spanning the output's
+            // full width, sits flush against the screen edges, so its frame
+            // (and with it the bar) squares off. A maximized window that
+            // stops short of an edge, beside a side dock say, keeps its
+            // rounding. A tile's corners follow the decoration it wears:
+            // square under normal and none, a smaller radius under minimal,
+            // the same one otto-kit gives its own frames.
+            corner_radius: if fullscreen || self.is_maximized_full_width(window) {
                 0.0
             } else {
                 otto_kit::components::titlebar::WindowDecoration::corner_radius_for(
@@ -2318,6 +2320,20 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 == otto_kit::components::titlebar::DecorationVariant::Minimal,
             scale: scale_factor as f32,
         }
+    }
+
+    /// Whether `window` is maximized and spans its output edge to edge.
+    fn is_maximized_full_width(&self, window: &WindowElement) -> bool {
+        if !window.is_maximized() {
+            return false;
+        }
+        let Some(window_geometry) = self.workspaces.element_geometry(window) else {
+            return false;
+        };
+        self.workspaces
+            .output_for_window(window)
+            .and_then(|output| self.workspaces.output_geometry(&output))
+            .is_some_and(|output_geometry| window_geometry.size.w >= output_geometry.size.w)
     }
 
     /// Rebuild every server-side titlebar from the current configuration.
