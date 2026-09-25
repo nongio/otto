@@ -14,6 +14,8 @@ pub mod planes;
 pub mod render;
 pub mod schedule;
 pub mod types;
+#[cfg(feature = "vulkan")]
+pub mod vulkan_api;
 
 // Re-export public API
 pub use init::run_udev;

@@ -651,17 +651,22 @@ impl Otto<UdevData> {
             // and the primary GPU (plane dmabufs are rendered with the primary
             // GPU's EGL context; a cross-device import per plane per frame is
             // unreliable). Anything else renders as a single scene element.
-            let planes_enabled = !surface_is_legacy
+            //
+            // The Vulkan renderer composites everything into the primary
+            // plane for now: plane slots are not fenced for scanout on it.
+            let planes_enabled = !cfg!(feature = "vulkan")
+                && !surface_is_legacy
                 && overlay_count >= 3
                 && device_render_node == self.backend_data.primary_gpu;
             if !planes_enabled {
                 tracing::info!(
                     target: "otto::planes",
-                    "plane decomposition disabled for {}: legacy={} overlays={} primary_gpu={}",
+                    "plane decomposition disabled for {}: legacy={} overlays={} primary_gpu={} vulkan={}",
                     output.name(),
                     surface_is_legacy,
                     overlay_count,
                     device_render_node == self.backend_data.primary_gpu,
+                    cfg!(feature = "vulkan"),
                 );
             }
             let dmabuf_feedback = get_surface_dmabuf_feedback(

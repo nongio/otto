@@ -35,4 +35,23 @@ mod imp {
     }
 }
 
+#[cfg(feature = "vulkan")]
+mod imp {
+    pub use crate::{
+        renderer::{
+            vulkan::{
+                PlaneTextureRelease, SkiaVkError as Error, SkiaVkFrame as Frame,
+                SkiaVkRenderer as Renderer, SkiaVkSync as Sync, SkiaVkTexture as Texture,
+            },
+            SkiaSurface as Surface,
+        },
+        udev::vulkan_api::{GbmVulkanBackend as GraphicsApi, GbmVulkanError as AddNodeError},
+    };
+
+    /// Creates the multi-GPU api the udev backend starts with.
+    pub fn graphics_api() -> GraphicsApi {
+        GraphicsApi::default()
+    }
+}
+
 pub use imp::*;
