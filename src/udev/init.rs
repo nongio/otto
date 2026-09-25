@@ -95,6 +95,7 @@ pub fn vulkan_fallback() -> Option<&'static str> {
 /// A session that exits at startup because its renderer cannot come up is a
 /// greeter loop the user can only leave from a tty, so a Vulkan that does not
 /// work on this machine is a warning and a fallback, never an exit.
+#[cfg(any(feature = "vulkan", test))]
 fn fallback_reason(
     requested: crate::config::RendererKind,
     probe: Result<(), String>,
