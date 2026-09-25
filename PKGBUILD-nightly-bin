@@ -1,7 +1,21 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
+#
+# The nightly package, from the tarball CI publishes under the `nightly`
+# release. This file is a template: pkgver and sha256sums are placeholders
+# that scripts/packaging/make-nightly-pkgbuild.sh fills in from the tarball
+# it was built for, and the filled-in copy is published beside the tarball.
+# Install from that copy, not from this one:
+#
+#   curl -fLO https://github.com/nongio/otto/releases/download/nightly/PKGBUILD-nightly-bin
+#   makepkg -p PKGBUILD-nightly-bin -si
+#
+# The tarball's URL never changes, so the pinned checksum is what ties a
+# copy of this file to one build — and the local file name carries pkgver so
+# that makepkg fetches the new tarball on an update instead of reusing the
+# one it downloaded last time.
 
 pkgname=otto-nightly-bin
-pkgver=1.0.0rc1.r1.9783956
+pkgver=0
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail. (nightly build)"
 url="https://github.com/nongio/otto"
@@ -11,19 +25,26 @@ provides=("otto")
 conflicts=("otto" "otto-bin" "otto-git")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs")
 optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files")
-source=("otto-nightly-x86_64.tar.gz::https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz")
+source=("otto-nightly-${pkgver}-x86_64.tar.gz::https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz")
 sha256sums=("SKIP")
-noextract=("otto-nightly-x86_64.tar.gz")
+noextract=("otto-nightly-${pkgver}-x86_64.tar.gz")
 backup=("etc/otto/config.toml" "etc/pam.d/otto-lock")
 
 prepare() {
-    tar -xzf "$srcdir/otto-nightly-x86_64.tar.gz" -C "$srcdir"
+    # The tarball's top directory is named after the workspace version
+    # (otto-1.4.1), which is not pkgver. Unpack it under a fixed name, and
+    # clear the previous build's first so a re-run does not fail on the mv.
+    tar -xzf "$srcdir/otto-nightly-${pkgver}-x86_64.tar.gz" -C "$srcdir"
     rm -rf "$srcdir/otto"
     mv "$srcdir"/otto-*/ "$srcdir/otto"
-}
-
-pkgver() {
-    cat "$srcdir/otto/VERSION"
+    # The build the tarball says it is has to be the one this file was
+    # pinned to; the checksum already guarantees it, this names the mismatch.
+    local built
+    built=$(cat "$srcdir/otto/VERSION")
+    if [ "$built" != "$pkgver" ]; then
+        echo "tarball is build $built, this PKGBUILD is for $pkgver" >&2
+        return 1
+    fi
 }
 
 package() {

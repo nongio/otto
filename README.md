@@ -163,12 +163,17 @@ sudo apt install ./otto-nightly-amd64.deb
 sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
 
 # Arch Linux
-curl -fsSLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz
-mkdir otto && tar -xzf otto-nightly-x86_64.tar.gz -C otto
-cd otto && makepkg -p PKGBUILD-nightly-bin -si
+curl -fLO https://github.com/nongio/otto/releases/download/nightly/PKGBUILD-nightly-bin
+makepkg -p PKGBUILD-nightly-bin -si
 ```
 
-The URLs never change, so the same commands update an existing install.
+The URLs never change, so the same commands update an existing install. Each
+nightly is versioned as the release it was built from plus the commits since
+(`1.4.1+nightly.r566.gcb851c3`, say), so it installs over that release and
+the next nightly installs over it. Going back to a release is a downgrade,
+which the package manager wants told: `sudo apt install --allow-downgrades ./otto-amd64.deb`,
+`sudo dnf downgrade ./otto-x86_64.rpm`, or `makepkg -si` from the release
+`PKGBUILD` on Arch.
 
 Prefer to build it yourself? See [Building Otto](#building-otto).
 

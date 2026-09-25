@@ -105,7 +105,7 @@ git log v0.12.0..HEAD --oneline
 
 ```bash
 grep '^version' Cargo.toml
-git describe --tags --abbrev=0
+git describe --tags --abbrev=0 --match 'v*'   # not the moving `nightly` tag
 ```
 
 ### List All Tags
