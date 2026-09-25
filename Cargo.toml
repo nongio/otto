@@ -96,7 +96,7 @@ version = "0.12.0"
 
 [features]
 perf-counters = []
-default = ["egl", "winit", "udev", "renderer_sync", "xwayland"]
+default = ["egl", "winit", "udev", "renderer_sync", "xwayland", "vulkan"]
 dev = ["debug", "profile", "debugger", "debug-hooks"]
 # File-driven live toggles and command files under /tmp (see src/debug_hooks.rs).
 debug-hooks = []
