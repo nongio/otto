@@ -71,6 +71,7 @@ settings-pane-pointing = トラックパッドとマウス
 settings-pane-sound = サウンド
 settings-pane-power = 電源
 settings-pane-lock-and-login = ロックとログイン
+settings-pane-agents = エージェント
 
 
 ## Settings — General
@@ -238,6 +239,93 @@ settings-group-login = ログイン
 settings-greeter = グリーター
 settings-greeter-detail = 次回のログインから適用されます
 settings-greeter-arguments = グリーターの引数
+
+
+## Settings — Agents
+##
+## The agents Ask sends requests to, read from agents.toml. Changes wait for
+## Apply, which saves the file and restarts the agent service.
+
+settings-agents-intro = Ask がリクエストを渡せるエージェント。権限は、エージェントが何かをしようとしたときの扱いを決め、フォルダはエージェントが読めるもののすべてです。
+settings-agents-default = デフォルトのエージェント
+settings-agents-default-detail = エージェントを選ばなかったときにリクエストを受け取るエージェント
+# The row holding the Revert and Apply buttons.
+settings-agents-changes = 変更
+settings-agents-revert = 元に戻す
+settings-agents-apply = 適用
+settings-agents-saved = すべて保存済み
+settings-agents-unsaved = まだ保存されていません。「適用」で agents.toml に書き込み、エージェントサービスを再起動します。
+# $error is the reason, as the system gives it.
+settings-agents-failed = 保存できませんでした：{ $error }
+# The otto-agents service, which runs the agents; the row shows whether it is
+# up, with Start or Restart.
+settings-agents-service = エージェントサービス
+settings-agents-service-checking = 確認中…
+settings-agents-service-running = 実行中
+settings-agents-service-stopped = 停止中。起動するまで、Ask はどのエージェントにも接続できません。
+settings-agents-service-failed = エラーで停止しました。理由は journalctl --user -u otto-agents で確認できます。
+settings-agents-service-missing = 未インストール
+# The system has no systemctl, so the app can't tell whether the service runs.
+settings-agents-service-unmanaged = 不明：このシステムには systemctl がありません
+settings-agents-start = 起動
+settings-agents-restart = 再起動
+# The row that opens agents.toml. Its path is shown under it.
+settings-agents-file = 設定ファイル
+settings-agents-none = エージェントが設定されていません
+settings-agents-none-detail = { $path } に追加します。方法は Ask とエージェントのガイドにあります。
+# Titles an agent's section. $id is how agents.toml and the agent's sessions
+# know it, such as claude.
+settings-agent-id = id：{ $id }
+# The field that replaces that row while the agent is being renamed.
+settings-agent-name = 名前
+settings-agents-rename = 名前を変更
+# The row under the list of agents, holding its Add button.
+settings-agents-add = 新規エージェント
+# What an agent is called until it is renamed.
+settings-agents-new-name = 新規エージェント
+# The program an agent runs on: Claude Code, Codex, OpenCode and so on.
+settings-agent-harness = プログラム
+# A harness Settings doesn't recognise, set up by its command alone.
+settings-agent-harness-custom = カスタム
+settings-agent-command = コマンド
+# Which agent file the agent runs as: who it is and how it answers.
+settings-agent-instructions = 指示
+# No instructions from Otto: the harness runs as itself, Claude Code as
+# Claude Code and so on.
+settings-agent-instructions-default = デフォルト
+settings-agent-instructions-detail = エージェントファイルは ~/.local/share/otto/plugins/<plugin>/agents/ にあります
+# $name is the agent file the agent names, which wasn't found.
+settings-agent-instructions-missing = { $name } という名前のエージェントファイルはありません。~/.local/share/otto/plugins/<plugin>/agents/ に置いてください
+# $name is the agent file; Hermes runs it in a profile of that name, which
+# Hermes has to make.
+settings-agent-instructions-hermes = Hermes にはこのためのプロファイルが必要です：hermes profile create { $name } を実行してください
+# The row that opens the agent file. Its path is shown under it.
+settings-agent-instructions-file = 指示ファイル
+settings-agent-permissions = 権限
+settings-agent-permissions-deny = 常に拒否
+settings-agent-permissions-ask = 毎回確認
+settings-agent-permissions-allow = 常に許可
+settings-agent-model = モデル
+settings-agent-folder = フォルダ
+# Under an agent's Folder when none is set. $path is Ask's scratch folder,
+# such as ~/.local/state/otto/ask.
+settings-agent-folder-unset = 未設定：セッションは一時フォルダ { $path } で開始します
+settings-agent-folder-detail = エージェントはこの中のすべてを読み取れます
+# The tint of an agent's cards in Ask. None keeps the plain material.
+settings-agent-colour = 色
+settings-agent-colour-none = なし
+settings-agent-colour-red = レッド
+settings-agent-colour-orange = オレンジ
+settings-agent-colour-amber = アンバー
+settings-agent-colour-yellow = イエロー
+settings-agent-colour-lime = ライム
+settings-agent-colour-green = グリーン
+settings-agent-colour-teal = ティール
+settings-agent-colour-cyan = シアン
+settings-agent-colour-blue = ブルー
+settings-agent-colour-indigo = インディゴ
+settings-agent-colour-violet = バイオレット
+settings-agent-colour-magenta = マゼンタ
 
 
 ## Settings — choices
