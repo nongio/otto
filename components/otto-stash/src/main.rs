@@ -245,6 +245,8 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
         stash: None,
         stash_dir: PathBuf::new(),
         held_by: None,
+        ask_open: false,
+        on_card: false,
         announcements,
         last_announced: Items::new(),
         balloon: Balloon::default(),
@@ -304,6 +306,11 @@ struct State {
     stash_dir: PathBuf,
     /// The bus client showing the stash in the card's place.
     held_by: Option<String>,
+    /// Ask was opened for the stash and hasn't exited yet.
+    ask_open: bool,
+    /// The stash was set aside on the card: Ask closed with it unsent. Until
+    /// then a stash opens Ask rather than the card.
+    on_card: bool,
     /// Where changes to the stash go out on the bus, and the last that
     /// did.
     announcements: tokio::sync::mpsc::UnboundedSender<Items>,
@@ -394,9 +401,13 @@ impl State {
             // any other way.
             Command::Send => {
                 if self.stash.is_some() {
-                    if let Err(error) = open_ask() {
-                        tracing::error!(error = format!("{error:#}"), "cannot open Ask");
-                    }
+                    self.open_ask();
+                }
+            }
+            Command::AskClosed => {
+                self.ask_open = false;
+                if self.held_by.is_none() {
+                    self.set_aside();
                 }
             }
             Command::Items(reply) => {
@@ -410,6 +421,7 @@ impl State {
                 if self.held_by.as_ref() == Some(&holder) {
                     tracing::info!(%holder, "released");
                     self.held_by = None;
+                    self.set_aside();
                 }
             }
             Command::Toggle(index) => {
@@ -432,10 +444,38 @@ impl State {
         self.refresh();
     }
 
+    /// Ask let go of the stash without sending it: from now on it lives on
+    /// the card. One that is still empty is dropped instead.
+    fn set_aside(&mut self) {
+        match self.stash.as_ref() {
+            Some(stash) if stash.items.is_empty() => {
+                tracing::info!("empty stash dropped");
+                self.stash = None;
+            }
+            Some(_) => self.on_card = true,
+            None => {}
+        }
+    }
+
+    /// Open Ask for the stash, unless it is already opening.
+    fn open_ask(&mut self) {
+        if self.ask_open {
+            return;
+        }
+        match open_ask(self.commands.clone()) {
+            Ok(()) => self.ask_open = true,
+            Err(error) => {
+                tracing::error!(error = format!("{error:#}"), "cannot open Ask");
+                self.on_card = true;
+            }
+        }
+    }
+
     /// The stash, started if there is none.
     fn start_stash(&mut self) -> &mut Stash {
         if self.stash.is_none() {
             tracing::info!("start a stash");
+            self.on_card = false;
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis());
@@ -636,8 +676,9 @@ impl State {
         }
     }
 
-    /// Show, redraw or remove the balloon to match the stash. It stays
-    /// up from the first add until the stash is sent or cancelled.
+    /// Show, redraw or remove the balloon to match the stash. A new stash
+    /// opens Ask; once Ask lets go of it unsent, the card shows it until it
+    /// is sent or cancelled.
     fn refresh(&mut self) {
         self.announce();
         self.layout = None;
@@ -647,6 +688,12 @@ impl State {
         }
         if self.stash.is_none() || self.picking || self.held_by.is_some() {
             self.close_panel();
+            return;
+        }
+        // Until Ask has let go of it once, the stash is shown in Ask.
+        if !self.on_card {
+            self.close_panel();
+            self.open_ask();
             return;
         }
         if self.panel.is_none() {
@@ -859,8 +906,9 @@ fn runtime_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
-/// Open Ask. It shows what is stashed, following it over the bus.
-fn open_ask() -> anyhow::Result<()> {
+/// Open Ask. It shows what is stashed, following it over the bus;
+/// [`Command::AskClosed`] follows once it exits.
+fn open_ask(commands: channel::Sender<Command>) -> anyhow::Result<()> {
     let launcher = std::env::var("OTTO_STASH_LAUNCHER").unwrap_or_else(|_| "otto-launcher".into());
     tracing::info!(%launcher, "open Ask");
     // Not waited for: the launcher runs until it is closed. A thread reaps it
@@ -869,7 +917,10 @@ fn open_ask() -> anyhow::Result<()> {
         .arg("--ask")
         .spawn()
         .with_context(|| format!("cannot start {launcher}"))?;
-    std::thread::spawn(move || child.wait());
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        let _ = commands.send(Command::AskClosed);
+    });
     Ok(())
 }
 

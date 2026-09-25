@@ -45,6 +45,9 @@ pub enum Command {
     RegionCaptured(Option<PathBuf>),
     /// Open Ask, which takes everything stashed.
     Send,
+    /// The Ask that otto-stash opened has exited. Sent by the thread that
+    /// waits for it, not over the bus.
+    AskClosed,
     /// Everything stashed, as files.
     Items(oneshot::Sender<Items>),
     /// The bus client named here shows the stash, so the card steps

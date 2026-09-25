@@ -72,7 +72,14 @@ the same text, the same file path, or the same region. Its place on the card
 does not change. When the equal item is struck out, adding it again brings it
 back instead.
 
-**The card.** From the first add until the stash ends, a card shows what
+**Where a stash shows.** A new stash opens Ask with its first item attached,
+and what is added while Ask is up joins it there. When Ask closes without
+sending, the stash is set aside on the card, and from then on adds go to the
+card until the stash ends. Ask closing on a stash that is still empty (nothing
+was selected) ends it instead of leaving an empty card. When Ask cannot be
+started, the stash goes to the card at once.
+
+**The card.** Once the stash is set aside and until it ends, a card shows what
 is stashed. It sits on top of everything, first placed in the top-right
 corner of the output, just below the bar, and can be dragged anywhere by
 pressing on it away from its buttons. It wears the launcher's frosted
@@ -119,7 +126,7 @@ its own shortcut, agents mode, or `otto-launcher --selection`), it shows the
 stash with the next request, following it live: items added while Ask is
 up appear there, and striking out or removing an item in Ask does the same in
 the stash. While Ask is up the card steps aside. Closed without sending,
-Ask lets go and the card comes back with the stash as it was left. When
+Ask lets go and the card shows the stash as it was left. When
 Ask sends a request while anything is stashed, the items not struck out go
 with it and the stash ends, struck items included. How attachments look
 and behave in Ask is in [launcher.md](./launcher.md).
@@ -140,7 +147,6 @@ configuration. The rest are suggestions:
 | Ctrl+Alt+Shift+R | `otto-stash add-region` |
 | Ctrl+Alt+Shift+G | `otto-stash send` |
 | Ctrl+Alt+Shift+C | `otto-stash cancel` (clear) |
-| Ctrl+Alt+Shift+A | `otto-launcher --selection` |
 | Ctrl+Alt+A | `otto-launcher --ask` (Ask, shown on the card as the send key) |
 
 Inside Files, Ctrl+G adds the selection to the stash (see
@@ -200,6 +206,12 @@ signal Changed(items: a(sb))    after every change
   the card closes; the next change opens it again.
 
 ## Rationale
+
+- **A stash starts in Ask.** Most stashes are one thing to ask about right
+  away, so the first add goes where the question is typed. The card is for
+  the other case: set aside by closing Ask, it collects more while the person
+  keeps working. This makes `otto-launcher --selection` the same as the add
+  shortcut, so it isn't bound by default.
 
 - **Default shortcuts ship.** Collecting has to be one key press from any app,
   and a feature nobody can reach until they edit their config goes unused. The
