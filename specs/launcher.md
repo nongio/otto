@@ -145,7 +145,9 @@ log, above the field, before anything is typed: files attached when Ask was
 opened (`--file`, or Ask… in Files), then everything stashed (see
 [stash.md](./stash.md)). They are listed newest first, as the stash card
 lists them: selected text reads as the text itself, quoted and cut to a few
-lines; a screen region as its picture; a picture file as its picture under its
+lines; a screen region as its picture, in its own shape, never wider than
+the list or taller than a few lines of text and never enlarged past its
+captured size; a picture file as its picture under its
 name; any other file as its icon or thumbnail and its name, as in Files.
 Pointing at one highlights it and turns the pointer to a hand. A click on it
 strikes it out or brings it back: a struck attachment stays listed, dimmed,

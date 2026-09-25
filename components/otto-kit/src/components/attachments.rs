@@ -46,7 +46,8 @@ const DISC: f32 = 22.0;
 const STRUCK_ALPHA: f32 = 0.4;
 /// The tallest a screen region's picture is shown.
 const PICTURE_MAX_H: f32 = 220.0;
-/// The shortest a picture is shown, so a thin strip is still a picture.
+/// The least a picture is shown either way, so a thin strip is still a
+/// picture with room for its remove button.
 const PICTURE_MIN_H: f32 = 60.0;
 /// A file's icon or thumbnail, as in a Files list row with two lines.
 pub const ICON_SIZE: f32 = 48.0;
@@ -338,6 +339,23 @@ fn file_name(path: &Path) -> String {
     )
 }
 
+/// How big a picture `w` × `h` pixels shows, at most `max_w` × `max_h`
+/// points: in its own shape, and no bigger than it was captured. A tiny one
+/// is enlarged to [`PICTURE_MIN_H`], and only a strip too thin or too narrow
+/// to hold a remove button loses its shape, cropped to fit.
+fn picture_size(w: f32, h: f32, max_w: f32, max_h: f32) -> (f32, f32) {
+    let (w, h) = (w / PREVIEW_SCALE, h / PREVIEW_SCALE);
+    let mut factor = (max_w / w).min(max_h / h).min(1.0);
+    if h * factor < PICTURE_MIN_H {
+        factor = (PICTURE_MIN_H / h).min(max_w / w);
+    }
+    let floor = PICTURE_MIN_H.min(max_w);
+    (
+        (w * factor).max(floor).round(),
+        (h * factor).max(floor).min(max_h).round(),
+    )
+}
+
 /// `image` scaled down to fit `max_w` × `max_h` pixels.
 fn shrink(image: &Image, max_w: f32, max_h: f32) -> Image {
     let (w, h) = (image.width() as f32, image.height() as f32);
@@ -473,11 +491,16 @@ impl Placing<'_> {
         (self.width - button - from).max(40.0)
     }
 
-    /// A picture across the list, `max_h` tall at most, at `y`.
+    /// A picture at `y`, in its own shape, as wide as the list and `max_h`
+    /// tall at most.
     fn picture(&mut self, image: Image, y: f32, max_h: f32) -> Rect {
-        let (w, h) = (image.width() as f32, image.height() as f32);
-        let height = (self.width * h / w).clamp(PICTURE_MIN_H, max_h).round();
-        let rect = Rect::from_xywh(0.0, y, self.width, height);
+        let (width, height) = picture_size(
+            image.width() as f32,
+            image.height() as f32,
+            self.width,
+            max_h,
+        );
+        let rect = Rect::from_xywh(0.0, y, width, height);
         self.pieces.push(Piece::Picture {
             image,
             rect,
@@ -1011,6 +1034,20 @@ mod tests {
         assert!(layout.removes.is_empty());
         assert_eq!(layout.items_at[0].1, 0);
         assert!(layout.items_at[0].0.top < layout.items_at[1].0.top);
+    }
+
+    #[test]
+    fn a_picture_keeps_its_shape() {
+        // Captured at twice the scale: 1600 × 900 pixels is 800 × 450 points.
+        assert_eq!(picture_size(1600.0, 900.0, 320.0, 220.0), (320.0, 180.0));
+        // Tall ones are held to the height and narrow instead.
+        assert_eq!(picture_size(900.0, 1600.0, 320.0, 220.0), (124.0, 220.0));
+        // Small ones are not enlarged.
+        assert_eq!(picture_size(400.0, 300.0, 320.0, 220.0), (200.0, 150.0));
+        // A tiny one grows to a size that still shows.
+        assert_eq!(picture_size(40.0, 20.0, 320.0, 220.0), (120.0, 60.0));
+        // A thin strip keeps enough height to be seen, cropped.
+        assert_eq!(picture_size(4000.0, 40.0, 320.0, 220.0), (320.0, 60.0));
     }
 
     #[test]
