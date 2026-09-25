@@ -15,6 +15,7 @@
 //!
 //! The main `SkiaRenderer` in the parent module orchestrates these components.
 
+pub mod draw;
 pub mod egl_context;
 pub mod frame;
 pub mod skia_surface;

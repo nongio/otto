@@ -32,51 +32,7 @@ impl Frame for SkiaFrame<'_> {
         damage: &[Rectangle<i32, Physical>],
         color: Color32F,
     ) -> Result<(), Self::Error> {
-        if damage.is_empty() {
-            return Ok(());
-        }
-
-        let dest_rect = skia::Rect::from_xywh(
-            dst.loc.x as f32,
-            dst.loc.y as f32,
-            dst.size.w as f32,
-            dst.size.h as f32,
-        );
-
-        let color = skia::Color4f::new(color.r(), color.g(), color.b(), color.a());
-        let mut paint = skia::Paint::new(color, None);
-        paint.set_blend_mode(skia::BlendMode::Src);
-
-        let mut surface = self.skia_surface.clone();
-        let canvas = surface.canvas();
-
-        // Render each damage rect with clipping for true partial rendering
-        for rect in damage.iter() {
-            let rect_constrained_loc = rect
-                .loc
-                .constrain(Rectangle::from_extremities((0, 0), dst.size.to_point()));
-            let rect_clamped_size = rect.size.clamp(
-                (0, 0),
-                (dst.size.to_point() - rect_constrained_loc).to_size(),
-            );
-
-            if rect_clamped_size.w <= 0 || rect_clamped_size.h <= 0 {
-                continue;
-            }
-
-            let clip_rect = skia::Rect::from_xywh(
-                (dst.loc.x + rect_constrained_loc.x) as f32,
-                (dst.loc.y + rect_constrained_loc.y) as f32,
-                rect_clamped_size.w as f32,
-                rect_clamped_size.h as f32,
-            );
-
-            canvas.save();
-            canvas.clip_rect(clip_rect, None, None);
-            canvas.draw_rect(dest_rect, &paint);
-            canvas.restore();
-        }
-
+        super::draw::draw_solid(&mut self.skia_surface.surface, dst, damage, color);
         Ok(())
     }
     #[profiling::function]
@@ -90,90 +46,15 @@ impl Frame for SkiaFrame<'_> {
         src_transform: Transform,
         alpha: f32,
     ) -> Result<(), Self::Error> {
-        if damage.is_empty() {
-            return Ok(());
-        }
-
-        let image = &texture.image;
-
-        let mut paint = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, alpha), None);
-        paint.set_blend_mode(skia::BlendMode::SrcOver);
-
-        let mut matrix = skia::Matrix::new_identity();
-
-        let mut surface = self.skia_surface.clone();
-        let canvas = surface.canvas();
-
-        let scale_x = dst.size.w as f32 / src.size.w as f32;
-        let scale_y = dst.size.h as f32 / src.size.h as f32;
-
-        match src_transform {
-            Transform::Normal => {
-                matrix.pre_scale((scale_x, scale_y), None);
-                matrix.pre_translate((
-                    dst.loc.x as f32 / scale_x - (src.loc.x as f32),
-                    dst.loc.y as f32 / scale_y - (src.loc.y as f32),
-                ));
-            }
-            Transform::Flipped180 => {
-                matrix.pre_scale((scale_x, -scale_y), None);
-                matrix.pre_translate((
-                    dst.loc.x as f32 / scale_x - src.loc.x as f32,
-                    -dst.loc.y as f32 / scale_y + src.loc.y as f32,
-                ));
-            }
-            Transform::Flipped90 => {
-                panic!("unhandled transform {:?}", src_transform);
-            }
-            Transform::Flipped270 => {
-                panic!("unhandled transform {:?}", src_transform);
-            }
-            _ => {
-                panic!("unhandled transform {:?}", src_transform);
-            }
-        }
-
-        // Setup shader once outside loop
-        paint.set_shader(image.to_shader(
-            (skia::TileMode::Repeat, skia::TileMode::Repeat),
-            skia::SamplingOptions::default(),
-            &matrix,
-        ));
-
-        let draw_rect = skia::Rect::from_xywh(
-            dst.loc.x as f32,
-            dst.loc.y as f32,
-            dst.size.w as f32,
-            dst.size.h as f32,
+        super::draw::render_texture(
+            &mut self.skia_surface.surface,
+            &texture.image,
+            src,
+            dst,
+            damage,
+            src_transform,
+            alpha,
         );
-
-        // Render only damaged regions with per-rect clipping
-        for rect in damage.iter() {
-            let rect_constrained_loc = rect
-                .loc
-                .constrain(Rectangle::from_extremities((0, 0), dst.size.to_point()));
-            let rect_clamped_size = rect.size.clamp(
-                (0, 0),
-                (dst.size.to_point() - rect_constrained_loc).to_size(),
-            );
-
-            if rect_clamped_size.w <= 0 || rect_clamped_size.h <= 0 {
-                continue;
-            }
-
-            let clip_rect = skia::Rect::from_xywh(
-                (dst.loc.x + rect_constrained_loc.x) as f32,
-                (dst.loc.y + rect_constrained_loc.y) as f32,
-                rect_clamped_size.w as f32,
-                rect_clamped_size.h as f32,
-            );
-
-            canvas.save();
-            canvas.clip_rect(clip_rect, None, None);
-            canvas.draw_rect(draw_rect, &paint);
-            canvas.restore();
-        }
-
         Ok(())
     }
     fn transformation(&self) -> Transform {
