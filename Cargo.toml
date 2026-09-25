@@ -210,7 +210,7 @@ too_many_arguments = "allow"
 # is a one-line change here instead of an edit per component — and no member
 # can drift onto a different revision and pull a second copy into the link.
 #
-# Pinned to v1.18.0 (nongio/layers#28, #29): kept blurred backdrops, clipped
+# Pinned to v1.18.1 (nongio/layers#28, #29, blur fade-in fix): kept blurred backdrops, clipped
 # damage, opaque regions and the Vulkan render target; v1.17.0 (#27) takes the
 # transaction locks in one order, ending the deadlock that left the
 # compositor black at login.
@@ -220,7 +220,7 @@ too_many_arguments = "allow"
 # For local development point this at the checkout — one edit, whole workspace:
 #   laye-rs = { path = "../layers", features = ["export-taffy"] }
 [workspace.dependencies]
-laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.18.0", features = [
+laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.18.1", features = [
     "export-taffy",
 ] }
 
