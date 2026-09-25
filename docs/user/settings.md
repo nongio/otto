@@ -17,8 +17,8 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 
 | Pane | Covers |
 |------|--------|
-| General | Light or dark appearance, accent colour, interface font, GTK theme, desktop background colour and image, pointer and icon themes |
-| Displays | Resolution, refresh rate and arrangement of connected monitors, the global interface scale, and the renderer |
+| General | Light or dark appearance, accent colour, interface font, GTK theme, desktop background colour and image, pointer and icon themes, the renderer |
+| Displays | Resolution, refresh rate and arrangement of connected monitors, and the global interface scale |
 | Dock | Size, position, auto-hide, magnification, icon colorization |
 | Keyboard | Layout and options, repeat rate, and the shortcut list |
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
@@ -59,8 +59,10 @@ session and are gone at restart. To make them stick, write them under
 Scale is the exception: it is bound, but it is the global `screen_scale`, not a
 per-display value.
 
-**Renderer** picks the GPU API Otto draws with: OpenGL or Vulkan. It applies
-to the login session only, since a windowed session (`otto --winit` or
+## Renderer
+
+The **Renderer** row in General picks the GPU API Otto draws with: OpenGL or
+Vulkan. It applies to the login session only, since a windowed session (`otto --winit` or
 `--x11`) always uses OpenGL, and it takes effect after you log in again. Run
 Settings inside a windowed session and the row shows OpenGL with a note
 instead of a menu. Vulkan is part of the default build, but it also needs a

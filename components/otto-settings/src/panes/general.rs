@@ -2,8 +2,17 @@
 //!
 //! Rows carrying an `id` are bound to `org.otto.Settings`; rows without one
 //! are not wired to the compositor yet.
+//!
+//! The renderer only reaches a login session: the windowed backends always
+//! draw with OpenGL, and Vulkan exists only in a build that includes it. Where
+//! there is nothing to choose, the row states what Otto draws with and why
+//! instead of offering a menu.
 
 use crate::model::{group, Control, Pane, Row};
+use crate::settings_client;
+
+/// The setting the renderer row edits.
+const RENDERER_ID: &str = "rendering.renderer";
 
 pub fn build() -> Pane {
     Pane {
@@ -120,6 +129,7 @@ pub fn build() -> Pane {
                 )
                 .id("locales")],
             ),
+            group(otto_kit::t!("settings-renderer"), vec![renderer_row()]),
             // Not a setting: where the settings go. Otto's configuration is
             // layered, and which file is the writable one depends on what
             // exists on this machine — so it is worth being able to read it
@@ -138,6 +148,39 @@ pub fn build() -> Pane {
             ),
         ],
     }
+}
+
+/// The renderer row: a pop-up where there is a choice to make, and a plain
+/// statement of what Otto draws with where there is not.
+///
+/// There is none under a windowed session, which always draws with OpenGL,
+/// nor in a build without Vulkan, where OpenGL is the only renderer left.
+fn renderer_row() -> Row {
+    let mut row = Row::new(
+        otto_kit::t!("settings-renderer"),
+        Control::Select("gl".into()),
+    )
+    .detail(otto_kit::t!("settings-renderer-detail"))
+    .id(RENDERER_ID);
+    let Some(desc) = settings_client::describe(RENDERER_ID) else {
+        return row;
+    };
+    let offered = desc
+        .choices
+        .iter()
+        .filter(|choice| !desc.unavailable_choices.contains(choice))
+        .count();
+    let note = if !desc.applies_here {
+        otto_kit::t!("settings-renderer-windowed-detail")
+    } else if offered < 2 {
+        otto_kit::t!("settings-renderer-no-vulkan-detail")
+    } else {
+        return row;
+    };
+    if let Control::Select(current) = &row.control {
+        row.control = Control::Value(settings_client::display_choice(RENDERER_ID, current));
+    }
+    row.detail(note)
 }
 
 /// The row that shows where settings are written, and the button that opens

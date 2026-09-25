@@ -2,6 +2,162 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-09-25
+
+### 🚀 Features
+
+- *(files)* Open and Open With (#212)
+- *(input)* Raise windows on release, not press (#214)
+- *(islands)* Music island with MPRIS and PipeWire (#127)
+- *(files)* Share undo across windows (#215)
+- *(islands)* Follow the player's audio stream (#217)
+- *(stash)* Collect things to send to Ask (#218)
+- *(settings)* Agents pane (#224)
+- *(render)* Vulkan renderer, experimental (#225)
+- *(settings)* Renderer in the General pane
+
+### 🐛 Bug Fixes
+
+- Winit repaints and SSD click offset (#211)
+- *(kit)* Paint windows after on_update (#216)
+- *(pkg)* Drop stale otto-agents symlink (#220)
+- *(pkg)* Make nightly packages install and update (#222)
+- *(islands)* Only the player's stream moves the bars (#221)
+- *(planes)* Fence plane buffers instead of blocking (#223)
+
+## [1.4.1] - 2026-09-23
+
+### 🐛 Bug Fixes
+
+- *(peek)* Select words on a picture, and fit a page into the panel (#209)
+- *(kit)* Let a scalable directory answer an oversized icon request
+
+### 📚 Documentation
+
+- *(website)* Size the images, and add nine more (#206)
+- *(files)* Lead the text-in-pictures guide with installing tesseract
+- *(developer)* Add pages for file icons, search and text in pictures
+- Correct comments and specs that no longer match the code
+- Bring the developer and user guides up to date
+- *(help)* Sync the skill's copies of the user guides
+- Link the two guides to each other, and ask for contributions
+- *(configuration)* Say how the file, the Settings app and D-Bus connect
+- One copy-paste block per distribution, and a GitHub link on every page
+- Install a package to try Otto, and publish nightly packages
+
+### ⚙️ Miscellaneous Tasks
+
+- Publish each package under a name that never changes
+
+### Peek
+
+- Text in pictures, dragging, and a new name (#202)
+
+## [1.4.0] - 2026-09-19
+
+### 🚀 Features
+
+- *(kit)* Key repeat and a --version exit (#193)
+- *(agentsd)* Add the otto-agentsd agent service (#194)
+- *(launcher)* Ask and agents modes (#195)
+- *(launcher)* Markdown answers, request bubbles (#199)
+- *(skill)* Review a Files command before install (#200)
+
+### 🐛 Bug Fixes
+
+- Build without the xwayland feature (#191)
+- *(render)* Damage rects, layer-shell size, exposé planes (#201)
+
+### Build
+
+- Package otto-agentsd, skills and aliases (#196)
+
+## [1.3.0] - 2026-09-12
+
+### 🚀 Features
+
+- *(settings)* Apply the keyboard, sound, power and lock settings live
+- *(media-kit)* Play video in Quick View (#182)
+- *(l10n)* Japanese (#180)
+- *(emoji)* An emoji picker (#183)
+- *(files)* Search and Recent, through the desktop's index (#186)
+- *(files)* A command palette, dry runs and scripts (#188)
+- *(tiling)* I3-style tiling (#189)
+
+### 🐛 Bug Fixes
+
+- *(fullscreen)* Show modal dialogs over fullscreen
+- *(screenshare)* End the PipeWire node with the session
+- *(fullscreen)* Restore a window that never had a size
+- *(popups)* Let a menu overhang the window chrome
+- *(cursor)* Honour the configured theme and size everywhere
+- *(input)* Light the caps lock LED (#178)
+- Cursor, settings, otto-kit and virtual-output fixes (#181)
+- *(packaging)* Ship the emoji picker, and name the plugins playback needs (#185)
+- *(doc)* Publish the pages the site was leaving out
+- *(emoji)* Place the card beside Chrome's caret
+- *(packaging)* Ship otto-msg
+
+### 🚜 Refactor
+
+- *(settings)* Drop the revert badge
+
+### 📚 Documentation
+
+- Inventory the XDG standards Otto implements
+- *(files)* Pages for the command palette, custom commands and previews
+- Tiling in the README, and Files' palette and scripts
+
+### ⚡ Performance
+
+- Cheaper video playback and a frosting setting (#187)
+
+### 🧪 Testing
+
+- *(popups)* Follow the compositor's rounding chain
+
+### ⚙️ Miscellaneous Tasks
+
+- *(pkg)* Refresh the git pkgver
+- *(pkg)* Refresh the git pkgver
+- *(release)* 1.3.0
+
+## [1.2.0] - 2026-09-04
+
+### 🚀 Features
+
+- *(workspaces)* Drag to reorder in the selector
+
+### 🐛 Bug Fixes
+
+- *(headless)* Drop a duplicated test helper
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* 1.2.0
+
+## [1.1.0] - 2026-09-04
+
+### 🚀 Features
+
+- *(settings)* Apply appearance settings live
+
+### 🐛 Bug Fixes
+
+- *(packaging)* Keep the rpm's docs through the container's diet
+- *(input)* Light the caps lock LED
+- *(shell)* Drop decoration when fullscreen
+- *(popups)* Place popups below the titlebar
+- *(input)* Keep fullscreen input on its workspace
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* 1.0.1
+- *(release)* 1.0.2
+- *(release)* 1.0.3
+- *(release)* 1.0.4
+- *(release)* 1.1.0
+
 ## [1.0.0] - 2026-09-04
 
 ### 🚀 Features
@@ -33,6 +189,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - *(release)* Changelog for 1.0.0-rc.3
+- *(release)* 1.0.0
 
 ## [1.0.0-rc.3] - 2026-08-30
 

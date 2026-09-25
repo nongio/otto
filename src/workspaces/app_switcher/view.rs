@@ -23,8 +23,8 @@ use crate::{
     interactive_view::ViewInteractions,
     utils::Observer,
     workspaces::{
-        app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, Application,
-        WorkspacesModel,
+        app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, utils::ModelFeed,
+        Application, WorkspacesModel,
     },
 };
 
@@ -40,8 +40,10 @@ pub struct AppSwitcherView {
     /// first placement, where the shared model's screen width is used instead.
     host_metrics: Arc<std::sync::RwLock<(i32, f32)>>,
     active: Arc<AtomicBool>,
-    notify_tx: mpsc::Sender<WorkspacesModel>,
-    latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
+    notify_tx: mpsc::Sender<(u64, WorkspacesModel)>,
+    /// How far the panel has caught up with the model.
+    pub model_feed: Arc<ModelFeed>,
+    latest_event: Arc<tokio::sync::RwLock<Option<(u64, WorkspacesModel)>>>,
 }
 impl PartialEq for AppSwitcherView {
     fn eq(&self, other: &Self) -> bool {
@@ -89,6 +91,7 @@ impl AppSwitcherView {
             host_metrics: Arc::new(std::sync::RwLock::new((0, 0.0))),
             active: Arc::new(AtomicBool::new(false)),
             notify_tx,
+            model_feed: Arc::new(ModelFeed::default()),
             latest_event: Arc::new(tokio::sync::RwLock::new(None)),
         };
         switcher.init_notification_handler(notify_rx);
@@ -255,7 +258,7 @@ impl AppSwitcherView {
         }
     }
 
-    fn init_notification_handler(&self, mut rx: mpsc::Receiver<WorkspacesModel>) {
+    fn init_notification_handler(&self, mut rx: mpsc::Receiver<(u64, WorkspacesModel)>) {
         let latest_event = self.latest_event.clone();
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
@@ -271,7 +274,7 @@ impl AppSwitcherView {
                     let mut guard = latest_event.write().await;
                     guard.take()
                 };
-                if let Some(workspace) = event {
+                if let Some((seq, workspace)) = event {
                     let mut app_set = HashSet::new();
                     let mut apps: Vec<Application> = Vec::new();
                     for app_id in workspace.zindex_application_list.iter().rev() {
@@ -295,6 +298,7 @@ impl AppSwitcherView {
                     let new_state =
                         this.build_model_with_stacks(apps, current_app, workspace.width);
                     this.update_state(new_state);
+                    this.model_feed.rendered(seq);
                     // Nothing left to switch to — the last app quit while the
                     // panel was up. The model change above already plays the
                     // panel's spring resize (the quit app's slot collapsing);
@@ -315,7 +319,10 @@ impl AppSwitcherView {
 
 impl Observer<WorkspacesModel> for AppSwitcherView {
     fn notify(&self, event: &WorkspacesModel) {
-        let _ = self.notify_tx.try_send(event.clone());
+        let seq = self.model_feed.next();
+        if self.notify_tx.try_send((seq, event.clone())).is_ok() {
+            self.model_feed.posted(seq);
+        }
     }
 }
 

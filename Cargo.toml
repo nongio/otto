@@ -29,7 +29,6 @@ tokio = { version = "1", features = ["full"] }
 accesskit = "0.24"
 accesskit_unix = "0.22"
 fps_ticker = { version = "1.0.0", optional = true }
-xdgkit = "3.2.5"
 freedesktop-icons = "0.2.4"
 freedesktop-desktop-entry = "0.7.5"
 sd-notify = "0.4"
@@ -225,7 +224,7 @@ laye-rs = { git = "https://github.com/nongio/layers", tag = "v1.18.1", features 
 ] }
 
 [workspace.package]
-version = "1.4.1"
+version = "1.5.0"
 edition = "2021"
 authors = ["Riccardo Canalicchio <riccardo.canalicchio@gmail.com>"]
 license = "MIT"
@@ -317,7 +316,7 @@ post_install_script = "ln -sf otto-launcher /usr/bin/otto-ask"
 post_uninstall_script = "if [ \"$1\" -eq 0 ]; then rm -f /usr/bin/otto-ask; fi"
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
-version = "1.4.1"
+version = "1.5.0"
 assets = [
     { source = "target/release/otto", dest = "/usr/bin/otto", mode = "755" },
     { source = "target/release/otto-bar", dest = "/usr/bin/otto-bar", mode = "755" },
