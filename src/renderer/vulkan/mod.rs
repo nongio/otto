@@ -48,8 +48,8 @@ use smithay::{
     backend::{
         allocator::{
             dmabuf::{Dmabuf, WeakDmabuf},
-            format::FormatSet,
-            Buffer as _, Fourcc,
+            format::{get_opaque, FormatSet},
+            Buffer as _, Format as DrmFormat, Fourcc,
         },
         renderer::{
             sync::SyncPoint, Bind, Blit, ContextId, DebugFlags, ExportMem, ImportDma, ImportDmaWl,
@@ -268,12 +268,23 @@ impl SkiaVkRenderer {
         )?;
         let context = Self::create_context(phd, &device)?;
 
+        // The device lists alpha formats only; an `X` fourcc shares its
+        // Vulkan format with its alpha twin, so it is offered alongside.
+        // Without them a client with no alpha channel, XWayland's depth-24
+        // windows among others, has no format to allocate.
         let formats_for = |usage: vk::ImageUsageFlags| -> FormatSet {
             device
                 .formats()
                 .map(|entry| entry.format)
-                .filter(|format| skia_format(format.code).is_some())
                 .filter(|format| matches!(phd.drm_format_info(*format, usage), Ok(Some(_))))
+                .flat_map(|format| {
+                    let opaque = get_opaque(format.code).map(|code| DrmFormat {
+                        code,
+                        modifier: format.modifier,
+                    });
+                    std::iter::once(format).chain(opaque)
+                })
+                .filter(|format| skia_format(format.code).is_some())
                 .collect()
         };
         let texture_formats = formats_for(TEXTURE_USAGE);
