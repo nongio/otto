@@ -1947,7 +1947,7 @@ impl Otto<HeadlessData> {
             &MotionEvent {
                 location: pos,
                 serial,
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         pointer.frame(self);
@@ -2000,7 +2000,7 @@ impl Otto<HeadlessData> {
                 button: 0x110,
                 state: button_state,
                 serial,
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         pointer.frame(self);

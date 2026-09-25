@@ -1197,8 +1197,16 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
             "plane demoted to GPU composite: {} dst={dst:?}",
             self.label,
         );
-        RenderElement::<SkiaRenderer>::draw(self, frame.as_mut(), src, dst, damage, opaque_regions)
-            .map_err(|e| e.into())
+        RenderElement::<SkiaRenderer>::draw(
+            self,
+            frame.as_mut(),
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            cache,
+        )
+        .map_err(|e| e.into())
     }
 
     fn underlying_storage(

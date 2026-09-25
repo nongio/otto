@@ -151,7 +151,7 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowResizeV
         &self,
         data: &mut crate::Otto<Backend>,
         _serial: smithay::utils::Serial,
-        _time: u32,
+        _time: smithay::backend::input::InputTime,
     ) {
         if !self.pressed.load(Ordering::SeqCst) {
             data.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));

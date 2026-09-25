@@ -161,7 +161,15 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SkiaElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        RenderElement::<SkiaRenderer>::draw(self, frame.as_mut(), src, dst, damage, opaque_regions)
-            .map_err(|e| e.into())
+        RenderElement::<SkiaRenderer>::draw(
+            self,
+            frame.as_mut(),
+            src,
+            dst,
+            damage,
+            opaque_regions,
+            cache,
+        )
+        .map_err(|e| e.into())
     }
 }

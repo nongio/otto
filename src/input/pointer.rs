@@ -130,7 +130,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 &MotionEvent {
                     location,
                     serial,
-                    time: evt.time_msec(),
+                    time: evt.time(),
                 },
             );
             pointer.frame(self);
@@ -142,7 +142,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 button,
                 state: button_state,
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         );
         pointer.frame(self);
@@ -894,7 +894,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let vertical_amount_discrete = evt.amount_v120(input::Axis::Vertical);
 
         {
-            let mut frame = AxisFrame::new(evt.time_msec()).source(evt.source());
+            let mut frame = AxisFrame::new(evt.time()).source(evt.source());
             if horizontal_amount != 0.0 {
                 frame = frame
                     .relative_direction(Axis::Horizontal, evt.relative_direction(Axis::Horizontal));
@@ -1048,7 +1048,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
             &MotionEvent {
                 location: pos,
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         );
         pointer.frame(self);
@@ -1120,7 +1120,7 @@ impl crate::Otto<crate::udev::UdevData> {
             &RelativeMotionEvent {
                 delta: logical_delta,
                 delta_unaccel: logical_delta_unaccel,
-                utime: evt.time(),
+                time: evt.time(),
             },
         );
 
@@ -1162,7 +1162,7 @@ impl crate::Otto<crate::udev::UdevData> {
             &MotionEvent {
                 location: pointer_location,
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         );
         pointer.frame(self);
@@ -1278,7 +1278,7 @@ impl crate::Otto<crate::udev::UdevData> {
             &MotionEvent {
                 location: pointer_location,
                 serial,
-                time: evt.time_msec(),
+                time: evt.time(),
             },
         );
         pointer.frame(self);

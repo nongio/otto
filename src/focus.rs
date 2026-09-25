@@ -16,6 +16,7 @@ pub use smithay::{
     wayland::seat::WaylandFocus,
 };
 use smithay::{
+    backend::input::{InputTime, TabletToolDescriptor},
     desktop::WindowSurface,
     input::{
         dnd::{DndFocus, Source},
@@ -24,7 +25,8 @@ use smithay::{
             GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
             GestureSwipeEndEvent, GestureSwipeUpdateEvent,
         },
-        touch::TouchTarget,
+        tablet::{self, tool::TabletToolTarget, Tablet},
+        touch::{FrameMarker, TouchTarget},
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::Point,
@@ -229,7 +231,7 @@ impl<B: Backend> PointerTarget<Otto<B>> for PointerFocusTarget<B> {
             PointerFocusTarget::View(w) => PointerTarget::frame(w, seat, data),
         }
     }
-    fn leave(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, serial: Serial, time: u32) {
+    fn leave(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, serial: Serial, time: InputTime) {
         match self {
             PointerFocusTarget::WlSurface(w) => PointerTarget::leave(w, seat, data, serial, time),
             #[cfg(feature = "xwayland")]
@@ -491,7 +493,7 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
         key: KeysymHandle<'_>,
         state: KeyState,
         serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         match self {
             KeyboardFocusTarget::Window(w) => match w.underlying_surface() {
@@ -563,28 +565,21 @@ impl<B: Backend> TouchTarget<Otto<B>> for PointerFocusTarget<B> {
         seat: &Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::DownEvent,
-        seq: Serial,
     ) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::down(w, seat, data, event, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::down(w, seat, data, event),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => TouchTarget::down(w, seat, data, event, seq),
-            PointerFocusTarget::View(w) => TouchTarget::down(w, seat, data, event, seq),
+            PointerFocusTarget::X11Surface(w) => TouchTarget::down(w, seat, data, event),
+            PointerFocusTarget::View(w) => TouchTarget::down(w, seat, data, event),
         }
     }
 
-    fn up(
-        &self,
-        seat: &Seat<Otto<B>>,
-        data: &mut Otto<B>,
-        event: &smithay::input::touch::UpEvent,
-        seq: Serial,
-    ) {
+    fn up(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, event: &smithay::input::touch::UpEvent) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::up(w, seat, data, event, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::up(w, seat, data, event),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => TouchTarget::up(w, seat, data, event, seq),
-            PointerFocusTarget::View(w) => TouchTarget::up(w, seat, data, event, seq),
+            PointerFocusTarget::X11Surface(w) => TouchTarget::up(w, seat, data, event),
+            PointerFocusTarget::View(w) => TouchTarget::up(w, seat, data, event),
         }
     }
 
@@ -593,31 +588,30 @@ impl<B: Backend> TouchTarget<Otto<B>> for PointerFocusTarget<B> {
         seat: &Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::MotionEvent,
-        seq: Serial,
     ) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::motion(w, seat, data, event, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::motion(w, seat, data, event),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => TouchTarget::motion(w, seat, data, event, seq),
-            PointerFocusTarget::View(w) => TouchTarget::motion(w, seat, data, event, seq),
+            PointerFocusTarget::X11Surface(w) => TouchTarget::motion(w, seat, data, event),
+            PointerFocusTarget::View(w) => TouchTarget::motion(w, seat, data, event),
         }
     }
 
-    fn frame(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, seq: Serial) {
+    fn frame(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, marker: FrameMarker) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::frame(w, seat, data, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::frame(w, seat, data, marker),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => TouchTarget::frame(w, seat, data, seq),
-            PointerFocusTarget::View(w) => TouchTarget::frame(w, seat, data, seq),
+            PointerFocusTarget::X11Surface(w) => TouchTarget::frame(w, seat, data, marker),
+            PointerFocusTarget::View(w) => TouchTarget::frame(w, seat, data, marker),
         }
     }
 
-    fn cancel(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, seq: Serial) {
+    fn cancel(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, marker: FrameMarker) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::cancel(w, seat, data, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::cancel(w, seat, data, marker),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => TouchTarget::cancel(w, seat, data, seq),
-            PointerFocusTarget::View(w) => TouchTarget::cancel(w, seat, data, seq),
+            PointerFocusTarget::X11Surface(w) => TouchTarget::cancel(w, seat, data, marker),
+            PointerFocusTarget::View(w) => TouchTarget::cancel(w, seat, data, marker),
         }
     }
 
@@ -626,13 +620,12 @@ impl<B: Backend> TouchTarget<Otto<B>> for PointerFocusTarget<B> {
         seat: &Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
     ) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::shape(w, seat, data, event, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::shape(w, seat, data, event),
             #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(w) => TouchTarget::shape(w, seat, data, event, seq),
-            PointerFocusTarget::View(w) => TouchTarget::shape(w, seat, data, event, seq),
+            PointerFocusTarget::X11Surface(w) => TouchTarget::shape(w, seat, data, event),
+            PointerFocusTarget::View(w) => TouchTarget::shape(w, seat, data, event),
         }
     }
 
@@ -641,15 +634,176 @@ impl<B: Backend> TouchTarget<Otto<B>> for PointerFocusTarget<B> {
         seat: &Seat<Otto<B>>,
         data: &mut Otto<B>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
         match self {
-            PointerFocusTarget::WlSurface(w) => TouchTarget::orientation(w, seat, data, event, seq),
+            PointerFocusTarget::WlSurface(w) => TouchTarget::orientation(w, seat, data, event),
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => TouchTarget::orientation(w, seat, data, event),
+            PointerFocusTarget::View(w) => TouchTarget::orientation(w, seat, data, event),
+        }
+    }
+
+    fn last_frame(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>) -> Option<FrameMarker> {
+        match self {
+            PointerFocusTarget::WlSurface(w) => TouchTarget::last_frame(w, seat, data),
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => TouchTarget::last_frame(w, seat, data),
+            PointerFocusTarget::View(w) => TouchTarget::last_frame(w, seat, data),
+        }
+    }
+}
+
+/// Tablet tools reach client surfaces; Otto's own views take no tablet input.
+impl<B: Backend> TabletToolTarget<Otto<B>> for PointerFocusTarget<B> {
+    fn proximity_in(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        tablet: &Tablet,
+        serial: Serial,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::proximity_in(w, seat, data, tool_descriptor, tablet, serial)
+            }
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => {
-                TouchTarget::orientation(w, seat, data, event, seq)
+                TabletToolTarget::proximity_in(w, seat, data, tool_descriptor, tablet, serial)
             }
-            PointerFocusTarget::View(w) => TouchTarget::orientation(w, seat, data, event, seq),
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn proximity_out(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::proximity_out(w, seat, data, tool_descriptor)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::proximity_out(w, seat, data, tool_descriptor)
+            }
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn down(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet::tool::DownEvent,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::down(w, seat, data, tool_descriptor, event)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::down(w, seat, data, tool_descriptor, event)
+            }
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn up(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet::tool::UpEvent,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::up(w, seat, data, tool_descriptor, event)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::up(w, seat, data, tool_descriptor, event)
+            }
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn motion(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet::tool::MotionEvent,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::motion(w, seat, data, tool_descriptor, event)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::motion(w, seat, data, tool_descriptor, event)
+            }
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn axis(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        frame: tablet::tool::AxisFrame,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::axis(w, seat, data, tool_descriptor, frame)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::axis(w, seat, data, tool_descriptor, frame)
+            }
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn button(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        event: &tablet::tool::ButtonEvent,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::button(w, seat, data, tool_descriptor, event)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::button(w, seat, data, tool_descriptor, event)
+            }
+            PointerFocusTarget::View(_) => {}
+        }
+    }
+
+    fn frame(
+        &self,
+        seat: &Seat<Otto<B>>,
+        data: &mut Otto<B>,
+        tool_descriptor: &TabletToolDescriptor,
+        time: InputTime,
+    ) {
+        match self {
+            PointerFocusTarget::WlSurface(w) => {
+                TabletToolTarget::frame(w, seat, data, tool_descriptor, time)
+            }
+            #[cfg(feature = "xwayland")]
+            PointerFocusTarget::X11Surface(w) => {
+                TabletToolTarget::frame(w, seat, data, tool_descriptor, time)
+            }
+            PointerFocusTarget::View(_) => {}
         }
     }
 }
@@ -846,7 +1000,7 @@ where
         offer: Option<&mut Self::OfferData<S>>,
         seat: &Seat<Otto<B>>,
         location: Point<f64, Logical>,
-        time: u32,
+        time: InputTime,
     ) {
         match self {
             PointerFocusTarget::WlSurface(w) => {

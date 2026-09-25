@@ -393,7 +393,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
             Point<f64, Logical>,
         )>,
         _event: &smithay::input::touch::DownEvent,
-        _seq: Serial,
     ) {
     }
 
@@ -402,13 +401,12 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
         event: &smithay::input::touch::UpEvent,
-        seq: Serial,
     ) {
         if event.slot != self.start_data.slot {
             return;
         }
 
-        handle.up(data, event, seq);
+        handle.up(data, event);
         // The drop happens before the grab is unset: `unset` cancels a detach
         // that is still open, which would undo the insert.
         if self.tiling_detached {
@@ -431,7 +429,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
             Point<f64, Logical>,
         )>,
         event: &smithay::input::touch::MotionEvent,
-        _seq: Serial,
     ) {
         if event.slot != self.start_data.slot {
             return;
@@ -469,7 +466,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         &mut self,
         _data: &mut Otto<BackendData>,
         _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        _seq: Serial,
     ) {
     }
 
@@ -477,9 +473,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         &mut self,
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        seq: Serial,
     ) {
-        handle.cancel(data, seq);
+        handle.cancel(data);
         handle.unset_grab(self, data);
     }
 
@@ -488,9 +483,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
     ) {
-        handle.shape(data, event, seq);
+        handle.shape(data, event);
     }
 
     fn orientation(
@@ -498,9 +492,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchMoveSurfaceGrab
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
-        handle.orientation(data, event, seq);
+        handle.orientation(data, event);
     }
 
     fn start_data(&self) -> &smithay::input::touch::GrabStartData<Otto<BackendData>> {
@@ -1057,7 +1050,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             Point<f64, Logical>,
         )>,
         _event: &smithay::input::touch::DownEvent,
-        _seq: Serial,
     ) {
     }
 
@@ -1066,7 +1058,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         state: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
         event: &smithay::input::touch::UpEvent,
-        _seq: Serial,
     ) {
         if event.slot != self.start_data.slot {
             return;
@@ -1135,7 +1126,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
             Point<f64, Logical>,
         )>,
         event: &smithay::input::touch::MotionEvent,
-        _seq: Serial,
     ) {
         if event.slot != self.start_data.slot {
             return;
@@ -1262,7 +1252,6 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         &mut self,
         _data: &mut Otto<BackendData>,
         _handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        _seq: Serial,
     ) {
     }
 
@@ -1270,9 +1259,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         &mut self,
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
-        seq: Serial,
     ) {
-        handle.cancel(data, seq);
+        handle.cancel(data);
         handle.unset_grab(self, data);
     }
 
@@ -1281,9 +1269,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
         event: &smithay::input::touch::ShapeEvent,
-        seq: Serial,
     ) {
-        handle.shape(data, event, seq);
+        handle.shape(data, event);
     }
 
     fn orientation(
@@ -1291,9 +1278,8 @@ impl<BackendData: Backend> TouchGrab<Otto<BackendData>> for TouchResizeSurfaceGr
         data: &mut Otto<BackendData>,
         handle: &mut smithay::input::touch::TouchInnerHandle<'_, Otto<BackendData>>,
         event: &smithay::input::touch::OrientationEvent,
-        seq: Serial,
     ) {
-        handle.orientation(data, event, seq);
+        handle.orientation(data, event);
     }
 
     fn start_data(&self) -> &smithay::input::touch::GrabStartData<Otto<BackendData>> {

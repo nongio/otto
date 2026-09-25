@@ -1398,7 +1398,11 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                                 .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
                     {
                         // Same as above: stale pointer grab from a previous popup session.
-                        pointer.unset_grab(self, serial, 0);
+                        pointer.unset_grab(
+                            self,
+                            serial,
+                            smithay::backend::input::InputTime::from_millis(0),
+                        );
                     }
                     pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
                 }

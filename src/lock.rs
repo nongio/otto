@@ -814,8 +814,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Same for the pointer: an X client holding a grab must lose it, or a
         // drag begun before the lock keeps receiving motion.
         let pointer = self.pointer.clone();
-        let time = self.clock.now().as_millis();
-        pointer.unset_grab(self, serial, time);
+        pointer.unset_grab(self, serial, smithay::backend::input::InputTime::now());
     }
 
     /// Give focus back to whatever had it when the lock began, if it is still

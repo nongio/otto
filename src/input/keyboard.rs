@@ -2,7 +2,7 @@ use smithay::wayland::{
     compositor::with_states, keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
 };
 use smithay::{
-    backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent},
+    backend::input::{Event, InputBackend, InputTime, KeyState, KeyboardKeyEvent},
     desktop::layer_map_for_output,
     input::keyboard::{xkb, FilterResult, Keysym, ModifiersState},
     utils::{IsAlive, SERIAL_COUNTER as SCOUNTER},
@@ -222,7 +222,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let keycode = evt.key_code();
         let state = evt.state();
         let serial = SCOUNTER.next_serial();
-        let time = Event::time_msec(&evt);
+        let time = Event::time(&evt);
         let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
         let mut updated_modifiers: Option<ModifiersState> = None;
@@ -411,7 +411,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         let repeat_delay = Duration::from_millis(
             Config::with(|config| config.keyboard_repeat_delay).max(0) as u64,
         );
-        let event_time = Duration::from_millis(u64::from(time));
+        let event_time = Duration::from_millis(u64::from(time.millis()));
 
         let action = keyboard
             .input(
@@ -583,7 +583,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 keycode,
                 KeyState::Released,
                 SCOUNTER.next_serial(),
-                0,
+                InputTime::from_millis(0),
                 |_, _, _| FilterResult::Forward::<bool>,
             );
         }

@@ -2570,7 +2570,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Unset pointer grab if active
         if let Some(pointer) = self.seat.get_pointer() {
             if pointer.is_grabbed() {
-                pointer.unset_grab(self, serial, 0);
+                pointer.unset_grab(
+                    self,
+                    serial,
+                    smithay::backend::input::InputTime::from_millis(0),
+                );
             }
         }
 
@@ -2599,7 +2603,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             &smithay::input::pointer::MotionEvent {
                 location: pointer_location,
                 serial,
-                time: 0,
+                time: smithay::backend::input::InputTime::from_millis(0),
             },
         );
         pointer.frame(self);

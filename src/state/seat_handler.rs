@@ -1,12 +1,11 @@
 use smithay::{
     backend::input::TabletToolDescriptor,
     desktop::{find_popup_root_surface, space::SpaceElement},
-    input::{pointer::CursorImageStatus, SeatHandler, SeatState},
+    input::{pointer::CursorImageStatus, tablet::TabletSeatHandler, SeatHandler, SeatState},
     reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
     wayland::{
         seat::WaylandFocus,
         selection::{data_device::set_data_device_focus, primary_selection::set_primary_focus},
-        tablet_manager::TabletSeatHandler,
     },
 };
 
@@ -178,6 +177,8 @@ impl<BackendData: Backend> Otto<BackendData> {
 }
 
 impl<BackendData: Backend> TabletSeatHandler for Otto<BackendData> {
+    type ToolFocus = PointerFocusTarget<BackendData>;
+
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         let mut cursor_status = self.cursor_status.lock().unwrap();
         *cursor_status = image.clone();
