@@ -25,7 +25,9 @@ use crate::{
     theme::theme_colors,
     utils::Observer,
     workspaces::{
-        app_icons_manager::AppIconsManager, apps_info::ApplicationsInfo, utils::ContextMenuView,
+        app_icons_manager::AppIconsManager,
+        apps_info::ApplicationsInfo,
+        utils::{ContextMenuView, ModelFeed},
         Application, WorkspacesModel,
     },
 };
@@ -120,10 +122,12 @@ pub struct DockView {
     miniwindow_layers: Arc<RwLock<HashMap<ObjectId, MiniWindowLayers>>>,
     state: Arc<RwLock<DockModel>>,
     active: Arc<AtomicBool>,
-    notify_tx: tokio::sync::mpsc::Sender<WorkspacesModel>,
+    notify_tx: tokio::sync::mpsc::Sender<(u64, WorkspacesModel)>,
+    /// How far the running-apps strip has caught up with the model.
+    pub model_feed: Arc<ModelFeed>,
     /// Watchers of the dock's own model. See [`DockView::add_model_listener`].
     model_observers: Arc<RwLock<Vec<std::sync::Weak<dyn Observer<DockModel>>>>>,
-    latest_event: Arc<tokio::sync::RwLock<Option<WorkspacesModel>>>,
+    latest_event: Arc<tokio::sync::RwLock<Option<(u64, WorkspacesModel)>>>,
     magnification_position: Arc<RwLock<f32>>,
     pub dragging: Arc<AtomicBool>,
     app_icons_manager: Arc<AppIconsManager>,
@@ -451,6 +455,7 @@ impl DockView {
             state: Arc::new(RwLock::new(initial_state)),
             active: Arc::new(AtomicBool::new(true)),
             notify_tx,
+            model_feed: Arc::new(ModelFeed::default()),
             model_observers: Arc::new(RwLock::new(Vec::new())),
             latest_event: Arc::new(tokio::sync::RwLock::new(None)),
             magnification_position: Arc::new(RwLock::new(-500.0)),
@@ -1432,7 +1437,7 @@ impl DockView {
             ),
         });
     }
-    fn notification_handler(&self, mut rx: tokio::sync::mpsc::Receiver<WorkspacesModel>) {
+    fn notification_handler(&self, mut rx: tokio::sync::mpsc::Receiver<(u64, WorkspacesModel)>) {
         // let view = self.view.clone();
         let latest_event = self.latest_event.clone();
         // Task to receive events
@@ -1455,7 +1460,7 @@ impl DockView {
                     latest_event_lock.take()
                 };
 
-                if let Some(workspace) = event {
+                if let Some((seq, workspace)) = event {
                     tracing::info!(target: "otto::dock", "dock event: {} running apps in application_list", workspace.application_list.len());
                     let mut app_set = HashSet::new();
                     let mut apps: Vec<Application> = Vec::new();
@@ -1478,6 +1483,7 @@ impl DockView {
                         minimized_windows,
                         ..state
                     });
+                    dock.model_feed.rendered(seq);
                 }
             }
         });
@@ -3248,7 +3254,10 @@ impl DockView {
 // Dock view observer
 impl Observer<WorkspacesModel> for DockView {
     fn notify(&self, event: &WorkspacesModel) {
-        let _ = self.notify_tx.try_send(event.clone());
+        let seq = self.model_feed.next();
+        if self.notify_tx.try_send((seq, event.clone())).is_ok() {
+            self.model_feed.posted(seq);
+        }
     }
 }
 

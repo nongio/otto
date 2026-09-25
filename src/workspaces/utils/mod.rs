@@ -1,5 +1,7 @@
 pub mod context_menu_view;
 pub use context_menu_view::ContextMenuView;
+mod model_feed;
+pub use model_feed::ModelFeed;
 
 use std::cell::RefCell;
 use std::collections::HashMap;

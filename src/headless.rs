@@ -541,21 +541,33 @@ impl HeadlessHandle {
     /// the event loop, say) is still queued. At rest therefore means two
     /// frames in a row with no damage and no pending transaction, with a
     /// turn of the loop between them to dispatch whatever was queued.
+    ///
+    /// The dock and the app switcher follow the workspace model from a task
+    /// that wakes on a wall-clock timer, so a window mapped just before this
+    /// call reaches their scene up to half a second later. The scene is not
+    /// at rest while either still owes a redraw; those frames wait a little
+    /// real time for the task to run.
     pub fn settle(&self, max_frames: usize) -> usize {
         const DT: f32 = 1.0 / 60.0;
         let mut frames_with_damage = 0;
         let mut quiet_frames = 0;
         for _ in 0..max_frames {
-            let (has_damage, busy) = self.query(move |state| {
+            let (has_damage, busy, feeds_behind) = self.query(move |state| {
                 let has_damage = state.layers_engine.update(DT);
+                let workspaces = &state.workspaces;
                 (
                     has_damage,
                     state.layers_engine.pending_transactions_count() > 0,
+                    workspaces.dock.model_feed.is_behind()
+                        || workspaces.app_switcher.model_feed.is_behind(),
                 )
             });
             if has_damage {
                 frames_with_damage += 1;
                 quiet_frames = 0;
+            } else if feeds_behind {
+                quiet_frames = 0;
+                thread::sleep(Duration::from_secs_f32(DT));
             } else if busy {
                 quiet_frames = 0;
             } else {
