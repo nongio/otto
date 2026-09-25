@@ -21,6 +21,8 @@ pub mod frame;
 pub mod skia_surface;
 pub mod sync;
 pub mod textures;
+#[cfg(feature = "vulkan")]
+pub mod vulkan;
 
 // Re-export commonly used types
 pub use egl_context::EGLSurfaceWrapper;

@@ -133,6 +133,8 @@ profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracy-mem = ["profile-with-tracy"]
 headless = []
+# Skia on Vulkan for the udev backend; winit and x11 stay on GL.
+vulkan = ["udev"]
 renderer_sync = []
 
 [dev-dependencies]
