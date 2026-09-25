@@ -18,7 +18,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{skia_renderer::SkiaRenderer, udev::UdevRenderer};
+use crate::{renderer::active, skia_renderer::SkiaRenderer, udev::UdevRenderer};
 
 #[derive(Clone)]
 pub struct SceneElement {
@@ -366,22 +366,15 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneElement {
     fn draw(
         &self,
         frame: &mut <UdevRenderer<'renderer> as RendererSuper>::Frame<'_, '_>,
-        src: Rectangle<f64, Buffer>,
+        _src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-        opaque_regions: &[Rectangle<i32, Physical>],
-        cache: Option<&smithay::utils::user_data::UserDataMap>,
+        _opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        RenderElement::<SkiaRenderer>::draw(
-            self,
-            frame.as_mut(),
-            src,
-            dst,
-            damage,
-            opaque_regions,
-            cache,
-        )
-        .map_err(|e| e.into())
+        let frame: &mut active::Frame<'_> = frame.as_mut();
+        self.draw_scene(frame.skia_surface.canvas(), dst, damage);
+        Ok(())
     }
 }
 
@@ -395,12 +388,25 @@ impl RenderElement<SkiaRenderer> for SceneElement {
         _opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
+        self.draw_scene(frame.skia_surface.canvas(), dst, damage);
+        Ok(())
+    }
+}
+
+impl SceneElement {
+    /// Draws the damaged part of the scene into `canvas` at `dst`.
+    ///
+    /// Damage is relative to `dst`.
+    fn draw_scene(
+        &self,
+        canvas: &layers::skia::Canvas,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+    ) {
         #[cfg(feature = "profile-with-puffin")]
         profiling::puffin::profile_scope!("render_scene");
-        let mut surface = frame.skia_surface.clone();
         tracing::debug!(target: "otto::planes", "scene draw {damage:?}");
 
-        let canvas = surface.canvas();
         let scene = self.engine.scene();
         // Use per-output root if set, otherwise fall back to global scene root.
         let root_id = self.output_root.or_else(|| self.engine.scene_root());
@@ -582,7 +588,5 @@ impl RenderElement<SkiaRenderer> for SceneElement {
             });
         });
         crate::render_phase_stats::record_scene_draw(scene_draw_t.elapsed());
-
-        Ok(())
     }
 }

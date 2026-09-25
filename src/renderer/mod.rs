@@ -15,6 +15,8 @@
 //!
 //! The main `SkiaRenderer` in the parent module orchestrates these components.
 
+#[cfg(feature = "udev")]
+pub mod active;
 pub mod draw;
 pub mod egl_context;
 pub mod frame;
@@ -177,7 +179,7 @@ impl SkiaRenderer {
 }
 
 impl BlitCurrentFrame for UdevRenderer<'_> {
-    type Error = GlesError;
+    type Error = active::Error;
 
     #[profiling::function]
     fn blit_current_frame(

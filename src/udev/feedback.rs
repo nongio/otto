@@ -2,16 +2,13 @@ use smithay::{
     backend::{
         allocator::format::FormatSet,
         drm::DrmNode,
-        renderer::{
-            multigpu::{gbm::GbmGlesBackend, GpuManager},
-            ImportDma,
-        },
+        renderer::{multigpu::GpuManager, ImportDma},
     },
     reexports::wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1,
     wayland::dmabuf::DmabufFeedbackBuilder,
 };
 
-use crate::skia_renderer::SkiaRenderer;
+use crate::renderer::active;
 
 use super::types::{DrmSurfaceDmabufFeedback, GbmDrmCompositor};
 
@@ -47,7 +44,7 @@ pub fn strip_clear_color_modifiers(formats: FormatSet) -> FormatSet {
 pub fn get_surface_dmabuf_feedback(
     primary_gpu: DrmNode,
     render_node: DrmNode,
-    gpus: &mut GpuManager<GbmGlesBackend<SkiaRenderer, smithay::backend::drm::DrmDeviceFd>>,
+    gpus: &mut GpuManager<active::GraphicsApi>,
     composition: &GbmDrmCompositor,
 ) -> Option<DrmSurfaceDmabufFeedback> {
     let primary_formats =

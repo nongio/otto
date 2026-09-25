@@ -316,7 +316,13 @@ pub fn complete_screencopy_for_output(
         let p = pending.remove(i);
         let success = match &p.buffer {
             CaptureBuffer::Dmabuf(dmabuf) => copy_to_dmabuf(renderer, &p, dmabuf, output),
-            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer.as_mut(), &p, buffer, output, false),
+            CaptureBuffer::Shm(buffer) => {
+                let surface = renderer
+                    .as_mut()
+                    .current_skia_renderer()
+                    .map(|s| s.surface.clone());
+                copy_to_shm(surface, &p, buffer, output, false)
+            }
         };
 
         if success {
@@ -371,7 +377,10 @@ pub fn complete_screencopy_for_output_skia(
                     }
                 }
             }
-            CaptureBuffer::Shm(buffer) => copy_to_shm(renderer, &p, buffer, output, true),
+            CaptureBuffer::Shm(buffer) => {
+                let surface = renderer.current_skia_renderer().map(|s| s.surface.clone());
+                copy_to_shm(surface, &p, buffer, output, true)
+            }
         };
 
         if success {
@@ -431,17 +440,18 @@ fn copy_to_dmabuf(
     }
 }
 
+/// Reads the capture region of `surface`, the frame just rendered, into an
+/// SHM buffer.
 fn copy_to_shm(
-    renderer: &mut crate::skia_renderer::SkiaRenderer,
+    surface: Option<layers::skia::Surface>,
     p: &PendingScreencopy,
     buffer: &WlBuffer,
     output: &Output,
     flip_y: bool,
 ) -> bool {
-    let Some(skia_renderer) = renderer.current_skia_renderer() else {
+    let Some(mut skia_surface) = surface else {
         return false;
     };
-    let mut skia_surface = skia_renderer.surface.clone();
     let scale = output.current_scale().fractional_scale();
 
     let result = shm::with_buffer_contents(buffer, |ptr, len, buf_data| {

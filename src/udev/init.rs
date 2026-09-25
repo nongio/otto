@@ -8,12 +8,8 @@ use std::{collections::HashMap, sync::atomic::Ordering, time::Duration};
 use smithay::{
     backend::{
         drm::{DrmNode, NodeType},
-        egl::context::ContextPriority,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
-        renderer::{
-            multigpu::{gbm::GbmGlesBackend, GpuManager},
-            ImportDma, ImportMemWl, Renderer,
-        },
+        renderer::{multigpu::GpuManager, ImportDma, ImportMemWl, Renderer},
         session::{libseat::LibSeatSession, Event as SessionEvent, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
@@ -119,8 +115,7 @@ pub fn run_udev() {
     };
     info!("Using {} as primary gpu.", primary_gpu);
 
-    let gpus =
-        GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High)).unwrap();
+    let gpus = GpuManager::new(crate::renderer::active::graphics_api()).unwrap();
 
     // // Context ID will be obtained after devices are initialized
     let data = UdevData {
@@ -315,8 +310,12 @@ pub fn run_udev() {
     }
 
     // Now that devices are added, set the context_id
-    if let Ok(renderer) = state.backend_data.gpus.single_renderer(&primary_gpu) {
-        state.backend_data.context_id = Some(renderer.context_id());
+    match state.backend_data.gpus.single_renderer(&primary_gpu) {
+        Ok(renderer) => state.backend_data.context_id = Some(renderer.context_id()),
+        Err(err) => {
+            error!("No renderer on the primary GPU {primary_gpu}: {err}");
+            std::process::exit(1);
+        }
     }
 
     state.shm_state.update_formats(

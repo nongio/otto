@@ -15,7 +15,7 @@ use smithay::{
             DrmDeviceFd, DrmNode,
         },
         renderer::{
-            multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer, MultiTexture},
+            multigpu::{GpuManager, MultiRenderer, MultiTexture},
             ContextId,
         },
         session::libseat::LibSeatSession,
@@ -34,7 +34,7 @@ use smithay::{
 };
 use smithay_drm_extras::drm_scanner::DrmScanner;
 
-use crate::skia_renderer::SkiaRenderer;
+use crate::renderer::active;
 
 // Supported pixel formats for rendering, in preference order.
 // Argb8888 maps to GL_BGRA_EXT which is Skia's native kN32 (BGRA8888) — no
@@ -45,12 +45,7 @@ pub const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Abgr2101010, Fourcc::Argb8888
 pub const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 
 /// Multi-GPU renderer type for udev backend
-pub type UdevRenderer<'a> = MultiRenderer<
-    'a,
-    'a,
-    GbmGlesBackend<SkiaRenderer, DrmDeviceFd>,
-    GbmGlesBackend<SkiaRenderer, DrmDeviceFd>,
->;
+pub type UdevRenderer<'a> = MultiRenderer<'a, 'a, active::GraphicsApi, active::GraphicsApi>;
 
 /// DRM compositor using GBM allocation
 pub type GbmDrmCompositor = DrmCompositor<
@@ -75,7 +70,7 @@ pub struct UdevData {
     pub(super) dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     pub(super) syncobj_state: Option<smithay::wayland::drm_syncobj::DrmSyncobjState>,
     pub(super) primary_gpu: DrmNode,
-    pub(super) gpus: GpuManager<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>,
+    pub(super) gpus: GpuManager<active::GraphicsApi>,
     pub backends: HashMap<DrmNode, BackendData>,
     /// Every libinput device currently on the seat, kept so an `input.*`
     /// change can reconfigure the hardware that is already connected.
@@ -444,7 +439,7 @@ pub enum DeviceAddError {
     #[error("Failed to access drm node: {0}")]
     DrmNode(smithay::backend::drm::CreateDrmNodeError),
     #[error("Failed to add device to GpuManager: {0}")]
-    AddNode(smithay::backend::egl::Error),
+    AddNode(active::AddNodeError),
 }
 
 /// Skia GPU surface + context for the cross-plane backdrop composite.

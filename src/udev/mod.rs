@@ -24,11 +24,8 @@ pub use types::{
     SUPPORTED_FORMATS_8BIT_ONLY,
 };
 
-use crate::renderer::{SkiaTexture, SkiaTextureImage};
-use crate::{
-    skia_renderer::SkiaRenderer,
-    state::{Backend, Otto},
-};
+use crate::renderer::{active, SkiaTextureImage};
+use crate::state::{Backend, Otto};
 
 #[cfg(feature = "fps_ticker")]
 use smithay::backend::renderer::ImportMem;
@@ -36,11 +33,7 @@ use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
         drm::{DrmDevice, DrmDeviceFd, DrmNode},
-        renderer::{
-            multigpu::{gbm::GbmGlesBackend, MultiTexture},
-            utils::import_surface,
-            ImportDma,
-        },
+        renderer::{multigpu::MultiTexture, utils::import_surface, ImportDma},
         session::{libseat::LibSeatSession, Session},
         udev::UdevBackend,
     },
@@ -145,9 +138,9 @@ impl Backend for UdevData {
         let id = self.context_id.as_ref().cloned()?;
         let tex = surface.texture::<MultiTexture>(id.clone());
         if let Some(multitexture) = tex {
-            // Convert ContextId<MultiTexture> to ContextId<SkiaTexture>
-            let skia_id: smithay::backend::renderer::ContextId<SkiaTexture> = id.map();
-            let texture = multitexture.get::<GbmGlesBackend<SkiaRenderer, DrmDeviceFd>>(&skia_id);
+            // Convert ContextId<MultiTexture> to the renderer's texture context
+            let skia_id: smithay::backend::renderer::ContextId<active::Texture> = id.map();
+            let texture = multitexture.get::<active::GraphicsApi>(&skia_id);
             return texture.map(|t| t.into());
         }
         None

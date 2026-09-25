@@ -9,7 +9,6 @@ use smithay::{
     backend::{
         allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         drm::{exporter::gbm::GbmFramebufferExporter, DrmDevice, DrmDeviceFd, DrmEvent, DrmNode},
-        egl::{EGLDevice, EGLDisplay},
         session::Session,
     },
     output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
@@ -63,6 +62,33 @@ pub(super) fn sync_scene_size_to_outputs(
     }
 }
 
+/// The render node that renders for the DRM device `node`.
+///
+/// Asked of EGL on the GL renderer, which also resolves devices without a
+/// render node of their own; falls back to `node` itself.
+#[cfg(not(feature = "vulkan"))]
+fn render_node_of(node: DrmNode, gbm: &GbmDevice<DrmDeviceFd>) -> DrmNode {
+    use smithay::backend::egl::{EGLDevice, EGLDisplay};
+
+    // SAFETY: the display is only used to query its device.
+    unsafe { EGLDisplay::new(gbm.clone()) }
+        .ok()
+        .and_then(|display| EGLDevice::device_for_display(&display).ok())
+        .and_then(|device| device.try_get_render_node().ok().flatten())
+        .unwrap_or(node)
+}
+
+/// The render node that renders for the DRM device `node`, or `node` itself
+/// when it has none.
+#[cfg(feature = "vulkan")]
+fn render_node_of(node: DrmNode, _gbm: &GbmDevice<DrmDeviceFd>) -> DrmNode {
+    use smithay::backend::drm::NodeType;
+
+    node.node_with_type(NodeType::Render)
+        .and_then(Result::ok)
+        .unwrap_or(node)
+}
+
 impl Otto<UdevData> {
     /// Handles addition of a new DRM device
     pub(super) fn device_added(
@@ -102,11 +128,7 @@ impl Otto<UdevData> {
             )
             .unwrap();
 
-        let render_node =
-            EGLDevice::device_for_display(&unsafe { EGLDisplay::new(gbm.clone()).unwrap() })
-                .ok()
-                .and_then(|x| x.try_get_render_node().ok().flatten())
-                .unwrap_or(node);
+        let render_node = render_node_of(node, &gbm);
 
         self.backend_data
             .gpus
@@ -234,11 +256,7 @@ impl Otto<UdevData> {
             .gpus
             .single_renderer(&device.render_node)
             .unwrap();
-        let render_formats = renderer
-            .as_mut()
-            .egl_context()
-            .dmabuf_render_formats()
-            .clone();
+        let render_formats = renderer.as_mut().dmabuf_render_formats();
 
         let output_name = format!(
             "{}-{}",

@@ -31,7 +31,8 @@ use smithay::{
 };
 
 use crate::{
-    skia_renderer::{PlaneTextureRelease, SkiaRenderer},
+    renderer::active::{self, PlaneTextureRelease},
+    skia_renderer::SkiaRenderer,
     udev::UdevRenderer,
 };
 
@@ -460,7 +461,7 @@ impl SceneDmabufElement {
     ///
     /// Returns `true` if a new frame was rendered, `false` if skipped
     /// (no subtree damage, no swapchain, no free slot, or surface creation failed).
-    pub fn render(&self, renderer: &mut SkiaRenderer) -> bool {
+    pub fn render(&self, renderer: &mut active::Renderer) -> bool {
         // Timing wrapper: under plane decomposition this call is where the
         // Skia work for a plane buffer happens, so it's the only place the
         // per-plane cost is visible. Only a real re-render is recorded — the
@@ -473,7 +474,7 @@ impl SceneDmabufElement {
         rendered
     }
 
-    fn render_inner(&self, renderer: &mut SkiaRenderer) -> bool {
+    fn render_inner(&self, renderer: &mut active::Renderer) -> bool {
         let mut inner = self.inner.lock().unwrap();
 
         // Skip re-render when a valid dmabuf already exists and there is nothing
@@ -1190,24 +1191,17 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SceneDmabufElement {
         src: Rectangle<f64, BufferCoord>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-        opaque_regions: &[Rectangle<i32, Physical>],
-        cache: Option<&smithay::utils::user_data::UserDataMap>,
+        _opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
         tracing::debug!(
             target: "otto::planes",
             "plane demoted to GPU composite: {} dst={dst:?}",
             self.label,
         );
-        RenderElement::<SkiaRenderer>::draw(
-            self,
-            frame.as_mut(),
-            src,
-            dst,
-            damage,
-            opaque_regions,
-            cache,
-        )
-        .map_err(|e| e.into())
+        let frame: &mut active::Frame<'_> = frame.as_mut();
+        self.draw_composite(frame.skia_surface.canvas(), src, dst, damage);
+        Ok(())
     }
 
     fn underlying_storage(
@@ -1244,15 +1238,40 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
         _opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
-        // GPU-composite fallback: this element did not get a hardware plane
-        // this frame, so Smithay composites it into the primary swapchain.
-        // Blit the current slot's rendered content — a no-op here makes the
-        // whole plane's content vanish (black) whenever assignment fails.
+        self.draw_composite(frame.skia_surface.canvas(), src, dst, damage);
+        Ok(())
+    }
+
+    fn underlying_storage(&self, _renderer: &mut SkiaRenderer) -> Option<UnderlyingStorage<'_>> {
+        let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
+        let keepalive = self
+            .inner
+            .lock()
+            .unwrap()
+            .current_slot
+            .clone()
+            .map(|s| s as Arc<dyn std::any::Any + Send + Sync>);
+        Some(UnderlyingStorage::Dmabuf(dmabuf, keepalive))
+    }
+}
+
+impl SceneDmabufElement {
+    /// Draws the current slot's content into `canvas` at `dst`.
+    ///
+    /// The GPU-composite fallback: this element did not get a hardware plane
+    /// this frame, so Smithay composites it into the primary swapchain. A
+    /// no-op here would make the whole plane's content vanish (black)
+    /// whenever plane assignment fails.
+    fn draw_composite(
+        &self,
+        canvas: &layers::skia::Canvas,
+        src: Rectangle<f64, BufferCoord>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+    ) {
         let Some(image) = self.snapshot() else {
-            return Ok(());
+            return;
         };
-        let mut surface = frame.skia_surface.clone();
-        let canvas = surface.canvas();
         let src_rect = layers::skia::Rect::from_xywh(
             src.loc.x as f32,
             src.loc.y as f32,
@@ -1297,19 +1316,6 @@ impl RenderElement<SkiaRenderer> for SceneDmabufElement {
             }
             canvas.restore_to_count(save);
         }
-        Ok(())
-    }
-
-    fn underlying_storage(&self, _renderer: &mut SkiaRenderer) -> Option<UnderlyingStorage<'_>> {
-        let dmabuf = self.current_dmabuf.lock().unwrap().clone()?;
-        let keepalive = self
-            .inner
-            .lock()
-            .unwrap()
-            .current_slot
-            .clone()
-            .map(|s| s as Arc<dyn std::any::Any + Send + Sync>);
-        Some(UnderlyingStorage::Dmabuf(dmabuf, keepalive))
     }
 }
 

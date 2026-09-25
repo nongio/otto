@@ -7,7 +7,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Scale},
 };
 
-use crate::{skia_renderer::SkiaRenderer, udev::UdevRenderer};
+use crate::{renderer::active, skia_renderer::SkiaRenderer, udev::UdevRenderer};
 
 #[derive(Debug, Clone)]
 pub struct SkiaElement {
@@ -76,9 +76,19 @@ impl RenderElement<SkiaRenderer> for SkiaElement {
         _opaque_regions: &[Rectangle<i32, Physical>],
         _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
-        let mut canvas = frame.skia_surface.clone();
-        let canvas = canvas.canvas();
+        self.draw_on(frame.skia_surface.canvas(), dst, damage);
+        Ok(())
+    }
+}
 
+impl SkiaElement {
+    /// Draws the damaged part of the element into `canvas` at `dst`.
+    fn draw_on(
+        &self,
+        canvas: &layers::skia::Canvas,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+    ) {
         let instances = damage
             .iter()
             .map(|rect| {
@@ -149,7 +159,6 @@ impl RenderElement<SkiaRenderer> for SkiaElement {
             canvas.restore();
         }
         canvas.restore_to_count(save_count);
-        Ok(())
     }
 }
 
@@ -157,21 +166,14 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SkiaElement {
     fn draw(
         &self,
         frame: &mut <UdevRenderer<'renderer> as RendererSuper>::Frame<'_, '_>,
-        src: Rectangle<f64, Buffer>,
+        _src: Rectangle<f64, Buffer>,
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
-        opaque_regions: &[Rectangle<i32, Physical>],
-        cache: Option<&smithay::utils::user_data::UserDataMap>,
+        _opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
-        RenderElement::<SkiaRenderer>::draw(
-            self,
-            frame.as_mut(),
-            src,
-            dst,
-            damage,
-            opaque_regions,
-            cache,
-        )
-        .map_err(|e| e.into())
+        let frame: &mut active::Frame<'_> = frame.as_mut();
+        self.draw_on(frame.skia_surface.canvas(), dst, damage);
+        Ok(())
     }
 }

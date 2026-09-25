@@ -295,6 +295,11 @@ impl SkiaRenderer {
         self.gl_renderer.egl_context()
     }
 
+    /// Formats a dmabuf can have to be bound as a render target.
+    pub fn dmabuf_render_formats(&self) -> FormatSet {
+        self.egl_context().dmabuf_render_formats().clone()
+    }
+
     /// Make the plane buffers rendered this frame safe to scan out.
     ///
     /// Plane slot surfaces are offscreen EGLImage render targets, which Mesa
