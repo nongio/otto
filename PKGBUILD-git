@@ -29,7 +29,9 @@ fi
 pkgver() {
     cd "$startdir"
     local described hash commits version
-    described=$(git describe --long --tags 2>/dev/null) || {
+    # --match: the `nightly` tag moves with every build on main, and would
+    # otherwise be the nearest tag from then on.
+    described=$(git describe --long --tags --match 'v*' 2>/dev/null) || {
         printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
         return
     }

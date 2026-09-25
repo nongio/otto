@@ -343,9 +343,18 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build-binaries
     runs-on: ubuntu-24.04
+    env:
+      # A tag build is a release and carries the workspace version as it is;
+      # anything else is a nightly, versioned as the release it was built
+      # from plus the commits since (scripts/packaging/version.sh).
+      OTTO_NIGHTLY: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          # The nightly version counts the commits on main, so the whole
+          # history is needed; a shallow clone would number every build r1.
+          fetch-depth: 0
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.0
       - name: System dependencies
@@ -371,7 +380,7 @@ jobs:
         # upload-artifact does not preserve the executable bit.
         run: chmod +x target/release/*
       - name: Build Debian package
-        run: cargo deb --no-build --no-strip
+        run: scripts/packaging/build-deb.sh
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
         with:
@@ -383,9 +392,18 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build-binaries
     runs-on: ubuntu-24.04
+    env:
+      # A tag build is a release and carries the workspace version as it is;
+      # anything else is a nightly, versioned as the release it was built
+      # from plus the commits since (scripts/packaging/version.sh).
+      OTTO_NIGHTLY: ${{ startsWith(github.ref, 'refs/tags/v') && '0' || '1' }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          # The nightly version counts the commits on main, so the whole
+          # history is needed; a shallow clone would number every build r1.
+          fetch-depth: 0
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.0
       - name: System dependencies
@@ -408,7 +426,7 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/*
       - name: Build RPM package
-        run: cargo generate-rpm
+        run: scripts/packaging/build-rpm.sh
       - name: Upload RPM package
         uses: actions/upload-artifact@v4
         with:
@@ -424,6 +442,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          # The nightly version counts the commits on main, so the whole
+          # history is needed; a shallow clone would number every build r1.
+          fetch-depth: 0
       - name: Download workspace binaries
         uses: actions/download-artifact@v4
         with:
@@ -434,26 +456,48 @@ jobs:
       - name: Build Arch tarball
         # The file list lives in the script, not here, so the packaging
         # test can assemble the same tarball and check it against the
-        # PKGBUILDs that install out of it.
-        run: scripts/packaging/make-arch-tarball.sh
+        # PKGBUILDs that install out of it. Alongside the tarball it writes
+        # the fixed-name copy the nightly publishes and the
+        # PKGBUILD-nightly-bin pinned to it.
+        run: scripts/packaging/make-arch-tarball.sh dist
       - name: Upload Arch tarball
         uses: actions/upload-artifact@v4
         with:
           name: otto-arch
-          path: otto-*.tar.gz
+          path: |
+            dist/otto-*.tar.gz
+            dist/PKGBUILD-nightly-bin
           retention-days: 30
 
   publish-nightly:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-arch, build-deb, build-rpm]
+    # Only main that passed its tests is worth a nightly: a commit that
+    # fails `check` is not published, rather than handed to everyone on the
+    # nightly channel. `check` is skipped when nothing Rust changed, which
+    # counts as passing — but only when `changes` itself succeeded, since a
+    # failed classifier skips `check` too. The other two never skip.
+    needs: [changes, check, locales, ahp-conformance, build-arch, build-deb, build-rpm]
+    if: >-
+      ${{ !cancelled()
+          && github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && needs.changes.result == 'success'
+          && (needs.check.result == 'success' || needs.check.result == 'skipped')
+          && needs.locales.result == 'success'
+          && needs.ahp-conformance.result == 'success'
+          && needs.build-arch.result == 'success'
+          && needs.build-deb.result == 'success'
+          && needs.build-rpm.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - name: Checkout sources
+        # For the tag push below, and the commit subject in the notes.
+        uses: actions/checkout@v4
       - name: Download Arch tarball
         uses: actions/download-artifact@v4
         with:
           name: otto-arch
+          path: artifacts/arch
       - name: Download .deb artifact
         uses: actions/download-artifact@v4
         with:
@@ -464,49 +508,77 @@ jobs:
         with:
           name: otto-rpm
           path: artifacts/rpm
-      # The nightly tag is reused by every build, so its assets carry no
-      # version: the download URL in the instructions below has to keep
-      # working from one night to the next.
+      # The nightly release is reused by every build, so its assets carry no
+      # version in their names: the download URLs in the instructions below
+      # have to keep working from one night to the next. The version is
+      # inside the packages instead (1.4.1+nightly.r123.gabc1234), which is
+      # what lets a nightly install over the release and the next nightly
+      # over it.
       - name: Names that do not change from night to night
         run: |
-          cp artifacts/deb/*.deb otto-nightly-amd64.deb
-          cp artifacts/rpm/*.rpm otto-nightly-x86_64.rpm
+          mkdir -p nightly
+          cp artifacts/deb/*.deb nightly/otto-nightly-amd64.deb
+          cp artifacts/rpm/*.rpm nightly/otto-nightly-x86_64.rpm
+          cp artifacts/arch/otto-nightly-x86_64.tar.gz artifacts/arch/PKGBUILD-nightly-bin nightly/
+          ls -l nightly
+      - name: Release notes
+        run: |
+          subject=$(git log -1 --format=%s "$GITHUB_SHA")
+          cat > notes.md <<EOF
+          Automated nightly build from the latest commit on \`main\`. Expect
+          rough edges; the [latest release](https://github.com/nongio/otto/releases/latest)
+          is the one to run if you want a working desktop.
+
+          Built from [\`${GITHUB_SHA::7}\`](https://github.com/nongio/otto/commit/$GITHUB_SHA)
+          — $subject — on $(date -u +'%Y-%m-%d %H:%M UTC').
+
+          ### Debian/Ubuntu
+          \`\`\`bash
+          curl -fLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-amd64.deb
+          sudo apt install ./otto-nightly-amd64.deb
+          \`\`\`
+
+          ### Fedora/RHEL
+          \`\`\`bash
+          sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
+          \`\`\`
+
+          ### Arch Linux
+          \`\`\`bash
+          curl -fLO https://github.com/nongio/otto/releases/download/nightly/PKGBUILD-nightly-bin
+          makepkg -p PKGBUILD-nightly-bin -si
+          \`\`\`
+
+          To update, run the same commands again: the URLs always point at
+          the most recent build, and each build is versioned above the last
+          (\`$(dpkg-deb -f nightly/otto-nightly-amd64.deb Version)\` tonight).
+          Going back to a release is a downgrade: \`apt install --allow-downgrades\`,
+          \`dnf downgrade\`, or \`makepkg -si\` from the release PKGBUILD on Arch.
+          EOF
+          cat notes.md
       - name: Publish nightly release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: nightly
-          name: Nightly
-          prerelease: true
-          files: |
-            otto-nightly-x86_64.tar.gz
-            otto-nightly-amd64.deb
-            otto-nightly-x86_64.rpm
-          body: |
-            Automated nightly build from the latest commit on `main`. Expect
-            rough edges; the [latest release](https://github.com/nongio/otto/releases/latest)
-            is the one to run if you want a working desktop.
-
-            ### Debian/Ubuntu
-            ```bash
-            curl -fLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-amd64.deb
-            sudo apt install ./otto-nightly-amd64.deb
-            ```
-
-            ### Fedora/RHEL
-            ```bash
-            sudo dnf install https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.rpm
-            ```
-
-            ### Arch Linux
-            ```bash
-            curl -fsSLO https://github.com/nongio/otto/releases/download/nightly/otto-nightly-x86_64.tar.gz
-            mkdir otto && tar -xzf otto-nightly-x86_64.tar.gz -C otto
-            cd otto
-            makepkg -p PKGBUILD-nightly-bin -si
-            ```
-
-            To update, run the same commands again: the URLs always point at
-            the most recent build.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly --prerelease --title Nightly \
+              --notes-file notes.md --target "$GITHUB_SHA"
+          fi
+          # The packages before the PKGBUILD that names the tarball's
+          # checksum, so the checksum never points at a tarball that is
+          # not there yet.
+          gh release upload nightly --clobber \
+            nightly/otto-nightly-x86_64.tar.gz \
+            nightly/otto-nightly-amd64.deb \
+            nightly/otto-nightly-x86_64.rpm
+          gh release upload nightly --clobber nightly/PKGBUILD-nightly-bin
+          gh release edit nightly --prerelease --title Nightly --notes-file notes.md
+      # The tag follows the build, so the release page's "Source code"
+      # links and its commit are the ones the packages were built from. It
+      # moves last: a job that fails mid-upload leaves it on the build whose
+      # assets are up. Nothing triggers on it: only v* tags run this workflow.
+      - name: Move the nightly tag to this commit
+        run: git push --force origin "$GITHUB_SHA:refs/tags/nightly"
 
   validate-pkgbuild:
     needs: changes
@@ -517,12 +589,15 @@ jobs:
     container:
       image: archlinux:latest
     steps:
+      # Before the checkout: without git on the PATH, actions/checkout
+      # downloads a tarball of the tree instead of cloning, and the nightly
+      # version below has no history to count.
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm base-devel git
       - name: Checkout sources
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install dependencies
-        run: pacman -Syu --noconfirm base-devel git
       - name: Setup build user
         run: |
           useradd -m builder
@@ -539,10 +614,37 @@ jobs:
         run: |
           DIR=$PWD
           su builder -c "cd $DIR && makepkg --printsrcinfo -p PKGBUILD-nightly-bin"
+      # The whole nightly chain, with stand-in binaries: the tarball, the
+      # PKGBUILD pinned to it, and a package built out of the two. This is
+      # where a file the PKGBUILD installs but the tarball leaves out fails,
+      # rather than on the machine of the first person to run makepkg.
+      - name: Build the nightly package from a stand-in tarball
+        # As builder throughout: the checkout was chown'd to it above, so it
+        # is the one user git lets read the history without a safe.directory
+        # entry, and the one makepkg accepts.
+        run: |
+          DIR=$PWD
+          su builder -c "cd $DIR && scripts/packaging/make-arch-tarball.sh --stand-in dist"
+          pkgver=$(sed -n 's/^pkgver=//p' dist/PKGBUILD-nightly-bin)
+          cp dist/otto-nightly-x86_64.tar.gz "dist/otto-nightly-$pkgver-x86_64.tar.gz"
+          chown builder:builder dist/otto-nightly-*-x86_64.tar.gz
+          su builder -c "cd $DIR/dist && makepkg --nodeps --noconfirm -p PKGBUILD-nightly-bin"
+          ls dist/*.pkg.tar.zst
   
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-deb, build-rpm, build-arch, validate-pkgbuild]
+    # The same gate as the nightly: a tag whose tests fail gets no draft.
+    needs: [changes, check, locales, ahp-conformance, build-deb, build-rpm, build-arch, validate-pkgbuild]
+    if: >-
+      ${{ !cancelled()
+          && startsWith(github.ref, 'refs/tags/v')
+          && needs.changes.result == 'success'
+          && (needs.check.result == 'success' || needs.check.result == 'skipped')
+          && needs.locales.result == 'success'
+          && needs.ahp-conformance.result == 'success'
+          && needs.build-deb.result == 'success'
+          && needs.build-rpm.result == 'success'
+          && needs.build-arch.result == 'success'
+          && needs.validate-pkgbuild.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -1,8 +1,8 @@
 //! Audio visualiser: a PipeWire level meter, the bar animation it drives and
 //! the bars themselves.
 //!
-//! The music island listens to the player's own stream when it can tell which
-//! one that is, and to the default output otherwise.
+//! The music island listens to the player's own stream, never to the whole
+//! output: other sounds must not move the bars.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -12,25 +12,16 @@ use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 /// Number of bars an animator tracks. Every bar style draws from these.
 pub const BAR_COUNT: usize = 8;
 
-/// What a [`LevelMeter`] listens to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    /// The default output's monitor: everything played there.
-    DefaultOutput,
-    /// One application stream, by `object.serial`, on whichever output it
-    /// plays.
-    Stream(u32),
-}
-
-/// The loudness of a [`Source`], 0.0 to 1.0, updated from a capture stream on
-/// its own thread.
+/// The loudness of one application stream, 0.0 to 1.0, updated from a capture
+/// stream on its own thread.
 ///
 /// The stream exists only while the meter listens. A connected capture stream
 /// keeps its target running, so a meter left on would stop the sound card
 /// from ever suspending.
 pub struct LevelMeter {
     level: Arc<Mutex<f32>>,
-    capture: Option<(Source, pipewire::channel::Sender<()>)>,
+    /// The `object.serial` of the stream listened to, and how to stop.
+    capture: Option<(u32, pipewire::channel::Sender<()>)>,
 }
 
 impl LevelMeter {
@@ -42,11 +33,11 @@ impl LevelMeter {
         }
     }
 
-    /// Listen to `source`, or stop with `None`. Changing the source replaces
-    /// the capture stream. A PipeWire failure is logged and the meter then
-    /// reads silence.
-    pub fn listen(&mut self, source: Option<Source>) {
-        if self.capture.as_ref().map(|(current, _)| *current) == source {
+    /// Listen to the stream with `object.serial` `serial`, on whichever output
+    /// it plays, or stop with `None`. Changing the stream replaces the capture
+    /// stream. A PipeWire failure is logged and the meter then reads silence.
+    pub fn listen(&mut self, serial: Option<u32>) {
+        if self.capture.as_ref().map(|(current, _)| *current) == serial {
             return;
         }
         if let Some((_, stop)) = self.capture.take() {
@@ -55,15 +46,15 @@ impl LevelMeter {
         if let Ok(mut level) = self.level.lock() {
             *level = 0.0;
         }
-        let Some(source) = source else { return };
+        let Some(serial) = serial else { return };
         let (stop_tx, stop_rx) = pipewire::channel::channel();
         let level = self.level.clone();
         thread::spawn(move || {
-            if let Err(error) = run_capture(source, level, stop_rx) {
+            if let Err(error) = run_capture(serial, level, stop_rx) {
                 tracing::error!(%error, "PipeWire level meter failed");
             }
         });
-        self.capture = Some((source, stop_tx));
+        self.capture = Some((serial, stop_tx));
     }
 
     pub fn level(&self) -> f32 {
@@ -100,7 +91,7 @@ pub fn buffer_level(bytes: &[u8], channels: usize) -> Option<f32> {
 }
 
 fn run_capture(
-    source: Source,
+    serial: u32,
     shared_level: Arc<Mutex<f32>>,
     stop: pipewire::channel::Receiver<()>,
 ) -> Result<(), pipewire::Error> {
@@ -130,15 +121,14 @@ fn run_capture(
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
     };
-    match source {
-        // Capturing a sink means its monitor. With no target the session
-        // manager links the default sink, and moves the stream when the
-        // default changes.
-        Source::DefaultOutput => props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true"),
-        // Linked to the application's output ports, beside its own link to
-        // whichever sink it plays on.
-        Source::Stream(serial) => props.insert("target.object", serial.to_string()),
-    }
+    // Linked to the application's output ports, beside its own link to
+    // whichever sink it plays on.
+    props.insert("target.object", serial.to_string());
+    // When that stream goes the session manager would otherwise relink the
+    // capture to the default source, the microphone. The route picks the next
+    // stream itself.
+    props.insert(*pw::keys::NODE_DONT_RECONNECT, "true");
+    props.insert("node.dont-fallback", "true");
 
     let stream = pw::stream::StreamBox::new(&core, "otto-islands-level-meter", props)?;
 

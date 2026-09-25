@@ -2,7 +2,8 @@
 # Assemble the Arch release tarball: the release binaries plus every data file
 # the binary PKGBUILDs install out of it.
 #
-#   scripts/packaging/make-arch-tarball.sh [output-dir]
+#   scripts/packaging/make-arch-tarball.sh [output-dir]      # default: dist/
+#   scripts/packaging/make-arch-tarball.sh --stand-in [output-dir]
 #
 # CI calls this, and so does scripts/packaging/test-installers.sh. That is the
 # point of it being a script rather than an inline CI step: PKGBUILD and
@@ -11,33 +12,48 @@
 # nothing catches it until someone tries to install a published release.
 # Sharing one list means the packaging test exercises what CI actually ships.
 #
+# Writes three files to the output directory: the versioned tarball a release
+# publishes, the fixed-name copy the nightly publishes, and the
+# PKGBUILD-nightly-bin pinned to that copy.
+#
 # Requires target/release to be populated (a release build, or CI's downloaded
-# artifacts).
+# artifacts), and the full git history: the nightly pkgver counts commits.
+# --stand-in writes a shell script in place of each binary that is missing,
+# for checking the packaging itself — that every file the PKGBUILDs install
+# is in the tarball — without a release build.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
-outdir="${1:-$PWD}"
+stand_in=0
+if [ "${1:-}" = --stand-in ]; then stand_in=1; shift; fi
+outdir="${1:-dist}"
 mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 
-# Read the version out of [workspace.package]. Not `head -1` on the first
-# `version = ` line: the crate inherits with `version.workspace = true`, so
-# the first such line in the file belongs to a [dependencies.*] table and
-# names that dependency.
-PKGVER=$(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
-if [ -z "$PKGVER" ]; then
-    echo "no [workspace.package] version found in Cargo.toml" >&2
-    exit 1
-fi
+BINARIES=(otto otto-bar otto-islands otto-lock otto-greeter otto-rdp
+          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek
+          otto-media-worker otto-msg otto-agents xdg-desktop-portal-otto)
+
+# The workspace version names the tarball and its top directory; the
+# nightly pkgver goes into the VERSION file below. Both come from the one
+# script that spells versions for every package format.
+PKGVER=$(scripts/packaging/version.sh workspace)
+NIGHTLY_PKGVER=$(OTTO_NIGHTLY=1 scripts/packaging/version.sh arch)
 
 PKGDIR="otto-${PKGVER}"
 TARBALL="$outdir/otto-${PKGVER}-x86_64.tar.gz"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
-for b in otto otto-bar otto-islands otto-lock otto-greeter otto-rdp \
-         otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek otto-media-worker otto-msg \
-         otto-agents xdg-desktop-portal-otto; do
+for b in "${BINARIES[@]}"; do
+    if [ "$stand_in" = 1 ] && [ ! -e "target/release/$b" ]; then
+        # Into the staging directory only: a stub left in target/release
+        # would be packaged by a later build that did not rebuild it.
+        mkdir -p "$tmpdir/$PKGDIR/target/release"
+        printf '#!/bin/sh\necho "stand-in for %s"\n' "$b" > "$tmpdir/$PKGDIR/target/release/$b"
+        chmod 755 "$tmpdir/$PKGDIR/target/release/$b"
+        continue
+    fi
     install -Dm755 "target/release/$b" "$tmpdir/$PKGDIR/target/release/$b"
 done
 
@@ -80,15 +96,16 @@ while IFS= read -r f; do
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/plugins/otto -type f)
 
-install -m644 PKGBUILD-git         "$tmpdir/$PKGDIR/PKGBUILD-git"
-install -m644 PKGBUILD-nightly-bin "$tmpdir/$PKGDIR/PKGBUILD-nightly-bin"
+install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 
-# VERSION file for PKGBUILD-nightly-bin's pkgver()
-echo "${PKGVER}.r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" \
-    > "$tmpdir/$PKGDIR/VERSION"
+# Which build this is, as the nightly package's pkgver. PKGBUILD-nightly-bin
+# is pinned to a tarball by make-nightly-pkgbuild.sh, which reads this file;
+# the PKGBUILD itself checks it against its own pkgver in prepare().
+echo "$NIGHTLY_PKGVER" > "$tmpdir/$PKGDIR/VERSION"
 
 tar -czf "$TARBALL" -C "$tmpdir" "$PKGDIR"
-# Fixed-name copy for the nightly release
+# Fixed-name copy for the nightly release, and the PKGBUILD pinned to it.
 cp "$TARBALL" "$outdir/otto-nightly-x86_64.tar.gz"
+scripts/packaging/make-nightly-pkgbuild.sh "$outdir/otto-nightly-x86_64.tar.gz" "$outdir" >/dev/null
 
 echo "$TARBALL"

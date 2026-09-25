@@ -21,7 +21,7 @@ use otto_kit::AppContext;
 use skia_safe::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 
 use crate::audio_route::{self, AudioStreams, Player, Route};
-use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, Source, BAR_COUNT};
+use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, BAR_COUNT};
 use crate::mpris::{self, Control, PlaybackInfo, SharedPlayback};
 use crate::state::SharedState;
 use crate::IslandMode;
@@ -523,7 +523,7 @@ impl MusicMonitor {
     /// Where the playing track's sound goes. Worked out again only when the
     /// streams or the player changed.
     fn current_route(&mut self, info: &PlaybackInfo) -> Route {
-        let (streams, generation) = self.streams.snapshot();
+        let (streams, clients, generation) = self.streams.snapshot();
         if let Some((cached_generation, pids, names, route)) = &self.route {
             if *cached_generation == generation
                 && *pids == info.player_pids
@@ -538,6 +538,7 @@ impl MusicMonitor {
                 names: &info.player_names,
             },
             &streams,
+            &clients,
             audio_route::parent_pid,
         );
         tracing::debug!(?route, players = ?info.player_names, "music route");
@@ -584,13 +585,11 @@ impl MusicMonitor {
     /// Listen to the track's stream while the bars are on screen and moving,
     /// and to nothing otherwise.
     pub fn set_meter_active(&mut self, active: bool) {
-        let source = match self.route.as_ref().map(|(.., route)| *route) {
-            _ if !active => None,
-            Some(Route::Stream(serial)) => Some(Source::Stream(serial)),
-            Some(Route::Elsewhere) => None,
-            Some(Route::DefaultOutput) | None => Some(Source::DefaultOutput),
+        let serial = match self.route.as_ref().map(|(.., route)| *route) {
+            Some(Route::Stream(serial)) if active => Some(serial),
+            _ => None,
         };
-        self.meter.listen(source);
+        self.meter.listen(serial);
     }
 
     /// Advance the bars one frame.

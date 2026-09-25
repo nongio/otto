@@ -233,9 +233,13 @@ against them:
   names, or the last part of its reverse-DNS desktop entry.
 
 The newest running stream that matches is captured by `object.serial`
-(`target.object`). With no match but something else playing, the meter falls back to
-the default output's monitor. With nothing playing locally at all, the track plays on
-another device: a phone or a network speaker (Spotify Connect, a cast). After a second
+(`target.object`), and never the default output's monitor: other sounds on the
+machine don't move the bars. With none of the player's streams running, a player that
+still has a stream, or a PipeWire client of its own (by `application.process.id`, same
+process rule), is local but silent: a muted video opens no stream while the browser's
+audio service stays connected. The bars stay still and no capture stream is open.
+Only a player with no presence in the graph plays on another device: a phone or a
+network speaker (Spotify Connect, a cast), even while other apps play locally. After a second
 like that (a player reports Playing a moment before its stream runs) the bars give way
 to a still cast glyph in the accent colour, and the open island adds "Playing on
 another device". No capture stream is open then. A paused track keeps what it showed.

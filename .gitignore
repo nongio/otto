@@ -44,3 +44,4 @@ perf/**/perf.data.old
 # Screen recordings and scene dumps from debugging sessions
 rec.mp4
 scene.json
+/dist

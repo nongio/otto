@@ -2,13 +2,19 @@
 #
 # A successful `docker build` is a passing test: apt resolves the declared
 # dependencies against the real archive, then verify-install.sh asserts the
-# installed layout. Build from the repo root with the .deb already in
-# target/debian:
+# installed layout. scripts/packaging/test-installers.sh stages the build
+# context (the .deb under target/debian, the directories below) and runs it:
 #
-#   docker build -f scripts/packaging/Dockerfile.deb .
+#   scripts/packaging/test-installers.sh deb deb-nightly
 #
 # BASE picks the distribution under test — the dependency names in
 # [package.metadata.deb] have to exist on every release we claim to support.
+#
+# A .deb in target/debian-before is installed first, and the one under test
+# then has to *upgrade* it: that is how a nightly is checked against the
+# release it was built from. apt refuses a downgrade and does nothing for an
+# equal version, so "the installed version is the one under test" is the
+# whole assertion.
 ARG BASE=ubuntu:24.04
 FROM ${BASE}
 
@@ -26,14 +32,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # check below then blames the package for the image's diet.
 RUN rm -f /etc/dpkg/dpkg.cfg.d/excludes /etc/dpkg/dpkg.cfg.d/docker*
 
-COPY target/debian/*.deb /tmp/pkg/
+COPY target/debian/ /tmp/pkg/
+COPY target/debian-before/ /tmp/before/
 COPY scripts/packaging/verify-install.sh /usr/local/bin/verify-install.sh
+
+# The package being upgraded from, when there is one.
+RUN if ls /tmp/before/*.deb >/dev/null 2>&1; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends /tmp/before/*.deb \
+        && rm -rf /var/lib/apt/lists/* \
+        && echo "before: $(dpkg-query -W -f '${Version}' otto)"; \
+    fi
 
 # `apt-get install ./file.deb` (not `dpkg -i`) so a missing or misnamed
 # dependency fails here instead of leaving a half-configured package behind.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends /tmp/pkg/*.deb \
     && rm -rf /var/lib/apt/lists/*
+
+# What is installed has to be the package under test. With a "before"
+# package this is the upgrade check: apt leaves an older or equal version
+# where it is, and says so only in its output.
+RUN set -eu; \
+    want=$(dpkg-deb -f /tmp/pkg/*.deb Version); \
+    have=$(dpkg-query -W -f '${Version}' otto); \
+    echo "installed: $have"; \
+    [ "$have" = "$want" ] || { echo "expected $want to be installed"; exit 1; }; \
+    if ls /tmp/before/*.deb >/dev/null 2>&1; then \
+        before=$(dpkg-deb -f /tmp/before/*.deb Version); \
+        dpkg --compare-versions "$before" lt "$want" \
+            || { echo "$want does not sort above $before"; exit 1; }; \
+        echo "upgraded: $before -> $want"; \
+    fi
 
 ARG SKIP_RUN=0
 RUN OTTO_SKIP_RUN=$SKIP_RUN bash /usr/local/bin/verify-install.sh deb

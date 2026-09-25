@@ -2,10 +2,17 @@
 #
 # A successful `docker build` is a passing test: every declared Requires is
 # checked to exist, dnf resolves them against the real repositories, then
-# verify-install.sh asserts the installed layout. Build from the repo root
-# with the .rpm already in target/generate-rpm:
+# verify-install.sh asserts the installed layout. scripts/packaging/test-installers.sh
+# stages the build context (the .rpm under target/generate-rpm, the
+# directories below) and runs it:
 #
-#   docker build -f scripts/packaging/Dockerfile.rpm .
+#   scripts/packaging/test-installers.sh rpm rpm-nightly
+#
+# An .rpm in target/generate-rpm-before is installed first, and the one
+# under test then has to *upgrade* it: that is how a nightly is checked
+# against the release it was built from. `dnf install` of a local file that
+# is not newer than what is installed exits 0 having done nothing, so the
+# installed version is compared to the package under test afterwards.
 ARG BASE=fedora:41
 FROM ${BASE}
 
@@ -19,7 +26,8 @@ ARG SKIP_RUN=0
 RUN sed -i '/^tsflags=nodocs/d' /etc/dnf/dnf.conf
 RUN dnf install -y desktop-file-utils && dnf clean all
 
-COPY target/generate-rpm/*.rpm /tmp/pkg/
+COPY target/generate-rpm/ /tmp/pkg/
+COPY target/generate-rpm-before/ /tmp/before/
 COPY scripts/packaging/verify-install.sh /usr/local/bin/verify-install.sh
 
 # Every *named* Requires must exist in the repositories. Checked separately
@@ -47,6 +55,18 @@ RUN set -eux; \
     done < /tmp/requires.txt; \
     [ "$fail" = 0 ]
 
+# The package being upgraded from, when there is one. The same two paths as
+# the install below: strict through dnf for a CI-built package, --nodeps
+# for a local one.
+RUN if ls /tmp/before/*.rpm >/dev/null 2>&1; then \
+        if [ "$SKIP_RUN" = "1" ]; then \
+            rpm -Uvh --nodeps /tmp/before/*.rpm; \
+        else \
+            dnf install -y /tmp/before/*.rpm && dnf clean all; \
+        fi; \
+        echo "before: $(rpm -q --qf '%{EVR}' otto)"; \
+    fi
+
 # `dnf install` rather than `rpm -i`, so unsatisfied Requires fail here the
 # way they would for a user. A locally built package cannot pass that: its
 # binaries carry the build machine's glibc symbol versions, which Fedora
@@ -57,6 +77,20 @@ RUN if [ "$SKIP_RUN" = "1" ]; then \
         rpm -Uvh --nodeps /tmp/pkg/*.rpm; \
     else \
         dnf install -y /tmp/pkg/*.rpm && dnf clean all; \
+    fi
+
+# What is installed has to be the package under test. With a "before"
+# package this is the upgrade check: dnf keeps a newer or equal version
+# and exits 0, so the version is the only evidence.
+RUN set -eu; \
+    want=$(rpm -qp --qf '%{EVR}' /tmp/pkg/*.rpm); \
+    have=$(rpm -q --qf '%{EVR}' otto); \
+    echo "installed: $have"; \
+    [ "$have" = "$want" ] || { echo "expected $want to be installed"; exit 1; }; \
+    if ls /tmp/before/*.rpm >/dev/null 2>&1; then \
+        before=$(rpm -qp --qf '%{EVR}' /tmp/before/*.rpm); \
+        [ "$before" != "$want" ] || { echo "before and after are the same version"; exit 1; }; \
+        echo "upgraded: $before -> $want"; \
     fi
 
 RUN OTTO_SKIP_RUN=$SKIP_RUN bash /usr/local/bin/verify-install.sh rpm
