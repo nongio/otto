@@ -131,7 +131,7 @@ settings-display-scale = Scala del monitor
 settings-display-scale-detail = Si applica al prossimo accesso. La scrivania non si aggiorna dinamicamente
 settings-renderer = Motore di rendering
 settings-renderer-detail = Riguarda la sessione avviata dalla schermata di accesso. Le sessioni in finestra usano sempre OpenGL. Si applica al prossimo accesso.
-settings-renderer-no-vulkan-detail = Questa build non include Vulkan, quindi Otto disegna con OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan non è disponibile qui, quindi Otto disegna con OpenGL.
 settings-renderer-windowed-detail = Le sessioni in finestra usano sempre OpenGL. Si può cambiare da una sessione avviata dalla schermata di accesso.
 
 # Shown when the compositor reports no outputs at all.

@@ -18,7 +18,7 @@ pub mod types;
 pub mod vulkan_api;
 
 // Re-export public API
-pub use init::{run_selected, run_udev};
+pub use init::{run_selected, run_udev, vulkan_fallback};
 
 // Re-export public types
 pub use types::{

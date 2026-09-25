@@ -131,7 +131,7 @@ settings-display-scale = Escala do monitor
 settings-display-scale-detail = Aplicada no próximo login. A área de trabalho não se reorganiza em tempo real
 settings-renderer = Renderizador
 settings-renderer-detail = Vale para a sessão iniciada pela tela de login. Sessões em janela sempre usam OpenGL. Entra em vigor no próximo login.
-settings-renderer-no-vulkan-detail = Esta compilação não inclui Vulkan, então o Otto desenha com OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan não está disponível aqui, então o Otto desenha com OpenGL.
 settings-renderer-windowed-detail = Sessões em janela sempre usam OpenGL. Dá para mudar isso em uma sessão iniciada pela tela de login.
 
 # Shown when the compositor reports no outputs at all.

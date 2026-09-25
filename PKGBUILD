@@ -15,7 +15,7 @@ arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs")
-optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files")
+optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files" "vulkan-icd-loader: the Vulkan renderer" "vulkan-intel: the Vulkan renderer on Intel GPUs" "vulkan-radeon: the Vulkan renderer on AMD GPUs")
 source=("https://github.com/nongio/otto/releases/download/$_tag/otto-$_ver-x86_64.tar.gz")
 sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on

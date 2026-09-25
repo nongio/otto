@@ -1,6 +1,6 @@
 # Skia on Vulkan: plan
 
-Status: phases 1 and 2 done on 2026-09-25, on the `feat/vulkan-device` branch of the smithay fork and `try/smithay-latest` in Otto. Phase 3 is implemented and passes its GPU tests; it has not run as a live session yet (see [Phase 3 status](#phase-3-status)).
+Status: phases 1 and 2 done on 2026-09-25, on the `feat/vulkan-device` branch of the smithay fork and `try/smithay-latest` in Otto. Phase 3 is implemented, passes its GPU tests and ships in the default build: the renderer is selectable at runtime, with OpenGL as the default and as the fallback when Vulkan cannot start (see [Phase 3 status](#phase-3-status)).
 
 Otto draws with Skia's Ganesh backend on OpenGL ES through EGL. This plan
 moves the compositor's rendering to Ganesh on Vulkan while keeping Smithay's
@@ -206,13 +206,23 @@ chain on the Framework laptop's Iris Xe with ANV:
 
 ## Phase 3 status
 
-A build with `--features vulkan` can run the udev backend on
-`SkiaVkRenderer` (`src/renderer/vulkan/`) or on the GL `SkiaRenderer`; the
-choice is made at startup. `otto --tty-udev --renderer vulkan` selects
-Vulkan, and so does `renderer = "vulkan"` under `[rendering]` in the config;
-the command line wins, and GL is the default. A build without the feature
-refuses `vulkan` with an error naming the feature and exits non-zero.
-Startup logs the choice (`otto::udev`: `renderer: vulkan`).
+The `vulkan` feature is on by default, so a stock build can run the udev
+backend on `SkiaVkRenderer` (`src/renderer/vulkan/`) or on the GL
+`SkiaRenderer`; the choice is made at startup. `otto --tty-udev --renderer
+vulkan` selects Vulkan, and so does `renderer = "vulkan"` under `[rendering]`
+in the config (Settings > Displays > Renderer writes that key); the command
+line wins, and GL is the default. A build without the feature refuses
+`vulkan` with an error naming the feature and exits non-zero.
+
+Before committing to Vulkan, `run_selected` probes the primary GPU
+(`udev::vulkan_api::probe`: a 1.3 instance plus a physical device whose
+render or primary node is the GPU, the same lookup `GbmVulkanBackend::
+add_node` makes). When that fails (no loader, no ICD, a driver below 1.3, a
+VM GPU) the session warns on `otto::udev` with the reason and runs on GL
+instead, and Settings reports Vulkan as unavailable on this machine through
+`unavailable_choices`. Without this a stored `renderer = "vulkan"` would exit
+at startup and the user would be looping at the greeter. Startup logs the
+choice (`otto::udev`: `renderer: vulkan`).
 
 The udev backend is generic over `RendererApi` (`src/renderer/active.rs`):
 `UdevData<A>` and every `impl Otto<UdevData<A>>` are monomorphised once per

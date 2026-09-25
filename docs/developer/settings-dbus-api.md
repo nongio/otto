@@ -191,10 +191,12 @@ menu. When present it has exactly one entry per choice, and a client shows it
 in place of the token while continuing to `Set` the token. When absent, the
 tokens are already fit to show.
 
-`unavailable_choices` lists choices the compositor knows but this build cannot
-honour, such as `vulkan` for `rendering.renderer` in a build without the
-`vulkan` feature. They stay in `choices` so a client can explain their absence;
-`Set` refuses them with `Unsupported`, and a menu should leave them out.
+`unavailable_choices` lists choices the compositor knows but this session
+cannot honour, such as `vulkan` for `rendering.renderer` in a build without
+the `vulkan` feature, or in a session that asked for Vulkan and fell back to
+OpenGL because it could not start on the primary GPU. They stay in `choices`
+so a client can explain their absence; `Set` refuses them with `Unsupported`,
+and a menu should leave them out.
 
 `applies_here` is present only for a setting tied to particular backends.
 `rendering.renderer` reaches the tty (udev) backend alone, so under `--winit`

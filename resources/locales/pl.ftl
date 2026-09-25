@@ -130,7 +130,7 @@ settings-display-scale = Skalowanie ekranu
 settings-display-scale-detail = Zacznie obowiązywać po następnym zalogowaniu. Pulpit nie dostosowuje się na bieżąco
 settings-renderer = Silnik renderowania
 settings-renderer-detail = Dotyczy sesji uruchamianej z ekranu logowania. Sesje w oknie zawsze używają OpenGL. Zacznie obowiązywać po następnym zalogowaniu.
-settings-renderer-no-vulkan-detail = Ta wersja nie ma obsługi Vulkan, więc Otto rysuje przy użyciu OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan nie jest tu dostępny, więc Otto rysuje przy użyciu OpenGL.
 settings-renderer-windowed-detail = Sesje w oknie zawsze używają OpenGL. Można to zmienić w sesji uruchomionej z ekranu logowania.
 
 # Shown when the compositor reports no outputs at all.

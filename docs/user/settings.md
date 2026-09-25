@@ -63,10 +63,13 @@ per-display value.
 to the login session only, since a windowed session (`otto --winit` or
 `--x11`) always uses OpenGL, and it takes effect after you log in again. Run
 Settings inside a windowed session and the row shows OpenGL with a note
-instead of a menu. Vulkan needs an Otto built with the `vulkan` feature; in a
-build without it the row says Vulkan isn't in this build. The setting is
-`renderer` under `[rendering]` in the config file, and
-`otto --tty-udev --renderer vulkan` overrides it for one session.
+instead of a menu. Vulkan is part of the default build, but it also needs a
+working Vulkan driver for your GPU (on Arch, `vulkan-icd-loader` plus
+`vulkan-intel` or `vulkan-radeon`). Choosing Vulkan where it cannot start is
+safe: Otto logs why and draws that session with OpenGL, and the row then says
+Vulkan isn't available here instead of offering it. The setting is `renderer`
+under `[rendering]` in the config file, and `otto --tty-udev --renderer
+vulkan` overrides it for one session.
 
 ## Shortcuts
 

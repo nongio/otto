@@ -114,15 +114,7 @@ impl GbmVulkanBackend {
                 instance
             }
         };
-        let matches = |candidate: Option<DrmNode>| {
-            candidate.is_some_and(|candidate| candidate.dev_id() == node.dev_id())
-        };
-        let phd = PhysicalDevice::enumerate(&instance)?
-            .find(|phd| {
-                matches(phd.render_node().ok().flatten())
-                    || matches(phd.primary_node().ok().flatten())
-            })
-            .ok_or(GbmVulkanError::NoDevice(node))?;
+        let phd = physical_device_of(&instance, node)?;
         let renderer = SkiaVkRenderer::new(&phd)
             .map_err(|source| GbmVulkanError::Renderer { node, source })?;
 
@@ -145,6 +137,36 @@ impl GbmVulkanBackend {
         }
         self.pending.get_mut().retain(|device| device.node != *node);
     }
+}
+
+/// The physical device whose render or primary node is `node`.
+fn physical_device_of(
+    instance: &Instance,
+    node: DrmNode,
+) -> Result<PhysicalDevice, GbmVulkanError> {
+    let matches = |candidate: Option<DrmNode>| {
+        candidate.is_some_and(|candidate| candidate.dev_id() == node.dev_id())
+    };
+    PhysicalDevice::enumerate(instance)?
+        .find(|phd| {
+            matches(phd.render_node().ok().flatten()) || matches(phd.primary_node().ok().flatten())
+        })
+        .ok_or(GbmVulkanError::NoDevice(node))
+}
+
+/// Checks that Vulkan can drive `node`, without creating a renderer.
+///
+/// The same instance and physical-device lookup [`GbmVulkanBackend::add_node`]
+/// does, so a machine with no loader, no ICD for the GPU, or a driver older
+/// than Vulkan 1.3 fails here, before the session commits to the renderer.
+///
+/// # Errors
+///
+/// Fails when the instance cannot be created, the devices cannot be listed,
+/// or none of them drives `node`.
+pub fn probe(node: DrmNode) -> Result<(), GbmVulkanError> {
+    let instance = Instance::new(Version::VERSION_1_3, None)?;
+    physical_device_of(&instance, node).map(drop)
 }
 
 impl GraphicsApi for GbmVulkanBackend {

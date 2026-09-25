@@ -131,7 +131,7 @@ settings-display-scale = Масштаб дисплея
 settings-display-scale-detail = Застосовується під час наступного входу. Стільниця не перебудовується одразу
 settings-renderer = Рушій рендерингу
 settings-renderer-detail = Стосується сеансу, запущеного з вітального екрана. Сеанси у вікні завжди використовують OpenGL. Застосовується під час наступного входу.
-settings-renderer-no-vulkan-detail = У цій збірці немає Vulkan, тож Otto малює через OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan тут недоступний, тож Otto малює через OpenGL.
 settings-renderer-windowed-detail = Сеанси у вікні завжди використовують OpenGL. Змінити це можна в сеансі, запущеному з вітального екрана.
 
 # Shown when the compositor reports no outputs at all.

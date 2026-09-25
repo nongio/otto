@@ -131,7 +131,7 @@ settings-display-scale = Escala de la pantalla
 settings-display-scale-detail = Se aplica en el siguiente inicio de sesión. El escritorio no se reajusta en vivo
 settings-renderer = Renderizador
 settings-renderer-detail = Afecta a la sesión iniciada desde la pantalla de bienvenida. Las sesiones en ventana siempre usan OpenGL. Se aplica en el siguiente inicio de sesión.
-settings-renderer-no-vulkan-detail = Esta versión no incluye Vulkan, así que Otto dibuja con OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan no está disponible aquí, así que Otto dibuja con OpenGL.
 settings-renderer-windowed-detail = Las sesiones en ventana siempre usan OpenGL. Se cambia desde una sesión iniciada en la pantalla de bienvenida.
 
 # Shown when the compositor reports no outputs at all.

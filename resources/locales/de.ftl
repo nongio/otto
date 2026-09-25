@@ -131,7 +131,7 @@ settings-display-scale = Bildschirmskalierung
 settings-display-scale-detail = Gilt ab der nächsten Anmeldung. Der Schreibtisch passt sich nicht sofort an
 settings-renderer = Renderer
 settings-renderer-detail = Betrifft die Sitzung vom Anmeldebildschirm. Sitzungen im Fenster nutzen immer OpenGL. Gilt ab der nächsten Anmeldung.
-settings-renderer-no-vulkan-detail = Dieser Build enthält kein Vulkan, daher zeichnet Otto mit OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan ist hier nicht verfügbar, daher zeichnet Otto mit OpenGL.
 settings-renderer-windowed-detail = Sitzungen im Fenster nutzen immer OpenGL. Ändern lässt sich das in einer Sitzung vom Anmeldebildschirm.
 
 # Shown when the compositor reports no outputs at all.

@@ -534,16 +534,12 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
                     ),
                 );
             }
-            if !spec.unavailable_choices.is_empty() {
+            let unavailable = spec.unavailable_now();
+            if !unavailable.is_empty() {
                 put(
                     &mut entry,
                     "unavailable_choices",
-                    SettingValue::StrList(
-                        spec.unavailable_choices
-                            .iter()
-                            .map(|c| c.to_string())
-                            .collect(),
-                    ),
+                    SettingValue::StrList(unavailable.iter().map(|c| c.to_string()).collect()),
                 );
             }
             // Only for a setting tied to some backends, so a client reads a

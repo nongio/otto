@@ -131,7 +131,7 @@ settings-display-scale = Display scale
 settings-display-scale-detail = Applies at the next login. The desktop does not reflow live
 settings-renderer = Renderer
 settings-renderer-detail = Applies to the login session. Windowed sessions always use OpenGL. Takes effect after you log in again.
-settings-renderer-no-vulkan-detail = Vulkan isn't in this build, so Otto draws with OpenGL.
+settings-renderer-no-vulkan-detail = Vulkan isn't available here, so Otto draws with OpenGL.
 settings-renderer-windowed-detail = Windowed sessions always use OpenGL. Change this from a login session.
 
 # Shown when the compositor reports no outputs at all.

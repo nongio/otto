@@ -130,7 +130,7 @@ settings-display-scale = ディスプレイスケール
 settings-display-scale-detail = 次回のログインから適用されます。デスクトップはその場では組み直されません
 settings-renderer = レンダラー
 settings-renderer-detail = ログイン画面から開始したセッションが対象です。ウインドウ内のセッションでは常にOpenGLを使用します。次回のログインから適用されます。
-settings-renderer-no-vulkan-detail = このビルドにはVulkanが含まれていないため、OttoはOpenGLで描画します。
+settings-renderer-no-vulkan-detail = ここではVulkanを利用できないため、OttoはOpenGLで描画します。
 settings-renderer-windowed-detail = ウインドウ内のセッションでは常にOpenGLを使用します。変更はログイン画面から開始したセッションで行えます。
 
 # Shown when the compositor reports no outputs at all.

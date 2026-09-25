@@ -68,6 +68,22 @@ pub struct SettingSpec {
 }
 
 impl SettingSpec {
+    /// The entries of `choices` this session cannot take: the ones this build
+    /// left out, plus a renderer that was asked for but could not come up on
+    /// this machine, so the session fell back (see
+    /// [`crate::udev::vulkan_fallback`]).
+    pub fn unavailable_now(&self) -> Vec<&'static str> {
+        let mut out = self.unavailable_choices.to_vec();
+        #[cfg(feature = "vulkan")]
+        if self.id == "rendering.renderer"
+            && crate::udev::vulkan_fallback().is_some()
+            && !out.contains(&"vulkan")
+        {
+            out.push("vulkan");
+        }
+        out
+    }
+
     /// The configuration section the setting lives in — everything before the
     /// last dot, empty for a top-level key.
     pub fn section(&self) -> &'static str {
@@ -99,9 +115,9 @@ impl SettingSpec {
                     self.choices.join(", ")
                 )));
             }
-            if self.unavailable_choices.contains(&text) {
+            if self.unavailable_now().contains(&text) {
                 return Err(Invalid::Unavailable(format!(
-                    "`{}` cannot be `{text}` in this build",
+                    "`{}` cannot be `{text}` here",
                     self.id
                 )));
             }
@@ -300,7 +316,9 @@ const RENDERER_CHOICES: &[&str] = &["gl", "vulkan"];
 const RENDERER_LABELS: &[&str] = &["OpenGL", "Vulkan"];
 
 /// The renderers this build cannot draw with: Vulkan needs the `vulkan`
-/// feature, and a build without it exits at startup when asked for it.
+/// feature, and a build without it exits at startup when asked for it. A
+/// build with it can still lack Vulkan on the machine; that case is added at
+/// runtime by [`SettingSpec::unavailable_now`].
 const RENDERER_UNAVAILABLE: &[&str] = if cfg!(feature = "vulkan") {
     &[]
 } else {

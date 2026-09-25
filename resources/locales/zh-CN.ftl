@@ -130,7 +130,7 @@ settings-display-scale = 显示器缩放
 settings-display-scale-detail = 下次登录时生效。桌面不会即时重新排布
 settings-renderer = 渲染器
 settings-renderer-detail = 适用于从登录界面启动的会话。窗口模式会话始终使用 OpenGL。下次登录时生效。
-settings-renderer-no-vulkan-detail = 此版本未包含 Vulkan，Otto 使用 OpenGL 绘制。
+settings-renderer-no-vulkan-detail = 此处无法使用 Vulkan，Otto 使用 OpenGL 绘制。
 settings-renderer-windowed-detail = 窗口模式会话始终使用 OpenGL。可在从登录界面启动的会话中更改。
 
 # Shown when the compositor reports no outputs at all.

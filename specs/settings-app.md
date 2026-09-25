@@ -596,11 +596,17 @@ then states what Otto draws with instead of offering a menu:
 - The compositor serves the setting with `applies_here: false`: this session
   runs on a windowed backend (`--winit`, `--x11`), which always draws with
   OpenGL. The note says so and points to a login session.
-- The compositor lists `vulkan` in `unavailable_choices`: the build has no
-  Vulkan renderer, so OpenGL is the only one left. The note says Vulkan isn't
-  in this build. A menu never offers an unavailable choice, and the compositor
-  refuses one with `Unsupported`, since a GL-only build asked for Vulkan exits
-  at startup.
+- The compositor lists `vulkan` in `unavailable_choices`: either the build
+  has no Vulkan renderer, or this session asked for Vulkan and could not bring
+  it up on the primary GPU, so it fell back to OpenGL. OpenGL is the only one
+  left, and the note says Vulkan isn't available here. A menu never offers an
+  unavailable choice, and the compositor refuses one with `Unsupported`: a
+  GL-only build asked for Vulkan exits at startup, and a build with it would
+  only fall back again.
+
+A login session asked for Vulkan that cannot come up does not exit; it warns
+(`otto::udev`) and draws with OpenGL for the whole session, so a wrong choice
+here never locks the user out at the greeter.
 
 An output that disconnects while the pane is open disappears from the canvas;
 the configuration recorded for it is retained so reconnecting restores it.
