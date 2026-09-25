@@ -206,14 +206,25 @@ chain on the Framework laptop's Iris Xe with ANV:
 
 ## Phase 3 status
 
-`cargo build --features vulkan` builds the udev backend on
-`SkiaVkRenderer` (`src/renderer/vulkan/`). The choice is made at compile
-time, not in the config: the feature swaps the aliases in
-`src/renderer/active.rs` (renderer, texture, frame, graphics api), which the
-udev backend, the render elements and screenshare name instead of a
-renderer. winit and x11 stay on the GL `SkiaRenderer` in both builds. The
-drawing itself lives once, in `src/renderer/draw.rs` and the elements'
-canvas helpers, and both frames call it.
+A build with `--features vulkan` can run the udev backend on
+`SkiaVkRenderer` (`src/renderer/vulkan/`) or on the GL `SkiaRenderer`; the
+choice is made at startup. `otto --tty-udev --renderer vulkan` selects
+Vulkan, and so does `renderer = "vulkan"` under `[rendering]` in the config;
+the command line wins, and GL is the default. A build without the feature
+refuses `vulkan` with an error naming the feature and exits non-zero.
+Startup logs the choice (`otto::udev`: `renderer: vulkan`).
+
+The udev backend is generic over `RendererApi` (`src/renderer/active.rs`):
+`UdevData<A>` and every `impl Otto<UdevData<A>>` are monomorphised once per
+renderer, and `GlApi` / `VulkanApi` supply the multi-GPU api, the device
+renderer, its texture and error types, the render-node lookup and whether
+planes may be used. The renderer-specific calls the backend makes (plane
+surfaces, render formats, the Skia context) go through the small
+`SkiaDeviceRenderer` trait both renderers implement, and the render elements
+draw into whatever frame they are given through `FrameSurface`. winit and x11
+stay on the GL `SkiaRenderer`. The drawing itself lives once, in
+`src/renderer/draw.rs` and the elements' canvas helpers, and both frames
+call it.
 
 What works, covered by the ignored GPU tests
 (`cargo test --features vulkan --lib -- --ignored vulkan`):
@@ -244,10 +255,10 @@ What works, covered by the ignored GPU tests
 
 Not done:
 
-- Plane scanout. `planes_enabled` is forced off under the feature, so every
-  output composites a single `SceneElement`. The plane code compiles against
-  the Vulkan renderer (`create_surface_from_dmabuf`,
-  `flush_planes_for_scanout`) but is untested; phase 4.
+- Plane scanout. `VulkanApi::PLANES_SUPPORTED` is false, so every output
+  composites a single `SceneElement`. The plane code builds for the Vulkan
+  renderer (`create_surface_from_dmabuf`, `flush_planes_for_scanout`) but is
+  untested; phase 4.
 - Modifier intersection for the primary swapchain beyond what Smithay's
   `DrmCompositor` already does with the renderer's colour-attachment formats.
 - Release barriers for sampled client dmabufs: Skia leaves them in its own

@@ -101,6 +101,8 @@ pub struct Config {
     #[serde(default)]
     pub tiling: TilingConfig,
     #[serde(default)]
+    pub rendering: RenderingConfig,
+    #[serde(default)]
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
@@ -169,6 +171,7 @@ impl Default for Config {
             lock: LockConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
+            rendering: RenderingConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
             systemd_notify: false,
@@ -1103,6 +1106,39 @@ impl WorkspacesConfig {
             self.switch_duration.clamp(0.0, 10.0),
             self.switch_bounce.clamp(0.0, 1.0),
         )
+    }
+}
+
+/// Rendering settings of the tty (udev) backend.
+///
+/// Read once at startup; the windowed backends always render with GL.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RenderingConfig {
+    /// The GPU api the compositor draws with. `--renderer` on the command
+    /// line overrides it.
+    pub renderer: RendererKind,
+}
+
+/// A GPU api the tty backend can draw with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RendererKind {
+    /// Skia on OpenGL ES through EGL.
+    #[default]
+    Gl,
+    /// Skia on Vulkan. Needs a build with the `vulkan` feature.
+    Vulkan,
+}
+
+impl RendererKind {
+    /// Parses the name `--renderer` and the config use: `gl` or `vulkan`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "gl" => Some(Self::Gl),
+            "vulkan" => Some(Self::Vulkan),
+            _ => None,
+        }
     }
 }
 
@@ -2131,6 +2167,22 @@ mod tests {
 
         let config: Config = toml::from_str(overrides).expect("Config should deserialize");
         assert!(matches!(config.theme_scheme, ThemeScheme::Dark));
+    }
+
+    #[test]
+    fn renderer_defaults_to_gl_and_reads_vulkan() {
+        assert_eq!(Config::default().rendering.renderer, RendererKind::Gl);
+
+        let config: Config = toml::from_str("[rendering]\nrenderer = \"vulkan\"\n")
+            .expect("Config should deserialize");
+        assert_eq!(config.rendering.renderer, RendererKind::Vulkan);
+
+        assert_eq!(RendererKind::from_name("gl"), Some(RendererKind::Gl));
+        assert_eq!(
+            RendererKind::from_name("vulkan"),
+            Some(RendererKind::Vulkan)
+        );
+        assert_eq!(RendererKind::from_name("metal"), None);
     }
 
     /// A temporary configuration environment: an empty `XDG_CONFIG_HOME`, no

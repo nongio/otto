@@ -73,6 +73,37 @@ fn configure_libinput_devices(
     }
 }
 
+/// Runs the udev backend on the renderer named `cli`, or else on the one the
+/// config's `[rendering] renderer` names.
+///
+/// # Errors
+///
+/// Fails, before anything starts, when `cli` names no renderer or names one
+/// this build does not include.
+pub fn run_selected(cli: Option<&str>) -> Result<(), String> {
+    use crate::config::RendererKind;
+
+    let kind = match cli {
+        Some(name) => RendererKind::from_name(name)
+            .ok_or_else(|| format!("unknown renderer {name:?}: expected gl or vulkan"))?,
+        None => Config::current().rendering.renderer,
+    };
+    match kind {
+        RendererKind::Gl => run_udev::<crate::renderer::active::GlApi>(),
+        #[cfg(feature = "vulkan")]
+        RendererKind::Vulkan => run_udev::<crate::renderer::active::VulkanApi>(),
+        #[cfg(not(feature = "vulkan"))]
+        RendererKind::Vulkan => {
+            return Err(
+                "the vulkan renderer needs a build with the `vulkan` feature \
+                        (cargo build --features vulkan)"
+                    .to_string(),
+            )
+        }
+    }
+    Ok(())
+}
+
 /// Main entry point for the udev backend, rendering with `A`.
 ///
 /// Initializes the session, GPU, input devices, and runs the main event loop.
