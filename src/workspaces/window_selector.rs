@@ -1198,6 +1198,22 @@ impl<Backend: crate::state::Backend> ViewInteractions<Backend> for WindowSelecto
             current_selection: hovered_selection,
         });
     }
+    /// The pointer moved off the grid onto something else (the workspace
+    /// strip, say): no preview is hovered any more. A drag keeps the focus,
+    /// so this never runs mid-drag.
+    fn on_leave_with_data(
+        &self,
+        otto: &mut crate::Otto<Backend>,
+        _serial: smithay::utils::Serial,
+        _time: smithay::backend::input::InputTime,
+    ) {
+        if self.drag_state.read().unwrap().is_some() {
+            return;
+        }
+        self.clear_selection();
+        otto.set_cursor(&CursorImageStatus::Named(CursorIcon::default()));
+    }
+
     fn on_button(
         &self,
         _seat: &smithay::input::Seat<crate::Otto<Backend>>,
