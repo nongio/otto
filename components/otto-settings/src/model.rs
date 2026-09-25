@@ -63,6 +63,9 @@ pub struct Row {
     /// The `org.otto.Settings` identifier this row edits. `None` means the row
     /// is not wired to the compositor yet and is display-only.
     pub id: Option<&'static str>,
+    /// The row's push buttons have nothing to do right now — Apply with
+    /// nothing to apply — and are drawn dimmed and take no press.
+    pub inactive: bool,
 }
 
 impl Row {
@@ -73,7 +76,14 @@ impl Row {
             control,
             restart_required: false,
             id: None,
+            inactive: false,
         }
+    }
+
+    /// Dim the row's push buttons and ignore presses on them while `inactive`.
+    pub(crate) fn inactive(mut self, inactive: bool) -> Self {
+        self.inactive = inactive;
+        self
     }
 
     /// Bind the row to a settings identifier, and take its current value and
@@ -325,6 +335,7 @@ pub fn panes() -> Vec<Pane> {
         panes::sound::build(),
         panes::power::build(),
         panes::lock_and_login::build(),
+        panes::agents::build(),
     ]
 }
 

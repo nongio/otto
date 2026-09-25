@@ -70,6 +70,7 @@ settings-pane-pointing = 触控板与鼠标
 settings-pane-sound = 声音
 settings-pane-power = 电源
 settings-pane-lock-and-login = 锁定与登录
+settings-pane-agents = 智能体
 
 
 ## Settings — General
@@ -239,6 +240,93 @@ settings-group-login = 登录
 settings-greeter = 登录界面
 settings-greeter-detail = 下次登录时生效
 settings-greeter-arguments = 登录界面参数
+
+
+## Settings — Agents
+##
+## The agents Ask sends requests to, read from agents.toml. Changes wait for
+## Apply, which saves the file and restarts the agent service.
+
+settings-agents-intro = Ask 可以把请求交给这些智能体。权限决定智能体想执行操作时如何处理，它的文件夹就是它能读取的全部内容。
+settings-agents-default = 默认智能体
+settings-agents-default-detail = 未选择智能体时，请求交给谁
+# The row holding the Revert and Apply buttons.
+settings-agents-changes = 更改
+settings-agents-revert = 还原
+settings-agents-apply = 应用
+settings-agents-saved = 已全部保存
+settings-agents-unsaved = 尚未保存。“应用”会写入 agents.toml 并重启智能体服务。
+# $error is the reason, as the system gives it.
+settings-agents-failed = 无法保存：{ $error }
+# The otto-agents service, which runs the agents; the row shows whether it is
+# up, with Start or Restart.
+settings-agents-service = 智能体服务
+settings-agents-service-checking = 正在检查…
+settings-agents-service-running = 正在运行
+settings-agents-service-stopped = 已停止。服务启动前，Ask 无法连接任何智能体。
+settings-agents-service-failed = 因错误而停止。原因可通过 journalctl --user -u otto-agents 查看。
+settings-agents-service-missing = 未安装
+# The system has no systemctl, so the app can't tell whether the service runs.
+settings-agents-service-unmanaged = 无法确定：此系统没有 systemctl
+settings-agents-start = 启动
+settings-agents-restart = 重启
+# The row that opens agents.toml. Its path is shown under it.
+settings-agents-file = 配置文件
+settings-agents-none = 尚未设置智能体
+settings-agents-none-detail = 添加到 { $path } 即可。Ask 与智能体指南中有说明。
+# Titles an agent's section. $id is how agents.toml and the agent's sessions
+# know it, such as claude.
+settings-agent-id = id：{ $id }
+# The field that replaces that row while the agent is being renamed.
+settings-agent-name = 名称
+settings-agents-rename = 重命名
+# The row under the list of agents, holding its Add button.
+settings-agents-add = 新建智能体
+# What an agent is called until it is renamed.
+settings-agents-new-name = 新智能体
+# The program an agent runs on: Claude Code, Codex, OpenCode and so on.
+settings-agent-harness = 程序
+# A harness Settings doesn't recognise, set up by its command alone.
+settings-agent-harness-custom = 自定义
+settings-agent-command = 命令
+# Which agent file the agent runs as: who it is and how it answers.
+settings-agent-instructions = 指令
+# No instructions from Otto: the harness runs as itself, Claude Code as
+# Claude Code and so on.
+settings-agent-instructions-default = 默认
+settings-agent-instructions-detail = 智能体文件位于 ~/.local/share/otto/plugins/<plugin>/agents/
+# $name is the agent file the agent names, which wasn't found.
+settings-agent-instructions-missing = 没有名为 { $name } 的智能体文件。请将其放入 ~/.local/share/otto/plugins/<plugin>/agents/
+# $name is the agent file; Hermes runs it in a profile of that name, which
+# Hermes has to make.
+settings-agent-instructions-hermes = Hermes 需要为此创建配置文件：运行 hermes profile create { $name }
+# The row that opens the agent file. Its path is shown under it.
+settings-agent-instructions-file = 指令文件
+settings-agent-permissions = 权限
+settings-agent-permissions-deny = 始终拒绝
+settings-agent-permissions-ask = 询问我
+settings-agent-permissions-allow = 始终允许
+settings-agent-model = 模型
+settings-agent-folder = 文件夹
+# Under an agent's Folder when none is set. $path is Ask's scratch folder,
+# such as ~/.local/state/otto/ask.
+settings-agent-folder-unset = 未设置：会话从临时文件夹 { $path } 开始
+settings-agent-folder-detail = 智能体可以读取其中的所有内容
+# The tint of an agent's cards in Ask. None keeps the plain material.
+settings-agent-colour = 颜色
+settings-agent-colour-none = 无
+settings-agent-colour-red = 红色
+settings-agent-colour-orange = 橙色
+settings-agent-colour-amber = 琥珀色
+settings-agent-colour-yellow = 黄色
+settings-agent-colour-lime = 青柠色
+settings-agent-colour-green = 绿色
+settings-agent-colour-teal = 青绿色
+settings-agent-colour-cyan = 青色
+settings-agent-colour-blue = 蓝色
+settings-agent-colour-indigo = 靛蓝色
+settings-agent-colour-violet = 紫罗兰色
+settings-agent-colour-magenta = 洋红色
 
 
 ## Settings — choices

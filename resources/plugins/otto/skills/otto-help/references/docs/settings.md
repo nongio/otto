@@ -25,6 +25,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Sound | Interface sounds on or off, and which sound theme to use |
 | Power | What the lid switch and the power button do |
 | Lock & Login | Auto-lock timeout, and which lock screen and greeter to run |
+| Agents | The default agent for Ask, and each agent's name, harness, command, permissions, model, folder and colour |
 
 ## How it works
 
@@ -63,6 +64,39 @@ per-display value.
 The Keyboard pane lists the configured shortcuts and lets you add and remove
 them. It edits the same `[keyboard_shortcuts]` table the config file has, so
 anything you bind here is a normal entry you can also read and edit by hand.
+
+## Agents
+
+The Agents pane edits `~/.config/otto/agents.toml`, the file behind Ask. The
+agent service only reads it when it starts, so changes here wait: press
+**Apply** to save them and restart the service, or **Revert** to drop them.
+Both stay greyed out until there is something to save. The **Agent service**
+row at the top says whether the service is running, with **Start** or
+**Restart**.
+Apply also runs `otto-agents plugins install`, which gives every harness
+other than Claude Code its own copy of the instructions. Hermes is the one it
+can't finish: it needs a profile for each set of instructions, and the pane
+tells you the `hermes profile create` line to run.
+Only the keys you changed are written, so your comments and anything the pane
+doesn't show stay put. An empty model means the agent's own default, and an empty folder means Ask
+starts its sessions in a scratch folder, `~/.local/state/otto/ask`. **New agent** adds
+one on Claude Code, and each agent's **Rename** and **Remove** buttons do what
+they say; nothing is written until you apply.
+
+Picking another **Harness** (Claude Code, Codex, OpenCode, Hermes or pi) sets
+the agent up for it: the command, how it finds Otto's instructions, and how
+`Ctrl+O` continues a session in a terminal. It also clears the model, since
+each harness names models differently.
+The **Command** field changes the command alone.
+
+**Instructions** picks who the agent is. **Default** runs the harness as
+itself (Claude Code as plain Claude Code), **otto** is Otto's own, and below
+that are the agent files you've added under
+`~/.local/share/otto/plugins/<plugin>/agents/` (see
+[Add an agent of your own](agents.md#add-an-agent-of-your-own)). **Open** next
+to **Instructions file** opens the one in use, and **Open** next to
+**Configuration file** opens `agents.toml` itself.
+See [Ask and Agents](agents.md) for what each setting does.
 
 ## From the keyboard
 

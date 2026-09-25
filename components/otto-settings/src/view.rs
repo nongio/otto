@@ -542,8 +542,8 @@ pub struct TextHit {
     pub local_x: f32,
 }
 
-/// A push button the pointer landed on. Both halves are labels: the row's,
-/// and the button's within it.
+/// A push button the pointer landed on: the row's handle (see
+/// [`crate::model::Row::handle`]) and the button's label within it.
 pub struct ButtonHit {
     pub row: &'static str,
     pub button: &'static str,
@@ -1476,12 +1476,15 @@ impl Settings {
         let Control::Button(labels) = &row.control else {
             return None;
         };
+        if row.inactive {
+            return None;
+        }
 
         widgets::button_rects(rect.right - 14.0, rect.center_y(), labels)
             .into_iter()
             .position(|button| button.contains(local))
             .map(|index| ButtonHit {
-                row: row.label,
+                row: row.handle(),
                 button: labels[index],
             })
     }
@@ -2213,8 +2216,8 @@ impl Settings {
             Control::Button(labels) => {
                 let held = labels
                     .iter()
-                    .position(|button| self.button_pressed(row.label, button));
-                widgets::buttons(canvas, right, cy, labels, held, &self.theme)
+                    .position(|button| self.button_pressed(row.handle(), button));
+                widgets::buttons(canvas, right, cy, labels, held, !row.inactive, &self.theme)
             }
             Control::File(value) => widgets::file_field(
                 canvas,

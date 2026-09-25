@@ -5756,6 +5756,7 @@ dependencies = [
  "serde",
  "skia-safe",
  "smithay-client-toolkit",
+ "toml_edit 0.22.27",
  "xcursor",
  "zbus 4.4.0",
 ]

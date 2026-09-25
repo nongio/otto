@@ -32,6 +32,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "sound" => sound(canvas, &paint),
         "battery" => battery(canvas, &paint),
         "lock" => lock(canvas, &paint),
+        "agent" => agent(canvas, &paint),
         _ => {
             canvas.draw_circle(Point::new(0.0, 0.0), 2.5, &paint);
         }
@@ -143,4 +144,16 @@ fn lock(canvas: &Canvas, paint: &Paint) {
     canvas.draw_rrect(RRect::new_rect_xy(body, 2.0, 2.0), paint);
     let shackle = Rect::from_ltrb(-3.5, -6.5, 3.5, 0.5);
     canvas.draw_arc(shackle, 180.0, 180.0, false, paint);
+}
+
+/// A four-pointed spark.
+fn agent(canvas: &Canvas, paint: &Paint) {
+    let mut spark = PathBuilder::new();
+    spark.move_to(Point::new(0.0, -7.0));
+    spark.quad_to(Point::new(1.0, -1.0), Point::new(7.0, 0.0));
+    spark.quad_to(Point::new(1.0, 1.0), Point::new(0.0, 7.0));
+    spark.quad_to(Point::new(-1.0, 1.0), Point::new(-7.0, 0.0));
+    spark.quad_to(Point::new(-1.0, -1.0), Point::new(0.0, -7.0));
+    spark.close();
+    canvas.draw_path(&spark.detach(), paint);
 }

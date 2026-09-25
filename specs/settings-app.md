@@ -80,7 +80,9 @@ D-Bus client that reads a described schema, sets values, and observes changes.
 ### Configuration ownership
 
 The compositor owns the writable configuration file. It is the only process
-that writes it. The app never reads or writes configuration files.
+that writes it. The app never reads or writes the compositor's configuration
+files. The one file it does write is `agents.toml`, whose owner, the
+otto-agents service, serves no settings interface (see [Agents](#agents)).
 
 The compositor's in-memory configuration is mutable at runtime. When a value
 changes — from any source — the compositor must, in this order:
@@ -477,6 +479,75 @@ chooses whether to reassign it. Reassigning clears the previous binding. A
 combination that cannot be bound is rejected with a reason.
 
 Shortcuts can be reset individually and as a group.
+
+### Agents
+
+The agents pane edits `agents.toml`, the file the otto-agents service reads
+when it starts. It shows the default agent, then one group per configured
+agent, titled with its name, holding its harness, command, permission policy,
+model, folder and colour. Everything else in an agent's block is edited by hand.
+
+Each group is titled with the agent's id (`id: review`) and opens with a row
+labelled with its name, carrying Rename and Remove. The row is keyed by an
+identifier rather than its label, since an unsaved agent's id follows its
+name. Rename turns that row into a field holding the name until it is
+committed or left. New agent, under the list, appends an agent on Claude Code
+with permissions `ask` and opens its name. An agent not yet saved takes its id
+from its name, kept unique; a saved one keeps its id, since its sessions are
+filed under it. Removing the default agent clears `default_agent`, because the
+service refuses a default that is not configured. The pane holds at most 32
+agents, the number of pop-up menus made when the window opens.
+
+Instructions is a pop-up of the agent files in Otto's plugins, found the way
+the service finds them: `$XDG_DATA_HOME/otto/plugins/<plugin>/agents/*.md`
+first, then `/usr/share/otto/plugins/`, known by the `name` in each file's
+frontmatter. Default comes first and names none, so the harness runs as
+itself; then Otto's own, `otto`; then the rest. Picking one rewrites the route
+the agent's harness takes to its instructions (see below), and Default writes
+no route at all. An agent on a command the pane does not recognise has no
+route it knows, and the pick is ignored. When the named file exists, an
+Instructions file row shows its path with Open; when it does not, the pop-up's
+note says where agent files go. A Configuration file row opens `agents.toml` the same way, handing
+both to `xdg-open`.
+
+The harness is recognised from the command (Claude Code, Codex, OpenCode,
+Hermes, pi, or Custom for anything else). Picking another one sets the whole
+harness up, not just the command: the command and arguments, the route that
+points it at its plugin agent (`skills` and `agent`, or the harness's
+environment variable or profile), the `enter` commands and Codex's
+`collaboration_mode`. It clears what the old harness left and the model, whose
+names differ from one harness to the next, and keeps the plugin agent the block
+ran as. The command field underneath edits the command and arguments alone, as
+one shell-quoted line.
+
+The pane opens with an Agent service row saying whether the service is
+running, stopped, stopped after an error, or not installed, with Start when it
+is down and Restart when it is up. The state comes from `systemctl --user
+show`, asked every five seconds on a thread of its own so the draw path never
+runs a process, and the window is woken when it changes. Without `systemctl`
+the row says it cannot tell, and nothing is asked again; neither that nor a
+missing `otto-agents` stops the pane working.
+
+Because the service serves no settings interface and only reads the file at
+startup, the pane holds changes rather than applying them as they are made.
+Apply writes them, runs `otto-agents plugins install` so every harness
+other than Claude Code has its copy of the instructions its agents now name,
+then runs `systemctl --user try-restart otto-agents`, so the service reads
+them and a stopped service stays stopped. The installer leaves Hermes profiles
+for Hermes to make; an agent on Hermes whose profile is missing says so under
+its Instructions pop-up, with the `hermes profile create` line to run. Revert throws the held
+changes away and reads the files again. Both are dimmed, and take no press,
+while nothing is held. One Apply costs one restart however
+many values changed, since a restart ends whatever the agents were doing.
+
+The files are read the way the service reads them: `/etc/otto/agents.toml`
+then the user's, each top-level key from the last file that sets it and the
+agent list from the last file that lists any. Apply always writes the user's
+file, and writes only the keys that changed, leaving comments and every other
+key as they were. An empty model or folder, or a colour of None, removes the
+key. When the agent list came from the system file, the first change to an
+agent copies that list into the user's file, since a user file that lists
+agents replaces the system list.
 
 ### Displays
 

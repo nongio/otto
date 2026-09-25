@@ -40,7 +40,9 @@ installed and logged in, and answers as **Otto** whichever one is underneath.
 ![An answer in the Ask panel: two paragraphs about the dock, a link to the documentation, and the skill it loaded to answer](images/ask-answer.jpg)
 
 Agents are configured in `~/.config/otto/agents.toml`, one `[[agents]]` block
-each. See [Configuration](configuration.md) for where that sits. Two settings
+each. The Agents pane in [Settings](settings.md) edits the everyday ones
+(default agent, name, harness, permissions, model, folder, colour) and restarts the service
+for you. See [Configuration](configuration.md) for where that sits. Two settings
 there are worth knowing before you start: `permissions`, which decides how an
 agent's requests are answered and is **`deny` unless you set it**, and
 `folder`, which says where that agent's sessions start. To put an agent of

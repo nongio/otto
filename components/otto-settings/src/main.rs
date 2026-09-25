@@ -39,7 +39,7 @@ use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
 use otto_kit::protocols::otto_surface_style_v1;
 use otto_kit::CursorShape;
-use panes::{displays, keyboard};
+use panes::{agents, displays, keyboard};
 use smithay_client_toolkit::reexports::client::protocol::{wl_keyboard, wl_surface};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
@@ -369,6 +369,9 @@ fn select_ids() -> Vec<&'static str> {
     // later would find no menu made. Adding them unconditionally costs two
     // entries; `HashMap` collapses the duplicates.
     ids.extend_from_slice(displays::slot_ids());
+    // The Agents pane's pop-ups, for every agent it can hold: one added at
+    // runtime has to find its menus already made.
+    ids.extend(agents::slot_ids());
     ids
 }
 
@@ -538,7 +541,10 @@ fn open_menu(
     // own probe rather than from the settings schema, which serves no
     // per-output mode. Checked before the schema so a future setting of the
     // same name could not quietly take the row over.
-    let display_slot = displays::menu_choices(select.id);
+    // The Agents pane's pop-ups edit `agents.toml`, which the pane holds
+    // itself, so they are answered the same way.
+    let display_slot =
+        displays::menu_choices(select.id).or_else(|| agents::menu_choices(select.id));
     let slot = keyboard::slot_index(select.id);
     let choices: Vec<discovery::Choice> = if let Some(values) = display_slot {
         values
@@ -610,6 +616,8 @@ fn open_menu(
             if let Some(value) = values.get(index) {
                 if displays::menu_choices(id).is_some() {
                     displays::choose(id, value);
+                } else if agents::owns(id) {
+                    agents::choose(id, value);
                 } else {
                     match slot {
                         Some(line) => keyboard::set_action(line, value.clone()),
@@ -664,7 +672,9 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
 }
 
 /// Do what a button does, once it has been both pressed and released on.
-fn activate(held: view::Pressed) {
+///
+/// `editing` is for the one button that opens a field: an agent's Rename.
+fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
     match held {
         // Push buttons belong to the pane that drew them, and a row label is
         // unique within one, so both are offered the press and only the owner
@@ -672,6 +682,17 @@ fn activate(held: view::Pressed) {
         view::Pressed::Button { row, button } => {
             panes::displays::press(row, button);
             panes::general::press(row, button);
+            panes::agents::press(row, button);
+            if let Some((id, name)) = agents::take_rename() {
+                start_edit(
+                    editing,
+                    EditTarget::Setting(id),
+                    name,
+                    f32::MAX,
+                    widgets::TEXT_W,
+                    current_color_scheme() == ColorScheme::Dark,
+                );
+            }
         }
         view::Pressed::Choose(id) => open_file_picker(id),
         // An empty path is what "no file" is in the schema, so clearing the
@@ -1004,6 +1025,7 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
         return false;
     };
     match edit.target {
+        EditTarget::Setting(id) if agents::owns(id) => agents::commit_text(id, edit.input.value()),
         EditTarget::Setting(id) => apply(id, settings_client::text_for(id, edit.input.value())),
         // Trimmed because the compositor's trigger parser splits on `+` and
         // trims each part, so surrounding space is noise either way — better
@@ -1038,6 +1060,8 @@ fn start_edit(
 /// Stop editing without sending anything — Escape, and a keyboard focus lost
 /// to another window.
 fn cancel_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
+    // An agent being renamed shows its buttons again.
+    agents::stop_renaming();
     editing.lock().unwrap().take().is_some()
 }
 
@@ -1331,16 +1355,16 @@ impl SettingsApp {
                 let Some(button) = focused.button.or_else(|| labels.first().copied()) else {
                     return false;
                 };
-                // Keyed by label, not by `handle()`: `Pressed::Button` is a
-                // label everywhere else — `view::button_hit` builds one from
-                // `row.label`, `released_on` compares against that, the panes'
-                // `press` handlers match on labels, and the pressed state is
-                // drawn from `row.label`. A `handle()` here would agree with
-                // all of them only for as long as no button row has an id.
-                activate(view::Pressed::Button {
-                    row: focused.label,
-                    button,
-                });
+                // Keyed by the row's handle, as `view::button_hit` keys a
+                // click: the label for most button rows, and the identifier
+                // for the Agents pane's, whose labels repeat per agent.
+                activate(
+                    view::Pressed::Button {
+                        row: focused.id.unwrap_or(focused.label),
+                        button,
+                    },
+                    &self.editing,
+                );
             }
             // A text field takes the keyboard rather than doing something: the
             // press opens an editing session on it, and the next keys are
@@ -1936,7 +1960,7 @@ impl App for SettingsApp {
                             );
                             let offset = pane_offset(&pane);
                             if released_on(&settings, held, x, y, offset) {
-                                activate(held);
+                                activate(held, &editing_hit);
                                 sync_key_capture(&capture_surface);
                             }
                             redraw.request_frame();
@@ -2128,7 +2152,7 @@ impl App for SettingsApp {
         self.declare_focusables();
         self.scroll_focus_into_view();
 
-        if settings_client::take_dirty() {
+        if settings_client::take_dirty() | agents::take_service_dirty() {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);
         }

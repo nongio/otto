@@ -71,6 +71,7 @@ settings-pane-pointing = Trackpad & Mouse
 settings-pane-sound = Sound
 settings-pane-power = Power
 settings-pane-lock-and-login = Lock & Login
+settings-pane-agents = Agents
 
 
 ## Settings — General
@@ -241,6 +242,93 @@ settings-group-login = Login
 settings-greeter = Greeter
 settings-greeter-detail = Applies at the next login
 settings-greeter-arguments = Greeter arguments
+
+
+## Settings — Agents
+##
+## The agents Ask sends requests to, read from agents.toml. Changes wait for
+## Apply, which saves the file and restarts the agent service.
+
+settings-agents-intro = The agents Ask can hand a request to. Permissions decide what happens when one asks to do something, and its folder is everything it can read.
+settings-agents-default = Default agent
+settings-agents-default-detail = Who a request goes to when you don't pick one
+# The row holding the Revert and Apply buttons.
+settings-agents-changes = Changes
+settings-agents-revert = Revert
+settings-agents-apply = Apply
+settings-agents-saved = Everything is saved
+settings-agents-unsaved = Not saved yet. Apply writes agents.toml and restarts the agent service.
+# $error is the reason, as the system gives it.
+settings-agents-failed = Couldn't save: { $error }
+# The otto-agents service, which runs the agents; the row shows whether it is
+# up, with Start or Restart.
+settings-agents-service = Agent service
+settings-agents-service-checking = Checking…
+settings-agents-service-running = Running
+settings-agents-service-stopped = Stopped. Ask can't reach any agent until it starts.
+settings-agents-service-failed = Stopped after an error. journalctl --user -u otto-agents says why.
+settings-agents-service-missing = Not installed
+# The system has no systemctl, so the app can't tell whether the service runs.
+settings-agents-service-unmanaged = Can't tell: this system has no systemctl
+settings-agents-start = Start
+settings-agents-restart = Restart
+# The row that opens agents.toml. Its path is shown under it.
+settings-agents-file = Configuration file
+settings-agents-none = No agents set up
+settings-agents-none-detail = Add them to { $path }. The Ask and Agents guide shows how.
+# Titles an agent's section. $id is how agents.toml and the agent's sessions
+# know it, such as claude.
+settings-agent-id = id: { $id }
+# The field that replaces that row while the agent is being renamed.
+settings-agent-name = Name
+settings-agents-rename = Rename
+# The row under the list of agents, holding its Add button.
+settings-agents-add = New agent
+# What an agent is called until it is renamed.
+settings-agents-new-name = New agent
+# The program an agent runs on: Claude Code, Codex, OpenCode and so on.
+settings-agent-harness = Harness
+# A harness Settings doesn't recognise, set up by its command alone.
+settings-agent-harness-custom = Custom
+settings-agent-command = Command
+# Which agent file the agent runs as: who it is and how it answers.
+settings-agent-instructions = Instructions
+# No instructions from Otto: the harness runs as itself, Claude Code as
+# Claude Code and so on.
+settings-agent-instructions-default = Default
+settings-agent-instructions-detail = Agent files live in ~/.local/share/otto/plugins/<plugin>/agents/
+# $name is the agent file the agent names, which wasn't found.
+settings-agent-instructions-missing = No agent file named { $name }. Put it in ~/.local/share/otto/plugins/<plugin>/agents/
+# $name is the agent file; Hermes runs it in a profile of that name, which
+# Hermes has to make.
+settings-agent-instructions-hermes = Hermes needs a profile for this: run hermes profile create { $name }
+# The row that opens the agent file. Its path is shown under it.
+settings-agent-instructions-file = Instructions file
+settings-agent-permissions = Permissions
+settings-agent-permissions-deny = Always refuse
+settings-agent-permissions-ask = Ask me
+settings-agent-permissions-allow = Always allow
+settings-agent-model = Model
+settings-agent-folder = Folder
+# Under an agent's Folder when none is set. $path is Ask's scratch folder,
+# such as ~/.local/state/otto/ask.
+settings-agent-folder-unset = Not set: sessions start in { $path }, a scratch folder
+settings-agent-folder-detail = The agent can read everything in it
+# The tint of an agent's cards in Ask. None keeps the plain material.
+settings-agent-colour = Colour
+settings-agent-colour-none = None
+settings-agent-colour-red = Red
+settings-agent-colour-orange = Orange
+settings-agent-colour-amber = Amber
+settings-agent-colour-yellow = Yellow
+settings-agent-colour-lime = Lime
+settings-agent-colour-green = Green
+settings-agent-colour-teal = Teal
+settings-agent-colour-cyan = Cyan
+settings-agent-colour-blue = Blue
+settings-agent-colour-indigo = Indigo
+settings-agent-colour-violet = Violet
+settings-agent-colour-magenta = Magenta
 
 
 ## Settings — choices

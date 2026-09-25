@@ -18,7 +18,7 @@ pub const SELECT_W: f32 = 176.0;
 pub const CONTROL_H: f32 = 24.0;
 
 /// One size for every control's own text — a readout, a field's value, a
-/// keycap, a button's label.
+/// keycap, a button's label (set a weight heavier, see `BUTTON_TEXT`).
 ///
 /// The same size as the pop-up button's label, the menu it drops, and the row
 /// label beside it: a control's value is content, not an annotation of it, and
@@ -226,6 +226,11 @@ fn elide_head(text: &str, style: otto_kit::typography::TextStyle, width: f32) ->
     "…".to_string()
 }
 
+/// A push button's label: the size of every other control's text, so a row's
+/// button and the field beside it read at the same size, and a step heavier,
+/// so the button reads as something to press rather than as more text.
+const BUTTON_TEXT: TextStyle = styles::BODY_MEDIUM;
+
 /// Horizontal padding inside a push button, and the gap between two of them.
 const BUTTON_PAD: f32 = 12.0;
 const BUTTON_GAP: f32 = 8.0;
@@ -236,7 +241,7 @@ const BUTTON_GAP: f32 = 8.0;
 /// get the same box as "Remove". Drawing and hit-testing both come through
 /// here so a press can never land on the button next door.
 pub fn button_rects(right: f32, cy: f32, labels: &[&str]) -> Vec<Rect> {
-    let style = styles::SUBHEADLINE;
+    let style = BUTTON_TEXT;
     let widths: Vec<f32> = labels
         .iter()
         .map(|label| style.font().measure_str(label, None).0 + BUTTON_PAD * 2.0)
@@ -261,9 +266,10 @@ pub fn buttons(
     cy: f32,
     labels: &[&str],
     pressed: Option<usize>,
+    enabled: bool,
     theme: &Theme,
 ) {
-    let style = styles::SUBHEADLINE;
+    let style = BUTTON_TEXT;
     for (index, (label, rect)) in labels
         .iter()
         .zip(button_rects(right, cy, labels))
@@ -279,7 +285,11 @@ pub fn buttons(
             rect.center_x() - width / 2.0,
             cy,
             style,
-            theme.text_primary,
+            if enabled {
+                theme.text_primary
+            } else {
+                theme.text_tertiary
+            },
         );
     }
 }
@@ -370,13 +380,13 @@ pub fn file_field(
     canvas.draw_rrect(brrect, &fill(button_fill(pressed, theme)));
     canvas.draw_rrect(brrect, &stroke(theme.fill_secondary, 1.0));
     let label = otto_kit::t!("settings-choose");
-    let label_w = style.font().measure_str(label, None).0;
+    let label_w = BUTTON_TEXT.font().measure_str(label, None).0;
     text_centered_y(
         canvas,
         label,
         button.center_x() - label_w / 2.0,
         cy,
-        style,
+        BUTTON_TEXT,
         theme.text_primary,
     );
 }
@@ -402,7 +412,7 @@ pub fn field_box(canvas: &Canvas, rect: Rect, value: &str, placeholder: &str, th
         text,
         rect.left + 9.0,
         rect.center_y(),
-        styles::SUBHEADLINE,
+        CONTROL_TEXT,
         color,
     );
     canvas.restore();
@@ -471,7 +481,7 @@ pub fn listening_field(canvas: &Canvas, rect: Rect, held: &str, prompt: &str, th
         text,
         rect.left + 9.0,
         rect.center_y(),
-        styles::SUBHEADLINE,
+        CONTROL_TEXT,
         color,
     );
     canvas.restore();
