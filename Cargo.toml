@@ -29,7 +29,6 @@ tokio = { version = "1", features = ["full"] }
 accesskit = "0.24"
 accesskit_unix = "0.22"
 fps_ticker = { version = "1.0.0", optional = true }
-xdgkit = "3.2.5"
 freedesktop-icons = "0.2.4"
 freedesktop-desktop-entry = "0.7.5"
 sd-notify = "0.4"
