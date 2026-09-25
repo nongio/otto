@@ -3029,10 +3029,10 @@ pub(super) fn render_output_frame<'a>(
             | smithay::backend::drm::compositor::FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY
             | smithay::backend::drm::compositor::FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT
     };
-    // Single CPU wait for every plane buffer rendered above. The per-plane
-    // renders submit without blocking, so this is the one point where the GPU
-    // is guaranteed to have finished writing them — required because the
-    // atomic commit will not wait for offscreen EGLImage targets itself.
+    // Fence every plane buffer rendered above. The atomic commit does not wait
+    // for offscreen EGLImage targets by itself, so the frame's GPU fence is
+    // attached to each plane dmabuf and the kernel waits for it; the CPU only
+    // blocks when that fails.
     let plane_sync_t = std::time::Instant::now();
     renderer.as_mut().flush_planes_for_scanout();
     crate::render_phase_stats::record_plane_sync(plane_sync_t.elapsed());

@@ -950,6 +950,8 @@ impl SceneDmabufElement {
             ss.last_commit.set(Some(inner.commit_counter));
         }
 
+        renderer.note_scanout_write(&dmabuf);
+
         // Store the node-tagged dmabuf for underlying_storage().
         inner.current_slot_id = slot.userdata().get::<SlotSurface>().map(|s| s.id);
         *self.current_dmabuf.lock().unwrap() = Some(dmabuf);
