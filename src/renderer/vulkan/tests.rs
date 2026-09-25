@@ -244,4 +244,56 @@ fn vulkan_gbm_dmabuf_renders_and_imports_back() {
     ] {
         assert_eq!(pixel(&data, x, y), [255, 0, 0, 255], "red at {x},{y}");
     }
+
+    // The screenshare path: copy the frame just rendered (the offscreen
+    // target, green and red) into another dmabuf and read that back.
+    let second = allocator
+        .create_buffer(SIZE as u32, SIZE as u32, Fourcc::Argb8888, &modifiers)
+        .expect("gbm buffer");
+    let second = second.export().expect("export dmabuf");
+    renderer
+        .blit_current_frame(&second, full(), full())
+        .expect("blit current frame");
+    let copied = renderer
+        .import_dmabuf(&second, None)
+        .expect("import copied dmabuf");
+    let mut readback = renderer
+        .create_buffer(Fourcc::Abgr8888, (SIZE, SIZE).into())
+        .expect("offscreen target");
+    let sync = {
+        let mut frame = renderer
+            .render(&mut readback, (SIZE, SIZE).into(), Transform::Normal)
+            .expect("frame");
+        frame
+            .render_texture_from_to(
+                &copied,
+                Rectangle::from_size((SIZE as f64, SIZE as f64).into()),
+                full(),
+                &[full()],
+                &[],
+                Transform::Normal,
+                1.0,
+            )
+            .expect("render texture");
+        frame.finish().expect("finish")
+    };
+    sync.wait().expect("sync point signals");
+    let mapping = renderer
+        .copy_framebuffer(
+            &readback,
+            Rectangle::from_size((SIZE, SIZE).into()),
+            Fourcc::Abgr8888,
+        )
+        .expect("copy framebuffer");
+    let data = renderer.map_texture(&mapping).expect("map").to_vec();
+    assert_eq!(
+        pixel(&data, SIZE / 4, SIZE / 2),
+        [0, 255, 0, 255],
+        "copied green"
+    );
+    assert_eq!(
+        pixel(&data, SIZE * 3 / 4, SIZE / 2),
+        [255, 0, 0, 255],
+        "copied red"
+    );
 }

@@ -415,6 +415,22 @@ impl SkiaVkRenderer {
         &mut self,
         target: &SkiaVkTarget,
     ) -> Result<SyncPoint, SkiaVkError> {
+        self.flush_target(target);
+        self.ctx().flush_and_submit();
+        let sync = match self.sync_pool.signal(&self.device, self.sync_fd)? {
+            Some(sync) => SyncPoint::from(sync),
+            None => SyncPoint::signaled(),
+        };
+        self.reap();
+        Ok(sync)
+    }
+
+    /// Flushes what was drawn into, or read from, `target`.
+    ///
+    /// A dmabuf target is released to the foreign queue family in `GENERAL`
+    /// layout, where KMS and other devices expect it, whatever Skia last
+    /// used it for.
+    fn flush_target(&mut self, target: &SkiaVkTarget) {
         let mut surface = target.skia_surface.surface.clone();
         let ctx = self.ctx();
         if target.is_dmabuf() {
@@ -430,13 +446,6 @@ impl SkiaVkRenderer {
         } else {
             ctx.flush_surface(&mut surface);
         }
-        ctx.flush_and_submit();
-        let sync = match self.sync_pool.signal(&self.device, self.sync_fd)? {
-            Some(sync) => SyncPoint::from(sync),
-            None => SyncPoint::signaled(),
-        };
-        self.reap();
-        Ok(sync)
     }
 
     /// Destroys retired memory the GPU is done with.
@@ -730,6 +739,8 @@ impl SkiaVkRenderer {
         to_surface
             .canvas()
             .draw_image_rect_with_sampling_options(&image, None, dst_rect, sampling, &paint);
+        // The snapshot read the source; hand a dmabuf source back.
+        self.flush_target(from);
         Ok(())
     }
 
@@ -1081,7 +1092,11 @@ impl ExportMem for SkiaVkRenderer {
         let row_bytes = info.min_row_bytes();
         let mut data = vec![0u8; row_bytes * region.size.h.max(0) as usize];
         let mut surface = target.skia_surface.surface.clone();
-        if !surface.read_pixels(&info, &mut data, row_bytes, (region.loc.x, region.loc.y)) {
+        let read = surface.read_pixels(&info, &mut data, row_bytes, (region.loc.x, region.loc.y));
+        // The read-back moved a dmabuf target out of the foreign queue family.
+        self.flush_target(target);
+        self.ctx().submit(None);
+        if !read {
             return Err(SkiaVkError::Readback);
         }
         Ok(SkiaVkMapping {
