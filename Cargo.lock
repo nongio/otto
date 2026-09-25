@@ -332,7 +332,7 @@ checksum = "e149dc73cd30538307e7ffa2acd3d2221148eaeed4871f246657b1c3eaa1cbd2"
 
 [[package]]
 name = "apps-manager"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "wayland-client",
  "wayland-protocols",
@@ -5214,7 +5214,7 @@ checksum = "e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1"
 
 [[package]]
 name = "otto"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -5271,7 +5271,7 @@ dependencies = [
 
 [[package]]
 name = "otto-agents"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "agent-client-protocol",
  "ahp",
@@ -5299,7 +5299,7 @@ dependencies = [
 
 [[package]]
 name = "otto-agents-client"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "ahp",
  "ahp-types",
@@ -5312,7 +5312,7 @@ dependencies = [
 
 [[package]]
 name = "otto-auth-ui"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "laye-rs",
@@ -5326,7 +5326,7 @@ dependencies = [
 
 [[package]]
 name = "otto-bar"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "futures-util",
@@ -5345,7 +5345,7 @@ dependencies = [
 
 [[package]]
 name = "otto-emoji"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "laye-rs",
  "memfd",
@@ -5363,7 +5363,7 @@ dependencies = [
 
 [[package]]
 name = "otto-files"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "khronos-egl",
  "laye-rs",
@@ -5386,7 +5386,7 @@ dependencies = [
 
 [[package]]
 name = "otto-greeter"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "otto-auth-ui",
@@ -5403,7 +5403,7 @@ dependencies = [
 
 [[package]]
 name = "otto-input-overlay"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "libc",
  "otto-kit",
@@ -5417,7 +5417,7 @@ dependencies = [
 
 [[package]]
 name = "otto-islands"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "libc",
  "otto-kit",
@@ -5435,7 +5435,7 @@ dependencies = [
 
 [[package]]
 name = "otto-kit"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -5471,7 +5471,7 @@ dependencies = [
 
 [[package]]
 name = "otto-launcher"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "ahp",
  "ahp-types",
@@ -5497,7 +5497,7 @@ dependencies = [
 
 [[package]]
 name = "otto-lock"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "libc",
@@ -5513,7 +5513,7 @@ dependencies = [
 
 [[package]]
 name = "otto-md-kit"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
@@ -5523,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "otto-media-kit"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "gstreamer",
  "gstreamer-app",
@@ -5535,7 +5535,7 @@ dependencies = [
 
 [[package]]
 name = "otto-msg"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "serde_json",
  "zbus 4.4.0",
@@ -5543,7 +5543,7 @@ dependencies = [
 
 [[package]]
 name = "otto-peek"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "laye-rs",
  "libc",
@@ -5559,7 +5559,7 @@ dependencies = [
 
 [[package]]
 name = "otto-rdp"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5591,7 +5591,7 @@ dependencies = [
 
 [[package]]
 name = "otto-settings"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "otto-kit",
  "serde",
@@ -5604,7 +5604,7 @@ dependencies = [
 
 [[package]]
 name = "otto-stash"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "otto-kit",
@@ -10310,7 +10310,7 @@ checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
 
 [[package]]
 name = "xdg-desktop-portal-otto"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "async-io",
