@@ -91,6 +91,7 @@ where
         _dst: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
         _damage: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <R as smithay::backend::renderer::RendererSuper>::Error> {
         Ok(())
     }

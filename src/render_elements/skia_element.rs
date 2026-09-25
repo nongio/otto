@@ -74,6 +74,7 @@ impl RenderElement<SkiaRenderer> for SkiaElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _opaque_regions: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <SkiaRenderer as RendererSuper>::Error> {
         let mut canvas = frame.skia_surface.clone();
         let canvas = canvas.canvas();
@@ -160,6 +161,7 @@ impl<'renderer> RenderElement<UdevRenderer<'renderer>> for SkiaElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), <UdevRenderer<'renderer> as RendererSuper>::Error> {
         RenderElement::<SkiaRenderer>::draw(
             self,

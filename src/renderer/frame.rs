@@ -6,7 +6,7 @@
 use layers::skia;
 use smithay::{
     backend::renderer::{gles::GlesError, sync::SyncPoint, Color32F, ContextId, Frame, Renderer},
-    utils::{Buffer, Physical, Rectangle, Transform},
+    utils::{Buffer, Physical, Rectangle, Size, Transform},
 };
 
 use super::{SkiaFrame, SkiaSync, SkiaTexture};
@@ -179,6 +179,10 @@ impl Frame for SkiaFrame<'_> {
     fn transformation(&self) -> Transform {
         // self.frame.transformation()
         Transform::Normal
+    }
+
+    fn output_size(&self) -> Size<i32, Physical> {
+        self.size
     }
     #[profiling::function]
     fn finish(self) -> Result<SyncPoint, Self::Error> {

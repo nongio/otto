@@ -81,17 +81,28 @@ pub fn get_surface_dmabuf_feedback(
     let builder = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), primary_formats);
     let render_feedback = builder
         .clone()
-        .add_preference_tranche(render_node.dev_id(), None, render_formats.clone())
+        .add_preference_tranche(
+            render_node.dev_id(),
+            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Sampling,
+            render_formats.clone(),
+            3u32..=6,
+        )
         .build()
         .unwrap();
 
     let scanout_feedback = builder
         .add_preference_tranche(
             surface.device_fd().dev_id().unwrap(),
-            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
+            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout,
             planes_formats,
+            4u32..=6,
         )
-        .add_preference_tranche(render_node.dev_id(), None, render_formats)
+        .add_preference_tranche(
+            render_node.dev_id(),
+            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Sampling,
+            render_formats,
+            3u32..=6,
+        )
         .build()
         .unwrap();
 
