@@ -26,7 +26,6 @@ use smithay::{
         winit::{self, WinitEvent, WinitGraphicsBackend},
         SwapBuffersError,
     },
-    delegate_dmabuf,
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -183,7 +182,6 @@ impl DmabufHandler for Otto<WinitData> {
         }
     }
 }
-delegate_dmabuf!(Otto<WinitData>);
 
 impl Backend for WinitData {
     fn seat_name(&self) -> String {

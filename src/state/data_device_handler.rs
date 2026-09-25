@@ -1,5 +1,4 @@
 use smithay::{
-    delegate_data_control, delegate_data_device, delegate_ext_data_control,
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction,
     wayland::selection::{
         data_device::{DataDeviceHandler, DataDeviceState},
@@ -60,7 +59,3 @@ impl<BackendData: Backend> ExtDataControlHandler for Otto<BackendData> {
         &mut self.ext_data_control_state
     }
 }
-
-delegate_data_device!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_data_control!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_ext_data_control!(@<BackendData: Backend + 'static> Otto<BackendData>);

@@ -11,7 +11,6 @@ use std::{
 
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::utils::RendererSurfaceState},
-    delegate_dmabuf,
     input::pointer::CursorImageStatus,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -80,7 +79,6 @@ impl DmabufHandler for Otto<HeadlessData> {
         notifier.failed();
     }
 }
-delegate_dmabuf!(Otto<HeadlessData>);
 
 /// Configuration for the headless compositor instance.
 pub struct HeadlessConfig {

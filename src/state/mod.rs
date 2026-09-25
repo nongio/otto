@@ -20,11 +20,6 @@ use smithay::{
         },
         utils::{RendererSurfaceState, RendererSurfaceStateUserData},
     },
-    delegate_compositor, delegate_cursor_shape, delegate_keyboard_shortcuts_inhibit,
-    delegate_layer_shell, delegate_output, delegate_pointer_gestures, delegate_presentation,
-    delegate_relative_pointer, delegate_shm, delegate_text_input_manager, delegate_viewporter,
-    delegate_virtual_keyboard_manager, delegate_xdg_dialog, delegate_xdg_foreign,
-    delegate_xdg_shell,
     desktop::{
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
@@ -465,7 +460,6 @@ pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
 pub mod session_lock_handler;
-pub mod virtual_keyboard_handler;
 pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
@@ -553,19 +547,13 @@ impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Otto<BackendData>
 
 impl<BackendData: Backend> XdgDialogHandler for Otto<BackendData> {}
 
+smithay::delegate_dispatch2!(@<BackendData: Backend + 'static> Otto<BackendData>);
+
 impl<BackendData: Backend> XdgForeignHandler for Otto<BackendData> {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
         &mut self.xdg_foreign_state
     }
 }
-
-delegate_compositor!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_output!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_shm!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_cursor_shape!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_text_input_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_keyboard_shortcuts_inhibit!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_virtual_keyboard_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 // wlr-virtual-pointer-unstable-v1 delegates. Hand-rolled because Smithay
 // doesn't ship a virtual-pointer module; the impls live in
@@ -585,13 +573,6 @@ smithay::reexports::wayland_server::delegate_dispatch!(
     [smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::server::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1: virtual_pointer::VirtualPointerUserData]
     => virtual_pointer::VirtualPointerManagerState
 );
-delegate_pointer_gestures!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_relative_pointer!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_viewporter!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_xdg_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_layer_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);
-smithay::delegate_session_lock!(@<BackendData: Backend + 'static> Otto<BackendData>);
-smithay::delegate_idle_inhibit!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibitHandler
     for Otto<BackendData>
@@ -604,9 +585,6 @@ impl<BackendData: Backend + 'static> smithay::wayland::idle_inhibit::IdleInhibit
         self.idle_inhibitors.remove(&surface);
     }
 }
-delegate_presentation!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_xdg_foreign!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_xdg_dialog!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 // Gamma control protocol delegation
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [

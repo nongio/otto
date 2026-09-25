@@ -1,6 +1,5 @@
 use smithay::{
     backend::input::TabletToolDescriptor,
-    delegate_seat, delegate_tablet_manager,
     desktop::{find_popup_root_surface, space::SpaceElement},
     input::{pointer::CursorImageStatus, SeatHandler, SeatState},
     reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
@@ -185,6 +184,3 @@ impl<BackendData: Backend> TabletSeatHandler for Otto<BackendData> {
         self.cursor_manager.set_cursor_image(image);
     }
 }
-
-delegate_seat!(@<BackendData: Backend + 'static> Otto<BackendData>);
-delegate_tablet_manager!(@<BackendData: Backend + 'static> Otto<BackendData>);

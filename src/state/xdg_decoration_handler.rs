@@ -1,5 +1,4 @@
 use smithay::{
-    delegate_kde_decoration, delegate_xdg_decoration,
     reexports::wayland_protocols::xdg::decoration::{
         self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
     },
@@ -102,7 +101,6 @@ impl<BackendData: Backend> XdgDecorationHandler for Otto<BackendData> {
         self.apply_decoration_mode(&toplevel, Mode::ServerSide);
     }
 }
-delegate_xdg_decoration!(@<BackendData: Backend + 'static> Otto<BackendData>);
 
 /// KDE's older server-decoration protocol, kept alive because it is the only
 /// one some toolkits look for. GTK never binds `xdg-decoration`, so apps built
@@ -141,4 +139,3 @@ impl<BackendData: Backend> KdeDecorationHandler for Otto<BackendData> {
         self.set_surface_decorated(surface, true);
     }
 }
-delegate_kde_decoration!(@<BackendData: Backend + 'static> Otto<BackendData>);

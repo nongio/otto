@@ -6,7 +6,6 @@ use crate::{
 };
 #[cfg(feature = "xwayland")]
 use smithay::{
-    delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
     desktop::{Window, WindowSurface},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::xwayland_keyboard_grab::XWaylandKeyboardGrabHandler,
@@ -121,9 +120,3 @@ impl<BackendData: Backend + 'static> XWaylandShellHandler for Otto<BackendData> 
         }
     }
 }
-
-#[cfg(feature = "xwayland")]
-delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> Otto<BackendData>);
-
-#[cfg(feature = "xwayland")]
-delegate_xwayland_shell!(@<BackendData: Backend + 'static> Otto<BackendData>);

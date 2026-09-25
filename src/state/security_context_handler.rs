@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use smithay::{
-    delegate_security_context,
-    wayland::security_context::{
-        SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
-    },
+use smithay::wayland::security_context::{
+    SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
 };
 
 use super::{Backend, ClientState, Otto};
@@ -31,4 +28,3 @@ impl<BackendData: Backend + 'static> SecurityContextHandler for Otto<BackendData
             .expect("Failed to init wayland socket source");
     }
 }
-delegate_security_context!(@<BackendData: Backend + 'static> Otto<BackendData>);
