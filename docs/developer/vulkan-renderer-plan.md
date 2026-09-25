@@ -1,6 +1,6 @@
 # Skia on Vulkan: plan
 
-Status: phases 1 and 2 done on 2026-09-25, on the `feat/vulkan-device` branch of the smithay fork and `try/smithay-latest` in Otto. Phase 3 onwards is not started.
+Status: phases 1 and 2 done on 2026-09-25, on the `feat/vulkan-device` branch of the smithay fork and `try/smithay-latest` in Otto. Phase 3 is implemented and passes its GPU tests; it has not run as a live session yet (see [Phase 3 status](#phase-3-status)).
 
 Otto draws with Skia's Ganesh backend on OpenGL ES through EGL. This plan
 moves the compositor's rendering to Ganesh on Vulkan while keeping Smithay's
@@ -203,6 +203,59 @@ chain on the Framework laptop's Iris Xe with ANV:
   into the device layer so `backend_vulkan` builds without
   `renderer_vulkan`, and the syncobj timeline types moved to
   `backend::drm::sync` with re-exports at the old path.
+
+## Phase 3 status
+
+`cargo build --features vulkan` builds the udev backend on
+`SkiaVkRenderer` (`src/renderer/vulkan/`). The choice is made at compile
+time, not in the config: the feature swaps the aliases in
+`src/renderer/active.rs` (renderer, texture, frame, graphics api), which the
+udev backend, the render elements and screenshare name instead of a
+renderer. winit and x11 stay on the GL `SkiaRenderer` in both builds. The
+drawing itself lives once, in `src/renderer/draw.rs` and the elements'
+canvas helpers, and both frames call it.
+
+What works, covered by the ignored GPU tests
+(`cargo test --features vulkan --lib -- --ignored vulkan`):
+
+- `GbmVulkanBackend` (`src/udev/vulkan_api.rs`) is the Smithay
+  `GraphicsApi`: one renderer per DRM node, on the physical device whose
+  render or primary node matches, created when the node is added so a
+  device Vulkan cannot drive fails `device_added` with a named error. Startup
+  logs one line naming the Vulkan device, driver and render node.
+- Frames draw into wrapped dmabufs (`Bind<Dmabuf>`, `GENERAL` layout,
+  foreign queue family) and Skia-owned offscreen targets. A swapchain slot
+  keeps its content between frames, so partial damage works.
+- Client dmabufs import with their explicit modifier; the Skia image is
+  re-wrapped on each import. SHM buffers upload into a per-surface texture
+  that later commits update in place; `import_memory` / `update_memory`
+  back the cursor and other memory buffers.
+- `finish()` returns a sync file from an empty submit after Skia's; it goes
+  to KMS as the in-fence. `wait()` imports a client's sync file as a
+  temporary semaphore payload, or waits on the CPU.
+- `ExportMem`, `Blit` and `BlitCurrentFrame` for screencopy and screenshare.
+  The screenshare copy attaches its fence to the destination dmabuf
+  (`DMA_BUF_IOCTL_IMPORT_SYNC_FILE`), or waits when the kernel cannot.
+- Dropped textures and targets retire their memory until nothing holds
+  their Skia image and the GPU has finished the frames that used it.
+- `wl_drm` is not offered: `MultiRenderer` gets `ImportEgl` through the
+  `EglImportUnsupported` marker added on the smithay fork, which reports it
+  as unsupported, so clients use `linux-dmabuf`.
+
+Not done:
+
+- Plane scanout. `planes_enabled` is forced off under the feature, so every
+  output composites a single `SceneElement`. The plane code compiles against
+  the Vulkan renderer (`create_surface_from_dmabuf`,
+  `flush_planes_for_scanout`) but is untested; phase 4.
+- Modifier intersection for the primary swapchain beyond what Smithay's
+  `DrmCompositor` already does with the renderer's colour-attachment formats.
+- Release barriers for sampled client dmabufs: Skia leaves them in its own
+  queue family after sampling; the next import acquires them again.
+- The `wait()` semaphore relies on in-order execution of submissions on one
+  queue, which ANV and RADV give but the spec does not promise.
+- Texture filters and debug flags are stored and ignored, as on GL.
+- Disjoint multi-plane dmabufs (NV12 video) are refused at import.
 
 ## Risks
 
