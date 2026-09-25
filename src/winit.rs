@@ -836,7 +836,7 @@ pub fn run_winit() {
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
-            state.workspaces.reap_closed_windows();
+            state.reap_closed_windows();
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();

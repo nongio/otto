@@ -1643,7 +1643,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
-    /// Strong handles on the textures of every surface in `surface`'s tree.
+    /// The last frame of a closing window: strong handles on the textures of
+    /// every surface in `surface`'s tree, and the surfaces themselves.
     ///
     /// Empty when no surface has a texture (never committed, already
     /// unmapped, or a backend without a renderer), so the caller can tell
@@ -1651,8 +1652,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     pub fn hold_surface_tree_textures(
         &self,
         surface: &WlSurface,
-    ) -> Vec<Box<dyn std::any::Any + Send>> {
-        let mut held = Vec::new();
+    ) -> crate::workspaces::ClosingFrame {
+        let mut held = crate::workspaces::ClosingFrame::default();
         if !surface.is_alive() {
             return held;
         }
@@ -1660,19 +1661,38 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             surface,
             (),
             |_, _, _| TraversalAction::DoChildren(()),
-            |_, states, _| {
+            |surface, states, _| {
+                held.surfaces.push(surface.id());
                 let Some(render_surface) = states.data_map.get::<RendererSurfaceStateUserData>()
                 else {
                     return;
                 };
                 let render_surface = render_surface.lock().unwrap();
                 if let Some(texture) = self.backend_data.hold_surface_texture(&render_surface) {
-                    held.push(texture);
+                    held.textures.push(texture);
                 }
             },
             |_, _, _| true,
         );
         held
+    }
+
+    /// Remove the layers of closed windows whose fade-out has ended, and
+    /// the last frames kept for their surfaces.
+    ///
+    /// Called once per event-loop iteration by the backends. A stored
+    /// texture is keyed by surface, and a client may have put a new window
+    /// on the same wl_surface within the fade: an entry is only dropped
+    /// when nothing live (a surface layer, a window view) is drawing it.
+    pub fn reap_closed_windows(&mut self) {
+        for surface_id in self.workspaces.reap_closed_windows() {
+            if self.surface_layers.contains_key(&surface_id)
+                || self.workspaces.get_window_view(&surface_id).is_some()
+            {
+                continue;
+            }
+            crate::textures_storage::remove(&surface_id);
+        }
     }
 
     pub fn cleanup_dnd_layers(&mut self, dnd_surface: &WlSurface) {

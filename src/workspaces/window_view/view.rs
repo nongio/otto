@@ -492,23 +492,25 @@ impl WindowView {
             )
     }
 
-    /// Fade the window out, shrinking slightly around its centre.
+    /// Fade the window out, with `shrink` a touch smaller around its centre.
     ///
     /// Meant for a window that has just closed: the layer stops taking
     /// pointer events at once and keeps drawing its last frame while the
     /// transition runs. The caller removes the layer once the returned
     /// transaction has finished.
-    pub fn fade_out(&self) -> TransactionRef {
+    pub fn fade_out(&self, shrink: bool) -> TransactionRef {
         self.window_layer.set_pointer_events(false);
-        self.window_layer
-            .set_anchor_point_preserving_position(Point { x: 0.5, y: 0.5 });
-        self.window_layer.set_scale(
-            Point {
-                x: CLOSE_FADE_SCALE,
-                y: CLOSE_FADE_SCALE,
-            },
-            Some(Transition::ease_out_quad(CLOSE_FADE)),
-        );
+        if shrink {
+            self.window_layer
+                .set_anchor_point_preserving_position(Point { x: 0.5, y: 0.5 });
+            self.window_layer.set_scale(
+                Point {
+                    x: CLOSE_FADE_SCALE,
+                    y: CLOSE_FADE_SCALE,
+                },
+                Some(Transition::ease_out_quad(CLOSE_FADE)),
+            );
+        }
         self.window_layer
             .set_opacity(0.0_f32, Some(Transition::ease_out_quad(CLOSE_FADE)))
     }

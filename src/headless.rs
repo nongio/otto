@@ -58,6 +58,17 @@ impl Backend for HeadlessData {
     fn texture_for_surface(&self, _surface: &RendererSurfaceState) -> Option<SkiaTextureImage> {
         None
     }
+    /// No renderer, so no texture to hold; a token stands in for the buffer
+    /// of a surface that has one, so a closing window fades out here the way
+    /// it does on a real backend and tests can watch it.
+    fn hold_surface_texture(
+        &self,
+        surface: &RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        surface
+            .buffer()
+            .map(|_| Box::new(()) as Box<dyn std::any::Any + Send>)
+    }
     fn set_cursor(&mut self, _image: &CursorImageStatus) {}
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext> {
         None
@@ -2157,6 +2168,7 @@ fn run_headless_loop(
             state.running.store(false, Ordering::SeqCst);
         } else {
             state.workspaces.refresh_space();
+            state.reap_closed_windows();
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
