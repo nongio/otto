@@ -183,6 +183,21 @@ fn vulkan_gbm_dmabuf_renders_and_imports_back() {
     };
     sync.wait().expect("sync point signals");
 
+    // A second frame damages only the left half: the right half keeps the
+    // red of the first, as a reused swapchain slot must.
+    let mut framebuffer = renderer.bind(&mut dmabuf).expect("bind dmabuf again");
+    let sync = {
+        let mut frame = renderer
+            .render(&mut framebuffer, (SIZE, SIZE).into(), Transform::Normal)
+            .expect("frame");
+        let left = Rectangle::from_size((SIZE / 2, SIZE).into());
+        frame
+            .draw_solid(left, &[left], Color32F::new(0.0, 1.0, 0.0, 1.0))
+            .expect("draw solid");
+        frame.finish().expect("finish")
+    };
+    sync.wait().expect("sync point signals");
+
     let texture = renderer
         .import_dmabuf(&dmabuf, None)
         .expect("import dmabuf");
@@ -219,7 +234,14 @@ fn vulkan_gbm_dmabuf_renders_and_imports_back() {
         )
         .expect("copy framebuffer");
     let data = renderer.map_texture(&mapping).expect("map").to_vec();
-    for (x, y) in [(0, 0), (SIZE / 2, SIZE / 2), (SIZE - 1, SIZE - 1)] {
+    for (x, y) in [(0, 0), (SIZE / 4, SIZE / 2), (SIZE / 2 - 1, SIZE - 1)] {
+        assert_eq!(pixel(&data, x, y), [0, 255, 0, 255], "green at {x},{y}");
+    }
+    for (x, y) in [
+        (SIZE / 2, 0),
+        (SIZE * 3 / 4, SIZE / 2),
+        (SIZE - 1, SIZE - 1),
+    ] {
         assert_eq!(pixel(&data, x, y), [255, 0, 0, 255], "red at {x},{y}");
     }
 }

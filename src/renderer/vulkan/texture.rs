@@ -14,20 +14,78 @@ use smithay::{
     utils::{Buffer, Rectangle},
 };
 
+use super::retire::{retire, RetireQueue, RetiredHandle};
 use crate::renderer::{SkiaSurface, SkiaTextureImage};
 
 /// What holds a texture's pixels.
-pub(crate) enum TextureBacking {
-    /// A client dmabuf imported as a `VkImage`, kept alive while Skia samples it.
+pub(crate) enum TextureMemory {
+    /// A client dmabuf imported as a `VkImage`.
     Dmabuf { _image: VulkanImage },
     /// A Skia-owned texture uploaded from memory, and the surface that writes it.
     ///
     /// The texture's [`SkiaVkTexture::image`] borrows the same GPU texture, so
     /// an `update_memory` through the surface shows up in the image.
-    Memory {
-        surface: Mutex<skia::Surface>,
+    Memory(skia::Surface),
+}
+
+/// The memory behind a texture, shared by its clones.
+///
+/// Dropped with the last clone, it retires the memory to the renderer, which
+/// destroys it once the image is unreachable and the GPU is done with it.
+pub(crate) struct TextureBacking {
+    memory: Mutex<Option<TextureMemory>>,
+    image: skia::Image,
+    /// The memory texture's rows were uploaded bottom to top.
+    pub flipped: bool,
+    retire: RetireQueue,
+}
+
+impl TextureBacking {
+    /// Backs `image` with `memory`.
+    pub fn new(
+        memory: TextureMemory,
+        image: skia::Image,
         flipped: bool,
-    },
+        retire: RetireQueue,
+    ) -> Self {
+        Self {
+            memory: Mutex::new(Some(memory)),
+            image,
+            flipped,
+            retire,
+        }
+    }
+
+    /// The surface that writes a memory texture, or `None` for a dmabuf.
+    pub fn memory_surface(&self) -> Option<std::sync::MutexGuard<'_, Option<TextureMemory>>> {
+        let guard = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+        matches!(*guard, Some(TextureMemory::Memory(_))).then_some(guard)
+    }
+
+    fn kind(&self) -> &'static str {
+        match *self.memory.lock().unwrap_or_else(|e| e.into_inner()) {
+            Some(TextureMemory::Dmabuf { .. }) => "dmabuf",
+            Some(TextureMemory::Memory(_)) => "memory",
+            None => "retired",
+        }
+    }
+}
+
+impl Drop for TextureBacking {
+    fn drop(&mut self) {
+        let memory = self
+            .memory
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(memory) = memory {
+            retire(
+                &self.retire,
+                RetiredHandle::Image(self.image.clone()),
+                Box::new(memory),
+            );
+        }
+    }
 }
 
 /// A texture the Vulkan renderer samples.
@@ -60,13 +118,7 @@ impl fmt::Debug for SkiaVkTexture {
             .field("width", &self.image.width())
             .field("height", &self.image.height())
             .field("format", &self.format)
-            .field(
-                "backing",
-                &match *self.backing {
-                    TextureBacking::Dmabuf { .. } => "dmabuf",
-                    TextureBacking::Memory { .. } => "memory",
-                },
-            )
+            .field("backing", &self.backing.kind())
             .finish()
     }
 }

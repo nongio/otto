@@ -19,6 +19,7 @@
 
 mod format;
 mod frame;
+mod retire;
 mod sync;
 mod texture;
 
@@ -72,8 +73,9 @@ use smithay::{
 
 use self::{
     format::{skia_format, SkiaFormat, FOURCCS},
+    retire::{retire, Graveyard, RetiredHandle},
     sync::{SyncFdSupport, SyncPool},
-    texture::{TargetKind, TextureBacking},
+    texture::{TargetKind, TextureBacking, TextureMemory},
 };
 use crate::renderer::SkiaSurface;
 
@@ -223,6 +225,8 @@ pub struct SkiaVkRenderer {
     /// The target last bound or rendered to; the screenshare blit reads it.
     current_target: Option<SkiaVkTarget>,
     plane_releases: PlaneImageQueue,
+    /// Memory of dropped textures and targets, destroyed once the GPU is done with it.
+    graveyard: Graveyard,
     upscale_filter: TextureFilter,
     downscale_filter: TextureFilter,
     debug_flags: DebugFlags,
@@ -305,6 +309,7 @@ impl SkiaVkRenderer {
             refused_targets: HashSet::new(),
             current_target: None,
             plane_releases: PlaneImageQueue::default(),
+            graveyard: Graveyard::default(),
             upscale_filter: TextureFilter::Linear,
             downscale_filter: TextureFilter::Linear,
             debug_flags: DebugFlags::empty(),
@@ -426,10 +431,37 @@ impl SkiaVkRenderer {
             ctx.flush_surface(&mut surface);
         }
         ctx.flush_and_submit();
-        Ok(match self.sync_pool.signal(&self.device, self.sync_fd)? {
+        let sync = match self.sync_pool.signal(&self.device, self.sync_fd)? {
             Some(sync) => SyncPoint::from(sync),
             None => SyncPoint::signaled(),
-        })
+        };
+        self.reap();
+        Ok(sync)
+    }
+
+    /// Destroys retired memory the GPU is done with.
+    fn reap(&mut self) {
+        self.sync_pool.reclaim(&self.device);
+        self.graveyard
+            .reap(self.sync_pool.submitted(), self.sync_pool.completed());
+    }
+
+    /// Retires the render targets of dmabufs that no longer exist.
+    fn evict_dead_targets(&mut self) {
+        let queue = self.graveyard.queue();
+        self.target_cache.retain(|weak, target| {
+            if !weak.is_gone() {
+                return true;
+            }
+            if let TargetKind::Dmabuf(image) = &target.kind {
+                retire(
+                    &queue,
+                    RetiredHandle::Surface(target.skia_surface.surface.clone()),
+                    Box::new(image.clone()),
+                );
+            }
+            false
+        });
     }
 
     /// Blocks until every plane surface rendered this frame is written, and
@@ -440,7 +472,7 @@ impl SkiaVkRenderer {
     pub fn flush_planes_for_scanout(&mut self) {
         self.ctx().flush_submit_and_sync_cpu();
         self.release_plane_textures();
-        self.sync_pool.reclaim(&self.device);
+        self.reap();
     }
 
     /// Destroys the images of plane slots dropped since the last call.
@@ -494,7 +526,7 @@ impl SkiaVkRenderer {
     fn dmabuf_target(&mut self, dmabuf: &Dmabuf) -> Result<SkiaVkTarget, SkiaVkError> {
         // Evict first: a new buffer can reuse a dead buffer's address, which
         // would otherwise alias its stale entry.
-        self.target_cache.retain(|weak, _| !weak.is_gone());
+        self.evict_dead_targets();
         self.refused_targets.retain(|weak| !weak.is_gone());
 
         let key = dmabuf.weak();
@@ -545,8 +577,8 @@ impl SkiaVkRenderer {
         }
         let size = dmabuf.size();
         let info = image_info(&image, fmt, skvk::ImageLayout::GENERAL);
-        // SAFETY: the image outlives the Skia image, which the texture's
-        // backing keeps alongside it.
+        // SAFETY: the texture's backing keeps the image alive, and retires it
+        // until the Skia image is unreachable and the GPU is done with it.
         let backend =
             unsafe { backend_textures::make_vk((size.w, size.h), &info, "client dmabuf") };
         let sk_image = skia::Image::from_texture(
@@ -559,10 +591,15 @@ impl SkiaVkRenderer {
         )
         .ok_or(SkiaVkError::Wrap)?;
         Ok(SkiaVkTexture {
+            backing: Arc::new(TextureBacking::new(
+                TextureMemory::Dmabuf { _image: image },
+                sk_image.clone(),
+                false,
+                self.graveyard.queue(),
+            )),
             image: sk_image,
             has_alpha: !fmt.opaque,
             format: Some(code),
-            backing: Arc::new(TextureBacking::Dmabuf { _image: image }),
         })
     }
 
@@ -613,13 +650,15 @@ impl SkiaVkRenderer {
         .ok_or(SkiaVkError::Wrap)?;
         ctx.flush_and_submit_surface(&mut surface, None);
         Ok(SkiaVkTexture {
+            backing: Arc::new(TextureBacking::new(
+                TextureMemory::Memory(surface),
+                image.clone(),
+                flipped,
+                self.graveyard.queue(),
+            )),
             image,
             has_alpha: !fmt.opaque,
             format: Some(format),
-            backing: Arc::new(TextureBacking::Memory {
-                surface: Mutex::new(surface),
-                flipped,
-            }),
         })
     }
 
@@ -631,13 +670,23 @@ impl SkiaVkRenderer {
         stride: usize,
         region: Rectangle<i32, Buffer>,
     ) -> Result<(), SkiaVkError> {
-        let TextureBacking::Memory { surface, flipped } = &*texture.backing else {
+        let mut memory = texture
+            .backing
+            .memory_surface()
+            .ok_or(SkiaVkError::Unsupported)?;
+        let Some(TextureMemory::Memory(surface)) = memory.as_mut() else {
             return Err(SkiaVkError::Unsupported);
         };
-        let mut surface = surface.lock().unwrap_or_else(|e| e.into_inner());
         let info = surface.image_info();
-        write_rows(&mut surface, &info, data, stride, region, *flipped)?;
-        self.ctx().flush_and_submit_surface(&mut surface, None);
+        write_rows(
+            surface,
+            &info,
+            data,
+            stride,
+            region,
+            texture.backing.flipped,
+        )?;
+        self.ctx().flush_and_submit_surface(surface, None);
         Ok(())
     }
 
@@ -804,20 +853,21 @@ impl SkiaVkRenderer {
 
 impl Drop for SkiaVkRenderer {
     fn drop(&mut self) {
-        self.current_target = None;
-        self.target_cache.clear();
-        self.dmabuf_cache.clear();
         if let Some(mut context) = self.context.take() {
             context.flush_submit_and_sync_cpu();
+            self.current_target = None;
+            self.target_cache.clear();
+            self.dmabuf_cache.clear();
             // Skia objects that outlive the renderer (textures kept in
             // surface state) must not touch the device once it is gone.
             context.release_resources_and_abandon();
         }
-        self.release_plane_textures();
         // SAFETY: the device is still alive; nothing else submits to it.
         if let Err(err) = unsafe { self.device.vk().device_wait_idle() } {
             tracing::warn!(?err, "waiting for the Vulkan device to go idle failed");
         }
+        self.graveyard.clear();
+        self.release_plane_textures();
         self.sync_pool.destroy(&self.device);
     }
 }
@@ -951,8 +1001,8 @@ impl Renderer for SkiaVkRenderer {
 
     fn cleanup_texture_cache(&mut self) -> Result<(), Self::Error> {
         self.dmabuf_cache.retain(|weak, _| !weak.is_gone());
-        self.target_cache.retain(|weak, _| !weak.is_gone());
-        self.sync_pool.reclaim(&self.device);
+        self.evict_dead_targets();
+        self.reap();
         Ok(())
     }
 }

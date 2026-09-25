@@ -91,25 +91,52 @@ pub(crate) struct SyncFdSupport {
     pub import: bool,
 }
 
+/// A submitted semaphore and fence, and the frame serial the submit signals.
+#[derive(Debug)]
+struct Pending {
+    semaphore: vk::Semaphore,
+    fence: vk::Fence,
+    serial: Option<u64>,
+}
+
 /// Pool of binary semaphores and fences for the empty submits.
+///
+/// Also counts frames: every signal is a serial, and a serial is complete
+/// once its fence has signaled. Fences signal in submission order.
 #[derive(Debug, Default)]
 pub(crate) struct SyncPool {
     free: Vec<(vk::Semaphore, vk::Fence)>,
-    pending: Vec<(vk::Semaphore, vk::Fence)>,
+    pending: Vec<Pending>,
+    submitted: u64,
+    completed: u64,
 }
 
 impl SyncPool {
+    /// Serial of the last frame signal submitted.
+    pub fn submitted(&self) -> u64 {
+        self.submitted
+    }
+
+    /// Serial of the last frame signal the GPU has reached.
+    pub fn completed(&self) -> u64 {
+        self.completed
+    }
+
     /// Moves pairs whose batch has executed back to the free list.
     pub fn reclaim(&mut self, device: &Device) {
         let vk = device.vk();
         let mut i = 0;
         while i < self.pending.len() {
-            let (_, fence) = self.pending[i];
+            let fence = self.pending[i].fence;
             // SAFETY: the fence belongs to `device`.
             if unsafe { vk.get_fence_status(fence) } == Ok(true) {
                 // SAFETY: the fence is signaled, so no queue operation uses it.
                 if unsafe { vk.reset_fences(&[fence]) }.is_ok() {
-                    self.free.push(self.pending.swap_remove(i));
+                    let done = self.pending.swap_remove(i);
+                    if let Some(serial) = done.serial {
+                        self.completed = self.completed.max(serial);
+                    }
+                    self.free.push((done.semaphore, done.fence));
                     continue;
                 }
             }
@@ -163,9 +190,12 @@ impl SyncPool {
         support: SyncFdSupport,
     ) -> Result<Option<SkiaVkSync>, SkiaVkError> {
         let vk = device.vk();
+        self.submitted += 1;
+        let serial = self.submitted;
         if !support.export {
             // SAFETY: the queue belongs to `device` and is only used from this thread.
             unsafe { vk.queue_wait_idle(*device.queue()) }?;
+            self.completed = serial;
             return Ok(None);
         }
         let (semaphore, fence) = self.acquire(device, true)?;
@@ -190,7 +220,11 @@ impl SyncPool {
             .and_then(|ext| unsafe { ext.get_semaphore_fd(&fd_info) }.map_err(Into::into));
         match exported {
             Ok(fd) => {
-                self.pending.push((semaphore, fence));
+                self.pending.push(Pending {
+                    semaphore,
+                    fence,
+                    serial: Some(serial),
+                });
                 // SAFETY: the export hands over ownership of a new fd.
                 Ok(Some(SkiaVkSync(unsafe { OwnedFd::from_raw_fd(fd) })))
             }
@@ -203,6 +237,7 @@ impl SyncPool {
                     vk.destroy_semaphore(semaphore, None);
                     vk.destroy_fence(fence, None);
                 }
+                self.completed = serial;
                 Ok(None)
             }
         }
@@ -247,7 +282,11 @@ impl SyncPool {
         // unsignaled, and the queue is only used from this thread.
         match unsafe { device.vk().queue_submit(*device.queue(), &[submit], fence) } {
             Ok(()) => {
-                self.pending.push((semaphore, fence));
+                self.pending.push(Pending {
+                    semaphore,
+                    fence,
+                    serial: None,
+                });
                 Ok(())
             }
             Err(err) => {
@@ -268,7 +307,8 @@ impl SyncPool {
     /// The caller has waited for the device to go idle.
     pub fn destroy(&mut self, device: &Device) {
         let vk = device.vk();
-        for (semaphore, fence) in self.free.drain(..).chain(self.pending.drain(..)) {
+        let pending = self.pending.drain(..).map(|p| (p.semaphore, p.fence));
+        for (semaphore, fence) in self.free.drain(..).chain(pending) {
             // SAFETY: the device is idle, so no batch references them.
             unsafe {
                 vk.destroy_semaphore(semaphore, None);
