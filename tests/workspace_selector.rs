@@ -1086,4 +1086,57 @@ mod workspace_selector_tests {
 
         handle.stop();
     }
+
+    /// The rename editor takes the keyboard as a view of Otto's own, not a
+    /// client surface. Keys typed through a virtual keyboard (the emoji
+    /// picker, the RDP bridge, wtype) must reach it all the same, decoded
+    /// with the virtual keyboard's keymap.
+    #[test]
+    #[serial]
+    fn a_virtual_keyboard_types_into_the_rename_editor() {
+        let handle = open_selector_with_workspaces();
+        clear_workspace_names(&handle);
+        let indices = workspace_indices(&handle);
+        let target = indices[1];
+
+        // A second click on the label opens the editor in place.
+        hover_layer_centre(
+            &handle,
+            &format!("workspace_selector_desktop_label_{target}"),
+        );
+        handle.pointer_click();
+        handle.pointer_click();
+        handle.settle(200);
+        let editing = handle.query(|state| {
+            state
+                .workspaces
+                .primary_output_workspaces()
+                .map(|output| output.workspace_selector.editing_index())
+        });
+        assert_eq!(
+            editing,
+            Some(Some(target)),
+            "a double click on the label should open the rename editor"
+        );
+
+        let text = "Sunny ☀";
+        std::env::set_var("WAYLAND_DISPLAY", &handle.socket_name);
+        otto_emoji::typing::type_text(text).expect("typing");
+        handle.wait(Duration::from_millis(150));
+        handle.settle(100);
+
+        let typed = handle.query(|state| {
+            state
+                .workspaces
+                .primary_output_workspaces()
+                .and_then(|output| output.workspace_selector.editing_value())
+        });
+        assert_eq!(
+            typed.as_deref(),
+            Some(text),
+            "the virtual keyboard's keys should replace the selected name"
+        );
+
+        handle.stop();
+    }
 }

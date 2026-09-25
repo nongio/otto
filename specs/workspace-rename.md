@@ -97,6 +97,10 @@ everywhere the workspace appears, and survives a restart.
 - While the editor is open, the compositor keyboard path forwards every key to
   it: no shortcut fires, and no client receives the key. VT switching and the
   session lock still take precedence, as they do over every other grab.
+- Keys from a virtual keyboard (the emoji picker, the RDP bridge, `wtype`)
+  reach the editor like physical ones, decoded with that keyboard's own keymap.
+  The editor is a view of Otto's own, not a client surface, so delivery cannot
+  stop at surfaces.
 - Only one label at a time is editable per output. Opening the editor on another
   label first ends the running edit.
 - Workspaces are per output, and each output's selector edits only its own.
