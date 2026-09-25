@@ -290,40 +290,12 @@ impl Store {
 /// A miss is remembered for the lifetime of the window instead, by the
 /// [`State::Absent`] the caller records.
 pub fn fetch(job: &Job) -> Found {
-    if let Some(image) = thumbcache::lookup(&job.path, job.modified, job.size) {
-        return Found::Thumbnail(image);
-    }
-    if !job.may_generate {
-        return Found::Nothing;
-    }
-
-    // The same sandboxed decoder Peek uses, asked for a thumbnail-sized
-    // picture rather than a panel-sized one. Untrusted bytes are parsed in the
-    // worker, never here.
-    let request = otto_peek::decode::Request {
-        width: job.size.pixels(),
-        height: job.size.pixels(),
-        // A tile in a listing shows one frame, so asking for an animation
-        // would buy a strip of hundreds and keep the first of them.
-        animate: false,
-        name: job
-            .path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        ..Default::default()
+    let found = if job.may_generate {
+        otto_peek::thumbnail(&job.path, job.modified, job.size)
+    } else {
+        thumbcache::lookup(&job.path, job.modified, job.size)
     };
-    match otto_peek::decode_path(&job.path, &request) {
-        otto_kit::preview::Preview::Pixels { pixels, .. } => match pixels.to_image() {
-            Some(image) => Found::Thumbnail(image),
-            None => Found::Nothing,
-        },
-        // Everything else a previewer can return — a text listing, an archive's
-        // contents, an unavailable file — is not a picture, and standing it in
-        // for one would put a wall of identical grey cards in the grid where
-        // the type icons say something useful.
-        _ => Found::Nothing,
-    }
+    found.map_or(Found::Nothing, Found::Thumbnail)
 }
 
 /// One visible entry, as the store needs to see it.

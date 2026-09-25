@@ -31,7 +31,7 @@ mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 
 BINARIES=(otto otto-bar otto-islands otto-lock otto-greeter otto-rdp
-          otto-settings otto-files otto-launcher otto-emoji otto-peek
+          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek
           otto-media-worker otto-msg otto-agents xdg-desktop-portal-otto)
 
 # The workspace version names the tarball and its top directory; the

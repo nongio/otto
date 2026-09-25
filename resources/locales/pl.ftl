@@ -397,6 +397,8 @@ files-column-original-location = Pierwotne położenie
 ## The Kind column. These name what a file is, as a user would say it.
 
 files-kind-folder = Folder
+attachments-screen-region = Obszar ekranu
+files-add-to-stash = Dodaj do zbioru
 files-kind-image = Obraz
 files-kind-movie = Film
 files-kind-audio = Dźwięk
@@ -978,7 +980,6 @@ launcher-agents-error = Niepowodzenie
 launcher-agents-none = Brak sesji agentów
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
-launcher-ask-attached = Załączniki: { $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = Otwieranie sesji…
 launcher-ask-loading = Wczytywanie rozmowy…

@@ -13,7 +13,8 @@ use agent_client_protocol::schema::v1::{
     RequestPermissionRequest, SessionConfigOptionValue, SessionMode, SessionModeState,
     SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
-    TextContent, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    TextContent, ToolCall, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind,
 };
 use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, Responder};
 use otto_agents::acp::{AcpBackend, Permissions, run_session};
@@ -66,7 +67,8 @@ fn advertised_modes() -> SessionModeState {
 /// Starts a fake agent that answers each prompt with `echo: <prompt>` in two
 /// chunks, with three exceptions: `wait`, which it holds until cancelled,
 /// `needs-permission`, which asks to run `cargo test` and answers with the
-/// option it was given, and `change-mode`, which switches itself to `plan`
+/// option it was given, `read:<path>`, which asks to read `<path>` and does
+/// the same, and `change-mode`, which switches itself to `plan`
 /// and says so. It advertises [`MODES`] and [`REFUSED_MODE`], starting in
 /// `default`, refuses to enter the latter, and records
 /// the model and mode it is switched to in `recorded`.
@@ -155,10 +157,21 @@ fn spawn_fake_agent(transport: Channel, recorded: Arc<Mutex<Recorded>>) {
                         ))?;
                         return responder.respond(PromptResponse::new(StopReason::EndTurn));
                     }
-                    if prompt == "needs-permission" {
+                    let read = prompt.strip_prefix("read:").map(str::to_owned);
+                    if prompt == "needs-permission" || read.is_some() {
                         let mut fields = ToolCallUpdateFields::new();
-                        fields.kind = Some(ToolKind::Execute);
-                        fields.title = Some("cargo test".into());
+                        match read {
+                            Some(path) => {
+                                fields.kind = Some(ToolKind::Read);
+                                fields.title = Some(format!("Read {path}"));
+                                fields.locations = Some(vec![ToolCallLocation::new(&path)]);
+                                fields.raw_input = Some(serde_json::json!({ "file_path": path }));
+                            }
+                            None => {
+                                fields.kind = Some(ToolKind::Execute);
+                                fields.title = Some("cargo test".into());
+                            }
+                        }
                         let permission = RequestPermissionRequest::new(
                             request.session_id.clone(),
                             ToolCallUpdate::new("call-1", fields),
@@ -438,7 +451,17 @@ impl Session {
     /// Runs a turn to its end, answering every permission question with
     /// `decision`.
     async fn turn(&mut self, text: &str, decision: Decision) -> TurnRecord {
-        self.prompt("t", text);
+        self.turn_with(text, Vec::new(), decision).await
+    }
+
+    /// [`Session::turn`], with `attachments` sent along.
+    async fn turn_with(
+        &mut self,
+        text: &str,
+        attachments: Vec<Attachment>,
+        decision: Decision,
+    ) -> TurnRecord {
+        self.prompt_with("t", text, attachments);
         let mut record = TurnRecord {
             answer: String::new(),
             outcome: TurnOutcome::Complete,
@@ -665,6 +688,75 @@ async fn attachments_reach_the_agent_as_resource_links() {
         }
     }
     assert_eq!(text, "echo: summarise [notes.md file:///home/me/notes.md]");
+}
+
+/// A folder holding `notes.md` and `other.md`, and `notes.md` as an
+/// attachment.
+fn attached_notes() -> (tempfile::TempDir, Attachment) {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["notes.md", "other.md"] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let notes = Attachment {
+        name: "notes.md".into(),
+        uri: otto_agents::uri::from_path(&dir.path().join("notes.md")),
+    };
+    (dir, notes)
+}
+
+#[tokio::test]
+async fn reading_an_attached_file_needs_no_permission() {
+    let (dir, notes) = attached_notes();
+    for policy in [PermissionPolicy::Ask, PermissionPolicy::Deny] {
+        let mut session = Session::launch(None, permissions(policy));
+        session.ready().await;
+
+        let read = format!("read:{}", dir.path().join("notes.md").display());
+        let record = session
+            .turn_with(&read, vec![notes.clone()], Decision::deny())
+            .await;
+        assert_eq!(record.answer, "allow", "{policy:?}");
+        assert!(record.asked.is_empty(), "{policy:?}: nobody is asked");
+
+        // The allowance lasts for the session, not just the turn.
+        let record = session.turn(&read, Decision::deny()).await;
+        assert_eq!(record.answer, "allow", "{policy:?}");
+        assert!(record.asked.is_empty(), "{policy:?}");
+    }
+}
+
+#[tokio::test]
+async fn reading_anything_else_still_asks() {
+    let (dir, notes) = attached_notes();
+    let mut session = Session::launch(None, permissions(PermissionPolicy::Ask));
+    session.ready().await;
+
+    let read = format!("read:{}", dir.path().join("other.md").display());
+    let record = session
+        .turn_with(&read, vec![notes], Decision::deny())
+        .await;
+    assert_eq!(record.answer, "reject");
+    assert_eq!(record.asked.len(), 1, "a file next to the attached one");
+
+    let record = session.turn("needs-permission", Decision::deny()).await;
+    assert_eq!(record.answer, "reject");
+    assert_eq!(record.asked.len(), 1, "a command, with a file attached");
+}
+
+#[tokio::test]
+async fn an_attachment_allows_nothing_in_another_session() {
+    let (dir, notes) = attached_notes();
+    let mut first = Session::launch(None, permissions(PermissionPolicy::Ask));
+    first.ready().await;
+    let read = format!("read:{}", dir.path().join("notes.md").display());
+    let record = first.turn_with(&read, vec![notes], Decision::deny()).await;
+    assert_eq!(record.answer, "allow");
+
+    let mut second = Session::launch(None, permissions(PermissionPolicy::Ask));
+    second.ready().await;
+    let record = second.turn(&read, Decision::deny()).await;
+    assert_eq!(record.answer, "reject");
+    assert_eq!(record.asked.len(), 1);
 }
 
 #[tokio::test]

@@ -1,10 +1,10 @@
 # File Browser
 
 **Status:** draft — nothing implemented
-**Wire contract:** `org.freedesktop.FileManager1`, defined inline below
+**Wire contract:** `org.freedesktop.FileManager1` and `org.otto.Files1`, defined inline below
 **Related specs:** [file-picker.md](./file-picker.md), [peek.md](./peek.md),
 [launcher.md](./launcher.md), [context-menus.md](./context-menus.md),
-[settings-app.md](./settings-app.md)
+[settings-app.md](./settings-app.md), [stash.md](./stash.md)
 
 ## Summary
 
@@ -1218,7 +1218,45 @@ ShowItemProperties(uris: as, startup_id: s) → ()
 
 This is the standard interoperability contract rather than an invented
 `org.otto.Files1`, so applications that already know how to reveal a file get it
-for free.
+for free. `org.otto.Files1` below carries only what the standard has no
+call for.
+
+### Wire contract: `org.otto.Files1`
+
+Every browser window serves this interface on the session bus, at object path
+`/org/otto/Files1`. Each window is its own process and queues for the bus name
+`org.otto.Files1` without replacing the owner, so the name's queued owners are
+the list of open Files windows, and a caller asks each by its unique name.
+Picker windows do not serve it: their selection belongs to the application
+they serve.
+
+```
+FocusedSelection() → as
+```
+
+- The window that holds the keyboard answers with the absolute paths of its
+  selected items, in the order it shows them. Its Get Info panel or menus
+  holding the keyboard count as the window holding it.
+- With nothing selected, that window answers with an empty list. The folder it
+  shows is not a selection. An empty answer is final: the caller knows Files
+  is in front with nothing selected, and must not look elsewhere for a
+  selection.
+- Every other window fails the call with `org.freedesktop.DBus.Error.Failed`,
+  so a caller can tell "Files is in front" from "another app is". At most one
+  window answers.
+- Paths that are not valid UTF-8 are left out, since `s` cannot carry them
+  faithfully.
+
+The stash service uses it for `otto-stash add` (see
+[stash.md](./stash.md)): the shortcut is a compositor binding, so Files
+never sees the key press and is asked instead.
+
+**Add to Stash.** While `otto-stash` is running, the window offers
+**Add to Stash** on its selection: in the context menu of selected items,
+in the command palette, and on Ctrl+G. It adds the selected files to the
+stash, in the order shown. Ctrl+G does nothing in a picker or in the
+Trash window, and with nothing selected none of them does anything. When `otto-stash` is not
+running, the menu and palette entries are not shown.
 
 ## Shared foundations
 

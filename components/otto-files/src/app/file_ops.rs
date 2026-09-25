@@ -240,6 +240,18 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Hand the selected files to otto-stash, to ask about in Ask.
+    pub(super) fn add_selection_to_stash(&mut self) {
+        let paths: Vec<PathBuf> = self
+            .selected_entries()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        if !paths.is_empty() {
+            crate::stash::add(paths);
+        }
+    }
+
     pub(super) fn copy_selection(&mut self, cut: bool, serial: u32) {
         // A cut in the Trash would offer a paste that moves a file out of it
         // without dropping its sidecar, leaving a phantom row behind. Put

@@ -246,6 +246,19 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// What `org.otto.Files1.FocusedSelection` answers: the selected
+    /// entries' paths while the window holds the keyboard, and `None` while
+    /// it does not. A folder being viewed with nothing selected in it is not
+    /// a selection.
+    pub(super) fn focused_selection(&self, focused: bool) -> Option<Vec<String>> {
+        focused.then(|| {
+            crate::files_service::wire_paths(
+                true,
+                self.selected_entries().into_iter().map(|entry| entry.path),
+            )
+        })
+    }
+
     /// Every selected entry in the active column, in view order.
     pub(super) fn selected_entries(&self) -> Vec<Entry> {
         let depth = self.active.min(self.columns.len().saturating_sub(1));

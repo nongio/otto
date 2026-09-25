@@ -61,6 +61,7 @@ package() {
     install -Dm755 target/release/otto-files "$pkgdir/usr/bin/otto-files"
     install -Dm755 target/release/otto-launcher "$pkgdir/usr/bin/otto-launcher"
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
+    install -Dm755 target/release/otto-stash "$pkgdir/usr/bin/otto-stash"
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"

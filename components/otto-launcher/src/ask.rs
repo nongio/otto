@@ -61,6 +61,7 @@ use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
 use otto_agents_client::default_url;
 use otto_agents_client::session::{self, SESSION_SCHEME};
 use otto_agents_client::uri::{from_path as file_uri, to_path as path_from_uri};
+pub use otto_kit::components::attachments::Attachment;
 use serde_json::{json, Value};
 use tokio::sync::mpsc as async_mpsc;
 
@@ -397,18 +398,11 @@ pub struct SkillRef {
     pub description: String,
 }
 
-/// A request as it was sent: what was typed, and the names of the files that
-/// went with it.
+/// A request as it was sent: what was typed, and what went with it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Request {
     pub prompt: String,
-    pub attachments: Vec<String>,
-}
-
-/// The line that names the files going with a request, when there are any.
-pub fn attached_text(attachments: &[String]) -> Option<String> {
-    (!attachments.is_empty())
-        .then(|| otto_kit::t_owned!("launcher-ask-attached", files = attachments.join(", ")))
+    pub attachments: Vec<Attachment>,
 }
 
 /// A piece of what the agent answered.
@@ -466,8 +460,8 @@ fn is_digest(text: &str) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub prompt: String,
-    /// The names of the files that went with the request.
-    pub attachments: Vec<String>,
+    /// What went with the request.
+    pub attachments: Vec<Attachment>,
     /// What the agent answered, in the order it said it.
     pub answer: Vec<Said>,
     /// The tool calls that were allowed or refused, in order.
@@ -828,8 +822,14 @@ pub struct Ask {
     /// The service's sessions, as they stood when the launcher connected.
     sessions: Vec<SessionSummary>,
     sessions_listed: bool,
-    /// The files that go with the next request.
+    /// The files that go with the next request…
     attachments: Vec<PathBuf>,
+    /// …but for those struck out, which stay listed and stay behind.
+    struck: Vec<bool>,
+    /// What otto-stash has stashed, after the files above: it goes with
+    /// the next request too, but otto-stash keeps it, and changes to it go
+    /// there. Each with its file and whether it is struck out.
+    stashed: Vec<(PathBuf, Attachment, bool)>,
     /// The open session is going to its terminal; `Some(true)` while a turn
     /// has to finish first.
     handing_over: Option<bool>,
@@ -885,6 +885,8 @@ impl Ask {
             sessions: Vec::new(),
             sessions_listed: false,
             attachments: Vec::new(),
+            struck: Vec::new(),
+            stashed: Vec::new(),
             handing_over: None,
             unreachable: None,
             run: None,
@@ -893,46 +895,90 @@ impl Ask {
 
     /// Attach `files` to the next request.
     pub fn attach(&mut self, files: impl IntoIterator<Item = PathBuf>) {
-        self.attachments.extend(
-            files
-                .into_iter()
-                .map(|file| std::path::absolute(&file).unwrap_or(file)),
-        );
+        self.attach_struck(files.into_iter().map(|file| (file, false)));
     }
 
-    /// The names of the files that go with the next request.
-    pub fn attachments(&self) -> Vec<String> {
-        self.attachments
-            .iter()
-            .map(|file| file_label(file))
-            .collect()
+    /// Attach `files` to the next request, each struck out or not.
+    pub fn attach_struck(&mut self, files: impl IntoIterator<Item = (PathBuf, bool)>) {
+        for (file, struck) in files {
+            self.attachments
+                .push(std::path::absolute(&file).unwrap_or(file));
+            self.struck.push(struck);
+        }
     }
 
-    /// The files that go with the next request, as rows: each file's name,
-    /// over the folder it is in.
-    pub fn attachment_rows(&self, source: usize) -> Vec<Item> {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        self.attachments
+    /// What otto-stash has stashed now, each file with whether it is
+    /// struck out.
+    pub fn set_stashed(&mut self, items: &[(PathBuf, bool)]) {
+        // Read once per change rather than on every layout: a text item's
+        // file is read to show it.
+        let known: HashMap<&Path, &Attachment> = self
+            .stashed
             .iter()
-            .enumerate()
-            .map(|(index, file)| Item {
-                title: file_label(file),
-                subtitle: file
-                    .parent()
-                    .map(|folder| home_relative(folder, home.as_deref())),
-                icon: Some(
-                    if file.is_dir() {
-                        "folder"
-                    } else {
-                        "text-x-generic"
-                    }
-                    .to_string(),
-                ),
-                activity: None,
-                search_terms: Vec::new(),
-                origin: Origin { source, index },
+            .map(|(file, attachment, _)| (file.as_path(), attachment))
+            .collect();
+        let stashed = items
+            .iter()
+            .map(|(file, struck)| {
+                let attachment = known
+                    .get(file.as_path())
+                    .map_or_else(|| Attachment::for_file(file), |known| (*known).clone());
+                (file.clone(), attachment, *struck)
             })
+            .collect();
+        self.stashed = stashed;
+    }
+
+    /// What goes with the next request, each with whether it is struck out:
+    /// the files attached, then what is stashed.
+    pub fn pending(&self) -> Vec<(Attachment, bool)> {
+        self.attachments
+            .iter()
+            .zip(&self.struck)
+            .map(|(file, struck)| (Attachment::for_file(file), *struck))
+            .chain(
+                self.stashed
+                    .iter()
+                    .map(|(_, attachment, struck)| (attachment.clone(), *struck)),
+            )
             .collect()
+    }
+
+    /// Whether anything goes with the next request: attached or stashed,
+    /// and not struck out.
+    pub fn has_attachments(&self) -> bool {
+        self.struck.iter().any(|struck| !struck)
+            || self.stashed.iter().any(|(_, _, struck)| !struck)
+    }
+
+    /// Take the attachment at `index` in [`Self::pending`] off the next
+    /// request. A stashed one is otto-stash's to take out: its index in
+    /// the stash is returned for that.
+    pub fn remove_attachment(&mut self, index: usize) -> Option<usize> {
+        if index < self.attachments.len() {
+            self.attachments.remove(index);
+            self.struck.remove(index);
+            return None;
+        }
+        let stashed = index - self.attachments.len();
+        (stashed < self.stashed.len()).then(|| {
+            self.stashed.remove(stashed);
+            stashed
+        })
+    }
+
+    /// Strike the attachment at `index` in [`Self::pending`] out, or bring
+    /// it back. A stashed one is struck out in otto-stash too: its index
+    /// in the stash is returned for that.
+    pub fn toggle_attachment(&mut self, index: usize) -> Option<usize> {
+        if let Some(struck) = self.struck.get_mut(index) {
+            *struck = !*struck;
+            return None;
+        }
+        let stashed = index - self.attachments.len();
+        let (_, _, struck) = self.stashed.get_mut(stashed)?;
+        *struck = !*struck;
+        Some(stashed)
     }
 
     /// How to open the session in a terminal, once there is a session and the
@@ -1470,15 +1516,30 @@ impl Ask {
         self.unreachable.as_deref()
     }
 
-    /// Hand `prompt` to the agent, with the files attached so far. The first
-    /// request starts a session with the agent at `agent` in the list, or the
-    /// service's default agent; later ones queue on the same session, and
-    /// `agent` is ignored.
-    pub fn send(&mut self, prompt: &str, agent: Option<usize>) {
-        let attachments = std::mem::take(&mut self.attachments);
+    /// Hand `prompt` to the agent, with the files attached and stashed so
+    /// far. The first request starts a session with the agent at `agent` in
+    /// the list, or the service's default agent; later ones queue on the same
+    /// session, and `agent` is ignored.
+    ///
+    /// Returns whether what was stashed went with it, so the stash can
+    /// be told it is over.
+    pub fn send(&mut self, prompt: &str, agent: Option<usize>) -> bool {
+        let struck = std::mem::take(&mut self.struck);
+        let stashed = std::mem::take(&mut self.stashed);
+        let took_stashed = !stashed.is_empty();
+        let attachments: Vec<PathBuf> = std::mem::take(&mut self.attachments)
+            .into_iter()
+            .zip(struck)
+            .chain(stashed.into_iter().map(|(file, _, struck)| (file, struck)))
+            .filter(|(_, struck)| !struck)
+            .map(|(file, _)| file)
+            .collect();
         let request = Request {
             prompt: prompt.to_string(),
-            attachments: attachments.iter().map(|file| file_label(file)).collect(),
+            attachments: attachments
+                .iter()
+                .map(|file| Attachment::for_file(file))
+                .collect(),
         };
         let provider = match self.run.as_mut() {
             Some(run) => {
@@ -1513,6 +1574,7 @@ impl Ask {
             provider,
             attachments,
         });
+        took_stashed
     }
 
     /// The name of the frosted material the card wears: the running session's
@@ -1742,19 +1804,27 @@ fn request(message: &Message) -> Request {
             .attachments
             .iter()
             .flatten()
-            .filter_map(|attachment| match attachment {
-                MessageAttachment::Simple(a) => Some(a.label.clone()),
-                MessageAttachment::EmbeddedResource(a) => Some(a.label.clone()),
-                MessageAttachment::Resource(a) => Some(a.label.clone()),
-                MessageAttachment::Annotations(a) => Some(a.label.clone()),
-                MessageAttachment::Chat(a) => Some(a.label.clone()),
-                MessageAttachment::Unknown(_) => None,
+            .filter_map(|attachment| {
+                // A file attached by reference reads as the file; anything
+                // else as what it is called.
+                let (label, uri) = match attachment {
+                    MessageAttachment::Simple(a) => (&a.label, None),
+                    MessageAttachment::EmbeddedResource(a) => (&a.label, None),
+                    MessageAttachment::Resource(a) => (&a.label, Some(a.uri.as_str())),
+                    MessageAttachment::Annotations(a) => (&a.label, None),
+                    MessageAttachment::Chat(a) => (&a.label, None),
+                    MessageAttachment::Unknown(_) => return None,
+                };
+                let path = uri
+                    .and_then(path_from_uri)
+                    .unwrap_or_else(|| PathBuf::from(label));
+                Some(Attachment::for_file(&path))
             })
             .collect(),
     }
 }
 
-/// What a file is called in the log: its name.
+/// What an attached file is called: its name.
 fn file_label(file: &Path) -> String {
     file.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -3174,30 +3244,64 @@ mod tests {
     }
 
     #[test]
+    fn stashed_items_follow_the_attached_ones_and_stay_otto_stashes() {
+        let mut ask = offline();
+        ask.attach([PathBuf::from("/tmp/attached.md")]);
+        ask.set_stashed(&[
+            (PathBuf::from("/tmp/one.png"), false),
+            (PathBuf::from("/tmp/two.png"), true),
+        ]);
+        assert_eq!(ask.pending().len(), 3);
+        // Changes to stashed items say where in the stash they are.
+        assert_eq!(ask.toggle_attachment(0), None);
+        assert_eq!(ask.toggle_attachment(2), Some(1));
+        assert_eq!(ask.remove_attachment(1), Some(0));
+        assert!(ask.has_attachments());
+        assert!(ask.send("", None));
+        assert!(ask.pending().is_empty());
+        let entries = ask.transcript().expect("a conversation").entries;
+        assert_eq!(
+            entries[0].attachments,
+            [Attachment::File("/tmp/two.png".into())]
+        );
+        // Nothing stashed, nothing for otto-stash to end.
+        assert!(!ask.send("again", None));
+    }
+
+    #[test]
     fn files_go_with_the_next_request_only() {
         let mut ask = offline();
         ask.attach([
             PathBuf::from("/home/me/My Notes.md"),
             PathBuf::from("/tmp/a.png"),
+            PathBuf::from("/tmp/left-out.txt"),
+            PathBuf::from("/tmp/removed.txt"),
         ]);
-        assert_eq!(ask.attachments(), ["My Notes.md", "a.png"]);
-        let rows = ask.attachment_rows(1);
-        let shown: Vec<(&str, Option<&str>)> = rows
-            .iter()
-            .map(|row| (row.title.as_str(), row.subtitle.as_deref()))
-            .collect();
+        ask.remove_attachment(3);
+        ask.toggle_attachment(2);
         assert_eq!(
-            shown,
-            [("My Notes.md", Some("/home/me")), ("a.png", Some("/tmp"))]
+            ask.pending(),
+            [
+                (Attachment::File("/home/me/My Notes.md".into()), false),
+                (Attachment::File("/tmp/a.png".into()), false),
+                (Attachment::File("/tmp/left-out.txt".into()), true),
+            ]
         );
-        assert!(rows.iter().all(|row| row.origin.source == 1));
 
+        assert!(ask.has_attachments());
         ask.send("summarise", None);
+        assert!(!ask.has_attachments());
         ask.send("and again", None);
-        assert!(ask.attachments().is_empty());
-        assert!(ask.attachment_rows(1).is_empty());
+        assert!(ask.pending().is_empty());
         let entries = ask.transcript().expect("a conversation").entries;
-        assert_eq!(entries[0].attachments, ["My Notes.md", "a.png"]);
+        // A struck attachment stays behind.
+        assert_eq!(
+            entries[0].attachments,
+            [
+                Attachment::File("/home/me/My Notes.md".into()),
+                Attachment::File("/tmp/a.png".into()),
+            ]
+        );
         assert!(entries[1].attachments.is_empty());
     }
 
@@ -3291,7 +3395,7 @@ mod tests {
             transcript.entries,
             vec![
                 Entry {
-                    attachments: vec!["notes.md".into()],
+                    attachments: vec![Attachment::File("/home/me/notes.md".into())],
                     ..entry("one", "Hi", None)
                 },
                 entry("more", "", None),
@@ -3537,7 +3641,10 @@ mod tests {
             .is_some_and(|t| t.status.is_none() && !t.entries.is_empty())));
         let entries = second.transcript().unwrap().entries;
         assert_eq!(entries[0].prompt, "resume me");
-        assert_eq!(entries[0].attachments, ["notes.md"]);
+        assert_eq!(
+            entries[0].attachments,
+            [Attachment::File("/tmp/notes.md".into())]
+        );
 
         second.send("carried on", None);
         let done = pump_until(&mut second, |ask| {

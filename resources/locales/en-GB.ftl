@@ -317,6 +317,8 @@ files-new-folder-with-count =
        *[other] New Folder with { $count } Items
     }
 files-move-to-trash = Move to Trash
+# Hands the selected files to the stash balloon, to ask about in Ask.
+files-add-to-stash = Add to Stash
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
     { $count ->
@@ -494,6 +496,7 @@ files-column-original-location = Original Location
 ## The Kind column. These name what a file is, as a user would say it.
 
 files-kind-folder = Folder
+attachments-screen-region = Screen region
 files-kind-image = Image
 files-kind-movie = Movie
 files-kind-audio = Audio
@@ -942,7 +945,6 @@ launcher-agents-error = Failed
 launcher-agents-none = No agent sessions yet
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
-launcher-ask-attached = Attached: { $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = Opening the session…
 launcher-ask-loading = Loading the conversation…

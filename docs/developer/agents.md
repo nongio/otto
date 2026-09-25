@@ -130,6 +130,7 @@ through the protocol.
 | `agent.rs` | The `Backend` trait: what actually runs a turn, plus the echo backend |
 | `acp.rs` | The real backend: an ACP agent per session, on stdio |
 | `dialog.rs` | Permission and question prompts, and the `org.otto.Dialog1` prompter |
+| `attached.rs` | What a session's prompts attached, and the reads that need no permission |
 | `elicitation.rs` | ACP form elicitations (Claude's AskUserQuestion) as AHP input requests |
 | `images.rs` | Pictures agents send, written to a cache so they travel as URIs |
 | `config.rs` | `agents.toml`: which agents exist, their models and permissions |
@@ -316,6 +317,20 @@ alone.
 name), which otto-agents passes to the agent as ACP `resource_link` blocks. The
 agent reads the files with its own tools. Other attachment kinds are dropped
 with a warning.
+
+Attaching a file is sharing it, so reading it needs no permission. Each ACP
+session keeps the `file://` attachments of its prompts, resolved with symbolic
+links followed, for as long as it runs. A `session/request_permission` of kind
+`read` is allowed on the spot, with the agent's "allow once" option and under
+any `permissions` setting, when every path it names (its `locations`, and any
+string under a `rawInput` key with "path" in its name, relative ones taken from
+the session's folder) resolves to an attached file or to something inside an
+attached folder. Anything else goes the usual way: a read of another file, a
+request that names no path, one whose only allow is "always", and every edit,
+move, delete or command, attached file or not. Nothing is shared between
+sessions, and a session the service starts again (reopened after a release or
+a restart) starts with nothing attached until a prompt attaches it again. The
+code is `attached.rs`.
 
 **Entering a terminal.** When the agent has an `enter` command, otto-agents
 publishes it, the folder and the agent's id for the session in the session's

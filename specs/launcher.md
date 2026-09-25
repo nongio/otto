@@ -1,7 +1,8 @@
 # Launcher
 
 **Status:** draft
-**Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md)
+**Related specs:** [context-menus.md](./context-menus.md), [topbar.md](./topbar.md),
+[stash.md](./stash.md)
 
 ## Summary
 
@@ -139,6 +140,35 @@ fires on the first word only, so an ordinary sentence never sprouts grey text,
 and where one skill's name is the start of another's the shorter one is
 offered, since the longer is a keystroke further on.
 
+**Attachments.** What goes with the next request is listed at the foot of the
+log, above the field, before anything is typed: files attached when Ask was
+opened (`--file`, or Ask… in Files), then everything stashed (see
+[stash.md](./stash.md)). They are listed newest first, as the stash card
+lists them: selected text reads as the text itself, quoted and cut to a few
+lines; a screen region as its picture, in its own shape, never wider than
+the list or taller than a few lines of text and never enlarged past its
+captured size; a picture file as its picture under its
+name; any other file as its icon or thumbnail and its name, as in Files.
+Pointing at one highlights it and turns the pointer to a hand. A click on it
+strikes it out or brings it back: a struck attachment stays listed, dimmed,
+and does not go with the request. Its remove button takes it off. Striking
+out or removing a stashed item does the same in the stash, and items
+stashed while Ask is up appear as they are added. Once sent, a request's
+attachments are listed under its bubble in the order they went, without
+remove buttons, and a click on one opens it as Files would.
+
+`--selection` opens Ask with what is selected in the app in front stashed
+first, read before the launcher takes the keyboard, alone or added to what is
+already stashed. While Ask or agents mode is up, the stash card steps
+aside; closed without sending, the card comes back. Sending a request while
+anything is stashed ends the stash, struck items included.
+
+**A request of attachments alone.** Enter with nothing typed sends a request
+when at least one attachment is not struck out: the attachments can be the
+whole question. The agent receives the attachments with no text, and a new
+session made this way is named after what was attached. With nothing typed
+and nothing to send, Enter does nothing.
+
 **Allowing a tool.** When the agent asks permission to use a tool, the log
 shows who wants to do what and the tool call itself, and under it what the
 call would touch as the service reported it: the file, and an edit to it as
@@ -147,7 +177,9 @@ field are the agent's options in the agent's order, starting on the one the
 service picked (the narrowest allow, or a refusal when the agent asked for no
 to be the default); only when the service names none does the launcher fall
 back to the narrowest allow itself. Cancelling the turn withdraws the
-question rather than refusing it.
+question rather than refusing it. The agent reading a file sent with
+the request, or anything inside a folder sent with it, is never asked about:
+attaching it was the yes. Writing to it still is.
 
 **Answering the agent.** When the agent asks the person something — a choice,
 a value, a link to open (an input request in its turn) — and no permission
@@ -180,8 +212,8 @@ as a document: headings, emphasis, lists, quotes, code and links take the
 toolkit's document typography, and the markup itself is not shown. Each
 request sits at the right of the log in a rounded gray bubble, in regular
 weight and the theme's text colour, wrapped inside the bubble and no wider
-than its words need. Everything else — attached files, tool calls, notes, the
-status — stays plain text, and is set smaller than the conversation as well as
+than its words need. Tool calls, notes and the status stay plain
+text, and are set smaller than the conversation as well as
 dimmer, so what was asked and answered outranks the trace of how. Code, in a
 fenced block or inline, is set at the size of the prose around it: a monospaced
 face is enough to say it is code without shrinking it.

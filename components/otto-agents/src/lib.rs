@@ -6,6 +6,7 @@
 
 pub mod acp;
 pub mod agent;
+pub mod attached;
 pub mod cli;
 pub mod client;
 pub mod config;

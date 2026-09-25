@@ -379,6 +379,8 @@ files-column-original-location = 元の場所
 ## The Kind column. These name what a file is, as a user would say it.
 
 files-kind-folder = フォルダ
+attachments-screen-region = 画面の領域
+files-add-to-stash = 収集に追加
 files-kind-image = イメージ
 files-kind-movie = ムービー
 files-kind-audio = オーディオ
@@ -913,7 +915,6 @@ launcher-agents-error = 失敗
 launcher-agents-none = エージェントセッションはまだありません
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
-launcher-ask-attached = 添付：{ $files }
 # Ask mode, while an existing session is being opened to continue it.
 launcher-ask-opening = セッションを開いています…
 launcher-ask-loading = 会話を読み込んでいます…

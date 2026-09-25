@@ -1078,6 +1078,9 @@ struct FilesApp {
     /// The picker's request queue, when this process is serving
     /// `org.otto.FilePicker1`. `None` in the browser.
     picker_queue: Option<crate::dbus::SharedQueue>,
+    /// Questions from `org.otto.Files1` waiting for the UI thread. `None` in
+    /// the picker, whose selection belongs to the application it serves.
+    selection_queue: Option<crate::files_service::SharedQueue>,
     /// The surfaces the window hangs over itself: each column's scroll pane,
     /// the stack's bar, Peek, the palette and the preview's player.
     /// `None` until the window exists.
@@ -1321,6 +1324,8 @@ fn run_app(
         .collect();
     otto_kit::sound::prewarm(&sounds);
 
+    let selection_queue = picker_queue.is_none().then(serve_files_interface);
+
     let app = FilesApp {
         pane_surfaces: None,
         window: None,
@@ -1334,9 +1339,27 @@ fn run_app(
         peek_target: Arc::new(Mutex::new(None)),
         palette_target: Arc::new(Mutex::new(None)),
         picker_queue,
+        selection_queue,
     };
 
     AppRunner::new(app).run()
+}
+
+/// Start serving `org.otto.Files1` for this window.
+///
+/// Outside a tokio runtime the queue is never fed and the window simply
+/// cannot be asked. A bus that refuses us costs nothing but that either.
+fn serve_files_interface() -> crate::files_service::SharedQueue {
+    let queue = crate::files_service::SharedQueue::default();
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let service_queue = Arc::clone(&queue);
+        runtime.spawn(async move {
+            if let Err(error) = crate::files_service::serve(service_queue).await {
+                tracing::warn!(%error, "cannot serve org.otto.Files1");
+            }
+        });
+    }
+    queue
 }
 
 #[cfg(test)]
@@ -1450,6 +1473,10 @@ mod picture_info_tests {
         assert!(picture_info(&text).is_none());
     }
 }
+
+/// What `org.otto.Files1.FocusedSelection` answers.
+#[cfg(test)]
+mod focused_selection_tests;
 
 /// Stepping in and out of Miller columns from the keyboard.
 #[cfg(test)]

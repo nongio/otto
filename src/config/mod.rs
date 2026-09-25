@@ -2972,6 +2972,7 @@ bookmarks = []
             started.contains(&"otto-islands"),
             "the dynamic island autostarts"
         );
+        assert!(started.contains(&"otto-stash"), "the stash autostarts");
 
         assert!(!config.dock.bookmarks.is_empty(), "the dock has bookmarks");
         assert!(

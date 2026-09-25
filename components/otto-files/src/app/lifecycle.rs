@@ -604,6 +604,7 @@ impl App for FilesApp {
         self.sync_info_window();
         self.sync_open_with_window();
         self.advance_picker();
+        self.answer_selection_asks();
     }
 
     /// A hand laid on the touchpad stops whatever is gliding, the way a
@@ -819,6 +820,27 @@ impl FilesApp {
             browser.settle_palette(outcome, 0);
         }
         browser.dirty = true;
+    }
+
+    /// Answer `org.otto.Files1.FocusedSelection` for every call waiting on
+    /// it.
+    ///
+    /// "Focused" is any surface of this process holding the keyboard: the
+    /// window itself, or its Get Info panel or menus, which are about the
+    /// same selection.
+    fn answer_selection_asks(&mut self) {
+        let Some(queue) = self.selection_queue.as_ref() else {
+            return;
+        };
+        let asks = queue.take();
+        if asks.is_empty() {
+            return;
+        }
+        let focused = AppContext::keyboard_focus().is_some();
+        let answer = self.state.lock().unwrap().focused_selection(focused);
+        for ask in asks {
+            let _ = ask.send(answer.clone());
+        }
     }
 
     /// Move the picker on when its request is done with, and notice when the

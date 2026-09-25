@@ -867,6 +867,7 @@ impl Browser {
             id::SELECT_MATCHING => self.select_matching(arg)?,
             id::MOVE_TO => self.move_selection_to(arg)?,
             id::NEW_FOLDER_WITH_SELECTION => self.new_folder_with_selection(arg)?,
+            id::ADD_TO_STASH => self.add_selection_to_stash(),
             id::UNDO => self.undo_last(),
             // The three views by name share their ids with the values Change
             // View takes, so one arm answers for both.
