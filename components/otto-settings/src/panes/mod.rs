@@ -3,6 +3,7 @@
 //! Each owns its own rows and their bindings, so panes can be worked on
 //! independently.
 
+pub mod agents;
 pub mod displays;
 pub mod dock;
 pub mod general;
