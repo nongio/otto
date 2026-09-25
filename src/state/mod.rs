@@ -1239,6 +1239,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             &self.display_handle,
             None,
             cursor_env,
+            std::iter::empty::<String>(),
             true,
             Stdio::null(),
             Stdio::null(),

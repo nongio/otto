@@ -11,7 +11,9 @@
 //! cannot do, and one mouse that has no tap support must not make a `Set` fail
 //! for the touchpad next to it.
 
-use smithay::reexports::input::{AccelProfile, ClickMethod, Device, DeviceCapability};
+use smithay::reexports::input::{
+    AccelProfile, ClickMethod, Device, DeviceCapability, DragLockState,
+};
 
 use crate::config::{InputConfig, PointerAccelProfile, TouchpadClickMethod};
 
@@ -53,7 +55,11 @@ pub fn apply_device_config(device: &mut Device, input: &InputConfig) {
     if is_touchpad(device) {
         let _ = device.config_tap_set_enabled(input.tap_enabled);
         let _ = device.config_tap_set_drag_enabled(input.tap_drag_enabled);
-        let _ = device.config_tap_set_drag_lock_enabled(input.tap_drag_lock_enabled);
+        let _ = device.config_tap_set_drag_lock_enabled(if input.tap_drag_lock_enabled {
+            DragLockState::EnabledTimeout
+        } else {
+            DragLockState::Disabled
+        });
 
         if device
             .config_click_methods()
@@ -77,7 +83,7 @@ pub fn apply_device_config(device: &mut Device, input: &InputConfig) {
         }
 
         tracing::debug!(
-            device = device.name(),
+            device = &*device.name(),
             tap = input.tap_enabled,
             drag = input.tap_drag_enabled,
             natural_scroll = input.touchpad_natural_scroll_enabled,
@@ -94,7 +100,7 @@ pub fn apply_device_config(device: &mut Device, input: &InputConfig) {
         }
         let _ = device.config_accel_set_speed(input.pointer_accel_speed);
         tracing::debug!(
-            device = device.name(),
+            device = &*device.name(),
             speed = input.pointer_accel_speed,
             profile = ?input.pointer_accel_profile,
             "Configured pointer acceleration"

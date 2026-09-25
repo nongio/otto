@@ -34,7 +34,7 @@ use smithay::{
         wayland_server::{protocol::wl_surface, Display},
         winit::{
             dpi::{LogicalSize, Size},
-            platform::pump_events::PumpStatus,
+            event_loop::pump_events::PumpStatus,
             window::WindowAttributes,
         },
     },
@@ -227,7 +227,7 @@ pub fn run_winit() {
         match winit::init_from_attributes_with_gl_attr::<SkiaRenderer>(
             WindowAttributes::default()
                 .with_title("Otto".to_string())
-                .with_inner_size(Size::new(window_size))
+                .with_surface_size(Size::new(window_size))
                 .with_visible(true),
             GlAttributes {
                 version: (3, 0),
@@ -464,7 +464,7 @@ pub fn run_winit() {
 
             // Set window cursor for named cursors (for window manager integration)
             if let CursorImageStatus::Named(cursor) = *cursor_guard {
-                backend.window().set_cursor(cursor);
+                backend.window().set_cursor(cursor.into());
             }
 
             #[cfg(feature = "fps_ticker")]
