@@ -476,7 +476,8 @@ mod tests {
     /// outputs, the bar and every maximized window and nothing reconciles
     /// those; the font is baked into caches shared with the client toolkits;
     /// the locale list is read once, before anything is built; the greeter runs
-    /// before this session exists. Each of these is a promise that the badge
+    /// before this session exists; the renderer is created once, when the
+    /// backend brings the GPU up. Each of these is a promise that the badge
     /// means something.
     #[test]
     fn the_settings_that_really_need_a_restart_say_so() {
@@ -486,6 +487,7 @@ mod tests {
             "locales",
             "login.greeter_command",
             "login.greeter_args",
+            "rendering.renderer",
         ] {
             assert_eq!(
                 schema::lookup(id).expect("in schema").apply,

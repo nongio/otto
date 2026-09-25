@@ -25,9 +25,9 @@ and the contract a settings client can build against.
 > `icon_theme`, `background_color` and `background_image`. For those the
 > compositor's own chrome and its window decorations are rebuilt, the cursor
 > and icon caches dropped, and the change relayed to other processes through
-> the Settings portal. The six that need a restart are `screen_scale`,
-> `font_family`, `gtk_theme`, `locales`, `login.greeter_command` and
-> `login.greeter_args`.
+> the Settings portal. The seven that need a restart are `screen_scale`,
+> `font_family`, `gtk_theme`, `locales`, `login.greeter_command`,
+> `login.greeter_args` and `rendering.renderer`.
 > No setting is `unsupported`. Keyed collections (dock bookmarks, shortcuts,
 > display profiles) have no single identifier and are not in the schema.
 
@@ -171,6 +171,8 @@ does not offer is edited by hand.
 | `step` | `v` | optional, numeric types only; granularity to snap to |
 | `choices` | `as` | optional, required for `enum`; for `color`, the palette names to offer as swatches |
 | `choice_labels` | `as` | optional; human names for `choices`, same order |
+| `unavailable_choices` | `as` | optional; entries of `choices` this build cannot take |
+| `applies_here` | `b` | optional; `false` when the setting has no effect under the running backend |
 
 Unknown keys must be ignored by clients, so the schema can grow without
 breaking them.
@@ -188,6 +190,17 @@ stay `clickfinger` on the wire and in the file, however badly it reads in a
 menu. When present it has exactly one entry per choice, and a client shows it
 in place of the token while continuing to `Set` the token. When absent, the
 tokens are already fit to show.
+
+`unavailable_choices` lists choices the compositor knows but this build cannot
+honour, such as `vulkan` for `rendering.renderer` in a build without the
+`vulkan` feature. They stay in `choices` so a client can explain their absence;
+`Set` refuses them with `Unsupported`, and a menu should leave them out.
+
+`applies_here` is present only for a setting tied to particular backends.
+`rendering.renderer` reaches the tty (udev) backend alone, so under `--winit`
+or `--x11` it is served with `applies_here: false`. The value can still be
+set, for the next login session; a client should present it as not affecting
+the session it runs in. A missing key means the setting applies.
 
 `apply` is what the setting does when set: `live` takes effect immediately;
 `restart` is persisted but needs a compositor restart, with the running
@@ -244,7 +257,7 @@ applies live throughout but emits and persists when the interaction settles.
 | `org.otto.Settings.Error.UnknownSetting` | no such identifier |
 | `org.otto.Settings.Error.InvalidType` | variant type does not match the schema |
 | `org.otto.Settings.Error.OutOfRange` | outside `min`/`max`, or not in `choices` |
-| `org.otto.Settings.Error.Unsupported` | `apply` is `unsupported` on this system |
+| `org.otto.Settings.Error.Unsupported` | `apply` is `unsupported` on this system, or the value is in `unavailable_choices` |
 | `org.otto.Settings.Error.ApplyFailed` | valid, but the compositor could not apply it; message says why |
 
 `ApplyFailed` means nothing was persisted and the running state is unchanged.

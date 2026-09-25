@@ -165,6 +165,13 @@ pub struct Desc {
     /// Human names for `choices`, in the same order, when the configuration
     /// tokens are not fit to show. Empty when they are.
     pub choice_labels: Vec<String>,
+    /// Entries of `choices` this compositor build cannot take. The compositor
+    /// refuses them, so a menu leaves them out.
+    pub unavailable_choices: Vec<String>,
+    /// Whether the setting has any effect in the running session. False for
+    /// one tied to other backends, such as the renderer under a windowed
+    /// session.
+    pub applies_here: bool,
 }
 
 impl Desc {
@@ -435,6 +442,11 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
                 default: entry.get("default").and_then(number_field),
                 choices: string_list(&entry, "choices"),
                 choice_labels: string_list(&entry, "choice_labels"),
+                unavailable_choices: string_list(&entry, "unavailable_choices"),
+                applies_here: !matches!(
+                    entry.get("applies_here").and_then(Value::from_zbus),
+                    Some(Value::Bool(false))
+                ),
                 id: id.clone(),
             };
             Some((id, desc))
@@ -719,6 +731,8 @@ mod commit_type_tests {
                 default: None,
                 choices: Vec::new(),
                 choice_labels: Vec::new(),
+                unavailable_choices: Vec::new(),
+                applies_here: true,
             },
         );
     }

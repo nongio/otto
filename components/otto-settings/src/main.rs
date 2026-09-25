@@ -363,11 +363,11 @@ fn select_ids() -> Vec<&'static str> {
     // be built later: the list is editable, and a line added at runtime has to
     // find its menu already made.
     ids.extend_from_slice(keyboard::slot_ids());
-    // The Displays pane's resolution and refresh pop-ups. They already come
-    // back from the walk above — both rows carry an `id` — but only while the
-    // pane has a display to show, and a session that gains its first output
-    // later would find no menu made. Adding them unconditionally costs two
-    // entries; `HashMap` collapses the duplicates.
+    // The Displays pane's resolution, refresh and renderer pop-ups. They
+    // already come back from the walk above — the rows carry an `id` — but
+    // only while the pane has a display to show, and a session that gains its
+    // first output later would find no menu made. Adding them unconditionally
+    // costs three entries; `HashMap` collapses the duplicates.
     ids.extend_from_slice(displays::slot_ids());
     // The Agents pane's pop-ups, for every agent it can hold: one added at
     // runtime has to find its menus already made.
@@ -569,6 +569,7 @@ fn open_menu(
         if !desc.choices.is_empty() {
             desc.choices
                 .iter()
+                .filter(|c| !desc.unavailable_choices.contains(c))
                 .map(|c| discovery::Choice {
                     label: desc.display(c),
                     value: c.clone(),

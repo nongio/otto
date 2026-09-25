@@ -651,6 +651,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // start out the configured colour rather than otto-kit's fallback.
         crate::theme::publish_accent();
 
+        // The settings schema says which settings reach this kind of session.
+        crate::settings::set_backend(backend_data.backend_name());
+
         let clock = Clock::new();
 
         // init wayland clients
