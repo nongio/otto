@@ -18,7 +18,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Pane | Covers |
 |------|--------|
 | General | Light or dark appearance, accent colour, interface font, GTK theme, desktop background colour and image, pointer and icon themes |
-| Displays | Resolution, refresh rate and arrangement of connected monitors, and the global interface scale |
+| Displays | Resolution, refresh rate and arrangement of connected monitors, the global interface scale, and the renderer |
 | Dock | Size, position, auto-hide, magnification, icon colorization |
 | Keyboard | Layout and options, repeat rate, and the shortcut list |
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
@@ -38,9 +38,9 @@ change.
 Nearly everything applies the moment you change it: the Dock's size and
 behaviour, the keyboard layout and repeat, the touchpad and pointer options,
 appearance and accent colour, the sound, power and lock settings. Only the
-interface font, the display scale, the GTK theme, the display language and the
-greeter need a restart, and the app badges those and only those — a badge you
-can catch lying is a badge you stop reading.
+interface font, the display scale, the GTK theme, the display language, the
+greeter and the renderer need a restart, and the app badges those and only
+those — a badge you can catch lying is a badge you stop reading.
 
 ## Displays
 
@@ -58,6 +58,18 @@ session and are gone at restart. To make them stick, write them under
 
 Scale is the exception: it is bound, but it is the global `screen_scale`, not a
 per-display value.
+
+**Renderer** picks the GPU API Otto draws with: OpenGL or Vulkan. It applies
+to the login session only, since a windowed session (`otto --winit` or
+`--x11`) always uses OpenGL, and it takes effect after you log in again. Run
+Settings inside a windowed session and the row shows OpenGL with a note
+instead of a menu. Vulkan is part of the default build, but it also needs a
+working Vulkan driver for your GPU (on Arch, `vulkan-icd-loader` plus
+`vulkan-intel` or `vulkan-radeon`). Choosing Vulkan where it cannot start is
+safe: Otto logs why and draws that session with OpenGL, and the row then says
+Vulkan isn't available here instead of offering it. The setting is `renderer`
+under `[rendering]` in the config file, and `otto --tty-udev --renderer
+vulkan` overrides it for one session.
 
 ## Shortcuts
 
