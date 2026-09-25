@@ -128,6 +128,10 @@ settings-display-refresh-detail = Herce — jak często strumień otrzymuje klat
 settings-display-resolution = Rozdzielczość
 settings-display-scale = Skalowanie ekranu
 settings-display-scale-detail = Zacznie obowiązywać po następnym zalogowaniu. Pulpit nie dostosowuje się na bieżąco
+settings-renderer = Silnik renderowania
+settings-renderer-detail = Dotyczy sesji uruchamianej z ekranu logowania. Sesje w oknie zawsze używają OpenGL. Zacznie obowiązywać po następnym zalogowaniu.
+settings-renderer-no-vulkan-detail = Ta wersja nie ma obsługi Vulkan, więc Otto rysuje przy użyciu OpenGL.
+settings-renderer-windowed-detail = Sesje w oknie zawsze używają OpenGL. Można to zmienić w sesji uruchomionej z ekranu logowania.
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Brak ekranów
@@ -999,6 +1003,10 @@ schema-login-greeter-command-label = Polecenie ekranu logowania
 schema-login-greeter-command-description = Ekran logowania uruchamiany w trybie logowania.
 schema-login-greeter-args-label = Parametry ekranu logowania
 schema-login-greeter-args-description = Parametry przekazywane ekranowi logowania.
+
+# --- rendering ---
+schema-rendering-renderer-label = Silnik renderowania
+schema-rendering-renderer-description = API GPU, którego Otto używa do rysowania w sesji uruchomionej z ekranu logowania. Sesje w oknie zawsze używają OpenGL.
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Przełącznik podąża za wskaźnikiem

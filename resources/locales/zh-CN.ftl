@@ -128,6 +128,10 @@ settings-display-refresh-detail = Hertz —— 串流每隔多久获得一帧
 settings-display-resolution = 分辨率
 settings-display-scale = 显示器缩放
 settings-display-scale-detail = 下次登录时生效。桌面不会即时重新排布
+settings-renderer = 渲染器
+settings-renderer-detail = 适用于从登录界面启动的会话。窗口模式会话始终使用 OpenGL。下次登录时生效。
+settings-renderer-no-vulkan-detail = 此版本未包含 Vulkan，Otto 使用 OpenGL 绘制。
+settings-renderer-windowed-detail = 窗口模式会话始终使用 OpenGL。可在从登录界面启动的会话中更改。
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = 没有显示器
@@ -937,6 +941,10 @@ schema-login-greeter-command-label = 登录界面命令
 schema-login-greeter-command-description = 在登录模式下启动的登录界面程序。
 schema-login-greeter-args-label = 登录界面参数
 schema-login-greeter-args-description = 传递给登录界面程序的参数。
+
+# --- rendering ---
+schema-rendering-renderer-label = 渲染器
+schema-rendering-renderer-description = Otto 在从登录界面启动的会话中用于绘制的 GPU API。窗口模式会话始终使用 OpenGL。
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = 切换器跟随指针

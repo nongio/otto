@@ -128,6 +128,10 @@ settings-display-refresh-detail = Герц — как часто в поток �
 settings-display-resolution = Разрешение
 settings-display-scale = Масштаб дисплея
 settings-display-scale-detail = Применяется при следующем входе. Рабочий стол не перестраивается на лету
+settings-renderer = Движок отрисовки
+settings-renderer-detail = Относится к сеансу, запущенному с экрана приветствия. Сеансы в окне всегда используют OpenGL. Применяется при следующем входе.
+settings-renderer-no-vulkan-detail = В этой сборке нет Vulkan, поэтому Otto рисует через OpenGL.
+settings-renderer-windowed-detail = Сеансы в окне всегда используют OpenGL. Изменить это можно в сеансе, запущенном с экрана приветствия.
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Нет дисплеев
@@ -992,6 +996,10 @@ schema-login-greeter-command-label = Команда экрана приветс�
 schema-login-greeter-command-description = Приветственный экран, запускаемый в режиме входа.
 schema-login-greeter-args-label = Аргументы экрана приветствия
 schema-login-greeter-args-description = Аргументы, передаваемые экрану приветствия.
+
+# --- rendering ---
+schema-rendering-renderer-label = Движок отрисовки
+schema-rendering-renderer-description = GPU API, через который Otto рисует в сеансе, запущенном с экрана приветствия. Сеансы в окне всегда используют OpenGL.
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Переключатель следует за указателем

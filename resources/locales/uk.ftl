@@ -129,6 +129,10 @@ settings-display-refresh-detail = Герц — як часто потік отр
 settings-display-resolution = Роздільна здатність
 settings-display-scale = Масштаб дисплея
 settings-display-scale-detail = Застосовується під час наступного входу. Стільниця не перебудовується одразу
+settings-renderer = Рушій рендерингу
+settings-renderer-detail = Стосується сеансу, запущеного з вітального екрана. Сеанси у вікні завжди використовують OpenGL. Застосовується під час наступного входу.
+settings-renderer-no-vulkan-detail = У цій збірці немає Vulkan, тож Otto малює через OpenGL.
+settings-renderer-windowed-detail = Сеанси у вікні завжди використовують OpenGL. Змінити це можна в сеансі, запущеному з вітального екрана.
 
 # Shown when the compositor reports no outputs at all.
 settings-display-none = Немає дисплеїв
@@ -987,6 +991,10 @@ schema-login-greeter-command-label = Команда вітального екр�
 schema-login-greeter-command-description = Вітальний екран, який запускають у режимі входу.
 schema-login-greeter-args-label = Аргументи вітального екрана
 schema-login-greeter-args-description = Аргументи, які передають вітальному екрану.
+
+# --- rendering ---
+schema-rendering-renderer-label = Рушій рендерингу
+schema-rendering-renderer-description = GPU API, через який Otto малює в сеансі, запущеному з вітального екрана. Сеанси у вікні завжди використовують OpenGL.
 
 # --- appswitcher ---
 schema-appswitcher-follow-cursor-label = Перемикач слідує за вказівником
