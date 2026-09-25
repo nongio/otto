@@ -73,6 +73,7 @@ impl SettingSpec {
     /// this machine, so the session fell back (see
     /// [`crate::udev::vulkan_fallback`]).
     pub fn unavailable_now(&self) -> Vec<&'static str> {
+        #[cfg_attr(not(feature = "vulkan"), allow(unused_mut))]
         let mut out = self.unavailable_choices.to_vec();
         #[cfg(feature = "vulkan")]
         if self.id == "rendering.renderer"
