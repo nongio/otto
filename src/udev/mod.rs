@@ -165,6 +165,17 @@ impl<A: RendererApi> Backend for UdevData<A> {
         }
         None
     }
+    fn hold_surface_texture(
+        &self,
+        surface: &smithay::backend::renderer::utils::RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        let id = self.context_id.as_ref().cloned()?;
+        let multitexture = surface.texture::<MultiTexture>(id.clone())?;
+        let skia_id: smithay::backend::renderer::ContextId<A::Texture> = id.map();
+        multitexture
+            .get::<A::GraphicsApi>(&skia_id)
+            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
+    }
     fn set_cursor(&mut self, _image: &CursorImageStatus) {
         // No-op: cursor rendering handled directly in render_surface
     }

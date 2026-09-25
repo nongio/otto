@@ -205,6 +205,23 @@ pub fn zombie_windows() -> usize {
     list.len()
 }
 
+/// A closed window whose view is still fading out.
+///
+/// The view is already out of every space, list and focus order; only its
+/// scene layer lingers. The textures keep the client's last buffers alive
+/// for the layer to draw, since the client has already dropped them.
+struct ClosingWindow {
+    window_id: ObjectId,
+    view: WindowView,
+    /// Set by the fade transaction's `on_finish`.
+    faded: Arc<AtomicBool>,
+    /// When the layer is removed even if the transaction never finishes
+    /// (the engine drops a transaction whose layer's subtree was torn down
+    /// underneath it, and a workspace removal does exactly that).
+    deadline: std::time::Instant,
+    _textures: Vec<Box<dyn std::any::Any + Send>>,
+}
+
 pub struct Workspaces {
     model: Arc<RwLock<WorkspacesModel>>,
     pub output_workspaces: HashMap<String, OutputWorkspaces>,
@@ -235,6 +252,9 @@ pub struct Workspaces {
     /// output-add time). See `place_app_switcher`.
     app_switcher_output: Arc<RwLock<Option<String>>>,
     pub window_views: Arc<RwLock<HashMap<ObjectId, WindowView>>>,
+    /// Windows that have closed but are still fading out on screen. Reaped
+    /// by [`Workspaces::reap_closed_windows`].
+    closing_windows: Vec<ClosingWindow>,
     pub dnd_view: DndView,
     pub popup_overlay: PopupOverlayView,
     pub osd: OsdView,
@@ -728,6 +748,7 @@ impl Workspaces {
             expose_gesture_active: Arc::new(AtomicBool::new(false)),
             label_editing: Arc::new(AtomicBool::new(false)),
             window_views: Arc::new(RwLock::new(HashMap::new())),
+            closing_windows: Vec::new(),
             observers: Vec::new(),
             layers_engine,
             expose_dragged_window: Arc::new(std::sync::Mutex::new(None)),
@@ -3411,6 +3432,20 @@ impl Workspaces {
     /// remove the window layer from the scene,
     /// Returns the surface IDs from removed popups that need cleanup
     pub fn unmap_window(&mut self, window_id: &ObjectId) -> Vec<ObjectId> {
+        self.unmap_window_fading(window_id, Vec::new())
+    }
+
+    /// [`Workspaces::unmap_window`], keeping the window's last frame on
+    /// screen while it fades out.
+    ///
+    /// `textures` are strong handles on the client's buffers as the backend
+    /// hands them out (`Backend::hold_surface_texture`); the view is removed
+    /// on the spot when there are none, since there is nothing to show.
+    pub fn unmap_window_fading(
+        &mut self,
+        window_id: &ObjectId,
+        textures: Vec<Box<dyn std::any::Any + Send>>,
+    ) -> Vec<ObjectId> {
         tracing::info!("workspaces::unmap_window: {:?}", window_id);
 
         // A window that goes away leaves its tiling tree; the surviving tiles
@@ -3452,9 +3487,7 @@ impl Workspaces {
             }
         }
         self.forget_window_focus(window_id);
-        // Remove debug texture snapshot for this surface
-        crate::textures_storage::remove(window_id);
-        let removed_surface_ids = self.remove_window_view(window_id);
+        let removed_surface_ids = self.remove_window_view(window_id, textures);
 
         self.refresh_space();
         self.update_workspace_model();
@@ -3701,17 +3734,62 @@ impl Workspaces {
 
     /// Remove a WindowView from the scene and delete it from the window_views map
     /// Returns the surface IDs from removed popups that need cleanup
-    pub fn remove_window_view(&mut self, object_id: &ObjectId) -> Vec<ObjectId> {
+    ///
+    /// With `textures` the layer fades out first and is removed by
+    /// [`Workspaces::reap_closed_windows`]; without, it goes at once.
+    pub fn remove_window_view(
+        &mut self,
+        object_id: &ObjectId,
+        textures: Vec<Box<dyn std::any::Any + Send>>,
+    ) -> Vec<ObjectId> {
         // Remove any popups that belong to this window
         let removed_surface_ids = self.popup_overlay.remove_popups_for_window(object_id);
 
-        let mut window_views = self.window_views.write().unwrap();
-        if let Some(view) = window_views.remove(object_id) {
+        let view = self.window_views.write().unwrap().remove(object_id);
+        if let Some(view) = view {
             view.set_is_unmapped(true);
-            view.window_layer.remove();
+            if textures.is_empty() || !view.is_alive() {
+                crate::textures_storage::remove(object_id);
+                view.window_layer.remove();
+            } else {
+                let faded = Arc::new(AtomicBool::new(false));
+                let done = faded.clone();
+                view.fade_out().on_finish(
+                    move |_: &Layer, _| done.store(true, std::sync::atomic::Ordering::SeqCst),
+                    true,
+                );
+                self.closing_windows.push(ClosingWindow {
+                    window_id: object_id.clone(),
+                    view,
+                    faded,
+                    deadline: std::time::Instant::now()
+                        + std::time::Duration::from_secs_f32(window_view::CLOSE_FADE * 2.0),
+                    _textures: textures,
+                });
+            }
         }
 
         removed_surface_ids
+    }
+
+    /// Remove the layers of closed windows whose fade-out has ended.
+    ///
+    /// Called once per event-loop iteration by the backends. A window whose
+    /// fade never reports back is removed once its deadline has passed.
+    pub fn reap_closed_windows(&mut self) {
+        let now = std::time::Instant::now();
+        let (done, pending): (Vec<_>, Vec<_>) = std::mem::take(&mut self.closing_windows)
+            .into_iter()
+            .partition(|closing| {
+                closing.faded.load(std::sync::atomic::Ordering::SeqCst) || now >= closing.deadline
+            });
+        self.closing_windows = pending;
+        for closing in done {
+            crate::textures_storage::remove(&closing.window_id);
+            if closing.view.is_alive() {
+                closing.view.window_layer.remove();
+            }
+        }
     }
 
     pub fn get_window_view(&self, id: &ObjectId) -> Option<WindowView> {

@@ -28,6 +28,15 @@ const MATERIAL_FADE: f32 = 0.3;
 /// with the keystroke rather than trail it.
 const TILE_BORDER_FADE: f32 = 0.15;
 
+/// How long a closing window takes to fade out, in seconds. Short enough
+/// that a burst of closing windows reads as snappy rather than as a queue.
+pub const CLOSE_FADE: f32 = 0.18;
+
+/// The scale a closing window shrinks to while it fades: a touch smaller
+/// than life size, so the fade reads as the window leaving rather than as
+/// content dimming in place.
+const CLOSE_FADE_SCALE: f32 = 0.95;
+
 #[derive(Clone)]
 pub struct WindowView {
     pub window_id: ObjectId,
@@ -481,6 +490,27 @@ impl WindowView {
                 },
                 true,
             )
+    }
+
+    /// Fade the window out, shrinking slightly around its centre.
+    ///
+    /// Meant for a window that has just closed: the layer stops taking
+    /// pointer events at once and keeps drawing its last frame while the
+    /// transition runs. The caller removes the layer once the returned
+    /// transaction has finished.
+    pub fn fade_out(&self) -> TransactionRef {
+        self.window_layer.set_pointer_events(false);
+        self.window_layer
+            .set_anchor_point_preserving_position(Point { x: 0.5, y: 0.5 });
+        self.window_layer.set_scale(
+            Point {
+                x: CLOSE_FADE_SCALE,
+                y: CLOSE_FADE_SCALE,
+            },
+            Some(Transition::ease_out_quad(CLOSE_FADE)),
+        );
+        self.window_layer
+            .set_opacity(0.0_f32, Some(Transition::ease_out_quad(CLOSE_FADE)))
     }
 
     /// Apply a scale/position to make the window fit inside the minimized drawer rect.

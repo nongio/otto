@@ -1643,6 +1643,38 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
+    /// Strong handles on the textures of every surface in `surface`'s tree.
+    ///
+    /// Empty when no surface has a texture (never committed, already
+    /// unmapped, or a backend without a renderer), so the caller can tell
+    /// whether there is a last frame worth keeping on screen.
+    pub fn hold_surface_tree_textures(
+        &self,
+        surface: &WlSurface,
+    ) -> Vec<Box<dyn std::any::Any + Send>> {
+        let mut held = Vec::new();
+        if !surface.is_alive() {
+            return held;
+        }
+        smithay::wayland::compositor::with_surface_tree_downward(
+            surface,
+            (),
+            |_, _, _| TraversalAction::DoChildren(()),
+            |_, states, _| {
+                let Some(render_surface) = states.data_map.get::<RendererSurfaceStateUserData>()
+                else {
+                    return;
+                };
+                let render_surface = render_surface.lock().unwrap();
+                if let Some(texture) = self.backend_data.hold_surface_texture(&render_surface) {
+                    held.push(texture);
+                }
+            },
+            |_, _, _| true,
+        );
+        held
+    }
+
     pub fn cleanup_dnd_layers(&mut self, dnd_surface: &WlSurface) {
         // Remove all layers created for this DnD surface tree
         let mut to_remove = Vec::new();
@@ -2986,6 +3018,19 @@ pub trait Backend {
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);
     fn texture_for_surface(&self, surface: &RendererSurfaceState) -> Option<SkiaTextureImage>;
+    /// A strong handle on the renderer texture of `surface`, kept alive for as
+    /// long as the box is.
+    ///
+    /// The Skia image the surface layer draws only borrows the GPU texture;
+    /// once the client's buffer is gone the renderer frees it and the image
+    /// samples freed memory. A closing window that keeps drawing its last
+    /// frame holds this until its fade-out has ended.
+    fn hold_surface_texture(
+        &self,
+        _surface: &RendererSurfaceState,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
     fn set_cursor(&mut self, image: &CursorImageStatus); //, renderer: &mut SkiaRenderer);
     fn renderer_context(&mut self) -> Option<layers::skia::gpu::DirectContext>;
     fn request_redraw(&mut self) {}

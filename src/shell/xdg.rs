@@ -302,7 +302,10 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 }
             }
         }
-        let removed_surface_ids = self.workspaces.unmap_window(&id);
+        // The client is dropping its buffers with the toplevel; hold them so
+        // the window can fade out showing its last frame.
+        let held = self.hold_surface_tree_textures(toplevel.wl_surface());
+        let removed_surface_ids = self.workspaces.unmap_window_fading(&id, held);
 
         // Notify foreign toplevel list that this toplevel is closed
         if let Some(handle) = self.foreign_toplevels.remove(&id) {

@@ -121,7 +121,9 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
                 })
                 .unwrap_or(false);
             if let Some(surface) = elem.wl_surface() {
-                self.workspaces.unmap_window(&surface.as_ref().id());
+                let held = self.hold_surface_tree_textures(&surface);
+                self.workspaces
+                    .unmap_window_fading(&surface.as_ref().id(), held);
             } else if let Some(space) = self.workspaces.space_mut() {
                 space.unmap_elem(&elem);
             }
