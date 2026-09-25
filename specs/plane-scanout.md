@@ -244,20 +244,24 @@ vibrancy even though the content behind it lives on other planes.
 - Plane buffers are offscreen EGLImage render targets, which Mesa iris does
   not attach implicit dma-fences to, so the atomic commit does not wait for
   their GL writes on its own — something must, or planes flip half-drawn.
-  That wait happens **once per frame**, after the last plane render and
-  before the buffers are handed to the DRM compositor: every plane's slot
-  surface is built from the renderer's single shared Skia `DirectContext`,
-  so one sync covers all of them. The per-plane flushes submit without
+  Every plane's slot surface is built from the renderer's single shared Skia
+  `DirectContext`, so **one fence per frame** covers all of them: after the
+  last plane render, and before the buffers are handed to the DRM
+  compositor, the pending work is submitted, a native EGL fence is created,
+  and its sync file is attached to each plane dmabuf rendered that frame as
+  an implicit write fence (`DMA_BUF_IOCTL_IMPORT_SYNC_FILE`). The kernel then
+  holds the flip until the GPU is done, and the event loop stays free to
+  deliver input while the GPU works. The per-plane flushes submit without
   blocking (they still submit rather than merely record, because the
   backdrop composite samples an earlier plane's snapshot from the same
   context and the queued order is the correct order).
-  Waiting per plane instead serialised CPU against GPU once per plane, and
-  that blocked time — nearly all of a plane render — was the dominant term
-  in the frame budget.
-  Delivering the fence to KMS as `IN_FENCE_FD` instead would be better
-  still, but is not currently possible: smithay populates `PlaneConfig.sync`
-  only from a `ScanoutBuffer::Wayland` acquire point, so a dmabuf-backed
-  plane element cannot carry a sync point without extending smithay.
+- If the fence cannot be exported, or attaching it fails (a kernel older
+  than 6.0), the renderer blocks the CPU on the GPU at that same point
+  instead, and stays on that path after the first failure. Blocking the event
+  loop there delays input: libinput events queue up behind the frame and
+  reach clients in bursts, which throws off clients that time touchpad
+  flings by arrival (Chromium does). smithay's `IN_FENCE_FD` path is not
+  used because it only carries acquire points of Wayland client buffers.
 - A promoted (scanned-out) window's commits skip the scene import
   entirely — importing would only re-render its hidden content layer into
   the windows plane. The skip sets a pending flag that forces the next

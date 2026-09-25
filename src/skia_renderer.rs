@@ -66,6 +66,13 @@ pub struct SkiaRenderer {
     /// dropped, waiting for a frame with the context current to delete them
     /// (see [`PlaneTextureRelease`]).
     plane_texture_releases: PlaneTextureQueue,
+    /// Plane dmabufs written since the last [`Self::flush_planes_for_scanout`],
+    /// which have to carry a fence for their GPU writes before KMS reads them.
+    scanout_writes: Vec<smithay::backend::allocator::dmabuf::Dmabuf>,
+    /// Set once attaching a fence to a plane dmabuf has failed, so a kernel
+    /// or driver without support falls back to the CPU wait for good rather
+    /// than retrying and warning every frame.
+    scanout_fences_unsupported: bool,
     smithay_context_id: ContextId<SkiaTexture>,
 }
 
@@ -128,6 +135,8 @@ impl From<GlesRenderer> for SkiaRenderer {
             dmabuf_target_aux: HashMap::new(),
             refused_dmabuf_targets: Default::default(),
             plane_texture_releases: Default::default(),
+            scanout_writes: Vec::new(),
+            scanout_fences_unsupported: false,
             smithay_context_id: ContextId::new(),
         }
     }
@@ -269,6 +278,8 @@ impl SkiaRenderer {
             dmabuf_target_aux: HashMap::new(),
             refused_dmabuf_targets: Default::default(),
             plane_texture_releases: Default::default(),
+            scanout_writes: Vec::new(),
+            scanout_fences_unsupported: false,
             smithay_context_id: ContextId::new(),
         })
     }
@@ -284,21 +295,26 @@ impl SkiaRenderer {
         self.gl_renderer.egl_context()
     }
 
-    /// Block until every plane buffer rendered this frame has actually been
-    /// written by the GPU.
+    /// Make the plane buffers rendered this frame safe to scan out.
     ///
     /// Plane slot surfaces are offscreen EGLImage render targets, which Mesa
     /// iris does not attach implicit dma-fences to, so the atomic commit will
     /// not wait for them — something must, or planes flip with half-drawn
-    /// buffers. Every plane shares this one `DirectContext`, so a single wait
-    /// here covers all of them; the per-plane renders submit without blocking
-    /// (see `SceneDmabufElement::render_inner`).
+    /// buffers. Every plane shares this one `DirectContext`, so one fence
+    /// covers all of them; the per-plane renders submit without blocking (see
+    /// `SceneDmabufElement::render_inner`). The fence is attached to each
+    /// plane dmabuf so the kernel waits for it, keeping the event loop free
+    /// while the GPU works. When that is not possible this blocks until the
+    /// GPU is done instead.
     ///
     /// Call once per frame, after the last plane render and before handing the
     /// buffers to the DRM compositor.
     pub fn flush_planes_for_scanout(&mut self) {
-        if let Some(context) = self.context.as_mut() {
-            context.flush_submit_and_sync_cpu();
+        let writes = std::mem::take(&mut self.scanout_writes);
+        if !self.fence_scanout_writes(&writes) {
+            if let Some(context) = self.context.as_mut() {
+                context.flush_submit_and_sync_cpu();
+            }
         }
         self.release_plane_textures();
         // Textures dropped with their last `GlesTexture` (evicted client
@@ -364,6 +380,51 @@ impl SkiaRenderer {
                 );
             }
         }
+    }
+
+    /// Record that `dmabuf` was rendered into for scanout this frame.
+    ///
+    /// [`Self::flush_planes_for_scanout`] attaches the frame's GPU fence to it,
+    /// so the KMS commit waits for the writes instead of the CPU.
+    pub fn note_scanout_write(&mut self, dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf) {
+        self.scanout_writes.push(dmabuf.clone());
+    }
+
+    /// Submit the pending GPU work and attach its fence to every dmabuf in
+    /// `writes` as an implicit write fence.
+    ///
+    /// The atomic commit then waits for the GPU in the kernel, and the event
+    /// loop stays free to deliver input while the GPU works. Returns `false`
+    /// when the fence cannot be exported or attached, in which case the
+    /// caller has to block on the GPU itself.
+    fn fence_scanout_writes(
+        &mut self,
+        writes: &[smithay::backend::allocator::dmabuf::Dmabuf],
+    ) -> bool {
+        if writes.is_empty() || self.scanout_fences_unsupported {
+            return false;
+        }
+        let Some(context) = self.context.as_mut() else {
+            return false;
+        };
+        context.flush_and_submit();
+        let display = self.egl_context().display().clone();
+        let fence = match smithay::backend::egl::fence::EGLFence::create(&display) {
+            Ok(fence) if fence.is_native() => fence,
+            _ => return false,
+        };
+        // A native fence reaches the GPU only with the next flush.
+        // SAFETY: the renderer's EGL context is current for the whole frame.
+        unsafe { self.gl.Flush() };
+        let Ok(sync_file) = fence.export() else {
+            return false;
+        };
+        let attached = writes
+            .iter()
+            .flat_map(|dmabuf| dmabuf.handles())
+            .all(|handle| import_write_fence(handle, &sync_file));
+        self.scanout_fences_unsupported = !attached;
+        attached
     }
 
     /// Delete the textures and EGLImages of plane slots dropped since the
@@ -1667,4 +1728,48 @@ impl Offscreen<SkiaGLesFbo> for SkiaRenderer {
     ) -> Result<SkiaGLesFbo, GlesError> {
         self.create_texture_and_framebuffer(size.w, size.h, format)
     }
+}
+
+/// Attach `sync_file` to the dmabuf behind `handle` as a write fence, with
+/// `DMA_BUF_IOCTL_IMPORT_SYNC_FILE` (Linux 6.0).
+///
+/// Readers that honor implicit sync, KMS among them, then wait for it.
+fn import_write_fence(
+    handle: std::os::fd::BorrowedFd<'_>,
+    sync_file: &std::os::fd::OwnedFd,
+) -> bool {
+    use std::os::fd::AsRawFd;
+
+    /// `struct dma_buf_import_sync_file` from `linux/dma-buf.h`.
+    #[repr(C)]
+    struct ImportSyncFile {
+        flags: u32,
+        fd: i32,
+    }
+    /// `DMA_BUF_SYNC_WRITE`: the fence is a write, so readers wait for it.
+    const DMA_BUF_SYNC_WRITE: u32 = 2;
+    /// `_IOW('b', 3, struct dma_buf_import_sync_file)`.
+    const DMA_BUF_IOCTL_IMPORT_SYNC_FILE: libc::c_ulong = 0x4008_6203;
+
+    let mut arg = ImportSyncFile {
+        flags: DMA_BUF_SYNC_WRITE,
+        fd: sync_file.as_raw_fd(),
+    };
+    // SAFETY: `handle` is a live dmabuf fd and `arg` matches the kernel's
+    // struct layout for this request.
+    let ret = unsafe {
+        libc::ioctl(
+            handle.as_raw_fd(),
+            DMA_BUF_IOCTL_IMPORT_SYNC_FILE,
+            &mut arg as *mut ImportSyncFile,
+        )
+    };
+    if ret != 0 {
+        tracing::warn!(
+            target: "otto::planes",
+            err = %std::io::Error::last_os_error(),
+            "attaching the GPU fence to a plane dmabuf failed; waiting on the CPU from now on"
+        );
+    }
+    ret == 0
 }
