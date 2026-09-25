@@ -1706,6 +1706,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     texture_id,
                     commit: render_surface.current_commit(),
                     transform: surface_attributes.buffer_transform.into(),
+                    fully_opaque: render_surface.opaque_regions().is_some_and(|regions| {
+                        let full = utils::Rectangle::from_size(view.dst);
+                        regions.iter().any(|r| r.contains_rect(full))
+                    }),
                 };
                 return Some(wvs);
             }
