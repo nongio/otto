@@ -36,15 +36,8 @@
 //! dimensions and does not reflow — applying it live would leave the desktop
 //! unusable. The schema marks it `Restart`, so a changed value carries the
 //! restart pill until the session comes back.
-//!
-//! The renderer sits here too, as the other thing about how the screens are
-//! driven. It only reaches a login session: the windowed backends always draw
-//! with OpenGL, and Vulkan exists only in a build that includes it. Where
-//! there is nothing to choose, the row states what Otto draws with and why
-//! instead of offering a menu.
 
 use crate::model::{self, group, Control, Pane, Row};
-use crate::settings_client;
 
 // Labels of the rows this pane routes back to itself. They are the only
 // handle an unbound row has: `Row::id` is `None`, so there is no identifier
@@ -84,13 +77,6 @@ fn virtual_displays() -> &'static str {
 fn scale() -> &'static str {
     otto_kit::t!("settings-display-scale")
 }
-fn renderer() -> &'static str {
-    otto_kit::t!("settings-renderer")
-}
-
-/// The setting the renderer row edits.
-const RENDERER_ID: &str = "rendering.renderer";
-
 /// The push buttons on the virtual-displays row.
 fn add() -> &'static str {
     otto_kit::t!("common-add")
@@ -118,11 +104,9 @@ fn virtual_buttons() -> &'static [&'static str] {
 pub const RESOLUTION_ID: &str = "display.resolution";
 pub const REFRESH_ID: &str = "display.refresh";
 
-/// The pop-up rows this pane owns, for the menu pool built at startup. The
-/// renderer's is among them: its menu is filled from the schema like any
-/// other setting's, but the row only exists while there is a display to show.
+/// The pop-up rows this pane owns, for the menu pool built at startup.
 pub fn slot_ids() -> &'static [&'static str] {
-    &[RESOLUTION_ID, REFRESH_ID, RENDERER_ID]
+    &[RESOLUTION_ID, REFRESH_ID]
 }
 
 /// The choices `id`'s pop-up offers, or `None` if `id` is not one of ours.
@@ -266,7 +250,6 @@ pub fn build() -> Pane {
                 .id("screen_scale")
                 .detail(otto_kit::t!("settings-display-scale-detail"))],
             ),
-            group(renderer(), vec![renderer_row()]),
             group(
                 virtual_displays(),
                 vec![
@@ -280,36 +263,6 @@ pub fn build() -> Pane {
             ),
         ],
     }
-}
-
-/// The renderer row: a pop-up where there is a choice to make, and a plain
-/// statement of what Otto draws with where there is not.
-///
-/// There is none under a windowed session, which always draws with OpenGL,
-/// nor in a build without Vulkan, where OpenGL is the only renderer left.
-fn renderer_row() -> Row {
-    let mut row = Row::new(renderer(), Control::Select("gl".into()))
-        .detail(otto_kit::t!("settings-renderer-detail"))
-        .id(RENDERER_ID);
-    let Some(desc) = settings_client::describe(RENDERER_ID) else {
-        return row;
-    };
-    let offered = desc
-        .choices
-        .iter()
-        .filter(|choice| !desc.unavailable_choices.contains(choice))
-        .count();
-    let note = if !desc.applies_here {
-        otto_kit::t!("settings-renderer-windowed-detail")
-    } else if offered < 2 {
-        otto_kit::t!("settings-renderer-no-vulkan-detail")
-    } else {
-        return row;
-    };
-    if let Control::Select(current) = &row.control {
-        row.control = Control::Value(settings_client::display_choice(RENDERER_ID, current));
-    }
-    row.detail(note)
 }
 
 /// The rows describing how the selected display is being driven.

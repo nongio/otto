@@ -364,7 +364,7 @@ are:
 
 - **General** — appearance (light/dark), accent colour, rounded corners, frosting, which
   end of a title bar the window controls sit at, font family, background
-  colour and image, cursor theme and size, icon theme, and the display
+  colour and image, cursor theme and size, icon theme, the renderer (see below), and the display
   language, which is what every part of Otto localises itself against. That
   setting requires a restart to take effect, and the app says so like any
   other; its *System language* entry asks Otto to take the language from the
@@ -586,8 +586,8 @@ the next start, which the app reports. A modeset made from under a running
 session cannot be undone if the display does not come back, so the confirm
 timeout above has to exist before the live path does.*
 
-Below the display's own rows the pane offers the renderer
-(`rendering.renderer`): OpenGL or Vulkan, the GPU API a login session draws
+The General pane offers the renderer
+(`rendering.renderer`), in a group of its own above Configuration: OpenGL or Vulkan, the GPU API a login session draws
 with. It is a restart setting, and its helper text says it applies to the
 login session, that windowed sessions always use OpenGL, and that it takes
 effect after the next login. Two cases leave nothing to choose, and the row
