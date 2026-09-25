@@ -569,7 +569,11 @@ impl SkiaVkRenderer {
     /// on every import: a re-import follows a client commit, after which the
     /// buffer is back in the foreign queue family and Skia must not trust the
     /// layout it last saw.
-    fn import_dmabuf_texture(&mut self, dmabuf: &Dmabuf) -> Result<SkiaVkTexture, SkiaVkError> {
+    fn import_dmabuf_texture(
+        &mut self,
+        dmabuf: &Dmabuf,
+        damage: Option<&[Rectangle<i32, Buffer>]>,
+    ) -> Result<SkiaVkTexture, SkiaVkError> {
         self.dmabuf_cache.retain(|weak, _| !weak.is_gone());
         let code = dmabuf.format().code;
         let fmt = skia_format(code).ok_or(SkiaVkError::UnsupportedFormat(code))?;
@@ -609,6 +613,7 @@ impl SkiaVkRenderer {
             image: sk_image,
             has_alpha: !fmt.opaque,
             format: Some(code),
+            damage: damage.map(|damage| damage.to_vec()),
         })
     }
 
@@ -668,6 +673,7 @@ impl SkiaVkRenderer {
             image,
             has_alpha: !fmt.opaque,
             format: Some(format),
+            damage: None,
         })
     }
 
@@ -843,7 +849,8 @@ impl SkiaVkRenderer {
                 })
             });
             if let Some((_, texture)) = reusable {
-                let texture = texture.clone();
+                let mut texture = texture.clone();
+                texture.damage = Some(damage.to_vec());
                 for rect in damage {
                     let region = rect.intersection(Rectangle::from_size(size));
                     if let Some(region) = region {
@@ -853,7 +860,8 @@ impl SkiaVkRenderer {
                 return Ok(texture);
             }
 
-            let texture = self.upload(bytes, stride, format, size, false)?;
+            let mut texture = self.upload(bytes, stride, format, size, false)?;
+            texture.damage = Some(damage.to_vec());
             if let Some(cached) = cached.as_mut() {
                 **cached = Some((context_id.clone(), texture.clone()));
             }
@@ -1065,9 +1073,9 @@ impl ImportDma for SkiaVkRenderer {
     fn import_dmabuf(
         &mut self,
         dmabuf: &Dmabuf,
-        _damage: Option<&[Rectangle<i32, Buffer>]>,
+        damage: Option<&[Rectangle<i32, Buffer>]>,
     ) -> Result<Self::TextureId, Self::Error> {
-        self.import_dmabuf_texture(dmabuf)
+        self.import_dmabuf_texture(dmabuf, damage)
     }
 }
 

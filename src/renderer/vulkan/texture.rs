@@ -100,6 +100,10 @@ pub struct SkiaVkTexture {
     pub has_alpha: bool,
     /// The DRM fourcc of the pixels.
     pub format: Option<Fourcc>,
+    /// The buffer damage the client reported with the commit this import
+    /// belongs to. The surface layer's draw content reports it as its own
+    /// damage, which is what makes a commit repaint only the changed band.
+    pub damage: Option<Vec<Rectangle<i32, Buffer>>>,
     pub(crate) backing: Arc<TextureBacking>,
 }
 
@@ -146,7 +150,7 @@ impl From<SkiaVkTexture> for SkiaTextureImage {
             image: value.image,
             has_alpha: value.has_alpha,
             format: value.format,
-            damage: None,
+            damage: value.damage,
         }
     }
 }
