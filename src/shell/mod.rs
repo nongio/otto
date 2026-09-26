@@ -280,11 +280,18 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                             root = parent;
                         }
                         // Only return if we found a different root
-                        if root.id() != surface_id {
-                            Some(root.id())
-                        } else {
-                            None
+                        if root.id() == surface_id {
+                            return None;
                         }
+                        // A subsurface of a popup (Firefox draws its menus
+                        // into one) belongs to the popup's window.
+                        let popup_root =
+                            self.popup_root_cache.get(&root.id()).cloned().or_else(|| {
+                                self.popups.find_popup(&root).and_then(|popup| {
+                                    find_popup_root_surface(&popup).ok().map(|r| r.id())
+                                })
+                            });
+                        Some(popup_root.unwrap_or_else(|| root.id()))
                     });
 
                 // Check if the root is a layer shell surface
