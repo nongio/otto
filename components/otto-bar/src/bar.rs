@@ -330,12 +330,8 @@ impl RightPanel {
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
             paint.set_color(hl.active);
-            let pill = skia_safe::Rect::from_xywh(
-                layout.battery_x - BATTERY_PILL_PADDING,
-                0.0,
-                layout.battery_width + BATTERY_PILL_PADDING * 2.0,
-                self.height,
-            );
+            let (px, py, pw, ph) = self.battery_pill_rect().unwrap_or_default();
+            let pill = skia_safe::Rect::from_xywh(px, py, pw, ph);
             let radius = self.tray_style.item_corner_radius;
             canvas.draw_round_rect(pill, radius, radius, &paint);
 
@@ -439,6 +435,21 @@ impl RightPanel {
             return None;
         }
         Some((layout.battery_x, 0.0, layout.battery_width, self.height))
+    }
+
+    /// The pill an open power menu draws behind the battery.
+    ///
+    /// The menu hangs from this rect, as a tray menu hangs from its item's
+    /// pill, so both line up with the highlight above them.
+    pub fn battery_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        self.battery_rect().map(|(x, y, w, h)| {
+            (
+                x - BATTERY_PILL_PADDING,
+                y,
+                w + BATTERY_PILL_PADDING * 2.0,
+                h,
+            )
+        })
     }
 
     pub fn tray_item_at(&self, x: f32) -> Option<usize> {

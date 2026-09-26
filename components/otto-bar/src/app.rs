@@ -472,7 +472,7 @@ impl TopBarApp {
             );
         positioner.set_size(menu_w as i32, menu_h as i32);
 
-        if let Some((ix, iy, iw, ih)) = self.right.battery_rect() {
+        if let Some((ix, iy, iw, ih)) = self.right.battery_pill_rect() {
             positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
         } else {
             return;
