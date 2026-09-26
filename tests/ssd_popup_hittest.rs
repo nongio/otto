@@ -25,7 +25,7 @@ mod ssd_popup_hittest_tests {
     const POPUP_W: u32 = 200;
     const POPUP_H: u32 = 150;
     /// `WindowElement::DECORATION_HEIGHT`, in logical points.
-    const BAR: f64 = 34.0;
+    const BAR: f64 = 28.0;
 
     #[test]
     #[serial]

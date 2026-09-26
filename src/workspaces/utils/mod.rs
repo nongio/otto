@@ -433,8 +433,8 @@ pub fn snap_position_px(x: f64, y: f64) -> layers::types::Point {
 /// [`snap_position_px`] puts an origin on the grid, but a size reaches the
 /// layer the same way a position does — a logical integer multiplied by the
 /// output scale — so the FAR edge is left fractional. The server-side
-/// titlebar is [`WindowElement::DECORATION_HEIGHT`] = 34 logical points, and
-/// 34 x 1.75 = 59.5: its bottom hairline paints across three physical rows
+/// titlebar is [`WindowElement::DECORATION_HEIGHT`] = 28 logical points, and
+/// 28 x 1.125 = 31.5: its bottom hairline paints across three physical rows
 /// with no fully covered one, and the client content below it starts on a
 /// half pixel, which resamples the whole surface subtree.
 ///
@@ -796,11 +796,15 @@ pub fn configure_surface_layer(
 
         let mut paint =
             layers::skia::Paint::new(layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
-        paint.set_shader(tex.image.to_shader(
+        let shader = tex.image.to_shader(
             (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
             sampling,
             &matrix,
-        ));
+        );
+        paint.set_shader(match shader {
+            Some(shader) if tex.padding_alpha => Some(crate::renderer::draw::opaque_shader(shader)),
+            shader => shader,
+        });
 
         let rect = layers::skia::Rect::from_xywh(0.0, 0.0, w, h);
         canvas.draw_rect(rect, &paint);
@@ -844,11 +848,11 @@ mod tests {
     }
 
     /// The regression this pairs with: snapping the origin alone still leaves
-    /// the far edge fractional. A 34pt titlebar on a 1.75x output is 59.5px,
+    /// the far edge fractional. A 28pt titlebar on a 1.125x output is 31.5px,
     /// which paints its bottom hairline across three physical rows.
     #[test]
     fn an_extent_off_the_grid_is_snapped_onto_it() {
-        assert_eq!(snap_extent_px(0.0, 34.0 * 1.75), 60.0);
+        assert_eq!(snap_extent_px(0.0, 28.0 * 1.125), 32.0);
     }
 
     /// Snapping against the origin, not in isolation: origin 10.5 and extent
@@ -863,7 +867,7 @@ mod tests {
     /// Integer scales stay a no-op here too.
     #[test]
     fn an_extent_on_the_grid_is_left_alone() {
-        assert_eq!(snap_extent_px(202.0, 34.0 * 2.0), 68.0);
+        assert_eq!(snap_extent_px(202.0, 28.0 * 2.0), 56.0);
     }
 
     /// The whole point of the cheap branches: a window whose client painted a
