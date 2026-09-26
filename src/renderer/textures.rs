@@ -56,6 +56,8 @@ pub struct SkiaTexture {
     pub texture: GlesTexture,
     pub image: skia::Image,
     pub has_alpha: bool,
+    /// The sampled alpha byte is format padding, not coverage; drawn forced opaque.
+    pub padding_alpha: bool,
     pub format: Option<Fourcc>,
     pub egl_images: Option<Vec<EGLImage>>,
     pub is_external: bool,
@@ -86,6 +88,8 @@ pub struct SkiaTextureImage {
     pub tid: u32,
     pub image: skia::Image,
     pub has_alpha: bool,
+    /// The sampled alpha byte is format padding, not coverage; drawn forced opaque.
+    pub padding_alpha: bool,
     pub format: Option<Fourcc>,
     pub damage: Option<Vec<Rectangle<i32, Buffer>>>,
 }
@@ -96,6 +100,7 @@ impl From<SkiaTexture> for SkiaTextureImage {
             tid: value.texture.tex_id(),
             image: value.image,
             has_alpha: value.has_alpha,
+            padding_alpha: value.padding_alpha,
             format: value.format,
             damage: value.damage,
         }

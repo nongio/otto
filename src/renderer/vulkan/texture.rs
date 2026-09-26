@@ -98,6 +98,8 @@ pub struct SkiaVkTexture {
     pub image: skia::Image,
     /// The pixel format has an alpha channel.
     pub has_alpha: bool,
+    /// The sampled alpha byte is format padding, not coverage; drawn forced opaque.
+    pub padding_alpha: bool,
     /// The DRM fourcc of the pixels.
     pub format: Option<Fourcc>,
     /// The buffer damage the client reported with the commit this import
@@ -149,6 +151,7 @@ impl From<SkiaVkTexture> for SkiaTextureImage {
             tid: value.image.unique_id(),
             image: value.image,
             has_alpha: value.has_alpha,
+            padding_alpha: value.padding_alpha,
             format: value.format,
             damage: value.damage,
         }
