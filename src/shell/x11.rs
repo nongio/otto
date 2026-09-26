@@ -586,9 +586,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             .get(&output_name)
             .map(|ows| ows.current_workspace)
             .unwrap_or(0);
-        let Some((next_workspace_index, next_workspace)) = self
-            .workspaces
-            .get_next_free_workspace_on_output(&output_name)
+        let app_id = elem.display_app_id(&self.display_handle);
+        let Some((next_workspace_index, next_workspace)) =
+            self.workspaces.add_fullscreen_workspace_on_output(
+                &output_name,
+                Some(app_id.clone()).filter(|id| !id.is_empty()),
+            )
         else {
             return;
         };
@@ -597,7 +600,6 @@ impl<BackendData: Backend> Otto<BackendData> {
         // Fetch app info asynchronously to get the proper display name for the workspace.
         // Mirrors the XDG path in xdg.rs; `display_app_id` resolves to the X11 class
         // (falling back to PID resolution) for X11 surfaces.
-        let app_id = elem.display_app_id(&self.display_handle);
         if !app_id.is_empty() {
             let workspace_clone = next_workspace.clone();
             tokio::spawn(async move {
@@ -706,11 +708,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         // here would overwrite the floating rect with the tile, and untiling
         // later would restore the half-screen the window already has.
         //
-        // An already-maximized window keeps it too: `remaximize_maximized_windows`
-        // re-runs this whenever the usable zone changes (the dock autohiding, a
-        // layer surface resizing), and saving there would overwrite the restore
-        // rect with the maximized one — unmaximize would then restore to the
-        // full screen, looking like it did nothing at all.
+        // An already-maximized window keeps it too: saving on a second request
+        // would overwrite the restore rect with the maximized one — unmaximize
+        // would then restore to the full screen, looking like it did nothing.
         if !self.is_tiled(&elem) && !was_maximized {
             window.user_data().insert_if_missing(OldGeometry::default);
             window

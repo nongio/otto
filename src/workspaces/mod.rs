@@ -3389,6 +3389,57 @@ impl Workspaces {
         self.map_window_for_output(output, window_element, location, activate, transition);
     }
 
+    /// Move an already-mapped window to `location` inside the workspace it
+    /// lives in, keeping its place in the stack. Unlike
+    /// [`Self::map_window_on_output`] this neither raises the window nor pulls
+    /// it onto the output's current workspace, so it suits geometry changes
+    /// that sweep every window, visible or not. Returns false when the window
+    /// is not in any space.
+    pub fn relocate_window(
+        &mut self,
+        window_element: &WindowElement,
+        location: smithay::utils::Point<i32, smithay::utils::Logical>,
+        transition: Option<Transition>,
+    ) -> bool {
+        let found = self.output_workspaces.iter().find_map(|(name, ows)| {
+            ows.spaces
+                .iter()
+                .position(|s| s.elements().any(|e| e.id() == window_element.id()))
+                .map(|idx| (name.clone(), idx))
+        });
+        let Some((name, idx)) = found else {
+            return false;
+        };
+        let Some(output) = self.outputs.iter().find(|o| o.name() == name).cloned() else {
+            return false;
+        };
+        let Some(ows) = self.output_workspaces.get_mut(&name) else {
+            return false;
+        };
+
+        // `map_element` raises what it maps: put back on top whatever was
+        // above the window, in order, so the stack ends up as it was.
+        let space = &mut ows.spaces[idx];
+        let above: Vec<WindowElement> = space
+            .elements()
+            .skip_while(|e| e.id() != window_element.id())
+            .skip(1)
+            .cloned()
+            .collect();
+        space.map_element(window_element.clone(), location, false);
+        for element in &above {
+            space.raise_element(element, false);
+        }
+
+        // Space locations are global; the view's layers are output-local.
+        let local_loc = location - output.current_location();
+        ows.workspace_views[idx].map_window(window_element, local_loc, transition);
+
+        self.refresh_space();
+        self.expose_update_if_needed();
+        true
+    }
+
     /// Map a window onto a specific output's current workspace.
     /// Falls back to primary output if the output has no workspace set yet.
     pub fn map_window_for_output(

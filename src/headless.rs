@@ -744,6 +744,26 @@ impl HeadlessHandle {
         })
     }
 
+    /// Index of the workspace holding the window with this title, on the
+    /// headless output.
+    pub fn window_workspace_index(&self, title: &str) -> Option<usize> {
+        let title = title.to_string();
+        self.query(move |state| {
+            let ows = state.workspaces.output_workspaces.get(OUTPUT_NAME)?;
+            ows.spaces
+                .iter()
+                .position(|space| space.elements().any(|w| w.xdg_title() == title))
+        })
+    }
+
+    /// Whether a change to the dock's reserved band has yet to reach the
+    /// windows: queued by the dock, or waiting for the dock to come to rest.
+    pub fn dock_refit_pending(&self) -> bool {
+        self.query(|state| {
+            state.dock_refit_pending || state.workspaces.dock.reserved_change_queued()
+        })
+    }
+
     /// Title of the topmost non-minimized window on the current workspace.
     pub fn top_window_title(&self) -> Option<String> {
         self.query(|state| {
@@ -2184,6 +2204,7 @@ fn run_headless_loop(
             // Pick up any tiling tree a close, minimize or workspace move
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
+            state.flush_dock_reserved_change();
             state.popups.cleanup();
             send_frames(&mut state);
             display_handle.flush_clients().unwrap();

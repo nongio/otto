@@ -132,16 +132,11 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         }
         "dock.position" => {
             state.workspaces.dock.apply_dock_position();
-            // The dock reserves screen space on a different edge now.
-            state.remaximize_maximized_windows();
             Ok(())
         }
         "dock.autohide" => {
             let dock = state.workspaces.dock.clone();
             dock.apply_autohide();
-            // With autohide off the dock is permanently visible, so maximized
-            // windows have to shrink to make room for it.
-            state.remaximize_maximized_windows();
             Ok(())
         }
         "dock.magnification" => {

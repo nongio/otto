@@ -172,6 +172,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub layer_surfaces: HashMap<ObjectId, LayerShellSurface>,
     /// Tracked exclusive zones per output (reserved space on each edge)
     pub exclusive_zones: HashMap<String, ExclusiveZones>,
+    /// A refit of zoned windows is waiting for the dock to come to rest.
+    pub dock_refit_pending: bool,
     /// Whether the fullscreen chrome is currently held visible for a modal
     /// overlay layer surface (a portal Access dialog, say). Fullscreen hides
     /// the layer-shell top/overlay layers and scans the window out directly,
@@ -977,6 +979,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             popup_root_cache: HashMap::new(),
             layer_surfaces: HashMap::new(),
             exclusive_zones: HashMap::new(),
+            dock_refit_pending: false,
             modal_overlay_shown: false,
             compositor_state,
             data_device_state,
@@ -1210,6 +1213,63 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
 
         usable_zone
+    }
+
+    /// Bring exclusive zones and the dock's space budget up to date after a
+    /// layer-shell surface on `output` mapped, changed or went away, and refit
+    /// the maximized and tiled windows there if the usable area moved.
+    pub fn layer_zones_changed(&mut self, output: &Output) {
+        // Panels are torn down with an output that is going away.
+        if self.workspaces.output_geometry(output).is_none() {
+            return;
+        }
+        let before = self.usable_zone(output);
+        self.recalculate_exclusive_zones(output);
+        self.workspaces.refresh_dock_metrics();
+        if self.usable_zone(output) != before {
+            self.refit_zoned_windows(Some(output));
+        }
+    }
+
+    /// Refit the maximized and tiled windows if the dock changed the band it
+    /// reserves — its edge, its size or autohide — since the last call. Runs
+    /// once per event-loop iteration.
+    pub fn flush_dock_reserved_change(&mut self) {
+        if self.workspaces.dock.take_reserved_changed() {
+            self.refit_zoned_windows_when_dock_settles();
+        }
+    }
+
+    /// Refit the maximized and tiled windows once the dock has settled after
+    /// a change to its edge, size or autohide. The dock's rect animates to its
+    /// new place, and reading it on the way would size windows to a band the
+    /// dock is only passing through; so the rect is polled until two readings
+    /// agree.
+    fn refit_zoned_windows_when_dock_settles(&mut self) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+        if self.dock_refit_pending {
+            return;
+        }
+        self.dock_refit_pending = true;
+        let mut last = None;
+        let inserted = self
+            .handle
+            .insert_source(Timer::from_duration(POLL), move |_, _, state| {
+                let dock = state.workspaces.get_dock_geometry();
+                if last != Some(dock) {
+                    last = Some(dock);
+                    return TimeoutAction::ToDuration(POLL);
+                }
+                state.dock_refit_pending = false;
+                state.refit_zoned_windows(None);
+                TimeoutAction::Drop
+            });
+        if inserted.is_err() {
+            self.dock_refit_pending = false;
+            self.refit_zoned_windows(None);
+        }
     }
 
     pub fn schedule_event_loop_dispatch(&self) {
