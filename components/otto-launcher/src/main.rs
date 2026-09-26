@@ -2211,7 +2211,7 @@ impl App for Launcher {
                 match terminal.open() {
                     Ok(()) => {
                         // The terminal's agent writes the history from here;
-                        // the service lets go of its own once it is idle.
+                        // the service cancels its turn and lets go of its own.
                         let index = self
                             .picking
                             .then(|| self.selected_origin())

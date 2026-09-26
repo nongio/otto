@@ -247,6 +247,7 @@ fn question_style(groups: usize, labels: &HashMap<String, String>) -> QuestionSt
         multi_hint: label("multi-hint"),
         body_start: label("body-align") == "start",
         handle_title: label("title-style") == "handle",
+        quiet: label("focus") == "none",
     }
 }
 

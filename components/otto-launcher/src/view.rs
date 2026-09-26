@@ -1033,9 +1033,15 @@ impl Palette {
                 Activity::Idle => theme.text_tertiary,
                 Activity::Waiting => theme.accent_yellow,
             });
+            let check = item.checked.map(|checked| Check {
+                checked,
+                accent: theme.accent,
+                outline: theme.text_tertiary,
+            });
             let draw = draw_row(
                 icon,
                 dot,
+                check,
                 item.title.clone(),
                 item.subtitle.clone(),
                 labels.get(item.origin.source).copied().unwrap_or(""),
@@ -1105,10 +1111,53 @@ impl Palette {
 // resolved here and moved in.
 // ---------------------------------------------------------------------------
 
+/// A checkbox in a row's icon place: an outlined box, or one filled with the
+/// accent and ticked.
+#[derive(Clone, Copy)]
+struct Check {
+    checked: bool,
+    accent: Color,
+    outline: Color,
+}
+
+impl Check {
+    /// Side of the box.
+    const SIZE: f32 = 16.0;
+
+    fn draw(&self, canvas: &Canvas, centre: (f32, f32)) {
+        let half = Self::SIZE / 2.0;
+        let rect = Rect::from_xywh(centre.0 - half, centre.1 - half, Self::SIZE, Self::SIZE);
+        let radius = 4.0;
+        if !self.checked {
+            let mut paint = Paint::new(Color4f::from(self.outline), None);
+            paint.set_anti_alias(true);
+            paint.set_style(skia_safe::PaintStyle::Stroke);
+            paint.set_stroke_width(1.5);
+            canvas.draw_round_rect(rect.with_inset((0.75, 0.75)), radius, radius, &paint);
+            return;
+        }
+        let mut fill = Paint::new(Color4f::from(self.accent), None);
+        fill.set_anti_alias(true);
+        canvas.draw_round_rect(rect, radius, radius, &fill);
+        let mut tick = skia_safe::PathBuilder::new();
+        tick.move_to((centre.0 - 4.0, centre.1 + 0.2));
+        tick.line_to((centre.0 - 1.2, centre.1 + 3.0));
+        tick.line_to((centre.0 + 4.2, centre.1 - 3.2));
+        let mut paint = Paint::new(Color4f::from(Color::WHITE), None);
+        paint.set_anti_alias(true);
+        paint.set_style(skia_safe::PaintStyle::Stroke);
+        paint.set_stroke_width(2.0);
+        paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+        paint.set_stroke_join(skia_safe::paint::Join::Round);
+        canvas.draw_path(&tick.detach(), &paint);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_row(
     icon: Option<Image>,
     dot: Option<Color>,
+    check: Option<Check>,
     title: String,
     subtitle: Option<String>,
     badge: &'static str,
@@ -1140,6 +1189,10 @@ fn draw_row(
             let mut dot_paint = Paint::new(Color4f::from(color), None);
             dot_paint.set_anti_alias(true);
             canvas.draw_circle(centre, DOT_RADIUS, &dot_paint);
+        }
+
+        if let Some(check) = check {
+            check.draw(canvas, (ROW_INSET + 8.0 + ICON / 2.0, height / 2.0));
         }
 
         // The badge is measured first: the title is clipped to what is left,

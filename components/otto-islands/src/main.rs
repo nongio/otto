@@ -1138,8 +1138,11 @@ impl IslandApp {
             self.dialog_presence_changed();
         }
         // A newly presented non-modal dialog takes the keyboard, so it can be
-        // answered from it straight away.
-        let shown_after = self.dialog.as_ref().map(|p| (p.id, p.view.modal));
+        // answered from it straight away — unless it asked to leave it be.
+        let shown_after = self
+            .dialog
+            .as_ref()
+            .map(|p| (p.id, p.view.modal || p.view.style.quiet));
         if let Some((id, false)) = shown_after {
             if shown_before != Some(id) {
                 self.dialog_hovered = false;

@@ -318,9 +318,10 @@ name), which otto-agents passes to the agent as ACP `resource_link` blocks. The
 agent reads the files with its own tools. Other attachment kinds are dropped
 with a warning.
 
-Attaching a file is sharing it, so reading it needs no permission. Each ACP
-session keeps the `file://` attachments of its prompts, resolved with symbolic
-links followed, for as long as it runs. A `session/request_permission` of kind
+Attaching a file is sharing it, so reading it needs no permission. The host
+keeps the `file://` attachments of each session's prompts for as long as the
+service runs, and hands them to every agent process the session starts; each
+ACP session resolves them with symbolic links followed. A `session/request_permission` of kind
 `read` is allowed on the spot, with the agent's "allow once" option and under
 any `permissions` setting, when every path it names (its `locations`, and any
 string under a `rawInput` key with "path" in its name, relative ones taken from
@@ -328,9 +329,9 @@ the session's folder) resolves to an attached file or to something inside an
 attached folder. Anything else goes the usual way: a read of another file, a
 request that names no path, one whose only allow is "always", and every edit,
 move, delete or command, attached file or not. Nothing is shared between
-sessions, and a session the service starts again (reopened after a release or
-a restart) starts with nothing attached until a prompt attaches it again. The
-code is `attached.rs`.
+sessions. A session reopened after a release or an idle stop keeps what it
+attached; after a restart of the service it starts with nothing attached until
+a prompt attaches it again. The code is `attached.rs`.
 
 **Entering a terminal.** When the agent has an `enter` command, otto-agents
 publishes it, the folder and the agent's id for the session in the session's
@@ -374,11 +375,12 @@ without it the terminal is still not opened twice, but cannot be raised.
 @Claude: will it rain today?*), which is what the dock shows.
 
 Entering the terminal hands the session over. The launcher asks the service to
-`releaseSession`: otto-agents stops its own agent as soon as it is idle (a
-turn under way, and anything queued behind it, finishes first), so the
-terminal's agent is the only one writing the history. That is what the card's
-last line says while it lingers (*Carrying on in the terminal…*, or *Finishing
-this turn, then…*). What is said in the terminal lands in the agent's history,
+`releaseSession`: otto-agents cancels a turn under way, withdraws its
+questions, and stops its own agent, so the terminal's agent is the only one
+writing the history. A turn left running would carry on beside the terminal
+and fork the history. Anything queued waits until the session is next opened
+in Ask. That is what the card's last line says while it lingers (*Carrying on
+in the terminal…*). What is said in the terminal lands in the agent's history,
 and the next time the session is opened in Ask the agent is started again and
 replays it. See
 [the agent's history is the session](#the-agents-history-is-the-session).
@@ -409,7 +411,11 @@ whoever is actually in front of the user. The rule is in `host.rs`:
    narrowest-allow pick when the service sent none. The wait has a limit: after
    `WATCHED_GRACE` (20 s) unanswered, the question goes to the dialog as
    well, so a subscriber that shows nothing cannot hold it. Whichever answers
-   first counts.
+   first counts. A dialog raised while a client still watches is *quiet*
+   (the `focus: none` label): it leaves the keyboard where it is, since taking
+   it would close the launcher under the person answering there. For an agent's
+   question the 20 s start over each time the client changes a draft answer,
+   so picking several options is not cut short.
 3. **Nobody is subscribed**, or the last watcher closes: `escalate` sends the
    question to otto-islands through `org.otto.Dialog1.PresentQuestions`, the
    same Access-style panel the portal uses, with an extra **Open in Ask** button.
@@ -417,12 +423,18 @@ whoever is actually in front of the user. The rule is in `host.rs`:
    into a circle in the island row, still waiting, until clicked open again.
    A plain yes or no picks the narrowest matching option; Open in Ask starts
    `otto-ask --session <uri>` and leaves the question waiting in the chat.
+   It is started with `systemd-run --user`, so it gets the user manager's
+   current environment: the service outlives compositors, and its own
+   `WAYLAND_DISPLAY` is stale or missing. Should Ask not answer within
+   `WATCHED_GRACE`, the question goes back to the dialog.
    Older renderers are tried in turn: one without `PresentQuestions` gets
    `PresentQuestion`, with any multi-select questions spelled out in the body
    rather than asked; one without that either gets `PresentAccess`, minus the
    Open in Ask button, and only for a request that carries no questions.
-4. **The dialog can't be shown** (no session bus, no renderer, an error), and
-   the request is **denied**. An agent is never granted something nobody saw.
+4. **The dialog can't be shown** (no session bus, no renderer, an error), or
+   is taken down unanswered: with nobody watching, the request is **denied**.
+   An agent is never granted something nobody saw. A client still watching
+   can answer it.
 
 The first answer wins; a later one is refused, and each question escalates at
 most once. Cancelling the turn (`chat/turnCancelled` from a client, or the

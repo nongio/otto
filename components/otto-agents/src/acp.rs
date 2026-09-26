@@ -191,6 +191,7 @@ impl Backend for AcpBackend {
             agent.config.clone(),
             spec.resume,
             spec.cwd,
+            spec.attached,
             meta,
             self.images.clone(),
             commands,
@@ -247,6 +248,7 @@ pub async fn run_session(
     config: BTreeMap<String, String>,
     resume: Option<String>,
     cwd: PathBuf,
+    earlier: Vec<crate::agent::Attachment>,
     meta: Option<Meta>,
     images: Option<ImageCache>,
     mut commands: mpsc::UnboundedReceiver<SessionCommand>,
@@ -266,8 +268,10 @@ pub async fn run_session(
     // show the same picture again on every update.
     let shown: Arc<Mutex<BTreeSet<(String, PathBuf)>>> = Arc::default();
     // What this session's prompts attached, which the agent may read without
-    // asking; see [`crate::attached`].
+    // asking; see [`crate::attached`]. Earlier prompts count too, when this
+    // agent takes up a session another process ran.
     let attached: Arc<Mutex<Attached>> = Arc::default();
+    lock(&attached).add(&earlier);
     let ready = Arc::new(AtomicBool::new(false));
 
     let result = Client

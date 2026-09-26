@@ -9,7 +9,8 @@
 //! Paths are compared as the filesystem resolves them: symbolic links are
 //! followed on both sides, so a link inside an attached folder that points
 //! out of it covers nothing, and a path that does not exist covers nothing
-//! either. The set lives as long as the session it belongs to.
+//! either. The host keeps what a session attached for as long as it runs, and
+//! hands it to each agent process the session starts.
 
 use std::path::{Path, PathBuf};
 
