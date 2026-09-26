@@ -5271,52 +5271,87 @@ impl Workspaces {
         true
     }
 
-    pub fn get_next_free_workspace(&mut self) -> (usize, Arc<WorkspaceView>) {
-        let current_workspace = self.get_current_workspace_index();
-        let num_spaces = self
-            .primary_output_workspaces()
-            .map(|ows| ows.spaces.len())
-            .unwrap_or(0);
-        if current_workspace < num_spaces.saturating_sub(1) {
-            for i in current_workspace + 1..num_spaces {
-                let is_empty = self
-                    .primary_output_workspaces()
-                    .and_then(|ows| ows.spaces.get(i))
-                    .map(|s| s.elements().count() == 0)
-                    .unwrap_or(false);
-                if is_empty {
-                    return (i, self.with_model(|m| m.workspaces[i].clone()));
-                }
-            }
-        }
-        self.add_workspace()
-    }
-
-    /// Per-output variant of `get_next_free_workspace`: the first empty
-    /// workspace after the output's current one, or a new workspace created on
-    /// that output alone.
-    pub fn get_next_free_workspace_on_output(
+    /// A fresh workspace for a window going fullscreen, inserted right after
+    /// the output's current workspace and named `name`.
+    ///
+    /// It is always a new one: reusing an empty workspace would hand the
+    /// fullscreen window a workspace the user made (and named) themselves, and
+    /// leaving fullscreen removes it again. It skips the persisted per-position
+    /// settings for the same reason — those belong to the user's workspaces.
+    pub fn add_fullscreen_workspace_on_output(
         &mut self,
         output_name: &str,
+        name: Option<String>,
     ) -> Option<(usize, Arc<WorkspaceView>)> {
-        let (current, num_spaces) = {
-            let ows = self.output_workspaces.get(output_name)?;
-            (ows.current_workspace, ows.spaces.len())
-        };
-        for i in current + 1..num_spaces {
-            let ows = self.output_workspaces.get(output_name)?;
-            let empty = ows
-                .spaces
-                .get(i)
-                .map(|s| s.elements().count() == 0)
-                .unwrap_or(false);
-            if empty {
-                if let Some(ws) = ows.workspace_views.get(i).cloned() {
-                    return Some((i, ws));
+        if !self.output_workspaces.contains_key(output_name) {
+            return None;
+        }
+        let counter = self.with_model_mut(|m| {
+            m.workspace_counter += 1;
+            m.workspace_counter
+        });
+        let layers_engine = self.layers_engine.clone();
+        let overlay_layer = self.overlay_layer.clone();
+        let output = self
+            .outputs
+            .iter()
+            .find(|o| o.name() == output_name)
+            .cloned();
+
+        let result = {
+            let ows = self.output_workspaces.get_mut(output_name)?;
+            let index = (ows.current_workspace + 1).min(ows.spaces.len());
+
+            let mut new_space = Space::default();
+            if let Some(ref o) = output {
+                if let Some(existing_space) = ows.spaces.first() {
+                    let geo = existing_space.output_geometry(o).unwrap_or_default();
+                    new_space.map_output(o, geo.loc);
+                } else {
+                    new_space.map_output(o, (0, 0));
                 }
             }
-        }
-        self.add_workspace_to_output(output_name)
+
+            let workspace = Arc::new(WorkspaceView::new(
+                counter,
+                layers_engine.clone(),
+                &ows.workspaces_layer,
+                overlay_layer.clone(),
+                &ows.layer_shell_background,
+                &ows.layer_shell_bottom,
+            ));
+            let _ = ows
+                .expose_layer
+                .add_sublayer(&workspace.window_selector_view.window_selector_root);
+            let _ = ows
+                .background_plane
+                .add_sublayer(&workspace.workspace_background);
+            let _ = ows.windows_plane.add_sublayer(&workspace.windows_layer);
+            workspace.set_name(name);
+            workspace
+                .set_display_number(next_display_number(display_numbers(&ows.workspace_views)));
+
+            // Every workspace position a window remembers at or past the
+            // insertion point moves up by one, like the workspaces themselves.
+            let shift = |i: usize| if i >= index { i + 1 } else { i };
+            for space in ows.spaces.iter() {
+                for window in space.elements() {
+                    window.set_workspace(shift(window.get_workspace()));
+                    if window.is_fullscreen() {
+                        window.set_fullscreen(true, shift(window.get_fullscreen_workspace()));
+                    }
+                }
+            }
+
+            ows.spaces.insert(index, new_space);
+            ows.workspace_views.insert(index, workspace.clone());
+            (index, workspace)
+        };
+
+        self.sync_model_from_primary();
+        self.with_model(|m| self.notify_observers(m));
+        self.update_workspaces_layout();
+        Some(result)
     }
 
     /// Move a window into `workspace_index` on a single output, unmapping it

@@ -172,4 +172,64 @@ mod fullscreen_focus_tests {
 
         f.handle.stop();
     }
+
+    /// Fullscreen always gets a workspace of its own, right after the current
+    /// one and named after the app. An empty workspace the user already has —
+    /// here one they named — is never borrowed for it.
+    #[test]
+    #[serial]
+    fn fullscreen_creates_a_new_workspace_after_the_current_one() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+
+        // Workspace 0 holds the window; the others are empty, the last one named.
+        let before = handle.query(|state| {
+            let output = state.workspaces.primary_output().unwrap().name();
+            let (_, ws) = state.workspaces.add_workspace_to_output(&output).unwrap();
+            ws.set_custom_name(Some("Mine".into()));
+            state.workspaces.output_workspaces[&output]
+                .workspace_views
+                .len()
+        });
+
+        let mut client =
+            TestClient::connect(&handle.socket_name).expect("Failed to connect to compositor");
+        let _fs = client.create_toplevel_with_app_id(FULLSCREEN, "otto.test.Fullscreen", 640, 480);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        handle.settle(300);
+        assert_eq!(handle.current_workspace_index(), 0);
+
+        handle.fullscreen_window(FULLSCREEN);
+        for _ in 0..12 {
+            handle.settle(30);
+            let _ = client.roundtrip();
+        }
+        assert!(handle.window_is_fullscreen(FULLSCREEN));
+
+        let names: Vec<(String, bool)> = handle.query(|state| {
+            let output = state.workspaces.primary_output().unwrap().name();
+            state.workspaces.output_workspaces[&output]
+                .workspace_views
+                .iter()
+                .map(|ws| (ws.display_name(), ws.get_fullscreen_mode()))
+                .collect()
+        });
+        assert_eq!(
+            names.len(),
+            before + 1,
+            "a new workspace, not a reused one: {names:?}"
+        );
+        assert!(
+            names[1].1,
+            "the fullscreen workspace sits next to the current one"
+        );
+        assert!(
+            names[1].0.contains("Fullscreen"),
+            "named after the app: {names:?}"
+        );
+        assert_eq!(names.last().unwrap(), &("Mine".to_string(), false));
+        assert_eq!(handle.current_workspace_index(), 1);
+
+        handle.stop();
+    }
 }
