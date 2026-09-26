@@ -19,7 +19,7 @@ use smithay::{
     backend::input::{InputTime, TabletToolDescriptor},
     desktop::WindowSurface,
     input::{
-        dnd::{DndFocus, Source},
+        dnd::{DndFocus, OfferData, Source},
         pointer::{
             GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
             GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
@@ -34,9 +34,9 @@ use smithay::{
 };
 
 use crate::{
-    interactive_view::InteractiveView,
+    interactive_view::{InteractiveView, ViewInteractions},
     shell::WindowElement,
-    state::{Backend, Otto},
+    state::{trash_drop::TrashOffer, Backend, Otto},
     workspaces::{
         AppSwitcherView, DockView, WindowDecorationView, WindowResizeView, WindowSelectorView,
         WorkspaceSelectorView,
@@ -969,11 +969,59 @@ impl<B: Backend> From<WorkspaceSelectorView> for PointerFocusTarget<B> {
     }
 }
 
+/// What a drag hands the target under the pointer: a client's
+/// `wl_data_offer`, or the dock's own answer when the target is the dock.
+pub enum DndOffer<B: Backend + 'static, S: Source>
+where
+    Otto<B>: DataDeviceHandler,
+{
+    Client(<WlSurface as DndFocus<Otto<B>>>::OfferData<S>),
+    Trash(TrashOffer<S>),
+}
+
+impl<B: Backend + 'static, S: Source> OfferData for DndOffer<B, S>
+where
+    Otto<B>: DataDeviceHandler,
+{
+    fn disable(&self) {
+        match self {
+            DndOffer::Client(offer) => offer.disable(),
+            DndOffer::Trash(offer) => offer.disable(),
+        }
+    }
+
+    fn drop(&self) {
+        match self {
+            DndOffer::Client(offer) => offer.drop(),
+            DndOffer::Trash(offer) => offer.drop(),
+        }
+    }
+
+    fn validated(&self) -> bool {
+        match self {
+            DndOffer::Client(offer) => offer.validated(),
+            DndOffer::Trash(offer) => offer.validated(),
+        }
+    }
+}
+
+impl<B: Backend> PointerFocusTarget<B> {
+    /// Whether this is the dock, the one view that takes drops.
+    fn is_dock(&self, data: &Otto<B>) -> bool {
+        match self {
+            PointerFocusTarget::View(view) => {
+                view.view.id() == ViewInteractions::<B>::id(data.workspaces.dock.as_ref())
+            }
+            _ => false,
+        }
+    }
+}
+
 impl<B: Backend + 'static> DndFocus<Otto<B>> for PointerFocusTarget<B>
 where
     Otto<B>: DataDeviceHandler,
 {
-    type OfferData<S: Source> = <WlSurface as DndFocus<Otto<B>>>::OfferData<S>;
+    type OfferData<S: Source> = DndOffer<B, S>;
 
     fn enter<S: Source>(
         &self,
@@ -986,10 +1034,16 @@ where
     ) -> Option<Self::OfferData<S>> {
         match self {
             PointerFocusTarget::WlSurface(w) => {
-                DndFocus::enter(w, data, dh, source, seat, location, serial)
+                DndFocus::enter(w, data, dh, source, seat, location, serial).map(DndOffer::Client)
             }
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(_) => None,
+            PointerFocusTarget::View(_) if self.is_dock(data) => {
+                data.workspaces.dock.file_drag_enter();
+                let mut offer = TrashOffer::new(source);
+                data.trash_drag_motion(Some(&mut offer), location);
+                Some(DndOffer::Trash(offer))
+            }
             PointerFocusTarget::View(_) => None,
         }
     }
@@ -1002,13 +1056,18 @@ where
         location: Point<f64, Logical>,
         time: InputTime,
     ) {
-        match self {
-            PointerFocusTarget::WlSurface(w) => {
+        match (self, offer) {
+            (PointerFocusTarget::WlSurface(w), offer) => {
+                let offer = offer.and_then(|offer| match offer {
+                    DndOffer::Client(offer) => Some(offer),
+                    DndOffer::Trash(_) => None,
+                });
                 DndFocus::motion(w, data, offer, seat, location, time)
             }
-            #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(_) => {}
-            PointerFocusTarget::View(_) => {}
+            (PointerFocusTarget::View(_), Some(DndOffer::Trash(offer))) => {
+                data.trash_drag_motion(Some(offer), location)
+            }
+            _ => {}
         }
     }
 
@@ -1018,11 +1077,18 @@ where
         offer: Option<&mut Self::OfferData<S>>,
         seat: &Seat<Otto<B>>,
     ) {
-        match self {
-            PointerFocusTarget::WlSurface(w) => DndFocus::leave(w, data, offer, seat),
-            #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(_) => {}
-            PointerFocusTarget::View(_) => {}
+        match (self, offer) {
+            (PointerFocusTarget::WlSurface(w), offer) => {
+                let offer = offer.and_then(|offer| match offer {
+                    DndOffer::Client(offer) => Some(offer),
+                    DndOffer::Trash(_) => None,
+                });
+                DndFocus::leave(w, data, offer, seat)
+            }
+            (PointerFocusTarget::View(_), Some(DndOffer::Trash(_))) => {
+                data.workspaces.dock.file_drag_leave()
+            }
+            _ => {}
         }
     }
 
@@ -1032,11 +1098,18 @@ where
         offer: Option<&mut Self::OfferData<S>>,
         seat: &Seat<Otto<B>>,
     ) {
-        match self {
-            PointerFocusTarget::WlSurface(w) => DndFocus::drop(w, data, offer, seat),
-            #[cfg(feature = "xwayland")]
-            PointerFocusTarget::X11Surface(_) => {}
-            PointerFocusTarget::View(_) => {}
+        match (self, offer) {
+            (PointerFocusTarget::WlSurface(w), offer) => {
+                let offer = offer.and_then(|offer| match offer {
+                    DndOffer::Client(offer) => Some(offer),
+                    DndOffer::Trash(_) => None,
+                });
+                DndFocus::drop(w, data, offer, seat)
+            }
+            (PointerFocusTarget::View(_), Some(DndOffer::Trash(offer))) => {
+                data.trash_drop(Some(offer))
+            }
+            _ => {}
         }
     }
 }

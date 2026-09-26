@@ -460,6 +460,7 @@ pub mod seat_handler;
 pub mod security_context_handler;
 pub mod selection_handler;
 pub mod session_lock_handler;
+pub mod trash_drop;
 pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;

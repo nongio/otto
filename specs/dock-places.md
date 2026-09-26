@@ -63,6 +63,15 @@ defaulting to the freedesktop location; it exists for the file manager that
 keeps its trash somewhere else, and it never changes where Otto itself puts
 what it throws away.
 
+**Dropping files on it** throws them away. A drag of files (`text/uri-list`)
+that crosses the dock magnifies it as the pointer does, and the Trash darkens
+and shows its label while the drag is over it; only there does the dock
+accept the drop. The files are moved into the freedesktop home trash, each
+with its `.trashinfo`, exactly as Files trashes them, so they can be put back
+from the Trash window. The compositor does the move itself, off its own
+thread, after reading the list from the source: a source is never asked to
+delete anything. Dropped anywhere else on the dock, the drag is refused.
+
 **Right-clicking it** opens a menu of:
 
 - **Open**, when the window is not already open.
@@ -97,6 +106,10 @@ command. This is how the Trash's Empty Trash gets there — it is data in
   launcher order it would be counted against is not the strip it is in.
 - **A missing desktop entry** is a warning in the log and a place that is not
   drawn, exactly as a missing bookmark is.
+- **A drop needs files.** A drag carrying only text, or a source that offers
+  neither move nor copy, is refused over the Trash as everywhere else on the
+  dock. A source that never finishes writing its list is given up on after
+  ten seconds, and nothing is moved.
 - **The strips move as one.** While the dock is being resized, the places strip
   stays on the applications' line frame by frame, not only once the animation
   settles. Anything that lets one strip's thickness settle independently of the

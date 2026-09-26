@@ -1596,6 +1596,15 @@ impl DockView {
         }
     }
 
+    /// Whether `layer` is the one wearing the pressed darkening.
+    pub(super) fn is_pressed(&self, layer: &Layer) -> bool {
+        self.pressed_layer
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|pressed| pressed.id() == layer.id())
+    }
+
     /// Returns `true` when the currently hovered layer resolves to the same
     /// darkening target that was recorded on press.
     pub(super) fn is_released_on_pressed(&self, layer_id: &layers::engine::NodeRef) -> bool {

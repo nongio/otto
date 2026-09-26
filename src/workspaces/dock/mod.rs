@@ -1,3 +1,4 @@
+mod drop;
 mod interactions;
 mod model;
 mod render;
