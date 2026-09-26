@@ -43,7 +43,7 @@ impl Variant {
             active: true,
             hovered: false,
             pressed: None,
-            titlebar_height: 34.0,
+            titlebar_height: 28.0,
             title_style: styles::SUBHEADLINE_EMPHASIZED,
             traffic_lights: true,
             title_leading: false,

@@ -24,6 +24,9 @@ pub struct SessionSpec {
     /// The agent's id for a session it ran before, to take up again rather
     /// than start afresh.
     pub resume: Option<String>,
+    /// What the session's prompts attached so far, which a new agent process
+    /// may read without asking again; see [`crate::attached`].
+    pub attached: Vec<Attachment>,
 }
 
 /// A command the host sends to a running session.

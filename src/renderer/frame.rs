@@ -54,6 +54,7 @@ impl Frame for SkiaFrame<'_> {
             damage,
             src_transform,
             alpha,
+            texture.padding_alpha,
         );
         Ok(())
     }

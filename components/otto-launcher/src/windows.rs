@@ -164,6 +164,7 @@ impl Source for Windows {
                     }),
                     icon: Some(toplevel.app_id.clone()),
                     activity: None,
+                    checked: None,
                     search_terms: vec![toplevel.app_id.clone()],
                     origin: Origin {
                         source: self.index,

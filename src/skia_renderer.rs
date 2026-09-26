@@ -685,6 +685,8 @@ impl SkiaRenderer {
                     texture: gles_texture,
                     image,
                     has_alpha,
+                    // GL samples an X format without an alpha channel.
+                    padding_alpha: false,
                     format: Some(dmabuf.format().code),
                     egl_images: Some(vec![egl_image]),
                     // Preserve original is_external to drive update path in reuse
@@ -1178,6 +1180,8 @@ impl ImportMemWl for SkiaRenderer {
             texture,
             image,
             has_alpha,
+            // GL samples an X format without an alpha channel.
+            padding_alpha: false,
             format,
             egl_images: None,
             is_external: false,
@@ -1236,6 +1240,8 @@ impl ImportEgl for SkiaRenderer {
             texture,
             image,
             has_alpha,
+            // GL samples an X format without an alpha channel.
+            padding_alpha: false,
             format,
             egl_images: None,
             is_external: false,
@@ -1304,6 +1310,8 @@ impl ImportMem for SkiaRenderer {
             texture,
             image,
             has_alpha,
+            // GL samples an X format without an alpha channel.
+            padding_alpha: false,
             format,
             egl_images: None,
             is_external: false,

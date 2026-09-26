@@ -111,7 +111,7 @@ window leaves fullscreen, without the client asking for it again.
 This is not only what it looks like. The bar's height is part of the window's
 layout geometry and is taken off the size the client is configured with, so a
 decorated window that kept its bar in fullscreen would be handed the output
-height minus 34 points and left with a strip of compositor chrome over a
+height minus 28 points and left with a strip of compositor chrome over a
 surface that was promised the whole screen. Dropping the decoration for the
 duration gives the fullscreen surface the output exactly.
 

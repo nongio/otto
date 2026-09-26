@@ -94,7 +94,8 @@ The Trash icon shows a **full wastebasket whenever the trash has anything in
 it**, and an empty one when it does not, whether or not the Trash window is
 open, and whichever application did the deleting. Click it to open the Trash
 window; right-click it for **Empty Trash**, which opens that window with the
-question already asked.
+question already asked. Drag files onto it to move them to the trash; they can
+be put back from the Trash window.
 
 ### Another file manager's trash
 

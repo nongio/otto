@@ -899,9 +899,10 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
         // Arrange the layer map which will handle the exclusive zone
         map.arrange();
         // A new panel may have taken space away from the dock (see
-        // `refresh_dock_metrics`); it takes the map itself, so drop ours.
+        // `refresh_dock_metrics`) and from maximized windows; both take the
+        // map themselves, so drop ours.
         drop(map);
-        self.workspaces.refresh_dock_metrics();
+        self.layer_zones_changed(&output);
     }
 
     fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
@@ -962,8 +963,8 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
                 "Layer surface destroyed: namespace={}",
                 layer_shell_surface.namespace()
             );
-            // Recalculate exclusive zones after removal
-            self.recalculate_exclusive_zones(&output);
+            // The space it reserved is free again.
+            self.layer_zones_changed(&output);
             // The dialog may have gone away with the surface.
             self.refresh_modal_overlay();
         }
@@ -1274,10 +1275,11 @@ fn ensure_initial_configure<Backend: crate::state::Backend>(
             layer.layer_surface().send_configure();
         }
         // The arrange above may have changed the exclusive zones (a panel
-        // appearing or resizing), which is the dock's own space budget. Drop
-        // the map first — refreshing takes it again.
+        // appearing or resizing), which is the dock's own space budget and
+        // the area maximized windows fill. Drop the map first — refreshing
+        // takes it again.
         drop(map);
-        state.workspaces.refresh_dock_metrics();
+        state.layer_zones_changed(&output);
     };
 }
 

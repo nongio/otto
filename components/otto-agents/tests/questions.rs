@@ -580,6 +580,10 @@ async fn with_nobody_watching_the_dialog_answers() {
     let prompt = &dialog.asked()[0];
     assert_eq!(prompt.title, "Asker wants to run a command");
     assert_eq!(prompt.open, "Open in Ask");
+    assert!(
+        !prompt.quiet,
+        "with nobody watching, the dialog takes the keyboard"
+    );
 
     let (mut chat, mut events) = watch(&client, &chat_uri).await;
     until(&mut chat, &mut events, |chat| !chat.turns.is_empty()).await;
@@ -624,10 +628,66 @@ async fn a_watched_question_left_unanswered_reaches_the_dialog() {
 
     // The client shows nothing and answers nothing, and the dialog takes over.
     dialog.wait_shown().await;
+    // Beside the client, which may be answering it: it leaves the keyboard be.
+    assert!(dialog.asked()[0].quiet);
     until(&mut chat, &mut events, |chat| !chat.turns.is_empty()).await;
     assert_eq!(outcome(&chat), ("reject".into(), "cancelled"));
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(dialog.asked().len(), 1, "a question escalates once");
+}
+
+#[tokio::test]
+async fn a_dialog_that_cannot_be_shown_leaves_a_watched_question_to_the_client() {
+    let dialog = FakeDialog::replying(Reply::Unavailable);
+    let Harness { client, host, .. } = connect(Arc::clone(&dialog)).await;
+    host.set_watched_grace(Duration::from_millis(100));
+    let chat_uri = ready_chat(&client).await;
+    let (mut chat, mut events) = watch(&client, &chat_uri).await;
+
+    start_turn(&client, &chat_uri, "run the tests").await;
+    until(&mut chat, &mut events, |chat| pending(chat).is_some()).await;
+    dialog.wait_shown().await;
+    // No dialog is not a no: the client still answers.
+    let (tool_call_id, _) = pending(&chat).unwrap();
+    client
+        .dispatch(chat_uri.clone(), confirmed(&tool_call_id, true, "allow"))
+        .await
+        .expect("dispatch");
+    until(&mut chat, &mut events, |chat| !chat.turns.is_empty()).await;
+    assert_eq!(outcome(&chat), ("allow".into(), "completed"));
+}
+
+/// Handing a session to its terminal stops the turn here at once: left
+/// running, the agent this host runs would write the history beside the
+/// terminal's.
+#[tokio::test]
+async fn releasing_a_session_cancels_its_turn() {
+    let dialog = FakeDialog::answering(true);
+    let Harness {
+        client, answers, ..
+    } = connect(Arc::clone(&dialog)).await;
+    let (session_uri, chat_uri) = ready_session(&client, "asker").await;
+    let (mut chat, mut events) = watch(&client, &chat_uri).await;
+
+    start_turn(&client, &chat_uri, "run the tests").await;
+    until(&mut chat, &mut events, |chat| pending(chat).is_some()).await;
+
+    let released: Result<serde_json::Value, _> = client
+        .request("releaseSession", json!({ "channel": session_uri }))
+        .await;
+    released.expect("releaseSession");
+    until(&mut chat, &mut events, |chat| !chat.turns.is_empty()).await;
+    assert_eq!(outcome(&chat).1, "cancelled");
+
+    // The agent was told its question is void, and nobody was asked it.
+    for _ in 0..50 {
+        if !answers.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(*answers.lock().unwrap(), ["cancelled"]);
+    assert!(dialog.asked().is_empty());
 }
 
 #[tokio::test]

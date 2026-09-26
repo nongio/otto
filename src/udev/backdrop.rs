@@ -843,8 +843,8 @@ pub(super) fn update_backdrop_and_upper_planes<A: RendererApi>(
                 // reuse, not a re-render.
                 for (dmabuf, rect) in promoted {
                     use smithay::backend::renderer::ImportDma as _;
-                    let img = match renderer.as_mut().import_dmabuf(dmabuf, None) {
-                        Ok(tex) => Into::<crate::renderer::SkiaTextureImage>::into(tex).image,
+                    let tex = match renderer.as_mut().import_dmabuf(dmabuf, None) {
+                        Ok(tex) => Into::<crate::renderer::SkiaTextureImage>::into(tex),
                         Err(e) => {
                             tracing::debug!(
                                 target: "otto::planes",
@@ -859,9 +859,20 @@ pub(super) fn update_backdrop_and_upper_planes<A: RendererApi>(
                         rect.width() * BACKDROP_SCALE,
                         rect.height() * BACKDROP_SCALE,
                     );
+                    // The paint alpha is 1, so the opaque filter can sit on
+                    // the paint rather than on an image shader.
+                    let mut promoted_paint = paint.clone();
+                    if tex.padding_alpha {
+                        promoted_paint
+                            .set_color_filter(crate::renderer::draw::opaque_color_filter());
+                    }
                     let canvas = bs.surface.canvas();
                     canvas.draw_image_rect_with_sampling_options(
-                        &img, None, win_dst, sampling, &paint,
+                        &tex.image,
+                        None,
+                        win_dst,
+                        sampling,
+                        &promoted_paint,
                     );
                 }
                 bs.context.flush_and_submit();

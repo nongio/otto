@@ -23,6 +23,9 @@ pub struct Item {
     /// What the thing behind the row is doing, drawn as a small dot in the
     /// icon's place — an agent session at work, idle, or waiting on someone.
     pub activity: Option<Activity>,
+    /// A box in the icon's place, ticked or not: an option of a question
+    /// that takes several answers.
+    pub checked: Option<bool>,
     /// Extra text that matches but is never shown: keywords, the binary name,
     /// the app id behind a window.
     pub search_terms: Vec<String>,
@@ -168,6 +171,7 @@ mod tests {
             subtitle: None,
             icon: None,
             activity: None,
+            checked: None,
             search_terms: Vec::new(),
             origin: Origin {
                 source: 0,

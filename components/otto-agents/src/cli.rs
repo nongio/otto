@@ -171,8 +171,8 @@ pub async fn enter(url: &str, session: Option<&str>) -> anyhow::Result<()> {
 /// replaces the process, so it does not return on success.
 async fn enter_session(client: Client, session: &str) -> anyhow::Result<()> {
     let command = terminal_entry(&client, session).await?;
-    // The service lets go of its own agent once it is idle, so the terminal's
-    // is the only one writing. What is said here comes back on `session/load`
+    // The service cancels a turn under way and lets go of its own agent, so
+    // the terminal's is the only one writing. What is said here comes back on `session/load`
     // the next time the session is opened in Ask.
     let released: Result<serde_json::Value, _> = client
         .request("releaseSession", json!({ "channel": session }))

@@ -160,6 +160,9 @@ pub struct QuestionStyle {
     /// drawn small and muted at the top, and the question itself becomes the
     /// panel's largest text. Permission dialogs keep the headline.
     pub handle_title: bool,
+    /// The dialog leaves the keyboard where it is when it appears: the
+    /// question is also open in a client, which may be answering it.
+    pub quiet: bool,
 }
 
 /// What the user has picked: `selected[g]` is a single-select group's option

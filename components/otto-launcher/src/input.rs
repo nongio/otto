@@ -546,6 +546,21 @@ impl InputRequest {
         })
     }
 
+    /// Whether the option at `row` is picked, for a question that takes
+    /// several answers; `None` for any other row.
+    pub fn row_checked(&self, row: Row, current: Option<usize>) -> Option<bool> {
+        let Row::Option(index) = row else {
+            return None;
+        };
+        let field = current.and_then(|index| self.fields.get(index))?;
+        let FieldKind::Multi { options, .. } = &field.kind else {
+            return None;
+        };
+        let option = options.get(index)?;
+        let (picked, _) = Field::picked(self.answers.get(&field.id));
+        Some(picked.contains(&option.id))
+    }
+
     /// A row's title and subtitle.
     pub fn row_text(&self, row: Row, current: Option<usize>) -> (String, Option<String>) {
         let field = current.and_then(|index| self.fields.get(index));
@@ -554,25 +569,14 @@ impl InputRequest {
                 let Some(field) = field else {
                     return (String::new(), None);
                 };
-                let (options, multi) = match &field.kind {
-                    FieldKind::Single { options, .. } => (options, false),
-                    FieldKind::Multi { options, .. } => (options, true),
+                let options = match &field.kind {
+                    FieldKind::Single { options, .. } | FieldKind::Multi { options, .. } => options,
                     _ => return (String::new(), None),
                 };
                 let Some(option) = options.get(index) else {
                     return (String::new(), None);
                 };
-                let title = if multi {
-                    let (picked, _) = Field::picked(self.answers.get(&field.id));
-                    let mark = if picked.contains(&option.id) {
-                        '☑'
-                    } else {
-                        '☐'
-                    };
-                    format!("{mark} {}", option.label)
-                } else {
-                    option.label.clone()
-                };
+                let title = option.label.clone();
                 let suggested = (option.recommended == Some(true))
                     .then(|| otto_kit::t_owned!("launcher-input-suggested"));
                 let subtitle = match (option.description.clone(), suggested) {
@@ -1066,8 +1070,9 @@ mod tests {
         let request = survey(json!({
             "features": { "state": "draft", "value": { "kind": "selected-many", "value": ["billing"] } }
         }));
-        assert_eq!(request.row_text(Row::Option(1), Some(1)).0, "☑ Billing");
-        assert_eq!(request.row_text(Row::Option(0), Some(1)).0, "☐ Auth");
+        assert_eq!(request.row_text(Row::Option(1), Some(1)).0, "Billing");
+        assert_eq!(request.row_checked(Row::Option(1), Some(1)), Some(true));
+        assert_eq!(request.row_checked(Row::Option(0), Some(1)), Some(false));
         let step = request.choose(Row::Option(1), Some(1), "");
         let Change::Answer { answer, .. } = &step.changes[0] else {
             panic!()

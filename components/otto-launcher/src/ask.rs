@@ -223,9 +223,8 @@ pub enum Status {
     Waiting,
     /// The session failed, and nothing more will come.
     Failed(String),
-    /// The session is going to its terminal. `busy` while a turn has to
-    /// finish first.
-    HandingOver { busy: bool },
+    /// The session is going to its terminal.
+    HandingOver,
     /// The conversation is on its way from the agent.
     Loading,
 }
@@ -234,10 +233,7 @@ impl Status {
     pub fn text(&self) -> String {
         match self {
             Status::Loading => otto_kit::t_owned!("launcher-ask-loading"),
-            Status::HandingOver { busy: false } => otto_kit::t_owned!("launcher-ask-handing-over"),
-            Status::HandingOver { busy: true } => {
-                otto_kit::t_owned!("launcher-ask-handing-over-busy")
-            }
+            Status::HandingOver => otto_kit::t_owned!("launcher-ask-handing-over"),
             Status::Opening => otto_kit::t_owned!("launcher-ask-opening"),
             Status::Starting(Some(agent)) => {
                 otto_kit::t_owned!("launcher-ask-starting", agent = agent.as_str())
@@ -830,9 +826,8 @@ pub struct Ask {
     /// the next request too, but otto-stash keeps it, and changes to it go
     /// there. Each with its file and whether it is struck out.
     stashed: Vec<(PathBuf, Attachment, bool)>,
-    /// The open session is going to its terminal; `Some(true)` while a turn
-    /// has to finish first.
-    handing_over: Option<bool>,
+    /// The open session is going to its terminal.
+    handing_over: bool,
     unreachable: Option<String>,
     run: Option<Run>,
 }
@@ -887,7 +882,7 @@ impl Ask {
             attachments: Vec::new(),
             struck: Vec::new(),
             stashed: Vec::new(),
-            handing_over: None,
+            handing_over: false,
             unreachable: None,
             run: None,
         }
@@ -1083,6 +1078,7 @@ impl Ask {
                 )),
                 icon: None,
                 activity: Some(session_activity(session)),
+                checked: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -1208,6 +1204,7 @@ impl Ask {
                 subtitle: (!agent.description.is_empty()).then(|| agent.description.clone()),
                 icon: None,
                 activity: None,
+                checked: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -1304,6 +1301,7 @@ impl Ask {
                 subtitle: None,
                 icon: None,
                 activity: None,
+                checked: None,
                 search_terms: Vec::new(),
                 origin: Origin { source, index },
             })
@@ -1376,6 +1374,7 @@ impl Ask {
                     subtitle,
                     icon: None,
                     activity: None,
+                    checked: request.row_checked(row, current),
                     search_terms: Vec::new(),
                     origin: Origin { source, index },
                 }
@@ -1670,11 +1669,9 @@ impl Ask {
             .is_ok()
     }
 
-    /// Stop the turn of the session at `index` in the list. Returns whether it
-    /// had one going, as far as the list knows.
     /// Tells the service the session is going to its terminal: the one at
-    /// `index` in the list, or the open one. The service stops its own agent
-    /// once it is idle, so the terminal's is the only one writing.
+    /// `index` in the list, or the open one. The service cancels a turn under
+    /// way and stops its own agent, so the terminal's is the only one writing.
     pub fn release(&mut self, index: Option<usize>) -> bool {
         let session = match index {
             Some(index) => match self.sessions.get(index) {
@@ -1682,16 +1679,7 @@ impl Ask {
                 None => return false,
             },
             None => {
-                let busy = self.run.as_ref().is_some_and(|run| {
-                    run.chat.as_ref().is_some_and(|chat| {
-                        chat.active_turn.is_some()
-                            || chat
-                                .queued_messages
-                                .as_ref()
-                                .is_some_and(|queue| !queue.is_empty())
-                    }) || self.handing_off()
-                });
-                self.handing_over = Some(busy);
+                self.handing_over = true;
                 None
             }
         };
@@ -1748,8 +1736,8 @@ impl Ask {
         if run.loading && !turn_running && run.failure.is_none() {
             transcript.status = Some(Status::Loading);
         }
-        if let Some(busy) = self.handing_over {
-            transcript.status = Some(Status::HandingOver { busy });
+        if self.handing_over {
+            transcript.status = Some(Status::HandingOver);
         }
         // Answers given here show before the service carries them.
         for request in transcript
@@ -2468,9 +2456,8 @@ async fn follow(
     Ok((chat_uri, session_events, chat_events))
 }
 
-/// Cancels the active turn of `session`, if it has one, without following it.
-/// Hands `session` to its terminal, so the service lets go of its agent once
-/// the agent is idle. Failing is logged and nothing more: the terminal opens
+/// Hands `session` to its terminal, so the service cancels a turn under way
+/// and lets go of its agent. Failing is logged and nothing more: the terminal opens
 /// either way, and the idle timeout gets there in the end.
 async fn release(client: &Client, session: &str) {
     let released: Result<Value, _> = client

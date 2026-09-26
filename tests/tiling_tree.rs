@@ -458,7 +458,7 @@ mod tiling_tree_tests {
                 .window_decoration_height(title)
                 .expect("a decorated tile");
             assert!(
-                bar > 0 && bar < 34,
+                bar > 0 && bar < 28,
                 "{title} should wear the compact bar, not the floating one: {bar}"
             );
             let (_, _, cw, ch) = cell(&handle, title);
@@ -546,7 +546,7 @@ mod tiling_tree_tests {
             let bar = handle
                 .window_decoration_height(title)
                 .expect("still decorated");
-            assert_eq!(bar, 34, "{title} wears the floating bar again");
+            assert_eq!(bar, 28, "{title} wears the floating bar again");
             assert!(bar > tiled_bar);
         }
 

@@ -19,6 +19,7 @@ pub mod focus;
 pub mod foreign;
 pub mod frosted;
 pub mod frosting;
+pub mod fs;
 pub mod i18n;
 pub mod icon_theme;
 pub mod icons;
@@ -36,6 +37,7 @@ pub mod sound;
 pub mod surfaces;
 pub mod theme;
 pub mod tile_decoration;
+pub mod trash;
 pub mod typography;
 pub mod utils;
 

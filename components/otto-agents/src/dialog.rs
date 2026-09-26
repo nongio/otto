@@ -62,6 +62,9 @@ pub struct Prompt {
     pub handle_title: bool,
     /// Groups of options, one picked from each, sent back with a grant.
     pub choices: Vec<Choice>,
+    /// The dialog leaves the keyboard where it is: a client may be answering
+    /// the same question right now, and taking the keyboard would close it.
+    pub quiet: bool,
 }
 
 /// A group of options in a [`Prompt`], of which the user picks one.
@@ -117,26 +120,70 @@ pub trait Prompter: Send + Sync {
     }
 }
 
-/// Starts `otto-ask --session <session_uri>` in a process group of its own,
-/// so it is not stopped along with this service.
+/// Starts `otto-ask --session <session_uri>` as a transient unit of the
+/// systemd user manager.
+///
+/// This service outlives compositors, so the environment it started with
+/// says nothing about where the current one listens: a child of ours would
+/// have no `WAYLAND_DISPLAY` and exit at once. A transient unit takes the
+/// manager's current environment, which the compositor keeps up to date, and
+/// sits outside this unit's sandbox and cgroup. Without a user manager it
+/// falls back to a child in a process group of its own.
 pub fn open_in_ask(session_uri: &str) {
-    let mut command = tokio::process::Command::new("otto-ask");
-    command
-        .arg("--session")
-        .arg(session_uri)
+    let session_uri = session_uri.to_owned();
+    tokio::spawn(async move {
+        let mut command = tokio::process::Command::new("systemd-run");
+        command.args([
+            "--user",
+            "--collect",
+            "--quiet",
+            "--",
+            "otto-ask",
+            "--session",
+        ]);
+        command.arg(&session_uri);
+        match run_quietly(command).await {
+            Ok(()) => tracing::info!(session_uri, "opening the session in Ask"),
+            Err(err) => {
+                tracing::debug!(%err, "systemd-run failed; starting otto-ask directly");
+                let mut command = tokio::process::Command::new("otto-ask");
+                command
+                    .arg("--session")
+                    .arg(&session_uri)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .process_group(0);
+                match command.spawn() {
+                    Ok(mut child) => {
+                        tracing::info!(session_uri, "opening the session in Ask");
+                        // Reaped once it exits, so it never lingers as a zombie.
+                        let _ = child.wait().await;
+                    }
+                    Err(err) => tracing::warn!(%err, session_uri, "could not start otto-ask"),
+                }
+            }
+        }
+    });
+}
+
+/// Runs `command` to completion, turning a failed exit into an error that
+/// carries what it wrote to stderr.
+async fn run_quietly(mut command: tokio::process::Command) -> std::io::Result<()> {
+    let output = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0);
-    match command.spawn() {
-        Ok(mut child) => {
-            tracing::info!(session_uri, "opening the session in Ask");
-            // Reaped once it exits, so it never lingers as a zombie.
-            tokio::spawn(async move {
-                let _ = child.wait().await;
-            });
-        }
-        Err(err) => tracing::warn!(%err, session_uri, "could not start otto-ask"),
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "{}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
     }
 }
 
@@ -474,6 +521,9 @@ pub(crate) fn question_labels(prompt: &Prompt) -> HashMap<String, String> {
     // the left edge, not centred.
     if prompt.body.contains('\n') {
         labels.insert("body-align".to_owned(), "start".to_owned());
+    }
+    if prompt.quiet {
+        labels.insert("focus".to_owned(), "none".to_owned());
     }
     labels
 }

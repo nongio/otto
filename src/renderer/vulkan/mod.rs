@@ -623,6 +623,7 @@ impl SkiaVkRenderer {
             )),
             image: sk_image,
             has_alpha: !fmt.opaque,
+            padding_alpha: fmt.opaque,
             format: Some(code),
             damage: damage.map(|damage| damage.to_vec()),
         })
@@ -683,6 +684,7 @@ impl SkiaVkRenderer {
             )),
             image,
             has_alpha: !fmt.opaque,
+            padding_alpha: fmt.opaque,
             format: Some(format),
             damage: None,
         })

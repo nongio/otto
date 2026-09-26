@@ -74,7 +74,7 @@ pub struct WindowDecorationModel {
     pub title: String,
     pub active: bool,
     pub dark: bool,
-    /// Window frame corner radius; 0 while maximized or tiled
+    /// Window frame corner radius; 0 while fullscreen, maximized full width or tiled
     pub corner_radius: f32,
     /// Pointer is over the traffic lights
     pub controls_hovered: bool,

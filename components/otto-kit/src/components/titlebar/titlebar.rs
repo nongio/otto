@@ -374,15 +374,17 @@ impl Titlebar {
             }
         }
 
-        // Bevel hairlines. Drawn at half-pixel offsets so they stay crisp
-        // instead of straddling two rows.
+        // Bevel hairlines: one device pixel whatever the output scale, centred
+        // on that pixel's row so they stay crisp. A point-wide line doubles at
+        // scale 2 and reads as a rim rather than a bevel.
+        let px = 1.0 / canvas.local_to_device_as_3x3().scale_y().abs().max(1.0);
         let mut line = Paint::default();
         line.set_anti_alias(true);
         line.set_style(skia_safe::PaintStyle::Stroke);
-        line.set_stroke_width(1.0);
+        line.set_stroke_width(px);
         if let Some(highlight) = material.top_highlight {
             line.set_color(highlight);
-            let y = rect.top + 0.5;
+            let y = rect.top + px / 2.0;
             // Inset by the corner radius so the highlight doesn't cut across
             // the rounded corners.
             let inset = self.corner_radius * 0.8;
@@ -390,7 +392,7 @@ impl Titlebar {
         }
         if let Some(shade) = material.bottom_shade {
             line.set_color(shade);
-            let y = rect.bottom - 0.5;
+            let y = rect.bottom - px / 2.0;
             canvas.draw_line((rect.left, y), (rect.right, y), &line);
         }
     }

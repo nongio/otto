@@ -12,6 +12,8 @@ use std::time::SystemTime;
 
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
+use otto_kit::fs::{copy_entry, first_free_name, move_entry, remove_entry, unique_name};
+use otto_kit::trash::percent_decode;
 use skia_safe::Rect;
 
 /// One entry in a directory.
@@ -1612,113 +1614,6 @@ fn name_of(path: &Path) -> String {
         .into_owned()
 }
 
-/// `name`, `name 2`, `name 3`… — the first that does not exist in `dir`.
-///
-/// The suffix goes before the extension, so `photo.png` becomes `photo 2.png`
-/// rather than `photo.png 2`.
-fn unique_name(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
-    let name = name.to_string_lossy();
-    let (stem, ext) = match name.rsplit_once('.') {
-        // A leading dot is the whole name of a hidden file, not an extension.
-        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
-        _ => (name.as_ref(), String::new()),
-    };
-
-    for n in 2..10_000 {
-        let candidate = dir.join(format!("{stem} {n}{ext}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    dir.join(format!("{stem} {}{ext}", std::process::id()))
-}
-
-/// Move one entry, falling back to copy-then-delete across filesystems.
-///
-/// The source is unlinked only after the destination is fully written — that
-/// ordering is the whole guarantee that a failed move cannot lose data.
-fn move_entry(source: &Path, target: &Path) -> Result<(), String> {
-    match std::fs::rename(source, target) {
-        Ok(()) => Ok(()),
-        // EXDEV: a rename cannot cross filesystems, so do it the long way.
-        Err(err) if err.raw_os_error() == Some(libc::EXDEV) => {
-            copy_entry(source, target)?;
-            remove_entry(source)
-        }
-        Err(err) => Err(err.to_string()),
-    }
-}
-
-/// Copy a file or a directory tree.
-fn copy_entry(source: &Path, target: &Path) -> Result<(), String> {
-    let meta = std::fs::symlink_metadata(source).map_err(|e| e.to_string())?;
-
-    if meta.is_symlink() {
-        // Copy the link itself, not what it points at — following it could
-        // duplicate a whole tree the user did not ask for.
-        let link = std::fs::read_link(source).map_err(|e| e.to_string())?;
-        return std::os::unix::fs::symlink(link, target).map_err(|e| e.to_string());
-    }
-
-    if meta.is_dir() {
-        std::fs::create_dir_all(target).map_err(|e| e.to_string())?;
-        for entry in std::fs::read_dir(source)
-            .map_err(|e| e.to_string())?
-            .flatten()
-        {
-            copy_entry(&entry.path(), &target.join(entry.file_name()))?;
-        }
-        return Ok(());
-    }
-
-    // Write to a temporary name in the destination directory and rename into
-    // place, so an interrupted copy never leaves a truncated file wearing the
-    // real name.
-    let parent = target.parent().unwrap_or(Path::new("."));
-    let temp = parent.join(format!(
-        ".{}.otto-files-{}",
-        target
-            .file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default(),
-        std::process::id()
-    ));
-
-    let copy = std::fs::copy(source, &temp).map_err(|e| e.to_string());
-    if let Err(err) = copy {
-        std::fs::remove_file(&temp).ok();
-        return Err(err);
-    }
-    if let Err(err) = std::fs::rename(&temp, target) {
-        std::fs::remove_file(&temp).ok();
-        return Err(err.to_string());
-    }
-    Ok(())
-}
-
-fn remove_entry(path: &Path) -> Result<(), String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if meta.is_dir() && !meta.is_symlink() {
-        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
-    } else {
-        std::fs::remove_file(path).map_err(|e| e.to_string())
-    }
-}
-
-/// `dir.join(name)`, or the next free numbered variant if that is taken.
-///
-/// Unlike [`unique_name`] — which always numbers, because every caller of it
-/// already knows the plain name collides — this checks first, so a fresh
-/// "untitled folder" doesn't open as "untitled folder 2" for no reason.
-fn first_free_name(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
-    let plain = dir.join(name);
-    if plain.exists() {
-        unique_name(dir, name)
-    } else {
-        plain
-    }
-}
-
 /// Create a new, empty directory in `dest`, named "untitled folder" or a
 /// numbered variant if that name is already taken.
 pub fn create_folder(dest: &Path) -> Result<PathBuf, String> {
@@ -1756,7 +1651,7 @@ pub fn create_folder_named(dest: &Path, name: &str) -> Result<PathBuf, String> {
 /// [`paste`] for why that is acceptable here.
 pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
     let mut result = OpResult::default();
-    let Some(trash) = trash_dir() else {
+    let Some(trash) = otto_kit::trash::home_trash_dir() else {
         result
             .errors
             .push("No home directory to trash into.".to_string());
@@ -1777,7 +1672,7 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
         let Some(name) = source.file_name() else {
             continue;
         };
-        match trash_one(source, name, &files_dir, &info_dir) {
+        match otto_kit::trash::trash_into(source, &trash) {
             Ok((to, info)) => {
                 result.trashed += 1;
                 result.changes.push(Change::Trashed {
@@ -1792,29 +1687,6 @@ pub fn move_to_trash(paths: &[PathBuf]) -> OpResult {
         }
     }
     result
-}
-
-/// Returns where the item landed in the trash and where its sidecar went, so
-/// the caller can record a restorable [`Change::Trashed`].
-fn trash_one(
-    source: &Path,
-    name: &std::ffi::OsStr,
-    files_dir: &Path,
-    info_dir: &Path,
-) -> Result<(PathBuf, PathBuf), String> {
-    let target = first_free_name(files_dir, name);
-    let trashed_name = target.file_name().unwrap().to_string_lossy().to_string();
-    let info_path = info_dir.join(format!("{trashed_name}.trashinfo"));
-
-    move_entry(source, &target)?;
-
-    let info = format!(
-        "[Trash Info]\nPath={}\nDeletionDate={}\n",
-        percent_encode_path(source),
-        deletion_date(),
-    );
-    std::fs::write(&info_path, info).map_err(|e| e.to_string())?;
-    Ok((target, info_path))
 }
 
 /// A trash can under a temp directory, for tests.
@@ -1844,12 +1716,12 @@ pub(crate) fn test_data_home() -> &'static Path {
 /// special — the origins, and what may be done to a row — hangs off
 /// [`is_trash_root`] rather than off a separate kind of column.
 pub fn trash_files_dir() -> Option<PathBuf> {
-    trash_dir().map(|t| t.join("files"))
+    otto_kit::trash::home_trash_dir().map(|t| t.join("files"))
 }
 
 /// The sidecar directory: `$XDG_DATA_HOME/Trash/info`.
 pub fn trash_info_dir() -> Option<PathBuf> {
-    trash_dir().map(|t| t.join("info"))
+    otto_kit::trash::home_trash_dir().map(|t| t.join("info"))
 }
 
 /// Is `path` the trash's own directory — the one the Trash shell opens on?
@@ -1894,28 +1766,6 @@ fn parse_trashinfo(body: &str) -> Option<PathBuf> {
     body.lines()
         .find_map(|line| line.strip_prefix("Path="))
         .map(|encoded| PathBuf::from(percent_decode(encoded.trim())))
-}
-
-/// Undo [`percent_encode_path`]. A stray `%` that is not followed by two hex
-/// digits is kept as itself rather than dropped — the name is what matters,
-/// and a malformed sidecar should still point somewhere recognisable.
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
-            if let Some(byte) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Put trashed items back where they came from.
@@ -2030,51 +1880,6 @@ pub fn empty_trash() -> OpResult {
     delete_forever(&paths)
 }
 
-/// `$XDG_DATA_HOME/Trash`, falling back to `~/.local/share/Trash` — the
-/// "home trashcan" the freedesktop Trash spec describes.
-fn trash_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(dir).join("Trash"));
-    }
-    home_dir().map(|h| h.join(".local/share/Trash"))
-}
-
-/// Percent-encode a path the way a `.trashinfo`'s `Path=` key requires:
-/// everything but the unreserved characters and the `/` separator.
-fn percent_encode_path(path: &Path) -> String {
-    let mut out = String::new();
-    for byte in path.to_string_lossy().bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                out.push(byte as char);
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
-/// Local time as `YYYY-MM-DDTHH:MM:SS`, the format a `.trashinfo`'s
-/// `DeletionDate` key requires.
-fn deletion_date() -> String {
-    // Safe: `tm` is POD and `localtime_r` fills every field it reads back.
-    unsafe {
-        let mut when: libc::time_t = 0;
-        libc::time(&mut when);
-        let mut broken: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&when, &mut broken);
-        format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-            broken.tm_year + 1900,
-            broken.tm_mon + 1,
-            broken.tm_mday,
-            broken.tm_hour,
-            broken.tm_min,
-            broken.tm_sec,
-        )
-    }
-}
-
 #[cfg(test)]
 mod places_tests {
     use super::*;
@@ -2112,6 +1917,7 @@ mod places_tests {
 #[cfg(test)]
 mod paste_tests {
     use super::*;
+    use otto_kit::trash::percent_encode_path;
 
     struct Tmp(PathBuf);
     impl Tmp {

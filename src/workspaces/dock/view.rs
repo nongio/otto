@@ -163,6 +163,12 @@ pub struct DockView {
     pub cached_hot_zone: Arc<RwLock<Option<skia::Rect>>>,
     /// Full dock bounds (at rest) used to decide when to *hide* the dock.
     pub cached_dock_bounds: Arc<RwLock<Option<skia::Rect>>>,
+    /// Edge, thickness (physical px) and autohide of the band the dock
+    /// reserved when last laid out.
+    reserved_band: Arc<RwLock<Option<(DockPosition, i32, bool)>>>,
+    /// Set when `reserved_band` changes; the compositor takes it and refits
+    /// the windows that fill the usable area.
+    reserved_changed: Arc<AtomicBool>,
     /// The label layer currently shown as a tooltip — only one visible at a time.
     active_label: Arc<RwLock<Option<Layer>>>,
     /// The `AnimationRef` from the most recent `magnify_elements_with_scale` call,
@@ -471,6 +477,8 @@ impl DockView {
             screen_size: Arc::new(RwLock::new((0, 0))),
             usable_size: Arc::new(RwLock::new((0, 0))),
             cached_hot_zone: Arc::new(RwLock::new(None)),
+            reserved_band: Arc::new(RwLock::new(None)),
+            reserved_changed: Arc::new(AtomicBool::new(false)),
             cached_dock_bounds: Arc::new(RwLock::new(None)),
             active_label: Arc::new(RwLock::new(None)),
             last_layout_animation: Arc::new(RwLock::new(None)),
@@ -1436,6 +1444,7 @@ impl DockView {
                 screen_h + 80.0,
             ),
         });
+        self.note_reserved_band();
     }
     fn notification_handler(&self, mut rx: tokio::sync::mpsc::Receiver<(u64, WorkspacesModel)>) {
         // let view = self.view.clone();
@@ -1594,6 +1603,15 @@ impl DockView {
         if let Some(layer) = self.pressed_layer.write().unwrap().take() {
             layer.set_color_filter(None);
         }
+    }
+
+    /// Whether `layer` is the one wearing the pressed darkening.
+    pub(super) fn is_pressed(&self, layer: &Layer) -> bool {
+        self.pressed_layer
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|pressed| pressed.id() == layer.id())
     }
 
     /// Returns `true` when the currently hovered layer resolves to the same
@@ -2544,6 +2562,35 @@ impl DockView {
         } else {
             self.show(Some(Transition::ease_out_quad(0.3)));
         }
+        self.note_reserved_band();
+    }
+
+    /// Record the band the dock reserves on its edge, flagging a change for
+    /// [`Self::take_reserved_changed`].
+    fn note_reserved_band(&self) {
+        let (icon_size, _) = self.available_icon_size();
+        let band = (
+            self.position(),
+            Self::calculate_bar_height(icon_size, 1.0).round() as i32,
+            self.is_autohide_enabled(),
+        );
+        let previous = self.reserved_band.write().unwrap().replace(band);
+        if previous.is_some_and(|previous| previous != band) {
+            self.reserved_changed
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Whether a change to the reserved band is waiting to be taken.
+    pub fn reserved_change_queued(&self) -> bool {
+        self.reserved_changed
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Whether the dock's reserved band changed since the last call.
+    pub fn take_reserved_changed(&self) -> bool {
+        self.reserved_changed
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     /// Persist the dock keys the dock itself owns — currently only the

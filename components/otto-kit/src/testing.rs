@@ -817,6 +817,18 @@ impl TestLayerSurface {
         self.commit_frame();
     }
 
+    /// Stretch across the top edge and reserve `height` of it, the way a
+    /// menu bar does, then commit.
+    pub fn reserve_top(&self, height: i32) {
+        self.layer_surface.set_anchor(
+            zwlr_layer_surface_v1::Anchor::Top
+                | zwlr_layer_surface_v1::Anchor::Left
+                | zwlr_layer_surface_v1::Anchor::Right,
+        );
+        self.layer_surface.set_exclusive_zone(height);
+        self.commit_frame();
+    }
+
     /// Re-attach the buffer, damage the whole surface and commit.
     pub fn commit_frame(&self) {
         self.surface.attach(self.buffer.as_ref(), 0, 0);

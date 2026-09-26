@@ -117,7 +117,7 @@ impl WindowElement {
     /// Height of the server-side titlebar, in logical points. Mirrors
     /// otto-kit's `WindowDecoration::DEFAULT_HEIGHT` — the decoration is drawn
     /// by that shared component, so the two must agree.
-    pub const DECORATION_HEIGHT: i32 = 34;
+    pub const DECORATION_HEIGHT: i32 = 28;
 
     /// How much of a decoration this window wears.
     ///

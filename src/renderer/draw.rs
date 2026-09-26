@@ -67,10 +67,39 @@ pub fn draw_solid(
     }
 }
 
+/// A color filter that makes its input fully opaque, keeping the color.
+///
+/// Pixel formats without alpha (`Xrgb8888`, `Xbgr8888`, `Xrgb2101010`, ...)
+/// carry a padding byte where the alpha would be, and XWayland leaves it at 0
+/// in depth-24 pixmaps. A GL texture for such a format has no alpha channel,
+/// so sampling it yields alpha 1. The Vulkan renderer wraps the same memory as
+/// an alpha format and Skia samples the padding byte, giving `(r, g, b, 0)`:
+/// invisible when drawn straight over an opaque clear, but anything that
+/// keeps the intermediate (an image-cached layer, an exposé mirror) blends
+/// the window away.
+///
+/// `DstOver` of opaque black, in premultiplied space, keeps the input color
+/// and yields alpha 1. Filter the image shader with it ([`opaque_shader`]),
+/// so a paint alpha still fades the result; setting it on the paint instead
+/// is only right when the paint alpha is 1, because Skia applies the paint
+/// alpha before the paint's color filter.
+pub fn opaque_color_filter() -> skia::ColorFilter {
+    skia::color_filters::blend(skia::Color::BLACK, skia::BlendMode::DstOver)
+        .expect("DstOver of opaque black is never a no-op")
+}
+
+/// Wraps an image shader of a format without alpha so it draws opaque.
+///
+/// See [`opaque_color_filter`] for why the padding byte cannot be trusted.
+pub fn opaque_shader(shader: skia::Shader) -> skia::Shader {
+    shader.with_color_filter(opaque_color_filter())
+}
+
 /// Draws the `src` region of `image` into `dst`, touching only the `damage` rects.
 ///
 /// Damage is relative to `dst`. The image is blended over what is there
-/// (`SrcOver`) at `alpha`.
+/// (`SrcOver`) at `alpha`. With `padding_alpha` the image's alpha byte is
+/// format padding and the image draws opaque whatever that byte holds.
 ///
 /// # Panics
 ///
@@ -84,6 +113,7 @@ pub fn render_texture(
     damage: &[Rectangle<i32, Physical>],
     src_transform: Transform,
     alpha: f32,
+    padding_alpha: bool,
 ) {
     if damage.is_empty() {
         return;
@@ -114,11 +144,15 @@ pub fn render_texture(
         _ => panic!("unhandled transform {src_transform:?}"),
     }
 
-    paint.set_shader(image.to_shader(
+    let shader = image.to_shader(
         (skia::TileMode::Repeat, skia::TileMode::Repeat),
         skia::SamplingOptions::default(),
         &matrix,
-    ));
+    );
+    paint.set_shader(match shader {
+        Some(shader) if padding_alpha => Some(opaque_shader(shader)),
+        shader => shader,
+    });
 
     let draw_rect = skia::Rect::from_xywh(
         dst.loc.x as f32,

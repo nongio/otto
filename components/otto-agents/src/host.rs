@@ -174,10 +174,14 @@ struct Session {
     /// this service never sees. It is what tells the command that resumes a
     /// session from the one that starts it; see [`crate::config::enter_command`].
     written: bool,
-    /// The session is handed to its terminal: the agent is stopped as soon
-    /// as it has nothing left to do, so the terminal's agent is the only
-    /// writer of the history. Set by `releaseSession`.
+    /// The session is handed to its terminal: a turn under way is cancelled
+    /// and the agent stopped, so the terminal's agent is the only writer of
+    /// the history. Set by `releaseSession`.
     releasing: bool,
+    /// Everything this session's prompts attached, handed to each agent
+    /// process it starts; see [`crate::attached`]. Kept for as long as this
+    /// service runs.
+    attached: Vec<Attachment>,
 }
 
 /// The `setMode` request: switch `session`'s agent to the mode `mode_id`, one
@@ -209,6 +213,9 @@ struct PendingInput {
     reply: oneshot::Sender<InputAnswer>,
     /// Whether it has also been put to the user in a dialog.
     escalated: bool,
+    /// When a client last changed an answer to it. Someone picking options
+    /// in Ask is answering, so the grace period before a dialog starts over.
+    touched: std::time::Instant,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -383,6 +390,8 @@ impl Host {
             Err(err) => rpc::error_response(id, &err),
         };
         state.send(conn.id, Outgoing::Message(response));
+        // Releasing a session ends its questions, and their dialogs.
+        self.flush_withdrawals(&mut state);
     }
 
     pub fn handle_notification(self: &Arc<Self>, conn: &Connection, method: &str, params: Value) {
@@ -477,6 +486,7 @@ impl Host {
             activity: 0,
             written: false,
             releasing: false,
+            attached: Vec::new(),
         };
         state.sessions.insert(uri.clone(), session);
         state
@@ -634,6 +644,13 @@ impl Host {
                 let request_id = action.request_id.clone();
                 let changed = StateAction::ChatInputAnswerChanged(action);
                 state.apply(&channel, changed, Some(origin));
+                if let Some(pending) = state
+                    .sessions
+                    .get_mut(&session_uri)
+                    .and_then(|session| session.inputs.get_mut(&request_id))
+                {
+                    pending.touched = std::time::Instant::now();
+                }
                 state.mirror_input(&session_uri, &channel, &request_id);
             }
             StateAction::ChatInputCompleted(action) => {
@@ -702,6 +719,7 @@ impl Host {
                         session_uri,
                         &tool_call_id,
                         "no client is watching",
+                        false,
                     );
                 } else if opened {
                     self.escalate_after(state.watched_grace, session_uri, &tool_call_id);
@@ -719,7 +737,7 @@ impl Host {
                 // a dialog. A client that subscribes and shows nothing would
                 // else hold the agent's question open for good.
                 if opened && !state.watched(&chat_uri) {
-                    self.escalate_input(&mut state, session_uri, &request_id);
+                    self.escalate_input(&mut state, session_uri, &request_id, false);
                 } else if opened {
                     self.escalate_input_after(state.watched_grace, session_uri, &request_id);
                 }
@@ -761,11 +779,15 @@ impl Host {
                 return;
             };
             let mut state = host.lock();
+            // A client still watching may be answering it right now: the
+            // dialog then waits beside it rather than taking the keyboard.
+            let quiet = state.session_watched(&session_uri);
             host.escalate(
                 &mut state,
                 &session_uri,
                 &tool_call_id,
                 "unanswered past the grace period",
+                quiet,
             );
         });
     }
@@ -781,12 +803,29 @@ impl Host {
         let host = Arc::downgrade(self);
         let (session_uri, request_id) = (session_uri.to_owned(), request_id.to_owned());
         tokio::spawn(async move {
-            tokio::time::sleep(grace).await;
-            let Some(host) = host.upgrade() else {
+            let mut wait = grace;
+            loop {
+                tokio::time::sleep(wait).await;
+                let Some(host) = host.upgrade() else {
+                    return;
+                };
+                let mut state = host.lock();
+                let Some(idle) = state
+                    .sessions
+                    .get(&session_uri)
+                    .and_then(|session| session.inputs.get(&request_id))
+                    .map(|pending| pending.touched.elapsed())
+                else {
+                    return;
+                };
+                if idle < grace {
+                    wait = grace - idle;
+                    continue;
+                }
+                let quiet = state.session_watched(&session_uri);
+                host.escalate_input(&mut state, &session_uri, &request_id, quiet);
                 return;
-            };
-            let mut state = host.lock();
-            host.escalate_input(&mut state, &session_uri, &request_id);
+            }
         });
     }
 
@@ -799,6 +838,7 @@ impl Host {
         session_uri: &str,
         tool_call_id: &str,
         why: &str,
+        quiet: bool,
     ) {
         let Some(pending) = state
             .sessions
@@ -815,6 +855,7 @@ impl Host {
         let prompt = Prompt {
             open: dialog::open_in_ask_label(),
             cookie: dialog_cookie(session_uri, tool_call_id),
+            quiet,
             ..pending.prompt.clone()
         };
         let prompter = Arc::clone(&self.prompter);
@@ -827,13 +868,32 @@ impl Host {
             };
             match reply {
                 Reply::Open => {
-                    host.lock().unescalate(&session_uri, &tool_call_id);
+                    let grace = {
+                        let mut state = host.lock();
+                        state.unescalate(&session_uri, &tool_call_id);
+                        state.watched_grace
+                    };
                     prompter.open(&session_uri);
+                    // Should Ask not come up, or not be answered in, the
+                    // question comes back rather than waiting on nobody.
+                    host.escalate_after(grace, &session_uri, &tool_call_id);
                 }
-                reply => {
-                    let granted = matches!(reply, Reply::Granted(_));
+                Reply::Granted(_) => {
                     host.lock()
-                        .answer_from_dialog(&session_uri, &tool_call_id, granted);
+                        .answer_from_dialog(&session_uri, &tool_call_id, true)
+                }
+                Reply::Denied => host
+                    .lock()
+                    .answer_from_dialog(&session_uri, &tool_call_id, false),
+                // Taken down, or never shown: not an answer. A client watching
+                // the chat can still give one; with nobody watching, the
+                // request is denied rather than left waiting on nobody.
+                Reply::Ended | Reply::Unavailable => {
+                    let mut state = host.lock();
+                    state.unescalate(&session_uri, &tool_call_id);
+                    if !state.session_watched(&session_uri) {
+                        state.answer_from_dialog(&session_uri, &tool_call_id, false);
+                    }
                 }
             }
         });
@@ -848,6 +908,7 @@ impl Host {
         state: &mut HostState,
         session_uri: &str,
         request_id: &str,
+        quiet: bool,
     ) {
         let Some(session) = state.sessions.get(session_uri) else {
             return;
@@ -884,6 +945,7 @@ impl Host {
         );
         let prompt = Prompt {
             cookie: dialog_cookie(session_uri, request_id),
+            quiet,
             ..question_prompt(&agent, &provider, icon, &request)
         };
         let prompter = Arc::clone(&self.prompter);
@@ -903,8 +965,14 @@ impl Host {
                 // answer, as it does when a permission dialog goes away.
                 Reply::Denied | Reply::Ended => (ChatInputResponseKind::Decline, HashMap::new()),
                 Reply::Open => {
-                    host.lock().unescalate_input(&session_uri, &request_id);
+                    let grace = {
+                        let mut state = host.lock();
+                        state.unescalate_input(&session_uri, &request_id);
+                        state.watched_grace
+                    };
                     prompter.open(&session_uri);
+                    // As for a permission question.
+                    host.escalate_input_after(grace, &session_uri, &request_id);
                     return;
                 }
                 // The question stays in the chat, for a client to answer.
@@ -958,10 +1026,16 @@ impl Host {
             );
         }
         for (session_uri, tool_call_id) in questions {
-            self.escalate(state, &session_uri, &tool_call_id, "no client is watching");
+            self.escalate(
+                state,
+                &session_uri,
+                &tool_call_id,
+                "no client is watching",
+                false,
+            );
         }
         for (session_uri, request_id) in inputs {
-            self.escalate_input(state, &session_uri, &request_id);
+            self.escalate_input(state, &session_uri, &request_id, false);
         }
     }
 }
@@ -1032,6 +1106,7 @@ impl HostState {
                 tools: HashMap::new(),
                 activity: 0,
                 releasing: false,
+                attached: Vec::new(),
             };
             self.sessions.insert(resource.clone(), session);
             self.chats.insert(chat_uri.clone(), chat);
@@ -1118,6 +1193,7 @@ impl HostState {
             provider: session.state.provider.clone(),
             cwd,
             resume: session.agent_session.clone(),
+            attached: session.attached.clone(),
         };
         self.backend.start(spec, command_rx, events);
         let host = self.host.clone();
@@ -1286,10 +1362,12 @@ impl HostState {
         session.commands = None;
     }
 
-    /// Hands the session to its terminal. The agent this host runs stops once
-    /// it has nothing left to do — a turn under way, and anything queued
-    /// behind it, finishes first — and the next time the session is opened
-    /// here its history is loaded afresh, with whatever the terminal added.
+    /// Hands the session to its terminal. The terminal's agent starts on the
+    /// same history at once, so a turn under way here is cancelled and this
+    /// host's agent stops: left running, it would keep writing beside the
+    /// terminal and fork the history. Anything queued stays queued. The next
+    /// time the session is opened here its history is loaded afresh, with
+    /// whatever the terminal added.
     fn release_session(&mut self, params: DisposeSessionParams) -> Result<Value, RpcError> {
         let uri = params.channel;
         let Some(session) = self.sessions.get_mut(&uri) else {
@@ -1299,10 +1377,27 @@ impl HostState {
             ));
         };
         session.releasing = true;
+        let chat_uri = session.chat.clone();
         // From here the terminal's agent writes the history, and this service
         // never sees those turns: the session is entered as a written one
         // whatever it looked like when it was handed over.
         self.mark_written(&uri);
+        let active = self
+            .chats
+            .get(&chat_uri)
+            .and_then(|chat| chat.active_turn.as_ref())
+            .map(|turn| turn.id.clone());
+        if let Some(turn_id) = active {
+            tracing::info!(session_uri = %uri, "cancelling the turn under way for the terminal");
+            self.send_command(
+                &uri,
+                SessionCommand::Cancel {
+                    turn_id: turn_id.clone(),
+                },
+            );
+            // Ends its questions and dialogs with it.
+            self.end_turn(&uri, &chat_uri, turn_id, TurnOutcome::Cancelled);
+        }
         self.release_if_idle(&uri);
         Ok(Value::Null)
     }
@@ -1349,7 +1444,16 @@ impl HostState {
             .sessions
             .get(session_uri)
             .is_some_and(|session| session.releasing && session.commands.is_some());
-        if !releasing || !self.idle(session_uri) {
+        // What is queued waits for the session to be opened here again.
+        let busy = self.sessions.get(session_uri).is_some_and(|session| {
+            self.chats
+                .get(&session.chat)
+                .is_some_and(|chat| chat.active_turn.is_some())
+                || !session.questions.is_empty()
+                || !session.inputs.is_empty()
+                || !session.tools.is_empty()
+        });
+        if !releasing || busy {
             return;
         }
         if let Some(session) = self.sessions.get_mut(session_uri) {
@@ -1357,6 +1461,13 @@ impl HostState {
             session.commands = None;
             session.releasing = false;
         }
+    }
+
+    /// Whether any client watches the chat of the session at `session_uri`.
+    fn session_watched(&self, session_uri: &str) -> bool {
+        self.sessions
+            .get(session_uri)
+            .is_some_and(|session| self.watched(&session.chat))
     }
 
     /// Whether any client is subscribed to `chat_uri`, and so can answer the
@@ -1641,6 +1752,7 @@ impl HostState {
                 turn_id,
                 reply,
                 escalated: false,
+                touched: std::time::Instant::now(),
             },
         );
         let requested = StateAction::ChatInputRequested(ChatInputRequestedAction { request });
@@ -1982,10 +2094,18 @@ impl HostState {
             action.message.text.clone()
         };
         self.title_from_prompt(session_uri, &title_from);
+        let attached = attachments(&action.message);
+        if let Some(session) = self.sessions.get_mut(session_uri) {
+            for attachment in &attached {
+                if !session.attached.contains(attachment) {
+                    session.attached.push(attachment.clone());
+                }
+            }
+        }
         let prompt = SessionCommand::Prompt {
             turn_id: action.turn_id.clone(),
             text: action.message.text.clone(),
-            attachments: attachments(&action.message),
+            attachments: attached,
         };
         self.apply(&chat_uri, StateAction::ChatTurnStarted(action), origin);
         self.mark_written(session_uri);
@@ -2019,6 +2139,10 @@ impl HostState {
             return;
         };
         if self.check_turn_start(session_uri, &chat_uri).is_err() {
+            return;
+        }
+        // A session handed to its terminal takes no more turns here.
+        if self.sessions.get(session_uri).is_some_and(|s| s.releasing) {
             return;
         }
         let Some(next) = self
@@ -2689,6 +2813,7 @@ pub fn question_prompt(
             open: dialog::open_in_ask_label(),
             icon: icon.unwrap_or("dialog-question").into(),
             choices,
+            quiet: false,
         },
         // A question the dialog cannot ask — free text, a number — makes the
         // whole request one to answer in Ask. The dialog says what is being
@@ -2722,6 +2847,7 @@ pub fn question_prompt(
             open: dialog::open_in_ask_label(),
             icon: icon.unwrap_or("dialog-question").into(),
             choices: Vec::new(),
+            quiet: false,
         },
     }
 }

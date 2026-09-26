@@ -144,8 +144,10 @@ impl Default for WindowDecoration {
 }
 
 impl WindowDecoration {
-    /// Height of the titlebar strip, in logical points
-    pub const DEFAULT_HEIGHT: f32 = 34.0;
+    /// Height of the titlebar strip, in logical points: a little under the
+    /// 30pt top bar, so a maximized window's bar reads as the lighter of the
+    /// two.
+    pub const DEFAULT_HEIGHT: f32 = 28.0;
     /// Height of a tile's minimal bar: one line of the body type, which is
     /// 13pt on a 1.5 line, rounded up — a little over half the floating bar.
     /// [`Self::minimal_height_matches_the_title_line`] holds it to that.
@@ -162,7 +164,7 @@ impl WindowDecoration {
     /// floating bar on the desktop now shares.
     pub const DEFAULT_TITLE_STYLE: TextStyle = styles::TITLEBAR;
     /// Title type on the compact bar: one step down the scale, at 11pt. The
-    /// floating bar's 13pt is set against 34 points of height; on a 20pt bar
+    /// floating bar's 13pt is set against 28 points of height; on a 20pt bar
     /// it crowds the strip and reads as the loudest thing on a tile that is
     /// mostly its client's. The weight stays semibold, so the title still
     /// carries at the smaller size.
@@ -175,7 +177,7 @@ impl WindowDecoration {
     /// also keep the same column whether a window floats or tiles.
     pub const MINIMAL_CONTROL_INSET: f32 = 10.0;
     /// Corner radius of a tile's frame under `decoration = "minimal"`, in
-    /// logical points. The floating frame's 12pt is drawn against a 34pt bar;
+    /// logical points. The floating frame's 12pt is drawn against a 28pt bar;
     /// on a bar 20pt high it swallows most of the strip, so a minimal tile
     /// keeps a softened corner at half that. The other tiled variants square
     /// off entirely, since they abut their neighbours with the full bar or
@@ -591,12 +593,12 @@ mod tests {
     #[test]
     fn hit_testing_follows_the_variant() {
         let floating = WindowDecoration::new("t", 400.0);
-        assert!(floating.hits_titlebar(200.0, 30.0));
+        assert!(floating.hits_titlebar(200.0, 25.0));
 
         let minimal = floating.clone().with_variant(DecorationVariant::Minimal);
         assert!(minimal.hits_titlebar(200.0, 10.0));
         // Below the compact bar is the client's own content.
-        assert!(!minimal.hits_titlebar(200.0, 30.0));
+        assert!(!minimal.hits_titlebar(200.0, 25.0));
 
         let hidden = floating.with_variant(DecorationVariant::Hidden);
         assert!(!hidden.hits_titlebar(200.0, 0.0));

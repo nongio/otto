@@ -721,9 +721,12 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             // This prevents damage tracking artifacts from the scene-based rendering
             self.backend_data.reset_buffers(&output);
 
-            let Some((next_workspace_index, next_workspace)) = self
-                .workspaces
-                .get_next_free_workspace_on_output(&output.name())
+            let app_id = window.display_app_id(&self.display_handle);
+            let Some((next_workspace_index, next_workspace)) =
+                self.workspaces.add_fullscreen_workspace_on_output(
+                    &output.name(),
+                    Some(app_id.clone()).filter(|id| !id.is_empty()),
+                )
             else {
                 return;
             };
@@ -734,7 +737,6 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             self.workspaces.expose_set_visible(false);
 
             // Fetch app info asynchronously to get the proper display name
-            let app_id = window.display_app_id(&self.display_handle);
             if !app_id.is_empty() {
                 let workspace_clone = next_workspace.clone();
                 tokio::spawn(async move {
@@ -1922,25 +1924,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
-        let id = window.id();
-        let tiled_zone = self
-            .workspaces
-            .get_window_view(&id)
-            .and_then(|view| view.tiled_zone);
-        let zone = match (window.is_maximized(), tiled_zone) {
-            (true, _) => crate::workspaces::TileZone::Maximize,
-            (false, Some(zone)) => zone,
-            (false, None) => return,
-        };
-        let Some(output) = self
-            .workspaces
-            .output_for_window(window)
-            .or_else(|| self.workspaces.outputs_for_element(window).first().cloned())
-        else {
+        let Some(target) = self.zone_target(window) else {
             return;
         };
-        self.recalculate_exclusive_zones(&output);
-        let target = zone.target_rect(self.usable_zone(&output));
         let size = window.client_size(target.size);
         toplevel.with_pending_state(|state| {
             state.size = Some(size);
@@ -1958,6 +1944,107 @@ impl<BackendData: Backend> Otto<BackendData> {
         if initial_configure_sent {
             toplevel.send_pending_configure();
         }
+    }
+
+    /// The rect a maximized or half-tiled window should fill right now, with
+    /// fresh exclusive zones; `None` for a floating window.
+    fn zone_target(&mut self, window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+        let tiled_zone = self
+            .workspaces
+            .get_window_view(&window.id())
+            .and_then(|view| view.tiled_zone);
+        let zone = match (window.is_maximized(), tiled_zone) {
+            (true, _) => crate::workspaces::TileZone::Maximize,
+            (false, Some(zone)) => zone,
+            (false, None) => return None,
+        };
+        let output = self
+            .workspaces
+            .output_for_window(window)
+            .or_else(|| self.workspaces.outputs_for_element(window).first().cloned())?;
+        self.recalculate_exclusive_zones(&output);
+        Some(zone.target_rect(self.usable_zone(&output)))
+    }
+
+    /// Move and resize every maximized or half-tiled window whose zone no
+    /// longer matches the usable area — the dock moved to another edge, or a
+    /// layer-shell panel reserved or released space. `output` limits the sweep
+    /// to one screen. Windows on hidden workspaces are refitted in place; the
+    /// stacking order and restore rects are left alone. Tiling workspaces are
+    /// laid out again for the same reason.
+    pub fn refit_zoned_windows(&mut self, output: Option<&Output>) {
+        let windows: Vec<WindowElement> = self.workspaces.spaces_elements().cloned().collect();
+        for window in windows {
+            if window.is_fullscreen() {
+                continue;
+            }
+            if let Some(output) = output {
+                if self
+                    .workspaces
+                    .output_for_window(&window)
+                    .is_none_or(|o| o.name() != output.name())
+                {
+                    continue;
+                }
+            }
+            self.move_window_to_zone(&window);
+        }
+
+        let outputs: Vec<Output> = match output {
+            Some(output) => vec![output.clone()],
+            None => self.workspaces.outputs().cloned().collect(),
+        };
+        for output in outputs {
+            self.relayout_workspace(&output, true);
+        }
+    }
+
+    /// Animate a zoned window to its zone's current rect. Nothing happens when
+    /// it is already there or is floating.
+    fn move_window_to_zone(&mut self, window: &WindowElement) {
+        let Some(target) = self.zone_target(window) else {
+            return;
+        };
+        let Some(current) = self.workspaces.element_geometry(window) else {
+            return;
+        };
+        if current == target {
+            return;
+        }
+        let transition = Transition::ease_out(0.3);
+
+        match window.underlying_surface() {
+            WindowSurface::Wayland(_) => {
+                let Some(toplevel) = window.toplevel().cloned() else {
+                    return;
+                };
+                let animation = self
+                    .layers_engine
+                    .add_animation_from_transition(&transition, false);
+                let (from, to) = (current.size, target.size);
+                let w = window.clone();
+                self.layers_engine.on_animation_update(
+                    animation,
+                    move |p: f32| {
+                        let size = animated_client_size(&w, from, to, p);
+                        toplevel.with_pending_state(|state| {
+                            state.size = Some(size);
+                        });
+                        toplevel.send_configure();
+                    },
+                    false,
+                );
+                self.layers_engine.start_animation(animation, 0.0);
+            }
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(x11) => {
+                let _ = x11.configure(target);
+            }
+        }
+
+        self.workspaces
+            .relocate_window(window, target.loc, Some(transition));
+        self.reposition_popups_for_window(window);
     }
 
     /// Forget that `window` is tiled, without moving it: a window the user
