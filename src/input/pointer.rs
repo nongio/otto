@@ -306,17 +306,21 @@ impl<BackendData: Backend> Otto<BackendData> {
                 .zip(self.workspaces.primary_output())
                 .map(|(o, p)| o.name() == p.name())
                 .unwrap_or(false);
-            if !(on_primary
+            let over_dock = on_primary
                 && self
                     .workspaces
-                    .is_cursor_over_dock(scaled_position.x as f32, scaled_position.y as f32))
-            {
+                    .is_cursor_over_dock(scaled_position.x as f32, scaled_position.y as f32);
+            // A press on a window or the dock is also over the desk behind
+            // them, which must not take the keyboard from under them.
+            let mut over_window = false;
+            if !over_dock {
                 let window_under = self
                     .workspaces
                     .element_under(position)
                     .map(|(w, p)| (w.clone(), p));
 
                 if let Some((window, _)) = window_under {
+                    over_window = true;
                     if let Some(id) = window.wl_surface().as_ref().map(|s| s.id()) {
                         if let Some(w) = self.workspaces.get_window_for_surface(&id) {
                             if w.is_minimised() {
@@ -350,6 +354,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             // Check if a Bottom/Background layer shell surface should receive keyboard focus
             if let Some((output, output_geo)) = output
                 .as_ref()
+                .filter(|_| !over_dock && !over_window)
                 .and_then(|o| Some((o, self.workspaces.output_geometry(o)?)))
             {
                 let scale = output.current_scale().fractional_scale();
