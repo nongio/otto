@@ -1429,6 +1429,8 @@ pub fn build() -> Pane {
         changes_row,
         file_row,
     ])];
+    // With the service, before the agents: it is how the phone reaches them.
+    groups.push(bridge_group(&state));
     groups.extend(draft.agents.iter().enumerate().map(|(index, agent)| {
         let mut rows = vec![
             if state.renaming == Some(index) {
@@ -1533,7 +1535,6 @@ pub fn build() -> Pane {
     }));
 
     groups.extend(add_row.map(|row| untitled(vec![row])));
-    groups.push(bridge_group(&state));
     Pane {
         name,
         icon: "agent",
