@@ -89,6 +89,22 @@ What it needs:
   client is watching. Without it, a permission request is denied and a question
   waits in the chat.
 
+## A chat bridge
+
+A chat bridge lets chat apps reach the agents: a program, such as an OpenClaw
+gateway, that starts `otto-agents acp` as its agent. Name it in `agents.toml`:
+
+```toml
+[bridge]
+command = "openclaw"      # a full path if it lives under nvm or ~/.local/bin
+args = ["gateway"]
+```
+
+and turn it on under **Chat bridge** in Settings › Agents, which enables the
+`otto-agents-bridge` user unit (off by default). The unit runs
+`otto-agents bridge`, which execs the command, and starts the agent service too.
+Its log is `journalctl --user -u otto-agents-bridge`.
+
 ## Repository layout
 
 | Path | Contents |

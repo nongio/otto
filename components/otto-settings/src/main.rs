@@ -759,6 +759,13 @@ fn stop_recording() -> bool {
 /// Push one change to the compositor, reporting a refusal rather than letting
 /// the UI show a value that was never accepted.
 fn apply(id: &str, value: settings_client::Value) {
+    // The agents pane's switches are its own, not the compositor's.
+    if let settings_client::Value::Bool(on) = value {
+        if agents::owns(id) {
+            agents::switch(id, on);
+            return;
+        }
+    }
     match settings_client::set(id, value) {
         settings_client::SetOutcome::Applied => {}
         settings_client::SetOutcome::PendingRestart => {

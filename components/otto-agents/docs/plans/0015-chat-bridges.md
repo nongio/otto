@@ -18,6 +18,12 @@ network code of our own (`src/facade.rs`, `tests/facade.rs`).
 | `session/request_permission` | sent for each tool call awaiting confirmation; the desktop is asked too, and the first answer wins |
 | `session/cancel` | cancels the turn, or the queued prompt as soon as it starts |
 
+**Turned on from Settings.** The bridge program is named in `agents.toml` as
+`[bridge] command` and `args`, and runs under the `otto-agents-bridge` user unit
+(`otto-agents bridge` execs it), off by default. Settings › Agents has a Chat
+bridge group: a switch that enables or disables the unit, showing its state, and
+the command, written on Apply like the agents' fields.
+
 Not yet: agent questions (forms) are announced in the text and answered on the
 desktop; pictures and audio in a prompt are dropped; an ACP permission request is
 not withdrawn when the desktop answers first (the late answer is refused by the

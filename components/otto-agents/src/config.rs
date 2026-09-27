@@ -238,6 +238,8 @@ pub struct Config {
     /// stopped, as `agents.toml` sets it. Read it through
     /// [`Config::idle_timeout`].
     pub idle_timeout: Option<u64>,
+    /// The chat bridge `otto-agents bridge` runs, when one is configured.
+    pub bridge: Option<BridgeConfig>,
 }
 
 /// How long an agent stays up with nothing to do when `idle_timeout` is unset.
@@ -420,6 +422,22 @@ impl AgentConfig {
     }
 }
 
+/// A chat bridge: a program that brings chat apps to the desktop's agents,
+/// usually by starting `otto-agents acp` as its agent. `otto-agents bridge`
+/// runs it, under the `otto-agents-bridge` user unit that Settings turns on
+/// and off.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BridgeConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Non-secret only, as for agents: tokens belong in the bridge's own
+    /// configuration.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
@@ -429,6 +447,8 @@ struct ConfigFile {
     default_agent: Option<String>,
     #[serde(default)]
     idle_timeout: Option<u64>,
+    #[serde(default)]
+    bridge: Option<BridgeConfig>,
     #[serde(default)]
     agents: Vec<AgentConfig>,
 }
@@ -454,6 +474,9 @@ pub fn load(explicit: Option<&Path>) -> anyhow::Result<Config> {
                 }
                 if file.idle_timeout.is_some() {
                     config.idle_timeout = file.idle_timeout;
+                }
+                if file.bridge.is_some() {
+                    config.bridge = file.bridge;
                 }
             }
         }
@@ -492,6 +515,7 @@ fn parse(text: &str) -> anyhow::Result<Config> {
         terminal: file.terminal,
         default_agent: file.default_agent,
         idle_timeout: file.idle_timeout,
+        bridge: file.bridge,
     })
 }
 
@@ -504,6 +528,28 @@ fn default_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chat_bridge_is_read_with_its_arguments() {
+        let config = parse(
+            r#"
+            [bridge]
+            command = "openclaw"
+            args = ["gateway", "--port", "18789"]
+            env = { OPENCLAW_HOME = "~/.openclaw" }
+            "#,
+        )
+        .unwrap();
+        let bridge = config.bridge.expect("a bridge");
+        assert_eq!(bridge.command, "openclaw");
+        assert_eq!(bridge.args, ["gateway", "--port", "18789"]);
+        assert_eq!(bridge.env["OPENCLAW_HOME"], "~/.openclaw");
+        assert_eq!(parse("").unwrap().bridge, None);
+        assert!(
+            parse("[bridge]\nargs = []").is_err(),
+            "a bridge needs a command"
+        );
+    }
 
     #[test]
     fn a_session_is_entered_in_the_terminal_with_the_agents_enter_command() {
