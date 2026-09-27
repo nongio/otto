@@ -1922,6 +1922,18 @@ impl<'a> AppContext<'a> {
         });
     }
 
+    /// Close every window the application has.
+    ///
+    /// Run as the application ends, so the compositor sees each toplevel
+    /// destroyed while its surfaces are still there to fade out, rather than
+    /// the whole connection going at once.
+    pub fn close_windows() {
+        let windows = WINDOWS.with(|windows| windows.borrow().clone());
+        for window in windows {
+            window.close();
+        }
+    }
+
     pub fn update_windows() {
         WINDOWS.with(|windows| {
             let mut windows = windows.borrow_mut();

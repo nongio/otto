@@ -820,6 +820,11 @@ impl<A: App + 'static> AppRunnerInitialized<A> {
             // Otherwise (timeout or only wakeup), guard drops and cancels the read.
         }
 
+        // The windows go before the connection does, so the compositor can
+        // fade them out showing their last frame.
+        AppContext::close_windows();
+        self.conn.flush()?;
+
         Ok(())
     }
 }

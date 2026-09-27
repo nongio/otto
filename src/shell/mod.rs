@@ -405,6 +405,9 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
         self.schedule_event_loop_dispatch();
     }
     fn destroyed(&mut self, surface: &WlSurface) {
+        // Before the layer goes and smithay releases the textures.
+        self.hold_frame_of_dying_surface(surface);
+
         // Clean up the layer for this surface
         self.destroy_layer_for_surface(&surface.id());
         self.forget_background_effect(&surface.id());

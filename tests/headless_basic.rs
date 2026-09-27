@@ -1523,6 +1523,94 @@ mod headless_tests {
         handle.stop();
     }
 
+    /// A client that quits by dropping its connection destroys nothing
+    /// itself; the server tears its objects down in id order, so the
+    /// surfaces die before the toplevel does. The window still fades out
+    /// showing its last frame.
+    #[test]
+    #[serial]
+    fn window_of_disconnected_client_fades_out() {
+        let handle = start_compositor();
+        let mut client = connect_client(&handle);
+        let (toplevel, sub) = map_window_with_subsurface(&handle, &mut client, "vanishing");
+        settle_animations(&handle);
+
+        let (window_id, root_node, sub_node) = handle.query(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "vanishing")
+                .expect("window mapped");
+            let root = state
+                .surface_layers
+                .get(&window.id())
+                .expect("root surface layer")
+                .id();
+            let sub = state
+                .surface_layers
+                .iter()
+                .find(|(id, _)| **id != window.id())
+                .map(|(_, layer)| layer.id())
+                .expect("subsurface layer");
+            (window.id(), root, sub)
+        });
+
+        drop(sub);
+        drop(toplevel);
+        drop(client);
+        handle.wait(Duration::from_millis(50));
+        handle.tick(1.0 / 60.0);
+
+        let (closing, content_children, root_alive, sub_alive, root_children) =
+            handle.query(move |state| {
+                let closing = state.workspaces.closing_window_views();
+                let view = closing
+                    .iter()
+                    .find(|(id, _)| *id == window_id)
+                    .map(|(_, view)| view.clone());
+                let engine = &state.layers_engine;
+                (
+                    closing.len(),
+                    view.as_ref()
+                        .map(|v| v.content_layer.children_nodes())
+                        .unwrap_or_default(),
+                    engine.is_layer_alive(&root_node),
+                    engine.is_layer_alive(&sub_node),
+                    engine
+                        .get_layer(&root_node)
+                        .map(|l| l.children_nodes())
+                        .unwrap_or_default(),
+                )
+            });
+        assert_eq!(closing, 1, "the window of the gone client is fading out");
+        assert!(
+            content_children.contains(&root_node) && root_alive,
+            "the root surface layer stays under the content layer during the fade"
+        );
+        assert!(
+            root_children.contains(&sub_node) && sub_alive,
+            "the subsurface layer stays under the root during the fade"
+        );
+
+        settle_animations(&handle);
+        handle.wait(Duration::from_millis(50));
+        handle.tick(1.0 / 60.0);
+        let (closing, root_alive, sub_alive) = handle.query(move |state| {
+            (
+                state.workspaces.closing_window_views().len(),
+                state.layers_engine.is_layer_alive(&root_node),
+                state.layers_engine.is_layer_alive(&sub_node),
+            )
+        });
+        assert_eq!(closing, 0, "the window is reaped once faded");
+        assert!(
+            !root_alive && !sub_alive,
+            "the surface layers go with the window layer"
+        );
+
+        handle.stop();
+    }
+
     /// A window on its own plane closes: its layer must be back under the
     /// workspace's windows container before the fade starts, or it fades in
     /// the plane container the next promotion assumes empty.

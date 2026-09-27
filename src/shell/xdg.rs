@@ -2357,15 +2357,18 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Destroy the layer associated with a surface
     /// Removes from surface_layers hashmap and marks for deletion in layers_engine
     ///
-    /// The layer of a surface whose window is fading out is only forgotten
-    /// here: the fade still draws it, and it goes with the window layer once
+    /// The layer of a surface whose window is fading out, or is about to
+    /// (see `Otto::hold_frame_of_dying_surface`), is only forgotten here: the
+    /// fade still draws it, and it goes with the window layer once
     /// the fade has ended (`Workspaces::reap_closed_windows`).
     pub(crate) fn destroy_layer_for_surface(
         &mut self,
         surface_id: &smithay::reexports::wayland_server::backend::ObjectId,
     ) {
         if let Some(layer) = self.surface_layers.remove(surface_id) {
-            if !self.workspaces.is_closing_surface(surface_id) {
+            if !self.workspaces.is_closing_surface(surface_id)
+                && !self.is_dying_window_surface(surface_id)
+            {
                 self.layers_engine.mark_for_delete(layer.id);
             }
         }
