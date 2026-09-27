@@ -1,7 +1,7 @@
 ---
 name: send-to-phone
 description: Send a file, picture or screenshot to the person's phone, into the chat app they talk to Otto from (Telegram and others, through the chat bridge), and take the screenshot to send. Use when they ask to send, share or show them a file, a picture or a screenshot of the screen or of an app while writing from their phone, or ask for something to be sent to their phone ("send me a screenshot", "send me a screenshot of Files", "share that PDF with me", "send this to my phone").
-allowed-tools: Bash(cc-connect send *) Bash(*/send-to-phone/scripts/screenshot *) Bash(*/send-to-phone/scripts/screenshot)
+allowed-tools: Bash(cc-connect send:*) Bash(cc-connect send *) Bash(*/send-to-phone/scripts/screenshot:*) Bash(*/send-to-phone/scripts/screenshot *) Bash(*/send-to-phone/scripts/screenshot)
 ---
 
 # Send to the phone
