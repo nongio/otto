@@ -38,6 +38,7 @@ is the place to start.
 | [Dock](dock-design.md) | The compositor-drawn dock: data flow, layers, magnification |
 | [Exposé](expose.md) | The all-windows overview: layout, mirrors, drag-and-drop, multi-output |
 | [Window Move](window-move.md) | How interactive window drags are implemented |
+| [Vulkan Renderer](vulkan-renderer.md) | Skia on Vulkan: picking it, buffer import, sync files, what is missing |
 | [DRM Planes](drm_plane.md) | Handing parts of the scene to display hardware instead of the GPU |
 | [Foreign Toplevel](foreign-toplevel.md) | Exposing the window list to taskbars and launchers |
 | [Surface Style Protocol](surface-style-protocol.md) | `otto-surface-style-unstable-v1`: letting a client style and animate its own surface |
@@ -68,6 +69,7 @@ at the top — check that before trusting the details.
 | [Tiling Plan](tiling-plan.md) | Mostly built: the tree, the commands and the settings; tabbed/stacked and XWayland are not |
 | [Screenshot Portal Plan](screenshot-plan.md) | Partly built: the portal exists and shells out to `grim`; capture inside the compositor is still the plan |
 | [AirPlay Screenshare](airplay-screenshare.md) | Exploration only |
+| [Vulkan Renderer Plan](vulkan-renderer-plan.md) | Phases 1–3 built; plane scanout on Vulkan is next |
 
 ## Specs
 
