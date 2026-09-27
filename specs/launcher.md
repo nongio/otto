@@ -85,6 +85,15 @@ from the list it starts a fresh request, whatever is typed. Neither key is
 taken while a request is still on its way to the service, which leaving would
 lose.
 
+**Drafts.** What is typed and not sent is kept when the launcher closes or
+leaves a session, under the session it was for, and is back in the field the
+next time that session is opened — from the list, with `--session`, or by
+Ctrl+L between the two. A request that has no session yet is kept as the one
+draft of a new request, and comes back the next time Ask opens fresh. Sending
+forgets the draft, as does closing with the field empty. The drafts live in
+`$XDG_STATE_HOME/otto/ask-drafts.json`, the 64 most recently written; the
+field of the list of sessions is a search, and is not kept.
+
 **Choosing the agent.** The empty field names the agent the request would go
 to — "Ask @Otto…" — from the start: the default agent is the first the service
 lists, so it is what the field says until another is picked, and the card

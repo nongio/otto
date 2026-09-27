@@ -127,6 +127,8 @@ enum Update {
     Colours(HashMap<String, String>),
     /// The agent of the followed session, by provider id.
     Provider(String),
+    /// The URI of the followed session, once it is open or created.
+    Session(String),
     /// The sessions the service has, most recently changed first.
     Sessions(Vec<SessionSummary>),
     /// The service could not be reached.
@@ -546,6 +548,8 @@ struct Run {
     /// The agent's modes, once the service says; `None` for an agent
     /// without any, or before its session opened.
     modes: Option<Modes>,
+    /// The session's URI, once the service has opened or created it.
+    session: Option<String>,
 }
 
 /// The modes an agent can run in — its own permission and sandboxing presets,
@@ -1030,6 +1034,7 @@ impl Ask {
             terminal: None,
             loading: false,
             modes: None,
+            session: None,
         });
         let _ = self.commands.send(Command::Resume {
             session: session.to_string(),
@@ -1115,6 +1120,11 @@ impl Ask {
         match update {
             Update::Agents(agents) => self.agents = agents,
             Update::Colours(colours) => self.colours = colours,
+            Update::Session(session) => {
+                if let Some(run) = self.run.as_mut() {
+                    run.session = Some(session);
+                }
+            }
             Update::Provider(provider) => {
                 if let Some(run) = self.run.as_mut() {
                     run.provider = Some(provider);
@@ -1564,6 +1574,7 @@ impl Ask {
                     terminal: None,
                     loading: false,
                     modes: None,
+                    session: None,
                 });
                 chosen.map(|agent| agent.provider.clone())
             }
@@ -1590,6 +1601,12 @@ impl Ask {
                 .as_str(),
         };
         self.colours.get(provider).map(String::as_str)
+    }
+
+    /// The URI of the session being followed, once the service has opened or
+    /// created it.
+    pub fn session(&self) -> Option<&str> {
+        self.run.as_ref()?.session.as_deref()
     }
 
     /// Whether a request has been made, and the launcher is showing the log.
@@ -2436,6 +2453,7 @@ async fn follow(
     let (subscribed, session_events) = client.subscribe(session.clone()).await?;
     let chat_uri = match subscribed.snapshot.map(|snapshot| snapshot.state) {
         Some(SnapshotState::Session(state)) => {
+            reporter.send(Update::Session(session.clone()));
             reporter.send(Update::Provider(state.provider.clone()));
             reporter.send(Update::Terminal(Terminal::from_meta(state.meta.as_ref())));
             reporter.send(Update::Loading(loading_from_meta(state.meta.as_ref())));
