@@ -37,6 +37,11 @@ pub const CLOSE_FADE: f32 = 0.18;
 /// content dimming in place.
 const CLOSE_FADE_SCALE: f32 = 0.95;
 
+/// How long a closing window's shadow takes to fade out, in seconds. Well
+/// inside [`CLOSE_FADE`]: the window settles onto the desktop first, then
+/// dissolves, instead of floating until its last frame.
+const CLOSE_SHADOW_FADE: f32 = CLOSE_FADE * 0.5;
+
 #[derive(Clone)]
 pub struct WindowView {
     pub window_id: ObjectId,
@@ -493,6 +498,7 @@ impl WindowView {
     }
 
     /// Fade the window out, with `shrink` a touch smaller around its centre.
+    /// The shadow goes first, in half the time.
     ///
     /// Meant for a window that has just closed: the layer stops taking
     /// pointer events at once and keeps drawing its last frame while the
@@ -511,6 +517,8 @@ impl WindowView {
                 Some(Transition::ease_out_quad(CLOSE_FADE)),
             );
         }
+        self.shadow_layer
+            .set_opacity(0.0_f32, Some(Transition::ease_out_quad(CLOSE_SHADOW_FADE)));
         self.window_layer
             .set_opacity(0.0_f32, Some(Transition::ease_out_quad(CLOSE_FADE)))
     }
