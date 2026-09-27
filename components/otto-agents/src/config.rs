@@ -534,16 +534,16 @@ mod tests {
         let config = parse(
             r#"
             [bridge]
-            command = "openclaw"
-            args = ["gateway", "--port", "18789"]
-            env = { OPENCLAW_HOME = "~/.openclaw" }
+            command = "cc-connect"
+            args = ["--config", "~/.cc-connect/config.toml"]
+            env = { CC_MAX_ATTACHMENT_SIZE_MB = "100" }
             "#,
         )
         .unwrap();
         let bridge = config.bridge.expect("a bridge");
-        assert_eq!(bridge.command, "openclaw");
-        assert_eq!(bridge.args, ["gateway", "--port", "18789"]);
-        assert_eq!(bridge.env["OPENCLAW_HOME"], "~/.openclaw");
+        assert_eq!(bridge.command, "cc-connect");
+        assert_eq!(bridge.args, ["--config", "~/.cc-connect/config.toml"]);
+        assert_eq!(bridge.env["CC_MAX_ATTACHMENT_SIZE_MB"], "100");
         assert_eq!(parse("").unwrap().bridge, None);
         assert!(
             parse("[bridge]\nargs = []").is_err(),

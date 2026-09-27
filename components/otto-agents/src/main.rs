@@ -95,7 +95,7 @@ enum Command {
         agent: Option<String>,
         /// Who answers the agent's permission requests: the ACP client as
         /// well as the desktop (first answer wins), or the desktop only, for
-        /// clients that answer by a fixed policy, such as OpenClaw's acpx.
+        /// clients that answer by a fixed policy rather than asking anyone.
         #[arg(long, value_enum, default_value = "client")]
         permissions: facade::Permissions,
         /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.

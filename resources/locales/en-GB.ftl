@@ -287,7 +287,7 @@ settings-agents-service-missing = Not installed
 settings-agents-service-unmanaged = Can't tell: this system has no systemctl
 settings-agents-start = Start
 settings-agents-restart = Restart
-# The group that turns on a chat bridge: a program such as an OpenClaw gateway
+# The group that turns on a chat bridge: a program such as cc-connect
 # that lets chat apps on a phone talk to the agents.
 settings-agents-bridge-group = Chat bridge
 settings-agents-bridge = Bridge

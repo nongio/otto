@@ -1,6 +1,6 @@
 //! `otto-agents acp`: the service, seen from outside as one ACP agent.
 //!
-//! Tools that drive ACP agents — chat bridges such as OpenClaw's acpx, or an
+//! Tools that drive ACP agents — chat bridges such as cc-connect, or an
 //! editor — start `otto-agents acp` as if it were an agent and speak ACP to it
 //! over stdio. Every ACP session is one of the desktop's sessions:
 //! `session/new` creates one, `session/load` takes up one that is already
@@ -59,7 +59,7 @@ pub enum Permissions {
     /// The ACP client as well as the desktop; the first answer wins.
     Client,
     /// The desktop only. For clients that answer every request by a fixed
-    /// policy rather than asking anyone, such as OpenClaw's acpx.
+    /// policy rather than asking anyone.
     Desktop,
 }
 
