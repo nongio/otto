@@ -154,6 +154,7 @@ meant for the desk. `~/.local/state/otto/remote/.claude/settings.json`:
       "Skill(otto:send-to-phone)",
       "Skill(otto:otto-help)",
       "Bash(/usr/share/otto/plugins/otto/skills/send-to-phone/scripts/screenshot:*)",
+      "Bash(/usr/share/otto/plugins/otto/skills/otto-help/scripts/files-command commands)",
       "Bash(cc-connect send:*)",
       "Read(~/Pictures/Screenshots/**)"
     ],
@@ -162,6 +163,9 @@ meant for the desk. `~/.local/state/otto/remote/.claude/settings.json`:
 }
 ```
 
+- **The paths are the packaged plugin's.** With a copy of your own in
+  `~/.local/share/otto/plugins/otto` (it shadows the packaged one), use its
+  paths instead.
 - **A skill's own `allowed-tools` is not enough.** Through ACP, Claude still
   asks for a command the skill lists; the rules above are what it honours.
 - **The screenshot is one command.** The skill's `scripts/screenshot` brings
