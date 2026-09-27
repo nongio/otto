@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" width="760" height="400" role="img" aria-label="How buffers move through the Vulkan renderer in one frame">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .zone { fill: none; stroke: #8b949e; stroke-width: 1; stroke-dasharray: 5 4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box  { fill: #161b22; stroke: #6e7681; }
+      .acc  { fill: #10243b; stroke: #388bfd; }
+      .zone { stroke: #6e7681; }
+      .t, .tb { fill: #e6edf3; }
+      .tm   { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="20" y="24">Buffers in one frame</text>
+
+  <!-- foreign side -->
+  <rect class="zone" x="16" y="40" width="200" height="340" rx="8"/>
+  <text class="tm" x="28" y="58">outside Vulkan (“foreign”)</text>
+
+  <rect class="box" x="30" y="72" width="172" height="52" rx="7"/>
+  <text class="t"  x="44" y="94">Client dmabuf</text>
+  <text class="tm" x="44" y="112">any modifier, any GPU</text>
+
+  <rect class="box" x="30" y="150" width="172" height="52" rx="7"/>
+  <text class="t"  x="44" y="172">Client SHM buffer</text>
+  <text class="tm" x="44" y="190">CPU memory, wl_shm</text>
+
+  <rect class="box" x="30" y="300" width="172" height="60" rx="7"/>
+  <text class="t"  x="44" y="322">KMS / screencast</text>
+  <text class="tm" x="44" y="340">reads the swapchain slot</text>
+  <text class="tm" x="44" y="354">after the in-fence</text>
+
+  <!-- renderer side -->
+  <rect class="zone" x="236" y="40" width="508" height="340" rx="8"/>
+  <text class="tm" x="248" y="58">SkiaVkRenderer (one Vulkan device, graphics queue)</text>
+
+  <rect class="box" x="252" y="72" width="210" height="52" rx="7"/>
+  <text class="t"  x="266" y="94">VkImage, explicit modifier</text>
+  <text class="tm" x="266" y="112">cached; Skia image wrapped per import</text>
+
+  <rect class="box" x="252" y="150" width="210" height="52" rx="7"/>
+  <text class="t"  x="266" y="172">Skia-owned texture</text>
+  <text class="tm" x="266" y="190">per surface, damage written in place</text>
+
+  <path class="ln" d="M202 98 L252 98"/>
+  <text class="tm" x="206" y="90">import</text>
+  <path class="ln" d="M202 176 L252 176"/>
+  <text class="tm" x="206" y="168">upload</text>
+
+  <rect class="acc" x="500" y="100" width="228" height="76" rx="7"/>
+  <text class="tb" x="514" y="122">SkiaVkFrame</text>
+  <text class="tm" x="514" y="142">lay-rs scene + elements draw</text>
+  <text class="tm" x="514" y="156">through renderer/draw.rs,</text>
+  <text class="tm" x="514" y="170">same code as the GL frame</text>
+
+  <path class="ln" d="M462 98 L500 124"/>
+  <path class="ln" d="M462 176 L500 152"/>
+
+  <rect class="box" x="500" y="222" width="228" height="60" rx="7"/>
+  <text class="t"  x="514" y="244">Swapchain slot (GBM dmabuf)</text>
+  <text class="tm" x="514" y="262">bound as a wrapped render target,</text>
+  <text class="tm" x="514" y="276">GENERAL layout, keeps last frame</text>
+
+  <path class="ln" d="M614 176 L614 222"/>
+  <text class="tm" x="622" y="204">draw into</text>
+
+  <rect class="box" x="252" y="300" width="210" height="60" rx="7"/>
+  <text class="t"  x="266" y="322">finish()</text>
+  <text class="tm" x="266" y="340">hand back to the foreign queue,</text>
+  <text class="tm" x="266" y="354">submit, export a sync file</text>
+
+  <path class="ln" d="M560 282 L560 330 L462 330"/>
+  <path class="ln" d="M252 330 L202 330"/>
+  <text class="tm" x="208" y="322">fd</text>
+</svg>

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" role="img" aria-label="Empty submits fence Skia's work on the Vulkan queue">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box  { fill: #f6f8fa; stroke: #8b949e; stroke-width: 1.4; }
+    .acc  { fill: #ddf4ff; stroke: #218bff; stroke-width: 1.4; }
+    .t    { fill: #1f2328; font-size: 13px; }
+    .tb   { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tm   { fill: #656d76; font-size: 11px; }
+    .ln   { stroke: #8b949e; stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+    .q    { stroke: #8b949e; stroke-width: 2; fill: none; marker-end: url(#ah); }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #6e7681; }
+      .acc { fill: #10243b; stroke: #388bfd; }
+      .t, .tb { fill: #e6edf3; }
+      .tm  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <text class="tb" x="20" y="24">One queue, submissions run in order</text>
+  <text class="tm" x="20" y="42">skia-safe has no semaphore API, so the renderer brackets Skia's submit with its own empty ones</text>
+
+  <path class="q" d="M20 150 L740 150"/>
+  <text class="tm" x="690" y="170">time</text>
+
+  <rect class="box" x="40" y="118" width="180" height="64" rx="7"/>
+  <text class="t"  x="54" y="140">empty submit: wait</text>
+  <text class="tm" x="54" y="158">client sync file imported</text>
+  <text class="tm" x="54" y="172">as a temporary semaphore</text>
+
+  <rect class="acc" x="270" y="118" width="200" height="64" rx="7"/>
+  <text class="t"  x="284" y="140">Skia flush_and_submit</text>
+  <text class="tm" x="284" y="158">the frame's draws, then the</text>
+  <text class="tm" x="284" y="172">release to the foreign queue</text>
+
+  <rect class="box" x="520" y="118" width="190" height="64" rx="7"/>
+  <text class="t"  x="534" y="140">empty submit: signal</text>
+  <text class="tm" x="534" y="158">SYNC_FD semaphore + fence</text>
+  <text class="tm" x="534" y="172">from the SyncPool</text>
+
+  <rect class="box" x="40" y="220" width="180" height="56" rx="7"/>
+  <text class="t"  x="54" y="242">Renderer::wait(sync)</text>
+  <text class="tm" x="54" y="260">CPU wait if import fails</text>
+  <path class="ln" d="M130 220 L130 182"/>
+
+  <rect class="box" x="520" y="220" width="190" height="56" rx="7"/>
+  <text class="t"  x="534" y="242">SkiaVkSync (sync file)</text>
+  <text class="tm" x="534" y="260">KMS IN_FENCE_FD, SyncPoint</text>
+  <path class="ln" d="M615 182 L615 220"/>
+
+  <text class="tm" x="40" y="80">Semaphores and fences are pooled; a fence tells when its batch ran.</text>
+  <text class="tm" x="40" y="96">Its serial also drives the graveyard that frees dropped textures.</text>
+</svg>

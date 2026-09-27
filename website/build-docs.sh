@@ -343,6 +343,7 @@ DEVELOPER_FILES=(
     "developer/file-search.md"
     "developer/otto-media-kit.md"
     "developer/drm_plane.md"
+    "developer/vulkan-renderer.md"
     "developer/dock-design.md"
     "developer/expose.md"
     "developer/window-move.md"
