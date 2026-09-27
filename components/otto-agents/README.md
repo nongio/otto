@@ -91,20 +91,21 @@ What it needs:
 
 ## A chat bridge
 
-A chat bridge lets chat apps reach the agents: a program, such as an OpenClaw
-gateway, that starts `otto-agents acp` as its agent. Name it in `agents.toml`:
+A chat bridge lets chat apps reach the agents: a program that starts
+`otto-agents acp` as its agent. Otto's is
+[cc-connect](https://github.com/chenhg5/cc-connect). Name it in `agents.toml`:
 
 ```toml
 [bridge]
-command = "openclaw"      # a full path if it lives under nvm or ~/.local/bin
-args = ["gateway"]
+command = "/home/you/.local/bin/cc-connect"   # a full path: the unit has its own PATH
+args = ["--config", "/home/you/.cc-connect/config.toml"]
 ```
 
 and turn it on under **Chat bridge** in Settings › Agents, which enables the
 `otto-agents-bridge` user unit (off by default). The unit runs
 `otto-agents bridge`, which execs the command, and starts the agent service too.
-Its log is `journalctl --user -u otto-agents-bridge`. [docs/openclaw.md](docs/openclaw.md)
-walks through it with OpenClaw and a Telegram bot.
+Its log is `journalctl --user -u otto-agents-bridge`. [docs/cc-connect.md](docs/cc-connect.md)
+walks through it with a Telegram bot.
 
 ## Repository layout
 

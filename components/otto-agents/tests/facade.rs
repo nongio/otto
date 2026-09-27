@@ -276,7 +276,7 @@ async fn a_chat_bridge_drives_a_desktop_session() {
     assert!(text.contains("you said again"), "{text}");
 
     // A client that answers permission requests by a fixed policy, as
-    // OpenClaw's acpx does, leaves them to the desktop. It resumes the session
+    // some bridges do, leaves them to the desktop. It resumes the session
     // without a replay, is never asked, and closes the session when done.
     let id = session.0.to_string();
     let seen = Arc::new(Mutex::new(Seen::default()));

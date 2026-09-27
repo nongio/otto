@@ -1682,9 +1682,9 @@ color = "teal"
 
     #[test]
     fn the_bridge_is_read_written_and_taken_out() {
-        let file = format!("{USER}\n# How chat apps reach the agents.\n[bridge]\ncommand = \"openclaw\"\nargs = [\"gateway\"]\n");
+        let file = format!("{USER}\n# How chat apps reach the agents.\n[bridge]\ncommand = \"cc-connect\"\nargs = [\"--config\"]\n");
         let saved = parsed(&file);
-        assert_eq!(saved.bridge, ["openclaw", "gateway"]);
+        assert_eq!(saved.bridge, ["cc-connect", "--config"]);
 
         // A new command keeps the comment above the table.
         let mut draft = saved.clone();

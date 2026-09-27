@@ -1,22 +1,32 @@
 # 0015: Chat bridges
 
-**Status:** In progress: the ACP facade has landed; `otto-bridge` is a draft.
+**Status:** In progress. The ACP facade and the Settings switch have landed, and
+chats reach the agents through cc-connect. The native `otto-bridge` below is
+deferred while cc-connect covers it.
 
-## First step: `otto-agents acp`
+## First step: `otto-agents acp` and cc-connect
 
-Chat bridges for ACP agents already exist: OpenClaw's acpx, acp-connector,
-telegram-acp-bot and others. Each starts an agent command and speaks ACP to it
-over stdio. `otto-agents acp` is such a command, and behind it are the
-desktop's sessions, so any of those bridges reaches Otto's agents without
-network code of our own (`src/facade.rs`, `tests/facade.rs`).
+Chat bridges for ACP agents already exist. Each starts an agent command and
+speaks ACP to it over stdio. `otto-agents acp` is such a command, and behind it
+are the desktop's sessions, so a bridge reaches Otto's agents without network
+code of our own (`src/facade.rs`, `tests/facade.rs`).
+
+The bridge is [cc-connect](https://github.com/chenhg5/cc-connect): thirteen chat
+platforms including Telegram and Matrix, most without a public address, one ACP
+session per chat, and permission requests asked in the chat. Tried on
+2026-09-27 with a Telegram bot: a message became a desktop session, and a file
+edit was approved from the phone. [docs/cc-connect.md](../cc-connect.md) sets it
+up. It is used as a tool, not built on: its repository carries no licence.
 
 | ACP | What the facade does |
 |---|---|
 | `session/new` | `createSession` with `--agent` (else the default agent) in the given folder |
 | `session/load` | takes up an existing session by its id or the start of it, replaying its turns |
+| `session/resume` | the same, without the replay |
 | `session/prompt` | queues the prompt on the chat, streams the turn back as `session/update`, returns when it ends |
-| `session/request_permission` | sent for each tool call awaiting confirmation; the desktop is asked too, and the first answer wins |
+| `session/request_permission` | sent for each tool call awaiting confirmation; the desktop is asked too, and the first answer wins. `--permissions desktop` keeps them on the desktop, for a client that answers by a fixed policy |
 | `session/cancel` | cancels the turn, or the queued prompt as soon as it starts |
+| `session/close` | cancels the prompt in hand and stops following; the desktop keeps the session |
 
 **Turned on from Settings.** The bridge program is named in `agents.toml` as
 `[bridge] command` and `args`, and runs under the `otto-agents-bridge` user unit
@@ -29,7 +39,9 @@ desktop; pictures and audio in a prompt are dropped; an ACP permission request i
 not withdrawn when the desktop answers first (the late answer is refused by the
 host). The routing, sender allowlists and chat-to-session bindings are the
 bridge's own configuration in this mode. The rest of this plan is the native
-bridge, for when those should be Otto's.
+bridge, for when those should be Otto's: if cc-connect's licence, its reach
+(it has shell and folder commands of its own, turned off in Otto's setup) or
+its defaults get in the way.
 
 ## Goal
 
@@ -42,8 +54,8 @@ write in them, and which session each one feeds are set in configuration.
 The desktop sees the same sessions. A conversation started from the phone shows in
 Sessions and can be entered at the desk, and the other way round.
 
-This is the gateway model of OpenClaw, built from what Otto already has: otto-agents
-is the host, and each chat network is one more AHP client.
+This is a gateway built from what Otto already has: otto-agents is the host, and
+each chat network is one more AHP client.
 
 ## Decisions
 
