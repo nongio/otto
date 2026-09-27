@@ -1067,10 +1067,10 @@ struct FilesApp {
     /// until `on_app_ready` constructs it, which is the earliest point
     /// `AppContext` is set up.
     context_menu: Option<ContextMenu>,
-    /// Peek's surface and its card's rect within it, published by the
+    /// Peek's surfaces and its card's rect within its own, published by the
     /// render path for the pointer callback below. See
     /// [`pane_surfaces::PaneSurfaces::peek_target`].
-    peek_target: Arc<Mutex<Option<(wayland_client::backend::ObjectId, Rect)>>>,
+    peek_target: Arc<Mutex<Option<pane_surfaces::PeekTarget>>>,
     /// The palette's surface and where it sits in window points, for the same
     /// reason Peek has one: dragged clear of the window, the card is
     /// over pixels the toplevel is never told about.

@@ -70,20 +70,14 @@ impl FilesApp {
         });
     }
 
-    /// Peek's panel handles its own pointer, because it is the one
-    /// surface of this window that is routinely *outside* it.
+    /// Peek's panel handles its own pointer, because it is on an overlay
+    /// of its own rather than over the window: the compositor delivers events
+    /// over it to its surface, never to the toplevel.
     ///
-    /// Centred on the display, the card hangs past the toplevel's edges, and
-    /// the compositor delivers events over that part to this surface — never
-    /// to the toplevel. Hit-testing the button in window coordinates
-    /// therefore misses it exactly when the panel is placed correctly.
-    ///
-    /// The close button and the panel's own scrolling are handled here.
-    /// Both are things the pointer does *over* the card, and over the card is
-    /// exactly where the toplevel never hears about it. Dismissing on a click
-    /// outside the panel stays with the toplevel, where the rest of the
-    /// browser's hit-testing already lives — a click outside the card is a
-    /// click on the window.
+    /// The close button and the panel's own scrolling are handled here, and
+    /// so is a press outside the panel, which lands on the overlay around it
+    /// and dismisses the preview. The overlay covers the display, so that
+    /// press never reaches whatever is underneath.
     pub(super) fn install_peek_pointer(&self) {
         let state = Arc::clone(&self.state);
         let target = Arc::clone(&self.peek_target);
@@ -91,10 +85,34 @@ impl FilesApp {
         AppContext::register_pointer_callback(move |events| {
             for event in events {
                 use wayland_client::Proxy;
-                let Some((surface, panel)) = target.lock().unwrap().clone() else {
+                let Some(pane_surfaces::PeekTarget {
+                    card,
+                    panel,
+                    overlay,
+                }) = target.lock().unwrap().clone()
+                else {
                     continue;
                 };
-                if event.surface.id() != surface {
+                if event.surface.id() == overlay {
+                    let mut browser = state.lock().unwrap();
+                    match event.kind {
+                        PointerEventKind::Press { .. } => {
+                            browser.close_peek();
+                        }
+                        // Off the card the pointer is over nothing of ours,
+                        // and wears the ordinary arrow. A surface it has just
+                        // entered has no cursor until it is given one.
+                        PointerEventKind::Enter { .. } => {
+                            browser.peek_cursor = CursorShape::Default;
+                            AppContext::set_cursor_shape(CursorShape::Default);
+                        }
+                        _ => continue,
+                    }
+                    drop(browser);
+                    AppContext::request_wakeup();
+                    continue;
+                }
+                if event.surface.id() != card {
                     continue;
                 }
                 // Surface-local already: the compositor reports positions

@@ -888,18 +888,22 @@ impl<A: App + 'static> CompositorHandler for AppData<A> {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
-        _output: &wl_output::WlOutput,
+        surface: &wl_surface::WlSurface,
+        output: &wl_output::WlOutput,
     ) {
+        use wayland_client::Proxy;
+        AppContext::note_surface_enter(&surface.id(), output);
     }
 
     fn surface_leave(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
-        _output: &wl_output::WlOutput,
+        surface: &wl_surface::WlSurface,
+        output: &wl_output::WlOutput,
     ) {
+        use wayland_client::Proxy;
+        AppContext::note_surface_leave(&surface.id(), output);
     }
 }
 
