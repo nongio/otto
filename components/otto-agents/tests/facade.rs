@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    ContentBlock, InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOptionKind,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    CancelNotification, CloseSessionRequest, ContentBlock, InitializeRequest, LoadSessionRequest,
+    NewSessionRequest, PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
     SelectedPermissionOutcome, SessionNotification, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectionTo};
@@ -134,11 +135,21 @@ async fn with_facade<T: Send + 'static>(
     + Send
     + 'static,
 ) -> T {
-    let config = AcpAgentConfig::new(env!("CARGO_BIN_EXE_otto-agents")).args(vec![
-        "acp".to_owned(),
-        "--url".to_owned(),
-        url.to_owned(),
-    ]);
+    with_facade_args(url, &[], seen, body).await
+}
+
+/// As [`with_facade`], with more arguments for `otto-agents acp`.
+async fn with_facade_args<T: Send + 'static>(
+    url: &str,
+    extra: &[&str],
+    seen: Arc<Mutex<Seen>>,
+    body: impl AsyncFnOnce(ConnectionTo<Agent>) -> Result<T, agent_client_protocol::Error>
+    + Send
+    + 'static,
+) -> T {
+    let mut args = vec!["acp".to_owned(), "--url".to_owned(), url.to_owned()];
+    args.extend(extra.iter().map(|arg| arg.to_string()));
+    let config = AcpAgentConfig::new(env!("CARGO_BIN_EXE_otto-agents")).args(args);
     let run = Client
         .builder()
         .on_receive_notification(
@@ -263,4 +274,52 @@ async fn a_chat_bridge_drives_a_desktop_session() {
         "the replay has the first prompt: {text}"
     );
     assert!(text.contains("you said again"), "{text}");
+
+    // A client that answers permission requests by a fixed policy, as
+    // OpenClaw's acpx does, leaves them to the desktop. It resumes the session
+    // without a replay, is never asked, and closes the session when done.
+    let id = session.0.to_string();
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let (asked_stop, after_close) = with_facade_args(
+        &url,
+        &["--permissions", "desktop"],
+        Arc::clone(&seen),
+        async move |connection| {
+            let id = agent_client_protocol::schema::v1::SessionId::new(id);
+            let cwd = std::env::temp_dir();
+            connection
+                .send_request(ResumeSessionRequest::new(id.clone(), cwd))
+                .block_task()
+                .await?;
+            // The question waits for the desktop, which never answers here;
+            // the client gives up on the turn.
+            let asked = connection.send_request(prompt(&id, "ask"));
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            connection.send_notification(CancelNotification::new(id.clone()))?;
+            let asked = asked.block_task().await?;
+            connection
+                .send_request(CloseSessionRequest::new(id.clone()))
+                .block_task()
+                .await?;
+            let after_close = connection
+                .send_request(prompt(&id, "after close"))
+                .block_task()
+                .await;
+            Ok((asked.stop_reason, after_close.is_err()))
+        },
+    )
+    .await;
+    assert_eq!(asked_stop, StopReason::Cancelled);
+    assert!(after_close, "a closed session takes no more prompts");
+    let seen = std::mem::take(&mut *seen.lock().unwrap());
+    assert!(
+        seen.asked.is_empty(),
+        "the client was asked: {:?}",
+        seen.asked
+    );
+    assert!(
+        !seen.text.contains("hello"),
+        "resume replays nothing: {}",
+        seen.text
+    );
 }

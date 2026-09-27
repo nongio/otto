@@ -19,12 +19,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, ContentBlock, ContentChunk, Implementation,
-    InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
-    NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, SessionId,
-    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCall, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
+    ContentChunk, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
+    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PermissionOption,
+    PermissionOptionKind, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
+    SessionCloseCapabilities, SessionId, SessionNotification, SessionResumeCapabilities,
+    SessionUpdate, StopReason, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields,
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo, Stdio};
 use ahp::reducers::apply_action_to_session;
@@ -51,20 +53,37 @@ use crate::uri;
 /// gives up: long enough for a harness fetched with `npx` on a cold cache.
 const START_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Who answers the agent's permission requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Permissions {
+    /// The ACP client as well as the desktop; the first answer wins.
+    Client,
+    /// The desktop only. For clients that answer every request by a fixed
+    /// policy rather than asking anyone, such as OpenClaw's acpx.
+    Desktop,
+}
+
 /// Serves ACP on stdin and stdout until the client goes away. `agent` is the
 /// service's agent new sessions run, by id or name; the default agent without
 /// one.
-pub async fn serve(url: &str, agent: Option<&str>) -> anyhow::Result<()> {
+pub async fn serve(url: &str, agent: Option<&str>, permissions: Permissions) -> anyhow::Result<()> {
     let service = cli::connect(url).await?;
     let provider = cli::resolve_agent(&service, agent).await?;
     let sessions: Sessions = Arc::default();
+    let ask_client = permissions == Permissions::Client;
 
     Agent
         .builder()
         .name("otto-agents")
         .on_receive_request(
             async move |request: InitializeRequest, responder, _connection| {
-                let capabilities = AgentCapabilities::new().load_session(true);
+                let capabilities = AgentCapabilities::new()
+                    .load_session(true)
+                    .session_capabilities(
+                        SessionCapabilities::new()
+                            .resume(SessionResumeCapabilities::new())
+                            .close(SessionCloseCapabilities::new()),
+                    );
                 responder.respond(
                     InitializeResponse::new(request.protocol_version)
                         .agent_capabilities(capabilities)
@@ -92,7 +111,7 @@ pub async fn serve(url: &str, agent: Option<&str>) -> anyhow::Result<()> {
                         match new_session(&service, provider.as_deref(), &request.cwd).await {
                             Ok(opened) => {
                                 let id = opened.id.clone();
-                                open(&sessions, &service, &connection, opened);
+                                open(&sessions, &service, &connection, opened, ask_client);
                                 responder.respond(NewSessionResponse::new(id))
                             }
                             Err(err) => responder.respond_with_error(internal(err)),
@@ -120,12 +139,53 @@ pub async fn serve(url: &str, agent: Option<&str>) -> anyhow::Result<()> {
                                 // The client rebuilds the conversation from
                                 // the replay before the response comes.
                                 replay(&connection, &opened.id, &chat);
-                                open(&sessions, &service, &connection, opened);
+                                open(&sessions, &service, &connection, opened, ask_client);
                                 responder.respond(LoadSessionResponse::new())
                             }
                             Err(err) => responder.respond_with_error(internal(err)),
                         }
                     })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let service = service.clone();
+                let sessions = Arc::clone(&sessions);
+                // As `session/load`, without the replay: the client already
+                // has the conversation.
+                async move |request: ResumeSessionRequest,
+                            responder,
+                            connection: ConnectionTo<Client>| {
+                    let service = service.clone();
+                    let sessions = Arc::clone(&sessions);
+                    connection.clone().spawn(async move {
+                        match load_session(&service, &request.session_id.0).await {
+                            Ok((mut opened, _)) => {
+                                opened.id = request.session_id.0.to_string();
+                                open(&sessions, &service, &connection, opened, ask_client);
+                                responder.respond(ResumeSessionResponse::new())
+                            }
+                            Err(err) => responder.respond_with_error(internal(err)),
+                        }
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let sessions = Arc::clone(&sessions);
+                // The client is done with the session; the desktop is not.
+                // Its prompt in hand is cancelled and this connection stops
+                // following it, but the session stays, in Sessions and on
+                // disk, for the desk or a later `session/load`.
+                async move |request: CloseSessionRequest, responder, _connection| {
+                    if let Some(commands) = lock(&sessions).remove(&*request.session_id.0) {
+                        let _ = commands.send(Command::Cancel);
+                    }
+                    responder.respond(CloseSessionResponse::new())
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -215,6 +275,7 @@ fn open(
     service: &ahp::Client,
     connection: &ConnectionTo<Client>,
     opened: Opened,
+    ask_client: bool,
 ) {
     let (commands, receiver) = mpsc::unbounded_channel();
     lock(sessions).insert(opened.id.clone(), commands);
@@ -226,6 +287,7 @@ fn open(
         waiting: None,
         turn: None,
         cancel_when_started: false,
+        ask_client,
     };
     tokio::spawn(pump.run(opened.events, receiver));
 }
@@ -341,6 +403,9 @@ struct Pump {
     turn: Option<(String, oneshot::Sender<anyhow::Result<StopReason>>)>,
     /// A cancel came before the queued prompt started.
     cancel_when_started: bool,
+    /// Whether permission requests go to the client, or stay with the
+    /// desktop; see [`Permissions`].
+    ask_client: bool,
 }
 
 impl Pump {
@@ -501,6 +566,9 @@ impl Pump {
     /// asked too; the first answer wins, and the host turns the later one
     /// away.
     fn ask(&self, ready: ChatToolCallReadyAction) {
+        if !self.ask_client {
+            return;
+        }
         let (Some(options), None) = (ready.options, ready.confirmed) else {
             return;
         };
