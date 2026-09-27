@@ -56,6 +56,7 @@ check /usr/lib/systemd/user/xdg-desktop-portal-otto.service
 
 echo "== agent service =="
 check /usr/lib/systemd/user/otto-agents.service
+check /usr/lib/systemd/user/otto-agents-bridge.service
 for a in otto-ask; do
     if [[ "$(readlink "/usr/bin/$a")" == otto-launcher ]]; then
         echo "  ok  /usr/bin/$a -> otto-launcher"
