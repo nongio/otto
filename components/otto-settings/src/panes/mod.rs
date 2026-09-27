@@ -12,5 +12,6 @@ pub mod keyboard_layouts;
 pub mod lock_and_login;
 pub mod pointing;
 pub mod power;
+pub mod search;
 pub mod sound;
 pub mod tiling;

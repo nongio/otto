@@ -99,6 +99,8 @@ pub struct Config {
     #[serde(default)]
     pub desk: DeskConfig,
     #[serde(default)]
+    pub search: SearchConfig,
+    #[serde(default)]
     pub workspaces: WorkspacesConfig,
     #[serde(default)]
     pub tiling: TilingConfig,
@@ -172,6 +174,7 @@ impl Default for Config {
             login: LoginConfig::default(),
             lock: LockConfig::default(),
             desk: DeskConfig::default(),
+            search: SearchConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
             rendering: RenderingConfig::default(),
@@ -465,6 +468,15 @@ fn config_layers() -> Vec<PathBuf> {
     }
 
     layers
+}
+
+/// Whether any configuration layer sets the dotted key `path`.
+///
+/// Reads every layer from disk, so call it off the compositor thread.
+pub fn set_in_any_layer(path: &str) -> bool {
+    config_layers().iter().any(|layer| {
+        file::load_document(layer).is_ok_and(|doc| file::get_key(&doc, path).is_some())
+    })
 }
 
 /// The file a setting is persisted to: the highest-priority layer that is
@@ -1513,6 +1525,36 @@ pub struct DeskConfig {
     /// compositor starts it, restarts it if it crashes and stops it when this
     /// is switched off.
     pub enabled: bool,
+}
+
+/// The file index behind search: which folders LocalSearch looks in and what
+/// it leaves out.
+///
+/// These are LocalSearch's own settings, pushed to it (the
+/// `org.freedesktop.Tracker3.Miner.Files` schema) by `crate::search_index`.
+/// Only keys set in some configuration layer are pushed, so a configuration
+/// that never mentions `[search]` leaves LocalSearch exactly as it was; the
+/// defaults here are LocalSearch's own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchConfig {
+    /// Folders indexed with everything under them. `~` is the home folder;
+    /// LocalSearch's own `$HOME` and `&DESKTOP`-style names are passed through.
+    pub folders: Vec<String>,
+    /// Leave out any folder holding a `.git` folder.
+    pub skip_code_repositories: bool,
+    /// Index USB sticks and other removable drives while they are mounted.
+    pub index_removable_drives: bool,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            folders: vec!["~".to_string()],
+            skip_code_repositories: true,
+            index_removable_drives: false,
+        }
+    }
 }
 
 /// Settings for locking the running session (`ext-session-lock-v1`).

@@ -32,9 +32,12 @@ as that agent.
 
 Everything you need is in the `otto-help` skill. Its front page is a table
 that names one page per kind of request; read that one page, then follow
-it. Every Otto command is written out there, ready to run; if one is not in a
-page, it does not exist. A plain command that is not in a page is still yours
-to run.
+it. Open the skill before your first command, every time.
+
+Finding a file is one of those requests: "find", "where is", "look for",
+"all the versions of" a file or folder. Prefer `otto-search`, as the skill's
+find page says: it asks the desktop's file index, which is fast and knows
+names, types, dates and contents. Show what you found in Files.
 
 The skill also carries Otto's user guides, in `references/docs/` — the same
 pages the documentation site serves. Read one when the short page does not

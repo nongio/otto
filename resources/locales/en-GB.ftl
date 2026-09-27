@@ -71,6 +71,7 @@ settings-pane-pointing = Trackpad & Mouse
 settings-pane-sound = Sound
 settings-pane-power = Power
 settings-pane-lock-and-login = Lock & Login
+settings-pane-search = Search
 settings-pane-agents = Agents
 
 
@@ -257,6 +258,68 @@ settings-group-login = Login
 settings-greeter = Greeter
 settings-greeter-detail = Applies at the next login
 settings-greeter-arguments = Greeter arguments
+
+
+## Settings — Search
+##
+## The file index Files searches, which LocalSearch keeps. These rows show
+## what it is doing and change what it looks at, through the [search] section
+## of Otto's configuration.
+
+settings-search-intro = Files searches an index of your files that LocalSearch keeps up to date in the background.
+# The row showing what the indexer is doing.
+settings-search-index = File index
+settings-search-checking = Checking…
+# $files is already written with its digits grouped, such as 48,210.
+settings-search-idle = Up to date · { $files } files
+settings-search-idle-uncounted = Up to date
+# $percent is how far through the indexer is, 0 to 99.
+settings-search-indexing = Indexing… { $percent }%
+# $minutes is the indexer's own estimate, rounded up.
+settings-search-indexing-minutes = Indexing… { $percent }% · about { $minutes } min left
+settings-search-indexing-hours = Indexing… { $percent }% · about { $hours } h left
+settings-search-paused = Paused
+settings-search-paused-detail = The indexer pauses on low battery or disk space, and when an app asks it to. It carries on by itself.
+# Under a Start button. A search starts the indexer by itself too.
+settings-search-stopped = Not running. A search starts it, or you can start it now.
+settings-search-start = Start
+settings-search-missing = Not installed
+# localsearch is the package name; keep it as is.
+settings-search-missing-detail = File search needs the localsearch package. Install it, then open this page again.
+# What goes between groups of three digits in a count: 48,210. Written as
+# a string so a space survives.
+settings-search-digit-separator = { "," }
+# The heading over the folders, switches and Re-index.
+settings-search-looks-in = What gets indexed
+settings-search-folders = Folders
+# The home folder, in the list of folders the index looks in.
+settings-search-folder-home = Home
+settings-search-folders-none = None
+# The row under the folders, whose button opens a folder picker.
+settings-search-add-folder = Add Folder
+settings-search-choose = Choose…
+settings-search-add-folder-detail = Search looks in each folder and everything inside it
+# $folder is the folder just chosen, named as the list names it.
+settings-search-folder-duplicate = { $folder } is already in the list
+# $folder is the folder just chosen; $parent is the listed folder it is in,
+# such as Home.
+settings-search-folder-covered = { $folder } is already searched, as part of { $parent }
+# Under Folders when the list is empty.
+settings-search-folders-empty = Nothing is indexed, so search won't find any files
+# The title of the folder picker.
+settings-search-choose-folder-title = Choose a Folder to Search
+settings-search-picker-failed = Couldn't open the folder picker
+# Leaves out folders that hold a .git folder, which is to say code.
+settings-search-skip-repos = Skip code repositories
+settings-search-skip-repos-detail = Leaves out any folder with a .git folder inside
+settings-search-removable = Search removable drives
+settings-search-removable-detail = Indexes USB sticks and other drives while they're plugged in
+settings-search-reindex = Re-index Home
+# The button on the Re-index Home row.
+settings-search-reindex-button = Re-index
+settings-search-reindex-detail = For when results look out of date. Everything in your home folder gets checked again.
+settings-search-reindex-asked = Asked the indexer to check your home folder again. It can take a while.
+settings-search-reindex-failed = Couldn't reach the indexer. Is it running?
 
 
 ## Settings — Agents
@@ -580,6 +643,11 @@ files-search-no-columns = Results have no columns to show.
 # it — and an empty listing would read as "no such file" rather than as
 # "nothing was able to look".
 files-search-unavailable = File indexing is off
+# Shown in place of a result count while the file indexer is still working
+# through the disk, so a search may miss files it has not reached yet.
+# $percent is how far along it is, 0 to 100.
+files-search-indexing = Still indexing ({ $percent }%), results may be incomplete
+files-search-indexing-paused = Indexing is paused, results may be incomplete
 
 # Lines under the file's name in the preview column, describing the picture
 # the column is showing. $width and $height are in pixels; $duration is how
@@ -654,6 +722,7 @@ files-new-folder-failed = Couldn’t create folder: { $error }
 files-open-failed = Couldn’t open that file: { $error }
 files-open-app-broken = the app’s launch command is broken
 files-new-window-failed = Couldn’t open a new window: { $error }
+files-settings-open-failed = Couldn’t open Settings: { $error }
 
 
 ## Files — the listing
@@ -988,6 +1057,14 @@ schema-login-greeter-command-description = The greeter launched in login mode.
 schema-login-greeter-args-label = Greeter arguments
 schema-login-greeter-args-description = Arguments passed to the greeter.
 
+# --- search ---
+schema-search-folders-label = Indexed folders
+schema-search-folders-description = Folders the file index looks in, with everything under them. ~ is your home folder.
+schema-search-skip-code-repositories-label = Skip code repositories
+schema-search-skip-code-repositories-description = Leave out any folder with a .git folder inside.
+schema-search-index-removable-drives-label = Search removable drives
+schema-search-index-removable-drives-description = Index USB sticks and other drives while they're plugged in.
+
 # --- rendering ---
 schema-rendering-renderer-label = Renderer
 schema-rendering-renderer-description = The GPU API Otto draws with in a login session. Windowed sessions always use OpenGL.
@@ -1076,7 +1153,12 @@ launcher-ask-window-title-bare = Ask
 launcher-ask-starting = Starting { $agent }…
 launcher-ask-starting-agent = Starting the agent…
 launcher-ask-thinking = Thinking…
+launcher-ask-writing = Writing…
+# $tool is the running tool, named as its step in the log names it.
+launcher-ask-running = Running { $tool }…
 launcher-ask-working = Working…
+# A turn has ended and the next queued message is on its way.
+launcher-ask-sending = Sending the next message…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = Waiting for an answer below
 # Ask mode: the line under the status naming the agent and the mode it is in.

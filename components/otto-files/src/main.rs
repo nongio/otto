@@ -89,12 +89,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return otto_files::app::run_empty_trash();
     }
 
-    let start = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .filter(|p| p.is_dir())
-        .or_else(otto_files::model::home_dir)
-        .unwrap_or_else(|| PathBuf::from("/"));
+    // A folder, files to select, or a search to open on; see `launch`.
+    let home = otto_files::model::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let args = otto_files::launch::parse(std::env::args_os().skip(1));
+    let start = otto_files::launch::resolve(&args, &home, &cwd, otto_files::launch::Probe::disk);
+    for warning in &start.warnings {
+        eprintln!("otto-files: {warning}");
+    }
 
     otto_files::stash::watch();
     otto_files::app::run_browser(start)

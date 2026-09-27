@@ -264,8 +264,11 @@ it.
 
 ### Find
 
-A Find query that matches recognised words lists the picture. The match is
-case-insensitive and by substring, as the desktop's index matches names.
+A Find query that matches recognised words lists the picture: its `text:`
+terms, or, when it has none, its plain words (see
+[search-language.md](./search-language.md#words-in-pictures)). Each term must
+appear, case-insensitively and by substring; the query's other filters still
+apply.
 Results found this way are ordinary rows: statted from the disk, thumbnailed,
 previewable, and dropped if the file is gone. They merge with the index's
 results and are deduplicated by path.

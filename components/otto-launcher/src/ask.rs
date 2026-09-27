@@ -217,8 +217,15 @@ pub enum Status {
     Starting(Option<String>),
     /// The agent is reasoning. Transient: the reasoning itself is never shown.
     Thinking,
-    /// The agent is answering, or doing something it does not narrate.
+    /// The agent is writing its answer.
+    Writing,
+    /// A tool is running. Carries the name its step row shows, cut to fit
+    /// one line.
+    Running(String),
+    /// The agent is doing something it does not narrate.
     Working,
+    /// A turn has ended and the next queued request is on its way.
+    Sending,
     /// The agent asked something, and waits for an answer from the rows.
     Waiting,
     /// The session failed, and nothing more will come.
@@ -240,7 +247,12 @@ impl Status {
             }
             Status::Starting(None) => otto_kit::t_owned!("launcher-ask-starting-agent"),
             Status::Thinking => otto_kit::t_owned!("launcher-ask-thinking"),
+            Status::Writing => otto_kit::t_owned!("launcher-ask-writing"),
+            Status::Running(tool) => {
+                otto_kit::t_owned!("launcher-ask-running", tool = tool.as_str())
+            }
             Status::Working => otto_kit::t_owned!("launcher-ask-working"),
+            Status::Sending => otto_kit::t_owned!("launcher-ask-sending"),
             Status::Waiting => otto_kit::t_owned!("launcher-ask-waiting"),
             Status::Failed(error) => {
                 otto_kit::t_owned!("launcher-ask-failed", error = error.as_str())
@@ -1925,15 +1937,12 @@ fn transcript(
         if let Some(turn) = &chat.active_turn {
             let (steps, question) = tool_calls(&turn.id, &turn.response_parts);
             let question = question.filter(|question| !answered.contains(&question.tool_call_id));
-            let thinking = matches!(turn.response_parts.last(), Some(ResponsePart::Reasoning(_)));
             let inputs = input_requests(&turn.response_parts, true);
             status = Some(
                 if question.is_some() || inputs.iter().any(InputRequest::is_open) {
                     Status::Waiting
-                } else if thinking {
-                    Status::Thinking
                 } else {
-                    Status::Working
+                    activity(turn.response_parts.last())
                 },
             );
             let Request {
@@ -1967,7 +1976,7 @@ fn transcript(
         status = Some(if entries.is_empty() {
             Status::Starting(agent.map(str::to_string))
         } else {
-            Status::Working
+            Status::Sending
         });
     }
     let next_is_starting = chat.is_none_or(|chat| chat.active_turn.is_none());
@@ -2026,6 +2035,39 @@ fn answer(parts: &[ResponsePart]) -> Vec<Said> {
 
 /// The tool calls in the turn `turn_id`'s `parts`: those already decided, and
 /// the one waiting for an answer.
+/// Longest tool name the status line shows, in characters, ellipsis included.
+const STATUS_TOOL_CHARS: usize = 40;
+
+/// What a running turn is doing, going by the last part it sent.
+fn activity(last: Option<&ResponsePart>) -> Status {
+    match last {
+        Some(ResponsePart::Reasoning(_)) => Status::Thinking,
+        Some(ResponsePart::Markdown(_)) => Status::Writing,
+        Some(ResponsePart::ToolCall(call)) => match &call.tool_call {
+            ToolCallState::Running(running) => {
+                Status::Running(status_tool(&plain(&running.invocation_message)))
+            }
+            _ => Status::Working,
+        },
+        _ => Status::Working,
+    }
+}
+
+/// `tool` as one line of at most [`STATUS_TOOL_CHARS`] characters, ending in
+/// an ellipsis when anything was left out.
+fn status_tool(tool: &str) -> String {
+    let mut lines = tool.lines().map(str::trim).filter(|line| !line.is_empty());
+    let line = lines.next().unwrap_or_default();
+    let more = lines.next().is_some();
+    if !more && line.chars().count() <= STATUS_TOOL_CHARS {
+        return line.to_string();
+    }
+    let mut cut: String = line.chars().take(STATUS_TOOL_CHARS - 1).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('…');
+    cut
+}
+
 fn tool_calls(turn_id: &str, parts: &[ResponsePart]) -> (Vec<Step>, Option<Question>) {
     let mut steps = Vec::new();
     let mut question = None;
@@ -2942,8 +2984,62 @@ mod tests {
         let parts = vec![reasoning("hmm"), markdown("Hello"), markdown("world")];
         let chat = with_active(empty_chat(), "hi", parts);
         let answering = of(Some(&chat), &hi);
-        assert_eq!(answering.status, Some(Status::Working));
+        assert_eq!(answering.status, Some(Status::Writing));
         assert_eq!(answering.entries, vec![entry("hi", "Hello\n\nworld", None)]);
+    }
+
+    fn running(tool_call_id: &str, invocation: &str) -> ResponsePart {
+        serde_json::from_value(json!({
+            "kind": "toolCall",
+            "toolCall": {
+                "status": "running",
+                "toolCallId": tool_call_id,
+                "toolName": "execute",
+                "displayName": "Shell",
+                "invocationMessage": invocation,
+                "confirmed": "not-needed",
+            }
+        }))
+        .expect("a running tool call")
+    }
+
+    #[test]
+    fn a_running_tool_is_named_on_the_status_line() {
+        let prompts = sent(&["build it"]);
+        let parts = vec![markdown("On it."), running("call-0", "cargo build")];
+        let chat = with_active(empty_chat(), "build it", parts);
+        let during = of(Some(&chat), &prompts);
+        assert_eq!(during.status, Some(Status::Running("cargo build".into())));
+        assert_eq!(
+            during.entries[0].steps,
+            vec![Step {
+                tool: "cargo build".into(),
+                state: StepState::Running
+            }]
+        );
+
+        // Once it has finished, the agent is back to something it does not
+        // narrate.
+        let parts = vec![refused("call-0")];
+        let chat = with_active(empty_chat(), "build it", parts);
+        assert_eq!(of(Some(&chat), &prompts).status, Some(Status::Working));
+    }
+
+    #[test]
+    fn a_long_tool_name_is_cut_to_one_line() {
+        let long = "cargo test --workspace --all-features -- --nocapture --test-threads 1";
+        let prompts = sent(&["test"]);
+        let chat = with_active(empty_chat(), "test", vec![running("call-0", long)]);
+        let Some(Status::Running(tool)) = of(Some(&chat), &prompts).status else {
+            panic!("a running tool");
+        };
+        assert_eq!(tool.chars().count(), STATUS_TOOL_CHARS);
+        assert!(tool.ends_with('…'), "{tool}");
+        assert!(long.starts_with(tool.trim_end_matches('…')), "{tool}");
+
+        let chat = with_active(empty_chat(), "test", vec![running("call-0", "one\ntwo")]);
+        let status = of(Some(&chat), &prompts).status;
+        assert_eq!(status, Some(Status::Running("one…".into())));
     }
 
     #[test]
@@ -2961,6 +3057,30 @@ mod tests {
             ]
         );
         assert_eq!(during.status, Some(Status::Working));
+    }
+
+    #[test]
+    fn between_turns_the_next_request_is_sending() {
+        let prompts = sent(&["one", "two"]);
+        let chat = with_queued(
+            with_ended(
+                empty_chat(),
+                "one",
+                TurnState::Complete,
+                vec![markdown("Hi")],
+            ),
+            "two",
+        );
+        let between = of(Some(&chat), &prompts);
+        assert_eq!(between.status, Some(Status::Sending));
+        assert_eq!(
+            between.entries,
+            vec![entry("one", "Hi", None), entry("two", "", None)]
+        );
+
+        // Before any turn, the agent is still starting.
+        let starting = of(None, &sent(&["one"]));
+        assert_eq!(starting.status, Some(Status::Starting(None)));
     }
 
     #[test]
@@ -3388,7 +3508,7 @@ mod tests {
                 entry("more", "", None),
             ]
         );
-        assert_eq!(transcript.status, Some(Status::Working));
+        assert_eq!(transcript.status, Some(Status::Sending));
         assert!(ask.handing_off(), "the new request is still on its way");
     }
 

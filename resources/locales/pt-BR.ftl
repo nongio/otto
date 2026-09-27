@@ -71,6 +71,7 @@ settings-pane-pointing = Trackpad e mouse
 settings-pane-sound = Som
 settings-pane-power = Energia
 settings-pane-lock-and-login = Bloqueio e login
+settings-pane-search = Pesquisa
 settings-pane-agents = Agentes
 
 
@@ -258,6 +259,68 @@ settings-group-login = Login
 settings-greeter = Tela de login
 settings-greeter-detail = Aplicada no próximo login
 settings-greeter-arguments = Argumentos da tela de login
+
+
+## Settings — Search
+##
+## The file index Files searches, which LocalSearch keeps. These rows show
+## what it is doing and change what it looks at, through the [search] section
+## of Otto's configuration.
+
+settings-search-intro = O Arquivos pesquisa um índice dos seus arquivos que o LocalSearch mantém atualizado em segundo plano.
+# The row showing what the indexer is doing.
+settings-search-index = Índice de arquivos
+settings-search-checking = Verificando…
+# $files is already written with its digits grouped, such as 48,210.
+settings-search-idle = Atualizado · { $files } arquivos
+settings-search-idle-uncounted = Atualizado
+# $percent is how far through the indexer is, 0 to 99.
+settings-search-indexing = Indexando… { $percent }%
+# $minutes is the indexer's own estimate, rounded up.
+settings-search-indexing-minutes = Indexando… { $percent }% · faltam cerca de { $minutes } min
+settings-search-indexing-hours = Indexando… { $percent }% · faltam cerca de { $hours } h
+settings-search-paused = Pausado
+settings-search-paused-detail = O indexador pausa com bateria ou espaço em disco baixos, e quando um app pede. Depois continua sozinho.
+# Under a Start button. A search starts the indexer by itself too.
+settings-search-stopped = Parado. Uma pesquisa o inicia, ou você pode iniciá-lo agora.
+settings-search-start = Iniciar
+settings-search-missing = Não instalado
+# localsearch is the package name; keep it as is.
+settings-search-missing-detail = A pesquisa de arquivos precisa do pacote localsearch. Instale-o e abra esta página de novo.
+# What goes between groups of three digits in a count: 48,210. Written as
+# a string so a space survives.
+settings-search-digit-separator = { "." }
+# The heading over the folders, switches and Re-index.
+settings-search-looks-in = O que é indexado
+settings-search-folders = Pastas
+# The home folder, in the list of folders the index looks in.
+settings-search-folder-home = Pasta pessoal
+settings-search-folders-none = Nenhuma
+# The row under the folders, whose button opens a folder picker.
+settings-search-add-folder = Adicionar pasta
+settings-search-choose = Escolher…
+settings-search-add-folder-detail = A pesquisa olha em cada pasta e em tudo dentro dela
+# $folder is the folder just chosen, named as the list names it.
+settings-search-folder-duplicate = { $folder } já está na lista
+# $folder is the folder just chosen; $parent is the listed folder it is in,
+# such as Home.
+settings-search-folder-covered = { $folder } já é pesquisada, como parte de { $parent }
+# Under Folders when the list is empty.
+settings-search-folders-empty = Nada está indexado, então a pesquisa não vai encontrar arquivos
+# The title of the folder picker.
+settings-search-choose-folder-title = Escolha uma pasta para pesquisar
+settings-search-picker-failed = Não foi possível abrir o seletor de pastas
+# Leaves out folders that hold a .git folder, which is to say code.
+settings-search-skip-repos = Ignorar repositórios de código
+settings-search-skip-repos-detail = Deixa de fora qualquer pasta com uma pasta .git dentro
+settings-search-removable = Pesquisar em unidades removíveis
+settings-search-removable-detail = Indexa pendrives e outras unidades enquanto estão conectados
+settings-search-reindex = Reindexar a pasta pessoal
+# The button on the Re-index Home row.
+settings-search-reindex-button = Reindexar
+settings-search-reindex-detail = Para quando os resultados parecerem desatualizados. Tudo na sua pasta pessoal é verificado de novo.
+settings-search-reindex-asked = O indexador vai verificar sua pasta pessoal de novo. Pode levar um tempo.
+settings-search-reindex-failed = Não foi possível falar com o indexador. Ele está rodando?
 
 
 ## Settings — Agents
@@ -479,6 +542,8 @@ files-search-no-columns = Os resultados não têm colunas para mostrar.
 # nenhuma das duas pode responder sem ela — e uma lista vazia se leria como “o
 # arquivo não existe” em vez de “nada pôde procurar”.
 files-search-unavailable = Indexação de arquivos desativada
+files-search-indexing = Ainda indexando ({ $percent }%), os resultados podem estar incompletos
+files-search-indexing-paused = A indexação está pausada, os resultados podem estar incompletos
 
 files-preview-dimensions = { $width } × { $height }
 files-preview-animation = { $width } × { $height } · { $duration }
@@ -549,6 +614,7 @@ files-new-folder-failed = Não foi possível criar a pasta: { $error }
 files-open-failed = Não foi possível abrir o arquivo: { $error }
 files-open-app-broken = o comando de inicialização do app é inválido
 files-new-window-failed = Não foi possível abrir uma nova janela: { $error }
+files-settings-open-failed = Não foi possível abrir as Configurações: { $error }
 
 
 ## Files — the listing
@@ -991,6 +1057,14 @@ schema-login-greeter-command-description = O programa da tela de login iniciado 
 schema-login-greeter-args-label = Argumentos da tela de login
 schema-login-greeter-args-description = Argumentos passados à tela de login.
 
+# --- search ---
+schema-search-folders-label = Pastas indexadas
+schema-search-folders-description = Pastas em que o índice de arquivos procura, com tudo dentro delas. ~ é a sua pasta pessoal.
+schema-search-skip-code-repositories-label = Ignorar repositórios de código
+schema-search-skip-code-repositories-description = Deixar de fora qualquer pasta com uma pasta .git dentro.
+schema-search-index-removable-drives-label = Pesquisar em unidades removíveis
+schema-search-index-removable-drives-description = Indexar pendrives e outras unidades enquanto estão conectados.
+
 # --- rendering ---
 schema-rendering-renderer-label = Renderizador
 schema-rendering-renderer-description = A API de GPU que o Otto usa para desenhar em uma sessão iniciada pela tela de login. Sessões em janela sempre usam OpenGL.
@@ -1079,7 +1153,10 @@ launcher-ask-window-title-bare = Ask
 launcher-ask-starting = Iniciando { $agent }…
 launcher-ask-starting-agent = Iniciando o agente…
 launcher-ask-thinking = Pensando…
+launcher-ask-writing = Escrevendo…
+launcher-ask-running = Executando { $tool }…
 launcher-ask-working = Trabalhando…
+launcher-ask-sending = Enviando a próxima mensagem…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = Aguardando uma resposta abaixo
 # Ask mode: the line under the status naming the agent and the mode it is in.

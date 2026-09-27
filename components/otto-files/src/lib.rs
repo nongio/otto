@@ -10,6 +10,8 @@
 //! ```sh
 //! cargo run -p otto-files            # browse $HOME
 //! cargo run -p otto-files -- /etc    # browse somewhere else
+//! cargo run -p otto-files -- ~/notes.txt           # its folder, selected
+//! cargo run -p otto-files -- --search 'kind:pdf'   # open on the results
 //! cargo run -p otto-files -- --picker  # serve org.otto.FilePicker1
 //! cargo run -p otto-files -- --desk    # the folder on the desktop
 //! ```
@@ -22,6 +24,7 @@ pub mod command;
 pub mod dbus;
 pub mod desk;
 pub mod files_service;
+pub mod launch;
 pub mod model;
 pub mod ocrcache;
 pub mod open_with;

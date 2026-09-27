@@ -116,6 +116,18 @@ args = []
 # [desk]
 # enabled = true
 
+# File search: the folders LocalSearch, the file indexer, looks in, and what it
+# leaves out. Otto pushes these to LocalSearch's own settings; a key left
+# unset here leaves LocalSearch's value alone. Settings ▸ Search edits them.
+#
+# [search]
+# Folders indexed with everything under them. ~ is your home folder.
+# folders = ["~", "/mnt/data"]
+# Leave out any folder with a .git folder inside (default true).
+# skip_code_repositories = true
+# Index USB sticks and other removable drives while they're mounted (default false).
+# index_removable_drives = false
+
 # Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
 # when the Wayland socket is ready. Enable this when running Otto as a systemd user service
 # (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.

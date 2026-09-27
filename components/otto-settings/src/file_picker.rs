@@ -38,6 +38,17 @@ pub enum Outcome {
 /// `filters` are `(label, [glob])` pairs, translated into the portal's
 /// `(sa(us))` filter shape with rule kind `0` (glob).
 pub fn open_file(title: &str, filters: &[(&str, &[&str])]) -> Outcome {
+    choose(title, filters, false)
+}
+
+/// Open a chooser for a folder, rather than a file, and block until it is
+/// answered.
+pub fn open_folder(title: &str) -> Outcome {
+    choose(title, &[], true)
+}
+
+/// Ask the portal's `OpenFile`, for folders when `directory` is set.
+fn choose(title: &str, filters: &[(&str, &[&str])], directory: bool) -> Outcome {
     let connection = match Connection::session() {
         Ok(connection) => connection,
         Err(err) => return Outcome::Failed(format!("no session bus: {err}")),
@@ -88,6 +99,9 @@ pub fn open_file(title: &str, filters: &[(&str, &[&str])]) -> Outcome {
     let mut options: HashMap<&str, ZValue> = HashMap::new();
     options.insert("handle_token", ZValue::from(token.as_str()));
     options.insert("modal", ZValue::from(true));
+    if directory {
+        options.insert("directory", ZValue::from(true));
+    }
     if !filters.is_empty() {
         options.insert("filters", ZValue::from(filters));
     }

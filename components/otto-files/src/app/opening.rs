@@ -153,27 +153,14 @@ impl Browser {
                 return;
             }
         };
-        let spawned = std::process::Command::new(exe)
-            .arg(path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        match spawned {
-            // Reap it on a thread of its own: the child outlives this call and
-            // nothing else here would ever wait on it.
-            Ok(mut child) => {
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-            }
-            Err(err) => {
-                self.status = Some(otto_kit::t_owned!(
-                    "files-new-window-failed",
-                    error = err.to_string()
-                ));
-                self.dirty = true;
-            }
+        let mut command = std::process::Command::new(exe);
+        command.arg(path);
+        if let Err(err) = spawn_detached(command) {
+            self.status = Some(otto_kit::t_owned!(
+                "files-new-window-failed",
+                error = err.to_string()
+            ));
+            self.dirty = true;
         }
     }
 
@@ -336,27 +323,45 @@ impl Browser {
     /// Detached, like a new window: stdio closed and reaped on a thread of its
     /// own, so the application outlives the browser that started it.
     pub(super) fn open_in_default_app(&mut self, target: impl AsRef<std::ffi::OsStr>) {
-        let spawned = std::process::Command::new("xdg-open")
-            .arg(target)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        match spawned {
-            Ok(mut child) => {
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-            }
-            Err(err) => {
-                self.status = Some(otto_kit::t_owned!(
-                    "files-open-failed",
-                    error = err.to_string()
-                ));
-                self.dirty = true;
-            }
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(target);
+        if let Err(err) = spawn_detached(command) {
+            self.status = Some(otto_kit::t_owned!(
+                "files-open-failed",
+                error = err.to_string()
+            ));
+            self.dirty = true;
+        }
+    }
+
+    /// Open Settings on its Search pane, where the file indexer is looked
+    /// after: what a click on an indexer notice does.
+    pub(super) fn open_index_settings(&mut self) {
+        let mut command = std::process::Command::new("otto-settings");
+        command.args(["--pane", "search"]);
+        if let Err(err) = spawn_detached(command) {
+            self.status = Some(otto_kit::t_owned!(
+                "files-settings-open-failed",
+                error = err.to_string()
+            ));
+            self.dirty = true;
         }
     }
 
     // --- The picker's half of "activate" -----------------------------------
+}
+
+/// Start `command` with its stdio closed, so it outlives the window that
+/// started it. The child is reaped on a thread of its own: nothing else here
+/// would ever wait on it.
+fn spawn_detached(mut command: std::process::Command) -> std::io::Result<()> {
+    let mut child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }

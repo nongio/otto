@@ -159,6 +159,64 @@ impl Browser {
         self.dirty = true;
     }
 
+    /// Open on the results of `query`, as if Ctrl+F had been pressed where
+    /// the window stands, the query typed and Return pressed: what
+    /// `otto-files --search` does. Escape and Back then lead back to the
+    /// folder the window opened on, as they would from any other search.
+    pub(super) fn start_search(&mut self, query: String, scope: model::SearchScope) {
+        if self.search.is_none() {
+            self.toggle_search();
+        }
+        self.search_scope = scope;
+        if let Some(input) = self.search.as_mut() {
+            input.set_value(query);
+        }
+        self.run_search();
+    }
+
+    /// Select what `--select` named, once it has been listed.
+    ///
+    /// A folder is listed in one read, so it settles when that read lands,
+    /// with whatever of the paths it holds. Search results stream in, so they
+    /// settle as soon as every path has arrived, or when the search ends with
+    /// at least one of them. Handing the keyboard to the listing then puts
+    /// the selection, rather than the query, under the arrow keys.
+    pub(super) fn settle_select(&mut self) {
+        let Some(keys) = self.pending_select.as_ref() else {
+            return;
+        };
+        let visible: Vec<String> = self.visible(0).iter().map(|e| e.selection_key()).collect();
+        let found: Vec<usize> = visible
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| keys.contains(key))
+            .map(|(index, _)| index)
+            .collect();
+        let loading = self.loading();
+        if found.len() < keys.len() && loading {
+            return;
+        }
+        self.pending_select = None;
+        let Some(&first) = found.first() else {
+            return;
+        };
+        if found.len() == 1 {
+            // Through `select_at`, so a lone folder opens its column in
+            // Miller view the way a click on it would.
+            self.select_at(0, first, false);
+        } else {
+            let column = &mut self.columns[0];
+            column.selection = found.iter().map(|&i| visible[i].clone()).collect();
+            column.cursor = Some(first);
+            column.anchor = Some(first);
+            self.active = 0;
+            self.columns.truncate(1);
+        }
+        self.blur_search();
+        self.reveal_cursor();
+        self.dirty = true;
+    }
+
     /// Switch which haystack the query runs against, keeping the query.
     pub(super) fn set_search_scope(&mut self, scope: model::SearchScope) {
         if self.search_scope == scope {
@@ -230,6 +288,7 @@ impl Browser {
         self.search_where = String::new();
         self.search_scope = model::SearchScope::default();
         self.search_origin = None;
+        self.index.stop();
         view::set_search_band(false);
         self.dirty = true;
         std::mem::take(&mut self.searching)
@@ -290,10 +349,24 @@ impl Browser {
                     .or_else(model::home_dir)
                     .unwrap_or_else(|| PathBuf::from("/"));
                 self.searching = false;
+                self.index.stop();
                 self.navigate_to(&origin);
             }
             return;
         };
+
+        // A `sort:` in the query is the pane's order, since the view sorts
+        // whatever it is handed. Without one the order is left as it was.
+        let order = match otto_search::parse(&query).sort() {
+            otto_search::Sort::Relevance => None,
+            otto_search::Sort::Modified => Some((SortKey::Modified, false)),
+            otto_search::Sort::Size => Some((SortKey::Size, false)),
+            otto_search::Sort::Name => Some((SortKey::Name, true)),
+        };
+        if let Some((sort, ascending)) = order {
+            self.sort = sort;
+            self.ascending = ascending;
+        }
 
         // Each run starts from scratch and abandons whatever the last one
         // started, so a query refined while the first is still out costs the
@@ -326,6 +399,7 @@ impl Browser {
         }
         self.columns = vec![column];
         self.active = 0;
+        self.index.start();
         self.dirty = true;
     }
 

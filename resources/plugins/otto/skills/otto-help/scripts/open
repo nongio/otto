@@ -1,0 +1,34 @@
+#!/bin/sh
+# Start one of the desktop's apps detached, and return at once.
+#
+#   open <app> [argument …]
+#
+# <app> is otto-files, otto-emoji, otto-settings, otto-launcher, otto-peek or
+# xdg-open; the arguments are that app's own. The app runs in a session of
+# its own, with its output discarded, so it outlives the command that
+# started it and the agent is not left waiting on a window.
+#
+# Only these apps: a script that would start anything named to it is a way
+# around every rule about which commands may run.
+set -eu
+
+if [ "$#" -lt 1 ]; then
+    echo "usage: open <app> [argument …]" >&2
+    exit 2
+fi
+
+case $1 in
+    otto-files | otto-emoji | otto-settings | otto-launcher | otto-peek | xdg-open) ;;
+    *)
+        echo "open: $1 is not one of the apps this starts: otto-files, otto-emoji," \
+            "otto-settings, otto-launcher, otto-peek, xdg-open" >&2
+        exit 2
+        ;;
+esac
+
+if ! command -v "$1" >/dev/null 2>&1; then
+    echo "open: $1 is not installed" >&2
+    exit 1
+fi
+
+setsid -f "$@" </dev/null >/dev/null 2>&1

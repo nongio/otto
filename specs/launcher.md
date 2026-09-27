@@ -218,6 +218,16 @@ dimmer, so what was asked and answered outranks the trace of how. Code, in a
 fenced block or inline, is set at the size of the prose around it: a monospaced
 face is enough to say it is code without shrinking it.
 
+**The status line.** The log's last line says what the agent is doing now,
+going by the last thing the running turn sent: *Thinking…* while it reasons
+(the reasoning itself is never shown), *Writing…* while its answer streams,
+*Running {tool}…* while a tool call is still running, named as the call's step
+in the log names it and cut to one line of about forty characters with an
+ellipsis, and *Working…* for anything else. A question or input request open
+under the field shows *Waiting for an answer below*. Between two turns, with
+the next request queued, it says *Sending the next message…*; before the first
+turn, *Starting {agent}…*.
+
 **The tool calls under an answer.** A request's tool calls are one thing in the
 log, not a list: closed, the group is the last call and an ellipsis, which is
 the call the agent is on. Pointing at it fills it faintly and turns the pointer

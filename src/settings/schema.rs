@@ -875,6 +875,28 @@ pub static SETTINGS: &[SettingSpec] = &[
         "Arguments passed to the greeter.",
         Restart,
     ),
+    // ---- Search ----------------------------------------------------------
+    spec(
+        "search.folders",
+        StrList,
+        "Indexed folders",
+        "Folders the file index looks in, with everything under them. ~ is your home folder.",
+        Live,
+    ),
+    spec(
+        "search.skip_code_repositories",
+        Bool,
+        "Skip code repositories",
+        "Leave out any folder with a .git folder inside.",
+        Live,
+    ),
+    spec(
+        "search.index_removable_drives",
+        Bool,
+        "Search removable drives",
+        "Index USB sticks and other drives while they're plugged in.",
+        Live,
+    ),
     // ---- Rendering -------------------------------------------------------
     SettingSpec {
         unavailable_choices: RENDERER_UNAVAILABLE,

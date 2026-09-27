@@ -10,6 +10,7 @@ repository.workspace = true
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 otto-peek = { path = "../otto-peek" }
+otto-search = { path = "../otto-search" }
 # Playback for Peek. Library only: the GStreamer worker is a separate
 # binary built from the same crate, found at run time.
 otto-media-kit = { path = "../otto-media-kit", default-features = false }

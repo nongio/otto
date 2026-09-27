@@ -303,9 +303,12 @@ the field and the field takes follow-ups, which queue on the same chat.
 in the answer rather than collecting at the end; `view.rs` decodes each picture
 once into raster pixels and caches it, because the log is laid out again on
 every chunk that lands and each pass asks every picture how large it is. The last line is the status:
-*Starting {agent}…*, *Thinking…*, *Working…*, then *Done*, *Cancelled* or
-*Failed*. Reasoning is never written into the log. It only shows as
-*Thinking…*. Ctrl+C or Cmd+C cancels a running turn; Esc closes the card and
+*Starting {agent}…*, then, by the last part of the running turn, *Thinking…*
+(reasoning), *Writing…* (Markdown), *Running {tool}…* (a tool call still
+running, named as its step row and cut to one line) or *Working…*; *Sending the
+next message…* between two turns with a request queued; then *Done*,
+*Cancelled* or *Failed*. Reasoning is never written into the log. It only
+shows as *Thinking…*. Ctrl+C or Cmd+C cancels a running turn; Esc closes the card and
 leaves the session running. In the list of sessions (`--agents`), the same keys
 stop the highlighted session's turn without opening it, and Ctrl+Backspace or
 Cmd+Backspace removes it for good: the launcher calls AHP `disposeSession`,

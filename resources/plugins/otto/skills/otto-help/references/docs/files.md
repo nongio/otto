@@ -133,6 +133,22 @@ Two buttons beside the field say how wide to look:
 Switching between them re-runs the same query, so you can start narrow and
 widen without retyping.
 
+A word finds names with its letters in order, so `otfl` finds
+`otto-files.rs`, and several words must all match, in any order. Put a phrase
+in quotes to match it exactly. Add filters to narrow things down:
+
+| Type | To find |
+|---|---|
+| `text:ricevuta` | files whose contents mention it (documents, and pictures Files has read) |
+| `kind:pdf`, `kind:image,video` | files of a kind: `document`, `pdf`, `image`, `video`, `audio`, `text`, `archive`, `app`, `folder` |
+| `in:~/Documents` | files under that folder, instead of the buttons' choice |
+| `modified:today`, `modified:<7d`, `modified:2025-03` | files changed today, in the last week, during March 2025 (`>30d` means longer ago) |
+| `size:>100M`, `size:<1K` | files bigger or smaller than that |
+| `sort:size`, `sort:modified`, `sort:name` | results biggest, newest or A to Z first |
+
+A minus in front leaves things out: `-kind:image`, `-in:~/Downloads`,
+`-draft`. The same query works anywhere Otto searches for files.
+
 Results are an ordinary listing of real files. Space previews one, `Return`
 opens it, and opening a *folder* takes you to it. The strip along the bottom
 says where the selected file actually lives, and clicking any folder in that
@@ -140,6 +156,33 @@ trail goes there. `Down` moves into the results and hands the keyboard to
 them, so `Space` previews rather than typing a space; `Ctrl+F` puts the caret
 back in the query. `Escape` puts back the folder you started in, and Back and
 Forward step out of a search and into it again.
+
+### From the command line
+
+`otto-search` runs the same query in a terminal and prints the paths it
+finds, best first:
+
+```sh
+otto-search 'invoice kind:pdf modified:<30d'
+otto-search --in ~/Documents --limit 5 text:lease
+otto-search --json 'kind:image modified:<7d'    # one JSON object per line
+```
+
+It looks in your home directory unless you pass `--in` or write `in:`. The one
+difference from the search field: words Files has read in pictures are found
+by Files only.
+
+To see an answer in Files instead:
+
+```sh
+otto-files --search 'invoice kind:pdf'           # the results, searching everywhere
+otto-files --search 'invoice' --in ~/Documents   # the results, in that folder
+otto-files --select ~/Documents/invoice-0312.pdf # its folder, with it selected
+```
+
+Passing a file rather than a folder, as in `otto-files ~/notes.txt`, also
+opens its folder with it selected. The agents use these to show you what they
+found.
 
 ### Search needs the file indexer
 
@@ -164,8 +207,14 @@ would go, rather than showing an empty listing: "nothing found" and "nothing
 was able to look" are different answers, and the second one should not send you
 hunting for a file that is sitting on your disk.
 
-Searching *inside* files (matching contents rather than names) is not built
-yet.
+While the indexer is still working through your files, a search can miss the
+ones it has not reached yet, so Files says **Still indexing (62%), results may
+be incomplete** in the same place, or **Indexing is paused** when it has
+stopped partway. The line updates every few seconds and goes away once the
+indexer has caught up. Click either line to open the Search pane in Settings.
+
+`text:` needs the indexer too: it searches the text `localsearch` has
+extracted from documents.
 
 ## Selecting
 
@@ -356,6 +405,6 @@ so you can look inside before deciding.
   the sidebar either. It lists Recent, your home directory, the XDG user
   folders and whatever you have added yourself, and you reach anything else by
   typing the path with `Ctrl+L`.
-- Searching file contents, batch rename, archive browsing, tags and labels.
+- Batch rename, archive browsing, tags and labels.
 - `Shift+Delete` (delete permanently) is deliberately inert for now.
 - Writing to the shared thumbnail cache.

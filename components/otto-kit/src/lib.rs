@@ -26,7 +26,9 @@ pub mod icons;
 pub mod input;
 pub mod key_capture;
 pub mod lottie;
-pub mod matching;
+/// Name matching lives with file search, which the agents daemon links
+/// without the toolkit; re-exported so apps keep one import path.
+pub use otto_search::matching;
 pub mod maximize_button;
 pub mod mime_apps;
 mod portal_runtime;

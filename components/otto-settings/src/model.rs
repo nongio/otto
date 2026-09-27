@@ -345,9 +345,14 @@ pub fn panes() -> Vec<Pane> {
         panes::sound::build(),
         panes::power::build(),
         panes::lock_and_login::build(),
+        panes::search::build(),
         panes::agents::build(),
     ]
 }
+
+/// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
+/// when it is on screen without building every pane to find out.
+pub const SEARCH_PANE: usize = 9;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {
@@ -911,5 +916,15 @@ mod readout_tests {
         assert_eq!(reformat_readout("0.5", 0.3, Some(0.1)), "0.3");
         assert_eq!(reformat_readout("3", 4.0, None), "4");
         assert_eq!(reformat_readout("100%", 1.5, None), "150%");
+    }
+}
+
+#[cfg(test)]
+mod pane_order_tests {
+    use super::{panes, SEARCH_PANE};
+
+    #[test]
+    fn the_search_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[SEARCH_PANE].icon, "search");
     }
 }

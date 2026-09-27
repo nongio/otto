@@ -14,27 +14,40 @@
 //!
 //! ## One source: the desktop's index
 //!
-//! Everything here goes to LocalSearch (TinySPARQL) over D-Bus. There is no
+//! Everything here goes to LocalSearch (TinySPARQL) over D-Bus, through
+//! `otto-search`, which owns the query language and the SPARQL. There is no
 //! second implementation to fall back to, and that is deliberate: a search of
 //! our own that reads every directory under home takes seconds where the index
-//! takes a fraction of one, and it answers a *different* question — matching
-//! names by subsequence where the index matches by substring — so which one
-//! ran decided what you found. One source is slower to be unavailable and
-//! never quietly disagrees with itself.
+//! takes a fraction of one. One source is slower to be unavailable and never
+//! quietly disagrees with itself.
+//!
+//! The crate also owns what happens to the index's answer: paging past files
+//! it remembers but the disk no longer has, statting and rechecking each row,
+//! ranking and capping ([`otto_search::find`]). What stays here is what
+//! belongs to a window: the worker thread, the generation counter, turning
+//! results into [`Entry`]s, and merging in the pictures whose words Otto has
+//! read.
 //!
 //! So the indexer not running is a real state the window has to show, not an
 //! internal detail to paper over: [`Batch::available`] carries it, and the
 //! pane says the indexer is not running rather than showing an empty listing.
 //! "No file matches" and "nothing is able to look" are different answers and
 //! must not look alike.
+//!
+//! An indexer that is running but still working through the disk answers too,
+//! just not completely. [`IndexWatch`] asks it how far along it is while a
+//! search is open, so the window can say results may be incomplete.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use crate::model::{entry_for_path, Entry};
+use otto_search::index::{State, Status};
+use otto_search::{Clock, Found, Plan, Scope};
+
+use crate::model::Entry;
 
 /// The path a pane of search results carries.
 ///
@@ -58,15 +71,13 @@ pub const LIMIT: usize = 500;
 /// What to look for, and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
-    /// The text to match names against. `None` is Recent: everything under
-    /// the roots, ranked by when it was written rather than by a query.
-    pub query: Option<String>,
-    /// Where to look. Directories; each is searched with everything below it.
+    /// The query, in the language of `specs/search-language.md`.
+    pub query: String,
+    /// Where to look when the query has no `in:`. Directories; each is
+    /// searched with everything below it.
     pub roots: Vec<PathBuf>,
-    /// Skip directories themselves. Recent is about files you saved, and a
-    /// folder's mtime changes every time anything inside it does, so folders
-    /// would otherwise crowd out the files the listing is for.
-    pub files_only: bool,
+    /// What a relative `in:` is relative to: the folder the search started in.
+    pub cwd: Option<PathBuf>,
     /// How long to wait before starting.
     ///
     /// Zero everywhere now: a search runs when Return is pressed rather than
@@ -77,14 +88,21 @@ pub struct Request {
     pub debounce: Duration,
 }
 
+/// Recent, as a query: files but not folders, newest first.
+///
+/// Folders are left out because a folder's time changes every time anything
+/// inside it does, and they would otherwise crowd out the files the listing
+/// is for.
+const RECENT_QUERY: &str = "-kind:folder sort:modified";
+
 impl Request {
     /// The Recent listing: what was written most recently across the user's
     /// own folders.
     pub fn recent() -> Self {
         Self {
-            query: None,
+            query: RECENT_QUERY.to_string(),
             roots: recent_roots(),
-            files_only: true,
+            cwd: None,
             debounce: Duration::ZERO,
         }
     }
@@ -92,9 +110,9 @@ impl Request {
     /// A search of everything, for the Everywhere scope.
     pub fn everywhere(query: String) -> Self {
         Self {
-            query: Some(query),
+            query,
             roots: crate::model::home_dir().into_iter().collect(),
-            files_only: false,
+            cwd: None,
             debounce: Duration::ZERO,
         }
     }
@@ -108,11 +126,22 @@ impl Request {
     /// one beside it would make switching between them unreadable.
     pub fn folder(query: String, dir: PathBuf) -> Self {
         Self {
-            query: Some(query),
-            roots: vec![dir],
-            files_only: false,
+            query,
+            roots: vec![dir.clone()],
+            cwd: Some(dir),
             debounce: Duration::ZERO,
         }
+    }
+
+    /// The query resolved against this request's scope, now. `None` when
+    /// there is nowhere to look.
+    fn plan(&self) -> Option<Plan> {
+        let scope = Scope {
+            roots: self.roots.clone(),
+            home: crate::model::home_dir(),
+            cwd: self.cwd.clone(),
+        };
+        Plan::new(&otto_search::parse(&self.query), &scope, Clock::now())
     }
 }
 
@@ -270,13 +299,8 @@ impl Sink {
     }
 }
 
-/// Why the index could not answer. Carried so the log can say, and so the
-/// pane can tell "nothing matched" from "nothing was able to look".
-#[derive(Debug)]
-struct Unavailable(String);
-
 /// The worker body.
-fn run(request: Request, sink: Sink) {
+fn run(request: Request, mut sink: Sink) {
     if !request.debounce.is_zero() {
         std::thread::sleep(request.debounce);
         if !sink.alive() {
@@ -284,400 +308,219 @@ fn run(request: Request, sink: Sink) {
         }
     }
 
-    if let Err(Unavailable(why)) = ask_index(&request, &sink) {
-        tracing::info!("search: the index could not answer ({why})");
-        // Empty *and* unavailable, which the pane shows as the indexer not
-        // running. Nothing was sent before the failure — every path that can
-        // fail does so before the first `send` — so this cannot be appended
-        // to half an answer. Pictures whose text is remembered still answer:
-        // names are not searched, and the status line says so, but a word
-        // read off a screenshot is found either way.
-        let mut best = Best::default();
-        ask_pictures(&request, &mut best);
-        sink.send(best.entries(), true, false);
-    }
-}
-
-/// Pictures whose remembered text contains the query, under the roots.
-///
-/// Read off Otto's own cache of what the recogniser found in pictures the
-/// person has looked at — see `ocrcache` — so this answers only for those,
-/// and says nothing about the rest. A hit that the index also returned is
-/// the same path, and the caller deduplicates by it.
-fn ask_pictures(request: &Request, best: &mut Best) {
-    let Some(query) = request.query.as_deref() else {
+    let Some(plan) = request.plan() else {
+        tracing::info!("search: nowhere to look");
+        sink.send(Vec::new(), true, false);
         return;
     };
-    for path in crate::ocrcache::matches(query) {
-        if !request.roots.iter().any(|root| path.starts_with(root)) {
-            continue;
+    // The paging, statting, rechecking and ranking are `otto-search`'s, so
+    // the command line and this window give the same answer; `sink` streams
+    // each page but the last as it lands.
+    let (mut results, available) = match otto_search::find(&plan, LIMIT, &mut sink) {
+        Ok(results) => (results, true),
+        Err(why) => {
+            tracing::info!("search: {why}");
+            // Empty *and* unavailable, which the pane shows as the indexer
+            // not running. Nothing was sent before the failure, so this cannot
+            // be appended to half an answer. Pictures whose text is remembered
+            // still answer `text:`: a word read off a screenshot is found
+            // either way.
+            (otto_search::Results::new(&plan, LIMIT), false)
         }
-        let Some(entry) = entry_for_path(&path) else {
-            continue;
-        };
-        if request.files_only && entry.is_dir {
-            continue;
-        }
-        // Ranked as a name match would be at best: the text is a whole-word
-        // hit, which is as good an answer as a name that contains the query.
-        best.push(Ranked {
-            rank: i64::from(i32::MAX),
-            entry,
-        });
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Ranking
-// ---------------------------------------------------------------------------
-
-/// A result and the number that decides whether it survives the cap.
-///
-/// For a query that is the name score; for Recent it is the modification time.
-/// Higher is better in both, so one comparison serves both.
-struct Ranked {
-    rank: i64,
-    entry: Entry,
-}
-
-/// Rank `entry` for `request`, or `None` if it does not belong in the results.
-fn rank(entry: &Entry, request: &Request) -> Option<i64> {
-    if request.files_only && entry.is_dir {
-        return None;
-    }
-    match &request.query {
-        Some(query) => otto_kit::matching::score(&entry.name, query).map(i64::from),
-        // Recent: newest first. A file whose time could not be read sorts
-        // last rather than being dropped — it is still a file that is there.
-        None => Some(entry.modified.and_then(epoch_secs).unwrap_or(i64::MIN)),
-    }
-}
-
-fn epoch_secs(t: SystemTime) -> Option<i64> {
-    t.duration_since(SystemTime::UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_secs() as i64)
-}
-
-/// The running result set: everything found so far, trimmed to the best
-/// [`LIMIT`] whenever it has grown enough to be worth the sort.
-#[derive(Default)]
-struct Best(Vec<Ranked>);
-
-impl Best {
-    fn push(&mut self, ranked: Ranked) {
-        self.0.push(ranked);
-        // Trimmed at twice the cap rather than at the cap, so a walk through a
-        // directory of a million files sorts once per thousand results instead
-        // of once per result.
-        if self.0.len() > LIMIT * 2 {
-            self.trim();
-        }
-    }
-
-    fn trim(&mut self) {
-        self.0.sort_by_key(|ranked| std::cmp::Reverse(ranked.rank));
-        self.0.truncate(LIMIT);
-    }
-
-    /// The result set as it stands, best first, one row per path: a picture
-    /// found both by its name and by its words is one file.
-    fn entries(&mut self) -> Vec<Entry> {
-        self.trim();
-        let mut seen = std::collections::HashSet::new();
-        self.0
-            .iter()
-            .filter(|r| seen.insert(r.entry.path.clone()))
-            .map(|r| r.entry.clone())
-            .collect()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// LocalSearch
-// ---------------------------------------------------------------------------
-
-// LocalSearch (TinySPARQL), the desktop's file index, reached over D-Bus.
-//
-// It is asked only for **paths**. Everything else — size, modification time,
-// kind, whether it is a folder — is read from the filesystem here, by the same
-// code that builds an ordinary directory listing. That is not duplicated work:
-// an index is always a little behind the disk, and a listing built from what
-// it remembers would name files that have been deleted and give the sizes they
-// used to have. Statting every row is what makes a result an ordinary [`Entry`]
-// that the grid, the thumbnailer and Peek can all treat like any other.
-
-const LOCALSEARCH_NAME: &str = "org.freedesktop.LocalSearch3";
-const ENDPOINT_PATH: &str = "/org/freedesktop/Tracker3/Endpoint";
-const ENDPOINT_IFACE: &str = "org.freedesktop.Tracker3.Endpoint";
-
-/// Ask the index, and hand what it says to `sink`.
-///
-/// `Err` means the indexer could not be reached at all, and nothing has been
-/// sent. An empty `Ok` is the opposite: the index looked and there was
-/// nothing, which is an answer and is shown as one.
-fn ask_index(request: &Request, sink: &Sink) -> Result<(), Unavailable> {
-    let sparql = sparql_for(request).ok_or_else(|| Unavailable("nothing to ask".into()))?;
-    let urls = query(&sparql)?;
-
-    let mut best = Best::default();
-    for url in urls {
-        if !sink.alive() {
-            return Ok(());
-        }
-        let Some(path) = path_from_file_url(&url) else {
-            continue;
-        };
-        let Some(entry) = entry_for_path(&path) else {
-            // Indexed but no longer on disk. Dropped silently: the index
-            // catching up is not something to tell anyone about. It is why
-            // the rows are statted at all rather than trusted.
-            continue;
-        };
-        if let Some(rank) = rank(&entry, request) {
-            best.push(Ranked { rank, entry });
-        }
-    }
-    ask_pictures(request, &mut best);
-
-    // Sent even when empty, and marked available: the index answered, and
-    // "nothing matched" is what it said.
-    sink.send(best.entries(), true, true);
-    Ok(())
-}
-
-/// The SPARQL for a request, or `None` when there is nothing to ask about.
-///
-/// Names are matched by **substring**, which is narrower than the subsequence
-/// match [`otto_kit::matching::score`] does on the results. A query the index
-/// answers can therefore miss a file the walk would have found — `otfl` finds
-/// `otto-files.rs` on a machine with no indexer and not on one with. Widening
-/// it would mean asking the index for every file under the roots and scoring
-/// them here, which is the walk with extra steps.
-fn sparql_for(request: &Request) -> Option<String> {
-    let mut wheres = vec![
-        "?f a nfo:FileDataObject".to_string(),
-        "?f nfo:fileName ?n".to_string(),
-        "?f nfo:fileLastModified ?m".to_string(),
-    ];
-
-    if request.files_only {
-        // Folders are `nfo:FileDataObject` too, and they dominate a
-        // newest-first answer — a folder's time changes every time anything
-        // inside it does. Excluded by mime type rather than by asking whether
-        // the resource is an `nfo:Folder`: the two are equivalent, and the
-        // type test made the same query take seventeen seconds instead of one.
-        wheres.push("?f nie:interpretedAs/nie:mimeType ?mt".to_string());
-        wheres.push("FILTER(?mt != \"inode/directory\")".to_string());
-    }
-
-    if request.roots.is_empty() {
-        return None;
-    }
-    let scope = request
-        .roots
-        .iter()
-        .map(|root| format!("STRSTARTS(STR(?f), {})", sparql_string(&file_url(root))))
-        .collect::<Vec<_>>()
-        .join(" || ");
-    wheres.push(format!("FILTER({scope})"));
-
-    if let Some(query) = &request.query {
-        let needle = query.to_lowercase();
-        wheres.push(format!(
-            "FILTER(CONTAINS(fn:lower-case(?n), {}))",
-            sparql_string(&needle)
-        ));
-    }
-
-    // Ordered newest-first in both cases, because that is what the cap has to
-    // cut against: for Recent it *is* the ranking, and for a query it is the
-    // least arbitrary way to choose which matches to bring back when there are
-    // more of them than anyone will read.
-    Some(format!(
-        "SELECT DISTINCT ?f WHERE {{ {} }} ORDER BY DESC(?m) LIMIT {}",
-        wheres.join(" . "),
-        LIMIT * 2
-    ))
-}
-
-/// `text` as a SPARQL string literal.
-///
-/// The query is built from something the user typed, so this is the boundary
-/// that keeps a quotation mark in a filename from being a query of its own.
-/// Control characters are dropped rather than escaped — no filename anyone
-/// means to search for has one, and there is no reason to find out what the
-/// parser does with a raw newline.
-fn sparql_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if c.is_control() => {}
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-/// A path as a `file:` URL, percent-encoding what has to be encoded.
-fn file_url(path: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    let mut out = String::from("file://");
-    for &byte in path.as_os_str().as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                out.push(byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
-/// The path a `file:` URL names, or `None` if it names something else.
-fn path_from_file_url(url: &str) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-    let rest = url.strip_prefix("file://")?;
-    // Only this host's own files. `file://otherhost/...` is not ours to open.
-    let rest = rest.strip_prefix('/').map(|r| format!("/{r}"))?;
-
-    let bytes = rest.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    Some(PathBuf::from(std::ffi::OsString::from_vec(out)))
-}
-
-/// Run one SPARQL SELECT and return the first column of every row.
-///
-/// `Query` hands its rows back down a pipe rather than in the reply, so the
-/// read end is drained on a thread of its own: the daemon writes the whole
-/// result set before the method returns, and a result set larger than a pipe
-/// buffer would otherwise deadlock the two ends against each other.
-fn query(sparql: &str) -> Result<Vec<String>, Unavailable> {
-    let (read, write) = pipe().map_err(|e| Unavailable(format!("pipe: {e}")))?;
-
-    let reader = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut file = std::fs::File::from(read);
-        let mut buffer = Vec::new();
-        let _ = file.read_to_end(&mut buffer);
-        buffer
-    });
-
-    // A runtime of this thread's own rather than the application's. The search
-    // worker is a plain thread and has no handle to the one `main` is running,
-    // and a current-thread runtime for one round trip costs less than plumbing
-    // one through would.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| Unavailable(format!("runtime: {e}")))?;
-
-    let called = runtime.block_on(async {
-        let connection = zbus::Connection::session().await?;
-        let arguments: HashMap<String, zbus::zvariant::Value<'_>> = HashMap::new();
-        connection
-            .call_method(
-                Some(LOCALSEARCH_NAME),
-                ENDPOINT_PATH,
-                Some(ENDPOINT_IFACE),
-                "Query",
-                &(sparql, zbus::zvariant::Fd::Owned(write), arguments),
-            )
-            .await
-            .map(|_| ())
-    });
-
-    let buffer = reader.join().unwrap_or_default();
-    called.map_err(|e| Unavailable(format!("{e}")))?;
-    Ok(cursor_rows(&buffer))
-}
-
-/// A pipe, both ends owned, with the write end kept out of a child's hands.
-fn pipe() -> std::io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
-    use std::os::fd::FromRawFd;
-    let mut fds = [0 as libc::c_int; 2];
-    // SAFETY: `fds` is two ints, which is what `pipe2` writes, and each is
-    // wrapped in an `OwnedFd` exactly once so neither is closed twice.
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    unsafe {
-        Ok((
-            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
-            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
-        ))
-    }
-}
-
-/// The first column of every row in a TinySPARQL cursor stream.
-///
-/// The wire format is not documented anywhere, but it is simple and it is what
-/// `Query` gives you — there is no JSON or Turtle route out of a `SELECT`.
-/// Each row is, in the machine's own byte order:
-///
-/// ```text
-/// u32                 number of columns
-/// u32 × columns       value type of each column
-/// u32 × columns       end offset of each column's text within the blob
-/// bytes               the blob: one NUL-terminated string per column
-/// ```
-///
-/// Offsets are the index of each string's terminating NUL, so the blob is one
-/// byte longer than the last of them. A stream that does not parse yields the
-/// rows read so far rather than an error: a partial answer from an index that
-/// is only an accelerator is not worth failing a search over.
-fn cursor_rows(buffer: &[u8]) -> Vec<String> {
-    let mut rows = Vec::new();
-    let mut at = 0usize;
-
-    let u32_at = |buffer: &[u8], at: usize| -> Option<usize> {
-        let bytes: [u8; 4] = buffer.get(at..at + 4)?.try_into().ok()?;
-        Some(u32::from_ne_bytes(bytes) as usize)
     };
+    if !sink.alive() {
+        return;
+    }
+    ask_pictures(&plan, &mut results);
+    // Sent even when empty: when the index answered, "nothing matched" is
+    // what it said.
+    sink.send(entries(&mut results), true, available);
+}
 
+/// Pictures whose remembered words match the query, and that meet the rest
+/// of it.
+///
+/// Matched against the `text:` terms when there are any. Otherwise the plain
+/// words stand in, so that typing a word seen in a screenshot finds the
+/// screenshot, as `specs/peek-ocr.md` promises; the name then need not match.
+///
+/// Read off Otto's own cache of what the recogniser found in pictures the
+/// person has looked at (see `ocrcache`), so this answers only for those. A
+/// hit that the index also returned is the same path, and
+/// [`otto_search::Results::best`] keeps one row per path.
+fn ask_pictures(plan: &Plan, results: &mut otto_search::Results) {
+    let by_text = plan.searches_text();
+    let needles: Vec<&str> = if by_text {
+        plan.text_needles().collect()
+    } else {
+        plan.name_needles().collect()
+    };
+    let Some((first, rest)) = needles.split_first() else {
+        return;
+    };
+    let mut paths = crate::ocrcache::matches(first);
+    for needle in rest {
+        let also = crate::ocrcache::matches(needle);
+        paths.retain(|path| also.contains(path));
+    }
+    for path in paths {
+        let Some(found) = Found::stat(&path) else {
+            continue;
+        };
+        let facts = found.facts(otto_kit::filetype::mime_for_name(&found.name));
+        let admitted = if by_text {
+            plan.admits(&facts)
+        } else {
+            plan.admits_ignoring_names(&facts)
+        };
+        if !admitted {
+            continue;
+        }
+        // Found by its words rather than its name, it ranks with the best
+        // name matches: the words are a whole-word hit.
+        let score = plan.rank(&found.name).unwrap_or(WORDS_SCORE);
+        results.push(found, score);
+    }
+}
+
+/// The name score given to a picture found by its words.
+const WORDS_SCORE: i64 = i32::MAX as i64;
+
+/// The result set as the pane shows it.
+fn entries(results: &mut otto_search::Results) -> Vec<Entry> {
+    results.best().into_iter().map(Entry::from).collect()
+}
+
+impl otto_search::Progress for Sink {
+    fn alive(&self) -> bool {
+        Sink::alive(self)
+    }
+
+    /// More is coming; show what there is meanwhile.
+    fn page(&mut self, results: &mut otto_search::Results) -> bool {
+        self.send(entries(results), false, true)
+    }
+}
+
+/// How long the indexer is left alone between checks while it is behind.
+///
+/// Often enough that the notice goes within a few seconds of the indexer
+/// finishing; each check is a handful of D-Bus round trips on a worker, so
+/// this costs nothing the person would notice.
+const INDEX_RECHECK: Duration = Duration::from_secs(3);
+
+/// What the file indexer is doing, asked on a worker and polled from the UI
+/// thread, for as long as a search is open.
+///
+/// Asked alongside every search, then again every [`INDEX_RECHECK`] while the
+/// indexer is behind, so a notice that results may be incomplete goes away
+/// once it catches up. Once it is caught up, or the watch is stopped, the
+/// worker ends.
+pub struct IndexWatch {
+    rx: Option<Receiver<Status>>,
+    /// Cleared to tell the current worker nobody is listening any more.
+    alive: Arc<AtomicBool>,
+    status: Option<Status>,
+}
+
+impl Default for IndexWatch {
+    fn default() -> Self {
+        Self {
+            rx: None,
+            alive: Arc::new(AtomicBool::new(false)),
+            status: None,
+        }
+    }
+}
+
+impl Drop for IndexWatch {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::Relaxed);
+    }
+}
+
+impl IndexWatch {
+    /// Ask again now, and keep asking while the indexer is behind. A worker
+    /// already running is abandoned. The last answer stays until the new one
+    /// lands, so a notice on screen does not blink off and back on.
+    pub fn start(&mut self) {
+        self.alive.store(false, Ordering::Relaxed);
+        let alive = Arc::new(AtomicBool::new(true));
+        self.alive = Arc::clone(&alive);
+        let (tx, rx) = channel();
+        self.rx = Some(rx);
+        std::thread::spawn(move || watch_index(&tx, &alive));
+    }
+
+    /// Stop asking and forget the answer: nothing is searching any more.
+    pub fn stop(&mut self) {
+        self.alive.store(false, Ordering::Relaxed);
+        self.rx = None;
+        self.status = None;
+    }
+
+    /// Take the newest answer, if one has arrived. Returns whether it
+    /// changed. Never blocks.
+    pub fn poll(&mut self) -> bool {
+        let Some(rx) = self.rx.as_ref() else {
+            return false;
+        };
+        let mut changed = false;
+        while let Ok(status) = rx.try_recv() {
+            changed |= self.status != Some(status);
+            self.status = Some(status);
+        }
+        changed
+    }
+
+    /// A watch that has already heard `status`, with no worker behind it.
+    #[cfg(test)]
+    pub(crate) fn answered(status: Status) -> Self {
+        let mut watch = Self::default();
+        watch.status = Some(status);
+        watch
+    }
+
+    /// The last answer, if one has arrived since the watch started.
+    pub fn status(&self) -> Option<&Status> {
+        self.status.as_ref()
+    }
+}
+
+/// The watch's worker body.
+fn watch_index(tx: &Sender<Status>, alive: &AtomicBool) {
     loop {
-        let Some(columns) = u32_at(buffer, at) else {
-            return rows;
-        };
-        at += 4;
-        if columns == 0 {
-            return rows;
+        let status = otto_search::index::status();
+        if !alive.load(Ordering::Relaxed) || tx.send(status).is_err() {
+            return;
         }
-        // The types are skipped: every column asked for here is a string or a
-        // resource, and both arrive as text in the blob.
-        at += 4 * columns;
-        let Some(first_end) = u32_at(buffer, at) else {
-            return rows;
-        };
-        let Some(last_end) = u32_at(buffer, at + 4 * (columns - 1)) else {
-            return rows;
-        };
-        at += 4 * columns;
-        let Some(blob) = buffer.get(at..at + last_end + 1) else {
-            return rows;
-        };
-        at += last_end + 1;
-        match blob.get(..first_end).map(String::from_utf8_lossy) {
-            Some(text) => rows.push(text.into_owned()),
-            None => return rows,
+        otto_kit::prelude::AppContext::request_wakeup();
+        if !keeps_watching(&status) {
+            return;
         }
+        std::thread::sleep(INDEX_RECHECK);
+        if !alive.load(Ordering::Relaxed) {
+            return;
+        }
+    }
+}
+
+/// Whether the indexer is worth asking again later. Only while it is behind:
+/// idle stays idle until something changes on disk, and a missing or stopped
+/// indexer is already reported by the search itself.
+fn keeps_watching(status: &Status) -> bool {
+    status.is_behind()
+}
+
+/// What the window says about the indexer being behind, if it is.
+pub fn indexing_notice(status: &Status) -> Option<String> {
+    match status.state {
+        State::Indexing => Some(otto_kit::t_owned!(
+            "files-search-indexing",
+            percent = (status.progress * 100.0).round() as i64
+        )),
+        State::Paused => Some(otto_kit::t_owned!("files-search-indexing-paused")),
+        State::Missing | State::Stopped | State::Idle => None,
     }
 }
 
@@ -706,37 +549,34 @@ mod tests {
     #[test]
     fn a_folder_scoped_search_asks_only_about_that_folder() {
         let dir = PathBuf::from("/home/u/Documents");
-        let sparql = sparql_for(&Request::folder("report".into(), dir.clone()))
+        let plan = Request::folder("report".into(), dir.clone())
+            .plan()
             .expect("a folder scope is answerable");
+        assert_eq!(plan.roots(), std::slice::from_ref(&dir));
 
-        assert!(
-            sparql.contains(&format!("STRSTARTS(STR(?f), \"{}", file_url(&dir))),
-            "confined to the folder: {sparql}"
-        );
-        assert!(
-            sparql.contains("report"),
-            "and still asks the query: {sparql}"
-        );
-
-        // Everywhere asks the same question of the whole of home, so the two
-        // are comparable rather than merely both called search.
-        let everywhere = sparql_for(&Request::everywhere("report".into()));
-        assert!(everywhere.is_some_and(|q| q.contains("report")));
+        // A relative `in:` is relative to the folder the search started in.
+        let plan = Request::folder("report in:notes".into(), dir.clone())
+            .plan()
+            .expect("answerable");
+        assert_eq!(plan.roots(), [dir.join("notes")]);
     }
 
-    /// Recent is the same query with nothing to match on: newest first, and
-    /// without the folders, whose time changes whenever anything inside them
-    /// does and which would otherwise fill the listing.
+    /// Recent is the same machinery with nothing to match on: newest first,
+    /// and without the folders.
     #[test]
-    fn recent_asks_the_index_for_files_newest_first() {
-        let sparql = sparql_for(&Request::recent()).expect("Recent is answerable");
-        assert!(sparql.contains("ORDER BY DESC(?m)"), "{sparql}");
-        assert!(sparql.contains("inode/directory"), "{sparql}");
+    fn recent_is_files_newest_first() {
+        let request = Request {
+            roots: vec![PathBuf::from("/home/u")],
+            ..Request::recent()
+        };
+        let plan = request.plan().expect("Recent is answerable");
+        assert_eq!(plan.sort(), otto_search::Sort::Modified);
+        assert!(plan.sparql(10).text.ends_with("ORDER BY DESC(?m) LIMIT 10"));
     }
 
     /// The state that has to be visible rather than papered over. With nothing
     /// able to answer, the batch comes back empty *and* marked unavailable, so
-    /// the pane can say the indexer is off instead of "nothing found" — which
+    /// the pane can say the indexer is off instead of "nothing found", which
     /// would send someone looking for a file that is sitting on the disk.
     #[test]
     fn an_index_that_cannot_answer_says_so_rather_than_reporting_an_empty_result() {
@@ -744,9 +584,9 @@ mod tests {
         // before the bus is touched, which makes this independent of whether a
         // daemon happens to be running on the machine running the tests.
         let batch = run_to_batch(Request {
-            query: Some("anything".into()),
+            query: "anything".into(),
             roots: Vec::new(),
-            files_only: false,
+            cwd: None,
             debounce: Duration::ZERO,
         });
 
@@ -776,82 +616,58 @@ mod tests {
         assert!(rx.into_iter().next().is_none());
     }
 
-    /// Against the real daemon, which is the only thing that can say whether
-    /// the SPARQL is *accepted* as well as well-formed. Ignored by default:
-    /// it needs a running indexer, and what it finds depends on the machine.
+    fn status(state: State, progress: f64) -> Status {
+        Status {
+            state,
+            progress,
+            remaining: None,
+        }
+    }
+
+    /// Only an indexer that is behind is asked again: once it is idle the
+    /// notice is gone and nothing needs watching, and a missing or stopped
+    /// one is what the search itself reports.
+    #[test]
+    fn the_indexer_is_watched_only_while_it_is_behind() {
+        assert!(keeps_watching(&status(State::Indexing, 0.4)));
+        assert!(keeps_watching(&status(State::Paused, 0.4)));
+        assert!(!keeps_watching(&status(State::Idle, 1.0)));
+        assert!(!keeps_watching(&status(State::Stopped, 0.0)));
+        assert!(!keeps_watching(&status(State::Missing, 0.0)));
+    }
+
+    /// The notice names how far along the indexer is while it works, says
+    /// when it is paused, and is absent otherwise.
+    #[test]
+    fn the_indexing_notice_follows_the_indexer() {
+        let working = indexing_notice(&status(State::Indexing, 0.617)).expect("a notice");
+        assert!(working.contains("62"), "{working}");
+        let paused = indexing_notice(&status(State::Paused, 0.617)).expect("a notice");
+        assert_ne!(working, paused);
+        assert!(!paused.contains("62"), "{paused}");
+        for state in [State::Idle, State::Stopped, State::Missing] {
+            assert_eq!(indexing_notice(&status(state, 1.0)), None);
+        }
+    }
+
+    /// Against the real daemon, end to end through the worker. Ignored by
+    /// default: it needs a running indexer, and what it finds depends on the
+    /// machine. `otto-search`'s own `live_index` test covers every filter.
     ///
     ///     cargo test -p otto-files --lib live_index -- --ignored --nocapture
     #[test]
     #[ignore = "needs a running LocalSearch indexer"]
     fn live_index_answers_both_scopes() {
-        let home = crate::model::home_dir().expect("a home directory");
-
         for (what, request) in [
             ("recent", Request::recent()),
             ("everywhere", Request::everywhere("rs".into())),
         ] {
-            let sparql = sparql_for(&request).expect("answerable");
-            let rows = query(&sparql).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-            println!("{what}: {} rows", rows.len());
-            assert!(!rows.is_empty(), "{what} returned nothing");
+            let started = std::time::Instant::now();
+            let batch = run_to_batch(request);
+            println!("{what}: {:.2}s", started.elapsed().as_secs_f64());
+            println!("{what}: {} entries", batch.entries.len());
+            assert!(batch.available, "{what}: the index did not answer");
+            assert!(!batch.entries.is_empty(), "{what} returned nothing");
         }
-
-        // The scope has to actually narrow, not merely parse: a folder filter
-        // the index ignored would make This Folder a slower Everywhere, and
-        // nothing on screen would say so.
-        let dir = home.join("Documents");
-        if !dir.is_dir() {
-            println!("no Documents to scope to; skipping the narrowing check");
-            return;
-        }
-        let sparql = sparql_for(&Request::folder("a".into(), dir.clone())).expect("answerable");
-        let rows = query(&sparql).expect("the folder scope is accepted");
-        println!("folder: {} rows under {}", rows.len(), dir.display());
-        let prefix = file_url(&dir);
-        assert!(
-            rows.iter().all(|url| url.starts_with(&prefix)),
-            "a row escaped the folder scope"
-        );
-    }
-
-    #[test]
-    fn a_quotation_mark_in_a_query_cannot_close_the_sparql_string() {
-        let escaped = sparql_string("say \"hi\" \\ now");
-        assert_eq!(escaped, "\"say \\\"hi\\\" \\\\ now\"");
-        assert_eq!(sparql_string("a\nb"), "\"ab\"");
-    }
-
-    #[test]
-    fn file_urls_round_trip_through_the_characters_that_need_encoding() {
-        let path = PathBuf::from("/home/u/Documents/a b&c%d — é.txt");
-        assert_eq!(path_from_file_url(&file_url(&path)), Some(path));
-    }
-
-    #[test]
-    fn a_cursor_row_is_read_back_out_of_its_wire_format() {
-        // One row, two columns: the shape `Query` actually writes.
-        let url = "file:///tmp/x.txt";
-        let mtime = "2026-01-01T00:00:00Z";
-        let mut blob = Vec::new();
-        blob.extend_from_slice(url.as_bytes());
-        blob.push(0);
-        blob.extend_from_slice(mtime.as_bytes());
-        blob.push(0);
-
-        let mut wire = Vec::new();
-        wire.extend_from_slice(&2u32.to_ne_bytes());
-        wire.extend_from_slice(&1u32.to_ne_bytes());
-        wire.extend_from_slice(&5u32.to_ne_bytes());
-        wire.extend_from_slice(&(url.len() as u32).to_ne_bytes());
-        wire.extend_from_slice(&((url.len() + 1 + mtime.len()) as u32).to_ne_bytes());
-        wire.extend_from_slice(&blob);
-
-        assert_eq!(cursor_rows(&wire), vec![url.to_string()]);
-    }
-
-    #[test]
-    fn a_truncated_cursor_yields_what_it_had_rather_than_panicking() {
-        assert!(cursor_rows(&[1, 0, 0]).is_empty());
-        assert!(cursor_rows(&2u32.to_ne_bytes()).is_empty());
     }
 }
