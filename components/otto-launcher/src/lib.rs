@@ -4,6 +4,7 @@
 pub mod apps;
 pub mod ask;
 pub mod calc;
+pub mod drafts;
 pub mod input;
 pub mod log;
 pub mod selection;
