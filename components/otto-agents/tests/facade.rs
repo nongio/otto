@@ -45,7 +45,13 @@ impl Backend for Asker {
                 agent_session: None,
             });
             while let Some(command) = commands.recv().await {
-                let SessionCommand::Prompt { turn_id, text, .. } = command else {
+                let SessionCommand::Prompt {
+                    turn_id,
+                    text,
+                    remote,
+                    ..
+                } = command
+                else {
                     continue;
                 };
                 let text = if text == "ask" {
@@ -57,6 +63,8 @@ impl Backend for Asker {
                     });
                     let decision = decision.await.unwrap_or_else(|_| Decision::deny());
                     format!("answered {}", decision.option_id().unwrap_or("none"))
+                } else if let Some(via) = remote {
+                    format!("you said {text} from {via}")
                 } else {
                     format!("you said {text}")
                 };
@@ -322,4 +330,32 @@ async fn a_chat_bridge_drives_a_desktop_session() {
         "resume replays nothing: {}",
         seen.text
     );
+}
+
+#[tokio::test]
+async fn a_bridge_says_its_messages_come_from_the_phone() {
+    let url = serving().await;
+    let folder = tempfile::tempdir().expect("tempdir");
+    let cwd = folder.path().to_path_buf();
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let stop = with_facade_args(
+        &url,
+        &["--remote", "Telegram"],
+        Arc::clone(&seen),
+        async move |connection| {
+            let opened = connection
+                .send_request(NewSessionRequest::new(cwd))
+                .block_task()
+                .await?;
+            let said = connection
+                .send_request(prompt(&opened.session_id, "hi"))
+                .block_task()
+                .await?;
+            Ok(said.stop_reason)
+        },
+    )
+    .await;
+    assert_eq!(stop, StopReason::EndTurn);
+    let text = seen.lock().unwrap().text.clone();
+    assert!(text.contains("you said hi from Telegram"), "{text}");
 }
