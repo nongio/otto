@@ -7,6 +7,9 @@
 #   files-command review NAME   open the draft for the person to read
 #   files-command publish NAME  move the draft, executable, to where Files reads it
 #   files-command list          drafts and published commands
+#   files-command commands      every command Files offers, to use yourself
+#   files-command run SCRIPT ID [--arg TEXT] FILE...
+#                               run one on FILE..., as choosing it in Files would
 #
 # A draft lives in ~/.local/state/otto/files-drafts/, where Files never looks,
 # so a half-written command never shows up in a window. Only `publish` puts it
@@ -108,6 +111,36 @@ case $command in
         ls -1 "$drafts" 2>/dev/null | sed 's/^/  /'
         echo "published ($published):"
         ls -1 "$published" 2>/dev/null | sed 's/^/  /'
+        ;;
+    commands)
+        [ $# -eq 0 ] || usage
+        # What each published script says it offers, one command a line.
+        for script in "$published"/*; do
+            [ -f "$script" ] && [ -x "$script" ] || continue
+            out=$(timeout 3 "$script" describe 2>/dev/null) || continue
+            printf '%s' "$out" | python3 "$here/files-command-list.py" "$(basename "$script")" || true
+        done
+        ;;
+    run)
+        [ $# -ge 2 ] || usage
+        valid_name "$1"
+        script="$published/$1"
+        id=$2
+        shift 2
+        [ -f "$script" ] && [ -x "$script" ] || die "no published command called \"$script\"; see: files-command commands"
+        has_arg=
+        arg=
+        if [ "${1:-}" = --arg ]; then
+            [ $# -ge 2 ] || usage
+            has_arg=1
+            arg=$2
+            shift 2
+        fi
+        [ $# -ge 1 ] || die "name the files to run it on"
+        # The request Files would send for these files, selected in the
+        # folder the first of them is in.
+        request=$(python3 "$here/files-command-request.py" "$id" "$has_arg" "$arg" "$@") || exit 1
+        printf '%s' "$request" | "$script" run
         ;;
     *) usage ;;
 esac
