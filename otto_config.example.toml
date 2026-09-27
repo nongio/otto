@@ -202,7 +202,8 @@ scroll_speed = 1.0
 # to force it either way.
 # mac_style_modifiers = true
 #
-# Show the active layout in otto-bar (only drawn with more than one layout).
+# Show the active layout in otto-bar (off by default; only drawn with more
+# than one layout).
 # The bar's menu switches between them; `otto-msg input type:keyboard
 # xkb_switch_layout next` does the same from a script.
 # show_layout_in_bar = true

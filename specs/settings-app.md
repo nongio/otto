@@ -479,8 +479,8 @@ list is still shown as it stands.
 - **Add** appends a layout: the one the locale names if it is not already in
   the list. A *System default* first layout is named first, as
   `XKB_DEFAULT_LAYOUT` or `us`.
-- **Show layout in the bar** (`input.show_layout_in_bar`, live) turns
-  otto-bar's layout indicator on or off. The bar hears it through
+- **Show layout in the bar** (`input.show_layout_in_bar`, live, off by
+  default) turns otto-bar's layout indicator on or off. The bar hears it through
   `org.otto.Shell1`'s `InputChanged`, the same event that tells it the layout
   switched.
 - **Switch layouts with**, shown only with two or more layouts, replaces every

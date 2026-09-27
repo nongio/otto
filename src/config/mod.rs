@@ -1784,8 +1784,9 @@ pub struct InputConfig {
     /// way.
     #[serde(default)]
     pub mac_style_modifiers: Option<bool>,
-    /// Whether otto-bar shows the active keyboard layout. The bar draws it
-    /// only with more than one layout, since one layout has nothing to tell.
+    /// Whether otto-bar shows the active keyboard layout. Off unless asked
+    /// for; the bar draws it only with more than one layout, since one layout
+    /// has nothing to tell.
     #[serde(default = "default_show_layout_in_bar")]
     pub show_layout_in_bar: bool,
 }
@@ -1846,7 +1847,7 @@ impl Default for InputConfig {
 }
 
 fn default_show_layout_in_bar() -> bool {
-    true
+    false
 }
 
 fn default_tap_enabled() -> bool {

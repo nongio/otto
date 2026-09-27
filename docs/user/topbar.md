@@ -189,8 +189,8 @@ governor = "performance"
 ## Keyboard layout
 
 With more than one keyboard layout, the bar can show which one is active: a
-small keycap with the layout's short name, such as **US** or **IT**. Turn it
-on in **Settings → Keyboard → Input source → Show in the bar**. The switch is
+small keycap with the layout's short name, such as **US** or **IT**. It is off
+by default; turn it on in **Settings → Keyboard → Input source → Show in the bar**. The switch is
 only there once a second layout has been added.
 
 Click the keycap for a menu of your layouts, with the active one ticked.

@@ -44,13 +44,14 @@ already bound. With `altwin:ctrl_win`, for example, `Logo+Space` is also
 
 ### Layout in the bar
 
-With more than one layout, otto-bar shows the active one as its short code
+With more than one layout, otto-bar can show the active one as its short code
 (**US**, **IT**). Clicking it lists the layouts to switch to, and opens the
-keyboard settings. Turn it off with **Show layout in the bar** in Settings, or:
+keyboard settings. It is off by default: turn it on with **Show in the bar**
+in Settings, or:
 
 ```toml
 [input]
-show_layout_in_bar = false
+show_layout_in_bar = true
 ```
 
 A script can switch layouts too, in sway's words:

@@ -52,7 +52,7 @@ mod keyboard_layout_tests {
                 .map(|names| names.len()),
             Some(2)
         );
-        assert_eq!(keyboard_now["otto_show_in_bar"], serde_json::json!(true));
+        assert_eq!(keyboard_now["otto_show_in_bar"], serde_json::json!(false));
         assert_eq!(active(&handle), 0);
 
         assert_eq!(
@@ -82,12 +82,17 @@ mod keyboard_layout_tests {
     #[serial]
     fn the_bar_toggle_is_reported_and_applies_live() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
-        handle
-            .set_setting("input.show_layout_in_bar", SettingValue::Bool(false))
-            .expect("the toggle is live");
+        // Off until the user asks for it.
         assert_eq!(
             keyboard(&handle)["otto_show_in_bar"],
             serde_json::json!(false)
+        );
+        handle
+            .set_setting("input.show_layout_in_bar", SettingValue::Bool(true))
+            .expect("the toggle is live");
+        assert_eq!(
+            keyboard(&handle)["otto_show_in_bar"],
+            serde_json::json!(true)
         );
     }
 }
