@@ -134,6 +134,39 @@ Stop any cc-connect you started by hand first: two copies with one config
 refuse to run (`--force` would kill the other), and two pollers on one bot
 token fight. Don't also use `cc-connect daemon install`, its own service.
 
+## 6. What the phone may do without asking
+
+Every tool call that needs permission is a question on the phone. Claude reads
+its permission rules from the folder the session works in, so the bridge's
+folder can allow the few that sending a screenshot takes, and keep out skills
+meant for the desk. `~/.local/state/otto/remote/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Skill(otto:send-to-phone)",
+      "Skill(otto:otto-help)",
+      "Bash(/usr/share/otto/plugins/otto/skills/send-to-phone/scripts/screenshot:*)",
+      "Bash(cc-connect send:*)",
+      "Read(~/Pictures/Screenshots/**)"
+    ],
+    "deny": []
+  }
+}
+```
+
+- **A skill's own `allowed-tools` is not enough.** Through ACP, Claude still
+  asks for a command the skill lists; the rules above are what it honours.
+- **The screenshot is one command.** The skill's `scripts/screenshot` brings
+  the app forward, captures and prints the file, so one rule covers it; `grim`
+  chained with `mkdir` and `sleep` would ask every time.
+- **Skills of your own** in `~/.claude/skills` reach the bridge's agent too.
+  One that also talks about screenshots can win over `send-to-phone`: list it
+  under `deny` as `Skill(<name>)`.
+- `cc-connect send` goes to your own chat, but anything it sends leaves the
+  computer. Leave it out of `allow` to be asked each time.
+
 ## Troubleshooting
 
 | What you see | Where to look |
