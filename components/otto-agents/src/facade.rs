@@ -35,7 +35,7 @@ use ahp_types::actions::{
     ActionEnvelope, ChatPendingMessageSetAction, ChatToolCallConfirmedAction,
     ChatToolCallReadyAction, ChatTurnCancelledAction, StateAction,
 };
-use ahp_types::common::StringOrMarkdown;
+use ahp_types::common::{JsonObject, StringOrMarkdown};
 use ahp_types::state::{
     ChatState, ConfirmationOption, ConfirmationOptionKind, Message, MessageAttachment, MessageKind,
     MessageOrigin, MessageResourceAttachment, PendingMessageKind, ResponsePart, SessionLifecycle,
@@ -65,8 +65,14 @@ pub enum Permissions {
 
 /// Serves ACP on stdin and stdout until the client goes away. `agent` is the
 /// service's agent new sessions run, by id or name; the default agent without
-/// one.
-pub async fn serve(url: &str, agent: Option<&str>, permissions: Permissions) -> anyhow::Result<()> {
+/// one. `remote` names the chat app the client relays messages from, when
+/// they are written away from the desktop; each message says so to the agent.
+pub async fn serve(
+    url: &str,
+    agent: Option<&str>,
+    permissions: Permissions,
+    remote: Option<String>,
+) -> anyhow::Result<()> {
     let service = cli::connect(url).await?;
     let provider = cli::resolve_agent(&service, agent).await?;
     let sessions: Sessions = Arc::default();
@@ -193,6 +199,7 @@ pub async fn serve(url: &str, agent: Option<&str>, permissions: Permissions) -> 
         .on_receive_request(
             {
                 let sessions = Arc::clone(&sessions);
+                let remote = remote.clone();
                 async move |request: PromptRequest, responder, connection: ConnectionTo<Client>| {
                     let Some(commands) = lock(&sessions).get(&*request.session_id.0).cloned()
                     else {
@@ -202,7 +209,7 @@ pub async fn serve(url: &str, agent: Option<&str>, permissions: Permissions) -> 
                         )));
                     };
                     let (done, outcome) = oneshot::channel();
-                    let message = message(request.prompt);
+                    let message = message(request.prompt, remote.as_deref());
                     if commands
                         .send(Command::Prompt {
                             message: Box::new(message),
@@ -641,7 +648,19 @@ fn kind(option: &ConfirmationOption) -> PermissionOptionKind {
 /// An ACP prompt as a chat message. Text is kept as written; links become
 /// attachments, which the agent may read without asking; embedded text
 /// resources are inlined. Pictures and audio have nowhere to go yet.
-fn message(prompt: Vec<ContentBlock>) -> Message {
+/// The chat app a chat bridge relays from, as cc-connect tells the agent it
+/// starts: the platform at the head of `CC_SESSION_KEY`, such as
+/// `telegram:<chat>:<user>`.
+pub fn remote_from_env() -> Option<String> {
+    let key = std::env::var("CC_SESSION_KEY").ok()?;
+    let platform = key.split(':').next()?.trim();
+    let mut letters = platform.chars();
+    let first = letters.next()?;
+    Some(first.to_uppercase().chain(letters).collect())
+}
+
+/// `prompt` as a chat message, marked as written in `remote` when it was.
+fn message(prompt: Vec<ContentBlock>, remote: Option<&str>) -> Message {
     let mut text = Vec::new();
     let mut attachments = Vec::new();
     for block in prompt {
@@ -677,7 +696,11 @@ fn message(prompt: Vec<ContentBlock>) -> Message {
         attachments: (!attachments.is_empty()).then_some(attachments),
         model: None,
         agent: None,
-        meta: None,
+        meta: remote.map(|via| {
+            let mut meta = JsonObject::new();
+            meta.insert("otto".into(), json!({ "remote": { "via": via } }));
+            meta
+        }),
     }
 }
 

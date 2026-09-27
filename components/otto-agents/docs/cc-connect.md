@@ -21,6 +21,12 @@ from the phone.
 - **Permission requests reach the chat and the desktop.** A tool call that
   needs approval is asked in Telegram at once, and as Otto's dialog 20 seconds
   later (sooner nobody watches). Whichever you answer first wins.
+- **The agent knows you are on your phone.** `otto-agents acp` marks each
+  message as written in the chat app (`--remote Telegram`; under cc-connect
+  the platform is taken from `CC_SESSION_KEY`), and the agent is told so ahead
+  of it. Otto's agent then replies briefly, asks in the message rather than
+  with a dialog, and offers to send what it finds. The desktop's transcript
+  shows the message as written.
 - **Files and pictures go back with `cc-connect send`.** Replies reach the chat
   as text only; cc-connect drops anything else an agent sends over ACP. Otto's
   `send-to-phone` skill tells the agent to run

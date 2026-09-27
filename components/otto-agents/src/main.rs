@@ -98,6 +98,11 @@ enum Command {
         /// clients that answer by a fixed policy rather than asking anyone.
         #[arg(long, value_enum, default_value = "client")]
         permissions: facade::Permissions,
+        /// The chat app messages are relayed from, such as `Telegram`: each
+        /// one tells the agent it was written away from the desktop, on the
+        /// person's phone. Under cc-connect, its platform is the default.
+        #[arg(long, value_name = "APP")]
+        remote: Option<String>,
         /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
@@ -207,8 +212,12 @@ async fn main() -> anyhow::Result<()> {
         Command::Acp {
             agent,
             permissions,
+            remote,
             url,
-        } => facade::serve(&url, agent.as_deref(), permissions).await,
+        } => {
+            let remote = remote.or_else(facade::remote_from_env);
+            facade::serve(&url, agent.as_deref(), permissions, remote).await
+        }
         Command::Bridge { config } => cli::run_bridge(config.as_deref()),
         Command::Plugins {
             command: PluginsCommand::Install { dir, home, only },

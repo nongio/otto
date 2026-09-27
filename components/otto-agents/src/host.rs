@@ -2106,6 +2106,7 @@ impl HostState {
             turn_id: action.turn_id.clone(),
             text: action.message.text.clone(),
             attachments: attached,
+            remote: remote_origin(&action.message),
         };
         self.apply(&chat_uri, StateAction::ChatTurnStarted(action), origin);
         self.mark_written(session_uri);
@@ -3140,6 +3141,21 @@ fn error_info(error_type: &str, message: String) -> ErrorInfo {
         stack: None,
         meta: None,
     }
+}
+
+/// The chat app a message was written in away from the desktop, as a chat
+/// bridge marks it in the message's `_meta`: `otto.remote.via`.
+fn remote_origin(message: &Message) -> Option<String> {
+    let via = message
+        .meta
+        .as_ref()?
+        .get("otto")?
+        .get("remote")?
+        .get("via")?;
+    via.as_str()
+        .map(str::trim)
+        .filter(|via| !via.is_empty())
+        .map(str::to_string)
 }
 
 /// What a message points the agent at. Only resources referenced by URI are
