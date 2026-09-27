@@ -190,8 +190,17 @@ settings-tiling-mode-bounce = Rebote del modo mosaico
 settings-key-repeat-delay = Retardo de repetición de tecla
 settings-key-repeat-rate = Velocidad de repetición de tecla
 settings-group-input-source = Fuente de entrada
-settings-xkb-layout = Distribución
+settings-xkb-layout-nth = Distribución { $n }
+settings-xkb-layout-default = Predeterminada del sistema
+settings-xkb-layout-remove = Quitar esta distribución
+settings-xkb-layouts = Distribuciones
+settings-xkb-layouts-detail = Hasta cuatro, en orden. La sesión empieza con la primera.
 settings-xkb-variant = Variante
+settings-xkb-variant-standard = Estándar
+settings-xkb-switch = Cambiar de distribución con
+settings-xkb-switch-detail = Las teclas que pasan a la siguiente distribución.
+settings-xkb-switch-none = Ninguna
+settings-xkb-show-in-bar = Mostrar en la barra
 settings-xkb-options = Opciones
 settings-group-shortcuts = Atajos
 settings-key-combination = Combinación de teclas
@@ -806,6 +815,8 @@ bar-power-saver = Ahorro de energía
 bar-power-balanced = Equilibrado
 bar-power-performance = Rendimiento
 bar-power-settings = Configuración de energía…
+bar-keyboard-settings = Configuración del teclado…
+bar-keyboard-layout-label = Distribución del teclado: { $layout }
 
 
 ## Settings — widgets
@@ -916,11 +927,13 @@ schema-keyboard-repeat-rate-description = Repeticiones por segundo mientras se m
 
 # --- input ---
 schema-input-xkb-layout-label = Distribución del teclado
-schema-input-xkb-layout-description = Nombre de la distribución XKB. Vacío para usar la predeterminada del sistema.
+schema-input-xkb-layout-description = Nombres de distribución XKB, separados por comas; la primera está activa al iniciar. Vacío usa la predeterminada del sistema.
 schema-input-xkb-variant-label = Variante del teclado
-schema-input-xkb-variant-description = Nombre de la variante XKB. Vacío para usar la predeterminada del sistema.
+schema-input-xkb-variant-description = Nombres de variante XKB, separados por comas, una por distribución. Vacío usa la variante estándar de cada distribución.
 schema-input-xkb-options-label = Opciones del teclado
 schema-input-xkb-options-description = Cadenas de opciones XKB.
+schema-input-show-layout-in-bar-label = Mostrar la distribución en la barra
+schema-input-show-layout-in-bar-description = Muestra la distribución de teclado activa en otto-bar cuando hay más de una.
 schema-input-tap-enabled-label = Tocar para pulsar
 schema-input-tap-enabled-description = Trata un toque en el trackpad como una pulsación.
 schema-input-tap-drag-enabled-label = Tocar y arrastrar

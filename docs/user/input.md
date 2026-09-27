@@ -15,6 +15,15 @@ xkb_options = ["caps:escape"]
 
 These are standard XKB settings, the same names `setxkbmap` uses.
 
+The easiest way to set them is **Settings → Keyboard → Input source**. Each
+layout has its own pop-up, listing every layout XKB knows about on this machine,
+with a Variant pop-up under it when that layout has variants. **Add** appends a
+layout (up to four), and *Remove this layout* at the bottom of a layout's pop-up
+takes it out again. With more than one layout, **Switch layouts with** picks
+the keys that cycle through them, and **Show in the bar** puts the active
+layout in the [top bar](topbar.md#keyboard-layout). Each change applies at
+once.
+
 ### Multiple layouts
 
 ```toml
@@ -24,7 +33,32 @@ xkb_options = ["grp:win_space_toggle", "caps:escape"]
 ```
 
 `grp:win_space_toggle` binds `Logo+Space` to cycle layouts. Other common
-switchers: `grp:alt_shift_toggle`, `grp:caps_toggle`, `grp:win_space_toggle`.
+switchers: `grp:alt_shift_toggle`, `grp:caps_toggle`, `grp:ctrl_space_toggle`.
+The first layout is the one a session starts on. `xkb_variant` holds one entry
+per layout, by position: `xkb_layout = "us,it"` with `xkb_variant = "intl"`
+gives US international and standard Italian.
+
+A switch combination still reaches Otto's shortcuts, so avoid one that is
+already bound. With `altwin:ctrl_win`, for example, `Logo+Space` is also
+`Ctrl+Space`, which opens the launcher.
+
+### Layout in the bar
+
+With more than one layout, otto-bar shows the active one as its short code
+(**US**, **IT**). Clicking it lists the layouts to switch to, and opens the
+keyboard settings. Turn it off with **Show layout in the bar** in Settings, or:
+
+```toml
+[input]
+show_layout_in_bar = false
+```
+
+A script can switch layouts too, in sway's words:
+
+```sh
+otto-msg input type:keyboard xkb_switch_layout next   # or prev, or 0, 1, …
+otto-msg -t get_inputs                                # which one is active
+```
 
 ### Useful options
 
@@ -204,9 +238,10 @@ libinput list-devices
 Check the `Tap-to-click` and `Click methods` lines — a device that reports
 `n/a` for a capability cannot do it.
 
-**The layout does not change.** Layout is applied at startup. Restart the
-session. A typo in `xkb_layout` leaves you on the previous layout with a warning
-in the log.
+**The layout does not change.** A layout or variant XKB does not know is
+refused, and you stay on the previous layout. Settings reports the refusal; a
+typo in the file leaves a warning in the log. Check the names with
+`xkbcli list`.
 
 **Keys produce the wrong characters.** Check `xkb_variant` — many layouts
 (`dvorak`, `colemak`, `intl`) are variants of a base layout, not layouts in

@@ -187,8 +187,17 @@ settings-tiling-mode-bounce = 平铺模式回弹
 settings-key-repeat-delay = 按键重复延迟
 settings-key-repeat-rate = 按键重复速率
 settings-group-input-source = 输入源
-settings-xkb-layout = 布局
+settings-xkb-layout-nth = 布局 { $n }
+settings-xkb-layout-default = 系统默认
+settings-xkb-layout-remove = 移除此布局
+settings-xkb-layouts = 布局
+settings-xkb-layouts-detail = 最多四个，按顺序排列。会话从第一个开始。
 settings-xkb-variant = 变体
+settings-xkb-variant-standard = 标准
+settings-xkb-switch = 切换布局的按键
+settings-xkb-switch-detail = 用于切换到下一个布局的按键。
+settings-xkb-switch-none = 无
+settings-xkb-show-in-bar = 在栏中显示
 settings-xkb-options = 选项
 settings-group-shortcuts = 快捷键
 settings-key-combination = 组合键
@@ -775,6 +784,8 @@ bar-power-saver = 节能
 bar-power-balanced = 平衡
 bar-power-performance = 性能
 bar-power-settings = 电源设置…
+bar-keyboard-settings = 键盘设置…
+bar-keyboard-layout-label = 键盘布局：{ $layout }
 
 
 ## Settings — widgets
@@ -886,11 +897,13 @@ schema-keyboard-repeat-rate-description = 按住一个键时每秒重复的次�
 
 # --- input ---
 schema-input-xkb-layout-label = 键盘布局
-schema-input-xkb-layout-description = XKB 布局名称。留空则使用系统默认值。
+schema-input-xkb-layout-description = XKB 布局名称，以逗号分隔，第一个在启动时生效。留空则使用系统默认值。
 schema-input-xkb-variant-label = 键盘变体
-schema-input-xkb-variant-description = XKB 变体名称。留空则使用系统默认值。
+schema-input-xkb-variant-description = XKB 变体名称，以逗号分隔，每个布局一个。留空则使用各布局的标准变体。
 schema-input-xkb-options-label = 键盘选项
 schema-input-xkb-options-description = XKB 选项字符串。
+schema-input-show-layout-in-bar-label = 在栏中显示布局
+schema-input-show-layout-in-bar-description = 有多个布局时，在 otto-bar 中显示当前键盘布局。
 schema-input-tap-enabled-label = 轻点来点按
 schema-input-tap-enabled-description = 将触控板上的轻点视为点按。
 schema-input-tap-drag-enabled-label = 轻点拖移

@@ -190,8 +190,17 @@ settings-tiling-mode-bounce = Rebond du mode mosaïque
 settings-key-repeat-delay = Délai de répétition des touches
 settings-key-repeat-rate = Vitesse de répétition des touches
 settings-group-input-source = Source de saisie
-settings-xkb-layout = Disposition
+settings-xkb-layout-nth = Disposition { $n }
+settings-xkb-layout-default = Valeur par défaut du système
+settings-xkb-layout-remove = Supprimer cette disposition
+settings-xkb-layouts = Dispositions
+settings-xkb-layouts-detail = Jusqu’à quatre, dans l’ordre. La session démarre avec la première.
 settings-xkb-variant = Variante
+settings-xkb-variant-standard = Standard
+settings-xkb-switch = Changer de disposition avec
+settings-xkb-switch-detail = Les touches qui passent à la disposition suivante.
+settings-xkb-switch-none = Aucune
+settings-xkb-show-in-bar = Afficher dans la barre
 settings-xkb-options = Options
 settings-group-shortcuts = Raccourcis
 settings-key-combination = Combinaison de touches
@@ -816,6 +825,8 @@ bar-power-saver = Économie d’énergie
 bar-power-balanced = Équilibré
 bar-power-performance = Performances
 bar-power-settings = Réglages d’énergie…
+bar-keyboard-settings = Réglages du clavier…
+bar-keyboard-layout-label = Disposition du clavier : { $layout }
 
 
 ## Settings — widgets
@@ -927,11 +938,13 @@ schema-keyboard-repeat-rate-description = Répétitions par seconde pendant qu�
 
 # --- input ---
 schema-input-xkb-layout-label = Disposition du clavier
-schema-input-xkb-layout-description = Nom de la disposition XKB. Vide utilise la valeur par défaut du système.
+schema-input-xkb-layout-description = Noms de disposition XKB, séparés par des virgules ; la première est active au démarrage. Vide utilise la valeur par défaut du système.
 schema-input-xkb-variant-label = Variante du clavier
-schema-input-xkb-variant-description = Nom de la variante XKB. Vide utilise la valeur par défaut du système.
+schema-input-xkb-variant-description = Noms de variante XKB, séparés par des virgules, une par disposition. Vide utilise la variante standard de chaque disposition.
 schema-input-xkb-options-label = Options du clavier
 schema-input-xkb-options-description = Chaînes d’options XKB.
+schema-input-show-layout-in-bar-label = Afficher la disposition dans la barre
+schema-input-show-layout-in-bar-description = Affiche la disposition de clavier active dans otto-bar quand il y en a plusieurs.
 schema-input-tap-enabled-label = Toucher pour cliquer
 schema-input-tap-enabled-description = Traiter un toucher sur le pavé tactile comme un clic.
 schema-input-tap-drag-enabled-label = Toucher-glisser

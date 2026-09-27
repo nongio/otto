@@ -63,6 +63,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "cursor_theme"
             | "cursor_size"
             | "icon_theme"
+            | "input.show_layout_in_bar"
     ) || is_input_id(id)
 }
 
@@ -314,7 +315,16 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
                         ..Default::default()
                     },
                 )
-                .map_err(|err| format!("the keymap was rejected: {err}"))
+                .map_err(|err| format!("the keymap was rejected: {err}"))?;
+            // A status bar showing the layout hears about the new list.
+            state.announce_keymap();
+            Ok(())
+        }
+        // otto-bar reads it from the `InputChanged` event it already follows
+        // for the layout, so announcing the keyboard again is the whole apply.
+        "input.show_layout_in_bar" => {
+            state.announce_keymap();
+            Ok(())
         }
         // Repeat timing lives on the keyboard handle, which pushes it to the
         // focused client; Otto's own repeat (`input::keyboard`) reads the
@@ -432,6 +442,7 @@ mod tests {
             "input.xkb_layout",
             "input.xkb_variant",
             "input.xkb_options",
+            "input.show_layout_in_bar",
             "keyboard_repeat_delay",
             "keyboard_repeat_rate",
         ] {

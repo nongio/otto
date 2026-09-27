@@ -28,7 +28,8 @@ See [Autostart](autostart.md) for other ways to launch it.
 - **Left.** The focused application's name in bold, then its global menu.
 - **Centre.** Deliberately empty, leaving room for the
   [Dynamic Island](dynamic-island.md).
-- **Right.** System tray icons, then the battery, then the clock.
+- **Right.** System tray icons, then the keyboard layout, then the battery,
+  then the clock.
 
 The bar reserves its own height as an exclusive zone, so maximized windows and
 other panels stop below it rather than sliding underneath.
@@ -184,6 +185,18 @@ label = "Performance"
 command = ["pkexec", "cpupower", "frequency-set", "-g", "performance"]
 governor = "performance"
 ```
+
+## Keyboard layout
+
+With more than one keyboard layout, the bar can show which one is active: a
+small keycap with the layout's short name, such as **US** or **IT**. Turn it
+on in **Settings → Keyboard → Input source → Show in the bar**. The switch is
+only there once a second layout has been added.
+
+Click the keycap for a menu of your layouts, with the active one ticked.
+Picking one switches to it. **Keyboard Settings…** at the bottom opens the
+keyboard settings. The keycap follows every switch, including one made with
+the layout switch keys.
 
 ## Clock
 

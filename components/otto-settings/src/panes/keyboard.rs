@@ -334,27 +334,7 @@ pub fn build() -> Pane {
             ]),
             group(
                 otto_kit::t!("settings-group-input-source"),
-                vec![
-                    // Shown, not editable: these are free text with no
-                    // discoverable choice list, and the app has no text entry
-                    // yet. Binding them at least stops the pane from hiding
-                    // what the session is actually using.
-                    Row::new(
-                        otto_kit::t!("settings-xkb-layout"),
-                        Control::Text(String::new()),
-                    )
-                    .id("input.xkb_layout"),
-                    Row::new(
-                        otto_kit::t!("settings-xkb-variant"),
-                        Control::Text(String::new()),
-                    )
-                    .id("input.xkb_variant"),
-                    Row::new(
-                        otto_kit::t!("settings-xkb-options"),
-                        Control::Text(String::new()),
-                    )
-                    .id("input.xkb_options"),
-                ],
+                super::keyboard_layouts::rows(),
             ),
             // Read from the compositor's merged config, editable, but not
             // persisted: `[keyboard_shortcuts]` is a table, and the settings

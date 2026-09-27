@@ -28,6 +28,7 @@ and `org.otto.ScreenCast` on the same connection.
 | `GetTree` | `() → s` | the whole tree, i3's `GET_TREE` node shape |
 | `GetWorkspaces` | `() → s` | every workspace, i3's `GET_WORKSPACES` shape |
 | `GetOutputs` | `() → s` | every output, i3's `GET_OUTPUTS` shape |
+| `GetInputs` | `() → s` | the keyboard, sway's `GET_INPUTS` shape |
 
 Every method is handed to the compositor thread over the same calloop channel
 the settings interface uses, and answered on a `oneshot`, so a call takes
@@ -76,6 +77,7 @@ and Otto has not built it. Commands that parse and are refused at run time
 | `tiling toggle\|enable\|disable` | Otto's own: the workspace's mode |
 | `expose [show\|hide\|toggle]` | Otto's own: the window overview. Show and hide are idempotent |
 | `gaps inner\|outer <n> [current\|all]` | see below |
+| `input type:keyboard xkb_switch_layout <n>\|next\|prev` | sway's layout switch. `<n>` counts from 0; `next` and `prev` wrap. `otto:keyboard` and `*` name the keyboard too. Nothing else sway sets through `input` is taken: the rest lives in the config |
 
 A criteria is parsed, but only `focus` reads one: `[app_id="firefox"] focus`
 and `[title="…"] focus` work, and `class` and `instance` are accepted as
@@ -147,12 +149,32 @@ to the focused output.
 An array of `{name, active, primary, focused, current_workspace, rect}`.
 `current_workspace` is a name, as i3 reports it.
 
+### `GetInputs() → s`
+
+An array with one entry, the seat's keyboard (Otto merges every physical
+keyboard into it): `{identifier: "otto:keyboard", name, type: "keyboard",
+xkb_layout_names, xkb_active_layout_index, xkb_active_layout_name}` as sway
+answers, plus two keys of Otto's own for a status bar:
+
+- `otto_layout_codes`: the configured layout codes, one per layout
+  (`["us", "it"]`), which is what otto-bar draws. An unset layout is XKB's
+  default: `XKB_DEFAULT_LAYOUT`, or `us`.
+- `otto_show_in_bar`: `input.show_layout_in_bar`.
+
 ## Signals
 
 | Signal | Argument | When |
 | --- | --- | --- |
 | `WorkspaceChanged` | `s`, i3's `workspace` event as JSON | the current workspace changed |
 | `WindowChanged` | `s`, i3's `window` event as JSON | keyboard focus moved to another window |
+| `InputChanged` | `s`, sway's `input` event as JSON | the keyboard layout switched, or the keymap was rebuilt |
+
+`InputChanged` carries `change` — `"xkb_layout"` for a switch, `"xkb_keymap"`
+for a new keymap or a change to `input.show_layout_in_bar` — and `input`, the
+`GetInputs` entry. A switch is noticed after every key event by comparing the
+effective layout index with the last one announced, which is one comparison
+per key; the layout names are only read when it moved. XKB switches on its own
+(a `grp:` option), so no shortcut path sees it happen.
 
 Both payloads carry a `change` key (`"focus"`) and the subject: `current` for a
 workspace, in the `GetWorkspaces` entry shape, and `container` for a window, in

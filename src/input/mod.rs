@@ -9,6 +9,7 @@
 
 pub mod actions;
 pub mod keyboard;
+pub mod keyboard_layout;
 pub mod pointer;
 
 #[cfg(feature = "udev")]

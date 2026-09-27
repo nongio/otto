@@ -190,8 +190,17 @@ settings-tiling-mode-bounce = Rebote do modo lado a lado
 settings-key-repeat-delay = Atraso de repetição de tecla
 settings-key-repeat-rate = Taxa de repetição de tecla
 settings-group-input-source = Fonte de entrada
-settings-xkb-layout = Layout
+settings-xkb-layout-nth = Layout { $n }
+settings-xkb-layout-default = Padrão do sistema
+settings-xkb-layout-remove = Remover este layout
+settings-xkb-layouts = Layouts
+settings-xkb-layouts-detail = Até quatro, em ordem. A sessão começa com o primeiro.
 settings-xkb-variant = Variante
+settings-xkb-variant-standard = Padrão
+settings-xkb-switch = Alternar layouts com
+settings-xkb-switch-detail = As teclas que avançam para o próximo layout.
+settings-xkb-switch-none = Nenhuma
+settings-xkb-show-in-bar = Mostrar na barra
 settings-xkb-options = Opções
 settings-group-shortcuts = Atalhos
 settings-key-combination = Combinação de teclas
@@ -806,6 +815,8 @@ bar-power-saver = Economia de energia
 bar-power-balanced = Equilibrado
 bar-power-performance = Desempenho
 bar-power-settings = Configurações de energia…
+bar-keyboard-settings = Configurações do teclado…
+bar-keyboard-layout-label = Layout do teclado: { $layout }
 
 
 ## Settings — widgets
@@ -917,11 +928,13 @@ schema-keyboard-repeat-rate-description = Repetições por segundo enquanto uma 
 
 # --- input ---
 schema-input-xkb-layout-label = Layout do teclado
-schema-input-xkb-layout-description = Nome do layout XKB. Vazio usa o padrão do sistema.
+schema-input-xkb-layout-description = Nomes de layout XKB, separados por vírgulas; o primeiro fica ativo ao iniciar. Vazio usa o padrão do sistema.
 schema-input-xkb-variant-label = Variante do teclado
-schema-input-xkb-variant-description = Nome da variante XKB. Vazio usa o padrão do sistema.
+schema-input-xkb-variant-description = Nomes de variante XKB, separados por vírgulas, uma por layout. Vazio usa a variante padrão de cada layout.
 schema-input-xkb-options-label = Opções do teclado
 schema-input-xkb-options-description = Strings de opções XKB.
+schema-input-show-layout-in-bar-label = Mostrar layout na barra
+schema-input-show-layout-in-bar-description = Mostra o layout de teclado ativo no otto-bar quando há mais de um.
 schema-input-tap-enabled-label = Tocar para clicar
 schema-input-tap-enabled-description = Tratar um toque no trackpad como um clique.
 schema-input-tap-drag-enabled-label = Tocar e arrastar

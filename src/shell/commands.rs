@@ -91,6 +91,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Command::RenameWorkspace { number, name } => {
                 self.command_rename_workspace(number, name)
             }
+            Command::SwitchLayout(target) => self.switch_layout(target),
         }
     }
 

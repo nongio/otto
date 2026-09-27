@@ -388,7 +388,8 @@ are:
   toggle lives here rather than with the switcher's own settings because it
   says nothing on its own: it borrows the dock's tint, and does nothing while
   that tint is off.
-- **Keyboard** — repeat delay and rate, then shortcuts.
+- **Keyboard** — repeat delay and rate, the input sources (see below), then
+  shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
 - **Sound** — enabled, theme.
 - **Power** — lid switch handling, power button action.
@@ -460,6 +461,41 @@ anywhere else goes to the chrome. The window's resize edges along the pane's
 right and bottom stay live, a wheel anywhere over the window scrolls the pane,
 and a slider or scrollbar drag keeps going when the pointer wanders off the
 pane.
+
+### Input sources
+
+The keyboard pane edits `input.xkb_layout`, `input.xkb_variant` and
+`input.xkb_options` as a list of layouts rather than as text. The choices come
+from the XKB rules registry (`rules/evdev.xml` under `XKB_CONFIG_ROOT` or the
+usual prefixes), parsed by the app itself, and each is shown by the
+registry's description, never by its XKB name. A name the registry does not
+list is still shown as it stands.
+
+- One pop-up per layout, in order, up to four (XKB's group limit). The first
+  layout alone may be *System default*, the empty value. Every other layout's
+  pop-up ends with *Remove this layout*.
+- A Variant pop-up under each layout that has variants, or that has one set.
+  *Standard* is the empty variant. Picking a new layout clears its variant.
+- **Add** appends a layout: the one the locale names if it is not already in
+  the list. A *System default* first layout is named first, as
+  `XKB_DEFAULT_LAYOUT` or `us`.
+- **Show layout in the bar** (`input.show_layout_in_bar`, live) turns
+  otto-bar's layout indicator on or off. The bar hears it through
+  `org.otto.Shell1`'s `InputChanged`, the same event that tells it the layout
+  switched.
+- **Switch layouts with**, shown only with two or more layouts, replaces every
+  `grp:` option in `input.xkb_options` with the one picked, or with none. The
+  other options keep their order. The full option list stays editable as text
+  under it.
+
+Every change applies live. The layout and variant lists are two settings and
+the compositor compiles a keymap after each `Set`, refusing any layout paired
+with a variant it does not have. So a change is written as up to three `Set`s:
+first the variants cleared wherever a layout changes position, then the
+layouts, then the new variants. Writing stops at the first refusal.
+
+Not in the app yet: an indicator of the active layout (in otto-bar, for
+example) and translated layout names. The registry's descriptions are English.
 
 ### Shortcuts
 

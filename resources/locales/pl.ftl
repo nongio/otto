@@ -190,8 +190,17 @@ settings-tiling-mode-bounce = Odbicie kafelkowania
 settings-key-repeat-delay = Opóźnienie powtarzania klawiszy
 settings-key-repeat-rate = Szybkość powtarzania klawiszy
 settings-group-input-source = Źródło wprowadzania
-settings-xkb-layout = Układ
+settings-xkb-layout-nth = Układ { $n }
+settings-xkb-layout-default = Domyślny systemowy
+settings-xkb-layout-remove = Usuń ten układ
+settings-xkb-layouts = Układy
+settings-xkb-layouts-detail = Maksymalnie cztery, w kolejności. Sesja zaczyna się od pierwszego.
 settings-xkb-variant = Wariant
+settings-xkb-variant-standard = Standardowy
+settings-xkb-switch = Przełączanie układów klawiszami
+settings-xkb-switch-detail = Klawisze, które przełączają na następny układ.
+settings-xkb-switch-none = Brak
+settings-xkb-show-in-bar = Pokaż na pasku
 settings-xkb-options = Opcje
 settings-group-shortcuts = Skróty
 settings-key-combination = Kombinacja klawiszy
@@ -837,6 +846,8 @@ bar-power-saver = Oszczędzanie energii
 bar-power-balanced = Zrównoważony
 bar-power-performance = Wydajność
 bar-power-settings = Ustawienia zasilania…
+bar-keyboard-settings = Ustawienia klawiatury…
+bar-keyboard-layout-label = Układ klawiatury: { $layout }
 
 
 ## Settings — widgets
@@ -948,11 +959,13 @@ schema-keyboard-repeat-rate-description = Liczba powtórzeń na sekundę przy pr
 
 # --- input ---
 schema-input-xkb-layout-label = Układ klawiatury
-schema-input-xkb-layout-description = Nazwa układu XKB. Puste używa domyślnego ustawienia systemu.
+schema-input-xkb-layout-description = Nazwy układów XKB, oddzielone przecinkami, pierwsza jest aktywna po starcie. Puste używa domyślnego ustawienia systemu.
 schema-input-xkb-variant-label = Wariant klawiatury
-schema-input-xkb-variant-description = Nazwa wariantu XKB. Puste używa domyślnego ustawienia systemu.
+schema-input-xkb-variant-description = Nazwy wariantów XKB, oddzielone przecinkami, jedna na układ. Puste używa standardowego wariantu każdego układu.
 schema-input-xkb-options-label = Opcje klawiatury
 schema-input-xkb-options-description = Ciągi opcji XKB.
+schema-input-show-layout-in-bar-label = Pokaż układ na pasku
+schema-input-show-layout-in-bar-description = Pokazuje aktywny układ klawiatury w otto-bar, gdy jest ich więcej niż jeden.
 schema-input-tap-enabled-label = Stuknięcie jako kliknięcie
 schema-input-tap-enabled-description = Traktuj stuknięcie w gładzik jako kliknięcie.
 schema-input-tap-drag-enabled-label = Stuknięcie i przeciąganie

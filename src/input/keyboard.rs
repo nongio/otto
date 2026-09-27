@@ -214,11 +214,20 @@ fn function_key_vt(keycode: u32) -> Option<i32> {
     }
 }
 
-impl<BackendData: Backend> Otto<BackendData> {
+impl<BackendData: Backend + 'static> Otto<BackendData> {
+    /// Resolve a key event to what Otto does with it, then announce the
+    /// keyboard layout if the key switched it (a `grp:` option acts inside
+    /// XKB, where no shortcut sees it).
     pub fn keyboard_key_to_action<B: InputBackend>(
         &mut self,
         evt: B::KeyboardKeyEvent,
     ) -> KeyAction {
+        let action = self.key_to_action::<B>(evt);
+        self.note_active_layout();
+        action
+    }
+
+    fn key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
         let keycode = evt.key_code();
         let state = evt.state();
         let serial = SCOUNTER.next_serial();

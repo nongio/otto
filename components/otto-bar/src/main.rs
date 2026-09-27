@@ -5,6 +5,7 @@ mod battery;
 mod clock;
 mod config;
 mod dbusmenu;
+mod keyboard_layout;
 mod power;
 mod tray;
 

@@ -190,8 +190,17 @@ settings-tiling-mode-bounce = Rimbalzo dell'affiancamento
 settings-key-repeat-delay = Ritardo di ripetizione dei tasti
 settings-key-repeat-rate = Velocità di ripetizione dei tasti
 settings-group-input-source = Sorgente di input
-settings-xkb-layout = Disposizione
+settings-xkb-layout-nth = Disposizione { $n }
+settings-xkb-layout-default = Predefinita di sistema
+settings-xkb-layout-remove = Rimuovi questa disposizione
+settings-xkb-layouts = Disposizioni
+settings-xkb-layouts-detail = Fino a quattro, in ordine. La sessione inizia con la prima.
 settings-xkb-variant = Variante
+settings-xkb-variant-standard = Standard
+settings-xkb-switch = Cambia disposizione con
+settings-xkb-switch-detail = I tasti che passano alla disposizione successiva.
+settings-xkb-switch-none = Nessuna
+settings-xkb-show-in-bar = Mostra nella barra
 settings-xkb-options = Opzioni
 settings-group-shortcuts = Scorciatoie
 settings-key-combination = Combinazione di tasti
@@ -812,6 +821,8 @@ bar-power-saver = Risparmio energetico
 bar-power-balanced = Bilanciato
 bar-power-performance = Prestazioni
 bar-power-settings = Impostazioni energia…
+bar-keyboard-settings = Impostazioni tastiera…
+bar-keyboard-layout-label = Disposizione della tastiera: { $layout }
 
 
 ## Settings — widgets
@@ -922,11 +933,13 @@ schema-keyboard-repeat-rate-description = Ripetizioni al secondo mentre un tasto
 
 # --- input ---
 schema-input-xkb-layout-label = Disposizione della tastiera
-schema-input-xkb-layout-description = Nome della disposizione XKB. Vuoto per usare quella predefinita di sistema.
+schema-input-xkb-layout-description = Nomi di disposizione XKB, separati da virgole; la prima è attiva all’avvio. Vuoto per usare quella predefinita di sistema.
 schema-input-xkb-variant-label = Variante della tastiera
-schema-input-xkb-variant-description = Nome della variante XKB. Vuoto per usare quella predefinita di sistema.
+schema-input-xkb-variant-description = Nomi di variante XKB, separati da virgole, uno per disposizione. Vuoto per usare la variante standard di ciascuna disposizione.
 schema-input-xkb-options-label = Opzioni della tastiera
 schema-input-xkb-options-description = Stringhe di opzioni XKB.
+schema-input-show-layout-in-bar-label = Mostra la disposizione nella barra
+schema-input-show-layout-in-bar-description = Mostra la disposizione della tastiera attiva in otto-bar quando ce n’è più di una.
 schema-input-tap-enabled-label = Tocca per fare clic
 schema-input-tap-enabled-description = Considera un tocco sul trackpad come un clic.
 schema-input-tap-drag-enabled-label = Tocca e trascina
