@@ -21,6 +21,10 @@ from the phone.
 - **Permission requests reach the chat and the desktop.** A tool call that
   needs approval is asked in Telegram at once, and as Otto's dialog 20 seconds
   later (sooner nobody watches). Whichever you answer first wins.
+- **Files and pictures go back with `cc-connect send`.** Replies reach the chat
+  as text only; cc-connect drops anything else an agent sends over ACP. Otto's
+  `send-to-phone` skill tells the agent to run
+  `cc-connect send --image|--file <path>`, and how to take a screenshot for it.
 - **The folder is not a fence.** The agent works in the bridge's folder but
   can reach elsewhere when you approve it. The permission prompt is the guard,
   so a bridge's agent should have `permissions = "ask"`.
@@ -143,7 +147,10 @@ token fight. Don't also use `cc-connect daemon install`, its own service.
 ## Not yet
 
 - **Questions the agent asks** (forms) are answered on the desktop only.
-- **Pictures, files and voice notes** from the chat don't reach the agent yet.
+- **Pictures and files sent from the chat** are saved by cc-connect under the
+  bridge's folder and named in the prompt; not tried with Otto yet.
+- **A screenshot of one window:** Otto can't crop to a window yet, so the skill
+  brings it forward and captures the whole monitor.
 - **cc-connect's session commands** (`/list`, `/switch`) were not tried with
   Otto; `otto-agents acp` doesn't serve `session/list`.
 
