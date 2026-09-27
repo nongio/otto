@@ -258,7 +258,10 @@ fn entry_from_meta(meta: Option<&serde_json::Map<String, serde_json::Value>>) ->
 
 /// The provider id `agent` names — its id, or the name it is shown under,
 /// either way ignoring case. `None` leaves the service its default agent.
-async fn resolve_agent(client: &Client, agent: Option<&str>) -> anyhow::Result<Option<String>> {
+pub(crate) async fn resolve_agent(
+    client: &Client,
+    agent: Option<&str>,
+) -> anyhow::Result<Option<String>> {
     let Some(agent) = agent else {
         return Ok(None);
     };
@@ -523,7 +526,7 @@ fn no_plugins() -> String {
 }
 
 /// `path` with the home directory written as `~`.
-async fn connect(url: &str) -> anyhow::Result<Client> {
+pub(crate) async fn connect(url: &str) -> anyhow::Result<Client> {
     let transport = crate::client::connect(url)
         .await
         .with_context(|| format!("could not connect to {url}; is `otto-agents serve` running?"))?;
@@ -539,7 +542,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 }
 
 /// The host's sessions, most recently modified first.
-async fn fetch_sessions(client: &Client) -> anyhow::Result<Vec<SessionSummary>> {
+pub(crate) async fn fetch_sessions(client: &Client) -> anyhow::Result<Vec<SessionSummary>> {
     let result: ListSessionsResult = client
         .request("listSessions", json!({ "channel": ROOT_RESOURCE_URI }))
         .await?;

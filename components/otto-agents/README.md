@@ -19,6 +19,7 @@ cargo run -p otto-agents -- new otto                   # start a session with an
 cargo run -p otto-agents -- enter 1a2b                 # take a session up in this terminal, in the agent's interface
 cargo run -p otto-agents -- plugins install            # link Otto's skills into ~/.agents/skills, render its agent per harness
 cargo run -p otto-agents -- plugins status             # what was found, and where each harness's copy stands
+cargo run -p otto-agents -- acp --agent claude         # be one ACP agent on stdio whose sessions are the desktop's
 ```
 
 - **Agents.** They come from `[[agents]]` in `~/.config/otto/agents.toml` (after
