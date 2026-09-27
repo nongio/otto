@@ -103,7 +103,8 @@ args = ["gateway"]
 and turn it on under **Chat bridge** in Settings › Agents, which enables the
 `otto-agents-bridge` user unit (off by default). The unit runs
 `otto-agents bridge`, which execs the command, and starts the agent service too.
-Its log is `journalctl --user -u otto-agents-bridge`.
+Its log is `journalctl --user -u otto-agents-bridge`. [docs/openclaw.md](docs/openclaw.md)
+walks through it with OpenClaw and a Telegram bot.
 
 ## Repository layout
 

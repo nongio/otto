@@ -93,6 +93,11 @@ enum Command {
         /// it is shown under. Defaults to the service's first agent.
         #[arg(long)]
         agent: Option<String>,
+        /// Who answers the agent's permission requests: the ACP client as
+        /// well as the desktop (first answer wins), or the desktop only, for
+        /// clients that answer by a fixed policy, such as OpenClaw's acpx.
+        #[arg(long, value_enum, default_value = "client")]
+        permissions: facade::Permissions,
         /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
@@ -199,7 +204,11 @@ async fn main() -> anyhow::Result<()> {
             follow,
             url,
         } => cli::show_session(&url, session.as_deref(), follow).await,
-        Command::Acp { agent, url } => facade::serve(&url, agent.as_deref()).await,
+        Command::Acp {
+            agent,
+            permissions,
+            url,
+        } => facade::serve(&url, agent.as_deref(), permissions).await,
         Command::Bridge { config } => cli::run_bridge(config.as_deref()),
         Command::Plugins {
             command: PluginsCommand::Install { dir, home, only },
