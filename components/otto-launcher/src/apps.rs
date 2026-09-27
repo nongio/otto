@@ -116,6 +116,7 @@ impl Source for Apps {
                     .cloned()
                     .chain(binary_name(&entry.exec))
                     .collect(),
+                pill: None,
                 origin: Origin {
                     source: self.index,
                     index,

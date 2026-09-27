@@ -1080,7 +1080,10 @@ impl Ask {
             .iter()
             .enumerate()
             .filter(|(_, session)| {
-                query.is_empty() || session.title.to_lowercase().contains(&query)
+                query.is_empty()
+                    || session.title.to_lowercase().contains(&query)
+                    || session_remote(session)
+                        .is_some_and(|via| via.to_lowercase().contains(&query))
             })
             .map(|(index, session)| Item {
                 title: if session.title.is_empty() {
@@ -1097,6 +1100,7 @@ impl Ask {
                 activity: Some(session_activity(session)),
                 checked: None,
                 search_terms: Vec::new(),
+                pill: session_remote(session),
                 origin: Origin { source, index },
             })
             .collect()
@@ -1228,6 +1232,7 @@ impl Ask {
                 activity: None,
                 checked: None,
                 search_terms: Vec::new(),
+                pill: None,
                 origin: Origin { source, index },
             })
             .collect()
@@ -1325,6 +1330,7 @@ impl Ask {
                 activity: None,
                 checked: None,
                 search_terms: Vec::new(),
+                pill: None,
                 origin: Origin { source, index },
             })
             .collect()
@@ -1398,6 +1404,7 @@ impl Ask {
                     activity: None,
                     checked: request.row_checked(row, current),
                     search_terms: Vec::new(),
+                    pill: None,
                     origin: Origin { source, index },
                 }
             })
@@ -1853,6 +1860,18 @@ fn file_label(file: &Path) -> String {
 /// are called.
 /// The dot beside a session in the list. A failed session has stopped, so it
 /// reads as idle; the subtitle says why.
+/// The chat app the session was last written to from, away from the desktop,
+/// as the service keeps it in the session's `_meta` under `otto.remote`.
+fn session_remote(session: &SessionSummary) -> Option<String> {
+    let via = session
+        .meta
+        .as_ref()?
+        .get("otto")?
+        .get("remote")?
+        .as_str()?;
+    (!via.trim().is_empty()).then(|| via.to_owned())
+}
+
 fn session_activity(session: &SessionSummary) -> Activity {
     let status = SessionStatus::from_bits(session.status);
     if status.contains(SessionStatus::InputNeeded) {
