@@ -654,6 +654,7 @@ impl FilesApp {
             // Same reason, and after it: a Back step and a delete never land
             // in the same frame, and both want the metrics that just landed.
             browser.settle_pick();
+            browser.settle_select();
             browser.settle_empty_ask();
             perf::mark(perf::Stage::Prep, t_prep);
             let t_frame = perf::now();

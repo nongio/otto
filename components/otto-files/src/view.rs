@@ -426,6 +426,23 @@ pub fn location_rect(width: f32) -> Rect {
         toolbar_cy() + 15.0,
     )
 }
+/// Half the height of the band a click on the subtitle lands in: its line of
+/// text with a little slack, so a click just above or below still counts.
+const SUBTITLE_HIT_HALF_H: f32 = 10.0;
+
+/// The subtitle's line, as a click target: from where its text starts to the
+/// view switcher. Only an indexer notice there takes a click, which opens the
+/// indexer's settings.
+pub fn index_notice_rect(width: f32) -> Rect {
+    let left = subtitle_x();
+    Rect::from_ltrb(
+        left,
+        subtitle_cy() - SUBTITLE_HIT_HALF_H,
+        (switcher_rect(width).left - 16.0).max(left + 80.0),
+        subtitle_cy() + SUBTITLE_HIT_HALF_H,
+    )
+}
+
 /// The path entry's field, in place of the header title.
 ///
 /// It starts where the title's text does and runs to the view switcher, so

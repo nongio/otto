@@ -693,6 +693,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::displays::press(row, button);
             panes::general::press(row, button);
             panes::agents::press(row, button);
+            panes::search::press(row, button);
             panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
                 start_edit(
@@ -718,7 +719,10 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             keyboard::remove(index);
         }
         view::Pressed::Add => keyboard::add(),
-        view::Pressed::RemoveRow(id) => panes::keyboard_layouts::remove(id),
+        view::Pressed::RemoveRow(id) => {
+            panes::keyboard_layouts::remove(id);
+            panes::search::remove(id);
+        }
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
             (keyboard::recording().map(|recording| recording.index) != Some(index))
@@ -2174,7 +2178,13 @@ impl App for SettingsApp {
         self.declare_focusables();
         self.scroll_focus_into_view();
 
-        if settings_client::take_dirty() | agents::take_service_dirty() {
+        // The Search pane polls the file index only while it is on screen.
+        panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
+
+        if settings_client::take_dirty()
+            | agents::take_service_dirty()
+            | panes::search::take_dirty()
+        {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);
         }

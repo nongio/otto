@@ -25,6 +25,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Sound | Interface sounds on or off, and which sound theme to use |
 | Power | What the lid switch and the power button do |
 | Lock & Login | Auto-lock timeout, and which lock screen and greeter to run |
+| Search | What the file index is doing, which folders it covers, whether it skips code repositories and removable drives |
 | Agents | The default agent for Ask, and each agent's name, harness, command, permissions, model, folder and colour |
 
 ## How it works
@@ -78,6 +79,39 @@ vulkan` overrides it for one session.
 The Keyboard pane lists the configured shortcuts and lets you add and remove
 them. It edits the same `[keyboard_shortcuts]` table the config file has, so
 anything you bind here is a normal entry you can also read and edit by hand.
+
+## Search
+
+Search in Files finds things through a file index that LocalSearch keeps up
+to date in the background. The Search pane shows what it is doing: up to date
+with how many files it holds, indexing with how far it has got, paused, or not
+running (with **Start**). If LocalSearch isn't installed, the pane says so and
+nothing else: install the `localsearch` package and open it again.
+
+Each folder the index looks in has its own row. The **−** at the end of a row
+takes that folder out, and **Choose…** on **Add Folder** opens a folder picker
+to add one. A folder already in the list, or inside one that is, isn't added
+twice; the pane says which folder already covers it. Take every folder out and
+nothing is indexed, so search finds nothing.
+
+**Skip code repositories** leaves out any folder with a `.git` folder inside,
+and **Search removable drives** indexes USB sticks and other drives while
+they're plugged in. Everything applies at once. If results look out of date,
+**Re-index** on the **Re-index Home** row has the index check your home
+folder again.
+
+These live in the `[search]` section of Otto's configuration, and Otto hands
+them on to LocalSearch:
+
+```toml
+[search]
+folders = ["~", "/mnt/data"]     # ~ is your home folder
+skip_code_repositories = true
+index_removable_drives = false
+```
+
+A key you never set, here or in the file, leaves LocalSearch's own value
+alone. Open the pane directly with `otto-settings --pane search`.
 
 ## Agents
 

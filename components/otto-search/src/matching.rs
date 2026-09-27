@@ -1,9 +1,8 @@
 //! Scoring a typed query against a name.
 //!
-//! One implementation, shared: the launcher ranks applications with it and the
-//! file browser ranks search results with it, so "what does typing `fire dev`
-//! find" has the same answer everywhere in the desktop. It lived in
-//! `otto-launcher` first and moved here when the second caller appeared.
+//! One implementation, shared: the launcher ranks applications with it and file
+//! search ranks names with it, so "what does typing `fire dev` find" has the
+//! same answer everywhere in the desktop. `otto_kit::matching` re-exports it.
 //!
 //! This is subsequence matching, not fuzzy edit distance. A query matches only
 //! if every character of it appears in order; what the score decides is which

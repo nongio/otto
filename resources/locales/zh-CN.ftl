@@ -70,6 +70,7 @@ settings-pane-pointing = 触控板与鼠标
 settings-pane-sound = 声音
 settings-pane-power = 电源
 settings-pane-lock-and-login = 锁定与登录
+settings-pane-search = 搜索
 settings-pane-agents = 智能体
 
 
@@ -255,6 +256,68 @@ settings-group-login = 登录
 settings-greeter = 登录界面
 settings-greeter-detail = 下次登录时生效
 settings-greeter-arguments = 登录界面参数
+
+
+## Settings — Search
+##
+## The file index Files searches, which LocalSearch keeps. These rows show
+## what it is doing and change what it looks at, through the [search] section
+## of Otto's configuration.
+
+settings-search-intro = “文件”会在 LocalSearch 于后台持续更新的文件索引中搜索。
+# The row showing what the indexer is doing.
+settings-search-index = 文件索引
+settings-search-checking = 正在检查…
+# $files is already written with its digits grouped, such as 48,210.
+settings-search-idle = 已是最新 · { $files } 个文件
+settings-search-idle-uncounted = 已是最新
+# $percent is how far through the indexer is, 0 to 99.
+settings-search-indexing = 正在索引… { $percent }%
+# $minutes is the indexer's own estimate, rounded up.
+settings-search-indexing-minutes = 正在索引… { $percent }% · 约剩 { $minutes } 分钟
+settings-search-indexing-hours = 正在索引… { $percent }% · 约剩 { $hours } 小时
+settings-search-paused = 已暂停
+settings-search-paused-detail = 电池电量或磁盘空间不足时，或有应用请求时，索引器会暂停，之后会自动继续。
+# Under a Start button. A search starts the indexer by itself too.
+settings-search-stopped = 未运行。搜索时会自动启动，也可以现在启动。
+settings-search-start = 启动
+settings-search-missing = 未安装
+# localsearch is the package name; keep it as is.
+settings-search-missing-detail = 文件搜索需要 localsearch 软件包。安装后请重新打开此页面。
+# What goes between groups of three digits in a count: 48,210. Written as
+# a string so a space survives.
+settings-search-digit-separator = { "," }
+# The heading over the folders, switches and Re-index.
+settings-search-looks-in = 索引范围
+settings-search-folders = 文件夹
+# The home folder, in the list of folders the index looks in.
+settings-search-folder-home = 主文件夹
+settings-search-folders-none = 无
+# The row under the folders, whose button opens a folder picker.
+settings-search-add-folder = 添加文件夹
+settings-search-choose = 选择…
+settings-search-add-folder-detail = 搜索会查看每个文件夹及其中的全部内容
+# $folder is the folder just chosen, named as the list names it.
+settings-search-folder-duplicate = { $folder } 已在列表中
+# $folder is the folder just chosen; $parent is the listed folder it is in,
+# such as Home.
+settings-search-folder-covered = { $folder } 已作为 { $parent } 的一部分被搜索
+# Under Folders when the list is empty.
+settings-search-folders-empty = 没有索引任何内容，因此搜索找不到文件
+# The title of the folder picker.
+settings-search-choose-folder-title = 选择要搜索的文件夹
+settings-search-picker-failed = 无法打开文件夹选择器
+# Leaves out folders that hold a .git folder, which is to say code.
+settings-search-skip-repos = 跳过代码仓库
+settings-search-skip-repos-detail = 不索引其中含有 .git 文件夹的文件夹
+settings-search-removable = 搜索可移动驱动器
+settings-search-removable-detail = 在 U 盘等驱动器接入时为其建立索引
+settings-search-reindex = 重新索引主文件夹
+# The button on the Re-index Home row.
+settings-search-reindex-button = 重新索引
+settings-search-reindex-detail = 搜索结果看起来过时时使用。主文件夹中的所有内容都会重新检查。
+settings-search-reindex-asked = 已请求索引器重新检查主文件夹，可能需要一段时间。
+settings-search-reindex-failed = 无法连接索引器。它在运行吗？
 
 
 ## Settings — Agents
@@ -466,6 +529,8 @@ files-search-no-columns = 结果没有可显示的列。
 # it — and an empty listing would read as "no such file" rather than as
 # "nothing was able to look".
 files-search-unavailable = 文件索引已关闭
+files-search-indexing = 仍在建立索引（{ $percent }%），结果可能不完整
+files-search-indexing-paused = 索引已暂停，结果可能不完整
 
 files-preview-dimensions = { $width } × { $height }
 files-preview-animation = { $width } × { $height } · { $duration }
@@ -533,6 +598,7 @@ files-new-folder-failed = 无法创建文件夹：{ $error }
 files-open-failed = 无法打开该文件：{ $error }
 files-open-app-broken = 该应用的启动命令有误
 files-new-window-failed = 无法打开新窗口：{ $error }
+files-settings-open-failed = 无法打开设置：{ $error }
 
 
 ## Files — the listing
@@ -960,6 +1026,14 @@ schema-login-greeter-command-description = 在登录模式下启动的登录界�
 schema-login-greeter-args-label = 登录界面参数
 schema-login-greeter-args-description = 传递给登录界面程序的参数。
 
+# --- search ---
+schema-search-folders-label = 索引的文件夹
+schema-search-folders-description = 文件索引查看的文件夹及其中全部内容。~ 表示你的主文件夹。
+schema-search-skip-code-repositories-label = 跳过代码仓库
+schema-search-skip-code-repositories-description = 不索引其中含有 .git 文件夹的文件夹。
+schema-search-index-removable-drives-label = 搜索可移动驱动器
+schema-search-index-removable-drives-description = 在 U 盘等驱动器接入时为其建立索引。
+
 # --- rendering ---
 schema-rendering-renderer-label = 渲染器
 schema-rendering-renderer-description = Otto 在从登录界面启动的会话中用于绘制的 GPU API。窗口模式会话始终使用 OpenGL。
@@ -1048,7 +1122,10 @@ launcher-ask-window-title-bare = Ask
 launcher-ask-starting = 正在启动 { $agent }…
 launcher-ask-starting-agent = 正在启动智能体…
 launcher-ask-thinking = 正在思考…
+launcher-ask-writing = 正在撰写…
+launcher-ask-running = 正在运行 { $tool }…
 launcher-ask-working = 正在工作…
+launcher-ask-sending = 正在发送下一条消息…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = 正在等待在下方作答
 # Ask mode: the line under the status naming the agent and the mode it is in.

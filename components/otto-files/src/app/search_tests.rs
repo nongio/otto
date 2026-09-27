@@ -664,3 +664,98 @@ fn up_from_recent_stays_put() {
         browser.columns[0].path.display()
     );
 }
+
+/// `otto-files --search` is Ctrl+F where the window opened, the query typed
+/// and Return pressed, so every way out of it is the usual one.
+#[test]
+fn opening_on_a_search_behaves_like_one_typed_there() {
+    let dir = std::env::temp_dir();
+    let mut browser = browser_at(&dir);
+    browser.start_search("pdf".into(), model::SearchScope::Everywhere);
+
+    assert!(browser.searching, "the results are on screen");
+    assert_eq!(browser.query().as_deref(), Some("pdf"), "under the query");
+    assert_eq!(browser.search_scope, model::SearchScope::Everywhere);
+    assert!(browser.has_focused_input(), "with the caret in it");
+
+    browser.clear_search();
+    assert_eq!(
+        browser.current_path(),
+        dir,
+        "Escape goes back to the folder"
+    );
+}
+
+/// `--select` names rows that do not exist until the folder has been read.
+#[test]
+fn a_selection_asked_for_at_launch_lands_once_the_folder_is_read() {
+    let dir = std::env::temp_dir().join(format!("otto-files-select-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::write(dir.join(name), b"x").expect("temp file");
+    }
+    let key = |name: &str| dir.join(name).to_string_lossy().into_owned();
+
+    let mut browser = browser_at(&dir);
+    browser.pending_select = Some(vec![key("a.txt"), key("c.txt")]);
+    for _ in 0..2000 {
+        browser.poll();
+        browser.settle_select();
+        if browser.pending_select.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(browser.pending_select.is_none(), "the selection settled");
+    let selected: Vec<&String> = browser.columns[0].selection.iter().collect();
+    assert_eq!(selected, [&key("a.txt"), &key("c.txt")]);
+    assert!(
+        browser.columns[0].cursor.is_some(),
+        "with the cursor on one"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With a search, the selection waits for its row to arrive in the results,
+/// and then takes the keyboard from the query.
+#[test]
+fn a_selection_in_a_search_waits_for_its_result() {
+    let mut browser = browser_at(&std::env::temp_dir());
+    browser.start_search("pdf".into(), model::SearchScope::Everywhere);
+    browser.pending_select = Some(vec!["/tmp/y.pdf".into()]);
+
+    browser.settle_select();
+    assert!(browser.pending_select.is_some(), "nothing has arrived yet");
+
+    browser.columns[0].snapshot.entries = named(&["x.pdf", "y.pdf"]);
+    browser.columns[0].epoch += 1;
+    browser.settle_select();
+    assert!(browser.pending_select.is_none(), "it arrived");
+    assert!(browser.columns[0].selection.contains("/tmp/y.pdf"));
+    assert!(!browser.has_focused_input(), "the listing has the keyboard");
+    assert!(browser.searching, "and the results stay up");
+}
+
+/// An indexer still working through the disk is said out loud while results
+/// are up, and the notice goes with the search: nothing outside one is
+/// answered by the index.
+#[test]
+fn a_search_says_when_the_indexer_is_still_at_work() {
+    let mut browser = browser_at(&std::env::temp_dir());
+    type_query(&mut browser, "ledger");
+    browser.index = crate::search::IndexWatch::answered(otto_search::index::Status {
+        state: otto_search::index::State::Indexing,
+        progress: 0.5,
+        remaining: None,
+    });
+    let notice = browser.index_notice().expect("a notice while indexing");
+    assert!(notice.contains("50"), "{notice}");
+
+    browser.clear_search();
+    assert_eq!(
+        browser.index.status(),
+        None,
+        "the watch stops with the strip"
+    );
+    assert_eq!(browser.index_notice(), None);
+}

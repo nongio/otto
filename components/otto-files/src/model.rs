@@ -592,33 +592,30 @@ pub fn entry_for_dir_entry(entry: &std::fs::DirEntry) -> Entry {
 /// the paths come from somewhere that is not a `readdir`. `None` when there is
 /// nothing at that path any more, which is how a stale index entry is dropped.
 pub fn entry_for_path(path: &Path) -> Option<Entry> {
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    // The link itself first: a broken symlink still exists and still belongs
-    // in a listing, and `metadata` alone would say it does not.
-    let link_meta = std::fs::symlink_metadata(path).ok()?;
-    let is_symlink = link_meta.file_type().is_symlink();
-    let meta = if is_symlink {
-        std::fs::metadata(path).ok()
-    } else {
-        Some(link_meta)
-    };
-    let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+    otto_search::Found::stat(path).map(Entry::from)
+}
 
-    Some(Entry {
-        hidden: name.starts_with('.') || name.ends_with('~'),
-        kind: if is_dir {
+impl From<otto_search::Found> for Entry {
+    /// A file as the search statted it. The stat is the same one a listing
+    /// makes, so a result is an ordinary entry to everything that shows it.
+    fn from(found: otto_search::Found) -> Self {
+        let kind = if found.is_dir {
             Kind::Folder
         } else {
-            filetype::kind_for_name(&name)
-        },
-        size: meta.as_ref().map(|m| m.len()),
-        modified: meta.as_ref().and_then(|m| m.modified().ok()),
-        origin: None,
-        name,
-        path: path.to_path_buf(),
-        is_dir,
-        is_symlink,
-    })
+            filetype::kind_for_name(&found.name)
+        };
+        Entry {
+            hidden: found.name.starts_with('.') || found.name.ends_with('~'),
+            kind,
+            size: found.size,
+            modified: found.modified,
+            origin: None,
+            name: found.name,
+            path: found.path,
+            is_dir: found.is_dir,
+            is_symlink: found.is_symlink,
+        }
+    }
 }
 
 /// A message worth showing a user, rather than a debug rendering.

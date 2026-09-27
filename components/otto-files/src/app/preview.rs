@@ -85,6 +85,9 @@ impl Browser {
         if let Some(edge) = edge {
             return edge.cursor();
         }
+        if self.index_notice_at(x, y) {
+            return CursorShape::Pointer;
+        }
         let (width, height) = (self.size.0, self.content_h());
         let over_divider = match self.mode {
             ViewMode::List => view::column_boundary_at(x, y, width, self.list_columns).is_some(),

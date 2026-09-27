@@ -799,6 +799,8 @@ impl Browser {
             // sit visibly pressed in the meantime.
             self.nav_pressed = Some(button);
             self.dirty = true;
+        } else if self.index_notice_at(x, y) {
+            self.open_index_settings();
         } else if !self.trash && view::switcher_at(x, y, width).is_some() {
             if let Some(mode) = view::switcher_at(x, y, width) {
                 self.set_mode(mode);

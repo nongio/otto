@@ -2,7 +2,7 @@
 
 **Status:** draft — compositor side of the settings interface implemented
 **Wire contract:** [docs/developer/settings-dbus-api.md](../docs/developer/settings-dbus-api.md)
-**Related specs:** [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [localisation.md](./localisation.md)
+**Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md#recent-and-find), [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [localisation.md](./localisation.md)
 
 ## Summary
 
@@ -65,6 +65,9 @@ D-Bus client that reads a described schema, sets values, and observes changes.
   application.
 - Configuring anything Otto does not already have a configuration key for.
   This app exposes the existing surface; it does not motivate new features.
+  The exceptions are services Otto's features stand on that keep their own
+  configuration: the agents service ([Agents](#agents)) and the desktop's
+  file indexer ([Search](#search)).
 - Application-level settings for other Otto components (bar layout, launcher
   behaviour) unless they are already compositor configuration keys.
 - Exposing the whole configuration surface. The app presents a curated set of
@@ -164,6 +167,9 @@ setting. Today these are reconciled with a changed configuration:
   keyboard, and from there to every client — otto-kit applications repeat a
   held key themselves at the delay and rate the compositor last sent;
 - `lock.auto_lock_timeout`, by re-arming the idle timer against the new value.
+- `search.folders`, `search.skip_code_repositories` and
+  `search.index_removable_drives`, by pushing them to LocalSearch (see
+  [Search](#search)).
 
 A second group applies live with no reconciliation at all, because the code
 acting on them reads the live configuration at the moment it acts: the sound
@@ -587,6 +593,85 @@ key. When the agent list came from the system file, the first change to an
 agent copies that list into the user's file, since a user file that lists
 agents replaces the system list.
 
+### Search
+
+The search pane shows the state of the desktop's file indexer, LocalSearch,
+and edits where it looks. Find, Recent and every other file search in Otto are
+answered by it (see [search-language.md](./search-language.md)), so this is
+where "why doesn't search find my file" gets its answer. The pane is titled
+**Search**, after what people want rather than the mechanism behind it, and
+`otto-settings --pane search` opens on it.
+
+**File index** comes first: one row saying what the indexer is doing.
+
+- *Up to date*, with the number of files indexed, its digits grouped the way
+  the locale groups them (48,210).
+- *Indexing*, with how far it has got as a whole percentage (never 100 until
+  it is done) and, when the indexer can tell, the time left: whole minutes
+  rounded up, or hours from an hour and a half on.
+- *Paused*, with a line saying the indexer pauses on low battery or disk
+  space, or when an application asks, and carries on by itself.
+- *Not running*: installed but not started, with Start, which runs
+  `systemctl --user start localsearch-3.service`. The line under it says a
+  search starts it too, since its endpoint is D-Bus activatable.
+- *Not installed*: the line under it says file search needs the
+  `localsearch` package, and every other row of the pane is hidden, since
+  there is nothing for them to change.
+
+The status is read from the indexer over D-Bus (`otto_search::index::status`)
+every two seconds while the pane is on screen, on a thread of its own so the
+draw path never waits on the bus, and the window is woken only when the answer
+changes. Polling stops when another pane is selected. The file count is asked
+only of an indexer that is already running, since counting would start one
+that is not: opening the pane never starts the indexer; Start does. Status,
+Start and Re-index are LocalSearch's runtime, asked of it directly; everything
+else in the pane is configuration.
+
+Under **What gets indexed**:
+
+- One row per entry of `search.folders`, each with a "−" that sets the list
+  without it. `~` and `$HOME` show as Home, LocalSearch's special names
+  (`&DESKTOP`, `&DOWNLOAD` and so on) as the folder `user-dirs.dirs` names for
+  them, and any other path under the home folder from `~`. Removing the last
+  folder is allowed; the list then shows a single Folders row saying nothing
+  is indexed, so search will find nothing.
+- **Add Folder**, whose Choose… button asks the desktop portal's FileChooser
+  for a folder (`directory` set). The folder is appended as `~/…` when it is
+  under the home folder and as an absolute path otherwise. A folder already in
+  the list, or inside one that is, is not added; the line under the row says
+  which listed folder already covers it.
+- **Skip code repositories** (`search.skip_code_repositories`) and **Search
+  removable drives** (`search.index_removable_drives`), ordinary bound
+  switches.
+- **Re-index Home** asks the indexer to look at the home folder again
+  (`otto_search::index::reindex`), for results that look out of date. It is
+  dimmed while the indexer is not running, and the line under it says
+  afterwards whether the request reached the indexer.
+
+The three settings are the `[search]` section of Otto's configuration, served
+and set through `org.otto.Settings` like any other and applied live. The
+compositor pushes them to LocalSearch, whose settings live in the desktop's
+settings store under `org.freedesktop.Tracker3.Miner.Files`: `folders` to
+`index-recursive-directories` (`~` as `$HOME`, `~/x` made absolute, anything
+else as written), `skip_code_repositories` as the presence of `.git` in
+`ignored-directories-with-content` (added or removed alone, the rest of the
+list kept in order), and `index_removable_drives` to
+`index-removable-devices`. It writes with the `gsettings` command on a thread
+of its own, so Otto links no GNOME library and the compositor never waits on
+it; the tool ships with GLib, which LocalSearch depends on. A push happens at
+session start, on a configuration reload that changes one of the keys, and on
+each `Set`. Only keys set in some configuration layer are pushed (and the key a
+`Set` just changed), and only when LocalSearch holds something different, so a
+configuration that never mentions `[search]` never writes the settings store.
+When the schema is not installed the push is skipped, with one debug line.
+
+When unset, the schema reports LocalSearch's own defaults (`["~"]`, `true`,
+`false`) rather than asking LocalSearch what it holds: a `Get` answered by
+spawning a process on the compositor thread would be too dear. A system whose
+LocalSearch was configured elsewhere therefore shows the defaults until the
+first change from Otto, which then writes the whole list. Folders listed in
+`index-single-directories` are LocalSearch's alone and not shown.
+
 ### Displays
 
 The displays pane shows every connected output as a proportionally sized
@@ -794,3 +879,12 @@ unreachable in the meantime.
   than a scalar?
 - Is per-output scale a display setting here, given `screen_scale` is currently
   global?
+- Search: pausing the indexer lasts only while the process that paused it is
+  connected to the bus, so a Pause in the pane would end when the app closes.
+  Left out until something can hold a pause for the session.
+- Search: the indexer's list of files it failed to read is only available as
+  the `localsearch status` command's text. Show it, parsed, or wait for a
+  structured source?
+- Search: leaving one folder out by writing a `.trackerignore` into it from
+  Files, and listing such folders here, needs a way to find them that does not
+  walk the whole home directory.

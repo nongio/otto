@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 laye-rs.workspace = true
+otto-search = { path = "../otto-search" }
 rustix = { version = "0.38", features = ["fs", "process"], optional = true }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-client = "0.31"

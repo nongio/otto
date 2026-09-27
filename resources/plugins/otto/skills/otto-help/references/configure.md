@@ -235,7 +235,19 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 
 # Turn off interface sounds
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv audio.sound_enabled b false
+
+# Folders file search looks in (the whole list; ~ is the home folder)
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv search.folders as 2 "~" "/mnt/data"
+
+# Index code repositories too (folders with a .git inside are skipped by default)
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv search.skip_code_repositories b false
+
+# Index USB sticks and other removable drives
+busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv search.index_removable_drives b true
 ```
+
+`search.folders` replaces the whole list: read it first (Step 3) and send it
+back with the folder added or taken out.
 
 ## When there is no identifier
 
@@ -252,9 +264,10 @@ If the person would rather click than be told, run:
 otto-settings
 ```
 
-It cannot be opened on a particular page, so tell them which one to click:
-General, Displays, Dock, Keyboard, Trackpad & Mouse, Sound, Power, or Lock &
-Login.
+`otto-settings --pane <name>` opens it on a page, such as
+`otto-settings --pane search` for the folders file search looks in. The pages
+are General, Displays, Dock, Tiling, Keyboard, Trackpad & Mouse, Sound, Power,
+Lock & Login, Search and Agents.
 
 ## Rules
 

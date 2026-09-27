@@ -71,6 +71,7 @@ settings-pane-pointing = Трекпад і миша
 settings-pane-sound = Звук
 settings-pane-power = Живлення
 settings-pane-lock-and-login = Блокування і вхід
+settings-pane-search = Пошук
 settings-pane-agents = Агенти
 
 
@@ -259,6 +260,68 @@ settings-group-login = Вхід
 settings-greeter = Вітальний екран
 settings-greeter-detail = Застосовується під час наступного входу
 settings-greeter-arguments = Аргументи вітального екрана
+
+
+## Settings — Search
+##
+## The file index Files searches, which LocalSearch keeps. These rows show
+## what it is doing and change what it looks at, through the [search] section
+## of Otto's configuration.
+
+settings-search-intro = Файли шукають в індексі ваших файлів, який LocalSearch оновлює у фоні.
+# The row showing what the indexer is doing.
+settings-search-index = Індекс файлів
+settings-search-checking = Перевірка…
+# $files is already written with its digits grouped, such as 48,210.
+settings-search-idle = Актуальний · файлів: { $files }
+settings-search-idle-uncounted = Актуальний
+# $percent is how far through the indexer is, 0 to 99.
+settings-search-indexing = Індексування… { $percent }%
+# $minutes is the indexer's own estimate, rounded up.
+settings-search-indexing-minutes = Індексування… { $percent }% · лишилося близько { $minutes } хв
+settings-search-indexing-hours = Індексування… { $percent }% · лишилося близько { $hours } год
+settings-search-paused = Призупинено
+settings-search-paused-detail = Індексатор призупиняється, коли мало заряду чи місця на диску, а також на прохання застосунку. Потім продовжує сам.
+# Under a Start button. A search starts the indexer by itself too.
+settings-search-stopped = Не запущено. Пошук запустить його сам, або можна запустити зараз.
+settings-search-start = Запустити
+settings-search-missing = Не встановлено
+# localsearch is the package name; keep it as is.
+settings-search-missing-detail = Для пошуку файлів потрібен пакет localsearch. Встановіть його й знову відкрийте цю сторінку.
+# What goes between groups of three digits in a count: 48,210. Written as
+# a string so a space survives.
+settings-search-digit-separator = { "\u00A0" }
+# The heading over the folders, switches and Re-index.
+settings-search-looks-in = Що індексується
+settings-search-folders = Теки
+# The home folder, in the list of folders the index looks in.
+settings-search-folder-home = Домашня тека
+settings-search-folders-none = Немає
+# The row under the folders, whose button opens a folder picker.
+settings-search-add-folder = Додати теку
+settings-search-choose = Вибрати…
+settings-search-add-folder-detail = Пошук переглядає кожну теку й усе, що в ній
+# $folder is the folder just chosen, named as the list names it.
+settings-search-folder-duplicate = { $folder } уже в списку
+# $folder is the folder just chosen; $parent is the listed folder it is in,
+# such as Home.
+settings-search-folder-covered = { $folder } уже входить у пошук як частина { $parent }
+# Under Folders when the list is empty.
+settings-search-folders-empty = Нічого не індексується, тож пошук не знайде файлів
+# The title of the folder picker.
+settings-search-choose-folder-title = Виберіть теку для пошуку
+settings-search-picker-failed = Не вдалося відкрити вибір теки
+# Leaves out folders that hold a .git folder, which is to say code.
+settings-search-skip-repos = Пропускати репозиторії коду
+settings-search-skip-repos-detail = Не індексує теки, в яких є тека .git
+settings-search-removable = Шукати на знімних дисках
+settings-search-removable-detail = Індексує флешки та інші диски, поки вони під'єднані
+settings-search-reindex = Переіндексувати домашню теку
+# The button on the Re-index Home row.
+settings-search-reindex-button = Переіндексувати
+settings-search-reindex-detail = Коли результати здаються застарілими. Усе в домашній теці буде перевірено знову.
+settings-search-reindex-asked = Індексатор знову перевірить домашню теку. Це може зайняти час.
+settings-search-reindex-failed = Не вдалося зв'язатися з індексатором. Він запущений?
 
 
 ## Settings — Agents
@@ -484,6 +547,8 @@ files-search-no-columns = У результатів немає стовпців 
 # не може відповісти — а порожній список читався б як «такого файла немає», а
 # не як «нічим було шукати».
 files-search-unavailable = Індексування файлів вимкнено
+files-search-indexing = Індексування ще триває ({ $percent }%), результати можуть бути неповними
+files-search-indexing-paused = Індексування призупинено, результати можуть бути неповними
 
 files-preview-dimensions = { $width } × { $height }
 files-preview-animation = { $width } × { $height } · { $duration }
@@ -555,6 +620,7 @@ files-new-folder-failed = Не вдалося створити папку: { $er
 files-open-failed = Не вдалося відкрити файл: { $error }
 files-open-app-broken = команда запуску застосунку пошкоджена
 files-new-window-failed = Не вдалося відкрити нове вікно: { $error }
+files-settings-open-failed = Не вдалося відкрити Налаштування: { $error }
 
 
 ## Files — the listing
@@ -1010,6 +1076,14 @@ schema-login-greeter-command-description = Вітальний екран, яки
 schema-login-greeter-args-label = Аргументи вітального екрана
 schema-login-greeter-args-description = Аргументи, які передають вітальному екрану.
 
+# --- search ---
+schema-search-folders-label = Індексовані теки
+schema-search-folders-description = Теки, які переглядає індекс файлів, з усім вмістом. ~ — ваша домашня тека.
+schema-search-skip-code-repositories-label = Пропускати репозиторії коду
+schema-search-skip-code-repositories-description = Не індексувати теки, в яких є тека .git.
+schema-search-index-removable-drives-label = Шукати на знімних дисках
+schema-search-index-removable-drives-description = Індексувати флешки та інші диски, поки вони під'єднані.
+
 # --- rendering ---
 schema-rendering-renderer-label = Рушій рендерингу
 schema-rendering-renderer-description = GPU API, через який Otto малює в сеансі, запущеному з вітального екрана. Сеанси у вікні завжди використовують OpenGL.
@@ -1098,7 +1172,10 @@ launcher-ask-window-title-bare = Ask
 launcher-ask-starting = Запуск: { $agent }…
 launcher-ask-starting-agent = Запуск агента…
 launcher-ask-thinking = Думає…
+launcher-ask-writing = Пише…
+launcher-ask-running = Виконується: { $tool }…
 launcher-ask-working = Працює…
+launcher-ask-sending = Надсилання наступного повідомлення…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = Чекає на відповідь нижче
 # Ask mode: the line under the status naming the agent and the mode it is in.

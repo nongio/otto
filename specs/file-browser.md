@@ -52,12 +52,12 @@ contract. Those are defined here once, and consumed — not redefined — elsewh
   kind. The browser deals in local paths.
 - Mounting, unmounting, formatting or ejecting devices. Already-mounted volumes
   appear; udisks2 integration is not in v1.
-- Searching file contents, and *building* an index of any kind. Otto stores
-  nothing about the user's files between runs. See Non-Goals in
-  [launcher.md](./launcher.md) — the same reasoning applies. Consulting an
-  index the desktop already keeps is a different thing and is in scope; see
-  *Recent and Find*. The one exception is text recognised in pictures the
-  person has looked at, kept in Otto's cache under the bounded terms of
+- *Building* an index of any kind. Otto stores nothing about the user's files
+  between runs. See Non-Goals in [launcher.md](./launcher.md); the same
+  reasoning applies. Consulting an index the desktop already keeps is a
+  different thing and is in scope, contents included (`text:`); see *Recent
+  and Find*. The one exception is text recognised in pictures the person has
+  looked at, kept in Otto's cache under the bounded terms of
   [peek-ocr.md](./peek-ocr.md).
 - A scripting or plugin interface.
 - Being configurable by theme file. It follows the desktop's colour scheme and
@@ -453,7 +453,8 @@ Recent's roots are the XDG user directories that exist, not the whole of home.
 A home directory's most recently written files are overwhelmingly caches, dot
 directories and build output: true, useless, and numerous enough to bury the
 document being looked for. Folders are left out for the same reason — a
-folder's modification time changes every time anything inside it does.
+folder's modification time changes every time anything inside it does. In
+the query language, Recent is `-kind:folder sort:modified` over those roots.
 
 **Find** is Ctrl+F: a filter strip under the toolbar with two scope pills.
 
@@ -490,21 +491,34 @@ by any route — discards it: the results pane and its search die together, the
 window shows the folder it was sent to, and the search or Recent listing is
 left behind Back, not still standing over the folder.
 
+**The query is the search language.** What is typed in the strip is read as
+described in [search-language.md](./search-language.md): plain words find
+names with their letters in order (`otfl` finds `otto-files.rs`), and filters
+such as `kind:pdf`, `in:~/Documents`, `modified:<7d`, `size:>100M` and
+`text:invoice` narrow it. A `sort:` in the query sets the listing's order; the
+scope pills are the default scope, which an `in:` replaces.
+
 **One source: the desktop's index.** Both scopes, and Recent, are answered by
 **LocalSearch (TinySPARQL)** over D-Bus. There is no second implementation to
 fall back to. A search of our own that reads every directory under home takes
-seconds where the index takes a fraction of one, and it answers a subtly
-different question — matching names by subsequence where the index matches by
-substring — so which one ran would decide what the person found. One source is
-slower to be unavailable and never quietly disagrees with itself.
+seconds where the index takes a fraction of one. One source is slower to be
+unavailable and never quietly disagrees with itself.
 
-The index is asked only for **paths**. Size, modification time, kind and
-whether a thing is a folder are read from the filesystem here, by the same code
-that builds an ordinary directory listing. That is not duplicated work: an
-index is always a little behind the disk, so a listing built from what it
-remembers would name files that have been deleted and give the sizes they used
-to have. Statting every row is what makes a result an ordinary entry that the
-grid, the thumbnailer and Peek can treat like any other.
+The index is asked for **paths** (and, for `text:`, the passage that
+matched). Size, modification time, kind and whether a thing is a folder are
+read from the filesystem here, by the same code that builds an ordinary
+directory listing. That is not duplicated work: an index is always a little
+behind the disk, so a listing built from what it remembers would name files
+that have been deleted and give the sizes they used to have. Statting every
+row is what makes a result an ordinary entry that the grid, the thumbnailer
+and Peek can treat like any other, and a row's time and size are checked
+against the query again from what the stat says.
+
+An index can remember thousands of files the disk no longer has, such as a
+folder deleted while the indexer was not watching. Those rows are dropped, and
+when a page of answers was mostly such ghosts a larger page is asked for, a
+bounded number of times, so they cannot starve the listing. The results found
+so far are shown while the next page is read.
 
 The scope pills differ only in how much of the disk the index may answer from:
 *This folder* narrows the query to the current directory and everything under
@@ -542,6 +556,23 @@ batch carries whether the index answered, and the pane and the status line say
 *File indexing is off* rather than *Nothing found*. Recent is empty for the
 same reason and says the same thing.
 
+**So is the indexer being behind.** A running indexer that has not reached
+every file yet answers, but not completely. Each search asks LocalSearch for
+its state on a worker, alongside the query (`otto_search::index::status`, which
+never starts the indexer). While it is indexing or paused, the status line says
+*Still indexing (62%), results may be incomplete* or *Indexing is paused,
+results may be incomplete* in place of the result count. The state is asked
+again every three seconds while the strip is open and the indexer is behind,
+so the line goes once it has caught up; the worker ends as soon as the indexer
+is idle, missing or stopped, or when the strip closes or the query is emptied.
+Nothing is asked outside a search. A missing or stopped indexer is left to the
+*File indexing is off* path, which the search's own failure already reports.
+
+Either notice in the status line takes a click, which starts `otto-settings
+--pane search` detached, where the indexer is looked after. The pointer turns
+to a hand over the line while it shows a notice; over a count or anything else
+the line is plain text.
+
 Results are capped at 500, which is more tiles than anyone reads and is what
 keeps the re-sort of a replaced listing off the frame budget.
 
@@ -559,6 +590,36 @@ cost of that choice is that search and Recent are dead until it is installed,
 which is why the window says *File indexing is off* out loud rather than
 showing an empty listing: the missing piece has to be discoverable from the
 window it is missing from. See `docs/user/files.md` for what the user is told.
+
+**Where it looks.** Which folders are indexed, and whether code repositories
+and removable drives are, is the `[search]` section of Otto's configuration,
+which the compositor pushes to LocalSearch and Settings ▸ Search edits (see
+[settings-app.md](./settings-app.md#search)). Files itself never writes the
+indexer's settings.
+
+### Starting on a file or a search
+
+The command line can open a window already showing something, which is how
+the agents and scripts hand an answer to the person rather than printing
+paths. Every window is its own process, so each of these starts a new one.
+
+| Command | Opens |
+|---|---|
+| `otto-files` | Home. |
+| `otto-files DIR` | That folder. |
+| `otto-files FILE` or `otto-files --select PATH...` | The first path's folder, with it and every other given path in that folder selected and scrolled into view. Paths in other folders are left out with a warning. |
+| `otto-files --search QUERY` | The results of `QUERY`, *Everywhere*, as if Ctrl+F had been pressed at home, the query typed and Return pressed. |
+| `otto-files --search QUERY --in DIR` | The same, *This folder* at `DIR`; a plain `DIR` argument does the same. |
+| `otto-files --search QUERY --select PATH` | The results, with `PATH` selected once it arrives in them. |
+
+The window is exactly what the same steps by hand would give: the strip is
+open with the query in it, Escape and Back return to the folder the search was
+started from, and the query can be edited and run again. A selection in the
+results, once it lands, takes the keyboard from the query, so the arrow keys
+and Space act on it.
+
+A path that does not exist is left out with a warning on stderr; with nothing
+left to open, the window opens at home. It never refuses to start.
 
 ### The Trash window
 
@@ -1505,7 +1566,7 @@ copied.
 ## Out of scope for v1, explicitly
 
 Tabs. Split views. Network and virtual filesystems. Mounting and ejecting.
-Content search, and any index of Otto's own. Batch rename. Archive browsing or
+Any index of Otto's own. Batch rename. Archive browsing or
 extraction.
 File comparison. Tags, labels, colours, or any metadata Otto would have to store
 itself. Custom per-directory view settings beyond sort order. Templates. Running

@@ -305,6 +305,7 @@ Otto is the compositor plus a set of components, each under `components/` and bu
 | `otto-emoji` | Emoji picker — search or browse, and the pick is typed into the focused window |
 | `otto-rdp` | RDP bridge serving a virtual output to a remote client |
 | `otto-msg` | Command-line control over `org.otto.Shell1`, speaking i3's command syntax |
+| `otto-search` | File search: the query language Files uses, as a library and a command |
 | `otto-media-kit` | Video playback: the embeddable player and its `otto-media-worker` |
 | `otto-kit` | UI toolkit the Otto clients are built on |
 | `xdg-desktop-portal-otto` | XDG Desktop Portal backend: screen sharing, file picker, screenshots, settings, permission dialogs |

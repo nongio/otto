@@ -71,6 +71,7 @@ settings-pane-pointing = トラックパッドとマウス
 settings-pane-sound = サウンド
 settings-pane-power = 電源
 settings-pane-lock-and-login = ロックとログイン
+settings-pane-search = 検索
 settings-pane-agents = エージェント
 
 
@@ -254,6 +255,68 @@ settings-group-login = ログイン
 settings-greeter = グリーター
 settings-greeter-detail = 次回のログインから適用されます
 settings-greeter-arguments = グリーターの引数
+
+
+## Settings — Search
+##
+## The file index Files searches, which LocalSearch keeps. These rows show
+## what it is doing and change what it looks at, through the [search] section
+## of Otto's configuration.
+
+settings-search-intro = ファイルは、LocalSearch がバックグラウンドで最新に保つファイルのインデックスを検索します。
+# The row showing what the indexer is doing.
+settings-search-index = ファイルインデックス
+settings-search-checking = 確認中…
+# $files is already written with its digits grouped, such as 48,210.
+settings-search-idle = 最新 · { $files } 個のファイル
+settings-search-idle-uncounted = 最新
+# $percent is how far through the indexer is, 0 to 99.
+settings-search-indexing = インデックス作成中… { $percent }%
+# $minutes is the indexer's own estimate, rounded up.
+settings-search-indexing-minutes = インデックス作成中… { $percent }% · 残り約 { $minutes } 分
+settings-search-indexing-hours = インデックス作成中… { $percent }% · 残り約 { $hours } 時間
+settings-search-paused = 一時停止中
+settings-search-paused-detail = バッテリーやディスクの空きが少ないときや、アプリから頼まれたときは一時停止します。その後は自動で再開します。
+# Under a Start button. A search starts the indexer by itself too.
+settings-search-stopped = 停止中。検索すると起動します。今すぐ起動することもできます。
+settings-search-start = 起動
+settings-search-missing = 未インストール
+# localsearch is the package name; keep it as is.
+settings-search-missing-detail = ファイル検索には localsearch パッケージが必要です。インストールしてから、このページを開き直してください。
+# What goes between groups of three digits in a count: 48,210. Written as
+# a string so a space survives.
+settings-search-digit-separator = { "," }
+# The heading over the folders, switches and Re-index.
+settings-search-looks-in = インデックスの対象
+settings-search-folders = フォルダ
+# The home folder, in the list of folders the index looks in.
+settings-search-folder-home = ホーム
+settings-search-folders-none = なし
+# The row under the folders, whose button opens a folder picker.
+settings-search-add-folder = フォルダを追加
+settings-search-choose = 選択…
+settings-search-add-folder-detail = 各フォルダとその中のすべてを検索します
+# $folder is the folder just chosen, named as the list names it.
+settings-search-folder-duplicate = { $folder } はすでにリストにあります
+# $folder is the folder just chosen; $parent is the listed folder it is in,
+# such as Home.
+settings-search-folder-covered = { $folder } は { $parent } の一部としてすでに検索対象です
+# Under Folders when the list is empty.
+settings-search-folders-empty = 何もインデックスされていないため、検索でファイルは見つかりません
+# The title of the folder picker.
+settings-search-choose-folder-title = 検索するフォルダを選択
+settings-search-picker-failed = フォルダの選択画面を開けませんでした
+# Leaves out folders that hold a .git folder, which is to say code.
+settings-search-skip-repos = コードリポジトリを除外
+settings-search-skip-repos-detail = 中に .git フォルダがあるフォルダを除外します
+settings-search-removable = リムーバブルドライブを検索
+settings-search-removable-detail = USB メモリなどのドライブを、接続中はインデックスに含めます
+settings-search-reindex = ホームを再インデックス
+# The button on the Re-index Home row.
+settings-search-reindex-button = 再インデックス
+settings-search-reindex-detail = 結果が古いと感じたときに。ホームフォルダ内のすべてをもう一度確認します。
+settings-search-reindex-asked = ホームフォルダの再確認を依頼しました。しばらくかかることがあります。
+settings-search-reindex-failed = インデクサーに接続できません。起動していますか？
 
 
 ## Settings — Agents
@@ -465,6 +528,8 @@ files-search-no-columns = 結果に表示できる列はありません。
 # it — and an empty listing would read as "no such file" rather than as
 # "nothing was able to look".
 files-search-unavailable = ファイルのインデックス作成はオフです
+files-search-indexing = インデックス作成中（{ $percent }%）。結果が不完全な可能性があります
+files-search-indexing-paused = インデックス作成は一時停止中です。結果が不完全な可能性があります
 
 files-preview-dimensions = { $width } × { $height }
 files-preview-animation = { $width } × { $height } · { $duration }
@@ -533,6 +598,7 @@ files-new-folder-failed = フォルダを作成できません：{ $error }
 files-open-failed = そのファイルを開けません：{ $error }
 files-open-app-broken = アプリの起動コマンドが正しくありません
 files-new-window-failed = 新しいウインドウを開けません：{ $error }
+files-settings-open-failed = 設定を開けません：{ $error }
 
 
 ## Files — the listing
@@ -957,6 +1023,14 @@ schema-login-greeter-command-description = ログインモードで起動する�
 schema-login-greeter-args-label = グリーターの引数
 schema-login-greeter-args-description = グリーターに渡す引数。
 
+# --- search ---
+schema-search-folders-label = インデックス対象のフォルダ
+schema-search-folders-description = ファイルインデックスが中身ごと調べるフォルダ。~ はホームフォルダです。
+schema-search-skip-code-repositories-label = コードリポジトリを除外
+schema-search-skip-code-repositories-description = 中に .git フォルダがあるフォルダを除外します。
+schema-search-index-removable-drives-label = リムーバブルドライブを検索
+schema-search-index-removable-drives-description = USB メモリなどのドライブを、接続中はインデックスに含めます。
+
 # --- rendering ---
 schema-rendering-renderer-label = レンダラー
 schema-rendering-renderer-description = ログイン画面から開始したセッションでOttoが描画に使うGPU API。ウインドウ内のセッションでは常にOpenGLを使用します。
@@ -1045,7 +1119,10 @@ launcher-ask-window-title-bare = Ask
 launcher-ask-starting = { $agent } を起動しています…
 launcher-ask-starting-agent = エージェントを起動しています…
 launcher-ask-thinking = 考えています…
+launcher-ask-writing = 書いています…
+launcher-ask-running = { $tool } を実行しています…
 launcher-ask-working = 作業しています…
+launcher-ask-sending = 次のメッセージを送信しています…
 # The agent asked for permission; its answers are the rows under the field.
 launcher-ask-waiting = 下での回答を待っています
 # Ask mode: the line under the status naming the agent and the mode it is in.

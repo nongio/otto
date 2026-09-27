@@ -134,6 +134,7 @@ $EDITOR ~/.config/otto/config.toml
 | [Night Shift](night-shift.md) | Color temperature and brightness control |
 | [Autostart](autostart.md) | exec_once, XDG autostart, systemd integration |
 | [Clipboard](clipboard.md) | Clipboard persistence and managers |
+| [File search](settings.md#search) | The folders file search looks in, code repositories and removable drives (`[search]`) |
 
 To *use* the desktop rather than configure it, start from the
 [User Guide index](README.md).

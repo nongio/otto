@@ -188,6 +188,7 @@ members = [
     "components/otto-agents",
     "components/otto-agents-client",
     "components/otto-stash",
+    "components/otto-search",
     "sample-clients/client-rainbow",
     "sample-clients/submenu",
     "sample-clients/submenu-gtk",
@@ -262,6 +263,7 @@ assets = [
     ["target/release/otto-stash", "usr/bin/", "755"],
     ["target/release/otto-peek", "usr/bin/", "755"],
     ["target/release/otto-msg", "usr/bin/", "755"],
+    ["target/release/otto-search", "usr/bin/", "755"],
     ["target/release/otto-agents", "usr/bin/", "755"],
     # Alias: a symlink to otto-launcher, which opens in ask mode under this
     # name. Kept as a link by preserve-symlinks.
@@ -327,6 +329,7 @@ assets = [
     { source = "target/release/otto-stash", dest = "/usr/bin/otto-stash", mode = "755" },
     { source = "target/release/otto-peek", dest = "/usr/bin/otto-peek", mode = "755" },
     { source = "target/release/otto-msg", dest = "/usr/bin/otto-msg", mode = "755" },
+    { source = "target/release/otto-search", dest = "/usr/bin/otto-search", mode = "755" },
     { source = "target/release/otto-agents", dest = "/usr/bin/otto-agents", mode = "755" },
     { source = "target/release/otto-media-worker", dest = "/usr/bin/otto-media-worker", mode = "755" },
     { source = "resources/bin/otto-look", dest = "/usr/bin/otto-look", mode = "755" },
@@ -439,6 +442,7 @@ files = [
     ["target/release/otto-stash", "/usr/bin/otto-stash", "755"],
     ["target/release/otto-peek", "/usr/bin/otto-peek", "755"],
     ["target/release/otto-msg", "/usr/bin/otto-msg", "755"],
+    ["target/release/otto-search", "/usr/bin/otto-search", "755"],
     ["target/release/otto-agents", "/usr/bin/otto-agents", "755"],
     ["components/otto-agents/otto-agents.service", "/usr/lib/systemd/user/otto-agents.service", "644"],
     # The plugin otto-agents hands agents (see resources/plugins/README.md); the script is listed apart so it stays executable.

@@ -1,7 +1,7 @@
 # Maintainer: Riccardo Canalicchio <riccardo.canalicchio@gmail.com>
 
 pkgname=otto-git
-pkgver=1.4.0.r2.gb65008da
+pkgver=1.5.0.r4.g2442bcca
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 url="https://github.com/nongio/otto"
@@ -64,6 +64,7 @@ build() {
     cargo build --release -p otto-peek
     cargo build --release -p otto-media-kit
     cargo build --release -p otto-msg
+    cargo build --release -p otto-search
     cargo build --release -p otto-agents
 }
 
@@ -84,6 +85,7 @@ package() {
     install -Dm755 target/release/otto-stash "$pkgdir/usr/bin/otto-stash"
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
+    install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
     # Aliases: the launcher opens in ask or agents mode under these names.
     ln -s otto-launcher "$pkgdir/usr/bin/otto-ask"

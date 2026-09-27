@@ -48,29 +48,16 @@ impl Browser {
     }
 
     pub(super) fn subtitle(&self) -> String {
-        // A first preview pays D-Bus activation, so this can be visible for a
-        // moment. Saying so beats a keystroke that appears to do nothing.
-        if self.peek_pending {
-            return otto_kit::t_owned!("files-status-opening-preview");
+        if let Some(line) = self.passing_subtitle() {
+            return line;
         }
-        if let Some(status) = &self.status {
-            return status.clone();
+        if let Some(notice) = self.index_notice() {
+            return notice;
         }
         let depth = self.active.min(self.columns.len() - 1);
-        if self.columns[depth].loading() {
-            return otto_kit::t_owned!("files-loading");
-        }
         // A result set counts what was found, not what a folder holds — and
         // says so plainly when it found nothing, since an empty grid under a
         // query reads as broken rather than as an answer.
-        //
-        // Unless nothing was able to look: search goes to the desktop's index,
-        // and with the indexer off there is no answer at all. Saying "nothing
-        // found" there would be a wrong answer rather than an empty one, and
-        // it would send the person looking for a file that is on the disk.
-        if (self.searching || self.recent) && !self.columns[depth].search_available {
-            return otto_kit::t_owned!("files-search-unavailable");
-        }
         if self.searching {
             let count = self.visible_len(depth);
             return if count == 0 {
@@ -111,6 +98,55 @@ impl Browser {
         } else {
             items
         }
+    }
+
+    /// What the subtitle says for the moment, over whatever it would
+    /// otherwise say about the listing.
+    fn passing_subtitle(&self) -> Option<String> {
+        // A first preview pays D-Bus activation, so this can be visible for a
+        // moment. Saying so beats a keystroke that appears to do nothing.
+        if self.peek_pending {
+            return Some(otto_kit::t_owned!("files-status-opening-preview"));
+        }
+        if let Some(status) = &self.status {
+            return Some(status.clone());
+        }
+        let depth = self.active.min(self.columns.len() - 1);
+        self.columns[depth]
+            .loading()
+            .then(|| otto_kit::t_owned!("files-loading"))
+    }
+
+    /// What the subtitle says about the file indexer instead of a count, when
+    /// the indexer is why the listing may be wrong.
+    ///
+    /// Nothing was able to look when the indexer is off: there is no answer
+    /// at all, and "nothing found" would be a wrong answer rather than an
+    /// empty one, sending the person looking for a file that is on the disk.
+    /// An indexer still working through the disk answers, but not
+    /// completely, and the person should know before trusting an empty or
+    /// short result.
+    pub(super) fn index_notice(&self) -> Option<String> {
+        let depth = self.active.min(self.columns.len() - 1);
+        if (self.searching || self.recent) && !self.columns[depth].search_available {
+            return Some(otto_kit::t_owned!("files-search-unavailable"));
+        }
+        if !self.searching {
+            return None;
+        }
+        self.index.status().and_then(crate::search::indexing_notice)
+    }
+
+    /// Whether `(x, y)` is on an indexer notice in the subtitle, which opens
+    /// the indexer's settings when clicked.
+    pub(super) fn index_notice_at(&self, x: f32, y: f32) -> bool {
+        // The picker and the path entry draw something else on that row.
+        if self.picker.is_some() || self.path_entry.is_some() || self.desk {
+            return false;
+        }
+        view::index_notice_rect(self.size.0).contains(skia_safe::Point::new(x, y))
+            && self.passing_subtitle().is_none()
+            && self.index_notice().is_some()
     }
 
     /// The palette this window draws with.

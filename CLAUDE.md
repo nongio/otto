@@ -100,6 +100,7 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 ### Components
 
 - `components/otto-kit/` — UI toolkit for building Otto apps (menu bars, context menus, popups)
+- `components/otto-search/` — File search: the query language, SPARQL over LocalSearch, name scoring (no toolkit deps)
 - `components/otto-bar/` — Top menu bar component
 - `components/apps-manager/` — **WIP**: a command-line probe for the foreign-toplevel protocol, not a launcher
 - `components/xdg-desktop-portal-otto/` — Portal backend bridging xdg-desktop-portal to compositor

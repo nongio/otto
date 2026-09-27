@@ -5314,6 +5314,7 @@ dependencies = [
  "otto-kit",
  "otto-media-kit",
  "otto-peek",
+ "otto-search",
  "serde",
  "serde_json",
  "skia-safe",
@@ -5393,6 +5394,7 @@ dependencies = [
  "laye-rs",
  "lazy_static",
  "libc",
+ "otto-search",
  "pipewire",
  "resvg",
  "rustix 0.38.44",
@@ -5533,10 +5535,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-search"
+version = "1.5.0"
+dependencies = [
+ "libc",
+ "tokio",
+ "tracing",
+ "zbus 4.4.0",
+]
+
+[[package]]
 name = "otto-settings"
 version = "1.5.0"
 dependencies = [
  "otto-kit",
+ "otto-search",
  "serde",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",

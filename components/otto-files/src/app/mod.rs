@@ -457,6 +457,9 @@ struct Browser {
     search_scope: model::SearchScope,
     /// This window is showing search results rather than a directory.
     searching: bool,
+    /// What the file indexer is doing, watched while the search strip is
+    /// open so the subtitle can say when results may be incomplete.
+    index: crate::search::IndexWatch,
     /// The recent listing's day sections, rebuilt whenever the listing is.
     /// Empty — a flat grid — whenever [`Self::recent`] is false.
     recent_sections: view::GridSections,
@@ -583,6 +586,10 @@ struct Browser {
     /// the successor is chosen from the listing that is still on screen, and
     /// acted on against the one that replaces it.
     pending_pick: Option<(usize, Option<String>)>,
+    /// Rows to select once they are listed, as [`Entry::selection_key`]s:
+    /// what `--select` asked for. The folder, or the search results, are read
+    /// off-thread, so the rows do not exist yet when the window opens.
+    pending_select: Option<Vec<String>>,
     /// A pane the keyboard stepped into before its listing had arrived, and
     /// which should take the cursor on its first row as soon as it does.
     ///
@@ -1202,9 +1209,21 @@ fn app_id() -> &'static str {
 }
 
 /// Open a browser window at `start` and run until it is closed.
-pub fn run_browser(start: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let mut browser = Browser::new(start);
+pub fn run_browser(start: crate::launch::Start) -> Result<(), Box<dyn std::error::Error>> {
+    let mut browser = Browser::new(start.folder);
     browser.remember(&remembered::Remembered::load());
+    if !start.select.is_empty() {
+        browser.pending_select = Some(
+            start
+                .select
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+        );
+    }
+    if let Some((query, scope)) = start.search {
+        browser.start_search(query, scope);
+    }
     run_app(browser, None)
 }
 

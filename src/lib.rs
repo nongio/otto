@@ -58,6 +58,7 @@ pub use state::{CalloopData, ClientState, Otto};
 mod workspaces;
 
 mod config;
+mod search_index;
 mod theme;
 
 /// The user's preferred locales, most preferred first.

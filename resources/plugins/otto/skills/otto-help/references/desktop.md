@@ -99,23 +99,28 @@ button. The trailing `0` is "no choice groups" — a plain confirm.
 
 ## Opening an app
 
-Start it detached, or the command sits there until the window is closed:
+Start it through this skill's `open` script, which starts the app detached
+and returns at once. Run it as a plain command: no `setsid`, no `&`, no
+redirections, which make the command stop and ask the person first. Quote
+each path or query whole in single quotes; never escape with backslashes.
 
 ```sh
-setsid otto-files >/dev/null 2>&1 &
+<this skill>/scripts/open otto-files
 ```
 
 | To open | Run |
 |---|---|
-| Files, at home | `setsid otto-files >/dev/null 2>&1 &` |
-| Files, at a folder | `setsid otto-files /home/me/Pictures >/dev/null 2>&1 &` |
-| The Trash | `setsid otto-files --trash >/dev/null 2>&1 &` |
-| The emoji picker | `setsid otto-emoji >/dev/null 2>&1 &` |
-| The emoji picker, searching | `setsid otto-emoji heart >/dev/null 2>&1 &` |
-| Settings | `setsid otto-settings >/dev/null 2>&1 &` |
-| The launcher (apps) | `setsid otto-launcher >/dev/null 2>&1 &` |
-| A quick look at a file | `setsid otto-peek /home/me/a.pdf >/dev/null 2>&1 &` |
-| Anything else — a file, a folder, a link | `setsid xdg-open /home/me/notes.txt >/dev/null 2>&1 &` |
+| Files, at home | `<this skill>/scripts/open otto-files` |
+| Files, at a folder | `<this skill>/scripts/open otto-files /home/me/Pictures` |
+| Files, with a file selected in its folder | `<this skill>/scripts/open otto-files --select /home/me/Documents/a.pdf` |
+| Files, on search results | `<this skill>/scripts/open otto-files --search 'invoice kind:pdf'` (add `--in DIR` for one folder, `--select PATH` to highlight one result) |
+| The Trash | `<this skill>/scripts/open otto-files --trash` |
+| The emoji picker | `<this skill>/scripts/open otto-emoji` |
+| The emoji picker, searching | `<this skill>/scripts/open otto-emoji heart` |
+| Settings | `<this skill>/scripts/open otto-settings` |
+| The launcher (apps) | `<this skill>/scripts/open otto-launcher` |
+| A quick look at a file | `<this skill>/scripts/open otto-peek /home/me/a.pdf` |
+| Anything else — a file, a folder, a link | `<this skill>/scripts/open xdg-open /home/me/notes.txt` |
 
 The emoji picker types the emoji into whatever window has the keyboard when the
 person picks one. `otto-emoji --copy` puts it on the clipboard instead, and
@@ -235,7 +240,8 @@ says so rather than acting on the focused window instead.
    where the person is working; open it and let them pick.
 3. **One message per thing that happened.** An activity you created is yours to
    dismiss when it is over.
-4. **Start GUI apps detached.** `setsid … &`, or the command never returns.
+4. **Start GUI apps through `scripts/open`.** Not `setsid … &`: that stops to
+   ask the person, and without it the command never returns.
 5. **Never pass `notify-send -A`.** It waits for a click that never comes.
 6. **Do not run `otto --probe`.** It takes over the session.
 7. **Do not invent commands.** If it is not on this page, it does not exist.

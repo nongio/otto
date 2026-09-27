@@ -65,6 +65,9 @@ pub fn is_applied_live(id: &str) -> bool {
             | "icon_theme"
             | "input.show_layout_in_bar"
             | "desk.enabled"
+            | "search.folders"
+            | "search.skip_code_repositories"
+            | "search.index_removable_drives"
     ) || is_input_id(id)
 }
 
@@ -362,6 +365,20 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // stops it.
         "desk.enabled" => {
             state.apply_desk_setting();
+            Ok(())
+        }
+        // LocalSearch's own settings: pushed to it on a thread of its own,
+        // since writing them runs `gsettings`.
+        "search.folders" => {
+            crate::search_index::sync(Some("search.folders"));
+            Ok(())
+        }
+        "search.skip_code_repositories" => {
+            crate::search_index::sync(Some("search.skip_code_repositories"));
+            Ok(())
+        }
+        "search.index_removable_drives" => {
+            crate::search_index::sync(Some("search.index_removable_drives"));
             Ok(())
         }
         // The rest of `input.*` is libinput device state, and one device is as

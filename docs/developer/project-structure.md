@@ -74,6 +74,7 @@ applications share:
 | `otto-auth-ui` | The password panel shared by the greeter and the lock screen |
 | `otto-input-overlay` | On-screen touchpad and key-press overlays, for screen recordings |
 | `otto-msg` | Drives the compositor from a script, the way `i3-msg` and `swaymsg` do |
+| `otto-search` | File search over the desktop's index: the query language, shared by Files, and the `otto-search` command |
 | `otto-agents` | Runs ACP agents and serves them over the Agent Host Protocol |
 | `otto-agents-client` | Library: talking to `otto-agents`, its socket, session URIs and file URIs |
 | `otto-media-kit` | Library: video playback for Otto apps; a sandboxed GStreamer worker plus the player view that draws its frames |

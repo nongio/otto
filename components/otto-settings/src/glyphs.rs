@@ -32,6 +32,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "sound" => sound(canvas, &paint),
         "battery" => battery(canvas, &paint),
         "lock" => lock(canvas, &paint),
+        "search" => search(canvas, &paint),
         "agent" => agent(canvas, &paint),
         _ => {
             canvas.draw_circle(Point::new(0.0, 0.0), 2.5, &paint);
@@ -48,6 +49,12 @@ fn settings(canvas: &Canvas, paint: &Paint) {
         let knob_x = [-2.0, 3.0, -4.0][i];
         canvas.draw_circle(Point::new(knob_x, *y), 2.0, paint);
     }
+}
+
+/// A magnifying glass.
+fn search(canvas: &Canvas, paint: &Paint) {
+    canvas.draw_circle(Point::new(-1.5, -1.5), 5.0, paint);
+    canvas.draw_line(Point::new(2.2, 2.2), Point::new(6.5, 6.5), paint);
 }
 
 /// Screen on a stand.

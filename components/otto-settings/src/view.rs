@@ -236,8 +236,8 @@ pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
     ))
 }
 
-/// The trailing edge of a row's pop-up: the row's own, or short of the "−"
-/// button on a removable row.
+/// The trailing edge of a row's pop-up or value: the row's own, or short of
+/// the "−" button on a removable row.
 fn select_right(row: &Row, right: f32) -> f32 {
     if row.removable {
         right - widgets::LINE_BUTTON - SHORTCUT_GAP
@@ -2080,6 +2080,7 @@ impl Settings {
                     .left
             }
             Control::Value(value) => {
+                let right = select_right(row, right);
                 if value.contains('+') {
                     right - widgets::key_combo_width(value)
                 } else {
@@ -2284,6 +2285,18 @@ impl Settings {
                 &self.theme,
             ),
             Control::Value(value) => {
+                // A removable value (a folder the Search pane indexes) keeps
+                // its "−" at the trailing edge, as a removable pop-up does.
+                if row.removable {
+                    widgets::line_button(
+                        canvas,
+                        row_remove_rect(right, cy),
+                        false,
+                        self.pressed == Some(Pressed::RemoveRow(row.handle())),
+                        &self.theme,
+                    );
+                }
+                let right = select_right(row, right);
                 // Shortcut rows read as key combinations; everything else is
                 // plain secondary text.
                 if value.contains('+') {
