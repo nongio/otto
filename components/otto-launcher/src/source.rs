@@ -29,6 +29,10 @@ pub struct Item {
     /// Extra text that matches but is never shown: keywords, the binary name,
     /// the app id behind a window.
     pub search_terms: Vec<String>,
+    /// A word in a pill at the row's end, in place of the source's badge:
+    /// the chat app an agent session was written to from, away from the
+    /// desktop.
+    pub pill: Option<String>,
     /// Which source this came from, and its index there. The launcher hands
     /// this back to activate the item.
     pub origin: Origin,
@@ -173,6 +177,7 @@ mod tests {
             activity: None,
             checked: None,
             search_terms: Vec::new(),
+            pill: None,
             origin: Origin {
                 source: 0,
                 index: 0,

@@ -2102,11 +2102,15 @@ impl HostState {
                 }
             }
         }
+        let remote = remote_origin(&action.message);
+        if let Some(via) = &remote {
+            self.mark_remote(session_uri, via);
+        }
         let prompt = SessionCommand::Prompt {
             turn_id: action.turn_id.clone(),
             text: action.message.text.clone(),
             attachments: attached,
-            remote: remote_origin(&action.message),
+            remote,
         };
         self.apply(&chat_uri, StateAction::ChatTurnStarted(action), origin);
         self.mark_written(session_uri);
@@ -2301,6 +2305,21 @@ impl HostState {
                 .collect::<Vec<_>>(),
         });
         let meta = with_otto_meta(session.state.meta.clone(), "modes", Some(modes));
+        if meta == session.state.meta {
+            return;
+        }
+        let changed = StateAction::SessionMetaChanged(SessionMetaChangedAction { meta });
+        self.apply(session_uri, changed, None);
+        self.mark_unsaved(session_uri);
+    }
+
+    /// Says in the session's `_meta`, as `otto.remote`, which chat app it was
+    /// last written to from, so lists can tell it from the desktop's own.
+    fn mark_remote(&mut self, session_uri: &str, via: &str) {
+        let Some(session) = self.sessions.get(session_uri) else {
+            return;
+        };
+        let meta = with_otto_meta(session.state.meta.clone(), "remote", Some(json!(via)));
         if meta == session.state.meta {
             return;
         }
