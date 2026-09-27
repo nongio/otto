@@ -348,6 +348,14 @@ settings-agents-service-missing = 未安装
 settings-agents-service-unmanaged = 无法确定：此系统没有 systemctl
 settings-agents-start = 启动
 settings-agents-restart = 重启
+settings-agents-bridge-group = 聊天桥接
+settings-agents-bridge = 桥接
+settings-agents-bridge-off = 已关闭。聊天应用无法连接你的智能体。
+settings-agents-bridge-unset = 先在下方设置命令并应用，再打开此项。
+settings-agents-bridge-failed = 因错误而停止。原因可通过 journalctl --user -u otto-agents-bridge 查看。
+settings-agents-bridge-missing = 未安装
+settings-agents-bridge-command = 命令
+settings-agents-bridge-command-detail = 运行桥接的程序，例如配置为以 otto-agents acp 作为其智能体启动的网关。
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = 配置文件
 settings-agents-none = 尚未设置智能体
