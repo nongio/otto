@@ -97,6 +97,13 @@ enum Command {
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
     },
+    /// Run the chat bridge `[bridge]` in `agents.toml` names, in place of this
+    /// process. The `otto-agents-bridge` unit runs this; Settings turns it on.
+    Bridge {
+        /// Agent configuration file. Defaults to Otto's config files.
+        #[arg(long, env = "OTTO_AGENTS_CONFIG")]
+        config: Option<PathBuf>,
+    },
     /// Put the desktop's skills and its agent where each harness looks for them.
     #[command(alias = "skills")]
     Plugins {
@@ -193,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
             url,
         } => cli::show_session(&url, session.as_deref(), follow).await,
         Command::Acp { agent, url } => facade::serve(&url, agent.as_deref()).await,
+        Command::Bridge { config } => cli::run_bridge(config.as_deref()),
         Command::Plugins {
             command: PluginsCommand::Install { dir, home, only },
         } => cli::install_plugins(dir.as_deref(), home.as_deref(), only.as_deref()),
