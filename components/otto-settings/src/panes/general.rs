@@ -81,6 +81,9 @@ pub fn build() -> Pane {
                     )
                     .detail(otto_kit::t!("settings-background-image-detail"))
                     .id("background_image"),
+                    Row::new(otto_kit::t!("settings-show-desk"), Control::Toggle(false))
+                        .detail(otto_kit::t!("settings-show-desk-detail"))
+                        .id("desk.enabled"),
                 ],
             ),
             group(

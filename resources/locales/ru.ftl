@@ -93,6 +93,8 @@ settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Невозможно показать
+settings-show-desk = Показывать файлы на рабочем столе
+settings-show-desk-detail = Файлы из папки «Рабочий стол», за окнами
 
 settings-group-pointer-and-icons = Указатель и значки
 settings-cursor-theme = Тема курсора
@@ -412,6 +414,7 @@ files-open-with-no-match = Нет подходящих приложений
 files-open-with-always = Всегда использовать для типа «{ $kind }»
 files-open-with-not-remembered = Открыто, но выбор не сохранён: { $error }
 files-new-folder = Новая папка
+files-desk-open-in-files = Открыть в Файлах
 files-move-to-trash = Переместить в корзину
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -889,6 +892,8 @@ schema-show-maximize-button-label = Кнопка развёртывания
 schema-show-maximize-button-description = Показывать кнопку масштабирования в заголовке окна. По умолчанию выключено: двойной щелчок по заголовку и так разворачивает окно.
 schema-font-family-label = Шрифт интерфейса
 schema-font-family-description = Семейство шрифтов, используемое собственным интерфейсом Otto.
+schema-desk-enabled-label = Показывать файлы на рабочем столе
+schema-desk-enabled-description = Файлы из папки «Рабочий стол», за окнами.
 schema-background-color-label = Цвет фона
 schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки.
 schema-background-image-label = Изображение фона

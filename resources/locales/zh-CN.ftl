@@ -93,6 +93,8 @@ settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = 无法显示
+settings-show-desk = 在桌面上显示文件
+settings-show-desk-detail = “桌面”文件夹中的文件，显示在窗口后面
 
 settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
@@ -406,6 +408,7 @@ files-open-with-no-match = 没有匹配的应用程序
 files-open-with-always = 始终使用此应用程序打开“{ $kind }”
 files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
+files-desk-open-in-files = 在文件中打开
 files-move-to-trash = 移到废纸篓
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -834,6 +837,8 @@ schema-show-maximize-button-label = 最大化按钮
 schema-show-maximize-button-description = 在窗口标题栏中显示缩放控件。默认关闭：双击标题栏同样可以缩放窗口。
 schema-font-family-label = 界面字体
 schema-font-family-description = Otto 自身界面使用的字体族。
+schema-desk-enabled-label = 在桌面上显示文件
+schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
 schema-background-color-label = 背景颜色
 schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
 schema-background-image-label = 背景图片

@@ -78,7 +78,11 @@ impl Browser {
     /// over, which is most of the time once a preview column is up, so the two
     /// bands overlap on every window.
     pub(super) fn hover_shape(&self, x: f32, y: f32) -> CursorShape {
-        if let Some(edge) = resize::edge_at(Rect::from_wh(self.size.0, self.size.1), x, y) {
+        // The desk has no border to offer a resize from.
+        let edge = (!self.desk)
+            .then(|| resize::edge_at(Rect::from_wh(self.size.0, self.size.1), x, y))
+            .flatten();
+        if let Some(edge) = edge {
             return edge.cursor();
         }
         let (width, height) = (self.size.0, self.content_h());
@@ -252,7 +256,7 @@ impl Browser {
         // for: a grid cell is worth a real picture, a list row is 16 points of
         // it.
         let box_edge = match self.mode {
-            view::ViewMode::Grid => view::GRID_ICON,
+            view::ViewMode::Grid => view::grid_icon(),
             view::ViewMode::List | view::ViewMode::Columns => view::ICON_SIZE,
         };
         let scale = AppContext::scale_factor().max(1) as f32;

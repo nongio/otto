@@ -13,7 +13,7 @@ use otto_kit::controls_side::ControlsSide;
 use otto_kit::icons;
 use otto_kit::prelude::*;
 use skia_safe::{ClipOp, Contains, Paint, PathBuilder, Point, RRect};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 use crate::model::{self, Column, Entry, Place, SearchScope, SortKey};
 
@@ -67,7 +67,7 @@ fn decoration_variant() -> DecorationVariant {
 /// Whether the window draws its traffic lights at all: a tile under
 /// `decoration = "none"` has no bar, and the browser's lights go with it.
 fn controls_shown() -> bool {
-    decoration_variant() != DecorationVariant::Hidden
+    !is_desk() && decoration_variant() != DecorationVariant::Hidden
 }
 
 /// The traffic lights at the origin, sized for the decoration the window
@@ -134,6 +134,9 @@ fn controls_top() -> f32 {
 /// The header's height under the decoration the window wears — [`HEADER_H`]
 /// less whatever the chrome moved up by.
 fn header_base_h() -> f32 {
+    if is_desk() {
+        return 0.0;
+    }
     HEADER_H - chrome_lift()
 }
 
@@ -162,43 +165,97 @@ pub const SIDEBAR_W: f32 = 232.0;
 /// shows one flat listing that cannot be navigated, so arrows pointing at
 /// nowhere and a switcher between three views of one directory would be
 /// controls that do nothing.
+///
+/// The desk drops everything else too — the header, the path bar, the
+/// window's frame and every ground — and keeps only the icon grid, drawn on a
+/// transparent layer surface over the wallpaper. See `specs/desk.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shell {
     Browser,
     Trash,
+    Desk,
 }
 
 /// Fixed at startup — a window does not change shell — which is why it is a
 /// process-wide value rather than a parameter on all forty geometry
 /// functions below, each of which starts from where the file area does.
-static TRASH_SHELL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SHELL: AtomicU8 = AtomicU8::new(0);
 
 /// Choose the shell, once, before the first frame.
 pub fn set_shell(shell: Shell) {
-    TRASH_SHELL.store(shell == Shell::Trash, std::sync::atomic::Ordering::Relaxed);
+    let code = match shell {
+        Shell::Browser => 0,
+        Shell::Trash => 1,
+        Shell::Desk => 2,
+    };
+    SHELL.store(code, Ordering::Relaxed);
 }
 
 pub fn shell() -> Shell {
-    if TRASH_SHELL.load(std::sync::atomic::Ordering::Relaxed) {
-        Shell::Trash
-    } else {
-        Shell::Browser
+    match SHELL.load(Ordering::Relaxed) {
+        1 => Shell::Trash,
+        2 => Shell::Desk,
+        _ => Shell::Browser,
     }
+}
+
+/// Whether this process is the desk: no chrome at all, only the grid.
+pub fn is_desk() -> bool {
+    shell() == Shell::Desk
 }
 
 /// Where the file area begins.
 pub fn sidebar_w() -> f32 {
     match shell() {
         Shell::Browser => SIDEBAR_W,
-        Shell::Trash => 0.0,
+        Shell::Trash | Shell::Desk => 0.0,
     }
 }
 
 /// The Trash window has nowhere to go back to, and one view of one
 /// directory, so it carries neither the nav pair nor the switcher — the
-/// header's trailing corner holds its two actions instead.
+/// header's trailing corner holds its two actions instead. The desk has no
+/// header to carry them in.
 fn nav_hidden() -> bool {
-    shell() == Shell::Trash
+    shell() != Shell::Browser
+}
+
+/// Where the desk's panel sits inside its surface and how far its icons stay
+/// from the panel's edges. Set once from the `[desk]` config before the first
+/// frame; unused by every other shell.
+#[derive(Debug, Clone, Copy)]
+pub struct DeskLayout {
+    pub anchor: crate::desk::Anchor,
+    pub size: [crate::desk::Extent; 2],
+    /// Points between the panel's edges and the grid.
+    pub padding: f32,
+}
+
+/// The whole surface, unpadded: what the desk is until its config is read.
+const UNSET_DESK_LAYOUT: DeskLayout = DeskLayout {
+    anchor: crate::desk::Anchor::Fill,
+    size: [crate::desk::Extent::Percent(100.0); 2],
+    padding: 0.0,
+};
+
+static DESK_LAYOUT: std::sync::RwLock<DeskLayout> = std::sync::RwLock::new(UNSET_DESK_LAYOUT);
+
+/// Set the desk's layout — see [`DeskLayout`].
+pub fn set_desk_layout(layout: DeskLayout) {
+    if let Ok(mut current) = DESK_LAYOUT.write() {
+        *current = layout;
+    }
+}
+
+/// The desk's panel inside a surface `width` × `height` points: what takes
+/// the pointer, and what the grid is laid out in once padded.
+pub fn desk_panel_rect(width: f32, height: f32) -> Rect {
+    let layout = DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT);
+    crate::desk::panel_rect(layout.anchor, layout.size, (width, height))
+}
+
+fn desk_padding() -> f32 {
+    DESK_LAYOUT.read().map(|l| l.padding).unwrap_or(0.0)
 }
 
 /// What a listing with nothing in it says. An empty Trash is a state worth
@@ -214,7 +271,7 @@ fn empty_message(f: &Frame) -> &'static str {
         return otto_kit::t!("files-search-unavailable");
     }
     match shell() {
-        Shell::Browser => otto_kit::t!("files-folder-empty"),
+        Shell::Browser | Shell::Desk => otto_kit::t!("files-folder-empty"),
         Shell::Trash => otto_kit::t!("files-trash-empty"),
     }
 }
@@ -493,7 +550,7 @@ impl Default for ListColumnWidths {
             // The Trash's third column holds a path, not a one-word kind, so
             // it starts twice as wide. It is still draggable from there.
             kind: match shell() {
-                Shell::Browser => 110.0,
+                Shell::Browser | Shell::Desk => 110.0,
                 Shell::Trash => 230.0,
             },
             modified: 150.0,
@@ -520,9 +577,39 @@ pub const MILLER_ROW_INSET: f32 = 8.0;
 /// Icon grid metrics. Kept together and public because this geometry is the
 /// reusable part: a desktop surface lays out the same cells against its own
 /// rect, with no file-manager chrome around them.
-pub const CELL_W: f32 = 112.0;
-pub const CELL_H: f32 = 120.0;
-pub const GRID_ICON: f32 = 64.0;
+///
+/// The icon's size is the one thing about a cell that can change: the desk
+/// takes it from `[desk] icon_size`. The cell grows and shrinks with the icon
+/// by the same amount on both axes, which keeps the label's width and the air
+/// around the icon what they are at the default size.
+pub const DEFAULT_GRID_ICON: f32 = 64.0;
+/// A cell's size at [`DEFAULT_GRID_ICON`].
+const DEFAULT_CELL_W: f32 = 112.0;
+const DEFAULT_CELL_H: f32 = 120.0;
+
+/// The grid icon's size in points, as the bits of an `f32`; see
+/// [`set_grid_icon`]. Process-wide for the same reason [`SHELL`] is.
+static GRID_ICON_BITS: AtomicU32 = AtomicU32::new(DEFAULT_GRID_ICON.to_bits());
+
+/// Change the grid icon's size, once, before the first frame.
+pub fn set_grid_icon(points: f32) {
+    GRID_ICON_BITS.store(points.to_bits(), Ordering::Relaxed);
+}
+
+/// The grid icon's size, in points.
+pub fn grid_icon() -> f32 {
+    f32::from_bits(GRID_ICON_BITS.load(Ordering::Relaxed))
+}
+
+/// A grid cell's width, in points.
+pub fn cell_w() -> f32 {
+    DEFAULT_CELL_W + grid_icon() - DEFAULT_GRID_ICON
+}
+
+/// A grid cell's height, in points.
+pub fn cell_h() -> f32 {
+    DEFAULT_CELL_H + grid_icon() - DEFAULT_GRID_ICON
+}
 const GRID_PAD: f32 = 14.0;
 /// Space between the bottom of the icon and the optical centre of the
 /// caption's first line. Tuned so the icon's selection rectangle and the
@@ -548,10 +635,10 @@ const GRID_ICON_INSET: f32 = 6.0;
 /// highlight against its own cells.
 pub fn grid_icon_highlight_rect(cell: Rect, icon_top: f32) -> Rect {
     Rect::from_xywh(
-        cell.center_x() - GRID_ICON / 2.0 - GRID_ICON_INSET,
+        cell.center_x() - grid_icon() / 2.0 - GRID_ICON_INSET,
         icon_top - GRID_ICON_INSET,
-        GRID_ICON + GRID_ICON_INSET * 2.0,
-        GRID_ICON + GRID_ICON_INSET * 2.0,
+        grid_icon() + GRID_ICON_INSET * 2.0,
+        grid_icon() + GRID_ICON_INSET * 2.0,
     )
 }
 
@@ -569,6 +656,15 @@ pub enum ViewMode {
 /// The file area: right of the sidebar, below the header (and the column strip
 /// in list view).
 pub fn content_viewport(width: f32, height: f32, mode: ViewMode) -> Rect {
+    // The desk's panel is the file area, less the padding that keeps the
+    // icons off its edges.
+    if is_desk() {
+        let panel = desk_panel_rect(width, height);
+        let pad = desk_padding()
+            .min(panel.width() / 2.0)
+            .min(panel.height() / 2.0);
+        return panel.with_inset((pad, pad));
+    }
     let top = match mode {
         ViewMode::List => header_h() + COLUMNS_H,
         ViewMode::Columns | ViewMode::Grid => header_h(),
@@ -626,7 +722,7 @@ impl GridSections {
     /// headings' text stays here; the layout only needs to know which
     /// sections have one.
     fn layout(&self, count: usize) -> GridLayout {
-        GridLayout::new(Size::new(CELL_W, CELL_H), count)
+        GridLayout::new(Size::new(cell_w(), cell_h()), count)
             .with_pad(GRID_PAD)
             .with_sections(
                 GRID_HEADER_H,
@@ -847,6 +943,9 @@ pub fn nav_forward_rect() -> Rect {
 
 /// Which nav arrow, if either, sits under `(x, y)`.
 pub fn nav_button_at(x: f32, y: f32) -> Option<NavButton> {
+    if nav_hidden() {
+        return None;
+    }
     let p = Point::new(x, y);
     if nav_back_rect().contains(p) {
         Some(NavButton::Back)
@@ -1023,6 +1122,9 @@ pub const SWITCHER_MODES: [ViewMode; 3] = [ViewMode::List, ViewMode::Grid, ViewM
 
 /// Which view the switcher segment at `(x, y)` selects, if any.
 pub fn switcher_at(x: f32, y: f32, width: f32) -> Option<ViewMode> {
+    if is_desk() {
+        return None;
+    }
     let rect = switcher_rect(width);
     if !rect.contains(Point::new(x, y)) {
         return None;
@@ -1138,7 +1240,7 @@ pub fn miller_rename_rect(
 pub fn grid_rename_rect(width: f32, height: f32, scroll: f32, index: usize) -> Rect {
     let area = content_viewport(width, height, ViewMode::Grid);
     let cell = grid_cell_rect(area, index, scroll);
-    let center_y = cell.top + 8.0 + GRID_ICON + GRID_LABEL_GAP;
+    let center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
     Rect::from_ltrb(
         cell.left + 2.0,
         center_y - GRID_LABEL_INSET - 2.0,
@@ -1495,17 +1597,17 @@ fn draw_drag_entry(
 
     match mode {
         ViewMode::Grid => {
-            let cell = Rect::from_wh(CELL_W, CELL_H);
+            let cell = Rect::from_wh(cell_w(), cell_h());
             let icon_top = cell.top + 8.0;
             if let Some(image) = thumb {
                 draw_thumbnail(
                     canvas,
                     image,
                     Rect::from_xywh(
-                        cell.center_x() - GRID_ICON / 2.0,
+                        cell.center_x() - grid_icon() / 2.0,
                         icon_top,
-                        GRID_ICON,
-                        GRID_ICON,
+                        grid_icon(),
+                        grid_icon(),
                     ),
                     false,
                 );
@@ -1513,16 +1615,16 @@ fn draw_drag_entry(
                 let chain = entry.icon_chain();
                 let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
                 if let Some(image) =
-                    icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
+                    icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
                 {
                     canvas.draw_image_rect(
                         &image,
                         None,
                         Rect::from_xywh(
-                            cell.center_x() - GRID_ICON / 2.0,
+                            cell.center_x() - grid_icon() / 2.0,
                             icon_top,
-                            GRID_ICON,
-                            GRID_ICON,
+                            grid_icon(),
+                            grid_icon(),
                         ),
                         &Paint::default(),
                     );
@@ -1530,7 +1632,7 @@ fn draw_drag_entry(
             }
 
             // The caption on its pill, the way a selected cell wears it.
-            let center_y = icon_top + GRID_ICON + GRID_LABEL_GAP;
+            let center_y = icon_top + grid_icon() + GRID_LABEL_GAP;
             let (first, second) = split_label(&entry.name, 13);
             let caption = GRID_LABEL_STYLE.font();
             let text_w = caption
@@ -1615,7 +1717,7 @@ fn row_icon_lead(mode: ViewMode) -> f32 {
 /// a row-shaped card.
 pub fn drag_image_size(mode: ViewMode) -> (f32, f32) {
     match mode {
-        ViewMode::Grid => (CELL_W, CELL_H),
+        ViewMode::Grid => (cell_w(), cell_h()),
         ViewMode::List | ViewMode::Columns => (DRAG_IMAGE_W, DRAG_IMAGE_H),
     }
 }
@@ -2433,13 +2535,14 @@ pub fn item_span_in(
         ViewMode::Grid => {
             let area = content_viewport(width, height, mode);
             let cell = sections.layout(usize::MAX).cell_rect(index, area.width());
-            (cell.top, CELL_H)
+            (cell.top, cell_h())
         }
     }
 }
 
 pub fn is_drag_area(x: f32, y: f32, width: f32) -> bool {
-    if y > header_base_h() || x > width {
+    // Nothing moves the desk: it has no frame to grab.
+    if is_desk() || y > header_base_h() || x > width {
         return false;
     }
     if switcher_rect(width).contains(Point::new(x, y)) {
@@ -2817,6 +2920,14 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
     // sheet of opaque paper are all *styles* on layers the engine composites
     // under this canvas — see [`crate::scene`]. What is left below is the
     // chrome drawn on top of them.
+    // The desk is the grid and nothing else, on a transparent surface.
+    if is_desk() {
+        draw_grid(canvas, f);
+        draw_drop_highlight(canvas, f);
+        draw_open_pulse(canvas, f);
+        return;
+    }
+
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
 
@@ -4241,7 +4352,13 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     canvas.save();
     canvas.clip_rect(area, ClipOp::Intersect, true);
 
-    if let Some(error) = pane.error {
+    // The desk says nothing about a folder that is empty, missing or still
+    // being read: a sentence in the middle of the wallpaper would be the only
+    // thing on screen, and an empty desk is the ordinary state of one.
+    let quiet = is_desk() && (pane.error.is_some() || pane.loading || pane.entries.is_empty());
+    if quiet {
+        // Nothing to draw; see above.
+    } else if let Some(error) = pane.error {
         draw_centered(canvas, area, error, theme.text_secondary);
     } else if pane.loading {
         draw_centered(
@@ -4392,7 +4509,7 @@ pub fn draw_grid_cell_with(
     let icon_top = cell.top + 8.0;
     // The optical centre of the caption's first line, not its top: that is what
     // `Label::centered_at` wants, and the pill is measured off the same point.
-    let label_center_y = icon_top + GRID_ICON + GRID_LABEL_GAP;
+    let label_center_y = icon_top + grid_icon() + GRID_LABEL_GAP;
 
     if selected {
         // The highlight hugs the icon, not the cell — a cell-wide wash reads as
@@ -4406,10 +4523,10 @@ pub fn draw_grid_cell_with(
     }
 
     let box_rect = Rect::from_xywh(
-        cell.center_x() - GRID_ICON / 2.0,
+        cell.center_x() - grid_icon() / 2.0,
         icon_top,
-        GRID_ICON,
-        GRID_ICON,
+        grid_icon(),
+        grid_icon(),
     );
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, false);
@@ -4417,7 +4534,7 @@ pub fn draw_grid_cell_with(
         let chain = entry.icon_chain();
         let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
         if let Some(image) =
-            icons::cached_icon_chain_at(&refs, GRID_ICON as i32, icons::FULL_COLOUR_SIZE)
+            icons::cached_icon_chain_at(&refs, grid_icon() as i32, icons::FULL_COLOUR_SIZE)
         {
             canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
         }
@@ -4434,7 +4551,11 @@ pub fn draw_grid_cell_with(
         Some(_) => (one_line_label(&entry.name, 13), String::new()),
         None => split_label(&entry.name, 13),
     };
-    let text_color = if selected {
+    // The desk's ground is the wallpaper, which follows no colour scheme, so
+    // its captions are white over a soft shadow whatever the theme: legible
+    // over a dark picture and a light one alike.
+    let on_wallpaper = is_desk() && !selected;
+    let text_color = if selected || on_wallpaper {
         Color::WHITE
     } else {
         theme.text_primary
@@ -4470,6 +4591,29 @@ pub fn draw_grid_cell_with(
         );
     }
 
+    let shadowed = on_wallpaper && !renaming;
+    if shadowed {
+        let bounds = Rect::from_xywh(
+            cell.left,
+            label_center_y - GRID_LABEL_LINE,
+            cell.width(),
+            GRID_LABEL_LINE * 3.0,
+        );
+        let mut layer = Paint::default();
+        layer.set_image_filter(skia_safe::image_filters::drop_shadow(
+            (0.0, 1.0),
+            (1.5, 1.5),
+            Color::from_argb(150, 0, 0, 0),
+            None,
+            None,
+            None,
+        ));
+        canvas.save_layer(
+            &skia_safe::canvas::SaveLayerRec::default()
+                .bounds(&bounds)
+                .paint(&layer),
+        );
+    }
     for (line, offset) in [(first.as_str(), 0.0), (second.as_str(), GRID_LABEL_LINE)] {
         if renaming || line.is_empty() {
             continue;
@@ -4479,6 +4623,9 @@ pub fn draw_grid_cell_with(
             .with_color(text_color)
             .centered_at(cell.center_x(), label_center_y + offset)
             .render(canvas);
+    }
+    if shadowed {
+        canvas.restore();
     }
 
     if let Some(folder) = subline.filter(|_| !renaming) {
@@ -4955,7 +5102,8 @@ fn draw_entry_icon(
     }
 }
 
-/// A thumbnail, fitted into the box an icon would have had.
+/// A thumbnail, fitted into the box an icon would have had, with rounded
+/// corners.
 ///
 /// Fitted rather than filled: a thumbnail is the file, and cropping it to a
 /// square would be showing the user the middle of their photograph and calling
@@ -4993,7 +5141,15 @@ pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect
         // Dimmed exactly as the icon it stands in for would be.
         paint.set_alpha(110);
     }
+    let radius = thumbnail_radius(dst);
+    canvas.save();
+    canvas.clip_rrect(
+        RRect::new_rect_xy(dst, radius, radius),
+        ClipOp::Intersect,
+        true,
+    );
     canvas.draw_image_rect(image, None, dst, &paint);
+    canvas.restore();
 
     let mut edge = Paint::default();
     edge.set_anti_alias(true);
@@ -5005,7 +5161,18 @@ pub(crate) fn draw_thumbnail(canvas: &Canvas, image: &skia_safe::Image, box_rect
         0,
         0,
     ));
-    canvas.draw_rect(dst.with_inset((0.5, 0.5)), &edge);
+    let inner = (radius - 0.5).max(0.0);
+    canvas.draw_rrect(
+        RRect::new_rect_xy(dst.with_inset((0.5, 0.5)), inner, inner),
+        &edge,
+    );
+}
+
+/// The corner radius of a thumbnail drawn into `dst`: a fixed share of its
+/// shorter side, so a list-row thumbnail and a large grid preview look like
+/// the same rounded card at different sizes.
+fn thumbnail_radius(dst: Rect) -> f32 {
+    (dst.width().min(dst.height()) * 0.08).clamp(2.0, 10.0)
 }
 
 /// The keyboard cursor when it is not itself part of the selection.
@@ -6250,10 +6417,10 @@ pub fn cursor_entry_rect(
 pub(crate) fn entry_icon_rect(rect: Rect, mode: ViewMode) -> Rect {
     match mode {
         ViewMode::Grid => Rect::from_xywh(
-            rect.center_x() - GRID_ICON / 2.0,
+            rect.center_x() - grid_icon() / 2.0,
             rect.top + 8.0,
-            GRID_ICON,
-            GRID_ICON,
+            grid_icon(),
+            grid_icon(),
         ),
         // The list insets its icon by the content padding; a Miller column,
         // which has no such padding, by its own fixed inset.
@@ -7100,7 +7267,7 @@ mod geometry_tests {
 
         // The second section's first cell is a further heading down again.
         let second = grid_cell_rect_in(area, &sections, cols, 0.0);
-        assert_eq!(second.top - first.top, CELL_H + GRID_HEADER_H);
+        assert_eq!(second.top - first.top, cell_h() + GRID_HEADER_H);
 
         assert_eq!(
             grid_content_height_in(area, &sections, count),
@@ -7355,7 +7522,7 @@ mod geometry_tests {
     /// grid, a row card everywhere else.
     #[test]
     fn the_drag_image_is_shaped_like_the_view_it_came_from() {
-        assert_eq!(drag_image_size(ViewMode::Grid), (CELL_W, CELL_H));
+        assert_eq!(drag_image_size(ViewMode::Grid), (cell_w(), cell_h()));
         for mode in [ViewMode::List, ViewMode::Columns] {
             assert_eq!(drag_image_size(mode), (DRAG_IMAGE_W, DRAG_IMAGE_H));
         }
@@ -7385,7 +7552,7 @@ mod geometry_tests {
         let cell = grid_cell_rect(Rect::from_xywh(0.0, 0.0, 800.0, 600.0), 0, 0.0);
         let rect = grid_icon_highlight_rect(cell, cell.top + 8.0);
 
-        assert_eq!(rect.width(), GRID_ICON + GRID_ICON_INSET * 2.0);
+        assert_eq!(rect.width(), grid_icon() + GRID_ICON_INSET * 2.0);
         assert_eq!(rect.height(), rect.width());
         assert_eq!(rect.center_x(), cell.center_x());
         assert!(rect.width() < cell.width() - 20.0);
@@ -7397,7 +7564,7 @@ mod geometry_tests {
     fn the_icon_highlight_meets_the_caption_pill() {
         let cell = grid_cell_rect(Rect::from_xywh(0.0, 0.0, 800.0, 600.0), 0, 0.0);
         let icon_top = cell.top + 8.0;
-        let pill_top = icon_top + GRID_ICON + GRID_LABEL_GAP - GRID_LABEL_INSET;
+        let pill_top = icon_top + grid_icon() + GRID_LABEL_GAP - GRID_LABEL_INSET;
 
         assert_eq!(grid_icon_highlight_rect(cell, icon_top).bottom, pill_top);
     }
@@ -7506,9 +7673,9 @@ mod geometry_tests {
     /// Draw one grid cell into a bitmap and hand back the pixels, so a test
     /// can ask what actually landed rather than what was meant to.
     fn grid_cell_pixels(thumb: Option<&skia_safe::Image>) -> (skia_safe::Surface, Rect) {
-        let cell = Rect::from_xywh(0.0, 0.0, CELL_W, CELL_H);
+        let cell = Rect::from_xywh(0.0, 0.0, cell_w(), cell_h());
         let mut surface =
-            skia_safe::surfaces::raster_n32_premul((CELL_W as i32, CELL_H as i32)).unwrap();
+            skia_safe::surfaces::raster_n32_premul((cell_w() as i32, cell_h() as i32)).unwrap();
         let theme = Theme::light();
         let entry = &entries(1)[0];
         surface.canvas().clear(skia_safe::Color::WHITE);
@@ -7547,12 +7714,38 @@ mod geometry_tests {
 
         // Centre of the icon box: a square thumbnail fills it, so this is red.
         let x = cell.center_x() as i32;
-        let y = (cell.top + 8.0 + GRID_ICON / 2.0) as i32;
+        let y = (cell.top + 8.0 + grid_icon() / 2.0) as i32;
         let (r, g, b) = pixel_at(&mut surface, x, y);
         assert!(
             r > 200 && g < 60 && b < 60,
             "expected the thumbnail at the icon box's centre, got ({r},{g},{b})"
         );
+    }
+
+    /// The picture's corners are rounded: the very corner of the box stays
+    /// the background, while the middle of each edge is the picture.
+    #[test]
+    fn a_thumbnail_has_rounded_corners() {
+        let image = red_image(64, 64);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
+        surface.canvas().clear(skia_safe::Color::WHITE);
+        let box_rect = Rect::from_xywh(0.0, 0.0, 64.0, 64.0);
+        draw_thumbnail(surface.canvas(), &image, box_rect, false);
+
+        for (x, y) in [(0, 0), (63, 0), (0, 63), (63, 63)] {
+            let (r, g, b) = pixel_at(&mut surface, x, y);
+            assert!(
+                g > 200 && b > 200,
+                "expected the background at corner {x},{y}, got ({r},{g},{b})"
+            );
+        }
+        for (x, y) in [(32, 2), (2, 32), (61, 32), (32, 61)] {
+            let (r, g, b) = pixel_at(&mut surface, x, y);
+            assert!(
+                r > 150 && g < 60 && b < 60,
+                "expected the picture at edge {x},{y}, got ({r},{g},{b})"
+            );
+        }
     }
 
     /// Fitted, not filled: a wide picture keeps its proportions, so the box's
@@ -7570,7 +7763,7 @@ mod geometry_tests {
 
         // Just below the box's bottom edge minus a quarter of its height: in
         // the picture.
-        let inside = (icon_top + GRID_ICON * 0.75) as i32;
+        let inside = (icon_top + grid_icon() * 0.75) as i32;
         let (r, _, _) = pixel_at(&mut surface, x, inside);
         assert!(r > 200, "expected picture in the lower half of the box");
 

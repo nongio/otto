@@ -130,6 +130,11 @@ impl Browser {
     /// query. Closing a strip whose results are on screen, when the ring is
     /// not even lit, would be answering a question nobody asked.
     pub(super) fn toggle_search(&mut self) {
+        // The strip is chrome the desk does not have; type-ahead is its
+        // way of finding a file.
+        if self.desk {
+            return;
+        }
         if let Some(input) = self.search.as_mut() {
             if input.state.focused() {
                 self.clear_search();

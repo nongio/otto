@@ -6,6 +6,10 @@ impl Browser {
     /// Switch view, taking the new view's default sort unless the user has
     /// pinned one of their own by clicking a column header.
     pub(super) fn set_mode(&mut self, mode: ViewMode) {
+        // The desk is an icon grid and nothing else.
+        if self.desk {
+            return;
+        }
         // Recent is a grid or it is nothing — see `Frame::mode_locked`.
         if self.recent && mode != ViewMode::Grid {
             self.refuse(otto_kit::t_owned!("files-recent-grid-only"));
@@ -56,9 +60,10 @@ impl Browser {
     /// Zero in the picker, whose bottom edge belongs to the action row, and
     /// zero in the Trash, where every path would spell out the same stretch
     /// of `.local/share/Trash` — the Original-location column already says
-    /// the thing a user of that window wants to know.
+    /// the thing a user of that window wants to know. The desk has no chrome
+    /// at all.
     pub(super) fn path_bar_h(&self) -> f32 {
-        if self.picker.is_some() || self.trash {
+        if self.picker.is_some() || self.trash || self.desk {
             0.0
         } else {
             view::PATH_BAR_H

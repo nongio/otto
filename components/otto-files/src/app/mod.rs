@@ -425,6 +425,12 @@ struct Browser {
     /// a path would still be the browser; this is set once, at startup, by
     /// the entry point that opened the window.
     trash: bool,
+    /// This window is the desk: one folder, as an icon grid on the desktop,
+    /// that never navigates away. A folder opened on it opens in a browser
+    /// window of its own; see `specs/desk.md`.
+    ///
+    /// A shell like [`Self::trash`], set once at startup.
+    desk: bool,
     /// This window is showing the Recent listing rather than a directory:
     /// what was written most recently across the user's folders, newest first,
     /// under a heading per day.
@@ -1190,6 +1196,8 @@ fn app_id() -> &'static str {
     match view::shell() {
         view::Shell::Browser => "otto-files",
         view::Shell::Trash => "otto-trash",
+        // A layer surface has no app_id; the desk is the file manager's.
+        view::Shell::Desk => "otto-files",
     }
 }
 
@@ -1198,6 +1206,32 @@ pub fn run_browser(start: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let mut browser = Browser::new(start);
     browser.remember(&remembered::Remembered::load());
     run_app(browser, None)
+}
+
+/// Show the desk and run until the session ends.
+///
+/// Another shell over this view layer: the icon grid alone, on a transparent
+/// layer surface below every window. A second desk in the same session
+/// leaves at once, since the first one already covers every workspace.
+pub fn run_desk() -> Result<(), Box<dyn std::error::Error>> {
+    let _lock = match crate::desk::claim_instance() {
+        Ok(Some(lock)) => Some(lock),
+        Ok(None) => {
+            tracing::info!(
+                name: "desk.start.duplicate",
+                "a desk is already running in this session"
+            );
+            return Ok(());
+        }
+        // Without the lock there is no telling whether another desk runs;
+        // showing one is the lesser surprise than showing none.
+        Err(error) => {
+            tracing::warn!(name: "desk.lock.failed", %error, "cannot take the desk lock");
+            None
+        }
+    };
+    let config = crate::desk::DeskConfig::load();
+    run_app(Browser::for_desk(&config), None)
 }
 
 /// Open the Trash window and run until it is closed.

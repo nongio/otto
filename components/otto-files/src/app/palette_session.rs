@@ -79,6 +79,11 @@ impl Browser {
     /// Ctrl+P. Asks every provider what it can offer *now* and opens onto the
     /// answer; nothing re-gathers while the palette is up.
     pub(super) fn open_palette(&mut self) {
+        // No palette on the desk: it is a card over a window, and the desk is
+        // below every window. See `specs/desk.md`.
+        if self.desk {
+            return;
+        }
         let situation = self.situation();
         let commands = self.commands.commands(&situation);
         let depth = self.active.min(self.columns.len().saturating_sub(1));

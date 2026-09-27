@@ -11,7 +11,7 @@ use wayland_client::protocol::wl_seat;
 
 use crate::app_runner::AppContext;
 pub use crate::protocols::otto_surface_style_v1;
-use crate::surfaces::{SurfaceError, ToplevelSurface};
+use crate::surfaces::{LayerShellSurface, SurfaceError, ToplevelSurface};
 use wayland_client::Proxy;
 use wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1;
 
@@ -64,6 +64,12 @@ const DOUBLE_CLICK_SLOP: f32 = 6.0;
 /// This is a high-level window component that uses ToplevelSurface for
 /// surface management while providing a simple API for window content.
 ///
+/// A window can also be backed by a layer-shell surface instead — see
+/// [`Window::from_layer_surface`]. Drawing, the layer node, pointer events,
+/// frame pacing and damage work the same on either; what only a toplevel has
+/// (title, move, resize, maximize, activation, the frame's corners and
+/// frost) quietly does nothing on a layer.
+///
 /// By default, windows have rounded corners (12px radius). Use `on_layer()`
 /// to customize or override the default layer augmentation.
 ///
@@ -75,6 +81,11 @@ const DOUBLE_CLICK_SLOP: f32 = 6.0;
 pub struct Window {
     #[allow(clippy::arc_with_non_send_sync)]
     surface: Arc<RwLock<Option<ToplevelSurface>>>,
+    /// The layer-shell surface backing this window, for a window made with
+    /// [`Window::from_layer_surface`]. Exactly one of this and `surface` is
+    /// set until the window is closed.
+    #[allow(clippy::arc_with_non_send_sync)]
+    layer: Arc<RwLock<Option<LayerShellSurface>>>,
     background_color: Arc<RwLock<skia_safe::Color>>,
     title: Arc<RwLock<String>>,
     on_draw_fn: CanvasDrawFn,
@@ -138,23 +149,7 @@ impl Window {
         // read through that same lock deadlocks before the window ever maps.
         let background = skia_safe::Color::from_rgb(245, 245, 245);
 
-        let window = Self {
-            #[allow(clippy::arc_with_non_send_sync)]
-            surface: Arc::new(RwLock::new(Some(surface))),
-            background_color: Arc::new(RwLock::new(background)),
-            title: Arc::new(RwLock::new(title.to_string())),
-            on_draw_fn: Arc::new(Mutex::new(None)),
-            blur_wanted: Arc::new(AtomicBool::new(false)),
-            material: Arc::new(RwLock::new(None)),
-            frosted: Arc::new(AtomicBool::new(false)),
-            fades_own_material: Arc::new(AtomicBool::new(false)),
-            last_titlebar_press: Arc::new(Mutex::new(None)),
-            frame_variant: Arc::new(AtomicU8::new(variant_code(
-                crate::components::titlebar::DecorationVariant::Floating,
-            ))),
-            frame_radius: Arc::new(RwLock::new(FRAME_CORNER_RADIUS)),
-            dialog: Arc::new(RwLock::new(None)),
-        };
+        let window = Self::with_backing(Some(surface), None, title, background);
         // Hand the default to the compositor too, so the background is carried
         // by the style from the first frame and a window that never calls
         // `set_background` looks the same either way.
@@ -181,6 +176,89 @@ impl Window {
         Ok(window)
     }
 
+    /// A window backed by a layer-shell surface rather than a toplevel.
+    ///
+    /// For content that lives in one of the desktop's layers — a panel, the
+    /// files on the desktop — but is otherwise an ordinary window of the
+    /// application: drawn through [`Window::on_draw`], with its layer node,
+    /// pointer events, frame pacing and damage exactly as a toplevel's. The
+    /// caller builds the surface, so the layer, namespace, anchors, margins
+    /// and keyboard interactivity are its to choose.
+    ///
+    /// The window starts transparent and carries none of a toplevel's frame:
+    /// no rounded corners, no hairline, no frost. Each configure repaints it
+    /// at the size the compositor gave, which is also what
+    /// [`Window::dimensions`] reports from then on.
+    pub fn from_layer_surface(surface: LayerShellSurface) -> Self {
+        let background = skia_safe::Color::TRANSPARENT;
+        let window = Self::with_backing(None, Some(surface.clone()), "", background);
+        window.apply_background(background);
+
+        // The surface acknowledges the configure and resizes its buffer
+        // itself; a repaint at the new size is all that is left.
+        let window_clone = window.clone();
+        surface.on_resize(move |_, _| window_clone.request_frame());
+
+        AppContext::register_window(window.clone());
+        window
+    }
+
+    fn with_backing(
+        toplevel: Option<ToplevelSurface>,
+        layer: Option<LayerShellSurface>,
+        title: &str,
+        background: skia_safe::Color,
+    ) -> Self {
+        Self {
+            #[allow(clippy::arc_with_non_send_sync)]
+            surface: Arc::new(RwLock::new(toplevel)),
+            #[allow(clippy::arc_with_non_send_sync)]
+            layer: Arc::new(RwLock::new(layer)),
+            background_color: Arc::new(RwLock::new(background)),
+            title: Arc::new(RwLock::new(title.to_string())),
+            on_draw_fn: Arc::new(Mutex::new(None)),
+            blur_wanted: Arc::new(AtomicBool::new(false)),
+            material: Arc::new(RwLock::new(None)),
+            frosted: Arc::new(AtomicBool::new(false)),
+            fades_own_material: Arc::new(AtomicBool::new(false)),
+            last_titlebar_press: Arc::new(Mutex::new(None)),
+            frame_variant: Arc::new(AtomicU8::new(variant_code(
+                crate::components::titlebar::DecorationVariant::Floating,
+            ))),
+            frame_radius: Arc::new(RwLock::new(FRAME_CORNER_RADIUS)),
+            dialog: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// The layer-shell surface backing this window, for one made with
+    /// [`Window::from_layer_surface`]; `None` for a toplevel or once closed.
+    pub fn layer_surface(&self) -> Option<LayerShellSurface> {
+        self.layer.read().ok()?.clone()
+    }
+
+    /// Whether this window is an `xdg_toplevel` — the kind the desktop lists,
+    /// moves and closes — rather than a layer surface.
+    pub fn is_toplevel(&self) -> bool {
+        self.surface
+            .read()
+            .ok()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Whether a frame committed on this window has yet to be presented.
+    ///
+    /// Something that redraws continuously should hold off while this is
+    /// true: painting again only queues a buffer the compositor has not asked
+    /// for. See [`crate::surfaces::BaseWaylandSurface::frame_in_flight`].
+    pub fn frame_in_flight(&self) -> bool {
+        if let Some(surface) = self.surface() {
+            return surface.frame_in_flight();
+        }
+        self.layer_surface()
+            .is_some_and(|layer| layer.frame_in_flight())
+    }
+
     /// Set the background color
     pub fn with_background(self, color: impl Into<skia_safe::Color>) -> Self {
         self.apply_background(color.into());
@@ -197,6 +275,9 @@ impl Window {
                 if let Some(ref surface) = *surface_guard {
                     surface.request_frame();
                 }
+            }
+            if let Some(layer) = self.layer_surface() {
+                layer.request_frame();
             }
         }
     }
@@ -253,6 +334,10 @@ impl Window {
     /// window.set_layer_node(layer.layer().clone());
     /// ```
     pub fn set_layer_node(&mut self, layer: layers::prelude::Layer) {
+        if let Some(backing) = self.layer_surface() {
+            backing.set_layer_node(layer);
+            return;
+        }
         if let Ok(mut surface_guard) = self.surface.write() {
             if let Some(ref mut surface) = *surface_guard {
                 surface.set_layer_node(layer);
@@ -267,7 +352,7 @@ impl Window {
                 return surface.layer_node().cloned();
             }
         }
-        None
+        self.layer_surface()?.layer_node()
     }
 
     /// Get direct access to the surface style for configuration
@@ -282,6 +367,9 @@ impl Window {
     /// }
     /// ```
     pub fn surface_style(&self) -> Option<otto_surface_style_v1::OttoSurfaceStyleV1> {
+        if let Some(layer) = self.layer_surface() {
+            return layer.base_surface().surface_style().cloned();
+        }
         self.surface.read().ok()?.as_ref()?.surface_style().cloned()
     }
 
@@ -294,6 +382,11 @@ impl Window {
     /// until it was restarted. [`AppContext::refresh_window_styles`] calls
     /// this on every window when a watcher reports the appearance changed.
     pub fn refresh_style(&self) {
+        // A layer surface wears no frame: the rounding and the hairline are a
+        // window's, and on a panel they would outline its whole extent.
+        if !self.is_toplevel() {
+            return;
+        }
         if let Some(style) = self.surface_style() {
             default_layer_augmentation(&style, self.frame_corner_radius());
         }
@@ -391,6 +484,42 @@ impl Window {
         surface.set_opaque_region(Some(&region));
         region.destroy();
         surface.commit();
+    }
+
+    /// Limit where this window takes pointer input to `rects`, in points.
+    /// `None` puts the whole surface back.
+    ///
+    /// For a window that covers more than it answers for — a layer surface
+    /// spanning an output with its content in one part of it — so a press
+    /// anywhere else reaches whatever is underneath.
+    ///
+    /// Not committed here: the region lands with the next frame, which the
+    /// caller asks for with [`Window::request_frame`] when it changed
+    /// anything worth changing the region for.
+    pub fn set_input_region(&self, rects: Option<&[skia_safe::Rect]>) {
+        let Some(surface) = self.wl_surface() else {
+            return;
+        };
+        let Some(rects) = rects else {
+            surface.set_input_region(None);
+            return;
+        };
+        let region = crate::app_runner::AppContext::compositor_state()
+            .wl_compositor()
+            .create_region(crate::app_runner::AppContext::queue_handle(), ());
+        for rect in rects {
+            // Rounded outwards: a partly covered point still belongs to the
+            // content.
+            let left = rect.left.floor() as i32;
+            let top = rect.top.floor() as i32;
+            let right = rect.right.ceil() as i32;
+            let bottom = rect.bottom.ceil() as i32;
+            if right > left && bottom > top {
+                region.add(left, top, right - left, bottom - top);
+            }
+        }
+        surface.set_input_region(Some(&region));
+        region.destroy();
     }
 
     /// Turn the compositor's backdrop blur on or off now, for a window that
@@ -613,6 +742,28 @@ impl Window {
     where
         F: FnOnce(),
     {
+        if let Some(layer) = self.layer_surface() {
+            if !layer.is_configured() {
+                return;
+            }
+            let on_draw_fn = self.on_draw_fn.clone();
+            let background_color = self
+                .background_color
+                .read()
+                .ok()
+                .map(|c| *c)
+                .unwrap_or(skia_safe::Color::TRANSPARENT);
+            layer.draw(|canvas| {
+                canvas.clear(background_color);
+                if let Ok(mut draw_fn_guard) = on_draw_fn.lock() {
+                    if let Some(ref mut content_fn) = *draw_fn_guard {
+                        content_fn(canvas);
+                    }
+                }
+            });
+            render_extra();
+            return;
+        }
         if let Ok(surface_guard) = self.surface.read() {
             if let Some(ref surface) = *surface_guard {
                 if !surface.is_configured() {
@@ -658,6 +809,14 @@ impl Window {
 
     /// Update the window - render if dirty
     pub(crate) fn update(&self) {
+        if let Some(layer) = self.layer_surface() {
+            // The same pacing as a toplevel's; see below.
+            if layer.is_dirty() && !layer.frame_in_flight() {
+                self.render();
+                layer.clear_dirty();
+            }
+            return;
+        }
         if let Some(surface) = self.surface() {
             if surface.is_dirty() {
                 // Painting again before the last frame has been presented
@@ -676,7 +835,6 @@ impl Window {
         }
     }
 
-    /// Get the underlying ToplevelSurface
     /// Repaint, telling the compositor only `rects` (in points) changed.
     ///
     /// The window still paints its whole buffer; the compositor recomposites
@@ -689,8 +847,14 @@ impl Window {
             surface.base_surface().add_frame_damage(rects);
             surface.request_frame();
         }
+        if let Some(layer) = self.layer_surface() {
+            layer.base_surface().add_frame_damage(rects);
+            layer.request_frame();
+        }
     }
 
+    /// The toplevel backing this window; `None` for a window backed by a
+    /// layer surface, and once closed.
     pub fn surface(&self) -> Option<ToplevelSurface> {
         self.surface.read().ok()?.clone()
     }
@@ -699,17 +863,19 @@ impl Window {
     /// every other window in the process. `None` once it has been closed.
     pub fn surface_id(&self) -> Option<wayland_client::backend::ObjectId> {
         use wayland_client::Proxy;
-        Some(self.surface()?.wl_surface().id())
+        Some(self.wl_surface()?.id())
     }
 
     /// Whether this window still has a surface — that is, whether it has not
     /// been closed.
     pub fn is_alive(&self) -> bool {
-        self.surface
-            .read()
-            .ok()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false)
+        self.is_toplevel()
+            || self
+                .layer
+                .read()
+                .ok()
+                .map(|guard| guard.is_some())
+                .unwrap_or(false)
     }
 
     /// Take this window off the screen for good.
@@ -732,6 +898,11 @@ impl Window {
         if let Ok(mut guard) = self.surface.write() {
             guard.take();
         }
+        // A layer surface has no role object that goes on drop, so its
+        // destruction is asked for explicitly.
+        if let Some(layer) = self.layer.write().ok().and_then(|mut guard| guard.take()) {
+            layer.destroy();
+        }
     }
 
     /// Handle the compositor's close request for this window — the titlebar's
@@ -748,6 +919,9 @@ impl Window {
 
     /// Check if the window is configured
     pub fn is_configured(&self) -> bool {
+        if let Some(layer) = self.layer_surface() {
+            return layer.is_configured();
+        }
         self.surface
             .read()
             .ok()
@@ -757,6 +931,9 @@ impl Window {
 
     /// Get window dimensions
     pub fn dimensions(&self) -> (i32, i32) {
+        if let Some(layer) = self.layer_surface() {
+            return layer.dimensions();
+        }
         self.surface
             .read()
             .ok()
@@ -766,6 +943,9 @@ impl Window {
 
     /// Get the underlying Wayland surface
     pub fn wl_surface(&self) -> Option<wayland_client::protocol::wl_surface::WlSurface> {
+        if let Some(layer) = self.layer_surface() {
+            return Some(layer.wl_surface());
+        }
         let guard = self.surface.read().ok()?;
         guard.as_ref().map(|s| s.wl_surface().clone())
     }
@@ -978,6 +1158,10 @@ impl Window {
                 surface.base_surface().mark_frame_damage_all();
                 surface.request_frame();
             }
+        }
+        if let Some(layer) = self.layer_surface() {
+            layer.base_surface().mark_frame_damage_all();
+            layer.request_frame();
         }
     }
     pub fn title(&self) -> String {

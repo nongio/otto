@@ -94,6 +94,8 @@ settings-background-image = Hintergrundbild
 settings-background-image-detail = Über die Dateiauswahl des Desktop-Portals gewählt
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Kann nicht angezeigt werden
+settings-show-desk = Dateien auf dem Schreibtisch anzeigen
+settings-show-desk-detail = Die Dateien im Ordner „Schreibtisch“, hinter den Fenstern
 
 settings-group-pointer-and-icons = Zeiger & Symbole
 settings-cursor-theme = Zeigerdesign
@@ -409,6 +411,7 @@ files-open-with-no-match = Keine passenden Apps
 files-open-with-always = Diese App immer für „{ $kind }“ verwenden
 files-open-with-not-remembered = Geöffnet, aber die Auswahl wurde nicht gespeichert: { $error }
 files-new-folder = Neuer Ordner
+files-desk-open-in-files = In Dateien öffnen
 files-move-to-trash = In den Papierkorb legen
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -852,6 +855,8 @@ schema-show-maximize-button-label = Maximieren-Knopf
 schema-show-maximize-button-description = Zeigt das Zoom-Steuerelement in der Titelleiste eines Fensters. Standardmäßig aus: Ein Doppelklick auf die Titelleiste maximiert das Fenster ohnehin.
 schema-font-family-label = Oberflächenschrift
 schema-font-family-description = Schriftfamilie für Ottos eigene Oberfläche.
+schema-desk-enabled-label = Dateien auf dem Schreibtisch anzeigen
+schema-desk-enabled-description = Die Dateien im Ordner „Schreibtisch“, hinter den Fenstern.
 schema-background-color-label = Hintergrundfarbe
 schema-background-color-description = Hintergrundfarbe des Schreibtischs, als Hex-Zeichenfolge.
 schema-background-image-label = Hintergrundbild

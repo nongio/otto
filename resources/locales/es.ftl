@@ -94,6 +94,8 @@ settings-background-image = Imagen de fondo
 settings-background-image-detail = Elegida a través del selector de archivos del portal de escritorio
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = No se puede mostrar
+settings-show-desk = Mostrar archivos en el escritorio
+settings-show-desk-detail = Los archivos de la carpeta Escritorio, detrás de las ventanas
 
 settings-group-pointer-and-icons = Puntero e iconos
 settings-cursor-theme = Tema del cursor
@@ -411,6 +413,7 @@ files-open-with-no-match = Ninguna aplicación coincide
 files-open-with-always = Usar siempre esta aplicación para «{ $kind }»
 files-open-with-not-remembered = Se abrió, pero no se guardó la elección: { $error }
 files-new-folder = Nueva carpeta
+files-desk-open-in-files = Abrir en Archivos
 files-move-to-trash = Mover a la papelera
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -864,6 +867,8 @@ schema-show-maximize-button-label = Botón de maximizar
 schema-show-maximize-button-description = Muestra el control de ampliar en la barra de título de una ventana. Desactivado por defecto: un doble clic en la barra de título amplía la ventana igualmente.
 schema-font-family-label = Tipo de letra de la interfaz
 schema-font-family-description = Familia tipográfica usada por la propia interfaz de Otto.
+schema-desk-enabled-label = Mostrar archivos en el escritorio
+schema-desk-enabled-description = Los archivos de la carpeta Escritorio, detrás de las ventanas.
 schema-background-color-label = Color de fondo
 schema-background-color-description = Color de fondo del escritorio, en formato hexadecimal.
 schema-background-image-label = Imagen de fondo

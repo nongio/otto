@@ -97,6 +97,8 @@ pub struct Config {
     #[serde(default)]
     pub lock: LockConfig,
     #[serde(default)]
+    pub desk: DeskConfig,
+    #[serde(default)]
     pub workspaces: WorkspacesConfig,
     #[serde(default)]
     pub tiling: TilingConfig,
@@ -169,6 +171,7 @@ impl Default for Config {
             occlusion_culling: true,
             login: LoginConfig::default(),
             lock: LockConfig::default(),
+            desk: DeskConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
             rendering: RenderingConfig::default(),
@@ -1499,6 +1502,19 @@ impl Default for AccessibilityConfig {
     }
 }
 
+/// The desk: the files of the desktop folder drawn behind the windows.
+///
+/// Only whether it runs lives here; how it looks is `otto-files`' own
+/// configuration (`specs/desk.md`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeskConfig {
+    /// Run `otto-files --desk` for the session. Off by default. The
+    /// compositor starts it, restarts it if it crashes and stops it when this
+    /// is switched off.
+    pub enabled: bool,
+}
+
 /// Settings for locking the running session (`ext-session-lock-v1`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -2162,6 +2178,16 @@ mod tests {
     use serial_test::serial;
     use std::env;
     use std::fs;
+
+    #[test]
+    fn desk_is_off_unless_enabled() {
+        assert!(!Config::default().desk.enabled);
+        let config: Config = toml::from_str("[desk]\n").expect("empty desk table");
+        assert!(!config.desk.enabled);
+        let config: Config =
+            toml::from_str("[desk]\nenabled = true\n").expect("desk table deserializes");
+        assert!(config.desk.enabled);
+    }
 
     #[test]
     fn theme_scheme_defaults_to_light() {

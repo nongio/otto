@@ -11,6 +11,7 @@
 //! cargo run -p otto-files            # browse $HOME
 //! cargo run -p otto-files -- /etc    # browse somewhere else
 //! cargo run -p otto-files -- --picker  # serve org.otto.FilePicker1
+//! cargo run -p otto-files -- --desk    # the folder on the desktop
 //! ```
 
 #[cfg(test)]
@@ -19,6 +20,7 @@ mod bench;
 pub mod app;
 pub mod command;
 pub mod dbus;
+pub mod desk;
 pub mod files_service;
 pub mod model;
 pub mod ocrcache;

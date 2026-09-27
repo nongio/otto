@@ -85,6 +85,18 @@ pub enum KeyAction {
     None,
 }
 
+/// Wait for `child` on a thread of its own, so it leaves no zombie behind.
+///
+/// A thread per child rather than a SIGCHLD handler: that signal is
+/// process-wide, and XWayland's own child management waits on its children.
+pub fn reap_in_background(name: &str, mut child: std::process::Child) {
+    let _ = std::thread::Builder::new()
+        .name(format!("reap {name}"))
+        .spawn(move || {
+            let _ = child.wait();
+        });
+}
+
 /// Hand a system power transition to logind, the way the lid-close path does.
 /// Otto never freezes or shuts itself down; it only asks.
 fn systemctl(verb: &str) {
@@ -98,8 +110,25 @@ impl<BackendData: Backend> Otto<BackendData> {
     pub fn launch_program(&mut self, cmd: String, args: Vec<String>) {
         info!(program = %cmd, args = ?args, "Starting program");
 
-        let mut command = Command::new(&cmd);
-        command.args(&args).envs(
+        match self.program_command(&cmd, &args).spawn() {
+            // Nothing in the compositor waits on a launched program, so
+            // without a reaper every one of them leaves a zombie behind for as
+            // long as Otto runs. It goes unnoticed for apps, which are
+            // launched by hand and outlive their launch — but a screen locker
+            // exits on every unlock, so locking the session a dozen times
+            // leaves a dozen of them.
+            Ok(child) => reap_in_background(&cmd, child),
+            Err(e) => error!(program = %cmd, err = %e, "Failed to start program"),
+        }
+    }
+
+    /// A command for `cmd` with the session's environment, ready to spawn.
+    ///
+    /// The child is given this session's Wayland (and X) display, and is tied
+    /// to the compositor's lifetime: it receives `SIGTERM` when Otto exits.
+    pub fn program_command(&self, cmd: &str, args: &[String]) -> Command {
+        let mut command = Command::new(cmd);
+        command.args(args).envs(
             self.socket_name
                 .clone()
                 .map(|v| ("WAYLAND_DISPLAY", v))
@@ -116,7 +145,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         // child SIGTERM as soon as Otto's process dies, so that crashing or
         // quitting Otto also tears down the apps it launched instead of leaving
         // them dangling. PR_SET_PDEATHSIG is relative to the spawning thread, so
-        // this relies on launch_program always being called from the main event
+        // this relies on the command always being spawned from the main event
         // loop thread (which lives for the whole process).
         #[cfg(target_os = "linux")]
         unsafe {
@@ -141,24 +170,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             });
         }
 
-        match command.spawn() {
-            // Nothing in the compositor waits on a launched program, so
-            // without a reaper every one of them leaves a zombie behind for as
-            // long as Otto runs. It goes unnoticed for apps, which are
-            // launched by hand and outlive their launch — but a screen locker
-            // exits on every unlock, so locking the session a dozen times
-            // leaves a dozen of them. A thread per child rather than a
-            // SIGCHLD handler: that signal is process-wide, and XWayland's
-            // own child management waits on its children.
-            Ok(mut child) => {
-                let _ = std::thread::Builder::new()
-                    .name(format!("reap {cmd}"))
-                    .spawn(move || {
-                        let _ = child.wait();
-                    });
-            }
-            Err(e) => error!(program = %cmd, err = %e, "Failed to start program"),
-        }
+        command
     }
 
     pub fn autostart(&mut self) {
@@ -176,6 +188,8 @@ impl<BackendData: Backend> Otto<BackendData> {
         for entry in entries {
             self.launch_program(entry.cmd, entry.args);
         }
+
+        self.apply_desk_setting();
 
         if Config::with(|c| c.xdg_autostart) {
             self.launch_xdg_autostart();

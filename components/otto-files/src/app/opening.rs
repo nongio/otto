@@ -250,6 +250,13 @@ impl Browser {
             self.dirty = true;
         }
 
+        if entry.is_dir && self.desk {
+            // The desk never navigates: the folder opens in a browser of its
+            // own, and the desk stays on the folder it shows.
+            self.spawn_window(&entry.path);
+            return;
+        }
+
         if entry.is_dir {
             // A folder found by a search, or listed in Recent, is a real
             // folder somewhere on the disk — but there is no hierarchy under a

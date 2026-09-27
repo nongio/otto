@@ -94,6 +94,8 @@ settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Неможливо показати
+settings-show-desk = Показувати файли на робочому столі
+settings-show-desk-detail = Файли з папки «Стільниця», позаду вікон
 
 settings-group-pointer-and-icons = Вказівник і піктограми
 settings-cursor-theme = Тема курсора
@@ -413,6 +415,7 @@ files-open-with-no-match = Немає відповідних застосунк�
 files-open-with-always = Завжди використовувати для типу «{ $kind }»
 files-open-with-not-remembered = Відкрито, але вибір не збережено: { $error }
 files-new-folder = Нова папка
+files-desk-open-in-files = Відкрити у Файлах
 files-move-to-trash = Перемістити в кошик
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -884,6 +887,8 @@ schema-show-maximize-button-label = Кнопка розгортання
 schema-show-maximize-button-description = Показувати кнопку масштабування в заголовку вікна. Типово вимкнено: подвійне клацання на заголовку однаково розгортає вікно.
 schema-font-family-label = Шрифт інтерфейсу
 schema-font-family-description = Гарнітура шрифту, яку використовує власний інтерфейс Otto.
+schema-desk-enabled-label = Показувати файли на робочому столі
+schema-desk-enabled-description = Файли з папки «Стільниця», позаду вікон.
 schema-background-color-label = Колір тла
 schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка.
 schema-background-image-label = Зображення тла

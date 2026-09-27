@@ -1394,8 +1394,13 @@ pub fn human_size(bytes: u64) -> String {
 
 /// The material a preview sits on. Exposed so the compositor and an
 /// application can paint the same ground.
+///
+/// A shade darker than the card material, so a white page or photograph
+/// still has an edge against it.
 pub fn background(theme: &Theme) -> Color {
-    theme.card_material()
+    let card = theme.card_material();
+    let shade = |c: u8| (f32::from(c) * 0.92).round() as u8;
+    Color::from_argb(card.a(), shade(card.r()), shade(card.g()), shade(card.b()))
 }
 
 #[cfg(test)]

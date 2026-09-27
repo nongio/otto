@@ -154,6 +154,14 @@ impl Scene {
         let _ = root.add_sublayer(&footer);
         let _ = root.add_sublayer(&path_bar);
 
+        // The desk's icons sit straight on the wallpaper: every ground stays
+        // hidden for the life of the process, and `update` leaves them be.
+        if view::is_desk() {
+            for panel in [&sidebar, &header, &footer, &path_bar, &content] {
+                panel.set_hidden(true);
+            }
+        }
+
         Self {
             engine,
             root,
@@ -185,6 +193,10 @@ impl Scene {
     /// no changes at all and the whole window is replayed from cached
     /// pictures.
     pub fn update(&mut self, f: &Frame) {
+        // The desk has no panels at all — see `Scene::new`.
+        if view::is_desk() {
+            return;
+        }
         self.sync_materials(f);
         self.sync_layout(f);
         // One tick, so the changes above are folded into the scene before the

@@ -381,7 +381,7 @@ impl SceneElement {
     /// Draws the damaged part of the scene into `canvas` at `dst`.
     ///
     /// Damage is relative to `dst`.
-    fn draw_scene(
+    pub fn draw_scene(
         &self,
         canvas: &layers::skia::Canvas,
         dst: Rectangle<i32, Physical>,

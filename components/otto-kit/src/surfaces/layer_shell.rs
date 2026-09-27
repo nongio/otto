@@ -27,6 +27,9 @@ struct LayerShellSurfaceInner {
     layer_surface: ZwlrLayerSurfaceV1,
     configured: bool,
     on_configure: Option<Rc<dyn Fn()>>,
+    /// Runs after every configure, the first included, once the buffer is at
+    /// the configured size — see [`LayerShellSurface::on_resize`].
+    on_resize: Option<Rc<dyn Fn(i32, i32)>>,
 }
 
 /// Manages a wlr-layer-shell surface with Skia rendering
@@ -107,6 +110,47 @@ impl LayerShellSurface {
         exclusive_zone: Option<i32>,
         output: Option<&WlOutput>,
     ) -> Result<Self, SurfaceError> {
+        Self::with_setup_on(layer, namespace, width, height, output, |layer_surface| {
+            if let Some(anchor) = anchor {
+                layer_surface.set_anchor(anchor);
+            }
+            if let Some(zone) = exclusive_zone {
+                layer_surface.set_exclusive_zone(zone);
+            }
+        })
+    }
+
+    /// Create a new layer shell surface, letting `setup` set whatever of the
+    /// layer surface's state it needs before the initial commit.
+    ///
+    /// The first configure answers the state that commit carried, so
+    /// anything that decides the surface's size — anchors, margins — belongs
+    /// here rather than after construction, where it would only land with the
+    /// first buffer and cost a second configure and a resize.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the compositor offers no `zwlr_layer_shell_v1`.
+    pub fn with_setup(
+        layer: Layer,
+        namespace: &str,
+        width: u32,
+        height: u32,
+        setup: impl FnOnce(&ZwlrLayerSurfaceV1),
+    ) -> Result<Self, SurfaceError> {
+        Self::with_setup_on(layer, namespace, width, height, None, setup)
+    }
+
+    /// [`Self::with_setup`] on a chosen output, as [`Self::on_output`] picks
+    /// one.
+    pub fn with_setup_on(
+        layer: Layer,
+        namespace: &str,
+        width: u32,
+        height: u32,
+        output: Option<&WlOutput>,
+        setup: impl FnOnce(&ZwlrLayerSurfaceV1),
+    ) -> Result<Self, SurfaceError> {
         use crate::app_runner::AppContext;
 
         let compositor = AppContext::compositor_state();
@@ -115,14 +159,13 @@ impl LayerShellSurface {
         let sc_layer_shell = AppContext::surface_style_manager();
         let qh = AppContext::queue_handle();
 
-        Self::new_typed(
+        Self::build(
             layer,
             namespace,
             width,
             height,
-            anchor,
-            exclusive_zone,
             output,
+            setup,
             compositor,
             layer_shell,
             sc_layer_shell,
@@ -166,6 +209,47 @@ impl LayerShellSurface {
             + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
             + 'static,
     {
+        Self::build(
+            layer,
+            namespace,
+            width,
+            height,
+            output,
+            |layer_surface| {
+                if let Some(anchor) = anchor {
+                    layer_surface.set_anchor(anchor);
+                }
+                if let Some(zone) = exclusive_zone {
+                    layer_surface.set_exclusive_zone(zone);
+                }
+            },
+            compositor,
+            layer_shell,
+            surface_style,
+            qh,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build<D>(
+        layer: Layer,
+        namespace: &str,
+        width: u32,
+        height: u32,
+        output: Option<&WlOutput>,
+        setup: impl FnOnce(&ZwlrLayerSurfaceV1),
+        compositor: &CompositorState,
+        layer_shell: &ZwlrLayerShellV1,
+        surface_style: Option<&otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
+        qh: &QueueHandle<D>,
+    ) -> Result<Self, SurfaceError>
+    where
+        D: Dispatch<wl_surface::WlSurface, SurfaceData>
+            + Dispatch<ZwlrLayerSurfaceV1, ()>
+            + Dispatch<otto_surface_style_v1::OttoSurfaceStyleV1, ()>
+            + Dispatch<otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1, ()>
+            + 'static,
+    {
         // Create the wl_surface
         let wl_surface = compositor.create_surface(qh);
 
@@ -193,16 +277,12 @@ impl LayerShellSurface {
             AppContext::note_style_surface(&style.id(), &wl_surface.id());
         }
 
-        // Set anchor and exclusive zone before commit (required for width/height = 0)
-        if let Some(anchor) = anchor {
-            layer_surface.set_anchor(anchor);
-        }
-        if let Some(zone) = exclusive_zone {
-            layer_surface.set_exclusive_zone(zone);
-        }
-
         // Set initial size on the layer surface
         layer_surface.set_size(width, height);
+
+        // Anchors, margins and the rest before the commit (anchors are
+        // required for width/height = 0).
+        setup(&layer_surface);
 
         // Commit to trigger initial configure
         wl_surface.commit();
@@ -216,6 +296,7 @@ impl LayerShellSurface {
             layer_surface: layer_surface.clone(),
             configured: false,
             on_configure: None,
+            on_resize: None,
         };
 
         let layer_shell_surface = Self {
@@ -259,7 +340,7 @@ impl LayerShellSurface {
                     };
 
                     // Initialize or resize Skia surface
-                    let mut callback_to_call = None;
+                    let mut callback_to_call: Option<Rc<dyn Fn()>> = None;
                     if !inner.configured {
                         // First time configuration - create the Skia surface
                         inner.base_surface.width = width;
@@ -287,12 +368,17 @@ impl LayerShellSurface {
                         inner.base_surface.resize(width, height);
                     }
 
-                    callback_to_call
+                    let on_resize = inner.on_resize.clone().map(|f| (f, width, height));
+                    (callback_to_call, on_resize)
                 }; // Drop the mutable borrow here
 
-                // Now call the callback without holding the borrow
+                // Now call the callbacks without holding the borrow
+                let (callback_to_call, on_resize) = callback_to_call;
                 if let Some(callback) = callback_to_call {
                     callback();
+                }
+                if let Some((callback, width, height)) = on_resize {
+                    callback(width, height);
                 }
             },
         );
@@ -366,6 +452,46 @@ impl LayerShellSurface {
         self.inner.borrow_mut().on_configure = Some(Rc::new(callback));
     }
 
+    /// Set a callback to be called after every configure, the first
+    /// included, with the size the surface now has in logical points.
+    ///
+    /// By the time it runs the configure has been acknowledged and the buffer
+    /// is already at that size, so all that is left is to paint it.
+    pub fn on_resize<F>(&self, callback: F)
+    where
+        F: Fn(i32, i32) + 'static,
+    {
+        self.inner.borrow_mut().on_resize = Some(Rc::new(callback));
+    }
+
+    /// Mark the surface as needing a repaint. See
+    /// [`crate::surfaces::ToplevelSurface::request_frame`].
+    pub fn request_frame(&self) {
+        self.base_surface()
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the surface needs a repaint.
+    pub fn is_dirty(&self) -> bool {
+        self.base_surface()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clear the repaint mark after painting.
+    pub fn clear_dirty(&self) {
+        self.base_surface()
+            .dirty
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a frame committed on this surface has yet to be presented.
+    /// See [`BaseWaylandSurface::frame_in_flight`].
+    pub fn frame_in_flight(&self) -> bool {
+        self.base_surface().frame_in_flight()
+    }
+
     /// Handle layer surface closed event
     pub fn handle_closed(&mut self) {
         self.inner.borrow_mut().configured = false;
@@ -396,11 +522,22 @@ impl LayerShellSurface {
         inner.base_surface.take_surface_style();
         inner.configured = false;
         inner.on_configure = None;
+        inner.on_resize = None;
         AppContext::unregister_layer_configure_callback(&inner.layer_surface.id());
         inner.layer_surface.destroy();
         let surface = inner.base_surface.wl_surface().clone();
         AppContext::forget_surface(&surface.id());
         surface.destroy();
+    }
+
+    /// Assign a layer node to render in this surface.
+    pub fn set_layer_node(&self, layer: layers::prelude::Layer) {
+        self.inner.borrow_mut().base_surface.set_layer_node(layer);
+    }
+
+    /// The layer node assigned to this surface.
+    pub fn layer_node(&self) -> Option<layers::prelude::Layer> {
+        self.inner.borrow().base_surface.layer_node().cloned()
     }
 
     /// Get reference to the base surface

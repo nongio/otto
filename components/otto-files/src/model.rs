@@ -792,6 +792,15 @@ pub fn places_with(config: &crate::places_config::SidebarConfig) -> Vec<Place> {
     places
 }
 
+/// The folder `user-dirs.dirs` names for `key` (`XDG_DESKTOP_DIR`, say), if
+/// it names one.
+pub(crate) fn user_dir(home: &Path, key: &str) -> Option<PathBuf> {
+    user_dirs(home)
+        .into_iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, path)| path)
+}
+
 fn user_dirs(home: &Path) -> Vec<(String, PathBuf)> {
     let config = std::env::var("XDG_CONFIG_HOME")
         .ok()

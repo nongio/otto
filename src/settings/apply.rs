@@ -64,6 +64,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "cursor_size"
             | "icon_theme"
             | "input.show_layout_in_bar"
+            | "desk.enabled"
     ) || is_input_id(id)
 }
 
@@ -355,6 +356,12 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // to read itself.
         "lock.auto_lock_timeout" => {
             state.rearm_auto_lock_timer();
+            Ok(())
+        }
+        // The desk is a process the compositor owns, so the setting starts or
+        // stops it.
+        "desk.enabled" => {
+            state.apply_desk_setting();
             Ok(())
         }
         // The rest of `input.*` is libinput device state, and one device is as

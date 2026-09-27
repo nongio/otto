@@ -210,6 +210,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// only way to follow a new `lock.auto_lock_timeout`. `None` while
     /// auto-locking is off, which is also its state when the timeout is 0.
     pub auto_lock_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// The desk process, while `desk.enabled` is on — see `src/desk.rs`.
+    pub desk: crate::desk::Desk,
     pub workspaces: Workspaces,
 
     // smithay state
@@ -1000,6 +1002,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             lock_last_activity: std::time::Instant::now(),
             last_press: None,
             auto_lock_timer,
+            desk: Default::default(),
             output_manager_state,
             primary_selection_state,
             data_control_state,

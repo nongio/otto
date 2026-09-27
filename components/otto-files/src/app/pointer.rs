@@ -414,12 +414,15 @@ fn show_context_menu(
         y,
         serial,
     } = menu;
-    let Some(parent_xdg) = window
+    // A menu hangs off an xdg surface — or, over the desk, off the layer
+    // surface through the layer shell's own popup request.
+    let parent_xdg = window
         .surface()
-        .map(|s| s.xdg_window().xdg_surface().clone())
-    else {
+        .map(|s| s.xdg_window().xdg_surface().clone());
+    let parent_layer = window.layer_surface().map(|s| s.layer_surface());
+    if parent_xdg.is_none() && parent_layer.is_none() {
         return;
-    };
+    }
     let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
         return;
     };
@@ -459,6 +462,10 @@ fn show_context_menu(
             "delete_forever" => browser.ask_delete_forever(),
             "empty_trash" => browser.ask_empty_trash(),
             "new_folder" => browser.new_folder(),
+            "open_in_files" => {
+                let folder = browser.columns[0].path.clone();
+                browser.spawn_window(&folder);
+            }
             "new_folder_with_selection" => {
                 // No name from a menu: the folder takes the
                 // default one and lands in rename, ready to
@@ -474,5 +481,9 @@ fn show_context_menu(
         }
     });
 
-    context_menu.show(&parent_xdg, &positioner, serial);
+    match (parent_xdg, parent_layer) {
+        (Some(parent), _) => context_menu.show(&parent, &positioner, serial),
+        (None, Some(layer)) => context_menu.show_for_layer_with_grab(&layer, &positioner, serial),
+        (None, None) => {}
+    }
 }

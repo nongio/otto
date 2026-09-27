@@ -93,6 +93,8 @@ settings-background-image = Obraz tła
 settings-background-image-detail = Wybierany w oknie wyboru plików portalu pulpitu
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Nie można wyświetlić
+settings-show-desk = Pokazuj pliki na pulpicie
+settings-show-desk-detail = Pliki z folderu Pulpit, za oknami
 
 settings-group-pointer-and-icons = Wskaźnik i ikony
 settings-cursor-theme = Motyw kursora
@@ -412,6 +414,7 @@ files-open-with-no-match = Brak pasujących aplikacji
 files-open-with-always = Zawsze używaj tej aplikacji dla typu „{ $kind }”
 files-open-with-not-remembered = Otwarto, ale nie zapisano wyboru: { $error }
 files-new-folder = Nowy folder
+files-desk-open-in-files = Otwórz w Plikach
 files-move-to-trash = Przenieś do kosza
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -896,6 +899,8 @@ schema-show-maximize-button-label = Przycisk maksymalizacji
 schema-show-maximize-button-description = Pokazuje przycisk powiększania na pasku tytułu okna. Domyślnie wyłączone: dwukrotne kliknięcie paska tytułu i tak maksymalizuje okno.
 schema-font-family-label = Czcionka interfejsu
 schema-font-family-description = Rodzina czcionek używana przez własny interfejs Otto.
+schema-desk-enabled-label = Pokazuj pliki na pulpicie
+schema-desk-enabled-description = Pliki z folderu Pulpit, za oknami.
 schema-background-color-label = Kolor tła
 schema-background-color-description = Kolor tła pulpitu, jako ciąg szesnastkowy.
 schema-background-image-label = Obraz tła
