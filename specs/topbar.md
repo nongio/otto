@@ -55,7 +55,7 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 5. **Left zone** (left-aligned): application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
 6. **Center zone**: reserved empty space. No content is rendered here to leave visual room for the Dynamic Island.
-7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then the battery indicator, then the clock.
+7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then the keyboard layout indicator, then the battery indicator, then the clock.
 
 ### Active Window Tracking
 
@@ -96,18 +96,26 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 33. The menu lists selectable power profiles from the first backend that applies: commands configured as `[[battery.profiles]]` when there are any (unless `profile_backend` asks for power-profiles), then power-profiles-daemon over D-Bus (under either of its two names), then the kernel's governors read-only. A configured entry is check-marked when its stated `governor` or `epp` matches the live one; an entry stating neither is never check-marked. The read-only listing is shown disabled, so the menu still reports what the CPU is set to on a machine where nothing can change it. While the menu is open it follows changes: the tick moves when a profile switch lands and the charge line updates; the frequencies keep the values read when it opened.
 34. To an assistive technology the indicator is a button with a popup, labelled with the percentage and time remaining, and announced politely as it changes.
 
+### Keyboard Layout (Right Zone)
+
+35. The keyboard layout indicator is drawn by the bar from what the compositor reports on `org.otto.Shell1`: `GetInputs` when the bar starts, or when the compositor's bus name appears, and the `InputChanged` signal for every switch and every change to the configured layouts. The shapes are sway's `GET_INPUTS` and `input` event; the bar reads the keyboard entry's `xkb_layout_names`, `xkb_active_layout_index`, and two Otto fields, `otto_layout_codes` and `otto_show_in_bar`. Nothing is polled.
+36. It is drawn only while `otto_show_in_bar` is true, which is the `input.show_layout_in_bar` setting (Settings, Keyboard, "Show in the bar", off by default), and there are at least two layouts. Turning the setting off hides it at once, and closes its menu if open.
+37. It draws as a keycap: a rounded outline, the height of the battery glyph, holding the active layout's XKB name in capitals, at most three characters (`US`, `IT`). A compositor that sends no codes gets the first letters of the full name instead. It is never a flag: a layout is a language, not a country.
+38. Clicking it opens a menu listing every layout by its full name, the active one check-marked, then a separator and "Keyboard Settings…", which starts the settings command (`battery.settings_command`) with `--pane keyboard`. Picking a layout runs `input type:keyboard xkb_switch_layout <index>`; the tick moves when the compositor announces the switch, not before. While open the menu follows changes the same way.
+39. To an assistive technology the indicator is a button with a popup, labelled with the active layout's full name, and announced politely as it changes: a switch made with a key combination is otherwise silent.
+
 ### Clock (Right Zone)
 
-35. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
-36. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
+40. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
+41. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
 
 ### Animations & Visual Behavior
 
-37. When a new SNI icon registers, it slides in from the right with a spring animation.
-38. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
-39. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
-40. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
-41. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
+42. When a new SNI icon registers, it slides in from the right with a spring animation.
+43. When an SNI icon deregisters, it fades out and the remaining icons slide to close the gap.
+44. Menu entry highlight uses a rounded-rect fill with spring-based scale feedback on press.
+45. Menus open with a fade-in + slight upward slide. Menus close with a fade-out.
+46. The right panel width animates smoothly when tray icons are added or removed, using an exponential ease-out interpolation. On the first frame after creation, the width snaps to the content-driven target without animating.
 
 ## Constraints & Edge Cases
 

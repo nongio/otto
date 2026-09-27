@@ -8,6 +8,7 @@ pub mod displays;
 pub mod dock;
 pub mod general;
 pub mod keyboard;
+pub mod keyboard_layouts;
 pub mod lock_and_login;
 pub mod pointing;
 pub mod power;

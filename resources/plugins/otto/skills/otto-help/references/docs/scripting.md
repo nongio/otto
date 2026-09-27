@@ -98,6 +98,7 @@ criteria works only in front of `focus`.
 otto-msg -t get_tree          # every window, in i3's node shape
 otto-msg -t get_workspaces    # every workspace
 otto-msg -t get_outputs       # every monitor
+otto-msg -t get_inputs        # the keyboard and its layouts
 ```
 
 Output is pretty-printed; `-r` gives one line, which is what you want in a
@@ -112,8 +113,8 @@ otto-msg -m -t subscribe '["workspace","window"]'
 
 prints one JSON event per line as the focused window or workspace changes —
 what a status bar reads. Without `-m` it prints the first event and exits, so a
-script can wait for one thing to happen. `workspace` and `window` are the only
-events so far.
+script can wait for one thing to happen. The events are `workspace`, `window`
+and `input`, which fires when the keyboard layout switches.
 
 ## Three things to try
 

@@ -24,6 +24,15 @@ pub enum WorkspaceTarget {
     Prev,
 }
 
+/// Which keyboard layout `input … xkb_switch_layout …` asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutTarget {
+    /// A layout index, 0-based as sway writes it.
+    Index(usize),
+    Next,
+    Prev,
+}
+
 /// The three-state argument i3 gives every toggleable command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -124,6 +133,10 @@ pub enum Command {
         number: Option<usize>,
         name: String,
     },
+    /// `input type:keyboard xkb_switch_layout <n>|next|prev` — sway's layout
+    /// switch. Otto has one keyboard, so `type:keyboard`, `otto:keyboard` and
+    /// `*` all name it.
+    SwitchLayout(LayoutTarget),
 }
 
 /// i3's `[app_id="…" title="…"]`, the window matcher that prefixes a command.
@@ -407,6 +420,7 @@ fn parse_one(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         "expose" => Command::Expose(parse_expose_arg(cursor)?),
         "gaps" => parse_gaps(cursor)?,
         "rename" => parse_rename(cursor)?,
+        "input" => parse_input(cursor)?,
         other => return Err(unknown(offset, other)),
     };
     if !cursor.is_done() {
@@ -533,6 +547,36 @@ fn parse_workspace(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
             _ => Err(invalid(word_offset, "workspace", "<n>|next|prev")),
         },
     }
+}
+
+/// `input <identifier> xkb_switch_layout <n>|next|prev`.
+///
+/// sway configures every input device through `input`; the layout switch is
+/// the only part of it Otto takes, because the rest lives in the config.
+fn parse_input(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
+    const EXPECTED: &str = "'type:keyboard xkb_switch_layout <n>|next|prev'";
+    let offset = cursor.offset();
+    match cursor.next() {
+        Some((_, "type:keyboard" | "otto:keyboard" | "*")) => {}
+        _ => return Err(invalid(offset, "input", EXPECTED)),
+    }
+    let offset = cursor.offset();
+    match cursor.next() {
+        Some((_, "xkb_switch_layout")) => {}
+        Some((offset, other)) => return Err(unsupported(offset, &join("input", other))),
+        None => return Err(invalid(offset, "input", EXPECTED)),
+    }
+    let offset = cursor.offset();
+    let target = match cursor.next() {
+        Some((_, "next")) => LayoutTarget::Next,
+        Some((_, "prev" | "previous")) => LayoutTarget::Prev,
+        Some((_, word)) => match word.parse::<usize>() {
+            Ok(index) => LayoutTarget::Index(index),
+            Err(_) => return Err(invalid(offset, "xkb_switch_layout", "<n>|next|prev")),
+        },
+        None => return Err(invalid(offset, "xkb_switch_layout", "<n>|next|prev")),
+    };
+    Ok(Command::SwitchLayout(target))
 }
 
 /// `rename workspace to <name>`, and `rename workspace <n> to <name>` for a
@@ -814,6 +858,31 @@ mod tests {
 
     fn error(text: &str) -> ParseError {
         parse(text).expect_err(text)
+    }
+
+    #[test]
+    fn the_keyboard_layout_switch_reads_like_sway() {
+        assert_eq!(
+            one("input type:keyboard xkb_switch_layout next"),
+            Command::SwitchLayout(LayoutTarget::Next)
+        );
+        assert_eq!(
+            one("input * xkb_switch_layout prev"),
+            Command::SwitchLayout(LayoutTarget::Prev)
+        );
+        assert_eq!(
+            one("input otto:keyboard xkb_switch_layout 1"),
+            Command::SwitchLayout(LayoutTarget::Index(1))
+        );
+        assert!(error("input type:keyboard xkb_switch_layout sideways")
+            .message
+            .contains("expected"));
+        assert!(error("input type:pointer xkb_switch_layout 0")
+            .message
+            .contains("expected"));
+        assert!(error("input type:keyboard repeat_rate 30")
+            .message
+            .contains("does not support"));
     }
 
     fn rename(number: Option<usize>, name: &str) -> Command {

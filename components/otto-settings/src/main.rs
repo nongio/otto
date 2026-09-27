@@ -22,6 +22,7 @@ mod settings_client;
 mod theme_preview;
 mod view;
 mod widgets;
+mod xkb_registry;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -369,6 +370,9 @@ fn select_ids() -> Vec<&'static str> {
     // later would find no menu made. Adding them unconditionally costs two
     // entries; `HashMap` collapses the duplicates.
     ids.extend_from_slice(displays::slot_ids());
+    // The keyboard layout, variant and switch pop-ups, for every layout the
+    // pane can hold: one added at runtime has to find its menus made.
+    ids.extend(panes::keyboard_layouts::slot_ids());
     // The Agents pane's pop-ups, for every agent it can hold: one added at
     // runtime has to find its menus already made.
     ids.extend(agents::slot_ids());
@@ -546,42 +550,45 @@ fn open_menu(
     let display_slot =
         displays::menu_choices(select.id).or_else(|| agents::menu_choices(select.id));
     let slot = keyboard::slot_index(select.id);
-    let choices: Vec<discovery::Choice> = if let Some(values) = display_slot {
-        values
-            .into_iter()
-            .map(|value| discovery::Choice {
-                label: value.clone(),
-                value,
-            })
-            .collect()
-    } else if slot.is_some() {
-        keyboard::actions()
-            .iter()
-            .map(|action| discovery::Choice {
-                label: (*action).to_string(),
-                value: (*action).to_string(),
-            })
-            .collect()
-    } else {
-        let Some(desc) = settings_client::describe(select.id) else {
-            return;
-        };
-        if !desc.choices.is_empty() {
-            desc.choices
+    let choices: Vec<discovery::Choice> =
+        if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
+            choices
+        } else if let Some(values) = display_slot {
+            values
+                .into_iter()
+                .map(|value| discovery::Choice {
+                    label: value.clone(),
+                    value,
+                })
+                .collect()
+        } else if slot.is_some() {
+            keyboard::actions()
                 .iter()
-                .filter(|c| !desc.unavailable_choices.contains(c))
-                .map(|c| discovery::Choice {
-                    label: desc.display(c),
-                    value: c.clone(),
+                .map(|action| discovery::Choice {
+                    label: (*action).to_string(),
+                    value: (*action).to_string(),
                 })
                 .collect()
         } else {
-            match discovery::choices_for(select.id, &select.current) {
-                Some(choices) => choices,
-                None => return,
+            let Some(desc) = settings_client::describe(select.id) else {
+                return;
+            };
+            if !desc.choices.is_empty() {
+                desc.choices
+                    .iter()
+                    .filter(|c| !desc.unavailable_choices.contains(c))
+                    .map(|c| discovery::Choice {
+                        label: desc.display(c),
+                        value: c.clone(),
+                    })
+                    .collect()
+            } else {
+                match discovery::choices_for(select.id, &select.current) {
+                    Some(choices) => choices,
+                    None => return,
+                }
             }
-        }
-    };
+        };
     if choices.is_empty() {
         return;
     }
@@ -615,7 +622,8 @@ fn open_menu(
         selected,
         move |index| {
             if let Some(value) = values.get(index) {
-                if displays::menu_choices(id).is_some() {
+                if panes::keyboard_layouts::choose(id, value) {
+                } else if displays::menu_choices(id).is_some() {
                     displays::choose(id, value);
                 } else if agents::owns(id) {
                     agents::choose(id, value);
@@ -661,6 +669,7 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Remove(hit)) if hit == index
         ),
+        view::Pressed::RemoveRow(id) => settings.row_remove_hit(x, y, offset) == Some(id),
         view::Pressed::Add => matches!(
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Add)
@@ -684,6 +693,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::displays::press(row, button);
             panes::general::press(row, button);
             panes::agents::press(row, button);
+            panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
                 start_edit(
                     editing,
@@ -708,6 +718,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             keyboard::remove(index);
         }
         view::Pressed::Add => keyboard::add(),
+        view::Pressed::RemoveRow(id) => panes::keyboard_layouts::remove(id),
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
             (keyboard::recording().map(|recording| recording.index) != Some(index))
@@ -898,7 +909,13 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
             );
         }
         model::Control::Select(current) => {
-            tree.combo_box(focus, bounds, label, current.clone(), false, true);
+            // What the field shows, not the configuration token behind it.
+            let shown = match row.id {
+                Some(id) => panes::keyboard_layouts::display(id, current)
+                    .unwrap_or_else(|| settings_client::display_choice(id, current)),
+                None => current.clone(),
+            };
+            tree.combo_box(focus, bounds, label, shown, false, true);
         }
         model::Control::Text(text) => {
             tree.control(focus, bounds, Role::TextInput, true, |node| {
@@ -1846,6 +1863,10 @@ impl App for SettingsApp {
                                 settings.dark,
                             );
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some(id) = settings.row_remove_hit(x, y, offset) {
+                            // Acts on release, like every other push button.
+                            *pressed_hit.lock().unwrap() = Some(view::Pressed::RemoveRow(id));
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(select) = settings.select_hit(x, y, offset) {
                             open_menu(
                                 &dropdowns,
@@ -2646,9 +2667,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("settings: showing placeholder values; changes will not be saved");
     }
 
+    // `--pane keyboard` opens on that pane: what the bar's layout menu asks
+    // for. Matched by the pane's icon name, its title, or its position.
+    let first_pane = args
+        .iter()
+        .position(|arg| arg == "--pane")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|query| {
+            let panes = model::panes();
+            pane_index(
+                query,
+                &panes
+                    .iter()
+                    .map(|pane| (pane.icon, pane.name))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or(0);
+
     AppRunner::new(SettingsApp {
         window: None,
-        selected: Arc::new(Mutex::new(0)),
+        selected: Arc::new(Mutex::new(first_pane)),
         pane: Rc::new(RefCell::new(None)),
         // The pane has never been painted, so the first update has to.
         pane_dirty: Arc::new(Mutex::new(true)),
@@ -2672,6 +2711,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .run()?;
     Ok(())
+}
+
+/// The pane `query` names: by icon name ("keyboard"), by title in any case,
+/// or by 0-based position.
+fn pane_index(query: &str, panes: &[(&str, &str)]) -> Option<usize> {
+    panes
+        .iter()
+        .position(|(icon, name)| *icon == query || name.eq_ignore_ascii_case(query))
+        .or_else(|| query.parse::<usize>().ok().filter(|i| *i < panes.len()))
+}
+
+#[cfg(test)]
+mod pane_arg_tests {
+    use super::pane_index;
+
+    #[test]
+    fn a_pane_is_found_by_icon_title_or_position() {
+        let panes = [("gear", "General"), ("keyboard", "Keyboard")];
+        assert_eq!(pane_index("keyboard", &panes), Some(1));
+        assert_eq!(pane_index("general", &panes), Some(0));
+        assert_eq!(pane_index("1", &panes), Some(1));
+        assert_eq!(pane_index("7", &panes), None);
+        assert_eq!(pane_index("nope", &panes), None);
+    }
 }
 
 #[cfg(test)]

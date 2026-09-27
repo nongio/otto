@@ -190,8 +190,17 @@ settings-tiling-mode-bounce = Отскок мозаики
 settings-key-repeat-delay = Задержка перед повтором
 settings-key-repeat-rate = Скорость повтора
 settings-group-input-source = Источник ввода
-settings-xkb-layout = Раскладка
+settings-xkb-layout-nth = Раскладка { $n }
+settings-xkb-layout-default = Системная по умолчанию
+settings-xkb-layout-remove = Удалить эту раскладку
+settings-xkb-layouts = Раскладки
+settings-xkb-layouts-detail = До четырёх, по порядку. Сеанс начинается с первой.
 settings-xkb-variant = Вариант
+settings-xkb-variant-standard = Стандартный
+settings-xkb-switch = Переключать раскладки клавишами
+settings-xkb-switch-detail = Клавиши, переключающие на следующую раскладку.
+settings-xkb-switch-none = Нет
+settings-xkb-show-in-bar = Показывать на панели
 settings-xkb-options = Параметры
 settings-group-shortcuts = Сочетания клавиш
 settings-key-combination = Сочетание клавиш
@@ -831,6 +840,8 @@ bar-power-saver = Энергосбережение
 bar-power-balanced = Сбалансированный
 bar-power-performance = Производительность
 bar-power-settings = Настройки питания…
+bar-keyboard-settings = Настройки клавиатуры…
+bar-keyboard-layout-label = Раскладка клавиатуры: { $layout }
 
 
 ## Settings — widgets
@@ -941,11 +952,13 @@ schema-keyboard-repeat-rate-description = Количество повторов 
 
 # --- input ---
 schema-input-xkb-layout-label = Раскладка клавиатуры
-schema-input-xkb-layout-description = Название раскладки XKB. Пусто — используется системная раскладка по умолчанию.
+schema-input-xkb-layout-description = Названия раскладок XKB через запятую, первая активна при запуске. Пусто — используется системная раскладка по умолчанию.
 schema-input-xkb-variant-label = Вариант клавиатуры
-schema-input-xkb-variant-description = Название варианта XKB. Пусто — используется системный вариант по умолчанию.
+schema-input-xkb-variant-description = Названия вариантов XKB через запятую, по одному на раскладку. Пусто — используется стандартный вариант каждой раскладки.
 schema-input-xkb-options-label = Параметры клавиатуры
 schema-input-xkb-options-description = Строки параметров XKB.
+schema-input-show-layout-in-bar-label = Показывать раскладку на панели
+schema-input-show-layout-in-bar-description = Показывает активную раскладку клавиатуры в otto-bar, если их больше одной.
 schema-input-tap-enabled-label = Нажатие касанием
 schema-input-tap-enabled-description = Считать касание тачпада нажатием.
 schema-input-tap-drag-enabled-label = Касание и перетаскивание

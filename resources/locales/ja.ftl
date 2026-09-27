@@ -187,8 +187,17 @@ settings-tiling-mode-bounce = タイル表示のバウンス
 settings-key-repeat-delay = リピート開始までの時間
 settings-key-repeat-rate = リピート速度
 settings-group-input-source = 入力ソース
-settings-xkb-layout = レイアウト
+settings-xkb-layout-nth = レイアウト { $n }
+settings-xkb-layout-default = システムの既定
+settings-xkb-layout-remove = このレイアウトを削除
+settings-xkb-layouts = レイアウト
+settings-xkb-layouts-detail = 最大4つまで、順番どおりに使われます。最初のものでセッションが始まります。
 settings-xkb-variant = バリアント
+settings-xkb-variant-standard = 標準
+settings-xkb-switch = レイアウトを切り替えるキー
+settings-xkb-switch-detail = 次のレイアウトに切り替えるキーです。
+settings-xkb-switch-none = なし
+settings-xkb-show-in-bar = バーに表示
 settings-xkb-options = オプション
 settings-group-shortcuts = ショートカット
 settings-key-combination = キーの組み合わせ
@@ -772,6 +781,8 @@ bar-power-saver = 省電力
 bar-power-balanced = バランス
 bar-power-performance = パフォーマンス
 bar-power-settings = 電源設定…
+bar-keyboard-settings = キーボード設定…
+bar-keyboard-layout-label = キーボードレイアウト: { $layout }
 
 
 ## Settings — widgets
@@ -883,11 +894,13 @@ schema-keyboard-repeat-rate-description = キーを押し続けている間の1�
 
 # --- input ---
 schema-input-xkb-layout-label = キーボードレイアウト
-schema-input-xkb-layout-description = XKBレイアウトの名前。空ならシステムのデフォルトを使います。
+schema-input-xkb-layout-description = XKBレイアウトの名前をカンマ区切りで指定します。最初の一つが開始時に有効です。空ならシステムのデフォルトを使います。
 schema-input-xkb-variant-label = キーボードバリアント
-schema-input-xkb-variant-description = XKBバリアントの名前。空ならシステムのデフォルトを使います。
+schema-input-xkb-variant-description = XKBバリアントの名前をカンマ区切りで指定します。レイアウトごとに一つです。空なら各レイアウトの標準バリアントを使います。
 schema-input-xkb-options-label = キーボードオプション
 schema-input-xkb-options-description = XKBのオプション文字列。
+schema-input-show-layout-in-bar-label = バーにレイアウトを表示
+schema-input-show-layout-in-bar-description = レイアウトが複数あるとき、使用中のキーボードレイアウトを otto-bar に表示します。
 schema-input-tap-enabled-label = タップでクリック
 schema-input-tap-enabled-description = トラックパッドのタップをクリックとして扱います。
 schema-input-tap-drag-enabled-label = タップでドラッグ

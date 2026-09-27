@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["unstable-locales"] }
 tokio = { version = "1", features = ["full"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
+serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }

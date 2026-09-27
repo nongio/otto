@@ -189,8 +189,17 @@ settings-tiling-mode-bounce = Überschwingen im Kachelmodus
 settings-key-repeat-delay = Verzögerung bis zur Wiederholung
 settings-key-repeat-rate = Wiederholungsrate
 settings-group-input-source = Eingabequelle
-settings-xkb-layout = Layout
+settings-xkb-layout-nth = Layout { $n }
+settings-xkb-layout-default = Systemstandard
+settings-xkb-layout-remove = Dieses Layout entfernen
+settings-xkb-layouts = Layouts
+settings-xkb-layouts-detail = Bis zu vier, in Reihenfolge. Die Sitzung beginnt mit dem ersten.
 settings-xkb-variant = Variante
+settings-xkb-variant-standard = Standard
+settings-xkb-switch = Layout wechseln mit
+settings-xkb-switch-detail = Die Tasten, die zum nächsten Layout wechseln.
+settings-xkb-switch-none = Keine
+settings-xkb-show-in-bar = In der Leiste anzeigen
 settings-xkb-options = Optionen
 settings-group-shortcuts = Tastenkombinationen
 settings-key-combination = Tastenkombination
@@ -793,6 +802,8 @@ bar-power-saver = Energiesparen
 bar-power-balanced = Ausgeglichen
 bar-power-performance = Leistung
 bar-power-settings = Energieeinstellungen…
+bar-keyboard-settings = Tastatureinstellungen…
+bar-keyboard-layout-label = Tastaturlayout: { $layout }
 
 
 ## Settings — widgets
@@ -904,11 +915,13 @@ schema-keyboard-repeat-rate-description = Wiederholungen pro Sekunde, während e
 
 # --- input ---
 schema-input-xkb-layout-label = Tastaturlayout
-schema-input-xkb-layout-description = XKB-Layoutname. Leer verwendet die Systemvorgabe.
+schema-input-xkb-layout-description = XKB-Layoutnamen, durch Kommas getrennt, das erste ist beim Start aktiv. Leer verwendet die Systemvorgabe.
 schema-input-xkb-variant-label = Tastaturvariante
-schema-input-xkb-variant-description = XKB-Variantenname. Leer verwendet die Systemvorgabe.
+schema-input-xkb-variant-description = XKB-Variantennamen, durch Kommas getrennt, eine pro Layout. Leer verwendet die Standardvariante jedes Layouts.
 schema-input-xkb-options-label = Tastaturoptionen
 schema-input-xkb-options-description = XKB-Optionszeichenfolgen.
+schema-input-show-layout-in-bar-label = Layout in der Leiste anzeigen
+schema-input-show-layout-in-bar-description = Zeigt das aktive Tastaturlayout in otto-bar, wenn es mehr als eines gibt.
 schema-input-tap-enabled-label = Tippen zum Klicken
 schema-input-tap-enabled-description = Ein Tippen auf dem Trackpad als Klick behandeln.
 schema-input-tap-drag-enabled-label = Tippen und Ziehen

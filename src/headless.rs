@@ -1277,6 +1277,11 @@ impl HeadlessHandle {
         self.query(|state| state.outputs_json())
     }
 
+    /// `GetInputs`, in sway's shape: the keyboard and its layouts.
+    pub fn inputs_json(&self) -> serde_json::Value {
+        self.query(|state| state.inputs_json())
+    }
+
     /// Plug in a second `width`×`height` output at `(x, y)` in the global
     /// layout, at the headless output's scale.
     pub fn add_output(&self, name: &str, width: i32, height: i32, x: i32, y: i32) {

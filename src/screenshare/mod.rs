@@ -200,6 +200,10 @@ pub enum CompositorCommand {
     GetShellOutputs {
         response_tx: tokio::sync::oneshot::Sender<String>,
     },
+    /// The keyboard, in sway's `GET_INPUTS` shape.
+    GetShellInputs {
+        response_tx: tokio::sync::oneshot::Sender<String>,
+    },
 }
 
 /// Information about an available output.
@@ -772,6 +776,9 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         }
         CompositorCommand::GetShellOutputs { response_tx } => {
             let _ = response_tx.send(state.outputs_json().to_string());
+        }
+        CompositorCommand::GetShellInputs { response_tx } => {
+            let _ = response_tx.send(state.inputs_json().to_string());
         }
     }
 }

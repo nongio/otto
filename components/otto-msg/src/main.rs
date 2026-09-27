@@ -24,7 +24,7 @@ its events.
 
 Options:
   -t, --type <type>   run_command (default), get_tree, get_workspaces,
-                      get_outputs, subscribe
+                      get_outputs, get_inputs, subscribe
   -m, --monitor       with -t subscribe, keep printing events
   -r, --raw           print raw JSON rather than pretty-printing it
   -p, --pretty        pretty-print even when stdout is not a terminal
@@ -45,6 +45,7 @@ enum Kind {
     GetTree,
     GetWorkspaces,
     GetOutputs,
+    GetInputs,
     Subscribe,
 }
 
@@ -57,6 +58,7 @@ impl Kind {
             "get_tree" => Some(Kind::GetTree),
             "get_workspaces" => Some(Kind::GetWorkspaces),
             "get_outputs" => Some(Kind::GetOutputs),
+            "get_inputs" => Some(Kind::GetInputs),
             "subscribe" => Some(Kind::Subscribe),
             _ => None,
         }
@@ -68,6 +70,7 @@ impl Kind {
             Kind::GetTree => "GetTree",
             Kind::GetWorkspaces => "GetWorkspaces",
             Kind::GetOutputs => "GetOutputs",
+            Kind::GetInputs => "GetInputs",
             Kind::Subscribe => "",
         }
     }
@@ -287,6 +290,7 @@ fn event_name(member: &str) -> Option<&'static str> {
     match member {
         "WorkspaceChanged" => Some("workspace"),
         "WindowChanged" => Some("window"),
+        "InputChanged" => Some("input"),
         _ => None,
     }
 }
@@ -358,6 +362,7 @@ mod tests {
     fn the_type_is_read_in_both_spellings() {
         assert!(args(&["-t", "get_tree"]).kind == Kind::GetTree);
         assert!(args(&["--type=get-outputs"]).kind == Kind::GetOutputs);
+        assert!(args(&["-t", "get_inputs"]).kind == Kind::GetInputs);
     }
 
     #[test]

@@ -189,8 +189,17 @@ settings-tiling-mode-bounce = Tiling mode bounce
 settings-key-repeat-delay = Key repeat delay
 settings-key-repeat-rate = Key repeat rate
 settings-group-input-source = Input source
-settings-xkb-layout = Layout
+settings-xkb-layout-nth = Layout { $n }
+settings-xkb-layout-default = System default
+settings-xkb-layout-remove = Remove this layout
+settings-xkb-layouts = Layouts
+settings-xkb-layouts-detail = Up to four, in order. The first is the one a session starts on.
 settings-xkb-variant = Variant
+settings-xkb-variant-standard = Standard
+settings-xkb-switch = Switch layouts with
+settings-xkb-switch-detail = The keys that move to the next layout.
+settings-xkb-switch-none = Nothing
+settings-xkb-show-in-bar = Show in the bar
 settings-xkb-options = Options
 settings-group-shortcuts = Shortcuts
 settings-key-combination = Key combination
@@ -802,6 +811,8 @@ bar-power-balanced = Balanced
 bar-power-performance = Performance
 # Last entry in the battery menu.
 bar-power-settings = Power Settings…
+bar-keyboard-settings = Keyboard Settings…
+bar-keyboard-layout-label = Keyboard layout: { $layout }
 
 
 ## Settings — widgets
@@ -913,11 +924,13 @@ schema-keyboard-repeat-rate-description = Repeats per second while a key is held
 
 # --- input ---
 schema-input-xkb-layout-label = Keyboard layout
-schema-input-xkb-layout-description = XKB layout name. Empty uses the system default.
+schema-input-xkb-layout-description = XKB layout names, comma-separated, first one active at start. Empty uses the system default.
 schema-input-xkb-variant-label = Keyboard variant
-schema-input-xkb-variant-description = XKB variant name. Empty uses the system default.
+schema-input-xkb-variant-description = XKB variant names, comma-separated, one per layout. Empty uses each layout's standard variant.
 schema-input-xkb-options-label = Keyboard options
 schema-input-xkb-options-description = XKB option strings.
+schema-input-show-layout-in-bar-label = Show layout in the bar
+schema-input-show-layout-in-bar-description = Shows the active keyboard layout in otto-bar when there is more than one.
 schema-input-tap-enabled-label = Tap to click
 schema-input-tap-enabled-description = Treat a tap on the touchpad as a click.
 schema-input-tap-drag-enabled-label = Tap and drag

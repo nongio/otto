@@ -5273,6 +5273,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "otto-kit",
+ "serde_json",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "tokio",

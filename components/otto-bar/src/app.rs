@@ -29,6 +29,8 @@ const MENUS: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA5
 const CLOCK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0001);
 /// The battery indicator's.
 const BATTERY: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0002);
+/// The keyboard layout indicator's.
+const KEYBOARD_LAYOUT: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0003);
 
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
@@ -96,6 +98,7 @@ pub struct TopBarApp {
     last_appmenu_gen: u64,
     last_power_gen: u64,
     last_menu_gen: u64,
+    last_layout_gen: u64,
     /// Currently open tray context menu (only one at a time).
     open_menu: Option<OpenMenu>,
     /// Tray index awaiting an async dbusmenu fetch (keeps active highlight).
@@ -106,6 +109,8 @@ pub struct TopBarApp {
     pending_app_menu_index: Option<usize>,
     /// The power menu, when the battery indicator has one open.
     open_power_menu: Option<PowerMenu>,
+    /// The keyboard layout menu, while it is open.
+    open_layout_menu: Option<ContextMenu>,
 }
 
 impl TopBarApp {
@@ -123,11 +128,13 @@ impl TopBarApp {
             last_appmenu_gen: 0,
             last_power_gen: 0,
             last_menu_gen: 0,
+            last_layout_gen: 0,
             open_menu: None,
             pending_menu_index: None,
             open_app_menu: None,
             pending_app_menu_index: None,
             open_power_menu: None,
+            open_layout_menu: None,
         }
     }
 
@@ -434,28 +441,7 @@ impl TopBarApp {
             if let Some(id) = action_id.strip_prefix("profile:") {
                 crate::power::activate_profile(id);
             } else if action_id == "settings" {
-                let cfg = battery_config();
-                if let Some((program, args)) = cfg.settings_command.split_first() {
-                    use std::os::unix::process::CommandExt;
-                    // Detached into its own process group with no stdio, and
-                    // reaped on a thread so each launch does not leave a
-                    // zombie behind until the bar exits.
-                    let spawned = std::process::Command::new(program)
-                        .args(args)
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .process_group(0)
-                        .spawn();
-                    match spawned {
-                        Ok(mut child) => {
-                            std::thread::spawn(move || {
-                                let _ = child.wait();
-                            });
-                        }
-                        Err(e) => tracing::warn!("battery.settings_command: {e}"),
-                    }
-                }
+                open_settings(&[]);
             }
         });
 
@@ -492,6 +478,91 @@ impl TopBarApp {
         self.open_power_menu = Some(PowerMenu { menu, cpu });
         self.right.battery_active = true;
         self.redraw_right();
+    }
+
+    fn close_layout_menu(&mut self) {
+        if let Some(menu) = self.open_layout_menu.take() {
+            menu.hide_animated();
+        }
+        if let Some(ref surface) = self.right_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+        if self.right.keyboard_active {
+            self.right.keyboard_active = false;
+            self.redraw_right();
+        }
+    }
+
+    /// Show the keyboard layout menu: the layouts, the active one ticked,
+    /// then the way to the keyboard settings.
+    fn show_layout_menu(&mut self) {
+        let Some(ref surface) = self.right_surface else {
+            return;
+        };
+        let Some(layouts) = crate::keyboard_layout::layouts() else {
+            return;
+        };
+        let Some((ix, iy, iw, ih)) = self.right.keyboard_pill_rect() else {
+            return;
+        };
+
+        let menu = ContextMenu::new(layout_menu_items(&layouts)).on_item_click(|action_id| {
+            if let Some(index) = action_id
+                .strip_prefix("layout:")
+                .and_then(|i| i.parse::<usize>().ok())
+            {
+                crate::keyboard_layout::switch_to(index);
+            } else if action_id == "settings" {
+                open_settings(&["--pane", "keyboard"]);
+            }
+        });
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+        positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_layout_menu = Some(menu);
+        self.right.keyboard_active = true;
+        self.redraw_right();
+    }
+
+    /// The layouts changed under an open layout menu: move the tick, or
+    /// reopen at the new size when a layout came or went. A menu whose
+    /// indicator went away (the setting turned off) closes with it.
+    fn refresh_layout_menu(&mut self) {
+        let Some(menu) = self.open_layout_menu.as_ref() else {
+            return;
+        };
+        let layouts = crate::keyboard_layout::layouts();
+        let Some(layouts) = layouts.filter(|_| crate::keyboard_layout::visible()) else {
+            self.close_layout_menu();
+            return;
+        };
+        if let MenuRefresh::Resized = menu.refresh(layout_menu_items(&layouts)) {
+            self.close_layout_menu();
+            self.show_layout_menu();
+        }
     }
 
     /// The battery or a profile changed under an open power menu: move the
@@ -557,6 +628,19 @@ impl TopBarApp {
     /// Handle a click on the right panel (tray icons).
     fn handle_right_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
+
+        // The layout indicator, like the battery, owns its slice of the panel.
+        if self.right.keyboard_at(x) {
+            let was_open = self.open_layout_menu.is_some();
+            self.close_menu();
+            self.close_power_menu();
+            self.close_layout_menu();
+            if !was_open {
+                self.show_layout_menu();
+            }
+            return;
+        }
+        self.close_layout_menu();
 
         // The battery owns its slice of the panel, so a click there is never
         // also a click on the tray icon beside it.
@@ -721,6 +805,7 @@ impl App for TopBarApp {
         otto_kit::utils::focus_watcher::spawn_focus_watcher();
         crate::appmenu::spawn_appmenu_registrar();
         crate::power::spawn_power_watcher();
+        crate::keyboard_layout::spawn_watcher();
 
         Ok(())
     }
@@ -778,6 +863,14 @@ impl App for TopBarApp {
             return;
         }
 
+        if let Some(ref mut menu) = self.open_layout_menu {
+            menu.handle_key(key, state);
+            if !menu.is_visible() {
+                self.close_layout_menu();
+            }
+            return;
+        }
+
         // Forward to open app menu
         if let Some(ref mut open) = self.open_app_menu {
             open.menu.handle_key(key, state);
@@ -815,6 +908,9 @@ impl App for TopBarApp {
         }
         if self.open_power_menu.is_some() {
             self.close_power_menu();
+        }
+        if self.open_layout_menu.is_some() {
+            self.close_layout_menu();
         }
     }
 
@@ -917,6 +1013,30 @@ impl App for TopBarApp {
             );
         }
 
+        // The layout indicator reads as the layout's name, not its code, and
+        // is announced when it changes: a switch from a key combination is
+        // otherwise silent.
+        if let Some((x, y, w, h)) = self.right.keyboard_rect() {
+            let name = crate::keyboard_layout::layouts()
+                .map(|l| l.active_name())
+                .unwrap_or_default();
+            tree.control(
+                KEYBOARD_LAYOUT,
+                Rect::from_xywh(x, y, w, h),
+                Role::Button,
+                true,
+                |node| {
+                    node.set_label(otto_kit::t_owned!(
+                        "bar-keyboard-layout-label",
+                        layout = name
+                    ));
+                    node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                    node.add_action(Action::Click);
+                    node.set_live(otto_kit::accessibility::Live::Polite);
+                },
+            );
+        }
+
         // The clock reads as what it says, and is announced when it changes:
         // it is the one thing on the bar that moves on its own.
         let clock = Rect::from_xywh(
@@ -966,6 +1086,15 @@ impl App for TopBarApp {
             return;
         }
 
+        if node == otto_kit::accessibility::node_id(KEYBOARD_LAYOUT) {
+            let was_open = self.open_layout_menu.is_some();
+            self.close_layout_menu();
+            if !was_open {
+                self.show_layout_menu();
+            }
+            return;
+        }
+
         let count = self.right.tray_menu_state.items().len();
         if let Some(index) =
             (0..count).find(|i| otto_kit::accessibility::node_id(tray_focus(*i)) == node)
@@ -1006,6 +1135,22 @@ impl App for TopBarApp {
             .is_some_and(|m| !m.menu.is_visible());
         if power_menu_gone {
             self.close_power_menu();
+            dirty = true;
+        }
+        let layout_menu_gone = self
+            .open_layout_menu
+            .as_ref()
+            .is_some_and(|m| !m.is_visible());
+        if layout_menu_gone {
+            self.close_layout_menu();
+            dirty = true;
+        }
+
+        // A layout switch, or the layouts or the setting changed.
+        let layout_gen = crate::keyboard_layout::generation();
+        if layout_gen != self.last_layout_gen {
+            self.last_layout_gen = layout_gen;
+            self.refresh_layout_menu();
             dirty = true;
         }
 
@@ -1272,6 +1417,62 @@ fn power_menu_items(cpu: &crate::power::Cpu) -> Vec<KitMenuItem> {
         );
     }
 
+    items
+}
+
+/// Launch the settings app (`battery.settings_command`) with `extra` after
+/// its own arguments.
+///
+/// Detached into its own process group with no stdio, and reaped on a thread
+/// so each launch does not leave a zombie behind until the bar exits.
+fn open_settings(extra: &[&str]) {
+    use std::os::unix::process::CommandExt;
+    let cfg = battery_config();
+    let Some((program, args)) = cfg.settings_command.split_first() else {
+        return;
+    };
+    let spawned = std::process::Command::new(program)
+        .args(args)
+        .args(extra)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn();
+    match spawned {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => tracing::warn!("battery.settings_command: {e}"),
+    }
+}
+
+/// The keyboard layout menu's items: every layout by its full name, the
+/// active one ticked, then the keyboard settings.
+fn layout_menu_items(layouts: &crate::keyboard_layout::Layouts) -> Vec<KitMenuItem> {
+    let mut items: Vec<KitMenuItem> = layouts
+        .names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let item = KitMenuItem::action(name).with_action_id(format!("layout:{index}"));
+            if index == layouts.active {
+                // The check column, as the power profiles use it.
+                item.with_icon(MenuItemIcon::Named("object-select-symbolic".into()))
+            } else {
+                item
+            }
+        })
+        .collect();
+    if !battery_config().settings_command.is_empty() {
+        items.push(KitMenuItem::separator());
+        items.push(
+            KitMenuItem::action(otto_kit::t!("bar-keyboard-settings"))
+                .with_action_id("settings".to_string()),
+        );
+    }
     items
 }
 

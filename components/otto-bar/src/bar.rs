@@ -21,6 +21,9 @@ pub struct RightLayout {
     pub battery_x: f32,
     /// Zero when there is no battery, or it is configured off.
     pub battery_width: f32,
+    pub keyboard_x: f32,
+    /// Zero while the keyboard layout indicator is hidden.
+    pub keyboard_width: f32,
     pub tray_x: f32,
     pub tray_width: f32,
 }
@@ -33,6 +36,8 @@ pub struct RightPanel {
     /// The power menu is open: the battery wears the same pill an open tray
     /// item does.
     pub battery_active: bool,
+    /// The keyboard layout menu is open: the keycap wears the same pill.
+    pub keyboard_active: bool,
     pub width: f32,
     pub height: f32,
 }
@@ -262,6 +267,7 @@ impl RightPanel {
             tray_menu_state: MenuBarState::new(),
             tray_style: tray_menu_style(),
             battery_active: false,
+            keyboard_active: false,
             width: RIGHT_WIDTH as f32,
             height: BAR_HEIGHT as f32,
         }
@@ -300,17 +306,27 @@ impl RightPanel {
         };
         let battery_x = self.width - clock_width - battery_gap - battery_width;
 
+        let keyboard_width = crate::keyboard_layout::width();
+        let keyboard_gap = if keyboard_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
+        let keyboard_x = battery_x - keyboard_gap - keyboard_width;
+
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
         let tray_gap = if tray_width > 0.0 {
             TRAY_CLOCK_GAP
         } else {
             0.0
         };
-        let tray_x = battery_x - tray_gap - tray_width;
+        let tray_x = keyboard_x - tray_gap - tray_width;
 
         RightLayout {
             battery_x,
             battery_width,
+            keyboard_x,
+            keyboard_width,
             tray_x,
             tray_width,
         }
@@ -340,6 +356,27 @@ impl RightPanel {
             crate::battery::draw(canvas, layout.battery_x, self.height, &active_theme);
         } else {
             crate::battery::draw(canvas, layout.battery_x, self.height, &theme);
+        }
+
+        if layout.keyboard_width > 0.0 {
+            let color = if self.keyboard_active {
+                let hl = highlight_colors();
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(hl.active);
+                let (px, py, pw, ph) = self.keyboard_pill_rect().unwrap_or_default();
+                let radius = self.tray_style.item_corner_radius;
+                canvas.draw_round_rect(
+                    skia_safe::Rect::from_xywh(px, py, pw, ph),
+                    radius,
+                    radius,
+                    &paint,
+                );
+                hl.on_active
+            } else {
+                theme.text_primary
+            };
+            crate::keyboard_layout::draw(canvas, layout.keyboard_x, self.height, color);
         }
 
         canvas.save();
@@ -385,6 +422,13 @@ impl RightPanel {
             0.0
         };
 
+        let keyboard_width = crate::keyboard_layout::width();
+        let keyboard_gap = if keyboard_width > 0.0 {
+            TRAY_CLOCK_GAP
+        } else {
+            0.0
+        };
+
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
         let tray_gap = if tray_width > 0.0 {
             TRAY_CLOCK_GAP
@@ -396,6 +440,8 @@ impl RightPanel {
             + BAR_PADDING_H * 2.0
             + battery_gap
             + battery_width
+            + keyboard_gap
+            + keyboard_width
             + tray_gap
             + tray_width;
         content.max(MIN_RIGHT_WIDTH as f32)
@@ -443,6 +489,38 @@ impl RightPanel {
     /// pill, so both line up with the highlight above them.
     pub fn battery_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
         self.battery_rect().map(|(x, y, w, h)| {
+            (
+                x - BATTERY_PILL_PADDING,
+                y,
+                w + BATTERY_PILL_PADDING * 2.0,
+                h,
+            )
+        })
+    }
+
+    /// Whether `x` (in panel coords) is on the keyboard layout indicator,
+    /// with the same slack either side the battery has.
+    pub fn keyboard_at(&self, x: f32) -> bool {
+        let layout = self.layout();
+        if layout.keyboard_width <= 0.0 {
+            return false;
+        }
+        let slack = TRAY_CLOCK_GAP / 2.0;
+        x >= layout.keyboard_x - slack && x <= layout.keyboard_x + layout.keyboard_width + slack
+    }
+
+    /// The keyboard layout indicator's bounding box in surface-local coords.
+    pub fn keyboard_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let layout = self.layout();
+        if layout.keyboard_width <= 0.0 {
+            return None;
+        }
+        Some((layout.keyboard_x, 0.0, layout.keyboard_width, self.height))
+    }
+
+    /// The pill an open layout menu draws behind the keycap, and hangs from.
+    pub fn keyboard_pill_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        self.keyboard_rect().map(|(x, y, w, h)| {
             (
                 x - BATTERY_PILL_PADDING,
                 y,

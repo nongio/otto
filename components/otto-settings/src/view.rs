@@ -231,9 +231,29 @@ pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
         return None;
     }
     Some(select_rect(
-        rect.right - 14.0,
+        select_right(row, rect.right - 14.0),
         Settings::control_band(row, rect).center_y(),
     ))
+}
+
+/// The trailing edge of a row's pop-up: the row's own, or short of the "−"
+/// button on a removable row.
+fn select_right(row: &Row, right: f32) -> f32 {
+    if row.removable {
+        right - widgets::LINE_BUTTON - SHORTCUT_GAP
+    } else {
+        right
+    }
+}
+
+/// A removable row's "−" button.
+fn row_remove_rect(right: f32, cy: f32) -> Rect {
+    Rect::from_xywh(
+        right - widgets::LINE_BUTTON,
+        cy - widgets::LINE_BUTTON / 2.0,
+        widgets::LINE_BUTTON,
+        widgets::LINE_BUTTON,
+    )
 }
 
 /// One push button's identity for the keyboard and for assistive
@@ -571,6 +591,8 @@ pub enum Pressed {
     Record(usize),
     /// The button that adds a shortcut line.
     Add,
+    /// A removable row's "−" button, by the row's handle.
+    RemoveRow(&'static str),
 }
 
 /// What a press on the shortcuts group means.
@@ -1332,7 +1354,10 @@ impl Settings {
             return None;
         };
 
-        let field = select_rect(rect.right - 14.0, Self::control_band(row, rect).center_y());
+        let field = select_rect(
+            select_right(row, rect.right - 14.0),
+            Self::control_band(row, rect).center_y(),
+        );
         if !dropdown::field::hit_test(field, local.x, local.y) {
             return None;
         }
@@ -1457,6 +1482,26 @@ impl Settings {
             ),
             current: color,
         })
+    }
+
+    /// The handle of the removable row whose "−" button a click lands on.
+    pub fn row_remove_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<&'static str> {
+        let viewport = self.viewport();
+        if !viewport.contains(Point::new(x, y)) {
+            return None;
+        }
+        let content_width = self.width - SIDEBAR_W;
+        let local = Point::new(x - viewport.left, y - viewport.top + scroll_offset);
+        let (row, rect) = self
+            .row_rects(content_width)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(local))?;
+        if !row.removable {
+            return None;
+        }
+        row_remove_rect(rect.right - 14.0, Self::control_band(row, rect).center_y())
+            .contains(local)
+            .then(|| row.handle())
     }
 
     /// The push button a click lands on, if any.
@@ -1693,7 +1738,7 @@ impl Settings {
                 if selected {
                     styles::BODY_EMPHASIZED
                 } else {
-                    styles::BODY
+                    styles::BODY_MEDIUM
                 },
                 tint,
             );
@@ -2023,7 +2068,7 @@ impl Settings {
                 let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
                 right - readout_w - 12.0 - widgets::SLIDER_W
             }
-            Control::Select(_) => select_rect(right, cy).left,
+            Control::Select(_) => select_rect(select_right(row, right), cy).left,
             Control::Color(argb) => well_rect(right, cy, Color::from(*argb)).left,
             Control::Text(_) => text_rect(right, cy).left,
             Control::Button(labels) => widgets::button_rects(right, cy, labels)
@@ -2149,12 +2194,13 @@ impl Settings {
                 // The control holds the configuration token; the field shows
                 // the schema's human name for it where there is one.
                 let shown = match row.id {
-                    Some(id) => settings_client::display_choice(id, value),
+                    Some(id) => crate::panes::keyboard_layouts::display(id, value)
+                        .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),
                 };
                 dropdown::field::draw(
                     canvas,
-                    select_rect(right, cy),
+                    select_rect(select_right(row, right), cy),
                     &shown,
                     if open {
                         DropdownInteraction::Open
@@ -2163,6 +2209,15 @@ impl Settings {
                     },
                     &self.theme,
                 );
+                if row.removable {
+                    widgets::line_button(
+                        canvas,
+                        row_remove_rect(right, cy),
+                        false,
+                        self.pressed == Some(Pressed::RemoveRow(row.handle())),
+                        &self.theme,
+                    );
+                }
             }
             Control::Color(argb) => {
                 let color = Color::from(*argb);

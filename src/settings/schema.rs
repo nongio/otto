@@ -668,14 +668,14 @@ pub static SETTINGS: &[SettingSpec] = &[
         "input.xkb_layout",
         Str,
         "Keyboard layout",
-        "XKB layout name. Empty uses the system default.",
+        "XKB layout names, comma-separated, first one active at start. Empty uses the system default.",
         Live,
     ),
     spec(
         "input.xkb_variant",
         Str,
         "Keyboard variant",
-        "XKB variant name. Empty uses the system default.",
+        "XKB variant names, comma-separated, one per layout. Empty uses each layout's standard variant.",
         Live,
     ),
     spec(
@@ -683,6 +683,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         StrList,
         "Keyboard options",
         "XKB option strings.",
+        Live,
+    ),
+    spec(
+        "input.show_layout_in_bar",
+        Bool,
+        "Show layout in the bar",
+        "Shows the active keyboard layout in otto-bar when there is more than one.",
         Live,
     ),
     // ---- Trackpad & Mouse ------------------------------------------------

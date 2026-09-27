@@ -307,6 +307,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// shortcut matching tell the two apart. See
     /// [`crate::input::keyboard::shortcut_modifiers`].
     pub pressed_cmd_keys: HashSet<u32>,
+    /// The keyboard layout last announced as active, so a key event only
+    /// costs a comparison — see [`crate::input::keyboard_layout`].
+    pub announced_layout: u32,
     pub app_switcher_hold_modifiers: Option<ModifiersState>,
     pub cursor_status: Arc<Mutex<CursorImageStatus>>,
     pub cursor_manager: CursorManager,
@@ -1029,6 +1032,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             suppressed_keys: Vec::new(),
             current_modifiers: ModifiersState::default(),
             pressed_cmd_keys: HashSet::new(),
+            announced_layout: 0,
             app_switcher_hold_modifiers: None,
             cursor_status,
             cursor_manager,

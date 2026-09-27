@@ -66,6 +66,9 @@ pub struct Row {
     /// The row's push buttons have nothing to do right now — Apply with
     /// nothing to apply — and are drawn dimmed and take no press.
     pub inactive: bool,
+    /// A pop-up row that can be taken out of its list: a "−" button sits at
+    /// its trailing edge, and the pop-up moves in to make room for it.
+    pub removable: bool,
 }
 
 impl Row {
@@ -77,7 +80,14 @@ impl Row {
             restart_required: false,
             id: None,
             inactive: false,
+            removable: false,
         }
+    }
+
+    /// Give the row a "−" button that removes it. See [`Row::removable`].
+    pub(crate) fn removable(mut self, removable: bool) -> Self {
+        self.removable = removable;
+        self
     }
 
     /// Dim the row's push buttons and ignore presses on them while `inactive`.

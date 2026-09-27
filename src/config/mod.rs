@@ -1784,6 +1784,11 @@ pub struct InputConfig {
     /// way.
     #[serde(default)]
     pub mac_style_modifiers: Option<bool>,
+    /// Whether otto-bar shows the active keyboard layout. Off unless asked
+    /// for; the bar draws it only with more than one layout, since one layout
+    /// has nothing to tell.
+    #[serde(default = "default_show_layout_in_bar")]
+    pub show_layout_in_bar: bool,
 }
 
 /// Touchpad click method configuration
@@ -1836,8 +1841,13 @@ impl Default for InputConfig {
             xkb_variant: None,
             xkb_options: Vec::new(),
             mac_style_modifiers: None,
+            show_layout_in_bar: default_show_layout_in_bar(),
         }
     }
+}
+
+fn default_show_layout_in_bar() -> bool {
+    false
 }
 
 fn default_tap_enabled() -> bool {

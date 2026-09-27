@@ -201,6 +201,12 @@ scroll_speed = 1.0
 # Ctrl key to the focused application. That follows the option above; set this
 # to force it either way.
 # mac_style_modifiers = true
+#
+# Show the active layout in otto-bar (off by default; only drawn with more
+# than one layout).
+# The bar's menu switches between them; `otto-msg input type:keyboard
+# xkb_switch_layout next` does the same from a script.
+# show_layout_in_bar = true
 
 # Layer shell (panels, bars, overlays)
 [layer_shell]

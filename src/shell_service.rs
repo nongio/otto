@@ -35,6 +35,8 @@ pub enum EventKind {
     Workspace,
     /// The focused window changed.
     Window,
+    /// The keyboard layout switched, or the keymap was rebuilt.
+    Input,
 }
 
 /// One event, ready to go out as JSON.
@@ -161,6 +163,14 @@ impl ShellInterface {
             .await
     }
 
+    /// The keyboard, in sway's `GET_INPUTS` shape: its layouts by name, the
+    /// active one, and the `otto_layout_codes` and `otto_show_in_bar` a bar
+    /// draws its indicator from.
+    async fn get_inputs(&self) -> Result<String, ShellFault> {
+        self.ask(|response_tx| CompositorCommand::GetShellInputs { response_tx })
+            .await
+    }
+
     /// The focused or visible workspace changed. The argument is i3's
     /// `workspace` event as JSON.
     #[zbus(signal)]
@@ -170,6 +180,12 @@ impl ShellInterface {
     /// JSON.
     #[zbus(signal)]
     async fn window_changed(context: &SignalContext<'_>, event: String) -> zbus::Result<()>;
+
+    /// The keyboard layout switched (`"change": "xkb_layout"`) or the keymap
+    /// was rebuilt (`"xkb_keymap"`). The argument is sway's `input` event as
+    /// JSON, carrying the same object `GetInputs` answers with.
+    #[zbus(signal)]
+    async fn input_changed(context: &SignalContext<'_>, event: String) -> zbus::Result<()>;
 }
 
 /// Register the shell interface on the existing D-Bus connection.
@@ -210,6 +226,7 @@ pub async fn register_shell_interface(
                     ShellInterface::workspace_changed(context, event.payload).await
                 }
                 EventKind::Window => ShellInterface::window_changed(context, event.payload).await,
+                EventKind::Input => ShellInterface::input_changed(context, event.payload).await,
             };
             if let Err(err) = sent {
                 tracing::warn!("Could not emit a shell event: {err}");
