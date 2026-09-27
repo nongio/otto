@@ -14,7 +14,10 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, RwLock};
 use wayland_client::backend::ObjectId;
-use wayland_client::{protocol::wl_surface, QueueHandle};
+use wayland_client::{
+    protocol::{wl_output, wl_surface},
+    QueueHandle,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
 
 // ============================================================================
@@ -154,6 +157,9 @@ thread_local! {
     /// The last `output_frame` a style surface was told, keyed by the style
     /// object. See [`AppContext::output_frame`].
     static OUTPUT_FRAMES: RefCell<HashMap<ObjectId, (f32, f32, f32, f32)>> = RefCell::new(HashMap::new());
+    /// The output each surface most recently entered, keyed by the surface.
+    /// See [`AppContext::surface_output`].
+    static SURFACE_OUTPUTS: RefCell<HashMap<ObjectId, wl_output::WlOutput>> = RefCell::new(HashMap::new());
     /// Which `wl_surface` a style object augments, for the style objects on a
     /// window's own surface. Only those: the compositor reports a desktop
     /// position for a surface that is a window in its own right, never for a
@@ -1122,6 +1128,13 @@ impl<'a> AppContext<'a> {
         Self::register_layer_shell_configure_callback(surface_id, callback);
     }
 
+    /// Drop the configure callback of a layer surface that is going away.
+    pub fn unregister_layer_configure_callback(surface_id: &ObjectId) {
+        let _ = LAYER_SHELL_CONFIGURE_CALLBACKS.try_with(|callbacks| {
+            callbacks.borrow_mut().remove(surface_id);
+        });
+    }
+
     /// Called when the compositor configures a session lock surface. Keyed by
     /// the `ext_session_lock_surface_v1` object.
     pub fn register_lock_surface_configure_callback<F>(lock_surface_id: ObjectId, callback: F)
@@ -1232,6 +1245,33 @@ impl<'a> AppContext<'a> {
         OUTPUT_FRAMES.with(|frames| {
             frames.borrow_mut().insert(style.clone(), frame);
         });
+    }
+
+    /// Record that `surface` has entered `output` (`wl_surface.enter`).
+    pub(crate) fn note_surface_enter(surface: &ObjectId, output: &wl_output::WlOutput) {
+        SURFACE_OUTPUTS.with(|outputs| {
+            outputs.borrow_mut().insert(surface.clone(), output.clone());
+        });
+    }
+
+    /// Record that `surface` has left `output` (`wl_surface.leave`). An enter
+    /// on the next output usually arrives first, and is kept.
+    pub(crate) fn note_surface_leave(surface: &ObjectId, output: &wl_output::WlOutput) {
+        SURFACE_OUTPUTS.with(|outputs| {
+            let mut outputs = outputs.borrow_mut();
+            if outputs.get(surface) == Some(output) {
+                outputs.remove(surface);
+            }
+        });
+    }
+
+    /// The output `surface` most recently entered, if the compositor has said.
+    ///
+    /// What a surface that belongs with a window but is not part of it — an
+    /// overlay opened from the window — is created on, so it comes up on the
+    /// display the window is on rather than wherever the pointer is.
+    pub fn surface_output(surface: &ObjectId) -> Option<wl_output::WlOutput> {
+        SURFACE_OUTPUTS.with(|outputs| outputs.borrow().get(surface).cloned())
     }
 
     /// Forget what the compositor last said, so [`AppContext::output_frame`]
@@ -1366,6 +1406,11 @@ impl<'a> AppContext<'a> {
         let _ = FRAME_LOOPS.try_with(|loops| {
             if let Ok(mut loops) = loops.try_borrow_mut() {
                 loops.remove(surface_id);
+            }
+        });
+        let _ = SURFACE_OUTPUTS.try_with(|outputs| {
+            if let Ok(mut outputs) = outputs.try_borrow_mut() {
+                outputs.remove(surface_id);
             }
         });
     }

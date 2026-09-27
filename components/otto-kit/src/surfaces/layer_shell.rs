@@ -4,10 +4,17 @@ use smithay_client_toolkit::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::Dispatch;
 use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
-    zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
+    zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+};
+
+/// The protocol's own vocabulary for placing a layer surface, so a client can
+/// build one without depending on the protocol crate itself.
+pub use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1::Layer,
+    zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity},
 };
 
 use super::common::{
@@ -72,6 +79,34 @@ impl LayerShellSurface {
         anchor: Option<Anchor>,
         exclusive_zone: Option<i32>,
     ) -> Result<Self, SurfaceError> {
+        Self::on_output(
+            layer,
+            namespace,
+            width,
+            height,
+            anchor,
+            exclusive_zone,
+            None,
+        )
+    }
+
+    /// [`Self::with_anchor`] on a chosen output. `None` leaves the choice to
+    /// the compositor, which is the output the pointer is on.
+    ///
+    /// For a surface that belongs with a window — an overlay the window opens
+    /// — pass the window's output ([`AppContext::surface_output`]), so the two
+    /// are on the same display wherever the pointer happens to be.
+    ///
+    /// [`AppContext::surface_output`]: crate::app_runner::AppContext::surface_output
+    pub fn on_output(
+        layer: Layer,
+        namespace: &str,
+        width: u32,
+        height: u32,
+        anchor: Option<Anchor>,
+        exclusive_zone: Option<i32>,
+        output: Option<&WlOutput>,
+    ) -> Result<Self, SurfaceError> {
         use crate::app_runner::AppContext;
 
         let compositor = AppContext::compositor_state();
@@ -87,6 +122,7 @@ impl LayerShellSurface {
             height,
             anchor,
             exclusive_zone,
+            output,
             compositor,
             layer_shell,
             sc_layer_shell,
@@ -104,6 +140,7 @@ impl LayerShellSurface {
     /// * `namespace` - Unique namespace for this layer surface (e.g., "panel", "dock")
     /// * `width` - Initial width in logical pixels (0 = fill available width)
     /// * `height` - Initial height in logical pixels (0 = fill available height)
+    /// * `output` - The output to be on; `None` leaves it to the compositor
     /// * `compositor` - Compositor state
     /// * `layer_shell` - wlr-layer-shell protocol object
     /// * `sc_layer_shell` - Optional SC layer shell for augmentation
@@ -116,6 +153,7 @@ impl LayerShellSurface {
         height: u32,
         anchor: Option<Anchor>,
         exclusive_zone: Option<i32>,
+        output: Option<&WlOutput>,
         compositor: &CompositorState,
         layer_shell: &ZwlrLayerShellV1,
         surface_style: Option<&otto_surface_style_manager_v1::OttoSurfaceStyleManagerV1>,
@@ -134,7 +172,7 @@ impl LayerShellSurface {
         // Create the layer surface
         let layer_surface = layer_shell.get_layer_surface(
             &wl_surface,
-            None, // Use first available output
+            output,
             layer,
             namespace.to_string(),
             qh,
@@ -343,9 +381,26 @@ impl LayerShellSurface {
         self.inner.borrow().layer_surface.clone()
     }
 
-    /// Destroy the layer surface
+    /// Destroy the layer surface, and everything under it.
+    ///
+    /// The Skia surface goes first, with its EGL resources, then the role and
+    /// the `wl_surface`. The configure callback is dropped too: it holds this
+    /// surface, so a surface that is opened and closed again and again — an
+    /// overlay per preview — would otherwise keep every buffer it ever had.
     pub fn destroy(&self) {
-        self.inner.borrow().layer_surface.destroy();
+        use crate::app_runner::AppContext;
+        use wayland_client::Proxy;
+
+        let mut inner = self.inner.borrow_mut();
+        drop(inner.base_surface.take_skia_surface());
+        inner.base_surface.take_surface_style();
+        inner.configured = false;
+        inner.on_configure = None;
+        AppContext::unregister_layer_configure_callback(&inner.layer_surface.id());
+        inner.layer_surface.destroy();
+        let surface = inner.base_surface.wl_surface().clone();
+        AppContext::forget_surface(&surface.id());
+        surface.destroy();
     }
 
     /// Get reference to the base surface

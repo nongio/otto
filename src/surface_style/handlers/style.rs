@@ -99,6 +99,21 @@ impl<BackendData: Backend> Dispatch<OttoSurfaceStyleV1, OttoLayerUserData> for O
             }
 
             otto_surface_style_v1::Request::RequestOutputFrame => {
+                // A layer surface places its children in its own coordinates,
+                // on the output it was given — which is where the answer has
+                // to be measured from, not from whichever output the style
+                // layer's centre happens to fall on.
+                if let Some((output, (origin_x, origin_y))) =
+                    layer_root_frame_px(state, &sstyle.surface)
+                {
+                    layer_obj.output_frame(
+                        (output.0 - origin_x) as f64,
+                        (output.1 - origin_y) as f64,
+                        output.2 as f64,
+                        output.3 as f64,
+                    );
+                    return;
+                }
                 let Some(output) = output_rect_px(state, &sstyle) else {
                     tracing::warn!("request_output_frame: no output for this surface");
                     return;
@@ -843,6 +858,54 @@ fn center_on_output<BackendData: Backend>(
 ///
 /// `(0, 0)` when the surface belongs to no window — a layer-shell surface, for
 /// instance, whose positions are already the output's.
+/// A rect in physical pixels: x, y, width, height.
+type RectPx = (f32, f32, f32, f32);
+
+/// For a surface whose root is a layer-shell surface: the usable area of that
+/// layer surface's output, and the layer surface's own origin, both in
+/// physical pixels in the global space. `None` for anything else.
+fn layer_root_frame_px<BackendData: Backend>(
+    state: &Otto<BackendData>,
+    surface: &wayland_server::protocol::wl_surface::WlSurface,
+) -> Option<(RectPx, (f32, f32))> {
+    use smithay::desktop::{layer_map_for_output, WindowSurfaceType};
+    use smithay::wayland::compositor::get_parent;
+
+    let mut root = surface.clone();
+    while let Some(parent) = get_parent(&root) {
+        root = parent;
+    }
+    let layer = state.layer_surfaces.get(&root.id())?;
+    let output = layer.output();
+    let output_geometry = state.workspaces.output_geometry(output)?;
+    let usable = state
+        .workspaces
+        .usable_geometry(output)
+        .unwrap_or(output_geometry);
+    // Where the layer sits on its output: the origin for an overlay anchored
+    // to every edge, somewhere else for a panel.
+    let placed = {
+        let map = layer_map_for_output(output);
+        map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+            .and_then(|layer| map.layer_geometry(layer))
+            .map(|geometry| geometry.loc)
+            .unwrap_or_default()
+    };
+    let scale = output.current_scale().fractional_scale() as f32;
+    Some((
+        (
+            usable.loc.x as f32 * scale,
+            usable.loc.y as f32 * scale,
+            usable.size.w as f32 * scale,
+            usable.size.h as f32 * scale,
+        ),
+        (
+            (output_geometry.loc.x + placed.x) as f32 * scale,
+            (output_geometry.loc.y + placed.y) as f32 * scale,
+        ),
+    ))
+}
+
 fn surface_root_origin_px<BackendData: Backend>(
     state: &Otto<BackendData>,
     surface: &wayland_server::protocol::wl_surface::WlSurface,

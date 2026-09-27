@@ -14,6 +14,7 @@ impl FilesApp {
             return;
         };
         let parent = surface.wl_surface().clone();
+        let window_style = window.surface_style();
         let mut browser = self.state.lock().unwrap();
         browser.sync_scroll_metrics();
         // Before the frame is built from it: a panel dragged aside in a
@@ -27,7 +28,7 @@ impl FilesApp {
             .peek_visible()
             .map(|session| (session, browser.peek_generation));
         if let Some(panes) = self.pane_surfaces.as_mut() {
-            panes.sync(&parent, &frame, peek);
+            panes.sync(&parent, window_style.as_ref(), &frame, peek);
         }
 
         // Hand the pointer handler the rect the panel was actually placed at.

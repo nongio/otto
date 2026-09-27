@@ -1115,16 +1115,15 @@ own.
 
 Pressing space with a selection previews it. Peek
 ([peek.md](./peek.md)) is a **library the browser embeds**, not a
-service it calls: the panel is drawn into the browser's own surface, and the
-decoding happens in a sandboxed worker process.
+service it calls: the panel is drawn on an overlay surface the browser owns,
+above every window, and the decoding happens in a sandboxed worker process.
 
 **This replaces an earlier `org.otto.Peek1` D-Bus contract**, which is
-deleted. It is recorded here so nobody reconstructs it: a subsurface's parent
-must be a `wl_surface` owned by the same client, so "the preview is parented to
-the file view" and "the previewer is a separate process" cannot both be true.
-Parenting also dissolves the anchor problem — the row's rect is already in the
-browser's coordinates — and hands stacking, focus and dismissal to the browser's
-window instead of leaving them to be managed by hand on an overlay.
+deleted. It is recorded here so nobody reconstructs it: a separate process
+cannot know where the row is on screen, and every key would have to be handed
+back to the browser. Embedded, the row's rect is already in the browser's
+coordinates and every key arrives in the browser, whichever of its surfaces
+holds the keyboard.
 
 What the browser does:
 
@@ -1148,9 +1147,13 @@ What the browser does:
   nothing to grow from** — no cursor, or a row scrolled out of view or in a
   panned-away Miller column — is a documented answer meaning "open in place",
   not a missing value.
-- **The browser keeps the keyboard.** Space toggles the panel, Escape dismisses
-  it before it clears the selection, and the arrow keys move the cursor and
-  re-decode in place rather than dismissing.
+- **The browser keeps the keys.** The panel's overlay holds the keyboard
+  exclusively while it is up, and being the browser's own surface, every key
+  still arrives in the browser. Space toggles the panel, Escape dismisses it
+  before it clears the selection, and the arrow keys move the cursor and
+  re-decode in place rather than dismissing. Closing destroys the overlay, and
+  the compositor hands the keyboard back to the window (or the desk) it took
+  it from.
 - **The panel follows a cursor that moves on its own**, not only one an arrow
   key moved. Deleting the previewed file moves the selection to the row that
   takes its place, and the panel re-decodes onto that row; deleting the last
@@ -1161,21 +1164,20 @@ What the browser does:
 - **The panel owns the pointer while it is up**: a click outside dismisses, the
   wheel scrolls a listing or text preview, a pinch zooms an image and a
   two-finger scroll pans a zoomed one, and nothing reaches the file list
-  underneath. Which of the two pointer handlers sees the gesture depends on
-  where the panel is — the panel takes its own input when it is centred on the
-  display and hangs outside the window, and the toplevel takes it otherwise —
-  so both routes feed one decision about what the gesture means.
+  underneath. The panel's surface takes its own input, and the overlay under
+  it takes everything else, so a press anywhere off the panel dismisses it.
+  The window's own handler makes the same decisions for a pointer that reaches
+  the window, so both routes feed one decision about what the gesture means.
 - Enter still opens the selection in its default application. The previewer
   never launches anything.
 - **Losing the keyboard closes the panel.** A preview is a preview of what
-  *this* window has selected; once focus is on another window there is nothing
+  *this* window has selected; once focus is somewhere else there is nothing
   for it to be a preview of, and a card left floating over a background window
-  is just litter. The signal is `wl_keyboard.leave` on the browser's own
-  toplevel — a leave on the Get Info panel is focus moving between two of the
-  browser's windows and does not count.
-- **This is also how expose reaches it.** The panel is a subsurface, not a
-  popup, so the compositor's popup dismissal on the way into Show All cannot
-  take it down. Otto drops keyboard focus when expose opens (see
+  is just litter. The signal is `wl_keyboard.leave` on the panel's overlay. The
+  toplevel's own leave does not count: opening the panel is what takes the
+  keyboard from it.
+- **This is also how expose reaches it.** The overlay is not a popup, so the
+  compositor's popup dismissal on the way into Show All cannot take it down. Otto drops keyboard focus when expose opens (see
   `Otto::enter_expose_focus`), and the browser closes on that leave like any
   other. Restoring the panel on the way back is deliberately not done: expose
   ends by focusing a window, which is a fresh start.
@@ -1531,11 +1533,13 @@ With [peek.md](./peek.md), recorded so they are not reopened:
   dispatch). Content never overrides the name for display.
 - The MIME source is the **full shared database via `globs2`/`subclasses`**, not
   a hardcoded table. They are plain text; no XML parser is needed.
-- Peek is **embedded as a library**, and the browser keeps the keyboard,
-  the pointer, and the panel's place in its own window. The earlier decision —
-  that Peek owned a D-Bus invocation interface and held the keyboard —
-  was reversed when it became clear that parenting the preview to the file view
-  and running it as a separate process are mutually exclusive.
+- Peek is **embedded as a library**, and the browser keeps the keys, the
+  pointer, and the panel's place. The earlier decision — that Peek owned a
+  D-Bus invocation interface and held the keyboard — was reversed when it
+  became clear that a separate process cannot know where the file is. The
+  panel is on an overlay the browser owns rather than a subsurface of its
+  window, which a window above it, or every window above the desk, would
+  cover.
 - The **decode worker stays a separate process**, and is the host binary
   re-executed. The sandbox is about untrusted bytes, not about where the UI
   lives; embedding the panel does not put a parser in the browser.

@@ -666,6 +666,21 @@ impl<BackendData: Backend> Otto<BackendData> {
             let target =
                 crate::focus::KeyboardFocusTarget::LayerSurface(layer.layer_surface().clone());
             if let Some(keyboard) = state.seat.get_keyboard() {
+                // Where the keyboard was, when that is another layer surface:
+                // the window focus history cannot say so, and closing this one
+                // has to put it back — see `layer_destroyed`.
+                let taken_from = match keyboard.current_focus() {
+                    Some(crate::focus::KeyboardFocusTarget::LayerSurface(held))
+                        if held.wl_surface().id() != surface_id =>
+                    {
+                        Some(FocusTakenFrom {
+                            layer: held.wl_surface().id(),
+                            last_window: state.workspaces.last_focused_window(),
+                        })
+                    }
+                    _ => None,
+                };
+                layer.note_focus_taken_from(taken_from);
                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                 keyboard.set_focus(state, Some(target), serial);
             }
@@ -954,6 +969,11 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
                 if l.wl_surface().id() == surface_id
         );
 
+        let taken_from = self
+            .layer_surfaces
+            .get(&surface_id)
+            .and_then(LayerShellSurface::focus_taken_from);
+
         // Remove from our compositor map and clean up lay_rs layer
         if let Some(layer_shell_surface) = self.layer_surfaces.remove(&surface_id) {
             let output = layer_shell_surface.output().clone();
@@ -976,7 +996,25 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
             self.refresh_modal_overlay();
         }
 
-        if held_focus {
+        // Back to the layer surface it was taken from — Peek opened from the
+        // desk goes back to the desk — unless a window has been focused since,
+        // in which case the window is what the user chose last.
+        let back_to_layer = taken_from
+            .filter(|from| from.last_window == self.workspaces.last_focused_window())
+            .and_then(|from| self.layer_surfaces.get(&from.layer))
+            .filter(|layer| layer.can_receive_keyboard_focus())
+            .map(|layer| layer.layer_surface().clone());
+
+        if let Some(layer) = back_to_layer.filter(|_| held_focus) {
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                keyboard.set_focus(
+                    self,
+                    Some(crate::focus::KeyboardFocusTarget::LayerSurface(layer)),
+                    serial,
+                );
+            }
+        } else if held_focus {
             // Back to the window that had the keyboard most recently, which is
             // the one the user chose if the layer surface was choosing one —
             // the launcher activates a window and *then* takes the focus back

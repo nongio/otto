@@ -33,6 +33,9 @@
 use otto_kit::app_runner::AppContext;
 use otto_kit::components::scroll::{Axis, Fill, Paint, PlacedSurface, ScrollSurfaces};
 use otto_kit::prelude::*;
+use otto_kit::protocols::otto_surface_style_v1::OttoSurfaceStyleV1;
+use otto_kit::surfaces::layer_shell::{Anchor, KeyboardInteractivity, Layer};
+use otto_kit::surfaces::LayerShellSurface;
 use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 use skia_safe::{Color, Rect};
@@ -45,28 +48,6 @@ use crate::view::{self, Frame, PaneData, ViewMode};
 
 /// Height of the box a column's status line is painted into.
 const STATUS_H: f32 = 40.0;
-
-/// Whether Peek is centred on the display rather than on the window.
-///
-/// The panel is a subsurface, so its position is relative to the browser's
-/// window — and a client is never told where its own window sits, so it cannot
-/// place itself anywhere else on its own. `set_output_placement` asks the
-/// compositor, which knows both, to resolve the position against the output.
-///
-/// On by default: a preview is a thing you look at, and where the *window*
-/// happens to sit is no reason for it to open off to one side of the display.
-/// A window pushed to a screen edge otherwise puts its preview there too.
-///
-/// `OTTO_FILES_QV_CENTER=0` opts out and goes back to centring on the window.
-pub fn peek_centered() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        !matches!(
-            std::env::var("OTTO_FILES_QV_CENTER").as_deref(),
-            Ok("0") | Ok("false")
-        )
-    })
-}
 
 /// What the palette's surface needs in order to paint and place itself.
 ///
@@ -187,7 +168,10 @@ pub struct PaneSurfaces {
     /// sideways, holding the columns and the preview's player.
     stack: Option<ScrollSurfaces>,
     columns: Vec<ColumnPane>,
-    /// The Peek panel, in a surface of its own over everything.
+    /// Peek's overlay: a layer-shell surface over the whole output, above
+    /// every window, holding the panel. See [`PeekOverlay`].
+    peek_overlay: Option<PeekOverlay>,
+    /// The Peek panel, a child of the overlay.
     peek: Option<PlacedSurface>,
     /// The command palette, in a surface of its own so it can be dragged clear
     /// of the window.
@@ -246,6 +230,12 @@ pub struct PaneSurfaces {
     /// and, when the window moves far enough, off it. The panel's own rect is
     /// derived from this on every pass, since expanding it changes the rect
     /// without changing where the display is.
+    ///
+    /// Kept in window points although the panel is drawn on the overlay: the
+    /// file the entrance grows out of is in window points, and so is every
+    /// rect the pointer handler and the drag work with. The overlay's own
+    /// answer for the same display is what carries all of them across — see
+    /// [`PeekOverlay::window_shift`].
     peek_display: Option<Rect>,
     /// Where the panel was last placed to rest, whichever space it rests in.
     /// What the pointer handler measures against.
@@ -272,9 +262,13 @@ impl PaneSurfaces {
     ///
     /// Returns whether anything was repainted, so a caller can tell a frame
     /// that did real work from one that did nothing.
+    ///
+    /// `window_style` is the window's own surface style, which is what can
+    /// tell where the window is on its display — see [`Self::display_for`].
     pub fn sync(
         &mut self,
         parent: &WlSurface,
+        window_style: Option<&OttoSurfaceStyleV1>,
         f: &Frame,
         peek: Option<(&peek::Session, u64)>,
     ) -> bool {
@@ -284,7 +278,7 @@ impl PaneSurfaces {
         // it.
         if f.mode != ViewMode::Columns {
             let mut changed = self.hide_all();
-            changed |= self.sync_peek(parent, f, peek);
+            changed |= self.sync_peek(parent, window_style, f, peek);
             self.restack(parent);
             return changed;
         }
@@ -401,13 +395,13 @@ impl PaneSurfaces {
         }
         painted |= self.sync_preview_pane(&band, f, viewport, (shown_from, shown_to));
         painted |= self.sync_preview_video(&band, f, viewport, peek.is_some());
-        painted |= self.sync_peek(parent, f, peek);
+        painted |= self.sync_peek(parent, window_style, f, peek);
         self.restack(parent);
         painted
     }
 
     /// Put the sibling surfaces back into a known order, bottom to top: in the
-    /// window the stack, then the palette and Peek; in the stack the
+    /// window the stack, then the palette; in the stack the
     /// columns in depth order, then the preview's player.
     ///
     /// Stacking each surface against the one below it states the whole order
@@ -465,11 +459,7 @@ impl PaneSurfaces {
             .stack
             .as_ref()
             .map(|stack| stack.clip_surface().clone());
-        let overlays = [
-            self.palette.as_ref(),
-            self.catcher.as_ref(),
-            self.peek.as_ref(),
-        ];
+        let overlays = [self.palette.as_ref(), self.catcher.as_ref()];
         for pane in overlays.into_iter().flatten() {
             if let Some(below) = &below {
                 pane.place_above(below);
@@ -479,37 +469,39 @@ impl PaneSurfaces {
         // `place_above` is part of the *parent's* pending state, so committing
         // the children does nothing for it. Without this the new order waits
         // for whatever else happens to commit the toplevel — and when a column
-        // appears while Peek is up, nothing does, so the column that
+        // appears while the palette is up, nothing does, so the column that
         // arrived on top stays on top.
         parent.commit();
     }
 
-    /// Where this panel rests, worked out once per opening and once per
-    /// closing and held steady in between.
-    fn resting_for(&mut self, session: &peek::Session) -> Option<Rect> {
-        if !peek_centered() {
-            return None;
-        }
-        let pane = self.peek.as_ref()?;
-
+    /// The display this panel is centred on, in window points, worked out
+    /// once per opening and once per closing and held steady in between.
+    ///
+    /// Asked of the window's own surface style: the compositor answers
+    /// relative to the window, which is the space the file's icon — where
+    /// the entrance starts — is in.
+    fn display_for(
+        &mut self,
+        session: &peek::Session,
+        window_style: &OttoSurfaceStyleV1,
+    ) -> Option<Rect> {
         // Once per open, and again when the exit starts — the two moments the
         // answer can actually differ.
         let placement = session.closing.is_some();
         if self.peek_placement != Some(placement) {
             self.peek_placement = Some(placement);
             self.peek_awaiting = true;
-            pane.ask_output_frame();
+            ask_output_frame(window_style);
         }
         // The *old* rect stays in force until the new answer lands. Nulling it
         // here is what made the panel snap to the window's centre and back.
         if self.peek_awaiting {
-            if let Some(rect) = pane.output_frame() {
+            if let Some(rect) = output_frame(window_style) {
                 self.peek_display = Some(rect);
                 self.peek_awaiting = false;
             }
         }
         self.peek_display
-            .map(|display| peek::resting_in(display, session.expanded))
     }
 
     /// The command palette, on a surface of its own.
@@ -755,51 +747,75 @@ impl PaneSurfaces {
         self.palette_display
     }
 
-    /// The Peek panel.
+    /// The Peek panel, on an overlay above every window.
     ///
-    /// Drawn into the window it would be buried: the column surfaces sit over
-    /// the toplevel, so a panel painted underneath them is a panel nobody can
-    /// see. It gets a surface of its own, stacked above every column and above
-    /// the horizontal bar — the topmost thing this window puts on screen.
+    /// Not a surface of the window's own: a subsurface is stacked, clipped and
+    /// covered along with its window, so a panel opened from a window behind
+    /// another — or from the desk, under every window — would be buried. The
+    /// overlay is a layer-shell surface on the window's display, above
+    /// everything, and the panel is a child of it.
     ///
-    /// Unlike the columns it answers for its own pointer: centred on the
-    /// display it hangs outside the toplevel, where no event reaches the
-    /// window. See [`Self::peek_target`].
+    /// Everything about where the panel goes is still worked out in window
+    /// points: the file it grows out of is there, and so is every rect the
+    /// pointer and the drag use. Only the surface's placement is carried
+    /// across to the overlay.
+    ///
+    /// The panel answers for its own pointer; the overlay around it takes
+    /// the click outside that dismisses it. See [`Self::peek_target`].
     fn sync_peek(
         &mut self,
         parent: &WlSurface,
+        window_style: Option<&OttoSurfaceStyleV1>,
         f: &Frame,
         peek: Option<(&peek::Session, u64)>,
     ) -> bool {
         let Some((session, generation)) = peek else {
             // Nothing is up, so the next open asks afresh. The last known
-            // resting rect is kept: if the window has not moved it is still
+            // display is kept: if the window has not moved it is still
             // right, and starting from it beats starting from the window's
             // centre and correcting.
             self.peek_placement = None;
             self.peek_awaiting = false;
-            return self
-                .peek
-                .as_mut()
-                .map(|pane| pane.set_hidden(true))
-                .unwrap_or(false);
+            return self.close_peek_overlay();
         };
-        // Centred on the display when the compositor has told us where the
-        // display is, and centred on the window until it has. Everything below
-        // stays in window coordinates either way, which is what lets the
-        // entrance keep growing out of the file's icon: the anchor and the
-        // resting place are in the same space.
+
+        if self.peek_overlay.is_none() {
+            match PeekOverlay::open(parent) {
+                Ok(overlay) => self.peek_overlay = Some(overlay),
+                Err(err) => {
+                    tracing::warn!(?err, "no overlay for Peek");
+                    return false;
+                }
+            }
+        }
+        let display = match window_style {
+            Some(style) => self.display_for(session, style),
+            // No surface style, no way to learn where the window is: centred
+            // on the window, and carried to the middle of the overlay.
+            None => Some(Rect::from_wh(f.width, f.window_h())),
+        };
+        let Some(overlay) = self.peek_overlay.as_mut() else {
+            return false;
+        };
+        let ground = overlay.sync_ground();
+        // The panel waits, hidden, for both answers: where the display is
+        // relative to the window, and relative to the overlay. Placed before
+        // that, it would be placed twice, a few milliseconds apart.
+        let Some((display, shift)) = display.and_then(|display| {
+            overlay
+                .window_shift(display, window_style)
+                .map(|shift| (display, shift))
+        }) else {
+            return ground;
+        };
+        let overlay_surface = overlay.layer.wl_surface();
+
         // Where it rests, moved by however far it has been dragged by its
         // title strip. Folded in here rather than inside the session's own
         // geometry so that everything derived from the resting rect — the
         // surface's placement, the drawing, and the rect the pointer is
         // hit-tested against — is moved by the same amount.
-        let resting = self
-            .resting_for(session)
-            .unwrap_or_else(|| {
-                peek::resting_in(Rect::from_wh(f.width, f.window_h()), session.expanded)
-            })
-            .with_offset(session.offset);
+        let resting = peek::resting_in(display, session.expanded).with_offset(session.offset);
         self.peek_resting = Some(resting);
         // Wherever the panel is *now* — part way in, at rest, or part way
         // back to its file. Asking for the entrance alone left the exit out
@@ -808,36 +824,24 @@ impl PaneSurfaces {
         // never changed, and the card sat frozen at full size until the
         // session was retired out from under it.
         let panel = session.panel(resting);
-        let mut rect = panel.with_outset((peek::SURFACE_MARGIN, peek::SURFACE_MARGIN));
-        // A panel centred on the display may legitimately reach past the
-        // window it belongs to, so it is only clipped to the window when it is
-        // the window it is centred on.
-        if !peek_centered() && !rect.intersect(Rect::from_wh(f.width, f.height)) {
-            return self
-                .peek
-                .as_mut()
-                .map(|pane| pane.set_hidden(true))
-                .unwrap_or(false);
-        }
+        let rect = panel.with_outset((peek::SURFACE_MARGIN, peek::SURFACE_MARGIN));
+        let placed = rect.with_offset(shift);
 
         if self.peek.is_none() {
-            self.peek = PlacedSurface::new(parent, rect).ok();
-            self.stack_dirty = true;
+            self.peek = PlacedSurface::new(&overlay_surface, placed).ok();
             if let Some(pane) = self.peek.as_mut() {
                 Self::style_peek(pane);
-                // A panel centred on the display hangs outside the toplevel,
-                // and the pointer never reports those coordinates to this
-                // client — so the close button would be dead exactly when the
-                // panel is where it is supposed to be. The surface answers for
-                // itself, and stops while it is hidden.
+                // The card answers for its own pointer, in its own
+                // coordinates; the overlay under it only hears about the
+                // pointer outside the card.
                 pane.set_takes_input(true);
             }
         }
         let Some(pane) = self.peek.as_mut() else {
-            return false;
+            return ground;
         };
-        let mut painted = pane.set_hidden(false);
-        pane.set_rect(rect);
+        let mut painted = ground | pane.set_hidden(false);
+        pane.set_rect(placed);
         // Everything the panel's pixels depend on has to be in here or the
         // repaint is skipped: the card's rect, which file it is showing, how
         // far its content is scrolled — and now how far its picture is zoomed
@@ -855,6 +859,19 @@ impl PaneSurfaces {
         painted |= self.painted(paint);
         painted
     }
+
+    /// Take the panel and its overlay down. Destroying the overlay is what
+    /// hands the keyboard back to the window, or the desk, it was taken from.
+    fn close_peek_overlay(&mut self) -> bool {
+        // The panel first: it is the overlay's child.
+        let had_panel = self.peek.take().is_some();
+        let Some(overlay) = self.peek_overlay.take() else {
+            return had_panel;
+        };
+        overlay.layer.destroy();
+        true
+    }
+
     /// The docked preview column, in the stack beside the last column: its
     /// paper, its picture or text and its caption, painted when what it shows
     /// changes and never for a pan. Hidden while the stack is panned away
@@ -1041,20 +1058,21 @@ impl PaneSurfaces {
             .is_some_and(|stack| stack.set_hidden(true))
     }
 
-    /// Peek's surface and where its card sits *within* that surface,
+    /// Peek's surfaces and where its card sits *within* its own surface,
     /// for the pointer callback.
     ///
-    /// The panel is centred on the display, so it routinely reaches outside
-    /// the toplevel — and a pointer event over that part is never delivered
-    /// to the toplevel at all. So the panel takes its own input, and is
-    /// hit-tested in surface-local coordinates rather than the window's.
+    /// The panel is on an overlay, never over the toplevel, so pointer events
+    /// over it are never delivered to the toplevel at all. So the panel takes
+    /// its own input, and is hit-tested in surface-local coordinates rather
+    /// than the window's; the overlay around it takes the rest.
     ///
     /// The card's rect rather than the close button's, because the callback
     /// needs both that button and the content box under it: everything else
     /// the panel's own geometry is derived from the card, and deriving it
     /// twice from two published rects is how the two drift apart.
-    pub fn peek_target(&self) -> Option<(ObjectId, Rect)> {
+    pub fn peek_target(&self) -> Option<PeekTarget> {
         use wayland_client::Proxy;
+        let overlay = self.peek_overlay.as_ref()?;
         let pane = self.peek.as_ref()?;
         let panel = Rect::from_xywh(
             peek::SURFACE_MARGIN,
@@ -1062,7 +1080,18 @@ impl PaneSurfaces {
             pane.rect().width() - peek::SURFACE_MARGIN * 2.0,
             pane.rect().height() - peek::SURFACE_MARGIN * 2.0,
         );
-        Some((pane.wl_surface().id(), panel))
+        Some(PeekTarget {
+            card: pane.wl_surface().id(),
+            panel,
+            overlay: overlay.layer.wl_surface().id(),
+        })
+    }
+
+    /// The overlay Peek is on, while it is up: the surface that holds the
+    /// keyboard for as long as the preview does.
+    pub fn peek_overlay_surface(&self) -> Option<ObjectId> {
+        use wayland_client::Proxy;
+        Some(self.peek_overlay.as_ref()?.layer.wl_surface().id())
     }
 
     /// The display the panel is centred on, in window points, once the
@@ -1072,11 +1101,10 @@ impl PaneSurfaces {
         self.peek_display
     }
 
-    /// Where Peek's panel actually rests, once it has been worked out.
+    /// Where Peek's panel actually rests, in window points, once it has been
+    /// worked out.
     ///
-    /// `None` until the compositor has answered with the output's geometry,
-    /// and always `None` when the panel is centred on the window — the caller
-    /// can compute that one itself. Hit-testing must use this rather than
+    /// `None` until the compositor has answered with the output's geometry. Hit-testing must use this rather than
     /// re-deriving a rect from the window size: a panel centred on the
     /// *display* is nowhere near the window's own centre.
     pub fn peek_resting(&self) -> Option<Rect> {
@@ -1113,19 +1141,148 @@ impl PaneSurfaces {
         });
 
         // Nothing here asks where the display is: that is worked out once per
-        // opening and once per closing, in `resting_for`, because the answer is
-        // relative to the window and the window moves.
-        //
-        // And it is asked for, rather than handed to the compositor to act on.
-        // `set_output_placement` moves the *layer*, and for a subsurface the
-        // layer carries the material — the blur, the shadow, the rounded
-        // corners — while the client's pixels are put where
-        // `wl_subsurface.set_position` says. Moving one without the other
-        // leaves the card's frame in the middle of the screen and its contents
-        // back over the window. Positioning both, as this client already does
-        // for its columns, moves them together — and keeps the entrance, since
-        // the icon it grows from is in the same coordinates as the answer.
+        // opening and once per closing, in `display_for`, because the answer
+        // is relative to the window and the window moves.
     }
+}
+
+/// Where Peek's pointer events are to be looked for.
+#[derive(Clone, Debug)]
+pub struct PeekTarget {
+    /// The panel's own surface.
+    pub card: ObjectId,
+    /// The card within that surface, in its coordinates.
+    pub panel: Rect,
+    /// The overlay under the panel: a press here is a press outside it.
+    pub overlay: ObjectId,
+}
+
+/// Peek's overlay: a layer-shell surface covering the display the window is
+/// on, above every window and panel.
+///
+/// Transparent, and there for three things. It carries the panel above
+/// everything, which a child of the window cannot be. It takes the keyboard,
+/// exclusively, so Space, Escape and the arrows reach the preview whatever is
+/// focused underneath — and destroying it hands the keyboard back to the
+/// window or the desk it was taken from, which the compositor remembers.
+/// And it takes the pointer everywhere the panel does not, which is how a
+/// click outside the panel closes it.
+struct PeekOverlay {
+    layer: LayerShellSurface,
+    /// The size the transparent ground was last painted at. The compositor
+    /// hit-tests a layer surface against its buffer, so the ground has to
+    /// cover the display, not merely be there.
+    ground: Option<(i32, i32)>,
+}
+
+impl PeekOverlay {
+    /// Open one on the display `window` is on.
+    fn open(window: &WlSurface) -> Result<Self, otto_kit::surfaces::SurfaceError> {
+        use wayland_client::Proxy;
+        // The window's display, not the pointer's: the preview belongs with
+        // the file it shows.
+        let output = AppContext::surface_output(&window.id());
+        let layer = LayerShellSurface::on_output(
+            Layer::Overlay,
+            "otto-peek",
+            0,
+            0,
+            Some(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right),
+            // Over the bar and every other reserved edge: a click there is
+            // still a click outside the panel.
+            Some(-1),
+            output.as_ref(),
+        )?;
+        // Exclusive, not on-demand: the keys have to arrive the moment the
+        // panel is up, with nothing clicked, and go on arriving whatever the
+        // pointer does. On-demand would leave them with the window until the
+        // overlay was clicked.
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        // Where the display is, in the overlay's own coordinates — asked now,
+        // so the answer is in by the time the ground is painted.
+        if let Some(style) = layer.base_surface().surface_style() {
+            ask_output_frame(style);
+        }
+        Ok(Self {
+            layer,
+            ground: None,
+        })
+    }
+
+    /// Paint the transparent ground once the overlay has been sized, and
+    /// again if it is resized. Returns whether it painted.
+    fn sync_ground(&mut self) -> bool {
+        if !self.layer.is_configured() {
+            return false;
+        }
+        let size = self.layer.dimensions();
+        if self.ground == Some(size) {
+            return false;
+        }
+        self.layer.draw(|canvas| {
+            canvas.clear(skia_safe::Color::TRANSPARENT);
+        });
+        self.ground = Some(size);
+        true
+    }
+
+    /// How far to move a rect in window points to put it in the same place
+    /// on the overlay, given where the display is in window points — `None`
+    /// until the overlay is up and knows where the display is in its own.
+    ///
+    /// Both answers describe the same display, one from each side, so the
+    /// difference between them is where the window sits on the overlay.
+    /// Without surface style there is no answer from either side, and the
+    /// window's centre is put on the overlay's.
+    fn window_shift(
+        &self,
+        display: Rect,
+        window_style: Option<&OttoSurfaceStyleV1>,
+    ) -> Option<(f32, f32)> {
+        self.ground?;
+        match (window_style, self.layer.base_surface().surface_style()) {
+            (Some(_), Some(style)) => Some(shift_between(display, output_frame(style)?)),
+            _ => {
+                let (width, height) = self.layer.dimensions();
+                let own = Rect::from_wh(width as f32, height as f32);
+                Some((
+                    own.center_x() - display.center_x(),
+                    own.center_y() - display.center_y(),
+                ))
+            }
+        }
+    }
+}
+
+/// The move that takes `from` onto `to`: one display, described in two
+/// coordinate spaces.
+fn shift_between(from: Rect, to: Rect) -> (f32, f32) {
+    (to.left - from.left, to.top - from.top)
+}
+
+/// Ask where the display is, forgetting the last answer so it cannot be
+/// mistaken for the new one.
+fn ask_output_frame(style: &OttoSurfaceStyleV1) {
+    use wayland_client::Proxy;
+    AppContext::clear_output_frame(&style.id());
+    style.request_output_frame();
+}
+
+/// The display, in points in the coordinates of the surface `style` belongs
+/// to, once the compositor has answered [`ask_output_frame`].
+fn output_frame(style: &OttoSurfaceStyleV1) -> Option<Rect> {
+    use wayland_client::Proxy;
+    let (x, y, width, height) = AppContext::output_frame(&style.id())?;
+    let scale = AppContext::fractional_scale() as f32;
+    if width <= 0.0 || height <= 0.0 || scale <= 0.0 {
+        return None;
+    }
+    Some(Rect::from_xywh(
+        x / scale,
+        y / scale,
+        width / scale,
+        height / scale,
+    ))
 }
 
 /// The hairline down the trailing edge of `column`, in the stack's
@@ -1367,6 +1524,33 @@ fn hash_rect(rect: Rect) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two answers for one display, from the window and from the
+    /// overlay, put a file's icon where it is on screen.
+    ///
+    /// A window at (300, 200) on a second display at (1920, 0), with a
+    /// 32-point bar across its top: the usable area is (1920, 32) and
+    /// 1920×1048 on the desktop.
+    #[test]
+    fn the_window_and_overlay_answers_place_the_icon_on_the_overlay() {
+        let usable = Rect::from_xywh(1920.0, 32.0, 1920.0, 1048.0);
+        let window = (1920.0 + 300.0, 200.0);
+        let overlay = (1920.0, 0.0);
+        let from_window = usable.with_offset((-window.0, -window.1));
+        let from_overlay = usable.with_offset((-overlay.0, -overlay.1));
+
+        let shift = shift_between(from_window, from_overlay);
+        let icon = Rect::from_xywh(10.0, 10.0, 16.0, 16.0);
+        let on_overlay = icon.with_offset(shift);
+        // Where the icon is on the desktop, less where the overlay is.
+        assert_eq!(on_overlay, Rect::from_xywh(310.0, 210.0, 16.0, 16.0));
+
+        // And the panel centred on the display in window points is centred
+        // on the display on the overlay.
+        let resting = peek::resting_in(from_window, false).with_offset(shift);
+        assert_eq!(resting.center_x(), from_overlay.center_x());
+        assert_eq!(resting.center_y(), from_overlay.center_y());
+    }
 
     /// The working badge breathes, and nothing else about the panel moves
     /// while it does. Without the phase in the key the cached picture replays

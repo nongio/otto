@@ -32,7 +32,7 @@ components/
     ├── thumbnails.rs              in-memory thumbnail store (no threads, no I/O)
     ├── thumbcache.rs              read-only freedesktop thumbnail cache
     ├── peek.rs                    Session, zoom/pan, Video, decode request sizing
-    ├── pane_surfaces.rs           the panel's and the preview video's subsurfaces
+    ├── pane_surfaces.rs           Peek's overlay and the preview video's subsurfaces
     ├── view.rs                    draw_peek, preview column stage, draw_thumbnail
     └── app.rs                     wiring: sync_thumbnails, start_preview, start_peek
 ```
@@ -305,18 +305,25 @@ generation, so a slow decode can't reopen a panel that was dismissed.
 
 ### The surface
 
-The panel is a **subsurface** of the browser toplevel, created and synced by
-`PaneSurfaces::sync_peek`:
+The panel is a child of an **overlay layer-shell surface** (namespace
+`otto-peek`), created and synced by `PaneSurfaces::sync_peek` and destroyed
+when the exit finishes:
 
-- **Position.** By default it is centred on the display. `request_output_frame`
-  is asked once when the panel opens and once when the exit starts, so a window
-  moved in between carries the panel with it. `OTTO_FILES_QV_CENTER=0` centres
-  it on the window instead; it is a subsurface either way.
+- **Overlay.** Anchored to every edge of the output the window last entered,
+  exclusive zone -1, exclusive keyboard. Its transparent ground is painted at
+  the configured size, because Otto hit-tests a layer surface against its
+  buffer; a press on it closes the panel. Destroying it hands the keyboard
+  back to the window, or the desk, it was taken from.
+- **Position.** Centred on the usable area of the display, worked out in
+  window points. `request_output_frame` is asked of the window's own style
+  (once when the panel opens and once when the exit starts) and of the
+  overlay's; the difference between the two answers moves window-point rects
+  onto the overlay. The panel stays hidden until both are in.
 - **Material.** Set through `otto_surface_style_v1`: corner radius 12, a shadow,
   and `BackgroundBlur` when frosting is on (`OTTO_FROSTING`), `Normal`
   otherwise. The client draws no shadow of its own.
-- **Stacking.** `restack` orders the subsurfaces as columns, preview video, pan
-  bar, palette, catcher, Peek, calling `place_above` again on each sync.
+- **Stacking.** Above everything, as an overlay. `restack` orders only the
+  window's own subsurfaces: columns, preview video, pan bar, palette, catcher.
 - **Repaints.** The panel is repainted only when `peek_key` changes (rect,
   generation, `first_row`, zoom, scrollbars, loading, the video's frame
   sequence), and not while a frame is in flight. A resize is claimed only once
@@ -422,7 +429,7 @@ and the window until then.
 
 The offset is folded into the resting rect, so surface placement, drawing and
 hit rects cannot disagree, and the panel's content key is its **size** rather
-than its rect. Dragging repaints nothing and only moves the subsurface.
+than its rect. Dragging repaints nothing and only moves the panel's surface.
 Expanding recentres. The offset survives arrow-keying to another file, but not
 closing the panel, since a session is built afresh.
 
@@ -511,7 +518,6 @@ needs to know:
 | `otto-peek --filmstrip OUT.png FILE` | Samples the entrance animation over a mock desktop |
 | `otto-peek --sandbox-selftest` | Reports which parts of the sandbox are in force |
 | `OTTO_FILES_QV_AUTO=1` | Opens Peek on the first entry, with no keypress |
-| `OTTO_FILES_QV_CENTER=0` | Centres the panel on the window rather than the display |
 | `OTTO_PEEK_OPEN_MS`, `OTTO_PEEK_CLOSE_MS`, `OTTO_PEEK_BOUNCE` | Tunes the entrance and exit |
 | `RUST_LOG=debug` | Forwarded to the worker, which logs the time and name of each decode |
 | `OTTO_MEDIA_TRACE=1`, `GST_DEBUG=3` | Worker stderr and GStreamer debugging; see [otto-media-kit](otto-media-kit.md#debugging) |

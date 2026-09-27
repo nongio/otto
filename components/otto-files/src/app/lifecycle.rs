@@ -718,31 +718,41 @@ impl App for FilesApp {
         *self.modifiers.lock().unwrap() = modifiers;
     }
 
-    /// Peek is a preview of what the window has selected, so it belongs
-    /// to the window's focus: once the keyboard goes somewhere else the panel
-    /// is a card floating over a background window with nothing to preview.
+    /// Peek holds the keyboard on its overlay for as long as it is up, and
+    /// closes when the overlay loses it: something else has taken the
+    /// keyboard, and a preview nobody can reach with a key is only in the way.
     ///
-    /// This is also how expose reaches us. The panel is a subsurface, not a
-    /// popup, so the compositor's `dismiss_all_popups` on the way into Show All
-    /// cannot take it down — but Otto drops keyboard focus entering expose, and
-    /// that lands here.
+    /// This is also how expose reaches us. The overlay is not a popup, so the
+    /// compositor's `dismiss_all_popups` on the way into Show All cannot take
+    /// it down — but Otto drops keyboard focus entering expose, and that lands
+    /// here.
     ///
-    /// Only the browser's own toplevel counts. A leave on the Get Info panel is
-    /// focus moving between two of our windows, not away from the browser.
+    /// The window's own leave closes the palette. Not Peek: opening Peek is
+    /// what takes the keyboard from the window. A leave on the Get Info panel
+    /// is focus moving between two of our windows, not away from the browser.
     fn on_keyboard_leave(&mut self, _ctx: &AppContext, surface: &wl_surface::WlSurface) {
         use wayland_client::Proxy;
-        let ours = self
+        let on_peek = self
+            .pane_surfaces
+            .as_ref()
+            .and_then(pane_surfaces::PaneSurfaces::peek_overlay_surface)
+            .is_some_and(|overlay| overlay == surface.id());
+        let on_window = self
             .window
             .as_ref()
             .and_then(|window| window.wl_surface())
             .is_some_and(|main| main.id() == surface.id());
-        if !ours {
+        if !on_peek && !on_window {
             return;
         }
-        // Both go with the keyboard: a panel that is nothing but a place to
-        // type has no reason to stay up once the typing would land elsewhere.
+        // A panel that is nothing but a place to type has no reason to stay up
+        // once the typing would land elsewhere.
         let mut browser = self.state.lock().unwrap();
-        let changed = browser.close_peek() | browser.close_palette();
+        let changed = if on_peek {
+            browser.close_peek()
+        } else {
+            browser.close_palette()
+        };
         drop(browser);
         if changed {
             self.render();

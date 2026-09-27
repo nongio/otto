@@ -41,6 +41,22 @@ pub struct LayerShellSurface {
     /// the transition *into* `Exclusive`, so a panel that toggles it on and
     /// off (otto-bar, around each menu) is handed the keyboard every time.
     observed_interactivity: std::cell::Cell<KeyboardInteractivity>,
+    /// Whose keyboard this surface took when it was granted it, when that was
+    /// another layer surface — the desk, a bottom-layer file view — together
+    /// with the window that had most recently been focused at that moment.
+    /// See [`Self::focus_taken_from`].
+    focus_taken_from: std::cell::RefCell<Option<FocusTakenFrom>>,
+}
+
+/// The layer surface an exclusive panel took the keyboard from, and what the
+/// window focus history said then.
+#[derive(Debug, Clone)]
+pub struct FocusTakenFrom {
+    /// The layer surface that held the keyboard.
+    pub layer: ObjectId,
+    /// The most recently focused window at the time, so a window focused
+    /// since can be told apart from one that was merely behind.
+    pub last_window: Option<ObjectId>,
 }
 
 impl LayerShellSurface {
@@ -61,6 +77,7 @@ impl LayerShellSurface {
             last_configure_serial: AtomicU32::new(0),
             geometry: Rectangle::default(),
             observed_interactivity: std::cell::Cell::new(KeyboardInteractivity::None),
+            focus_taken_from: std::cell::RefCell::new(None),
         }
     }
 
@@ -79,6 +96,22 @@ impl LayerShellSurface {
         self.observed_interactivity
             .replace(KeyboardInteractivity::Exclusive)
             != KeyboardInteractivity::Exclusive
+    }
+
+    /// Remember that this surface took the keyboard from another layer
+    /// surface, so it can be handed back when this one goes away.
+    ///
+    /// A window needs no such note: the window focus history already says
+    /// where the keyboard was. A layer surface is not in that history, so
+    /// without this a panel opened from the desk would hand the keyboard to
+    /// whichever window happened to be focused last.
+    pub fn note_focus_taken_from(&self, taken_from: Option<FocusTakenFrom>) {
+        self.focus_taken_from.replace(taken_from);
+    }
+
+    /// The layer surface this one took the keyboard from, if it was one.
+    pub fn focus_taken_from(&self) -> Option<FocusTakenFrom> {
+        self.focus_taken_from.borrow().clone()
     }
 
     /// Get the underlying Smithay LayerSurface

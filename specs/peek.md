@@ -7,11 +7,11 @@
 
 Press space on a selected file and see it, instantly, without launching the
 application that owns it. Peek is a **component the file views embed** —
-the file browser, the save/open dialog, and the desktop's file view — drawn as a
-subsurface of the window showing the files, so it is parented, stacked and
-dismissed by that window rather than managing any of it itself. Everything that
-interprets file bytes runs in a short-lived, sandboxed worker process that has
-one file descriptor and no network.
+the file browser, the save/open dialog, and the desktop's file view. The host
+draws it on an overlay layer-shell surface of its own, above every window, on
+the display the host is on. Everything that interprets file bytes runs in a
+short-lived, sandboxed worker process that has one file descriptor and no
+network.
 
 ## Goals
 
@@ -84,15 +84,20 @@ way cost real things — the preview could not be stacked above the window that
 opened it, could not know where the file was on screen, and had to hand-manage
 focus and dismissal that a parent window gives for free.
 
-**It is a component the file views embed.** The preview is a subsurface of
-whichever window is showing files. That is forced by the protocol and is the
-point: `wl_subcompositor.get_subsurface` takes two surfaces from the *same*
-client, as do `xdg_popup` and `xdg_toplevel.set_parent`, so "parented to the
-file view" and "separate process" are mutually exclusive. Choosing parented
-dissolves the hardest open problem in this spec — the host already knows where
-the row is in its own surface, so the entrance can grow out of the file with no
-protocol, no compositor change, and no `anchor` in screen coordinates that
-nobody could compute.
+**It is a component the file views embed.** The host draws the preview on a
+surface it owns, so the preview knows where the file is, and the host keeps the
+keys, the selection and the decode. The row's rect is in the host's own window
+coordinates, and the entrance grows out of it.
+
+**The surface is an overlay, not a subsurface.** An earlier version drew the
+panel as a subsurface of the window showing the files, and that buried it
+wherever the window was buried: a subsurface is stacked, clipped and covered
+along with its parent, so the desk's Peek, opened from a surface under every
+window, was under every window too. The panel now sits on a `zwlr_layer_shell`
+surface on the overlay layer, created by the host process on the host's display
+and destroyed when the preview closes. Nothing changes about who owns what: the
+overlay is the host's surface, so the keys that reach it reach the host, and
+the host decides what they mean.
 
 Three hosts embed it: the file browser, the save/open file dialog, and the
 desktop's file view. The `otto-peek` binary remains for previewing a path
@@ -165,15 +170,24 @@ Rules the host must honour:
   have already been checked against its length.
 
 What the host owns, because it is better placed to: the panel's rect, the
-keyboard (it never loses focus, so there is nothing to hand back), dismissal,
-and the selection. There is no `Navigate`, no `Activated` and no `Closed` — the
-host already has the keypress, already knows the selection, and already knows
-when it closed the panel.
+keyboard (the overlay that holds it is the host's own surface, so every key
+still arrives in the host), dismissal, and the selection. There is no
+`Navigate`, no `Activated` and no `Closed`: the host already has the keypress,
+already knows the selection, and already knows when it closed the panel.
 
 ### The keyboard, and the panel
 
-The host never loses focus, which removes the hardest part of the old design.
-There is no hand-back: the host already has the keypress.
+The overlay takes the keyboard with **exclusive** interactivity, so the keys
+arrive the moment the panel is up and go on arriving whatever the pointer does.
+On-demand interactivity would leave them with the window until the overlay was
+clicked. The overlay is the host's surface, so the host still gets every
+keypress and there is no hand-back to design.
+
+Closing destroys the overlay, and the compositor gives the keyboard back to
+whatever the overlay took it from: the window the file view is in, or the desk,
+a bottom-layer surface the window focus history knows nothing about. Otto
+records a layer surface an exclusive overlay took the keyboard from, and hands
+it back when the overlay goes, unless a window has been focused in between.
 
 - **Space, Escape** — close the preview.
 - **Arrows, Home, End, Page Up/Down** — the host moves its own selection and
@@ -242,8 +256,8 @@ pinch, which places the picture without scrolling it, writes the other way.
 
 ### The panel
 
-A subsurface of the host's window, positioned by the host: centred over the
-file view, sized to the content and clamped to 80% of the host's window with a
+A child of the host's overlay, positioned by the host: centred on the usable
+area of the host's display, sized to the content and clamped to 80% of it with a
 floor of 400×300. Content smaller than the floor is centred in it rather than
 upscaled.
 
@@ -257,22 +271,23 @@ token, background-blurred, with the desktop's corner radius and shadow. It reads
 as the same kind of surface as the bar's menus and the launcher's card, because
 it is.
 
-Under a compositor without Otto's surface style, the panel is not blurred: it
-is a subsurface of the host's own window, and a standard blur protocol only
-ever blurs behind the *window*, never behind one of its subsurfaces, so
-turning it on here would show the host's own file listing sharp through a
-translucent panel. The panel draws the theme's solid popup material instead —
-the same fallback the command palette uses for the same reason — under either
-a compositor with no blur protocol at all or one that offers only the
-standard, window-level one.
+Under a compositor without Otto's surface style, the panel is not blurred and
+draws the theme's solid popup material instead, the same fallback the command
+palette uses.
 
-Dismissal: space, Escape, the close control, a click outside the panel, or the
-host closing it for any reason of its own. The embedded panel has no focus-loss
-rule of its own — the host's window losing focus is the host's business, and a
-preview inside it simply goes when the host says so. The file browser makes
-exactly that call: it closes on `wl_keyboard.leave` for its toplevel, which is
-also the only signal a client gets that expose opened, since a subsurface is out
-of reach of the compositor's popup dismissal.
+Dismissal: space, Escape, the close control, a click outside the panel, the
+overlay losing the keyboard, or the host closing it for any reason of its own.
+
+- **A click outside the panel** lands on the overlay, which covers the display
+  with a transparent ground and takes the pointer everywhere the panel does
+  not. The press closes the preview and goes no further: it does not also
+  select whatever was under it.
+- **The overlay losing the keyboard** means something else took it, and a
+  preview nobody can reach with a key is only in the way. The file browser
+  closes on `wl_keyboard.leave` for the overlay. That is also the only signal a
+  client gets that expose opened, since the overlay is out of reach of the
+  compositor's popup dismissal. The window's own leave does not close the
+  panel: opening the panel is what takes the keyboard from the window.
 
 ### Opening and dismissing
 
@@ -866,28 +881,26 @@ detail of the library and may change without any host noticing.
 
 ### Where the panel sits
 
-By default the panel is centred on the **window** it was opened from, and grows
-out of the file's icon. Centring it on the **display** instead is opt-in
-(`OTTO_FILES_QV_CENTER=1`), and is a genuine trade, not a strict improvement:
+The panel is centred on the usable area of the **display** the host is on (the
+display less the dock and any exclusive zones), and grows out of the file's
+icon.
 
-- The panel is a subsurface of the browser, so its position is relative to that
-  window, and a client is never told where its own window sits. It asks:
-  `request_output_frame` answers with the output's *usable* rect — the display
-  minus the dock and any exclusive zones — expressed in the coordinates the
-  client already positions in. See
-  [surface-output-placement.md](./surface-output-placement.md).
-- Because the answer comes back in window coordinates, the entrance still runs
-  from the file's icon. Anchor and resting place are in the same space, so
-  nothing has to be translated and the opening reads the same as the
-  window-centred one; only where it lands differs.
-- **The resting rect is worked out once per opening and once per closing**, not
-  every frame. A window that moves while the panel is up therefore carries the
-  panel with it, which is what a subsurface does anyway; recomputing per frame
-  instead let a stale window-relative answer walk the panel off the display.
-- **The panel is stacked above every column** with `wl_subsurface.place_above`
-  against each sibling in turn, restated while the panel is up rather than
-  assumed from creation order — a pooled column that is shown again still holds
-  its old place in the stack.
+- The overlay is anchored to every edge of that display with an exclusive zone
+  of -1, so it covers the bar too and a click there is still a click outside
+  the panel.
+- **The geometry is worked out in window points**, the space the file's icon
+  is in, and only the surface's placement is carried across to the overlay.
+  The window's own surface style is asked where the display is
+  (`request_output_frame`, answered relative to the window), and so is the
+  overlay's (answered relative to the overlay). Both describe the same
+  display, so their difference is where the window sits on the overlay, and a
+  rect in window points moves onto the overlay by that much. See
+  [surface-output-placement.md](./surface-output-placement.md). Until both
+  answers are in the panel stays hidden, which is a round trip.
+- **The display is worked out once per opening and once per closing**, not
+  every frame. A window that moves while the panel is up leaves the panel
+  where it is; recomputing per frame instead let a moving window drag the
+  panel across the display.
 
 **The panel can be dragged by its title strip**, which is what the strip is for
 — the content below it is for reading, scrolling and zooming, so a press there
@@ -897,29 +910,26 @@ means one of those.
   placement, the card's drawing and the rect the pointer is hit-tested against
   are all moved by the same amount and cannot disagree.
 - **Everything the drag needs is fixed at the press**: the point it was
-  reported at, and where the card was in the window then. Where the pointer
-  has travelled since, added to where the card was, is where the card should
-  be now. Nothing is read back from the render path, because a pointer reports
-  far more often than the window paints and the card's own movement would feed
-  back into the next measurement — the drag would run away, once per event or
-  once per frame depending on which rect it trusted.
+  reported at, and where the card was then. Where the pointer has travelled
+  since, added to where the card was, is where the card should be now. Nothing
+  is read back from the render path, because a pointer reports far more often
+  than the window paints and the card's own movement would feed back into the
+  next measurement — the drag would run away, once per event or once per frame
+  depending on which rect it trusted.
 - That the press-time frame *stays* right is not an accident of this client:
   a pointer holding a button is in a grab, and a grab keeps the focus it was
   taken with, surface and position both. Coordinates go on being measured
   against wherever the panel's surface was when the press landed, however far
-  the card has moved since. The same holds over the toplevel, where the frame
-  is the window and does not move at all.
+  the card has moved since.
 - **A double-click on the title strip fills the display**, the same thing the
   expand button does. The strip is the panel's titlebar, and that is what a
   titlebar does.
-- The card is kept on the display it may be dragged around — the same answer
-  the centring uses, the window standing in until it arrives — with at least
-  the title strip on screen, since that is the only thing that can bring it
-  back. It is clamped again when the window or the display changes, not only
-  while a drag is running.
+- The card is kept on the display, with at least the title strip on screen,
+  since that is the only thing that can bring it back. It is clamped again
+  when the window or the display changes, not only while a drag is running.
 - The panel's content key is its *size*, not its rect: the card's drawing is
   translated to its surface's own origin, so a panel being dragged repaints
-  nothing and only the subsurface moves.
+  nothing and only the surface moves.
 - The position outlives the file but not the panel. Arrow-keying to the next
   file keeps the card where it was put; closing and opening again starts it at
   rest, as does expanding it — an expanded panel takes nearly the whole
@@ -946,8 +956,9 @@ means one of those.
   awaited.
 - The preview must survive the invoking window being minimised, moved to another
   workspace, or closed. A closed caller ends the session; the other two do not.
-- Multi-output: the preview appears on the output implied by `anchor` and stays
-  there. It does not follow the pointer.
+- Multi-output: the overlay is created on the output the host's window has
+  most recently entered (`wl_surface.enter`), not the pointer's, and stays
+  there. It does not follow the pointer or the window.
 - Under the windowed development backend there is no layer-shell overlay
   guarantee different from production, but the dimming behind an overlay covers
   only the compositor's own output — acceptable, and worth stating so it is not
@@ -1075,9 +1086,10 @@ them.
   cannot name what a portal filter or a Kind column will legitimately ask for.
 - The invocation contract in this spec is adopted verbatim by the browser,
   including the focus model.
-- The preview is embedded by its hosts rather than run as a process of its own.
-  A subsurface's parent must belong to the same client, so parented and separate
-  are mutually exclusive, and parented wins.
+- The preview is embedded by its hosts rather than run as a process of its own,
+  so the host knows where the file is and keeps the keyboard. It is drawn on an
+  overlay the host owns rather than on a subsurface of the host's window,
+  because a subsurface is buried wherever its window is.
 - Hosts decode off their UI thread and drop stale results by generation.
 
 ## Open Questions
