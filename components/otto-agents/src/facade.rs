@@ -20,13 +20,14 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
-    ContentChunk, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
-    LoadSessionResponse, NewSessionRequest, NewSessionResponse, PermissionOption,
-    PermissionOptionKind, PromptRequest, PromptResponse, RequestPermissionOutcome,
-    RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
-    SessionCloseCapabilities, SessionId, SessionNotification, SessionResumeCapabilities,
-    SessionUpdate, StopReason, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields,
+    ContentChunk, Implementation, InitializeRequest, InitializeResponse, ListSessionsRequest,
+    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, ResumeSessionRequest,
+    ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities, SessionId, SessionInfo,
+    SessionListCapabilities, SessionMode, SessionModeState, SessionNotification,
+    SessionResumeCapabilities, SessionUpdate, SetSessionModeRequest, SetSessionModeResponse,
+    StopReason, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo, Stdio};
 use ahp::reducers::apply_action_to_session;
@@ -39,7 +40,7 @@ use ahp_types::common::{JsonObject, StringOrMarkdown};
 use ahp_types::state::{
     ChatState, ConfirmationOption, ConfirmationOptionKind, Message, MessageAttachment, MessageKind,
     MessageOrigin, MessageResourceAttachment, PendingMessageKind, ResponsePart, SessionLifecycle,
-    SessionState, SnapshotState, ToolCallConfirmationReason,
+    SessionState, SessionSummary, SnapshotState, ToolCallConfirmationReason,
 };
 use anyhow::{Context, bail};
 use otto_agents_client::session::{self, SESSION_SCHEME};
@@ -87,6 +88,7 @@ pub async fn serve(
                     .load_session(true)
                     .session_capabilities(
                         SessionCapabilities::new()
+                            .list(SessionListCapabilities::new())
                             .resume(SessionResumeCapabilities::new())
                             .close(SessionCloseCapabilities::new()),
                     );
@@ -117,8 +119,9 @@ pub async fn serve(
                         match new_session(&service, provider.as_deref(), &request.cwd).await {
                             Ok(opened) => {
                                 let id = opened.id.clone();
+                                let modes = opened.modes.clone();
                                 open(&sessions, &service, &connection, opened, ask_client);
-                                responder.respond(NewSessionResponse::new(id))
+                                responder.respond(NewSessionResponse::new(id).modes(modes))
                             }
                             Err(err) => responder.respond_with_error(internal(err)),
                         }
@@ -145,8 +148,9 @@ pub async fn serve(
                                 // The client rebuilds the conversation from
                                 // the replay before the response comes.
                                 replay(&connection, &opened.id, &chat);
+                                let modes = opened.modes.clone();
                                 open(&sessions, &service, &connection, opened, ask_client);
-                                responder.respond(LoadSessionResponse::new())
+                                responder.respond(LoadSessionResponse::new().modes(modes))
                             }
                             Err(err) => responder.respond_with_error(internal(err)),
                         }
@@ -170,9 +174,52 @@ pub async fn serve(
                         match load_session(&service, &request.session_id.0).await {
                             Ok((mut opened, _)) => {
                                 opened.id = request.session_id.0.to_string();
+                                let modes = opened.modes.clone();
                                 open(&sessions, &service, &connection, opened, ask_client);
-                                responder.respond(ResumeSessionResponse::new())
+                                responder.respond(ResumeSessionResponse::new().modes(modes))
                             }
+                            Err(err) => responder.respond_with_error(internal(err)),
+                        }
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let service = service.clone();
+                // The agent's modes are its own, such as Claude's "Accept
+                // edits"; the desktop's session switches with the chat.
+                async move |request: SetSessionModeRequest,
+                            responder,
+                            connection: ConnectionTo<Client>| {
+                    let service = service.clone();
+                    connection.spawn(async move {
+                        match set_mode(&service, &request.session_id.0, &request.mode_id.0).await {
+                            Ok(()) => responder.respond(SetSessionModeResponse::new()),
+                            Err(err) => responder.respond_with_error(internal(err)),
+                        }
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let service = service.clone();
+                // The desktop's sessions, most recently changed first: those
+                // working in `cwd` when the client names a folder, as a chat
+                // bridge does with its own. All in one page.
+                async move |request: ListSessionsRequest,
+                            responder,
+                            connection: ConnectionTo<Client>| {
+                    let service = service.clone();
+                    connection.spawn(async move {
+                        match cli::fetch_sessions(&service).await {
+                            Ok(found) => responder.respond(ListSessionsResponse::new(listed(
+                                found,
+                                request.cwd.as_deref(),
+                            ))),
                             Err(err) => responder.respond_with_error(internal(err)),
                         }
                     })
@@ -274,6 +321,8 @@ struct Opened {
     id: String,
     chat: String,
     events: SessionSubscription,
+    /// The agent's modes and the one it is in, as the service publishes them.
+    modes: Option<SessionModeState>,
 }
 
 /// Starts following `opened` and makes it answer prompts.
@@ -299,6 +348,30 @@ fn open(
     tokio::spawn(pump.run(opened.events, receiver));
 }
 
+/// `sessions` as ACP lists them, keeping those working in `cwd` when one is
+/// named. The service lists them most recently changed first.
+fn listed(mut sessions: Vec<SessionSummary>, cwd: Option<&Path>) -> Vec<SessionInfo> {
+    sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    sessions
+        .iter()
+        .filter_map(|summary| {
+            let folder = summary
+                .working_directories
+                .as_ref()
+                .and_then(|dirs| dirs.first())
+                .and_then(|dir| uri::to_path(dir))?;
+            if cwd.is_some_and(|cwd| cwd != folder) {
+                return None;
+            }
+            Some(
+                SessionInfo::new(session::session_id(summary).to_string(), folder)
+                    .title(summary.title.clone())
+                    .updated_at(summary.modified_at.clone()),
+            )
+        })
+        .collect()
+}
+
 async fn new_session(
     service: &ahp::Client,
     provider: Option<&str>,
@@ -317,11 +390,12 @@ async fn new_session(
         .request::<_, Value>("createSession", params)
         .await
         .context("the service would not create the session")?;
-    let (chat, _) = follow(service, &resource).await?;
+    let (chat, _, modes) = follow(service, &resource).await?;
     Ok(Opened {
         id,
         chat: chat.0,
         events: chat.1,
+        modes,
     })
 }
 
@@ -329,28 +403,79 @@ async fn load_session(service: &ahp::Client, query: &str) -> anyhow::Result<(Ope
     let sessions = cli::fetch_sessions(service).await?;
     let found = session::find(&sessions, Some(query))?;
     let id = session::session_id(found).to_owned();
-    let ((chat, events), state) = follow(service, &found.resource).await?;
-    Ok((Opened { id, chat, events }, state))
+    let ((chat, events), state, modes) = follow(service, &found.resource).await?;
+    Ok((
+        Opened {
+            id,
+            chat,
+            events,
+            modes,
+        },
+        state,
+    ))
+}
+
+/// Switches the session `query` names to the agent's mode `mode_id`.
+async fn set_mode(service: &ahp::Client, query: &str, mode_id: &str) -> anyhow::Result<()> {
+    let sessions = cli::fetch_sessions(service).await?;
+    let found = session::find(&sessions, Some(query))?;
+    service
+        .request::<_, Value>(
+            "setMode",
+            json!({ "session": found.resource, "modeId": mode_id }),
+        )
+        .await
+        .context("the service would not switch the mode")?;
+    Ok(())
+}
+
+/// The agent's modes as ACP says them, from the session's `_meta`, where the
+/// service keeps them under `otto.modes`.
+fn session_modes(meta: Option<&JsonObject>) -> Option<SessionModeState> {
+    let modes = meta?.get("otto")?.get("modes")?;
+    let current = modes.get("current")?.as_str()?.to_owned();
+    let available = modes
+        .get("available")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mode| {
+            let id = mode.get("id")?.as_str()?.to_owned();
+            let name = mode
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(&id)
+                .to_owned();
+            Some(SessionMode::new(id, name))
+        })
+        .collect();
+    Some(SessionModeState::new(current, available))
 }
 
 /// Waits for `resource` to have its agent started, then subscribes to its
-/// chat. Returns the chat's URI, its events and the chat as it stands.
+/// chat. Returns the chat's URI, its events, the chat as it stands and the
+/// agent's modes.
 async fn follow(
     service: &ahp::Client,
     resource: &str,
-) -> anyhow::Result<((String, SessionSubscription), ChatState)> {
+) -> anyhow::Result<(
+    (String, SessionSubscription),
+    ChatState,
+    Option<SessionModeState>,
+)> {
     let (subscribed, mut events) = service.subscribe(resource.to_owned()).await?;
     let Some(SnapshotState::Session(state)) = subscribed.snapshot.map(|s| s.state) else {
         bail!("the service sent no session snapshot for {resource}");
     };
     let state = started(*state, &mut events).await?;
+    let modes = session_modes(state.meta.as_ref());
     let chat = state.default_chat.context("the session has no chat")?;
     let (subscribed, chat_events) = service.subscribe(chat.clone()).await?;
     let Some(SnapshotState::Chat(snapshot)) = subscribed.snapshot.map(|s| s.state) else {
         bail!("the service sent no chat snapshot for {chat}");
     };
     service.unsubscribe(resource.to_owned()).await.ok();
-    Ok(((chat, chat_events), *snapshot))
+    Ok(((chat, chat_events), *snapshot, modes))
 }
 
 async fn started(

@@ -27,6 +27,9 @@ up. It is used as a tool, not built on: its repository carries no licence.
 | `session/request_permission` | sent for each tool call awaiting confirmation; the desktop is asked too, and the first answer wins. `--permissions desktop` keeps them on the desktop, for a client that answers by a fixed policy |
 | `session/cancel` | cancels the turn, or the queued prompt as soon as it starts |
 | `session/close` | cancels the prompt in hand and stops following; the desktop keeps the session |
+| `session/list` | the desktop's sessions, most recently changed first; those in `cwd` when one is given |
+| `session/set_mode` | `setMode` on the session; the modes come with `new`, `load` and `resume`, from the session's `otto.modes` |
+| (every prompt) | with `--remote <app>` (or cc-connect's `CC_SESSION_KEY`), marked `_meta.otto.remote.via`: the agent is told it was written on the phone, and the session's `otto.remote` gives it a pill in Sessions |
 
 **Turned on from Settings.** The bridge program is named in `agents.toml` as
 `[bridge] command` and `args`, and runs under the `otto-agents-bridge` user unit

@@ -142,40 +142,47 @@ token fight. Don't also use `cc-connect daemon install`, its own service.
 
 ## 6. What the phone may do without asking
 
-Every tool call that needs permission is a question on the phone. Claude reads
-its permission rules from the folder the session works in, so the bridge's
-folder can allow the few that sending a screenshot takes, and keep out skills
-meant for the desk. `~/.local/state/otto/remote/.claude/settings.json`:
+Every tool call that needs permission is a question on the phone. Three
+things keep those few:
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Skill(otto:send-to-phone)",
-      "Skill(otto:otto-help)",
-      "Bash(/usr/share/otto/plugins/otto/skills/send-to-phone/scripts/screenshot:*)",
-      "Bash(/usr/share/otto/plugins/otto/skills/otto-help/scripts/files-command commands)",
-      "Bash(cc-connect send:*)",
-      "Read(~/Pictures/Screenshots/**)"
-    ],
-    "deny": []
-  }
-}
-```
+- **Otto's own skills load without asking.** otto-agents allows
+  `Skill(<plugin>:<skill>)` for every skill of the desktop's plugins when it
+  starts a Claude session.
+- **A skill pre-approves what it runs.** While `send-to-phone` is loaded, its
+  `allowed-tools` let `scripts/screenshot` and `cc-connect send` run without a
+  question. The screenshot is one script, rather than `grim` chained with
+  `mkdir` and `sleep`, so that one rule covers it.
+- **Your own rules** in `~/.claude/settings.json` apply as they do at the desk.
 
-- **The paths are the packaged plugin's.** With a copy of your own in
-  `~/.local/share/otto/plugins/otto` (it shadows the packaged one), use its
-  paths instead.
-- **A skill's own `allowed-tools` is not enough.** Through ACP, Claude still
-  asks for a command the skill lists; the rules above are what it honours.
-- **The screenshot is one command.** The skill's `scripts/screenshot` brings
-  the app forward, captures and prints the file, so one rule covers it; `grim`
-  chained with `mkdir` and `sleep` would ask every time.
-- **Skills of your own** in `~/.claude/skills` reach the bridge's agent too.
-  One that also talks about screenshots can win over `send-to-phone`: list it
-  under `deny` as `Skill(<name>)`.
-- `cc-connect send` goes to your own chat, but anything it sends leaves the
-  computer. Leave it out of `allow` to be asked each time.
+A `.claude/settings.json` in the bridge's folder does **not** work: Claude
+leaves out the permission rules of a folder it has not been told to trust.
+
+**Skills of your own** in `~/.claude/skills` reach the bridge's agent too, and
+one that also talks about screenshots can win over `send-to-phone`. Give it a
+description narrow enough not to match, or move it into a project's
+`.claude/skills` where only that project sees it.
+
+`cc-connect send` goes to your own chat, but anything it sends leaves the
+computer: the skill tells the agent to send only what was asked for.
+
+## 7. In the chat
+
+- **Replies only.** cc-connect sends every tool call and every thought as a
+  message of its own by default. Set
+  ```toml
+  [display]
+  mode = "compact"
+  ```
+  above `[[projects]]` to send only the agent's words; the desktop's Sessions
+  still shows all of it.
+- **Sessions.** `/list` shows the desktop's sessions in the bridge's folder,
+  `/switch <id>` carries one on (the start of an id will do), `/new` starts
+  another, and `/stop` stops the agent's turn.
+- **Modes.** `/mode` lists the agent's modes, such as Claude's "Accept
+  edits", and `/mode <name>` switches; the desktop's session switches with
+  it.
+- **The session list on the desktop** shows a pill with the chat app on every
+  session written to from the phone.
 
 ## Troubleshooting
 
@@ -194,8 +201,9 @@ meant for the desk. `~/.local/state/otto/remote/.claude/settings.json`:
   bridge's folder and named in the prompt; not tried with Otto yet.
 - **A screenshot of one window:** Otto can't crop to a window yet, so the skill
   brings it forward and captures the whole monitor.
-- **cc-connect's session commands** (`/list`, `/switch`) were not tried with
-  Otto; `otto-agents acp` doesn't serve `session/list`.
+- **`/model`, `/allow`, `/usage` and `/reasoning`** belong to cc-connect's own
+  Claude Code and Codex adapters, not to ACP, and do nothing here. The agent's
+  model is set in `agents.toml`.
 
 ## Cleaning up
 

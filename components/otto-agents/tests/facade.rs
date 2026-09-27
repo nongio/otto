@@ -10,10 +10,11 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, CloseSessionRequest, ContentBlock, InitializeRequest, LoadSessionRequest,
-    NewSessionRequest, PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
-    SelectedPermissionOutcome, SessionNotification, SessionUpdate, StopReason, TextContent,
+    CancelNotification, CloseSessionRequest, ContentBlock, InitializeRequest, ListSessionsRequest,
+    LoadSessionRequest, NewSessionRequest, PermissionOptionKind, PromptRequest,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    ResumeSessionRequest, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
+    StopReason, TextContent,
 };
 use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectionTo};
 use otto_agents::Server;
@@ -358,4 +359,38 @@ async fn a_bridge_says_its_messages_come_from_the_phone() {
     assert_eq!(stop, StopReason::EndTurn);
     let text = seen.lock().unwrap().text.clone();
     assert!(text.contains("you said hi from Telegram"), "{text}");
+}
+
+#[tokio::test]
+async fn a_bridge_lists_the_sessions_in_its_folder() {
+    let url = serving().await;
+    let folder = tempfile::tempdir().expect("tempdir");
+    let elsewhere = tempfile::tempdir().expect("tempdir");
+    let cwd = folder.path().to_path_buf();
+    let other = elsewhere.path().to_path_buf();
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let (created, mine, all) = with_facade(&url, seen, async move |connection| {
+        let opened = connection
+            .send_request(NewSessionRequest::new(cwd.clone()))
+            .block_task()
+            .await?;
+        connection
+            .send_request(NewSessionRequest::new(other))
+            .block_task()
+            .await?;
+        let mine = connection
+            .send_request(ListSessionsRequest::new().cwd(cwd))
+            .block_task()
+            .await?;
+        let all = connection
+            .send_request(ListSessionsRequest::new())
+            .block_task()
+            .await?;
+        Ok((opened.session_id, mine.sessions, all.sessions))
+    })
+    .await;
+    let ids: Vec<_> = mine.iter().map(|info| info.session_id.clone()).collect();
+    assert_eq!(ids, [created], "only the session in the folder asked about");
+    assert_eq!(mine[0].cwd, folder.path());
+    assert_eq!(all.len(), 2, "no folder, every session");
 }
