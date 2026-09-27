@@ -244,6 +244,16 @@ impl ClosingFrame {
     pub fn is_empty(&self) -> bool {
         self.textures.is_empty()
     }
+
+    /// Add `other`'s surfaces and textures, each surface listed once.
+    pub fn merge(&mut self, other: ClosingFrame) {
+        for surface in other.surfaces {
+            if !self.surfaces.contains(&surface) {
+                self.surfaces.push(surface);
+            }
+        }
+        self.textures.extend(other.textures);
+    }
 }
 
 pub struct Workspaces {

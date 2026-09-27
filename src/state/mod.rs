@@ -256,6 +256,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// one request ahead of `get_toplevel`, so there is no window to flag yet
     /// — `new_toplevel` replays what landed here.
     pub pending_kde_decorations: HashMap<ObjectId, bool>,
+    /// Last frames of mapped windows whose surfaces were destroyed ahead of
+    /// their toplevel, keyed by the window's root surface. Taken by
+    /// [`Otto::hold_surface_tree_textures`] when the toplevel follows.
+    pub dying_window_frames: HashMap<ObjectId, crate::workspaces::ClosingFrame>,
     pub xdg_shell_state: XdgShellState,
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
@@ -1015,6 +1019,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             xdg_decoration_state,
             kde_decoration_state,
             pending_kde_decorations: HashMap::new(),
+            dying_window_frames: HashMap::new(),
             xdg_shell_state,
             presentation_state,
             fractional_scale_manager_state,
@@ -1714,17 +1719,34 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// The last frame of a closing window: strong handles on the textures of
     /// every surface in `surface`'s tree, and the surfaces themselves.
     ///
+    /// Includes what [`Otto::hold_frame_of_dying_surface`] kept for the
+    /// window's surfaces that were already destroyed.
+    ///
     /// Empty when no surface has a texture (never committed, already
     /// unmapped, or a backend without a renderer), so the caller can tell
     /// whether there is a last frame worth keeping on screen.
     pub fn hold_surface_tree_textures(
+        &mut self,
+        surface: &WlSurface,
+    ) -> crate::workspaces::ClosingFrame {
+        let mut held = self
+            .dying_window_frames
+            .remove(&surface.id())
+            .unwrap_or_default();
+        if surface.is_alive() {
+            let live = self.collect_surface_tree_textures(surface);
+            held.merge(live);
+        }
+        held
+    }
+
+    /// Strong handles on the textures of every surface in `surface`'s tree,
+    /// and the surfaces themselves.
+    fn collect_surface_tree_textures(
         &self,
         surface: &WlSurface,
     ) -> crate::workspaces::ClosingFrame {
         let mut held = crate::workspaces::ClosingFrame::default();
-        if !surface.is_alive() {
-            return held;
-        }
         smithay::wayland::compositor::with_surface_tree_downward(
             surface,
             (),
@@ -1745,6 +1767,38 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         held
     }
 
+    /// Keep the last frame of a surface that is destroyed while its window
+    /// is still mapped.
+    ///
+    /// That is how a client that drops its connection goes: the server
+    /// destroys its objects in creation order, so the window's surfaces die
+    /// before its toplevel, and their textures are released right after
+    /// this. What is kept here is what the window fades out with once the
+    /// toplevel follows.
+    pub(crate) fn hold_frame_of_dying_surface(&mut self, surface: &WlSurface) {
+        let mut root = surface.clone();
+        while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+            root = parent;
+        }
+        let root_id = root.id();
+        if self.workspaces.get_window_view(&root_id).is_none() {
+            return;
+        }
+        let frame = self.collect_surface_tree_textures(surface);
+        self.dying_window_frames
+            .entry(root_id)
+            .or_default()
+            .merge(frame);
+    }
+
+    /// Whether `surface_id` belongs to a window whose surfaces are being
+    /// destroyed ahead of its toplevel.
+    pub(crate) fn is_dying_window_surface(&self, surface_id: &ObjectId) -> bool {
+        self.dying_window_frames
+            .values()
+            .any(|frame| frame.surfaces.contains(surface_id))
+    }
+
     /// Remove the layers of closed windows whose fade-out has ended, and
     /// the last frames kept for their surfaces.
     ///
@@ -1753,6 +1807,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// on the same wl_surface within the fade: an entry is only dropped
     /// when nothing live (a surface layer, a window view) is drawing it.
     pub fn reap_closed_windows(&mut self) {
+        // A frame whose window went without a toplevel following its
+        // surfaces (an X11 window, say) has no fade to feed.
+        let workspaces = &self.workspaces;
+        self.dying_window_frames
+            .retain(|id, _| workspaces.get_window_view(id).is_some());
         for surface_id in self.workspaces.reap_closed_windows() {
             if self.surface_layers.contains_key(&surface_id)
                 || self.workspaces.get_window_view(&surface_id).is_some()
