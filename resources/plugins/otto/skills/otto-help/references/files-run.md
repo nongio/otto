@@ -55,6 +55,6 @@ Running a command changes files, so the person is asked before it runs.
 
 The request usually names files rather than paths: "the scans from this
 morning", "the photos in Downloads". Find them first
-([find.md](find.md) when it is there, or list the folder), and when more than
+([find.md](find.md)), and when more than
 one set could be meant, ask which with your question tool before running
 anything.
