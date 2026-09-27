@@ -7,7 +7,7 @@ use otto_agents::agent::{Backend, EchoBackend};
 use otto_agents::dialog::Islands;
 use otto_agents::server::Listen;
 use otto_agents::store::Store;
-use otto_agents::{Server, cli, client, config};
+use otto_agents::{Server, cli, client, config, facade};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -81,6 +81,18 @@ enum Command {
         /// Keep printing while the agent works, until it is done.
         #[arg(long, short)]
         follow: bool,
+        /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
+        #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
+        url: String,
+    },
+    /// Speak ACP on stdin and stdout, as one agent whose sessions are the
+    /// desktop's. For tools that drive ACP agents, such as chat bridges: they
+    /// start `otto-agents acp` in place of an agent command.
+    Acp {
+        /// The agent new sessions run, by its id in `agents.toml` or the name
+        /// it is shown under. Defaults to the service's first agent.
+        #[arg(long)]
+        agent: Option<String>,
         /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
@@ -161,6 +173,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        // Standard output is `otto-agents acp`'s protocol stream.
+        .with_writer(std::io::stderr)
         .init();
     match command {
         Command::Serve(args) => serve(args).await,
@@ -178,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
             follow,
             url,
         } => cli::show_session(&url, session.as_deref(), follow).await,
+        Command::Acp { agent, url } => facade::serve(&url, agent.as_deref()).await,
         Command::Plugins {
             command: PluginsCommand::Install { dir, home, only },
         } => cli::install_plugins(dir.as_deref(), home.as_deref(), only.as_deref()),

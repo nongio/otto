@@ -1,6 +1,29 @@
 # 0015: Chat bridges
 
-**Status:** Draft
+**Status:** In progress: the ACP facade has landed; `otto-bridge` is a draft.
+
+## First step: `otto-agents acp`
+
+Chat bridges for ACP agents already exist: OpenClaw's acpx, acp-connector,
+telegram-acp-bot and others. Each starts an agent command and speaks ACP to it
+over stdio. `otto-agents acp` is such a command, and behind it are the
+desktop's sessions, so any of those bridges reaches Otto's agents without
+network code of our own (`src/facade.rs`, `tests/facade.rs`).
+
+| ACP | What the facade does |
+|---|---|
+| `session/new` | `createSession` with `--agent` (else the default agent) in the given folder |
+| `session/load` | takes up an existing session by its id or the start of it, replaying its turns |
+| `session/prompt` | queues the prompt on the chat, streams the turn back as `session/update`, returns when it ends |
+| `session/request_permission` | sent for each tool call awaiting confirmation; the desktop is asked too, and the first answer wins |
+| `session/cancel` | cancels the turn, or the queued prompt as soon as it starts |
+
+Not yet: agent questions (forms) are announced in the text and answered on the
+desktop; pictures and audio in a prompt are dropped; an ACP permission request is
+not withdrawn when the desktop answers first (the late answer is refused by the
+host). The routing, sender allowlists and chat-to-session bindings are the
+bridge's own configuration in this mode. The rest of this plan is the native
+bridge, for when those should be Otto's.
 
 ## Goal
 
