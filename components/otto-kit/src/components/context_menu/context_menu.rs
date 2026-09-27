@@ -223,7 +223,26 @@ impl ContextMenu {
     ) {
         self.closing.set(false);
         self.dismiss_pending.set(false);
-        self.show_menu_at_depth_for_layer(0, layer_surface, positioner);
+        self.show_menu_at_depth_for_layer(0, layer_surface, positioner, None);
+    }
+
+    /// [`ContextMenu::show_for_layer`], with the grab taken on the press that
+    /// opened it.
+    ///
+    /// The grab is what makes a click anywhere else dismiss the menu and puts
+    /// the keyboard on it, the way [`ContextMenu::show`] does for a menu over
+    /// a window. A menu opened from a pointer press should use this; one that
+    /// opens without an input event to point at has no serial to give.
+    pub fn show_for_layer_with_grab(
+        &self,
+        layer_surface: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
+        serial: u32,
+    ) {
+        self.closing.set(false);
+        self.dismiss_pending.set(false);
+        self.typeahead.borrow_mut().0.clear();
+        self.show_menu_at_depth_for_layer(0, layer_surface, positioner, Some(serial));
     }
 
     /// Internal: Show popup at a specific depth level for layer shell parent
@@ -232,6 +251,7 @@ impl ContextMenu {
         depth: usize,
         layer_surface: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
+        grab_serial: Option<u32>,
     ) {
         // Check if popup at this depth already exists and is Some
         if self.popups.borrow().len() > depth && self.popups.borrow()[depth].borrow().is_some() {
@@ -245,9 +265,13 @@ impl ContextMenu {
             ContextMenuRenderer::measure_items(items, &self.style.borrow())
         };
         // Create popup surface for layer shell parent
-        if let Ok(popup) =
-            PopupSurface::new_for_layer(layer_surface, positioner, width as i32, height as i32)
-        {
+        if let Ok(popup) = PopupSurface::new_for_layer_with_grab(
+            layer_surface,
+            positioner,
+            width as i32,
+            height as i32,
+            grab_serial,
+        ) {
             let surface_id = popup.wl_surface().id();
             popup.wl_surface().commit();
             // Apply visual effects immediately

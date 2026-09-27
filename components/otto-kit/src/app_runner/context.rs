@@ -1893,14 +1893,14 @@ impl<'a> AppContext<'a> {
 
     /// Whether `surface_id` is one of this application's toplevel windows.
     ///
-    /// Layer surfaces and popups are not registered here, which is what makes
-    /// this the test for "is the keyboard on something Cmd+W should close".
+    /// Popups are not registered here, and a window backed by a layer surface
+    /// is not a toplevel, which is what makes this the test for "is the
+    /// keyboard on something Cmd+W should close".
     pub fn is_toplevel_surface(surface_id: &ObjectId) -> bool {
         WINDOWS.with(|windows| {
-            windows
-                .borrow()
-                .iter()
-                .any(|window| window.surface_id().as_ref() == Some(surface_id))
+            windows.borrow().iter().any(|window| {
+                window.is_toplevel() && window.surface_id().as_ref() == Some(surface_id)
+            })
         })
     }
 

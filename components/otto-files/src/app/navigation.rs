@@ -162,6 +162,10 @@ impl Browser {
 
     /// Step to the previous location, if there is one.
     pub(super) fn go_back(&mut self) {
+        // The desk shows one folder and has no history to step through.
+        if self.desk {
+            return;
+        }
         let Some(location) = self.back.pop() else {
             return;
         };
@@ -171,6 +175,9 @@ impl Browser {
 
     /// Step to the location Back left, if there is one.
     pub(super) fn go_forward(&mut self) {
+        if self.desk {
+            return;
+        }
         let Some(location) = self.forward.pop() else {
             return;
         };
@@ -180,6 +187,15 @@ impl Browser {
 
     /// Go to the parent directory.
     pub(super) fn go_up(&mut self) {
+        // Up from the desk is the folder around it, which is somewhere to
+        // go — so it opens in a browser, the way any folder from the desk
+        // does.
+        if self.desk {
+            if let Some(parent) = self.columns[0].path.parent().map(Path::to_path_buf) {
+                self.spawn_window(&parent);
+            }
+            return;
+        }
         // A synthetic listing has no parent: the sentinel's is a path nobody
         // asked for, and going there would carry Recent's flag along with it.
         if self.is_synthetic() {
@@ -217,6 +233,12 @@ impl Browser {
     /// still refusing for want of a location. Every route into a folder goes
     /// through here, so every one of them gets that right.
     pub(super) fn navigate_to(&mut self, path: &Path) {
+        // The desk never leaves its folder. Every route into another one —
+        // a place, a crumb, a typed path — opens it in a browser instead.
+        if self.desk {
+            self.spawn_window(path);
+            return;
+        }
         // Recorded first: once the listing is down there is nothing left to
         // record but the sentinel standing in for its directory.
         self.record_location();
@@ -254,6 +276,11 @@ impl Browser {
     /// separator is there so the first Tab completes a child rather than
     /// re-completing the folder the user is already in.
     pub(super) fn open_path_entry(&mut self) {
+        // The desk has no title line to turn into a field, and nowhere else
+        // to go.
+        if self.desk {
+            return;
+        }
         // A synthetic listing has no location to resolve a typed path
         // against, and the sentinel behind it must never be offered as one.
         if self.is_synthetic() {

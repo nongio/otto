@@ -214,7 +214,7 @@ impl SidebarConfig {
     }
 }
 
-fn config_path() -> Option<PathBuf> {
+pub(crate) fn config_path() -> Option<PathBuf> {
     let base = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .filter(|value| !value.is_empty())
@@ -223,7 +223,7 @@ fn config_path() -> Option<PathBuf> {
     Some(base.join("otto").join("files.toml"))
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(crate) fn home_dir() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .filter(|home| !home.is_empty())
@@ -234,6 +234,15 @@ fn home_dir() -> Option<PathBuf> {
 /// them, and neither is a path any shell has already expanded by the time it
 /// reaches a config file.
 fn expand(raw: &str, home: Option<&Path>) -> Option<PathBuf> {
+    let path = expand_home(raw, home)?;
+    // A row leading nowhere is worse than its absence — the same rule the
+    // built-in XDG folders follow.
+    path.is_dir().then_some(path)
+}
+
+/// [`expand`] without asking whether the folder is there — for a path that
+/// is still meaningful before it exists, such as the desk's folder.
+pub(crate) fn expand_home(raw: &str, home: Option<&Path>) -> Option<PathBuf> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;
@@ -248,9 +257,7 @@ fn expand(raw: &str, home: Option<&Path>) -> Option<PathBuf> {
     } else {
         PathBuf::from(raw)
     };
-    // A row leading nowhere is worse than its absence — the same rule the
-    // built-in XDG folders follow.
-    path.is_dir().then_some(path)
+    Some(path)
 }
 
 #[cfg(test)]

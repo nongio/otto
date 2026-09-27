@@ -93,6 +93,8 @@ settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
 settings-background-image-unavailable = 表示できません
+settings-show-desk = デスクトップにファイルを表示
+settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
 
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
@@ -405,6 +407,7 @@ files-open-with-no-match = 一致するAppはありません
 files-open-with-always = 「{ $kind }」には常にこのAppを使用
 files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
+files-desk-open-in-files = ファイルで開く
 files-move-to-trash = ゴミ箱に入れる
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -831,6 +834,8 @@ schema-show-maximize-button-label = ズームボタン
 schema-show-maximize-button-description = ウインドウのタイトルバーにズームボタンを表示します。デフォルトはオフで、タイトルバーをダブルクリックすればどちらでもズームします。
 schema-font-family-label = インターフェイスフォント
 schema-font-family-description = Otto自身のインターフェイスが使うフォントファミリー。
+schema-desk-enabled-label = デスクトップにファイルを表示
+schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
 schema-background-color-label = 背景色
 schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
 schema-background-image-label = 背景画像

@@ -726,7 +726,12 @@ impl Browser {
         // area stops short of the bottom by the action row.
         // Measuring against `height` there would put the
         // "bottom edge" across the middle of that row.
-        if let Some(edge) = resize::edge_at(Rect::from_wh(width, self.size.1), x, y) {
+        //
+        // The desk has no border to grab: it is sized by its config.
+        let edge = (!self.desk)
+            .then(|| resize::edge_at(Rect::from_wh(width, self.size.1), x, y))
+            .flatten();
+        if let Some(edge) = edge {
             if let Some(seat) = AppContext::seat_state().seats().next() {
                 window.start_resize(&seat, serial, edge);
             }
@@ -825,9 +830,12 @@ impl Browser {
                 } else {
                     self.press_entry(depth, index);
                 }
-            } else if hit_content(area, x, y) {
+            } else if hit_content(area, x, y)
+                || (self.desk && hit_content(view::desk_panel_rect(width, self.size.1), x, y))
+            {
                 // Nothing under the press: it is the corner of
-                // a rubber band. A band that never travels is
+                // a rubber band. On the desk that is anywhere on the
+                // panel, its padding included. A band that never travels is
                 // an empty one, which is how a plain click on
                 // nothing comes to mean nothing selected.
                 if !ctrl && !shift {

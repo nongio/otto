@@ -79,6 +79,7 @@ impl Browser {
             ocr_reading: std::collections::HashSet::new(),
             peek_follow: false,
             trash: false,
+            desk: false,
             recent: false,
             search: None,
             search_where: String::new(),
@@ -154,6 +155,42 @@ impl Browser {
         browser.set_mode(ViewMode::List);
         browser.trash = true;
         browser.places = Vec::new();
+        browser
+    }
+
+    /// The desk: `config`'s folder as an icon grid, with nothing around it.
+    ///
+    /// Like [`Browser::for_trash`], the chrome is dropped in the view layer —
+    /// see [`view::Shell::Desk`] — and what is set here is what the listing
+    /// is: one folder, a grid in the configured order, no places and nowhere
+    /// else to go.
+    pub(super) fn for_desk(config: &crate::desk::DeskConfig) -> Self {
+        view::set_shell(view::Shell::Desk);
+        view::set_desk_layout(view::DeskLayout {
+            anchor: config.anchor,
+            size: config.size,
+            padding: config.padding,
+        });
+        view::set_grid_icon(config.icon_size);
+        Self::listing_the_desk(config)
+    }
+
+    /// The desk's listing and behaviour, without the process-wide chrome
+    /// switches [`Browser::for_desk`] throws — for tests, the way
+    /// [`Browser::listing_the_trash`] is.
+    pub(super) fn listing_the_desk(config: &crate::desk::DeskConfig) -> Self {
+        let mut browser = Self::new(config.folder.clone());
+        browser.set_mode(ViewMode::Grid);
+        browser.sort = config.sort;
+        // Newest first by date and A first by name, the way a fresh click on
+        // a list column reads.
+        browser.ascending = config.sort != SortKey::Modified;
+        browser.sort_pinned = true;
+        browser.places = Vec::new();
+        // Keyboard focus is the desk's only on a click; until then it draws
+        // the way a window in the background does.
+        browser.focused = false;
+        browser.desk = true;
         browser
     }
 

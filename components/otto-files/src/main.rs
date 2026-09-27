@@ -76,6 +76,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return otto_files::app::run_trash();
     }
 
+    // `--desk` is the folder on the desktop: the icon grid on a layer surface
+    // below every window. The compositor starts it when the session's desk
+    // setting is on; see `specs/desk.md`.
+    if std::env::args().any(|a| a == "--desk") {
+        return otto_files::app::run_desk();
+    }
+
     // The Trash window with its Empty Trash question already asked — the
     // desktop entry's `empty` action, which the dock offers on the Trash icon.
     if std::env::args().any(|a| a == "--empty-trash") {

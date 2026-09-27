@@ -408,6 +408,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         Restart,
     ),
     spec(
+        "desk.enabled",
+        Bool,
+        "Show files on the desktop",
+        "The files in your Desktop folder, behind the windows.",
+        Live,
+    ),
+    spec(
         "background_color",
         Str,
         "Background colour",

@@ -636,7 +636,7 @@ fn a_band_held_with_ctrl_adds_to_the_selection() {
     browser.select(0, 0);
 
     let (x, y) = cell_center(2);
-    browser.begin_marquee(0, x - view::CELL_W / 2.0 + 1.0, y, true);
+    browser.begin_marquee(0, x - view::cell_w() / 2.0 + 1.0, y, true);
     browser.update_marquee(x, y);
 
     assert!(

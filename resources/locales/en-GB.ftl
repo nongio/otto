@@ -94,6 +94,8 @@ settings-background-image = Background image
 settings-background-image-detail = Chosen through the desktop portal's file picker
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Cannot be shown
+settings-show-desk = Show files on the desktop
+settings-show-desk-detail = The files in your Desktop folder, behind the windows
 
 settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
@@ -409,6 +411,8 @@ files-open-with-no-match = No apps match
 files-open-with-always = Always use this app for every { $kind }
 files-open-with-not-remembered = Opened, but couldn’t save the choice: { $error }
 files-new-folder = New Folder
+# The desk's background menu: shows the desk's own folder in a Files window.
+files-desk-open-in-files = Open in Files
 files-new-folder-with-selection = New Folder with Selection
 # $count is always two or more; the single-item case uses
 # files-new-folder-with-selection.
@@ -861,6 +865,8 @@ schema-show-maximize-button-label = Maximize button
 schema-show-maximize-button-description = Show the zoom control in a window's titlebar. Off by default: a double click on the titlebar zooms a window either way.
 schema-font-family-label = Interface font
 schema-font-family-description = Font family used by Otto's own interface.
+schema-desk-enabled-label = Show files on the desktop
+schema-desk-enabled-description = The files in your Desktop folder, behind the windows.
 schema-background-color-label = Background colour
 schema-background-color-description = Desktop background colour, as a hex string.
 schema-background-image-label = Background image

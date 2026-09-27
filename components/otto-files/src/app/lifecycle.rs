@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// The desk's layer-shell namespace: the name the compositor, and any rule a
+/// person writes for it, knows the desk's surface by.
+const DESK_NAMESPACE: &str = "otto-desk";
+
 impl App for FilesApp {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         self.context_menu = Some(ContextMenu::new(Vec::new()));
@@ -9,6 +13,10 @@ impl App for FilesApp {
         // Before the window: a surface builds its own root layer node at
         // construction, and that node is what the scene hangs off.
         AppContext::enable_layer_engine(view::WINDOW_W, view::WINDOW_H);
+
+        if view::is_desk() {
+            return self.desk_ready();
+        }
 
         let mut window = Window::new(
             otto_kit::t!("files-window-title"),
@@ -72,189 +80,7 @@ impl App for FilesApp {
             self.frost = Some(scene.frost_state());
         }
 
-        let state = Arc::clone(&self.state);
-        window.on_draw(move |canvas| {
-            let mut browser = state.lock().unwrap();
-
-            // Drain finished directory reads. This is the UI thread by
-            // construction, which is what the poll needs — see
-            // `install_frame_loop` for why it cannot live on a worker.
-            let t_total = perf::now();
-            let t_prep = perf::now();
-            browser.poll();
-
-            let theme = browser.theme();
-            let title = browser.title();
-            // Panes measure themselves against the size this frame is drawn
-            // at, so their scroll views are re-fitted before anything reads
-            // an offset.
-            browser.sync_scroll_metrics();
-            // Needs those metrics, so it runs here rather than beside the poll.
-            browser.settle_restore();
-            // Same reason, and after it: a Back step and a delete never land
-            // in the same frame, and both want the metrics that just landed.
-            browser.settle_pick();
-            browser.settle_empty_ask();
-            perf::mark(perf::Stage::Prep, t_prep);
-            let t_frame = perf::now();
-            let frame = browser.frame(&theme, &title);
-            perf::mark(perf::Stage::FrameBuild, t_frame);
-            // The panels first, composited by the engine from cached pictures,
-            // then the chrome that sits over them.
-            let t0 = perf::now();
-            if let Some(scene) = scene.lock().unwrap().as_mut() {
-                scene.update(&frame);
-                perf::mark(perf::Stage::SceneUpdate, t0);
-                let t1 = perf::now();
-                scene.render(canvas);
-                perf::mark(perf::Stage::SceneRender, t1);
-            }
-            let t2 = perf::now();
-            view::draw(canvas, &frame);
-            perf::mark(perf::Stage::Chrome, t2);
-            perf::mark(perf::Stage::Total, t_total);
-            drop(frame);
-
-            // Where each field's caret ended up this frame, filled in as the
-            // fields are drawn because only the draw knows where they went.
-            let mut rename_caret = None;
-            let mut path_caret = None;
-            let mut search_caret = None;
-            let mut save_caret = None;
-
-            if let Some(session) = browser.rename.as_ref() {
-                let (depth, index) = (session.depth, session.index);
-                let (width, height) = (browser.size.0, browser.content_h());
-                let count = browser.visible(depth).len();
-                let scroll = browser.columns[depth].scroll.offset();
-                let rect = match browser.mode {
-                    ViewMode::List => {
-                        view::list_rename_rect(width, browser.list_columns, count, scroll, index)
-                    }
-                    ViewMode::Columns => {
-                        let is_dir = browser.visible(depth).get(index).is_some_and(|e| e.is_dir);
-                        view::miller_rename_rect(
-                            height,
-                            browser.pan.offset(),
-                            browser.miller_w,
-                            depth,
-                            count,
-                            scroll,
-                            index,
-                            is_dir,
-                        )
-                    }
-                    ViewMode::Grid => view::grid_rename_rect(width, height, scroll, index),
-                };
-                let session = browser.rename.as_mut().unwrap();
-                session.input.set_size(rect.width(), rect.height());
-                canvas.save();
-                canvas.translate((rect.left, rect.top));
-                session.input.render_at(canvas, rect.width(), rect.height());
-                canvas.restore();
-                rename_caret = caret_in_window(&session.input, (rect.left, rect.top));
-            }
-
-            // The path entry's value, over the box the header drew for it —
-            // the same two-step as the rename and save fields.
-            if browser.path_entry.is_some() {
-                let rect = view::path_field_rect(browser.size.0);
-                let input = browser.path_entry.as_mut().unwrap();
-                input.set_size(rect.width(), rect.height());
-                canvas.save();
-                canvas.translate((rect.left, rect.top));
-                input.render_at(canvas, rect.width(), rect.height());
-                canvas.restore();
-                path_caret = caret_in_window(input, (rect.left, rect.top));
-            }
-
-            // The query, over the capsule the header drew for it. Inset past
-            // the magnifier, so the text starts clear of the glyph rather than
-            // underneath it.
-            if browser.search.is_some() {
-                let rect = view::search_field_rect(browser.size.0);
-                let text_w = rect.width() - view::SEARCH_TEXT_INSET - 8.0;
-                let input = browser.search.as_mut().unwrap();
-                input.set_size(text_w, rect.height());
-                let origin = (rect.left + view::SEARCH_TEXT_INSET, rect.top);
-                canvas.save();
-                canvas.translate(origin);
-                input.render_at(canvas, text_w, rect.height());
-                canvas.restore();
-                search_caret = caret_in_window(input, origin);
-            }
-
-            // The save field's value, over the box the action row drew for
-            // it — the same two-step the in-place rename takes, and for the
-            // same reason: the text input owns its caret and selection and
-            // paints them itself.
-            if browser.save_name.is_some() {
-                let (width, window_h) = (browser.size.0, browser.size.1);
-                let rect = view::footer_name_rect(width, window_h);
-                let input = browser.save_name.as_mut().unwrap();
-                input.set_size(rect.width(), rect.height());
-                canvas.save();
-                canvas.translate((rect.left, rect.top));
-                input.render_at(canvas, rect.width(), rect.height());
-                canvas.restore();
-                save_caret = caret_in_window(input, (rect.left, rect.top));
-            }
-
-            // Tell the compositor where the text is, so an input method — or
-            // the emoji picker, or anything else watching
-            // `otto_text_cursor_manager_v1` — can put itself beside the word
-            // being typed instead of in the middle of the screen.
-            //
-            // The `or` chain is [`Browser::focused_input`]'s precedence rather
-            // than the order the fields are painted in: the caret to report is
-            // the one the keys are going to.
-            otto_kit::AppContext::report_text_cursor(
-                browser
-                    .palette
-                    .is_some()
-                    .then_some(browser.palette_caret)
-                    .flatten()
-                    .or(rename_caret)
-                    .or(path_caret)
-                    .or(save_caret)
-                    .or(search_caret),
-            );
-
-            // Last of all, because it is modal and dims everything above.
-            if let Some(sheet) = browser.confirm.as_ref() {
-                let (width, window_h) = (browser.size.0, browser.size.1);
-                view::draw_confirm(
-                    canvas,
-                    &theme,
-                    width,
-                    window_h,
-                    &view::ConfirmData {
-                        message: &sheet.message,
-                        detail: &sheet.detail,
-                        accept_label: &sheet.accept_label,
-                        pressed: sheet.pressed,
-                    },
-                );
-            }
-        });
-
-        self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new());
-
-        self.install_dnd(&window);
-        self.install_peek_pointer();
-        self.install_palette_pointer();
-        self.install_info_window_pointer();
-        self.install_open_with_window_pointer();
-        self.install_pointer(&window, self.context_menu.clone().unwrap());
-        self.install_frame_loop(&window);
-        AppContext::register_window(window.clone());
-        self.window = Some(window);
-
-        // Visible to assistive technologies. Nothing is built until one
-        // attaches — see `App::accessibility`.
-        if let Some(surface) = self.window.as_ref().and_then(Window::surface_id) {
-            AppContext::enable_accessibility(&surface);
-        }
+        self.install_window(window, scene);
         Ok(())
     }
 
@@ -467,7 +293,14 @@ impl App for FilesApp {
         // blur anything behind it. Down to the path bar, which sits on the
         // same paper, less the window's rounded corner at the bottom, where the
         // edge is antialiased and the frost shows through it.
-        if let Some(window) = self.window.as_ref() {
+        //
+        // The desk has no paper: every pixel of it may show the wallpaper, so
+        // it promises nothing opaque. What it has instead is keyboard focus
+        // that comes and goes without a configure to say so — a layer
+        // surface has no activated state — and it is read here.
+        if view::is_desk() {
+            self.follow_desk_focus();
+        } else if let Some(window) = self.window.as_ref() {
             let area = {
                 let browser = self.state.lock().unwrap();
                 let top = view::header_h();
@@ -684,6 +517,30 @@ impl App for FilesApp {
         animating.then_some(IDLE_TICK)
     }
 
+    /// The desk's size: the usable area of its output, which the compositor
+    /// works out around every reserved zone. The surface has already taken
+    /// it by the time this runs.
+    fn on_configure_layer(&mut self, _ctx: &AppContext, _width: i32, _height: i32, _serial: u32) {
+        if !view::is_desk() {
+            return;
+        }
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let (width, height) = window.dimensions();
+        let (width, height) = (width as f32, height as f32);
+        // Presses land only on the panel. Under `fill` that is the whole
+        // surface; a smaller panel leaves the rest of the desktop to the
+        // wallpaper's own clients.
+        window.set_input_region(Some(&[view::desk_panel_rect(width, height)]));
+        {
+            let mut browser = self.state.lock().unwrap();
+            browser.size = (width, height);
+            browser.dirty = true;
+        }
+        self.render();
+    }
+
     fn on_configure(&mut self, _ctx: &AppContext, configure: WindowConfigure, _serial: u32) {
         // Whether the window is tiled arrives on the configure — otto-kit has
         // already read it by the time this runs — and the chrome follows the
@@ -771,6 +628,243 @@ impl App for FilesApp {
 }
 
 impl FilesApp {
+    /// What every Files window — the browser's toplevel or the desk's layer
+    /// surface — does once it exists: the draw, the surfaces beside it, and
+    /// the pointer, drag and frame wiring.
+    fn install_window(&mut self, mut window: Window, scene: Arc<Mutex<Option<scene::Scene>>>) {
+        let state = Arc::clone(&self.state);
+        window.on_draw(move |canvas| {
+            let mut browser = state.lock().unwrap();
+
+            // Drain finished directory reads. This is the UI thread by
+            // construction, which is what the poll needs — see
+            // `install_frame_loop` for why it cannot live on a worker.
+            let t_total = perf::now();
+            let t_prep = perf::now();
+            browser.poll();
+
+            let theme = browser.theme();
+            let title = browser.title();
+            // Panes measure themselves against the size this frame is drawn
+            // at, so their scroll views are re-fitted before anything reads
+            // an offset.
+            browser.sync_scroll_metrics();
+            // Needs those metrics, so it runs here rather than beside the poll.
+            browser.settle_restore();
+            // Same reason, and after it: a Back step and a delete never land
+            // in the same frame, and both want the metrics that just landed.
+            browser.settle_pick();
+            browser.settle_empty_ask();
+            perf::mark(perf::Stage::Prep, t_prep);
+            let t_frame = perf::now();
+            let frame = browser.frame(&theme, &title);
+            perf::mark(perf::Stage::FrameBuild, t_frame);
+            // The panels first, composited by the engine from cached pictures,
+            // then the chrome that sits over them.
+            let t0 = perf::now();
+            if let Some(scene) = scene.lock().unwrap().as_mut() {
+                scene.update(&frame);
+                perf::mark(perf::Stage::SceneUpdate, t0);
+                let t1 = perf::now();
+                scene.render(canvas);
+                perf::mark(perf::Stage::SceneRender, t1);
+            }
+            let t2 = perf::now();
+            view::draw(canvas, &frame);
+            perf::mark(perf::Stage::Chrome, t2);
+            perf::mark(perf::Stage::Total, t_total);
+            drop(frame);
+
+            // Where each field's caret ended up this frame, filled in as the
+            // fields are drawn because only the draw knows where they went.
+            let mut rename_caret = None;
+            let mut path_caret = None;
+            let mut search_caret = None;
+            let mut save_caret = None;
+
+            if let Some(session) = browser.rename.as_ref() {
+                let (depth, index) = (session.depth, session.index);
+                let (width, height) = (browser.size.0, browser.content_h());
+                let count = browser.visible(depth).len();
+                let scroll = browser.columns[depth].scroll.offset();
+                let rect = match browser.mode {
+                    ViewMode::List => {
+                        view::list_rename_rect(width, browser.list_columns, count, scroll, index)
+                    }
+                    ViewMode::Columns => {
+                        let is_dir = browser.visible(depth).get(index).is_some_and(|e| e.is_dir);
+                        view::miller_rename_rect(
+                            height,
+                            browser.pan.offset(),
+                            browser.miller_w,
+                            depth,
+                            count,
+                            scroll,
+                            index,
+                            is_dir,
+                        )
+                    }
+                    ViewMode::Grid => view::grid_rename_rect(width, height, scroll, index),
+                };
+                let session = browser.rename.as_mut().unwrap();
+                session.input.set_size(rect.width(), rect.height());
+                canvas.save();
+                canvas.translate((rect.left, rect.top));
+                session.input.render_at(canvas, rect.width(), rect.height());
+                canvas.restore();
+                rename_caret = caret_in_window(&session.input, (rect.left, rect.top));
+            }
+
+            // The path entry's value, over the box the header drew for it —
+            // the same two-step as the rename and save fields.
+            if browser.path_entry.is_some() {
+                let rect = view::path_field_rect(browser.size.0);
+                let input = browser.path_entry.as_mut().unwrap();
+                input.set_size(rect.width(), rect.height());
+                canvas.save();
+                canvas.translate((rect.left, rect.top));
+                input.render_at(canvas, rect.width(), rect.height());
+                canvas.restore();
+                path_caret = caret_in_window(input, (rect.left, rect.top));
+            }
+
+            // The query, over the capsule the header drew for it. Inset past
+            // the magnifier, so the text starts clear of the glyph rather than
+            // underneath it.
+            if browser.search.is_some() {
+                let rect = view::search_field_rect(browser.size.0);
+                let text_w = rect.width() - view::SEARCH_TEXT_INSET - 8.0;
+                let input = browser.search.as_mut().unwrap();
+                input.set_size(text_w, rect.height());
+                let origin = (rect.left + view::SEARCH_TEXT_INSET, rect.top);
+                canvas.save();
+                canvas.translate(origin);
+                input.render_at(canvas, text_w, rect.height());
+                canvas.restore();
+                search_caret = caret_in_window(input, origin);
+            }
+
+            // The save field's value, over the box the action row drew for
+            // it — the same two-step the in-place rename takes, and for the
+            // same reason: the text input owns its caret and selection and
+            // paints them itself.
+            if browser.save_name.is_some() {
+                let (width, window_h) = (browser.size.0, browser.size.1);
+                let rect = view::footer_name_rect(width, window_h);
+                let input = browser.save_name.as_mut().unwrap();
+                input.set_size(rect.width(), rect.height());
+                canvas.save();
+                canvas.translate((rect.left, rect.top));
+                input.render_at(canvas, rect.width(), rect.height());
+                canvas.restore();
+                save_caret = caret_in_window(input, (rect.left, rect.top));
+            }
+
+            // Tell the compositor where the text is, so an input method — or
+            // the emoji picker, or anything else watching
+            // `otto_text_cursor_manager_v1` — can put itself beside the word
+            // being typed instead of in the middle of the screen.
+            //
+            // The `or` chain is [`Browser::focused_input`]'s precedence rather
+            // than the order the fields are painted in: the caret to report is
+            // the one the keys are going to.
+            otto_kit::AppContext::report_text_cursor(
+                browser
+                    .palette
+                    .is_some()
+                    .then_some(browser.palette_caret)
+                    .flatten()
+                    .or(rename_caret)
+                    .or(path_caret)
+                    .or(save_caret)
+                    .or(search_caret),
+            );
+
+            // Last of all, because it is modal and dims everything above.
+            if let Some(sheet) = browser.confirm.as_ref() {
+                let (width, window_h) = (browser.size.0, browser.size.1);
+                view::draw_confirm(
+                    canvas,
+                    &theme,
+                    width,
+                    window_h,
+                    &view::ConfirmData {
+                        message: &sheet.message,
+                        detail: &sheet.detail,
+                        accept_label: &sheet.accept_label,
+                        pressed: sheet.pressed,
+                    },
+                );
+            }
+        });
+
+        self.pane_surfaces = Some(pane_surfaces::PaneSurfaces::new());
+
+        self.install_dnd(&window);
+        self.install_peek_pointer();
+        self.install_palette_pointer();
+        self.install_info_window_pointer();
+        self.install_open_with_window_pointer();
+        self.install_pointer(&window, self.context_menu.clone().unwrap());
+        self.install_frame_loop(&window);
+        AppContext::register_window(window.clone());
+        self.window = Some(window);
+
+        // Visible to assistive technologies. Nothing is built until one
+        // attaches — see `App::accessibility`.
+        if let Some(surface) = self.window.as_ref().and_then(Window::surface_id) {
+            AppContext::enable_accessibility(&surface);
+        }
+    }
+
+    /// Bring the desk up: a transparent layer surface below every window,
+    /// covering its output's usable area, with the same view, pointer and
+    /// drag wiring the browser's window has.
+    ///
+    /// One surface, on the output the compositor picks. Everything about it
+    /// that is per output — the surface, its size, the panel inside it — is
+    /// built here and in `on_configure_layer`, so more outputs means more of
+    /// what this makes rather than a different shape of it.
+    fn desk_ready(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        use otto_kit::surfaces::layer_shell::{Anchor, KeyboardInteractivity, Layer};
+        use otto_kit::surfaces::LayerShellSurface;
+
+        // A size of zero on both axes, anchored to every edge: the compositor
+        // gives the surface the usable area, whatever it is.
+        let surface =
+            LayerShellSurface::with_setup(Layer::Bottom, DESK_NAMESPACE, 0, 0, |layer| {
+                layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+                // The desk sits among the windows' space; it reserves none.
+                layer.set_exclusive_zone(0);
+                // The keyboard comes to the desk on a click, and leaves with
+                // the next click anywhere else.
+                layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+            })?;
+        let window = Window::from_layer_surface(surface);
+
+        // No frost: the desk is transparent, and a blurred wallpaper behind
+        // its icons would be a background by another name.
+        let scene = Arc::new(Mutex::new(window.layer_node().map(scene::Scene::new)));
+        self.install_window(window, scene);
+        Ok(())
+    }
+
+    /// Whether the desk holds the keyboard, as the browser's chrome reads
+    /// focus: the selection is drawn at full strength only while typing
+    /// would land here.
+    fn follow_desk_focus(&self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let focused =
+            window.surface_id().is_some() && AppContext::keyboard_focus() == window.surface_id();
+        let mut browser = self.state.lock().unwrap();
+        if browser.focused != focused {
+            browser.focused = focused;
+            browser.dirty = true;
+        }
+    }
+
     /// Open the palette on its own, for looking at. See
     /// [`Browser::palette_auto`] — never on in a real session.
     pub(super) fn auto_palette(&self) {

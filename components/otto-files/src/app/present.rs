@@ -10,10 +10,9 @@ impl FilesApp {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        let Some(surface) = window.surface() else {
+        let Some(parent) = window.wl_surface() else {
             return;
         };
-        let parent = surface.wl_surface().clone();
         let window_style = window.surface_style();
         let mut browser = self.state.lock().unwrap();
         browser.sync_scroll_metrics();
@@ -110,7 +109,7 @@ impl FilesApp {
         // screen: the window cannot paint until the compositor answers, that
         // answer wakes the loop itself, and waking it sooner only spins the
         // loop rebuilding a frame nobody will paint.
-        let in_flight = window.surface().is_some_and(|s| s.frame_in_flight());
+        let in_flight = window.frame_in_flight();
         if !in_flight {
             AppContext::request_wakeup();
         }

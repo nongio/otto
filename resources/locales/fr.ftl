@@ -94,6 +94,8 @@ settings-background-image = Image d’arrière-plan
 settings-background-image-detail = Choisie via le sélecteur de fichiers du portail de bureau
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Impossible à afficher
+settings-show-desk = Afficher les fichiers sur le bureau
+settings-show-desk-detail = Les fichiers du dossier Bureau, derrière les fenêtres
 
 settings-group-pointer-and-icons = Pointeur et icônes
 settings-cursor-theme = Thème du curseur
@@ -411,6 +413,7 @@ files-open-with-no-match = Aucune application ne correspond
 files-open-with-always = Toujours utiliser cette application pour « { $kind } »
 files-open-with-not-remembered = Ouvert, mais le choix n’a pas été enregistré : { $error }
 files-new-folder = Nouveau dossier
+files-desk-open-in-files = Ouvrir dans Fichiers
 files-move-to-trash = Mettre à la corbeille
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -875,6 +878,8 @@ schema-show-maximize-button-label = Bouton d’agrandissement
 schema-show-maximize-button-description = Affiche le bouton d’agrandissement dans la barre de titre d’une fenêtre. Désactivé par défaut : un double-clic sur la barre de titre agrandit la fenêtre de toute façon.
 schema-font-family-label = Police de l’interface
 schema-font-family-description = Famille de police utilisée par l’interface propre d’Otto.
+schema-desk-enabled-label = Afficher les fichiers sur le bureau
+schema-desk-enabled-description = Les fichiers du dossier Bureau, derrière les fenêtres.
 schema-background-color-label = Couleur d’arrière-plan
 schema-background-color-description = Couleur d’arrière-plan du bureau, sous forme de chaîne hexadécimale.
 schema-background-image-label = Image d’arrière-plan

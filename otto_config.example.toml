@@ -108,6 +108,14 @@ args = []
 # the lock off while they play and restart the countdown when they stop.
 # auto_lock_timeout = 300
 
+# The desk: the files in your Desktop folder, shown behind the windows. Otto
+# runs it as `otto-files --desk`, restarts it if it crashes and stops it when
+# this is switched off. Off by default. Its folder, size and arrangement are
+# set in ~/.config/otto/files.toml.
+#
+# [desk]
+# enabled = true
+
 # Systemd integration — send READY=1 via sd_notify and activate graphical-session.target
 # when the Wayland socket is ready. Enable this when running Otto as a systemd user service
 # (Type=notify in the unit file). Can also be triggered with the --systemd-notify CLI flag.

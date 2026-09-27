@@ -94,6 +94,8 @@ settings-background-image = Imagem do plano de fundo
 settings-background-image-detail = Escolhida através do seletor de arquivos do portal da área de trabalho
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Não é possível exibir
+settings-show-desk = Mostrar arquivos na área de trabalho
+settings-show-desk-detail = Os arquivos da pasta Área de trabalho, atrás das janelas
 
 settings-group-pointer-and-icons = Ponteiro e ícones
 settings-cursor-theme = Tema do cursor
@@ -411,6 +413,7 @@ files-open-with-no-match = Nenhum aplicativo corresponde
 files-open-with-always = Sempre usar este aplicativo para “{ $kind }”
 files-open-with-not-remembered = Aberto, mas a escolha não foi salva: { $error }
 files-new-folder = Nova pasta
+files-desk-open-in-files = Abrir em Arquivos
 files-move-to-trash = Mover para o lixo
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -865,6 +868,8 @@ schema-show-maximize-button-label = Botão de maximizar
 schema-show-maximize-button-description = Mostra o controle de ampliar na barra de título de uma janela. Desativado por padrão: um clique duplo na barra de título amplia a janela de qualquer forma.
 schema-font-family-label = Fonte da interface
 schema-font-family-description = Família de fonte usada pela própria interface do Otto.
+schema-desk-enabled-label = Mostrar arquivos na área de trabalho
+schema-desk-enabled-description = Os arquivos da pasta Área de trabalho, atrás das janelas.
 schema-background-color-label = Cor do plano de fundo
 schema-background-color-description = Cor do plano de fundo da área de trabalho, como uma string hexadecimal.
 schema-background-image-label = Imagem do plano de fundo

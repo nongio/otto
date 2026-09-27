@@ -89,6 +89,14 @@ impl Browser {
             items.push(
                 MenuItem::action(otto_kit::t!("files-new-folder")).with_action_id("new_folder"),
             );
+            // The desk's folder is somewhere a browser can go; the desk
+            // itself never goes anywhere.
+            if self.desk {
+                items.push(
+                    MenuItem::action(otto_kit::t!("files-desk-open-in-files"))
+                        .with_action_id("open_in_files"),
+                );
+            }
             let can_paste = !self.clipboard.is_empty()
                 || clipboard::first_available(clipboard::file_mime_preference()).is_some();
             if can_paste {
@@ -135,6 +143,9 @@ impl Browser {
             .commands(&situation)
             .into_iter()
             .filter(|command| command.namespace().is_some())
+            // One that asks for an argument asks in the palette, which the
+            // desk does not have.
+            .filter(|command| !self.desk || command.arg.is_none())
             .collect();
         if !provided.is_empty() {
             if !items.is_empty() {
