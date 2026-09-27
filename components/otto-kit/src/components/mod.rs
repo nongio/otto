@@ -12,6 +12,7 @@ pub mod list;
 pub mod menu_bar;
 pub mod menu_item;
 pub mod scroll;
+pub mod selectable_text;
 pub mod slider;
 pub mod source_list;
 pub mod stashed;

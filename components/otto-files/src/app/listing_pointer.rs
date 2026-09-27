@@ -35,6 +35,8 @@ pub(super) enum After {
     Drag(DragStart),
     /// A right click: the context menu, with its items.
     Menu(MenuAt),
+    /// The Photos view's grouping button was pressed: its menu, under it.
+    GroupMenu { rect: Rect, serial: u32 },
 }
 
 pub(super) struct DragStart {
@@ -147,7 +149,12 @@ impl Browser {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => view::grid_rename_rect(width, height, scroll, index),
+                    ViewMode::Grid => {
+                        view::grid_rename_rect(width, height, &self.recent_sections, scroll, index)
+                    }
+                    ViewMode::Photos => {
+                        view::photos_rename_rect(width, height, &self.photos, scroll, index)
+                    }
                 };
                 if rect.contains(skia_safe::Point::new(x, y)) {
                     if let Some(session) = self.rename.as_mut() {
@@ -559,6 +566,19 @@ impl Browser {
             return After::Next;
         }
 
+        // A text selection being dragged out in an info panel follows the
+        // pointer wherever it goes, off the text and off the panel too.
+        if self.panel_text_drag(x, y) {
+            AppContext::set_cursor_shape(CursorShape::Text);
+            return After::Next;
+        }
+
+        // The Photos size slider follows the pointer wherever it goes
+        // while its knob is held, the way a divider does.
+        if self.photos_slider_drag(x) {
+            return After::Next;
+        }
+
         // A rubber band owns the gesture while it is out: no
         // scrollbar, hover or resize affordance should answer
         // a pointer that is busy drawing a selection.
@@ -585,6 +605,7 @@ impl Browser {
         }
 
         AppContext::set_cursor_shape(self.hover_shape(x, y));
+        self.track_photo_hover(x, y);
 
         // A scrollbar drag follows the pointer wherever it
         // goes, so the dragged pane is asked first and the
@@ -630,6 +651,8 @@ impl Browser {
         // The band goes away with the button that drew it; what
         // it caught stays selected.
         self.dirty |= self.marquee.take().is_some();
+        self.photos_slider_release();
+        self.panel_text_release();
         self.release_entry();
         self.column_resize = None;
         self.miller_resize = None;
@@ -697,6 +720,8 @@ impl Browser {
         self.controls.on_leave();
         // Same for a held arrow: the release will never come.
         self.nav_pressed = None;
+        self.photo_hover = None;
+        self.photo_swatch_hover = None;
         self.dirty = true;
     }
 
@@ -744,6 +769,18 @@ impl Browser {
         if self.controls.on_press(control) {
             self.dirty = true;
             return After::Stop;
+        }
+
+        // Text in an info panel is for selecting. A press anywhere else
+        // lets go of what was selected there, and carries on.
+        if self.panel_text_press(x, y) {
+            return After::Stop;
+        }
+
+        // The Photos view's slider and grouping button sit in the header
+        // band, so they are asked before it is taken for a window move.
+        if let Some(after) = self.photos_controls_press(x, y, serial) {
+            return after;
         }
 
         // Dragging the header moves the window, in every view. The
@@ -803,7 +840,7 @@ impl Browser {
             self.open_index_settings();
         } else if !self.trash && view::switcher_at(x, y, width).is_some() {
             if let Some(mode) = view::switcher_at(x, y, width) {
-                self.set_mode(mode);
+                self.choose_mode(mode);
             }
         } else if let Some(index) = view::place_at(x, y, self.places.len()) {
             // Picking a place is leaving whatever synthetic
@@ -818,13 +855,10 @@ impl Browser {
                 let path = self.places[index].path.clone();
                 self.leave_synthetic_to(&path);
             }
-        } else if self.mode == ViewMode::Grid {
+        } else if matches!(self.mode, ViewMode::Grid | ViewMode::Photos) {
             let depth = self.columns.len() - 1;
-            let count = self.visible(depth).len();
-            let scroll = self.columns[depth].scroll.offset();
-            let area = view::content_viewport(width, height, ViewMode::Grid);
-            let sections = self.recent_sections.clone();
-            if let Some(index) = view::grid_cell_at_in(area, &sections, x, y, count, scroll) {
+            let area = view::content_viewport(width, height, self.mode);
+            if let Some((_, index)) = self.entry_at(x, y) {
                 if ctrl {
                     self.note_ctrl_row_click(depth, index);
                 } else if shift {

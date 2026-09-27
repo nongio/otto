@@ -22,10 +22,12 @@ impl Browser {
             loading: column.awaiting_first_listing(),
             error: None,
         };
-        view::peek_anchor(
+        view::peek_anchor_in(
             self.size.0,
             self.content_h(),
             self.mode,
+            &self.recent_sections,
+            &self.photos,
             &pane,
             depth,
             self.pan.offset(),

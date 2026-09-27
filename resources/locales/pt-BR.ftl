@@ -1739,3 +1739,59 @@ a11y-preview = Pré-visualização
 a11y-preview-page = Pré-visualização, página { $page } de { $pages }
 a11y-preview-pages = Pré-visualização, { $pages } páginas
 a11y-preview-shortened = Pré-visualização, abreviada
+
+## The Photos view
+
+files-view-photos = Fotos
+files-photos-day = { $weekday }, { $day } de { $month }
+files-photos-day-year = { $weekday }, { $day } de { $month } de { $year }
+files-photos-undated = Sem data
+files-photos-other = Outros arquivos
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] 1 imagem
+       *[other] { $count } imagens
+    }
+files-photos-folders =
+    { $count ->
+        [one] 1 pasta
+       *[other] { $count } pastas
+    }
+
+files-weekday-sun = Domingo
+files-weekday-mon = Segunda-feira
+files-weekday-tue = Terça-feira
+files-weekday-wed = Quarta-feira
+files-weekday-thu = Quinta-feira
+files-weekday-fri = Sexta-feira
+files-weekday-sat = Sábado
+
+files-month-long-jan = janeiro
+files-month-long-feb = fevereiro
+files-month-long-mar = março
+files-month-long-apr = abril
+files-month-long-may = maio
+files-month-long-jun = junho
+files-month-long-jul = julho
+files-month-long-aug = agosto
+files-month-long-sep = setembro
+files-month-long-oct = outubro
+files-month-long-nov = novembro
+files-month-long-dec = dezembro
+files-photos-month = { $month } de { $year }
+files-photos-folders-title = Pastas
+files-photos-group-day = Agrupar por dia
+files-photos-group-month = Agrupar por mês
+files-photos-group-none = Sem agrupamento
+files-photos-info-kind = Imagem { $format }
+files-photos-info-copied = Copiado
+files-photos-info-dimensions = Dimensões
+files-photos-info-modified = Modificado
+files-photos-info-where = Local
+files-photos-info-many =
+    { $count ->
+        [one] 1 item
+       *[other] { $count } itens
+    }
+files-photos-one-selected = 1 selecionado · Espaço para visualizar · ↵ para abrir

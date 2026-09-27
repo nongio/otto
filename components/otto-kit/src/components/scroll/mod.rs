@@ -22,7 +22,9 @@ mod state;
 pub use backing::ScrollSurfaces;
 pub use band::{Band, BandView};
 pub use fill::Fill;
-pub use layout::{GridLayout, GridSection, RowLayout};
+pub use layout::{
+    Direction, GridLayout, GridSection, JustifiedLayout, JustifiedSection, RowLayout, SectionItems,
+};
 pub use pane::{AxisEvent, ScrollContent, ScrollGroup, ScrollPane};
 pub use placed::{Paint, PlacedSurface};
 pub use renderer::ScrollRenderer;

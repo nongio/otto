@@ -176,6 +176,28 @@ impl App for FilesApp {
                     shown,
                 )
             }
+            ViewMode::Photos => {
+                let tiles = browser.photos.area(browser.size.0, browser.content_h());
+                let photos = &browser.photos;
+                let shown = photos.visible_range(tiles, scroll, tiles);
+                let shown = shown.start.min(count)..shown.end.min(count);
+                // Only the rects the tree asks for, rather than the whole
+                // layout moved into the closure.
+                let rects: Vec<(usize, Rect)> = shown
+                    .clone()
+                    .chain(cursor)
+                    .map(|index| (index, photos.tile_rect(tiles, index, scroll)))
+                    .collect();
+                (
+                    Box::new(move |index| {
+                        rects
+                            .iter()
+                            .find(|(i, _)| *i == index)
+                            .map_or_else(Rect::new_empty, |(_, rect)| *rect)
+                    }),
+                    shown,
+                )
+            }
         };
         // The keyboard's row is described wherever it is: it is what the focus
         // names, and a focus pointing at an undescribed node reads as nothing.
@@ -321,6 +343,8 @@ impl App for FilesApp {
             scroll_area,
             thumb_jobs,
             ocr_job,
+            dims_jobs,
+            folder_jobs,
         ) = {
             let mut browser = self.state.lock().unwrap();
             let changed = browser.poll();
@@ -339,7 +363,8 @@ impl App for FilesApp {
                 | browser.peek_animating()
                 | browser.tick_peek_animation()
                 | browser.tick_peek_exit()
-                | browser.tick_open_pulse();
+                | browser.tick_open_pulse()
+                | browser.tick_photos_copied();
             // The docked preview column follows the selection wherever it
             // moves — a click, an arrow key, a directory finishing a load
             // that changes what "the selection" resolves to — so this is
@@ -352,6 +377,9 @@ impl App for FilesApp {
             // switch of view mode — has already happened by the time this
             // runs.
             let thumb_jobs = browser.sync_thumbnails();
+            // And the Photos view's picture sizes, a batch at a time.
+            let dims_jobs = browser.sync_photo_dims();
+            let folder_jobs = browser.sync_folder_previews();
             // And, with nothing else to do, a picture whose text is not yet
             // known to Find.
             let ocr_job = browser.sync_recognition();
@@ -378,6 +406,8 @@ impl App for FilesApp {
                 scroll_area,
                 thumb_jobs,
                 ocr_job,
+                dims_jobs,
+                folder_jobs,
             )
         };
         if let Some(job) = ocr_job {
@@ -388,6 +418,12 @@ impl App for FilesApp {
         }
         for job in thumb_jobs {
             self.start_thumbnail(job);
+        }
+        if !dims_jobs.is_empty() {
+            self.start_photo_dims(dims_jobs);
+        }
+        if !folder_jobs.is_empty() {
+            self.start_folder_previews(folder_jobs);
         }
 
         // One lock, taken once. A `self.state.lock()` in an `if` condition
@@ -454,13 +490,16 @@ impl App for FilesApp {
         self.render();
     }
 
-    /// A two-finger pinch zooms the open preview's picture.
-    ///
-    /// Only the preview: the browser's own views have no zoom, and a pinch
-    /// with no panel up is left alone rather than repurposed into something
-    /// the gesture does not mean anywhere else.
+    /// A two-finger pinch zooms the open preview's picture, or, with no
+    /// preview up, sizes the Photos view's pictures or the icon view's icons
+    /// the way their slider does. The other views have no zoom, and a pinch
+    /// there is left alone rather than repurposed into something the gesture
+    /// does not mean.
     fn on_pointer_pinch_begin(&mut self, _ctx: &AppContext, fingers: u32) {
         let mut browser = self.state.lock().unwrap();
+        browser.zoom_pinch = (fingers == 2 && browser.peek.is_none())
+            .then(|| browser.zoom_range().map(|_| browser.zoom_value()))
+            .flatten();
         // Where this gesture's scale is measured from. Taken at the start
         // because the protocol reports scale against the start.
         browser.peek_pinch = (fingers == 2)
@@ -477,6 +516,15 @@ impl App for FilesApp {
         _rotation: f64,
     ) {
         let mut browser = self.state.lock().unwrap();
+        if let Some(base) = browser.zoom_pinch {
+            browser.set_zoom(base * scale as f32);
+            let moved = browser.dirty;
+            drop(browser);
+            if moved {
+                self.render();
+            }
+            return;
+        }
         let Some(base) = browser.peek_pinch else {
             return;
         };
@@ -490,7 +538,11 @@ impl App for FilesApp {
     fn on_pointer_pinch_end(&mut self, _ctx: &AppContext, _cancelled: bool) {
         // Nothing to settle: every update already left the zoom clamped and
         // snapped, so the fingers lifting only ends the gesture.
-        self.state.lock().unwrap().peek_pinch = None;
+        let mut browser = self.state.lock().unwrap();
+        browser.peek_pinch = None;
+        if browser.zoom_pinch.take().is_some() {
+            browser.finish_zoom_pinch();
+        }
     }
 
     /// While something is gliding the app needs a steady clock, not just the
@@ -705,7 +757,16 @@ impl FilesApp {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => view::grid_rename_rect(width, height, scroll, index),
+                    ViewMode::Grid => view::grid_rename_rect(
+                        width,
+                        height,
+                        &browser.recent_sections,
+                        scroll,
+                        index,
+                    ),
+                    ViewMode::Photos => {
+                        view::photos_rename_rect(width, height, &browser.photos, scroll, index)
+                    }
                 };
                 let session = browser.rename.as_mut().unwrap();
                 session.input.set_size(rect.width(), rect.height());
@@ -806,7 +867,11 @@ impl FilesApp {
         self.install_palette_pointer();
         self.install_info_window_pointer();
         self.install_open_with_window_pointer();
-        self.install_pointer(&window, self.context_menu.clone().unwrap());
+        // Built here rather than on first use, for the reason the context
+        // menu is: see `DropdownMenu`'s docs.
+        let group_menu = Rc::new(otto_kit::components::dropdown::DropdownMenu::new());
+        self.group_menu = Some(Rc::clone(&group_menu));
+        self.install_pointer(&window, self.context_menu.clone().unwrap(), group_menu);
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
         self.window = Some(window);

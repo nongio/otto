@@ -12,7 +12,7 @@ impl Browser {
             return 1;
         }
         let area = view::content_viewport(self.size.0, self.content_h(), ViewMode::Grid);
-        view::grid_columns(area) as i32
+        view::grid_columns_in(area, &self.recent_sections) as i32
     }
 
     /// Move the cursor within the active column. With `extend`, the selection
@@ -30,6 +30,12 @@ impl Browser {
             None if delta >= 0 => 0,
             None => count - 1,
         };
+        self.move_cursor_to(next, extend);
+    }
+
+    /// Put the cursor on `next`, selecting it, or extending the selection to
+    /// it with `extend`, and scroll it into view.
+    pub(super) fn move_cursor_to(&mut self, next: usize, extend: bool) {
         if extend {
             self.extend_select(self.active, next);
         } else {
@@ -122,8 +128,14 @@ impl Browser {
         if viewport.is_empty() {
             return;
         }
-        let (top, item_h) =
-            view::item_span_in(width, height, self.mode, &self.recent_sections, index);
+        let (top, item_h) = view::item_span_in(
+            width,
+            height,
+            self.mode,
+            &self.recent_sections,
+            &self.photos,
+            index,
+        );
 
         let scroll = &mut self.columns[depth].scroll;
         let offset = scroll.offset();

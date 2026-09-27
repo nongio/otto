@@ -89,7 +89,7 @@ impl Browser {
     /// what makes a band that catches nothing — a plain click — mean nothing
     /// selected.
     pub(super) fn begin_marquee(&mut self, depth: usize, x: f32, y: f32, additive: bool) {
-        if self.mode != ViewMode::Grid || depth >= self.columns.len() {
+        if !matches!(self.mode, ViewMode::Grid | ViewMode::Photos) || depth >= self.columns.len() {
             return;
         }
         let scroll = self.columns[depth].scroll.offset();
@@ -132,14 +132,19 @@ impl Browser {
         // The band is in content coordinates, so the hit test is asked about
         // the unscrolled grid: `grid_cell_rect(area, i, 0.0)` is where cell `i`
         // sits in that same space.
-        let area = view::content_viewport(self.size.0, self.size.1, ViewMode::Grid);
+        let area = view::content_viewport(self.size.0, self.size.1, self.mode);
         let keys: Vec<String> = self
             .visible(depth)
             .iter()
             .map(|e| e.selection_key())
             .collect();
-        let caught =
-            view::grid_cells_in_rect_in(area, &self.recent_sections, keys.len(), 0.0, band);
+        let caught = if self.mode == ViewMode::Photos {
+            let mut caught = self.photos.tiles_in_rect(area, 0.0, band);
+            caught.retain(|&index| index < keys.len());
+            caught
+        } else {
+            view::grid_cells_in_rect_in(area, &self.recent_sections, keys.len(), 0.0, band)
+        };
 
         let last = caught.last().copied();
         for index in caught {

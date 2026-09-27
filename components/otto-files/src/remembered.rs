@@ -11,6 +11,20 @@
 //! # How far the command palette was last dragged from where it opens, in
 //! # window points.
 //! offset = [-320.0, 210.0]
+//!
+//! [photos]
+//! # The Photos view's row height and how it groups its pictures.
+//! row_height = 190.0
+//! group = "day"
+//!
+//! [icons]
+//! # The icon view's icon size.
+//! size = 64.0
+//!
+//! # The view chosen for each folder, least recently chosen first.
+//! [[views]]
+//! path = "/home/me/Pictures"
+//! view = "photos"
 //! ```
 
 use std::path::PathBuf;
@@ -21,6 +35,38 @@ use serde::{Deserialize, Serialize};
 pub struct Remembered {
     #[serde(default)]
     pub palette: Palette,
+    #[serde(default)]
+    pub photos: Photos,
+    #[serde(default)]
+    pub icons: Icons,
+    /// The view chosen for each folder, least recently chosen first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<FolderView>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Icons {
+    /// The icon view's icon size, in points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+}
+
+/// One folder's chosen view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FolderView {
+    pub path: String,
+    /// `list`, `grid`, `columns` or `photos`.
+    pub view: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Photos {
+    /// The row height the size slider was left at, in points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_height: Option<f32>,
+    /// How the pictures were grouped: `day`, `month` or `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -113,6 +159,15 @@ mod tests {
             palette: Palette {
                 offset: Some((-320.0, 210.5)),
             },
+            photos: Photos {
+                row_height: Some(240.0),
+                group: Some("month".into()),
+            },
+            icons: Icons { size: Some(96.0) },
+            views: vec![FolderView {
+                path: "/home/me/Pictures".into(),
+                view: "photos".into(),
+            }],
         };
         let text = toml::to_string(&remembered).unwrap();
         assert!(text.contains("offset"));
@@ -122,6 +177,15 @@ mod tests {
         let empty = toml::to_string(&Remembered::default()).unwrap();
         let back: Remembered = toml::from_str(&empty).unwrap();
         assert_eq!(back.palette.offset, None);
+    }
+
+    /// The info panel used to be a toggle remembered as `info`; it follows
+    /// the selection now, and a file that still says so reads as before.
+    #[test]
+    fn an_old_info_key_is_ignored() {
+        let back: Remembered =
+            toml::from_str("[photos]\nrow_height = 240.0\ninfo = true\n").unwrap();
+        assert_eq!(back.photos.row_height, Some(240.0));
     }
 
     #[test]

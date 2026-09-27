@@ -1783,3 +1783,80 @@ a11y-preview = Podgląd
 a11y-preview-page = Podgląd, strona { $page } z { $pages }
 a11y-preview-pages = Podgląd, { $pages } stron
 a11y-preview-shortened = Podgląd, skrócony
+
+## The Photos view
+
+files-view-photos = Zdjęcia
+files-photos-day = { $weekday }, { $day } { $month }
+files-photos-day-year = { $weekday }, { $day } { $month } { $year }
+files-photos-undated = Bez daty
+files-photos-other = Inne pliki
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] 1 obraz
+        [few] { $count } obrazy
+        [many] { $count } obrazów
+       *[other] { $count } obrazu
+    }
+files-photos-folders =
+    { $count ->
+        [one] 1 folder
+        [few] { $count } foldery
+        [many] { $count } folderów
+       *[other] { $count } folderu
+    }
+
+files-weekday-sun = Niedziela
+files-weekday-mon = Poniedziałek
+files-weekday-tue = Wtorek
+files-weekday-wed = Środa
+files-weekday-thu = Czwartek
+files-weekday-fri = Piątek
+files-weekday-sat = Sobota
+
+files-month-long-jan = stycznia
+files-month-long-feb = lutego
+files-month-long-mar = marca
+files-month-long-apr = kwietnia
+files-month-long-may = maja
+files-month-long-jun = czerwca
+files-month-long-jul = lipca
+files-month-long-aug = sierpnia
+files-month-long-sep = września
+files-month-long-oct = października
+files-month-long-nov = listopada
+files-month-long-dec = grudnia
+files-photos-month =
+    { $number ->
+        [1] Styczeń { $year }
+        [2] Luty { $year }
+        [3] Marzec { $year }
+        [4] Kwiecień { $year }
+        [5] Maj { $year }
+        [6] Czerwiec { $year }
+        [7] Lipiec { $year }
+        [8] Sierpień { $year }
+        [9] Wrzesień { $year }
+        [10] Październik { $year }
+        [11] Listopad { $year }
+        [12] Grudzień { $year }
+       *[other] { $month } { $year }
+    }
+files-photos-folders-title = Foldery
+files-photos-group-day = Według dnia
+files-photos-group-month = Według miesiąca
+files-photos-group-none = Bez grupowania
+files-photos-info-kind = Obraz { $format }
+files-photos-info-copied = Skopiowano
+files-photos-info-dimensions = Wymiary
+files-photos-info-modified = Zmodyfikowano
+files-photos-info-where = Miejsce
+files-photos-info-many =
+    { $count ->
+        [one] 1 element
+        [few] { $count } elementy
+        [many] { $count } elementów
+       *[other] { $count } elementu
+    }
+files-photos-one-selected = 1 zaznaczony · Spacja – podgląd · ↵ – otwórz

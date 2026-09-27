@@ -567,6 +567,7 @@ files-command-arg-pattern = pattern
 files-view-list = List
 files-view-grid = Grid
 files-view-columns = Columns
+files-view-photos = Photos
 # Refused when a name could not belong to a file — empty, or with a slash in it.
 files-name-invalid = That isn’t a name a file can have
 files-no-pattern = Type a pattern, such as *.png
@@ -850,6 +851,79 @@ files-month-sep = Sep
 files-month-oct = Oct
 files-month-nov = Nov
 files-month-dec = Dec
+
+## The Photos view: a heading over each day's pictures, and a last section
+## for everything that is not a picture.
+##
+## $weekday is one of the weekday names below, $day the day of the month,
+## $month one of the full month names below, $year the four-digit year. The
+## year is only shown for a day outside the current year.
+
+files-photos-day = { $weekday }, { $day } { $month }
+files-photos-day-year = { $weekday }, { $day } { $month } { $year }
+# Heading over pictures whose date could not be read.
+files-photos-undated = No Date
+files-photos-other = Other Files
+# Heading over a month's pictures when they are grouped by month, e.g.
+# "September 2026". $month is one of the full month names below; $number is
+# the month's number, 1 to 12, for a language whose standalone month names
+# differ from the ones used in a date.
+files-photos-month = { $month } { $year }
+# Heading over the folder cards at the top of the Photos view.
+files-photos-folders-title = Folders
+# The Photos view's grouping button and its menu.
+files-photos-group-day = Group by Day
+files-photos-group-month = Group by Month
+files-photos-group-none = No Grouping
+# The Photos view's info panel. $format is the picture's format in capitals,
+# from its extension: "JPEG", "PNG".
+files-photos-info-kind = { $format } image
+# Shown for a moment under a colour swatch that was clicked.
+files-photos-info-copied = Copied
+files-photos-info-dimensions = Dimensions
+files-photos-info-modified = Modified
+files-photos-info-where = Where
+files-photos-info-many =
+    { $count ->
+        [one] 1 item
+       *[other] { $count } items
+    }
+# The path bar's note with one picture selected in the Photos view.
+files-photos-one-selected = 1 selected · Space to preview · ↵ to open
+# The Photos view's header line, e.g. "36 images, 2 folders". $images and
+# $folders are already-formatted counts from the two messages below it.
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] 1 image
+       *[other] { $count } images
+    }
+files-photos-folders =
+    { $count ->
+        [one] 1 folder
+       *[other] { $count } folders
+    }
+
+files-weekday-sun = Sunday
+files-weekday-mon = Monday
+files-weekday-tue = Tuesday
+files-weekday-wed = Wednesday
+files-weekday-thu = Thursday
+files-weekday-fri = Friday
+files-weekday-sat = Saturday
+
+files-month-long-jan = January
+files-month-long-feb = February
+files-month-long-mar = March
+files-month-long-apr = April
+files-month-long-may = May
+files-month-long-jun = June
+files-month-long-jul = July
+files-month-long-aug = August
+files-month-long-sep = September
+files-month-long-oct = October
+files-month-long-nov = November
+files-month-long-dec = December
 
 
 ## Bar

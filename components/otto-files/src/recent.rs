@@ -58,7 +58,7 @@ impl Bucket {
 }
 
 /// Seconds since the Unix epoch, or `None` for a time before it.
-fn epoch_secs(t: SystemTime) -> Option<i64> {
+pub(crate) fn epoch_secs(t: SystemTime) -> Option<i64> {
     t.duration_since(SystemTime::UNIX_EPOCH)
         .ok()
         .map(|d| d.as_secs() as i64)
@@ -80,7 +80,7 @@ fn local_midnight(secs: i64) -> i64 {
 }
 
 /// The UTC offset in seconds in force locally at `secs`.
-fn local_utc_offset(secs: i64) -> i64 {
+pub(crate) fn local_utc_offset(secs: i64) -> i64 {
     // SAFETY: `tm` is fully written by `localtime_r` before it is read, and
     // the reentrant form is used so this is safe off the main thread.
     unsafe {

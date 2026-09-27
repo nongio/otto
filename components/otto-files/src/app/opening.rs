@@ -275,12 +275,13 @@ impl Browser {
                         self.reveal_pane(self.active);
                     }
                 }
-                ViewMode::List | ViewMode::Grid => {
+                ViewMode::List | ViewMode::Grid | ViewMode::Photos => {
                     // These show one directory, so descending replaces it.
                     self.record_location();
                     self.columns.truncate(depth + 1);
                     self.columns.push(Column::new(entry.path.clone()));
                     self.active = self.columns.len() - 1;
+                    self.apply_folder_view(&entry.path);
                 }
             }
             self.dirty = true;

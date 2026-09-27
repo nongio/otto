@@ -1740,3 +1740,59 @@ a11y-preview = Aperçu
 a11y-preview-page = Aperçu, page { $page } sur { $pages }
 a11y-preview-pages = Aperçu, { $pages } pages
 a11y-preview-shortened = Aperçu, abrégé
+
+## The Photos view
+
+files-view-photos = Photos
+files-photos-day = { $weekday } { $day } { $month }
+files-photos-day-year = { $weekday } { $day } { $month } { $year }
+files-photos-undated = Sans date
+files-photos-other = Autres fichiers
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] 1 image
+       *[other] { $count } images
+    }
+files-photos-folders =
+    { $count ->
+        [one] 1 dossier
+       *[other] { $count } dossiers
+    }
+
+files-weekday-sun = Dimanche
+files-weekday-mon = Lundi
+files-weekday-tue = Mardi
+files-weekday-wed = Mercredi
+files-weekday-thu = Jeudi
+files-weekday-fri = Vendredi
+files-weekday-sat = Samedi
+
+files-month-long-jan = janvier
+files-month-long-feb = février
+files-month-long-mar = mars
+files-month-long-apr = avril
+files-month-long-may = mai
+files-month-long-jun = juin
+files-month-long-jul = juillet
+files-month-long-aug = août
+files-month-long-sep = septembre
+files-month-long-oct = octobre
+files-month-long-nov = novembre
+files-month-long-dec = décembre
+files-photos-month = { $month } { $year }
+files-photos-folders-title = Dossiers
+files-photos-group-day = Grouper par jour
+files-photos-group-month = Grouper par mois
+files-photos-group-none = Sans regroupement
+files-photos-info-kind = Image { $format }
+files-photos-info-copied = Copié
+files-photos-info-dimensions = Dimensions
+files-photos-info-modified = Modifié
+files-photos-info-where = Emplacement
+files-photos-info-many =
+    { $count ->
+        [one] 1 élément
+       *[other] { $count } éléments
+    }
+files-photos-one-selected = 1 sélectionné · Espace pour l’aperçu · ↵ pour ouvrir

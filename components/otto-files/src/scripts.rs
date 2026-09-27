@@ -764,7 +764,16 @@ impl ScriptProvider {
     /// its own thread, so the window's start is not held up by a slow script
     /// and Ctrl+P finds whatever has answered by then.
     pub fn new() -> Self {
-        Self::over(scripts_dir(), otto_kit::i18n::current_locale())
+        // A unit test builds a browser per case, and discovering the user's
+        // own directory there runs every script in it per case: hundreds of
+        // interpreters at once, which starve the tests that time scripts
+        // against a deadline, and a suite whose outcome depends on what this
+        // machine has installed. Tests name their scripts explicitly.
+        #[cfg(test)]
+        let dir = None;
+        #[cfg(not(test))]
+        let dir = scripts_dir();
+        Self::over(dir, otto_kit::i18n::current_locale())
     }
 
     fn over(dir: Option<PathBuf>, locale: String) -> Self {

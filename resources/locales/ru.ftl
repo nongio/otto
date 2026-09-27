@@ -1776,3 +1776,80 @@ a11y-preview = Просмотр
 a11y-preview-page = Просмотр, страница { $page } из { $pages }
 a11y-preview-pages = Просмотр, { $pages } страниц
 a11y-preview-shortened = Просмотр, сокращённый
+
+## The Photos view
+
+files-view-photos = Фото
+files-photos-day = { $weekday }, { $day } { $month }
+files-photos-day-year = { $weekday }, { $day } { $month } { $year }
+files-photos-undated = Без даты
+files-photos-other = Другие файлы
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] { $count } изображение
+        [few] { $count } изображения
+        [many] { $count } изображений
+       *[other] { $count } изображения
+    }
+files-photos-folders =
+    { $count ->
+        [one] { $count } папка
+        [few] { $count } папки
+        [many] { $count } папок
+       *[other] { $count } папки
+    }
+
+files-weekday-sun = Воскресенье
+files-weekday-mon = Понедельник
+files-weekday-tue = Вторник
+files-weekday-wed = Среда
+files-weekday-thu = Четверг
+files-weekday-fri = Пятница
+files-weekday-sat = Суббота
+
+files-month-long-jan = января
+files-month-long-feb = февраля
+files-month-long-mar = марта
+files-month-long-apr = апреля
+files-month-long-may = мая
+files-month-long-jun = июня
+files-month-long-jul = июля
+files-month-long-aug = августа
+files-month-long-sep = сентября
+files-month-long-oct = октября
+files-month-long-nov = ноября
+files-month-long-dec = декабря
+files-photos-month =
+    { $number ->
+        [1] Январь { $year }
+        [2] Февраль { $year }
+        [3] Март { $year }
+        [4] Апрель { $year }
+        [5] Май { $year }
+        [6] Июнь { $year }
+        [7] Июль { $year }
+        [8] Август { $year }
+        [9] Сентябрь { $year }
+        [10] Октябрь { $year }
+        [11] Ноябрь { $year }
+        [12] Декабрь { $year }
+       *[other] { $month } { $year }
+    }
+files-photos-folders-title = Папки
+files-photos-group-day = По дням
+files-photos-group-month = По месяцам
+files-photos-group-none = Без группировки
+files-photos-info-kind = Изображение { $format }
+files-photos-info-copied = Скопировано
+files-photos-info-dimensions = Размеры
+files-photos-info-modified = Изменён
+files-photos-info-where = Где
+files-photos-info-many =
+    { $count ->
+        [one] { $count } объект
+        [few] { $count } объекта
+        [many] { $count } объектов
+       *[other] { $count } объекта
+    }
+files-photos-one-selected = 1 выбран · Пробел — просмотр · ↵ — открыть

@@ -565,6 +565,12 @@ impl Browser {
     pub fn remember(&mut self, remembered: &remembered::Remembered) {
         self.palette_memory = remembered.palette.offset;
         self.palette_memory_on_disk = true;
+        self.remember_photos_from(remembered);
+        self.remember_folder_views_from(remembered);
+        // The folder the window opened at is gone to like any other.
+        if let Some(start) = self.columns.first().map(|c| c.path.clone()) {
+            self.apply_folder_view(&start);
+        }
     }
 
     /// How far the palette may be dragged, in window points: the display when
@@ -876,15 +882,15 @@ impl Browser {
             id::UNDO => self.undo_last(),
             // The three views by name share their ids with the values Change
             // View takes, so one arm answers for both.
-            id::VIEW_LIST | id::VIEW_GRID | id::VIEW_COLUMNS => {
+            id::VIEW_LIST | id::VIEW_GRID | id::VIEW_COLUMNS | id::VIEW_PHOTOS => {
                 let mode = view_from_id(&request.id)
                     .ok_or_else(|| otto_kit::t_owned!("files-palette-no-matches"))?;
-                self.set_mode(mode);
+                self.choose_mode(mode);
             }
             id::CHANGE_VIEW => {
                 let mode = view_from_id(arg)
                     .ok_or_else(|| otto_kit::t_owned!("files-palette-no-matches"))?;
-                self.set_mode(mode);
+                self.choose_mode(mode);
             }
             id::SORT_BY => {
                 let key = sort_from_id(arg)

@@ -1771,3 +1771,80 @@ a11y-preview = Перегляд
 a11y-preview-page = Перегляд, сторінка { $page } з { $pages }
 a11y-preview-pages = Перегляд, { $pages } сторінок
 a11y-preview-shortened = Перегляд, скорочений
+
+## The Photos view
+
+files-view-photos = Фото
+files-photos-day = { $weekday }, { $day } { $month }
+files-photos-day-year = { $weekday }, { $day } { $month } { $year }
+files-photos-undated = Без дати
+files-photos-other = Інші файли
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] { $count } зображення
+        [few] { $count } зображення
+        [many] { $count } зображень
+       *[other] { $count } зображення
+    }
+files-photos-folders =
+    { $count ->
+        [one] { $count } тека
+        [few] { $count } теки
+        [many] { $count } тек
+       *[other] { $count } теки
+    }
+
+files-weekday-sun = Неділя
+files-weekday-mon = Понеділок
+files-weekday-tue = Вівторок
+files-weekday-wed = Середа
+files-weekday-thu = Четвер
+files-weekday-fri = Пʼятниця
+files-weekday-sat = Субота
+
+files-month-long-jan = січня
+files-month-long-feb = лютого
+files-month-long-mar = березня
+files-month-long-apr = квітня
+files-month-long-may = травня
+files-month-long-jun = червня
+files-month-long-jul = липня
+files-month-long-aug = серпня
+files-month-long-sep = вересня
+files-month-long-oct = жовтня
+files-month-long-nov = листопада
+files-month-long-dec = грудня
+files-photos-month =
+    { $number ->
+        [1] Січень { $year }
+        [2] Лютий { $year }
+        [3] Березень { $year }
+        [4] Квітень { $year }
+        [5] Травень { $year }
+        [6] Червень { $year }
+        [7] Липень { $year }
+        [8] Серпень { $year }
+        [9] Вересень { $year }
+        [10] Жовтень { $year }
+        [11] Листопад { $year }
+        [12] Грудень { $year }
+       *[other] { $month } { $year }
+    }
+files-photos-folders-title = Теки
+files-photos-group-day = За днями
+files-photos-group-month = За місяцями
+files-photos-group-none = Без групування
+files-photos-info-kind = Зображення { $format }
+files-photos-info-copied = Скопійовано
+files-photos-info-dimensions = Розміри
+files-photos-info-modified = Змінено
+files-photos-info-where = Де
+files-photos-info-many =
+    { $count ->
+        [one] { $count } об’єкт
+        [few] { $count } об’єкти
+        [many] { $count } об’єктів
+       *[other] { $count } об’єкта
+    }
+files-photos-one-selected = 1 вибрано · Пробіл — перегляд · ↵ — відкрити

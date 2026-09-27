@@ -401,6 +401,18 @@ impl Column {
     }
 }
 
+/// What a column's cached order was computed from: the column epoch, the
+/// sort key and direction, whether hidden files show, the picker's filter,
+/// and the Photos view's grouping when the order is that view's.
+pub type SortCacheKey = (
+    u64,
+    SortKey,
+    bool,
+    bool,
+    usize,
+    Option<crate::photos::Grouping>,
+);
+
 /// The filtered, sorted order of a column's listing, remembered between
 /// frames.
 ///
@@ -418,7 +430,9 @@ impl Column {
 /// [`Column::snapshot`], which is what `epoch` guards.
 #[derive(Default)]
 pub struct SortCache {
-    pub key: Option<(u64, SortKey, bool, bool, usize)>,
+    /// The column epoch, sort key, direction, hidden files shown, picker
+    /// filter, and the Photos view's grouping when the order is that view's.
+    pub key: Option<SortCacheKey>,
     pub order: Vec<usize>,
 }
 
@@ -927,7 +941,7 @@ pub fn format_time(time: SystemTime) -> String {
 
 /// Days since the Unix epoch to a civil date. Howard Hinnant's algorithm —
 /// exact, branch-light, and shorter than taking on a date crate.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
