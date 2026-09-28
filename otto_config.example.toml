@@ -512,11 +512,11 @@ colorize_icons = true
 # decoration = "minimal"
 
 [rendering]
-# The GPU api Otto draws with on a tty (the --tty-udev backend): "gl" or
-# "vulkan". Vulkan is in the default build and is experimental: it composites
-# every output into a single plane for now. When Vulkan cannot start on the
-# primary GPU (no loader, no driver for it, or one older than Vulkan 1.3) the
-# session falls back to "gl" and logs why. `otto --tty-udev --renderer vulkan`
-# overrides this for one session. Read at startup; the windowed backends
-# always use GL.
-# renderer = "gl"
+# The GPU api Otto draws with on a tty (the --tty-udev backend): "vulkan" or
+# "gl". Vulkan is the default and composites every output into a single plane
+# for now. When Vulkan cannot start on the primary GPU (no loader, no driver
+# for it, or one older than Vulkan 1.3) the session falls back to "gl" and
+# logs why. A build without the `vulkan` feature defaults to "gl".
+# `otto --tty-udev --renderer gl` overrides this for one session. Read at
+# startup; the windowed backends always use GL.
+# renderer = "vulkan"

@@ -39,6 +39,43 @@ use smithay::{
 
 use crate::skia_renderer::{SkiaRenderer, SkiaTarget};
 
+/// Imports the current buffer of `surface` and of every surface below it.
+///
+/// A synchronized subsurface's commit is cached until its parent commits;
+/// the parent's commit then makes the child's buffer current too, and the
+/// commit handler only runs for the parent. Importing the committed surface
+/// alone leaves such a child (a video player's picture, for one) without a
+/// texture, so it is never drawn. Surfaces already imported are skipped.
+///
+/// # Errors
+///
+/// Returns the last import error; the other surfaces are still imported.
+pub fn import_surface_subtree<R>(
+    renderer: &mut R,
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) -> Result<(), R::Error>
+where
+    R: smithay::backend::renderer::Renderer + smithay::backend::renderer::ImportAll,
+    R::TextureId: 'static,
+{
+    use smithay::wayland::compositor::{with_surface_tree_downward, TraversalAction};
+
+    let mut result = Ok(());
+    with_surface_tree_downward(
+        surface,
+        (),
+        |_, states, _| {
+            if let Err(err) = smithay::backend::renderer::utils::import_surface(renderer, states) {
+                result = Err(err);
+            }
+            TraversalAction::DoChildren(())
+        },
+        |_, _, _| {},
+        |_, _, _| true,
+    );
+    result
+}
+
 /// A renderer whose frames draw into a [`SkiaSurface`].
 ///
 /// Otto's render elements draw through Skia; this hands them the surface of

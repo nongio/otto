@@ -1,6 +1,6 @@
 # Skia on Vulkan: plan
 
-Status: phases 1 and 2 done on 2026-09-25, on the `feat/vulkan-device` branch of the smithay fork and `try/smithay-latest` in Otto. Phase 3 is implemented, passes its GPU tests and ships in the default build: the renderer is selectable at runtime, with OpenGL as the default and as the fallback when Vulkan cannot start (see [Phase 3 status](#phase-3-status)).
+Status: phases 1 and 2 done on 2026-09-25, on the `feat/vulkan-device` branch of the smithay fork and `try/smithay-latest` in Otto. Phase 3 is implemented, passes its GPU tests and ships in the default build: the renderer is selectable at runtime, with Vulkan as the default and OpenGL as the fallback when Vulkan cannot start (see [Phase 3 status](#phase-3-status)).
 
 Otto draws with Skia's Ganesh backend on OpenGL ES through EGL. This plan
 moves the compositor's rendering to Ganesh on Vulkan while keeping Smithay's
@@ -208,11 +208,11 @@ chain on the Framework laptop's Iris Xe with ANV:
 
 The `vulkan` feature is on by default, so a stock build can run the udev
 backend on `SkiaVkRenderer` (`src/renderer/vulkan/`) or on the GL
-`SkiaRenderer`; the choice is made at startup. `otto --tty-udev --renderer
-vulkan` selects Vulkan, and so does `renderer = "vulkan"` under `[rendering]`
-in the config (Settings > Displays > Renderer writes that key); the command
-line wins, and GL is the default. A build without the feature refuses
-`vulkan` with an error naming the feature and exits non-zero.
+`SkiaRenderer`; the choice is made at startup. Vulkan is the default;
+`otto --tty-udev --renderer gl` selects GL, and so does `renderer = "gl"`
+under `[rendering]` in the config (Settings > General > Renderer writes that
+key); the command line wins. A build without the feature defaults to GL and
+refuses an explicit `vulkan` with an error naming the feature.
 
 Before committing to Vulkan, `run_selected` probes the primary GPU
 (`udev::vulkan_api::probe`: a 1.3 instance plus a physical device whose
@@ -271,12 +271,9 @@ Not done:
   untested; phase 4.
 - Modifier intersection for the primary swapchain beyond what Smithay's
   `DrmCompositor` already does with the renderer's colour-attachment formats.
-- Release barriers for sampled client dmabufs: Skia leaves them in its own
-  queue family after sampling; the next import acquires them again.
-- The `wait()` semaphore relies on in-order execution of submissions on one
-  queue, which ANV and RADV give but the spec does not promise.
 - Texture filters and debug flags are stored and ignored, as on GL.
-- Disjoint multi-plane dmabufs (NV12 video) are refused at import.
+- YUV beyond single-object NV12: disjoint planes, P010, and encodings
+  other than the BT.601 (SD) / BT.709 (HD) limited-range guess.
 
 ## Risks
 

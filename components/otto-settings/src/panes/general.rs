@@ -161,7 +161,7 @@ pub fn build() -> Pane {
 fn renderer_row() -> Row {
     let mut row = Row::new(
         otto_kit::t!("settings-renderer"),
-        Control::Select("gl".into()),
+        Control::Select("vulkan".into()),
     )
     .detail(otto_kit::t!("settings-renderer-detail"))
     .id(RENDERER_ID);

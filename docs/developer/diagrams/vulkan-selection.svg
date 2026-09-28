@@ -38,7 +38,7 @@
 
   <rect class="box" x="230" y="132" width="300" height="50" rx="7"/>
   <text class="t"  x="244" y="154">udev::run_selected  —  udev/init.rs</text>
-  <text class="tm" x="244" y="172">asked for Vulkan? probe the primary GPU first</text>
+  <text class="tm" x="244" y="172">Vulkan (the default)? probe the GPU first</text>
 
   <path class="ln" d="M380 182 L380 212"/>
 
@@ -61,5 +61,5 @@
   <text class="tb" x="454" y="334">run_udev::&lt;GlApi&gt;</text>
   <text class="tm" x="454" y="354">GbmGlesBackend → SkiaRenderer</text>
   <text class="tm" x="454" y="370">Settings shows Vulkan as unavailable</text>
-  <text class="tm" x="454" y="386">the default when nothing asks for Vulkan</text>
+  <text class="tm" x="454" y="386">the default when the config asks for gl</text>
 </svg>
