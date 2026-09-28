@@ -20,7 +20,7 @@ use smithay::{
         renderer::{
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::Kind,
-            utils::{import_surface, RendererSurfaceState},
+            utils::RendererSurfaceState,
             ContextId, ImportDma, ImportMemWl, Renderer,
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
@@ -40,7 +40,7 @@ use smithay::{
     },
     utils::{IsAlive, Scale, Transform},
     wayland::{
-        compositor::{self, with_states},
+        compositor,
         dmabuf::{
             DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
             ImportNotifier,
@@ -194,9 +194,7 @@ impl Backend for WinitData {
         self.full_redraw = 4;
     }
     fn early_import(&mut self, surface: &wl_surface::WlSurface) {
-        with_states(surface, |states| {
-            let _ = import_surface(self.backend.renderer(), states);
-        });
+        let _ = crate::renderer::import_surface_subtree(self.backend.renderer(), surface);
     }
     fn texture_for_surface(
         &self,
