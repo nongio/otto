@@ -132,10 +132,11 @@ and which it can render into (`render_formats`), keeping only fourccs that
 XWayland's depth-24 windows need the opaque one.
 
 NV12 is sample-only. It imports with `SAMPLED` usage alone and is wrapped
-with a `YcbcrConversionInfo`, so Skia converts to RGB as it samples: BT.601,
-limited range, chroma at the midpoint, filtered linearly where the
-modifier's format features allow. Clients have no way to say how their
-YUV is encoded yet, and that is what video decoders produce by default.
+with a `YcbcrConversionInfo`, so Skia converts to RGB as it samples: BT.601
+up to 576 lines and BT.709 above, limited range, chroma at the midpoint,
+filtered linearly where the modifier's format features allow. Clients have
+no way to say how their YUV is encoded yet, so the size decides, as video
+players do for untagged video.
 
 ### Buffers in a frame
 
@@ -273,8 +274,8 @@ requested but unavailable, the probe failed and the session is on GL.
   entries in `format.rs`. NV12 with its planes in separate buffer objects
   (disjoint) is refused by Smithay's device layer, which needs
   `VkBindImagePlaneMemoryInfo`. Single-object NV12, which VAAPI exports,
-  works. The encoding is fixed at BT.601 limited range until clients can
-  describe it.
+  works. The encoding is guessed from the height (BT.601 for SD, BT.709
+  for HD) until clients can describe it.
 - **Texture filters and debug flags** are stored and ignored, as on GL.
 - **Driver coverage.** Tested on Intel (ANV). NVK and the proprietary NVIDIA
   driver still need checking for `SYNC_FD` export and modifier imports.

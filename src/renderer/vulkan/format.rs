@@ -141,13 +141,15 @@ pub(crate) fn skia_format(fourcc: Fourcc) -> Option<SkiaFormat> {
 
 /// The YCbCr conversion Skia samples a YUV image of `fmt` with.
 ///
-/// Clients cannot say how their YUV is encoded yet, so this assumes what
-/// video decoders produce by default: BT.601 in limited range with chroma
+/// Clients cannot say how their YUV is encoded yet, so this goes by the
+/// size, as video players do for untagged video: BT.601 up to standard
+/// definition (576 lines), BT.709 above, both in limited range with chroma
 /// sited between the luma samples. `features` are the format features of
 /// the image's modifier; chroma is filtered linearly where they allow it.
 pub(crate) fn ycbcr_conversion(
     fmt: SkiaFormat,
     features: vk::FormatFeatureFlags,
+    height: i32,
 ) -> Option<skvk::YcbcrConversionInfo> {
     if !fmt.ycbcr {
         return None;
@@ -155,9 +157,14 @@ pub(crate) fn ycbcr_conversion(
     let linear =
         features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER);
     let identity = skvk::ComponentSwizzle::VK_COMPONENT_SWIZZLE_IDENTITY;
+    let model = if height > 576 {
+        skvk::SamplerYcbcrModelConversion::YCBCR_709
+    } else {
+        skvk::SamplerYcbcrModelConversion::YCBCR_601
+    };
     Some(skvk::YcbcrConversionInfo::new_with_format(
         fmt.skia_vk,
-        skvk::SamplerYcbcrModelConversion::YCBCR_601,
+        model,
         skvk::SamplerYcbcrRange::ITU_NARROW,
         skvk::ChromaLocation::MIDPOINT,
         skvk::ChromaLocation::MIDPOINT,

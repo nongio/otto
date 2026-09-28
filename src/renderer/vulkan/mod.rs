@@ -610,7 +610,7 @@ impl SkiaVkRenderer {
                         .drm_format_modifier_tiling_features
                 })
                 .ok_or(SkiaVkError::UnsupportedFormat(code))?;
-            ycbcr_conversion(fmt, features)
+            ycbcr_conversion(fmt, features, size.h)
         } else {
             None
         };

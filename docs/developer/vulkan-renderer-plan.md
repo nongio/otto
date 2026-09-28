@@ -272,8 +272,8 @@ Not done:
 - Modifier intersection for the primary swapchain beyond what Smithay's
   `DrmCompositor` already does with the renderer's colour-attachment formats.
 - Texture filters and debug flags are stored and ignored, as on GL.
-- YUV beyond single-object NV12: disjoint planes, P010, and encodings other
-  than BT.601 limited range.
+- YUV beyond single-object NV12: disjoint planes, P010, and encodings
+  other than the BT.601 (SD) / BT.709 (HD) limited-range guess.
 
 ## Risks
 

@@ -1052,33 +1052,34 @@ fn vulkan_nv12_dmabuf_samples_as_rgb() {
         .expect("open render node");
     let gbm =
         GbmDevice::new(DrmDeviceFd::new(DeviceFd::from(OwnedFd::from(file)))).expect("gbm device");
-    // GBM will not allocate linear NV12 everywhere; a linear R8 buffer 1.5
-    // times as tall holds both planes, one buffer object like a decoder's.
-    let mut allocator = GbmAllocator::new(gbm, GbmBufferFlags::LINEAR);
+    // GBM will not allocate NV12 everywhere; an R8 buffer 1.5 times as tall
+    // holds both planes, one buffer object like a decoder's. 64 rows keep
+    // the chroma plane on a tile boundary for tiled modifiers.
+    let modifier = std::env::var("OTTO_NV12_MODIFIER")
+        .ok()
+        .and_then(|m| u64::from_str_radix(m.trim_start_matches("0x"), 16).ok())
+        .map(Modifier::from)
+        .unwrap_or(Modifier::Linear);
+    eprintln!("modifier {modifier:?}");
+    let mut allocator = GbmAllocator::new(gbm, GbmBufferFlags::empty());
     let buffer = allocator
-        .create_buffer(16, 24, Fourcc::R8, &[Modifier::Linear])
+        .create_buffer(64, 96, Fourcc::R8, &[modifier])
         .expect("gbm R8 buffer");
     let r8 = buffer.export().expect("export dmabuf");
     let stride = r8.strides().next().expect("stride");
-    let offsets = [0, stride * 16];
-    let strides = [stride, stride];
-    let mut builder = Dmabuf::builder(
-        (16, 16),
-        Fourcc::Nv12,
-        Modifier::Linear,
-        DmabufFlags::empty(),
-    );
-    for offset in offsets {
+    let chroma_offset = stride * 64;
+    let mut builder = Dmabuf::builder((64, 64), Fourcc::Nv12, modifier, DmabufFlags::empty());
+    for offset in [0, chroma_offset] {
         let fd = r8.handles().next().expect("plane fd");
         builder.add_plane(fd.try_clone_to_owned().expect("dup fd"), offset, stride);
     }
     let dmabuf = builder.build().expect("NV12 view of the buffer");
 
-    // Y = 81, Cb = 90, Cr = 240 is pure red in BT.601 limited range.
-    let len = (offsets[1] + strides[1] * 8) as usize;
+    // Y = 81, Cb = 90, Cr = 240 is pure red in BT.601 limited range; the
+    // planes are filled whole, so the tiling does not matter.
+    let len = (stride * 96) as usize;
     let fd = dmabuf.handles().next().expect("plane fd").as_raw_fd();
-    // SAFETY: a shared mapping of the buffer's first `len` bytes, which hold
-    // both planes of a linear 16x16 NV12 image; unmapped below.
+    // SAFETY: a shared mapping of the whole buffer; unmapped below.
     unsafe {
         let map = libc::mmap(
             std::ptr::null_mut(),
@@ -1090,15 +1091,10 @@ fn vulkan_nv12_dmabuf_samples_as_rgb() {
         );
         assert_ne!(map, libc::MAP_FAILED, "map the NV12 buffer");
         let bytes = std::slice::from_raw_parts_mut(map.cast::<u8>(), len);
-        for row in 0..16 {
-            let start = (offsets[0] + strides[0] * row) as usize;
-            bytes[start..start + 16].fill(81);
-        }
-        for row in 0..8 {
-            let start = (offsets[1] + strides[1] * row) as usize;
-            for pair in bytes[start..start + 16].chunks_exact_mut(2) {
-                pair.copy_from_slice(&[90, 240]);
-            }
+        let (luma, chroma) = bytes.split_at_mut(chroma_offset as usize);
+        luma.fill(81);
+        for pair in chroma.chunks_exact_mut(2) {
+            pair.copy_from_slice(&[90, 240]);
         }
         libc::munmap(map, len);
     }
@@ -1110,4 +1106,53 @@ fn vulkan_nv12_dmabuf_samples_as_rgb() {
         "red, got {:?}",
         [r, g, b, a]
     );
+
+    // Windows draw their surfaces scaled, with the filter the mapping needs.
+    use layers::skia;
+    let samplings = [
+        ("nearest", skia::SamplingOptions::default()),
+        (
+            "linear",
+            skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::None),
+        ),
+        (
+            "cubic",
+            skia::SamplingOptions::from(skia::CubicResampler::catmull_rom()),
+        ),
+    ];
+    for (name, sampling) in samplings {
+        let target = renderer
+            .create_buffer(Fourcc::Abgr8888, (SIZE, SIZE).into())
+            .expect("offscreen target");
+        let mut surface = target.skia_surface.surface.clone();
+        let canvas = surface.canvas();
+        canvas.clear(skia::Color::TRANSPARENT);
+        canvas.draw_image_rect_with_sampling_options(
+            &texture.image,
+            None,
+            skia::Rect::from_wh(12.0, 12.0),
+            sampling,
+            &skia::Paint::default(),
+        );
+        renderer
+            .submit_target(&target)
+            .expect("submit")
+            .wait()
+            .expect("sync");
+        let mapping = renderer
+            .copy_framebuffer(
+                &target,
+                Rectangle::from_size((SIZE, SIZE).into()),
+                Fourcc::Abgr8888,
+            )
+            .expect("copy framebuffer");
+        let data = renderer.map_texture(&mapping).expect("map").to_vec();
+        let [r, g, b, a] = pixel(&data, 6, 6);
+        eprintln!("{name}: {:?}", [r, g, b, a]);
+        assert!(
+            r > 230 && g < 25 && b < 25 && a == 255,
+            "{name}: red, got {:?}",
+            [r, g, b, a]
+        );
+    }
 }
