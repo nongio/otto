@@ -5503,6 +5503,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-preview"
+version = "1.5.0"
+dependencies = [
+ "otto-files",
+ "otto-kit",
+ "otto-media-kit",
+ "otto-peek",
+ "smithay-client-toolkit 0.19.2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-client",
+]
+
+[[package]]
 name = "otto-rdp"
 version = "1.5.0"
 dependencies = [

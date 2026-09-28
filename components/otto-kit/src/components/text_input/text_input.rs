@@ -10,15 +10,50 @@ use super::style::TextInputStyle;
 pub const CARET_BLINK_PERIOD: f32 = 1.06;
 
 /// Modifier state for a key press, in the terms this widget cares about.
+///
+/// Ctrl or Alt makes the arrows, Backspace and Delete work a word at a time,
+/// as in terminals and on either platform's convention; Logo (Cmd) makes them
+/// reach the start or end of the value.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct KeyMods {
     pub shift: bool,
     pub ctrl: bool,
+    pub alt: bool,
+    pub logo: bool,
 }
 
 impl KeyMods {
     pub fn shift(shift: bool) -> Self {
-        Self { shift, ctrl: false }
+        Self {
+            shift,
+            ..Self::default()
+        }
+    }
+
+    /// A word at a time, as Ctrl+W and Alt+B/F/D mean.
+    pub fn word() -> Self {
+        Self {
+            ctrl: true,
+            ..Self::default()
+        }
+    }
+
+    /// To the start or end of the value, as Ctrl+E/K and Cmd+arrows mean.
+    pub fn line() -> Self {
+        Self {
+            logo: true,
+            ..Self::default()
+        }
+    }
+
+    fn movement(self) -> Movement {
+        if self.logo {
+            Movement::Line
+        } else if self.ctrl || self.alt {
+            Movement::Word
+        } else {
+            Movement::Char
+        }
     }
 }
 
@@ -140,11 +175,7 @@ impl TextInput {
         if !self.state.focused() {
             return TextInputResponse::Ignored;
         }
-        let word = if mods.ctrl {
-            Movement::Word
-        } else {
-            Movement::Char
-        };
+        let word = mods.movement();
         self.blink_elapsed = 0.0;
 
         match key {
@@ -336,8 +367,8 @@ mod tests {
         i.on_key(
             TextInputKey::Right,
             KeyMods {
-                shift: false,
                 ctrl: true,
+                ..KeyMods::default()
             },
         );
         assert_eq!(i.state.caret(), 3);

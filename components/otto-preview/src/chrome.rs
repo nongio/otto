@@ -1,0 +1,278 @@
+//! The window's own chrome: the titlebar with its traffic lights, and the
+//! toolbar under it.
+//!
+//! Geometry and drawing live side by side so a press is always tested against
+//! the rects that were painted. Everything is in logical points with the
+//! window's top-left at the origin.
+
+// Rust guideline compliant 2026-02-21
+
+use otto_kit::common::Renderable;
+use otto_kit::components::titlebar::{DecorationVariant, WindowControl, WindowDecoration};
+use otto_kit::components::toolbar::Toolbar;
+use otto_kit::icons;
+use otto_kit::prelude::*;
+use otto_kit::skia::{BlendMode, Contains, PaintStyle, PathBuilder, Point, RRect};
+use otto_kit::typography::ellipsize;
+
+use crate::viewer::Viewer;
+
+/// The toolbar strip under the titlebar.
+pub const TOOLBAR_H: f32 = 40.0;
+/// A toolbar button, square around its icon.
+const BUTTON: f32 = 28.0;
+/// Between two buttons of one group.
+const GAP: f32 = 2.0;
+/// From the window's leading edge to the first button.
+const EDGE: f32 = 10.0;
+/// The page counter between the two page buttons.
+const PAGE_LABEL_W: f32 = 76.0;
+/// A symbolic icon's size inside a button.
+const GLYPH: f32 = 16.0;
+
+/// A toolbar button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tool {
+    ZoomOut,
+    ZoomFit,
+    ZoomIn,
+    PreviousPage,
+    NextPage,
+}
+
+/// Where the toolbar's buttons sit for one window width.
+#[derive(Debug, Clone)]
+pub struct ToolbarLayout {
+    pub buttons: Vec<(Tool, Rect)>,
+    /// The page counter's box, when the preview has pages.
+    pub page_label: Option<Rect>,
+}
+
+impl ToolbarLayout {
+    /// The button under a window-local point.
+    pub fn tool_at(&self, x: f32, y: f32) -> Option<Tool> {
+        self.buttons
+            .iter()
+            .find(|(_, rect)| rect.contains(Point::new(x, y)))
+            .map(|(tool, _)| *tool)
+    }
+}
+
+/// The titlebar's height for the decoration the window wears.
+pub fn titlebar_h(variant: DecorationVariant) -> f32 {
+    WindowDecoration::height_for(variant)
+}
+
+/// Everything above the content: the titlebar and the toolbar.
+pub fn chrome_h(variant: DecorationVariant) -> f32 {
+    titlebar_h(variant) + TOOLBAR_H
+}
+
+/// The box the preview is drawn in: the whole window under the chrome.
+pub fn content_rect(width: f32, height: f32, variant: DecorationVariant) -> Rect {
+    let top = chrome_h(variant);
+    Rect::from_ltrb(0.0, top, width.max(1.0), height.max(top + 1.0))
+}
+
+/// The titlebar the window draws, and hit-tests against.
+pub fn decoration(viewer: &Viewer) -> WindowDecoration {
+    let (width, _) = viewer.size;
+    let variant = viewer.variant;
+    let mut decoration = WindowDecoration::new(String::new(), width)
+        .with_variant(variant)
+        .with_active(viewer.active)
+        .with_dark(viewer.dark())
+        // Opaque: nothing is blurred behind this window.
+        .with_blurred(false);
+    decoration.controls_hovered = viewer.controls.hovered();
+    decoration.pressed = viewer.controls.pressed();
+    // Clear of the lights at both ends, since the title is centred.
+    let room = (width - 2.0 * 90.0).max(40.0);
+    let font = WindowDecoration::title_style_for(variant).font();
+    decoration.title = ellipsize(&font, &viewer.name, room);
+    decoration
+}
+
+/// The traffic light under a window-local point.
+pub fn control_at(viewer: &Viewer, x: f32, y: f32) -> Option<WindowControl> {
+    decoration(viewer).control_at(x, y)
+}
+
+/// Lay the toolbar out for a window `width` points wide.
+///
+/// The zoom buttons sit at the leading edge, and the page controls in the
+/// middle when there are pages.
+pub fn toolbar_layout(width: f32, variant: DecorationVariant, paged: bool) -> ToolbarLayout {
+    let top = titlebar_h(variant);
+    let y = top + (TOOLBAR_H - BUTTON) / 2.0;
+    let square = |x: f32| Rect::from_xywh(x, y, BUTTON, BUTTON);
+    let mut buttons = Vec::with_capacity(5);
+
+    let mut x = EDGE;
+    for tool in [Tool::ZoomOut, Tool::ZoomFit, Tool::ZoomIn] {
+        buttons.push((tool, square(x)));
+        x += BUTTON + GAP;
+    }
+
+    let page_label = paged.then(|| {
+        let group = BUTTON * 2.0 + PAGE_LABEL_W;
+        let left = (width - group) / 2.0;
+        buttons.push((Tool::PreviousPage, square(left)));
+        buttons.push((Tool::NextPage, square(left + BUTTON + PAGE_LABEL_W)));
+        Rect::from_xywh(left + BUTTON, y, PAGE_LABEL_W, BUTTON)
+    });
+
+    ToolbarLayout {
+        buttons,
+        page_label,
+    }
+}
+
+/// Paint the titlebar and the toolbar over the top of the window.
+pub fn draw(canvas: &Canvas, viewer: &Viewer, theme: &Theme) {
+    let (width, _) = viewer.size;
+    let decoration = decoration(viewer);
+
+    // The toolbar first, so the titlebar's bottom hairline lands over it.
+    let top = titlebar_h(viewer.variant);
+    Toolbar::new()
+        .at(0.0, top)
+        .with_width(width)
+        .with_height(TOOLBAR_H)
+        .with_padding(0.0)
+        .with_background(decoration.material_tint(false))
+        .with_border_bottom(theme.fill_tertiary)
+        .render(canvas);
+    decoration.draw(canvas);
+
+    let paged = viewer.page_status();
+    let layout = toolbar_layout(width, viewer.variant, paged.is_some());
+    for (tool, rect) in &layout.buttons {
+        let enabled = viewer.tool_enabled(*tool);
+        let hovered = enabled && viewer.hovered_tool == Some(*tool);
+        let pressed = hovered && viewer.pressed_tool == Some(*tool);
+        draw_icon_button(canvas, theme, *rect, *tool, enabled, hovered, pressed);
+    }
+
+    if let (Some(rect), Some((page, pages))) = (layout.page_label, paged) {
+        Label::new(otto_kit::t_owned!(
+            "peek-page-of",
+            page = page.to_string(),
+            pages = pages.to_string()
+        ))
+        .with_style(styles::SUBHEADLINE)
+        .with_color(theme.text_secondary)
+        .centered_at(rect.center_x(), rect.center_y())
+        .render(canvas);
+    }
+}
+
+/// The ground under a button the pointer is over or holding.
+fn button_ground(hovered: bool, pressed: bool, theme: &Theme) -> Option<Color> {
+    match (hovered, pressed) {
+        (_, true) => Some(theme.fill_tertiary),
+        (true, false) => Some(theme.fill_quaternary),
+        _ => None,
+    }
+}
+
+fn draw_icon_button(
+    canvas: &Canvas,
+    theme: &Theme,
+    rect: Rect,
+    tool: Tool,
+    enabled: bool,
+    hovered: bool,
+    pressed: bool,
+) {
+    if let Some(ground) = button_ground(hovered, pressed, theme) {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(ground);
+        canvas.draw_rrect(RRect::new_rect_xy(rect, 6.0, 6.0), &paint);
+    }
+    let color = match (enabled, hovered) {
+        (false, _) => theme.text_tertiary,
+        (true, true) => theme.text_primary,
+        (true, false) => theme.text_secondary,
+    };
+    let dst = Rect::from_xywh(
+        rect.center_x() - GLYPH / 2.0,
+        rect.center_y() - GLYPH / 2.0,
+        GLYPH,
+        GLYPH,
+    );
+    match icons::cached_icon_chain(icon_names(tool), GLYPH as i32) {
+        Some(image) => {
+            // Symbolic art recoloured to the text tone, as the rest of the
+            // chrome does with its glyphs.
+            let mut tint = Paint::default();
+            tint.set_color_filter(otto_kit::skia::color_filters::blend(
+                color,
+                BlendMode::SrcIn,
+            ));
+            canvas.draw_image_rect(&image, None, dst, &tint);
+        }
+        None => draw_fallback_glyph(canvas, dst, tool, color),
+    }
+}
+
+/// The themed symbolic icons for a tool, most specific first.
+fn icon_names(tool: Tool) -> &'static [&'static str] {
+    match tool {
+        Tool::ZoomOut => &["zoom-out-symbolic"],
+        Tool::ZoomFit => &["zoom-fit-best-symbolic", "zoom-original-symbolic"],
+        Tool::ZoomIn => &["zoom-in-symbolic"],
+        Tool::PreviousPage => &["go-up-symbolic", "pan-up-symbolic"],
+        Tool::NextPage => &["go-down-symbolic", "pan-down-symbolic"],
+    }
+}
+
+/// A plain drawn glyph for a theme with no symbolic art for the tool.
+fn draw_fallback_glyph(canvas: &Canvas, dst: Rect, tool: Tool, color: Color) {
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(PaintStyle::Stroke);
+    stroke.set_stroke_width(1.5);
+    stroke.set_stroke_cap(otto_kit::skia::PaintCap::Round);
+    stroke.set_color(color);
+    let r = dst.with_inset((2.0, 2.0));
+    let (cx, cy) = (r.center_x(), r.center_y());
+    let mut path = PathBuilder::new();
+    match tool {
+        Tool::ZoomOut | Tool::ZoomIn => {
+            path.move_to((r.left, cy));
+            path.line_to((r.right, cy));
+            if tool == Tool::ZoomIn {
+                path.move_to((cx, r.top));
+                path.line_to((cx, r.bottom));
+            }
+        }
+        Tool::ZoomFit => {
+            // Four corner brackets: the picture's frame.
+            let arm = r.width() * 0.3;
+            for (x, y, dx, dy) in [
+                (r.left, r.top, 1.0, 1.0),
+                (r.right, r.top, -1.0, 1.0),
+                (r.left, r.bottom, 1.0, -1.0),
+                (r.right, r.bottom, -1.0, -1.0),
+            ] {
+                path.move_to((x + dx * arm, y));
+                path.line_to((x, y));
+                path.line_to((x, y + dy * arm));
+            }
+        }
+        Tool::PreviousPage | Tool::NextPage => {
+            let dy = if tool == Tool::PreviousPage {
+                -1.0
+            } else {
+                1.0
+            };
+            let half = r.width() * 0.35;
+            path.move_to((cx - half, cy - dy * half / 2.0));
+            path.line_to((cx, cy + dy * half / 2.0));
+            path.line_to((cx + half, cy - dy * half / 2.0));
+        }
+    }
+    canvas.draw_path(&path.detach(), &stroke);
+}

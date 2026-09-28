@@ -31,7 +31,7 @@ mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 
 BINARIES=(otto otto-bar otto-islands otto-lock otto-greeter otto-rdp
-          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek
+          otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek otto-preview
           otto-media-worker otto-msg otto-search otto-agents xdg-desktop-portal-otto)
 
 # The workspace version names the tarball and its top directory; the
@@ -66,7 +66,8 @@ install -Dm755 resources/bin/otto-look "$tmpdir/$PKGDIR/resources/bin/otto-look"
 # its own entry, so it gets its own icon in the dock and the applications
 # list. All three PKGBUILDs install it; leaving it out of the tarball fails
 # package() with "cannot stat".
-for d in otto.desktop otto-files.desktop otto-settings.desktop otto-trash.desktop; do
+for d in otto.desktop otto-files.desktop otto-settings.desktop otto-trash.desktop \
+         otto-preview.desktop; do
     install -Dm644 "resources/$d" "$tmpdir/$PKGDIR/resources/$d"
 done
 

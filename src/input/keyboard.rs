@@ -121,10 +121,14 @@ pub fn app_switcher_hold_is_active(hold: Option<ModifiersState>, current: Modifi
 
 /// Whether `action` still fires while a modal layer surface holds the keyboard.
 ///
-/// These are the shortcuts whose UI draws above the overlay layer — the app
-/// switcher, and the OSD for volume and brightness — so using them never
-/// leaves something hidden behind the modal.
-fn shows_above_modal_layers(action: &KeyAction) -> bool {
+/// Two kinds get through. The shortcuts whose UI draws above the overlay
+/// layer — the app switcher, and the OSD for volume and brightness — so using
+/// them never leaves something hidden behind the modal. And the ones that
+/// leave the windows alone: the person's own commands (a screenshot, a
+/// dictation toggle), the media keys, locking, and the debug snapshots. What
+/// stays out is everything that acts on windows and workspaces, which the
+/// modal is covering.
+fn fires_over_modal_layers(action: &KeyAction) -> bool {
     matches!(
         action,
         KeyAction::ApplicationSwitchNext
@@ -135,6 +139,14 @@ fn shows_above_modal_layers(action: &KeyAction) -> bool {
             | KeyAction::VolumeMute
             | KeyAction::BrightnessUp
             | KeyAction::BrightnessDown
+            | KeyAction::Run(_)
+            | KeyAction::MediaPlayPause
+            | KeyAction::MediaNext
+            | KeyAction::MediaPrev
+            | KeyAction::MediaStop
+            | KeyAction::LockSession
+            | KeyAction::SceneSnapshot
+            | KeyAction::SkpSnapshot
     )
 }
 
@@ -339,9 +351,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 });
                 if let Some(surface) = surface {
                     keyboard.set_focus(self, Some(surface.into()), serial);
-                    // Every key is the surface's except the few shortcuts that
-                    // show something above it: the app switcher, and the
-                    // volume and brightness keys with their OSD.
+                    // Every key is the surface's except the shortcuts that leave
+                    // the windows under it alone: see `fires_over_modal_layers`.
                     let mut suppressed_keys = self.suppressed_keys.clone();
                     let mut pressed_modifiers = None;
                     let action = keyboard
@@ -362,7 +373,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                                         );
                                         process_keyboard_shortcut(config, modifiers, keysym)
                                     })
-                                    .filter(shows_above_modal_layers);
+                                    .filter(fires_over_modal_layers);
                                     match action {
                                         Some(action) => {
                                             suppressed_keys.push(keysym);

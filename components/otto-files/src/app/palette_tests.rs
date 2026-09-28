@@ -6,6 +6,7 @@ fn open_and_type(browser: &mut Browser, text: &str) {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     for ch in text.chars() {
         let palette = browser.palette.as_mut().expect("palette is open");
@@ -17,6 +18,7 @@ fn press(browser: &mut Browser, key: palette::Key) -> palette::Outcome {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     let outcome = browser
         .palette
@@ -199,6 +201,7 @@ fn a_previewed_pattern_reports_its_count_in_the_palette() {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     for ch in "select m".chars() {
         browser
@@ -254,6 +257,7 @@ fn renaming_a_selection_shows_its_dry_run_and_then_does_it() {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     let type_in = |browser: &mut Browser, text: &str| {
         for ch in text.chars() {
@@ -400,6 +404,7 @@ fn a_dry_run_line_can_be_toggled_out_of_the_run_and_back() {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     let press = |browser: &mut Browser, key: palette::Key| {
         let outcome = browser.palette.as_mut().unwrap().on_key(key, mods);
@@ -572,6 +577,7 @@ fn select_matching_shows_its_answer_while_it_is_typed() {
             KeyMods {
                 shift: false,
                 ctrl: false,
+                ..KeyMods::default()
             },
         );
         browser.preview_palette_argument();
@@ -594,6 +600,7 @@ fn deleting_through_a_pattern_gives_the_selection_back() {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     for ch in "*.png".chars() {
         browser
@@ -634,6 +641,7 @@ fn abandoning_a_preview_puts_the_selection_back() {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     for ch in "*.png".chars() {
         browser
@@ -830,6 +838,7 @@ fn the_list_scrolls_under_the_wheel_and_the_arrows() {
     let mods = KeyMods {
         shift: false,
         ctrl: false,
+        ..KeyMods::default()
     };
     for _ in 0..rows.len() {
         let outcome = browser

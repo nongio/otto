@@ -7279,7 +7279,13 @@ pub fn peek_text_badge_rect(panel: Rect) -> Rect {
 /// dot as the finished one so the two read as one thing changing rather than
 /// two appearing. It breathes: recognition takes seconds on a big screenshot,
 /// and a still glyph for that long looks like a result rather than a wait.
-fn draw_peek_working_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32, phase: f32) {
+pub fn draw_peek_working_badge(
+    canvas: &Canvas,
+    theme: &Theme,
+    panel: Rect,
+    opacity: f32,
+    phase: f32,
+) {
     // A slow breath, never all the way out: the badge stays legible at the
     // bottom of it, so what pulses is attention rather than presence.
     let breath = 0.65 + 0.35 * (phase * std::f32::consts::TAU / WORKING_BADGE_PERIOD).sin();
@@ -7304,7 +7310,7 @@ const WORKING_BADGE_PERIOD: f32 = 1.6;
 /// A dot in the same idiom as the close button, carrying a text-selection
 /// glyph. Its presence is the message: the picture has words in it, and they
 /// can be selected.
-fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
+pub fn draw_peek_text_badge(canvas: &Canvas, theme: &Theme, panel: Rect, opacity: f32) {
     draw_peek_badge(
         canvas,
         theme,

@@ -337,6 +337,7 @@ impl Browser {
                 let mods = KeyMods {
                     shift: false,
                     ctrl: false,
+                    ..KeyMods::default()
                 };
                 if let Some(outcome) = self
                     .palette

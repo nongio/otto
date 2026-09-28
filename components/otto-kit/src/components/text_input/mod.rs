@@ -6,11 +6,13 @@
 //! [`TextInputRenderer`] the stateless drawing and geometry, and [`TextInput`]
 //! the widget that ties them together for a host to drive.
 
+mod keymap;
 mod renderer;
 mod state;
 mod style;
 mod text_input;
 
+pub use keymap::key_for;
 pub use renderer::TextInputRenderer;
 pub use state::{Movement, TextInputState};
 pub use style::TextInputStyle;
