@@ -110,7 +110,16 @@ there with a named error rather than on the first frame.
 memory fd, dma-buf, DRM format modifiers, external semaphore fd, foreign queue
 family, image format list), creates a Smithay Vulkan `Device` on the
 **graphics** queue, and builds a Skia Ganesh `DirectContext` on that device and
-queue.
+queue. When the device supports `samplerYcbcrConversion` it is enabled, so YUV
+video buffers can be sampled.
+
+The context is built in `context.rs` through the raw skia-bindings
+(`layers::sb`), not skia-safe's `BackendContext`: Skia only samples YUV when
+`fDeviceFeatures2` tells it the YCbCr feature is on, and skia-safe has no way
+to set that field. `context.rs` writes it at its offset in
+`skgpu::VulkanBackendContext`, with a compile-time check on the struct size,
+so a skia-safe upgrade that changes the layout fails the build instead of
+misreading features.
 
 Skia is told the API version explicitly, capped at 1.3. A driver may report
 1.4 while the instance is 1.3; without the cap Skia asks for 1.4 entry points
@@ -121,6 +130,12 @@ and which it can render into (`render_formats`), keeping only fourccs that
 `format.rs` can map to Skia. Each alpha format also offers its `X` twin
 (`XRGB8888` for `ARGB8888`), since Vulkan lists only the alpha one and
 XWayland's depth-24 windows need the opaque one.
+
+NV12 is sample-only. It imports with `SAMPLED` usage alone and is wrapped
+with a `YcbcrConversionInfo`, so Skia converts to RGB as it samples: BT.601,
+limited range, chroma at the midpoint, filtered linearly where the
+modifier's format features allow. Clients have no way to say how their
+YUV is encoded yet, and that is what video decoders produce by default.
 
 ### Buffers in a frame
 
@@ -254,12 +269,12 @@ requested but unavailable, the probe failed and the session is on GL.
   window on its own KMS plane yet. The plane code builds for Vulkan
   (`create_surface_from_dmabuf`, `flush_planes_for_scanout`) but has not been
   run on hardware. See [DRM Planes](drm_plane.md).
-- **YUV dmabufs.** NV12 video buffers are refused at import; `format.rs` has
-  no YUV formats. Smithay's device layer already imports single-object NV12,
-  but Skia only samples it through a YCbCr conversion when it is told the
-  device's `samplerYcbcrConversion` feature, and skia-safe 0.93 always hands
-  it a null `fDeviceFeatures2`. Disjoint planes also need
-  `VkBindImagePlaneMemoryInfo` in the device layer.
+- **More YUV.** NV12 is the only YUV format. P010 and other layouts need
+  entries in `format.rs`. NV12 with its planes in separate buffer objects
+  (disjoint) is refused by Smithay's device layer, which needs
+  `VkBindImagePlaneMemoryInfo`. Single-object NV12, which VAAPI exports,
+  works. The encoding is fixed at BT.601 limited range until clients can
+  describe it.
 - **Texture filters and debug flags** are stored and ignored, as on GL.
 - **Driver coverage.** Tested on Intel (ANV). NVK and the proprietary NVIDIA
   driver still need checking for `SYNC_FD` export and modifier imports.

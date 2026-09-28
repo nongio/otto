@@ -2,8 +2,9 @@
 //!
 //! Skia names Vulkan formats with its own enum, and pairs each with a colour
 //! type. Only the formats in this table can be imported, rendered into or
-//! read back; anything else (YUV video buffers among them) is reported as
-//! unsupported and never advertised.
+//! read back; anything else is reported as unsupported and never advertised.
+//! YUV formats are sample-only: Skia reads them through a sampler YCbCr
+//! conversion into RGB.
 
 // Rust guideline compliant 2026-02-21
 
@@ -19,8 +20,10 @@ pub(crate) struct SkiaFormat {
     pub skia_vk: skvk::Format,
     /// The colour type Skia reads and writes the image with.
     pub color_type: skia::ColorType,
-    /// The fourcc has no alpha channel (an `X` format).
+    /// The fourcc has no alpha channel (an `X` format, or YUV).
     pub opaque: bool,
+    /// A YUV format, sampled through a YCbCr conversion.
+    pub ycbcr: bool,
 }
 
 impl SkiaFormat {
@@ -116,6 +119,15 @@ pub(crate) fn skia_format(fourcc: Fourcc) -> Option<SkiaFormat> {
             skia::ColorType::RGBAF16,
             true,
         ),
+        Fourcc::Nv12 => {
+            return Some(SkiaFormat {
+                vk: vk::Format::G8_B8R8_2PLANE_420_UNORM,
+                skia_vk: skvk::Format::G8_B8R8_2PLANE_420_UNORM,
+                color_type: skia::ColorType::RGB888x,
+                opaque: true,
+                ycbcr: true,
+            })
+        }
         _ => return None,
     };
     Some(SkiaFormat {
@@ -123,5 +135,44 @@ pub(crate) fn skia_format(fourcc: Fourcc) -> Option<SkiaFormat> {
         skia_vk,
         color_type,
         opaque,
+        ycbcr: false,
     })
+}
+
+/// The YCbCr conversion Skia samples a YUV image of `fmt` with.
+///
+/// Clients cannot say how their YUV is encoded yet, so this assumes what
+/// video decoders produce by default: BT.601 in limited range with chroma
+/// sited between the luma samples. `features` are the format features of
+/// the image's modifier; chroma is filtered linearly where they allow it.
+pub(crate) fn ycbcr_conversion(
+    fmt: SkiaFormat,
+    features: vk::FormatFeatureFlags,
+) -> Option<skvk::YcbcrConversionInfo> {
+    if !fmt.ycbcr {
+        return None;
+    }
+    let linear =
+        features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER);
+    let identity = skvk::ComponentSwizzle::VK_COMPONENT_SWIZZLE_IDENTITY;
+    Some(skvk::YcbcrConversionInfo::new_with_format(
+        fmt.skia_vk,
+        skvk::SamplerYcbcrModelConversion::YCBCR_601,
+        skvk::SamplerYcbcrRange::ITU_NARROW,
+        skvk::ChromaLocation::MIDPOINT,
+        skvk::ChromaLocation::MIDPOINT,
+        if linear {
+            skvk::Filter::LINEAR
+        } else {
+            skvk::Filter::NEAREST
+        },
+        0,
+        skvk::ComponentMapping {
+            r: identity,
+            g: identity,
+            b: identity,
+            a: identity,
+        },
+        features.as_raw(),
+    ))
 }

@@ -17,6 +17,7 @@
 
 // Rust guideline compliant 2026-02-21
 
+mod context;
 mod format;
 mod frame;
 mod retire;
@@ -33,16 +34,13 @@ pub use texture::{SkiaVkMapping, SkiaVkTarget, SkiaVkTexture};
 use std::{
     collections::{HashMap, HashSet},
     ffi::CStr,
-    fmt, ptr,
+    fmt,
     sync::{Arc, Mutex},
 };
 
 use layers::skia::{
     self,
-    gpu::{
-        self, backend_render_targets, backend_textures, direct_contexts, surfaces, vk as skvk,
-        DirectContext,
-    },
+    gpu::{self, backend_render_targets, backend_textures, surfaces, vk as skvk, DirectContext},
 };
 use smithay::{
     backend::{
@@ -58,7 +56,6 @@ use smithay::{
         vulkan::{
             device::{Device, DeviceError, QueueType},
             image::VulkanImage,
-            version::Version,
             PhysicalDevice,
         },
         SwapBuffersError,
@@ -72,7 +69,7 @@ use smithay::{
 };
 
 use self::{
-    format::{skia_format, SkiaFormat, FOURCCS},
+    format::{skia_format, ycbcr_conversion, SkiaFormat, FOURCCS},
     retire::{retire, Graveyard, RetiredHandle},
     sync::{SyncFdSupport, SyncPool},
     texture::{TargetKind, TextureBacking, TextureMemory},
@@ -95,6 +92,18 @@ const TEXTURE_USAGE: vk::ImageUsageFlags = vk::ImageUsageFlags::from_raw(
         | vk::ImageUsageFlags::TRANSFER_SRC.as_raw()
         | vk::ImageUsageFlags::TRANSFER_DST.as_raw(),
 );
+
+/// Usage of a client dmabuf of `fmt` imported for sampling.
+///
+/// YUV images are only sampled: drivers rarely allow transfers on them
+/// with a DRM modifier, and Skia never copies from a texture it samples.
+fn texture_usage(fmt: SkiaFormat) -> vk::ImageUsageFlags {
+    if fmt.ycbcr {
+        vk::ImageUsageFlags::SAMPLED
+    } else {
+        TEXTURE_USAGE
+    }
+}
 
 /// Usage of a dmabuf bound as a render target.
 const TARGET_USAGE: vk::ImageUsageFlags = vk::ImageUsageFlags::from_raw(
@@ -261,7 +270,12 @@ impl SkiaVkRenderer {
             }
         }
 
-        let mut features = vk::PhysicalDeviceFeatures2::default();
+        // YUV video buffers are sampled through a YCbCr conversion; without
+        // the feature they are not offered.
+        let ycbcr = context::supports_ycbcr(phd);
+        let mut vk11 =
+            vk::PhysicalDeviceVulkan11Features::default().sampler_ycbcr_conversion(ycbcr);
+        let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut vk11);
         let device = Device::new(
             phd,
             &DEVICE_EXTENSIONS,
@@ -269,7 +283,7 @@ impl SkiaVkRenderer {
             QueueType::Graphics,
             false,
         )?;
-        let context = Self::create_context(phd, &device)?;
+        let context = context::create(phd, &device, &DEVICE_EXTENSIONS, &features)?;
 
         // The device lists alpha formats only; an `X` fourcc shares its
         // Vulkan format with its alpha twin, so it is offered alongside.
@@ -279,7 +293,17 @@ impl SkiaVkRenderer {
             device
                 .formats()
                 .map(|entry| entry.format)
-                .filter(|format| matches!(phd.drm_format_info(*format, usage), Ok(Some(_))))
+                .filter(|format| {
+                    let Some(fmt) = skia_format(format.code) else {
+                        return false;
+                    };
+                    // YUV is sample-only, and only with the YCbCr feature.
+                    if fmt.ycbcr && (!ycbcr || usage != TEXTURE_USAGE) {
+                        return false;
+                    }
+                    let usage = if fmt.ycbcr { texture_usage(fmt) } else { usage };
+                    matches!(phd.drm_format_info(*format, usage), Ok(Some(_)))
+                })
                 .flat_map(|format| {
                     let opaque = get_opaque(format.code).map(|code| DrmFormat {
                         code,
@@ -329,61 +353,6 @@ impl SkiaVkRenderer {
             downscale_filter: TextureFilter::Linear,
             debug_flags: DebugFlags::empty(),
         })
-    }
-
-    /// Creates the Skia context on `device`'s queue.
-    fn create_context(phd: &PhysicalDevice, device: &Device) -> Result<DirectContext, SkiaVkError> {
-        // SAFETY: loading the system Vulkan loader has no preconditions; it
-        // is the library Smithay's instance already loaded.
-        let entry =
-            unsafe { ash::Entry::load() }.map_err(|e| SkiaVkError::Loader(e.to_string()))?;
-        let get_instance_proc_addr = entry.static_fn().get_instance_proc_addr;
-        let get_device_proc_addr = phd.instance().handle().fp_v1_0().get_device_proc_addr;
-        let get_proc = move |of: skvk::GetProcOf| -> skvk::GetProcResult {
-            // SAFETY: Skia hands valid instance/device handles and
-            // NUL-terminated names.
-            let f = unsafe {
-                match of {
-                    skvk::GetProcOf::Instance(instance, name) => {
-                        get_instance_proc_addr(vk::Instance::from_raw(instance as _), name)
-                    }
-                    skvk::GetProcOf::Device(device, name) => {
-                        get_device_proc_addr(vk::Device::from_raw(device as _), name)
-                    }
-                }
-            };
-            f.map_or(ptr::null(), |f| f as *const std::ffi::c_void)
-        };
-
-        let extensions: Vec<&str> = DEVICE_EXTENSIONS
-            .iter()
-            .filter_map(|ext| ext.to_str().ok())
-            .collect();
-        // Skia asks for core entry points of the version it is told; the
-        // instance is capped at 1.3, and entry points of a newer device
-        // version are not handed out under it.
-        let api_version = phd.api_version().min(Version::VERSION_1_3).to_raw();
-
-        // SAFETY: the instance, physical device, device and queue outlive the
-        // backend context, which is dropped right after the Skia context is
-        // made; the context keeps what it needs.
-        let context = unsafe {
-            let mut backend = skvk::BackendContext::new_with_extensions(
-                phd.instance().handle().handle().as_raw() as _,
-                phd.handle().as_raw() as _,
-                device.vk().handle().as_raw() as _,
-                (
-                    device.queue().as_raw() as _,
-                    device.queue_family_idx() as usize,
-                ),
-                &get_proc,
-                &[],
-                &extensions,
-            );
-            backend.set_max_api_version(skvk::Version::from(api_version));
-            direct_contexts::make_vulkan(&backend, None)
-        };
-        context.ok_or(SkiaVkError::ContextCreation)
     }
 
     /// The Skia context.
@@ -549,7 +518,7 @@ impl SkiaVkRenderer {
         let size = dmabuf.size();
         // GENERAL, not UNDEFINED: a swapchain slot rendered with partial
         // damage keeps the content of its last frame.
-        let info = image_info(&image, fmt, skvk::ImageLayout::GENERAL);
+        let info = image_info(&image, fmt, skvk::ImageLayout::GENERAL, None);
         let render_target = backend_render_targets::make_vk((size.w, size.h), &info);
         let ctx = self.ctx();
         let surface = surfaces::wrap_backend_render_target(
@@ -620,7 +589,7 @@ impl SkiaVkRenderer {
         let image = match self.dmabuf_cache.get(&dmabuf.weak()) {
             Some(image) => image.clone(),
             None => {
-                let image = VulkanImage::new_from_dmabuf(&self.device, dmabuf, TEXTURE_USAGE)?;
+                let image = VulkanImage::new_from_dmabuf(&self.device, dmabuf, texture_usage(fmt))?;
                 self.dmabuf_cache.insert(dmabuf.weak(), image.clone());
                 image
             }
@@ -629,7 +598,23 @@ impl SkiaVkRenderer {
             return Err(SkiaVkError::UnsupportedFormat(code));
         }
         let size = dmabuf.size();
-        let info = image_info(&image, fmt, skvk::ImageLayout::GENERAL);
+        let ycbcr = if fmt.ycbcr {
+            let format = dmabuf.format();
+            let features = self
+                .device
+                .formats()
+                .find(|entry| entry.format == format)
+                .map(|entry| {
+                    entry
+                        .modifier_properties
+                        .drm_format_modifier_tiling_features
+                })
+                .ok_or(SkiaVkError::UnsupportedFormat(code))?;
+            ycbcr_conversion(fmt, features)
+        } else {
+            None
+        };
+        let info = image_info(&image, fmt, skvk::ImageLayout::GENERAL, ycbcr);
         // SAFETY: the texture's backing keeps the image alive, and retires it
         // until the Skia image is unreachable and the GPU is done with it.
         let backend =
@@ -936,7 +921,12 @@ impl Drop for SkiaVkRenderer {
 }
 
 /// Describes `image` to Skia as a foreign-owned image in `layout`.
-fn image_info(image: &VulkanImage, fmt: SkiaFormat, layout: skvk::ImageLayout) -> skvk::ImageInfo {
+fn image_info(
+    image: &VulkanImage,
+    fmt: SkiaFormat,
+    layout: skvk::ImageLayout,
+    ycbcr: Option<skvk::YcbcrConversionInfo>,
+) -> skvk::ImageInfo {
     // SAFETY: the handle is a live image; Skia neither owns nor frees its
     // memory (`Alloc::default()`).
     unsafe {
@@ -948,7 +938,7 @@ fn image_info(image: &VulkanImage, fmt: SkiaFormat, layout: skvk::ImageLayout) -
             fmt.skia_vk,
             1,
             vk::QUEUE_FAMILY_FOREIGN_EXT,
-            None,
+            ycbcr,
             None,
             None,
         )

@@ -1026,3 +1026,88 @@ fn vulkan_gpu_wait_orders_later_frames() {
         assert_eq!(sample(&mut renderer, &texture)[1], 255, "green is drawn");
     }
 }
+
+/// An NV12 buffer is offered, imports, and samples as RGB through the
+/// YCbCr conversion (BT.601, limited range).
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_nv12_dmabuf_samples_as_rgb() {
+    use std::os::fd::AsRawFd;
+
+    let phd = first_physical_device();
+    let mut renderer = SkiaVkRenderer::new(&phd).expect("vulkan renderer");
+    assert!(
+        renderer
+            .dmabuf_formats()
+            .iter()
+            .any(|format| format.code == Fourcc::Nv12 && format.modifier == Modifier::Linear),
+        "linear NV12 is offered"
+    );
+
+    let node = phd.render_node().ok().flatten().expect("render node");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(node.dev_path().expect("render node path"))
+        .expect("open render node");
+    let gbm =
+        GbmDevice::new(DrmDeviceFd::new(DeviceFd::from(OwnedFd::from(file)))).expect("gbm device");
+    // GBM will not allocate linear NV12 everywhere; a linear R8 buffer 1.5
+    // times as tall holds both planes, one buffer object like a decoder's.
+    let mut allocator = GbmAllocator::new(gbm, GbmBufferFlags::LINEAR);
+    let buffer = allocator
+        .create_buffer(16, 24, Fourcc::R8, &[Modifier::Linear])
+        .expect("gbm R8 buffer");
+    let r8 = buffer.export().expect("export dmabuf");
+    let stride = r8.strides().next().expect("stride");
+    let offsets = [0, stride * 16];
+    let strides = [stride, stride];
+    let mut builder = Dmabuf::builder(
+        (16, 16),
+        Fourcc::Nv12,
+        Modifier::Linear,
+        DmabufFlags::empty(),
+    );
+    for offset in offsets {
+        let fd = r8.handles().next().expect("plane fd");
+        builder.add_plane(fd.try_clone_to_owned().expect("dup fd"), offset, stride);
+    }
+    let dmabuf = builder.build().expect("NV12 view of the buffer");
+
+    // Y = 81, Cb = 90, Cr = 240 is pure red in BT.601 limited range.
+    let len = (offsets[1] + strides[1] * 8) as usize;
+    let fd = dmabuf.handles().next().expect("plane fd").as_raw_fd();
+    // SAFETY: a shared mapping of the buffer's first `len` bytes, which hold
+    // both planes of a linear 16x16 NV12 image; unmapped below.
+    unsafe {
+        let map = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd,
+            0,
+        );
+        assert_ne!(map, libc::MAP_FAILED, "map the NV12 buffer");
+        let bytes = std::slice::from_raw_parts_mut(map.cast::<u8>(), len);
+        for row in 0..16 {
+            let start = (offsets[0] + strides[0] * row) as usize;
+            bytes[start..start + 16].fill(81);
+        }
+        for row in 0..8 {
+            let start = (offsets[1] + strides[1] * row) as usize;
+            for pair in bytes[start..start + 16].chunks_exact_mut(2) {
+                pair.copy_from_slice(&[90, 240]);
+            }
+        }
+        libc::munmap(map, len);
+    }
+
+    let texture = renderer.import_dmabuf(&dmabuf, None).expect("import NV12");
+    let [r, g, b, a] = sample(&mut renderer, &texture);
+    assert!(
+        r > 230 && g < 25 && b < 25 && a == 255,
+        "red, got {:?}",
+        [r, g, b, a]
+    );
+}
