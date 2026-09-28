@@ -4,9 +4,9 @@ Otto draws with Skia. On the udev backend (a real session on a TTY) Skia can
 run on either of two GPU APIs:
 
 - **OpenGL ES**, through EGL. This is `SkiaRenderer` in
-  `src/skia_renderer.rs`, the default, and the only choice on winit and x11.
-- **Vulkan**. This is `SkiaVkRenderer` in `src/renderer/vulkan/`,
-  experimental, picked at startup.
+  `src/skia_renderer.rs`, the fallback, and the only choice on winit and x11.
+- **Vulkan**. This is `SkiaVkRenderer` in `src/renderer/vulkan/`, the
+  default on the udev backend.
 
 Everything above the renderer is shared: the lay-rs scene graph, the render
 elements, damage tracking, Smithay's `DrmCompositor`. The Vulkan renderer only
@@ -27,23 +27,25 @@ see [Vulkan Renderer Plan](vulkan-renderer-plan.md).
 - **Formats.** 10-bit and fp16 render targets are ordinary Vulkan formats;
   the HDR work needs them.
 
-## Turning it on
+## Choosing the renderer
+
+Vulkan is the default. To draw with OpenGL instead:
 
 ```sh
-otto --tty-udev --renderer vulkan      # one session
+otto --tty-udev --renderer gl      # one session
 ```
 
 or, to keep it:
 
 ```toml
 [rendering]
-renderer = "vulkan"   # "gl" is the default
+renderer = "gl"   # "vulkan" is the default
 ```
 
 Settings › General › Renderer writes the same key. The command line wins over
 the config. The `vulkan` Cargo feature is in the default feature set; a build
-without it refuses `--renderer vulkan` and exits with an error naming the
-feature.
+without it defaults to OpenGL, and refuses an explicit `--renderer vulkan` with
+an error naming the feature.
 
 ![Choosing the renderer](diagrams/vulkan-selection.svg)
 

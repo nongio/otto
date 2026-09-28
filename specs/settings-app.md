@@ -708,7 +708,7 @@ session cannot be undone if the display does not come back, so the confirm
 timeout above has to exist before the live path does.*
 
 The General pane offers the renderer
-(`rendering.renderer`), in a group of its own above Configuration: OpenGL or Vulkan, the GPU API a login session draws
+(`rendering.renderer`), in a group of its own above Configuration: Vulkan (the default) or OpenGL, the GPU API a login session draws
 with. It is a restart setting, and its helper text says it applies to the
 login session, that windowed sessions always use OpenGL, and that it takes
 effect after the next login. Two cases leave nothing to choose, and the row

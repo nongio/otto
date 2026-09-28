@@ -1136,14 +1136,25 @@ pub struct RenderingConfig {
 }
 
 /// A GPU api the tty backend can draw with.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RendererKind {
     /// Skia on OpenGL ES through EGL.
-    #[default]
     Gl,
     /// Skia on Vulkan. Needs a build with the `vulkan` feature.
     Vulkan,
+}
+
+/// Vulkan in a build that includes it, OpenGL otherwise. A GPU Vulkan cannot
+/// start on still falls back to OpenGL at startup.
+impl Default for RendererKind {
+    fn default() -> Self {
+        if cfg!(feature = "vulkan") {
+            Self::Vulkan
+        } else {
+            Self::Gl
+        }
+    }
 }
 
 impl RendererKind {
@@ -2248,12 +2259,17 @@ mod tests {
     }
 
     #[test]
-    fn renderer_defaults_to_gl_and_reads_vulkan() {
-        assert_eq!(Config::default().rendering.renderer, RendererKind::Gl);
+    fn renderer_defaults_to_vulkan_and_reads_gl() {
+        let expected = if cfg!(feature = "vulkan") {
+            RendererKind::Vulkan
+        } else {
+            RendererKind::Gl
+        };
+        assert_eq!(Config::default().rendering.renderer, expected);
 
-        let config: Config = toml::from_str("[rendering]\nrenderer = \"vulkan\"\n")
-            .expect("Config should deserialize");
-        assert_eq!(config.rendering.renderer, RendererKind::Vulkan);
+        let config: Config =
+            toml::from_str("[rendering]\nrenderer = \"gl\"\n").expect("Config should deserialize");
+        assert_eq!(config.rendering.renderer, RendererKind::Gl);
 
         assert_eq!(RendererKind::from_name("gl"), Some(RendererKind::Gl));
         assert_eq!(
