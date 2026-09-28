@@ -960,6 +960,7 @@ impl FilesApp {
         let mods = KeyMods {
             shift: false,
             ctrl: false,
+            ..KeyMods::default()
         };
         // A value other than a bare "1" is typed in, so a screenshot can be
         // taken of the palette part-way through a query rather than at rest.

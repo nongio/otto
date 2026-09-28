@@ -34,7 +34,7 @@ use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
-use otto_kit::components::text_input::{KeyMods, TextInput, TextInputKey, TextInputResponse};
+use otto_kit::components::text_input::{self, KeyMods, TextInput, TextInputKey, TextInputResponse};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
 use otto_kit::prelude::*;
@@ -113,7 +113,7 @@ struct SettingsApp {
     hovered_preview: Arc<Mutex<Option<&'static str>>>,
     /// Modifier state, kept from `on_modifiers` so a key press can be read
     /// with the modifiers that were down when it arrived.
-    modifiers: Arc<Mutex<Mods>>,
+    modifiers: Arc<Mutex<KeyMods>>,
     /// Whether the compositor is frosting the surface *right now*.
     ///
     /// Not the same as having asked for a frost: the window drops the blur
@@ -180,13 +180,6 @@ fn held_modifiers(modifiers: Modifiers) -> keyboard::Modifiers {
         shift: modifiers.shift,
         logo: modifiers.logo,
     }
-}
-
-/// The modifiers a text field cares about.
-#[derive(Clone, Copy, Default)]
-struct Mods {
-    shift: bool,
-    ctrl: bool,
 }
 
 /// Every setting in the app that a colour well edits.
@@ -2237,10 +2230,7 @@ impl App for SettingsApp {
 
     /// Modifier state, saved for the key press it belongs to.
     fn on_modifiers(&mut self, _ctx: &AppContext, modifiers: Modifiers) {
-        *self.modifiers.lock().unwrap() = Mods {
-            shift: modifiers.shift,
-            ctrl: modifiers.ctrl,
-        };
+        *self.modifiers.lock().unwrap() = KeyMods::from(modifiers);
         // A listening line shows the modifiers held so far.
         if keyboard::recording().is_some() {
             keyboard::set_held(held_modifiers(modifiers));
@@ -2396,48 +2386,31 @@ impl App for SettingsApp {
             }
             return;
         }
-        let Mods { shift, ctrl } = *self.modifiers.lock().unwrap();
+        let mods = *self.modifiers.lock().unwrap();
 
-        let key = match event.keysym {
-            Keysym::Return | Keysym::KP_Enter => Some(TextInputKey::Enter),
-            Keysym::Escape => Some(TextInputKey::Escape),
-            Keysym::Left => Some(TextInputKey::Left),
-            Keysym::Right => Some(TextInputKey::Right),
-            Keysym::Home => Some(TextInputKey::Home),
-            Keysym::End => Some(TextInputKey::End),
-            Keysym::BackSpace => Some(TextInputKey::Backspace),
-            Keysym::Delete => Some(TextInputKey::Delete),
-            Keysym::a if ctrl => Some(TextInputKey::SelectAll),
-            // Cut, copy and paste. The field answers copy and cut with the
-            // text to offer; paste has to arrive with the text already read,
-            // since the widget owns no clipboard of its own.
-            Keysym::c if ctrl => Some(TextInputKey::Copy),
-            Keysym::x if ctrl => Some(TextInputKey::Cut),
-            Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
-            // Whatever the keymap produced, as a whole: an input method can
-            // commit more than one character at a time, and taking only the
-            // first would silently drop the rest. A modifier pressed on its
-            // own produces nothing here — `on_modifiers` already recorded
-            // what it changed.
-            _ => {
-                let text: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
-                (!text.is_empty()).then_some(TextInputKey::Text(text))
-            }
+        // Paste has to arrive with the text already read, since the widget
+        // owns no clipboard of its own; every other key is one all otto-kit
+        // fields share.
+        let paste =
+            mods.ctrl && !mods.alt && !mods.logo && matches!(event.keysym, Keysym::v | Keysym::V);
+        let (key, mods) = if paste {
+            let Some(text) = clipboard::text() else {
+                return;
+            };
+            (TextInputKey::Paste(text), KeyMods::default())
+        } else {
+            let Some(edit) = text_input::key_for(event.keysym, event.utf8.as_deref(), mods) else {
+                return;
+            };
+            edit
         };
-        let Some(key) = key else { return };
 
         let response = self
             .editing
             .lock()
             .unwrap()
             .as_mut()
-            .map(|edit| edit.input.on_key(key, KeyMods { shift, ctrl }));
+            .map(|edit| edit.input.on_key(key, mods));
         match response {
             Some(TextInputResponse::Commit) => {
                 commit_edit(&self.editing);
@@ -2715,7 +2688,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         editing: Arc::new(Mutex::new(None)),
         pressed: Arc::new(Mutex::new(None)),
         hovered_preview: Arc::new(Mutex::new(None)),
-        modifiers: Arc::new(Mutex::new(Mods::default())),
+        modifiers: Arc::new(Mutex::new(KeyMods::default())),
         frosted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         active: Arc::new(std::sync::atomic::AtomicBool::new(true)),
     })

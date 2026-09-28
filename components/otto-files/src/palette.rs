@@ -906,6 +906,7 @@ mod tests {
         KeyMods {
             shift: false,
             ctrl: false,
+            ..KeyMods::default()
         }
     }
 

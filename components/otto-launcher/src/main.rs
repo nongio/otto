@@ -20,7 +20,7 @@ use otto_kit::components::attachments::ICON_SIZE;
 use otto_kit::components::scroll::{Axis, RowLayout, ScrollContent, ScrollPane};
 use otto_kit::components::stashed::Stashed;
 use otto_kit::components::text_input::{
-    KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
+    self, KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
 };
 use otto_kit::focus::FocusId;
 use otto_kit::frosted::Frosted;
@@ -2429,43 +2429,23 @@ impl App for Launcher {
                 return;
             }
             (_, Some('w')) => {
-                self.input.on_key(
-                    TextInputKey::Backspace,
-                    KeyMods {
-                        shift: false,
-                        ctrl: true,
-                    },
-                );
+                self.input.on_key(TextInputKey::Backspace, KeyMods::word());
                 self.refilter();
                 return;
             }
             _ => {}
         }
 
+        // Everything else is the field's, with the keys every otto-kit field
+        // shares: Alt or Ctrl with the arrows and Backspace for a word at a
+        // time, Alt+B/F/D, Ctrl+E/K, Cmd with the arrows for the ends.
         let mods = KeyMods {
             shift: self.shift,
-            ctrl: false,
+            ..KeyMods::from(modifiers)
         };
-        let key = match event.keysym {
-            Keysym::Left => TextInputKey::Left,
-            Keysym::Right => TextInputKey::Right,
-            Keysym::Home => TextInputKey::Home,
-            Keysym::End => TextInputKey::End,
-            Keysym::BackSpace => TextInputKey::Backspace,
-            Keysym::Delete => TextInputKey::Delete,
-            _ => {
-                let text: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
-                if text.is_empty() {
-                    return;
-                }
-                TextInputKey::Text(text)
-            }
+        let Some((key, mods)) = text_input::key_for(event.keysym, event.utf8.as_deref(), mods)
+        else {
+            return;
         };
 
         match self.input.on_key(key, mods) {

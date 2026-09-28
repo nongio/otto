@@ -45,6 +45,9 @@ impl FilesApp {
         }
         let mods = *self.modifiers.lock().unwrap();
         let (ctrl, shift) = (mods.ctrl, mods.shift);
+        // What the text fields are handed: Alt and Cmd move and delete by word
+        // and to the ends, as in every otto-kit field.
+        let field_mods = KeyMods::from(mods);
 
         // The Open With chooser is a window of its own, and while it has the
         // keyboard every key is its: the field, the list and its buttons.
@@ -83,10 +86,7 @@ impl FilesApp {
                     .map(|ch| OpenWithKey::Edit(TextInputKey::Char(ch))),
             };
             if let Some(key) = key {
-                self.state
-                    .lock()
-                    .unwrap()
-                    .open_with_key(key, KeyMods { shift, ctrl });
+                self.state.lock().unwrap().open_with_key(key, field_mods);
             }
             return;
         }
@@ -160,7 +160,7 @@ impl FilesApp {
                         .map(|ch| palette::Key::Edit(TextInputKey::Char(ch))),
                 };
                 if let Some(key) = key {
-                    let mods = KeyMods { shift, ctrl };
+                    let mods = field_mods;
                     if let Some(outcome) = browser
                         .palette
                         .as_mut()
@@ -198,7 +198,7 @@ impl FilesApp {
                         .map(TextInputKey::Char),
                 };
                 if let Some(key) = key {
-                    let mods = KeyMods { shift, ctrl };
+                    let mods = field_mods;
                     let response = browser
                         .rename
                         .as_mut()
@@ -262,7 +262,7 @@ impl FilesApp {
                         .map(TextInputKey::Char),
                 };
                 if let Some(key) = key {
-                    let mods = KeyMods { shift, ctrl };
+                    let mods = field_mods;
                     let response = browser
                         .path_entry
                         .as_mut()
@@ -361,7 +361,7 @@ impl FilesApp {
                         .map(TextInputKey::Char),
                 };
                 if let Some(key) = editing {
-                    let mods = KeyMods { shift, ctrl };
+                    let mods = field_mods;
                     let response = browser.search.as_mut().map(|input| input.on_key(key, mods));
                     match response {
                         Some(TextInputResponse::Clipboard(text)) => {
@@ -433,7 +433,7 @@ impl FilesApp {
                         .map(TextInputKey::Char),
                 };
                 if let Some(key) = editing {
-                    let mods = KeyMods { shift, ctrl };
+                    let mods = field_mods;
                     let response = browser
                         .save_name
                         .as_mut()

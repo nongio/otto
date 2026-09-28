@@ -470,10 +470,7 @@ impl App for LauncherField {
                 TextInputKey::Text(text)
             }
         };
-        let mods = KeyMods {
-            shift: self.modifiers.shift,
-            ctrl,
-        };
+        let mods = KeyMods::from(self.modifiers);
         match self.input.on_key(key, mods) {
             TextInputResponse::Clipboard(text) => {
                 clipboard::set_text(&text, serial);
