@@ -63,6 +63,7 @@ package() {
     install -Dm755 target/release/otto-emoji "$pkgdir/usr/bin/otto-emoji"
     install -Dm755 target/release/otto-stash "$pkgdir/usr/bin/otto-stash"
     install -Dm755 target/release/otto-peek "$pkgdir/usr/bin/otto-peek"
+    install -Dm755 target/release/otto-preview "$pkgdir/usr/bin/otto-preview"
     install -Dm755 target/release/otto-msg "$pkgdir/usr/bin/otto-msg"
     install -Dm755 target/release/otto-search "$pkgdir/usr/bin/otto-search"
     install -Dm755 target/release/otto-agents "$pkgdir/usr/bin/otto-agents"
@@ -98,6 +99,7 @@ package() {
     # own icon in the dock and the applications list.
     install -Dm644 resources/otto-trash.desktop "$pkgdir/usr/share/applications/otto-trash.desktop"
     install -Dm644 resources/otto-settings.desktop "$pkgdir/usr/share/applications/otto-settings.desktop"
+    install -Dm644 resources/otto-preview.desktop "$pkgdir/usr/share/applications/otto-preview.desktop"
 
     # Install icons
     for _px in 16 24 32 48 64 128 256 512; do

@@ -33,7 +33,7 @@ check() {
 
 echo "== binaries =="
 for b in otto otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-stash otto-peek otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
+         otto-launcher otto-emoji otto-stash otto-peek otto-preview otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
     check "/usr/bin/$b" exec
 done
 check /usr/libexec/xdg-desktop-portal-otto exec
@@ -43,6 +43,7 @@ echo "== session and applications =="
 check /usr/share/wayland-sessions/otto.desktop
 check /usr/share/applications/otto-files.desktop
 check /usr/share/applications/otto-settings.desktop
+check /usr/share/applications/otto-preview.desktop
 # The Trash window is otto-files behind its own entry, so it gets its own
 # icon in the dock and the applications list. Every package must ship it.
 check /usr/share/applications/otto-trash.desktop
@@ -118,7 +119,8 @@ echo "== desktop entry is valid =="
 if command -v desktop-file-validate >/dev/null; then
     for d in /usr/share/applications/otto-files.desktop \
              /usr/share/applications/otto-trash.desktop \
-             /usr/share/applications/otto-settings.desktop; do
+             /usr/share/applications/otto-settings.desktop \
+             /usr/share/applications/otto-preview.desktop; do
         [[ -f "$d" ]] || continue   # already reported missing above
         desktop-file-validate "$d" && echo "  ok  $d" || fail=1
     done
@@ -147,7 +149,8 @@ echo "== Exec= targets resolve =="
 for d in /usr/share/wayland-sessions/otto.desktop \
          /usr/share/applications/otto-files.desktop \
          /usr/share/applications/otto-trash.desktop \
-         /usr/share/applications/otto-settings.desktop; do
+         /usr/share/applications/otto-settings.desktop \
+         /usr/share/applications/otto-preview.desktop; do
     [[ -f "$d" ]] || continue   # already reported missing above
     exe=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$d" | head -1)
     [[ -n "$exe" ]] || { echo "no Exec= in $d"; fail=1; continue; }
@@ -175,7 +178,7 @@ if [[ "${OTTO_SKIP_RUN:-0}" == 1 ]]; then
 else
 for b in /usr/bin/otto /usr/bin/otto-bar /usr/bin/otto-islands /usr/bin/otto-lock \
          /usr/bin/otto-settings /usr/bin/otto-files /usr/bin/otto-launcher /usr/bin/otto-emoji /usr/bin/otto-stash /usr/bin/otto-msg /usr/bin/otto-search \
-         /usr/bin/otto-peek /usr/bin/otto-media-worker \
+         /usr/bin/otto-peek /usr/bin/otto-preview /usr/bin/otto-media-worker \
          /usr/bin/otto-greeter /usr/bin/otto-rdp /usr/bin/otto-agents \
          /usr/libexec/xdg-desktop-portal-otto; do
     [[ -x "$b" ]] || continue   # already reported missing above
@@ -208,7 +211,7 @@ else
 # to prove the install is runnable without a seat, a GPU or a compositor.
 "/usr/bin/otto" --version || { echo "otto --version failed"; fail=1; }
 for b in otto-bar otto-islands otto-lock otto-settings otto-files \
-         otto-launcher otto-emoji otto-stash otto-peek otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
+         otto-launcher otto-emoji otto-stash otto-peek otto-preview otto-media-worker otto-msg otto-search otto-greeter otto-rdp otto-agents; do
     [[ -x "/usr/bin/$b" ]] || continue
     # Not every component parses --version; a component that instead prints
     # usage and exits non-zero has still loaded successfully. Only a loader

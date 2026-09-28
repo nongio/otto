@@ -1252,6 +1252,22 @@ impl Window {
         }
     }
 
+    /// Change the window's size from the client side, in logical points.
+    ///
+    /// Only for a size the compositor left to the window: a configure with no
+    /// size, answered with one other than the size the window was created at
+    /// (fitted to the configure's suggested bounds, say). A configure that
+    /// carries a size is followed as it is, and a resize here would disagree
+    /// with it.
+    pub fn resize(&self, width: i32, height: i32) {
+        if let Ok(mut surface_guard) = self.surface.write() {
+            if let Some(ref mut surface) = *surface_guard {
+                surface.resize(width, height);
+            }
+        }
+        self.request_frame();
+    }
+
     /// Rename the window, in the compositor as well as here.
     ///
     /// Takes `&self` rather than `&mut self`: a window's title is one of the
