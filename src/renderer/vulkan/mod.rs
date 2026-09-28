@@ -218,6 +218,9 @@ pub struct SkiaVkRenderer {
     /// Client dmabufs imported for sampling, keyed weakly so the cache never
     /// keeps a dropped buffer alive.
     dmabuf_cache: HashMap<WeakDmabuf, VulkanImage>,
+    /// Live textures of client dmabufs, handed back to the foreign queue
+    /// family after every submit (see [`Self::release_sampled`]).
+    sampled: Vec<(std::sync::Weak<TextureBacking>, gpu::BackendTexture)>,
     /// Dmabufs wrapped as render targets.
     target_cache: HashMap<WeakDmabuf, SkiaVkTarget>,
     /// Dmabufs the device cannot render into, so they are not retried every frame.
@@ -316,6 +319,7 @@ impl SkiaVkRenderer {
             texture_formats,
             render_formats,
             dmabuf_cache: HashMap::new(),
+            sampled: Vec::new(),
             target_cache: HashMap::new(),
             refused_targets: HashSet::new(),
             current_target: None,
@@ -427,7 +431,9 @@ impl SkiaVkRenderer {
         target: &SkiaVkTarget,
     ) -> Result<SyncPoint, SkiaVkError> {
         self.flush_target(target);
-        self.ctx().flush_and_submit();
+        self.ctx().flush(None);
+        self.release_sampled();
+        self.ctx().submit(None);
         let sync = match self.sync_pool.signal(&self.device, self.sync_fd)? {
             Some(sync) => SyncPoint::from(sync),
             None => SyncPoint::signaled(),
@@ -457,6 +463,27 @@ impl SkiaVkRenderer {
         } else {
             ctx.flush_surface(&mut surface);
         }
+    }
+
+    /// Hands every sampled client dmabuf back to the foreign queue family.
+    ///
+    /// Skia acquires a foreign image from `QUEUE_FAMILY_FOREIGN_EXT` when it
+    /// first samples it; the matching release is recorded here, after the
+    /// frame's draws are flushed and before they are submitted, so the client
+    /// and KMS see the buffer owned by no queue again. Skia skips images
+    /// already in that state, so textures not drawn this frame cost nothing.
+    fn release_sampled(&mut self) {
+        let state = skvk::mutable_texture_states::new_vulkan(
+            skvk::ImageLayout::GENERAL,
+            vk::QUEUE_FAMILY_FOREIGN_EXT,
+        );
+        let mut sampled = std::mem::take(&mut self.sampled);
+        sampled.retain(|(backing, _)| backing.strong_count() > 0);
+        let ctx = self.ctx();
+        for (_, backend) in &sampled {
+            ctx.set_backend_texture_state(backend, &state);
+        }
+        self.sampled = sampled;
     }
 
     /// Destroys retired memory the GPU is done with.
@@ -490,7 +517,9 @@ impl SkiaVkRenderer {
     /// Call once per frame, after the last plane render and before handing
     /// the buffers to the DRM compositor.
     pub fn flush_planes_for_scanout(&mut self) {
-        self.ctx().flush_submit_and_sync_cpu();
+        self.ctx().flush(None);
+        self.release_sampled();
+        self.ctx().submit(gpu::SyncCpu::Yes);
         self.release_plane_textures();
         self.reap();
     }
@@ -614,13 +643,15 @@ impl SkiaVkRenderer {
             None,
         )
         .ok_or(SkiaVkError::Wrap)?;
+        let backing = Arc::new(TextureBacking::new(
+            TextureMemory::Dmabuf { _image: image },
+            sk_image.clone(),
+            false,
+            self.graveyard.queue(),
+        ));
+        self.sampled.push((Arc::downgrade(&backing), backend));
         Ok(SkiaVkTexture {
-            backing: Arc::new(TextureBacking::new(
-                TextureMemory::Dmabuf { _image: image },
-                sk_image.clone(),
-                false,
-                self.graveyard.queue(),
-            )),
+            backing,
             image: sk_image,
             has_alpha: !fmt.opaque,
             padding_alpha: fmt.opaque,

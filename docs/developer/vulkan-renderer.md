@@ -161,12 +161,18 @@ after every frame, read-back or blit the buffer is back where KMS and other
 devices expect it. Forgetting this step shows up as garbage or stale content
 on screen, because Skia's layout transitions and the scanout engine disagree.
 
+Sampled client dmabufs are released too. Each import records the texture's
+`BackendTexture` in `sampled`, and `release_sampled` runs between the flush
+and the submit of every frame: `set_backend_texture_state(GENERAL,
+QUEUE_FAMILY_FOREIGN_EXT)` on each live one. Skia skips images already in
+that state, so only the textures drawn this frame get a barrier, and the
+next draw acquires them again.
+
 ### Sync
 
 skia-safe exposes no semaphore API: there is no way to hand Skia a semaphore
-to wait on or signal. The renderer works around Skia instead of inside it.
-Vulkan runs submissions to one queue in order, so an empty submit placed
-right before or right after Skia's does the job.
+to wait on or signal. The renderer works around Skia instead of inside it,
+with its own submits placed right before or right after Skia's.
 
 ![Sync around Skia's submit](diagrams/vulkan-sync.svg)
 
@@ -177,8 +183,12 @@ right before or right after Skia's does the job.
   as the plane's `IN_FENCE_FD` and anywhere else that takes a `SyncPoint`.
 - **Waiting for a client.** `Renderer::wait` exports the client's sync point
   as a sync file, imports it as a *temporary* semaphore payload, and submits
-  an empty batch that waits on it. Skia's next submit lands after it. If the
-  import or submit fails, the wait falls back to the CPU.
+  a batch that waits on it. A semaphore wait only holds back its own batch,
+  so that batch also runs one pre-recorded command buffer with a full
+  `ALL_COMMANDS` pipeline barrier. A barrier's second scope is every command
+  later in submission order on the queue, so Skia's next submits wait for the
+  client through it. If the import or submit fails, the wait falls back to
+  the CPU.
 - **Drivers without `SYNC_FD` export.** `signal` blocks on
   `vkQueueWaitIdle` and returns an already-signalled point. Slow, but correct.
 - **Screenshare copies.** `blit_current_frame` attaches the copy's sync file
@@ -244,12 +254,12 @@ requested but unavailable, the probe failed and the session is on GL.
   window on its own KMS plane yet. The plane code builds for Vulkan
   (`create_surface_from_dmabuf`, `flush_planes_for_scanout`) but has not been
   run on hardware. See [DRM Planes](drm_plane.md).
-- **Multi-plane dmabufs.** Disjoint NV12 video buffers are refused at import;
-  `format.rs` has no YUV formats.
-- **Release after sampling.** Sampled client dmabufs stay in Skia's queue
-  family after use; the next import acquires them again.
-- **Queue ordering.** The wait semaphore relies on submissions on one queue
-  executing in order. ANV and RADV do this; the spec does not promise it.
+- **YUV dmabufs.** NV12 video buffers are refused at import; `format.rs` has
+  no YUV formats. Smithay's device layer already imports single-object NV12,
+  but Skia only samples it through a YCbCr conversion when it is told the
+  device's `samplerYcbcrConversion` feature, and skia-safe 0.93 always hands
+  it a null `fDeviceFeatures2`. Disjoint planes also need
+  `VkBindImagePlaneMemoryInfo` in the device layer.
 - **Texture filters and debug flags** are stored and ignored, as on GL.
 - **Driver coverage.** Tested on Intel (ANV). NVK and the proprietary NVIDIA
   driver still need checking for `SYNC_FD` export and modifier imports.

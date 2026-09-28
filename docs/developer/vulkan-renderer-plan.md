@@ -271,12 +271,10 @@ Not done:
   untested; phase 4.
 - Modifier intersection for the primary swapchain beyond what Smithay's
   `DrmCompositor` already does with the renderer's colour-attachment formats.
-- Release barriers for sampled client dmabufs: Skia leaves them in its own
-  queue family after sampling; the next import acquires them again.
-- The `wait()` semaphore relies on in-order execution of submissions on one
-  queue, which ANV and RADV give but the spec does not promise.
 - Texture filters and debug flags are stored and ignored, as on GL.
-- Disjoint multi-plane dmabufs (NV12 video) are refused at import.
+- YUV dmabufs (NV12 video) are refused at import: Skia needs the
+  `samplerYcbcrConversion` feature passed in `fDeviceFeatures2`, which
+  skia-safe 0.93 cannot do (see the developer guide).
 
 ## Risks
 

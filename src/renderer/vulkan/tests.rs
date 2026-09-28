@@ -963,3 +963,66 @@ fn vulkan_plane_surface_draws_dmabuf_textures() {
     drop(release);
     renderer.flush_planes_for_scanout();
 }
+
+/// After a submit, a sampled client dmabuf belongs to the foreign queue
+/// family again, so the client and KMS can use it without an acquire.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_sampled_dmabuf_returns_to_foreign_queue() {
+    use layers::skia::gpu::vk as skvk;
+    use smithay::reexports::ash::vk;
+
+    let phd = first_physical_device();
+    let mut renderer = SkiaVkRenderer::new(&phd).expect("vulkan renderer");
+    let texture = xrgb_dmabuf_alpha_zero(&mut renderer);
+    assert_eq!(sample(&mut renderer, &texture)[1], 255, "green is drawn");
+
+    let (_, backend) = renderer.sampled.last().cloned().expect("tracked texture");
+    let state = skvk::mutable_texture_states::new_vulkan(
+        skvk::ImageLayout::GENERAL,
+        vk::QUEUE_FAMILY_FOREIGN_EXT,
+    );
+    let previous = renderer
+        .ctx()
+        .set_backend_texture_state_and_return_previous(&backend, &state)
+        .expect("texture state");
+    assert_eq!(
+        skvk::mutable_texture_states::get_vk_queue_family_index(&previous),
+        vk::QUEUE_FAMILY_FOREIGN_EXT
+    );
+
+    // Sampling again acquires it anew and releases it after the submit.
+    assert_eq!(
+        sample(&mut renderer, &texture)[1],
+        255,
+        "green is drawn again"
+    );
+}
+
+/// A sync file waited on by the GPU holds back the frames submitted after
+/// it, and the frame still renders.
+#[test]
+#[ignore = "needs a Vulkan GPU"]
+fn vulkan_gpu_wait_orders_later_frames() {
+    use smithay::backend::renderer::sync::Fence;
+
+    let phd = first_physical_device();
+    let mut renderer = SkiaVkRenderer::new(&phd).expect("vulkan renderer");
+    assert!(
+        renderer.sync_fd.import && renderer.sync_fd.export,
+        "SYNC_FD semaphores"
+    );
+    let texture = xrgb_dmabuf_alpha_zero(&mut renderer);
+    for _ in 0..3 {
+        let fence = renderer
+            .sync_pool
+            .signal(&renderer.device, renderer.sync_fd)
+            .expect("signal")
+            .expect("sync file");
+        renderer
+            .sync_pool
+            .wait(&renderer.device, fence.export().expect("dup sync file"))
+            .expect("GPU wait");
+        assert_eq!(sample(&mut renderer, &texture)[1], 255, "green is drawn");
+    }
+}
