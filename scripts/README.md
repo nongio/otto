@@ -2,6 +2,14 @@
 
 This directory contains helper scripts for working with Otto compositor.
 
+## Launch video
+
+### `launch-video/` - Otto's launch video
+
+Renders the launch video from an HTML film, frame by frame, with headless
+Chromium and ffmpeg, using the screenshots and recordings in `assets/`. See
+[`launch-video/README.md`](launch-video/README.md).
+
 ## Localisation
 
 ### `check-locales.py` - Catalogue completeness

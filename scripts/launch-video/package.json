@@ -1,0 +1,15 @@
+{
+  "name": "otto-launch-video",
+  "private": true,
+  "type": "module",
+  "description": "Renders Otto's launch video from film.html, frame by frame, with headless Chromium and ffmpeg.",
+  "scripts": {
+    "prepare-assets": "bash prepare.sh",
+    "stills": "node render.mjs stills",
+    "render": "node render.mjs video"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "playwright-core": "^1.56.1"
+  }
+}

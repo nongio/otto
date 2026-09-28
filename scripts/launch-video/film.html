@@ -1,0 +1,258 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>{{fonts}}</style>
+<style>
+:root{--ink:#0e0c12;--paper:#f6f1ec;--coral:#ff5a4e;--pink:#ff9ab8;--sky:#3aa6e8;}
+*{box-sizing:border-box}
+body{margin:0;width:1920px;height:1080px;overflow:hidden;position:relative;background:var(--ink);color:var(--paper);font-family:'Inter Tight',sans-serif}
+.beat{position:absolute;inset:0;opacity:0;overflow:hidden}
+.c{position:absolute;left:0;right:0;text-align:center}
+.big{font-weight:800;letter-spacing:-.05em;line-height:.9}
+.serif{font-family:'Instrument Serif',serif;font-weight:400;letter-spacing:-.02em}
+.mono{font-family:'JetBrains Mono',monospace}
+.shot{position:absolute;border-radius:18px;overflow:hidden;box-shadow:0 40px 120px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08)}
+.shot img{display:block;width:100%;height:100%;object-fit:cover}
+.cap{position:absolute;font-weight:800;letter-spacing:-.04em;line-height:.95}
+.tag{position:absolute;font-family:'JetBrains Mono',monospace;font-size:22px;letter-spacing:.14em;text-transform:uppercase}
+.key{display:inline-block;padding:10px 22px;border-radius:14px;background:#fff;color:var(--ink);font-family:'JetBrains Mono',monospace;font-weight:600;font-size:34px;box-shadow:0 6px 0 #c9c1ba}
+/* frame chrome */
+#frame .tag{font-size:18px;color:rgba(246,241,236,.55)}
+#bar{position:absolute;left:0;bottom:0;height:4px;background:var(--coral);width:0}
+.grad{background:radial-gradient(1200px 900px at 78% 30%,#3aa6e8 0%,transparent 55%),radial-gradient(1100px 900px at 60% 55%,#ff3b30 0%,transparent 60%),radial-gradient(900px 700px at 15% 90%,#ff5c93 0%,transparent 60%),linear-gradient(135deg,#ffb3a1,#ff6b6b 45%,#e9406f)}
+.plane{position:absolute;left:560px;width:800px;height:450px;border-radius:22px;display:flex;align-items:flex-end;padding:22px 28px;font-family:'JetBrains Mono',monospace;font-size:20px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.feat{position:absolute;left:0;right:0;text-align:center;font-weight:800;font-size:150px;letter-spacing:-.05em}
+</style></head>
+<body>
+
+<!-- B1: hook words -->
+<div class="beat" id="b1">
+  <div class="c big" id="w1" style="top:380px;font-size:300px">Smooth.</div>
+  <div class="c big" id="w2" style="top:380px;font-size:300px;color:var(--pink)">Thoughtful.</div>
+  <div class="c big" id="w3" style="top:380px;font-size:300px;color:var(--coral)">Yours.</div>
+</div>
+
+<!-- B2: promise -->
+<div class="beat" id="b2" style="background:var(--paper);color:var(--ink)">
+  <div class="c big" id="p1" style="top:330px;font-size:150px">A Wayland desktop</div>
+  <div class="c serif" id="p2" style="top:500px;font-size:160px;font-style:italic;color:var(--coral)">that feels like someone cared.</div>
+</div>
+
+<!-- B3: name reveal -->
+<div class="beat grad" id="b3">
+  <div class="c big" id="name" style="top:250px;font-size:520px;color:#fff;letter-spacing:-.07em">otto</div>
+  <div class="c mono" id="sub" style="top:830px;font-size:30px;letter-spacing:.2em;text-transform:uppercase;color:#fff">a compositor built from scratch in Rust</div>
+</div>
+
+<!-- B4: dock (clip) -->
+<div class="beat" id="b4" style="background:#15121a">
+  <div class="shot" id="s4" style="left:700px;top:166px;width:1120px;height:747px"><img class="clip" data-beat="3" data-rate="1.35" data-delay="0.5" data-name="minimize" data-frames="173" alt=""></div>
+  <div class="tag" id="t4" style="left:110px;top:250px;color:var(--coral)">01 &mdash; The Dock</div>
+  <div class="cap" id="c4" style="left:110px;top:310px;width:560px;font-size:96px">A Dock that's a real task manager.</div>
+  <div class="mono" id="m4" style="position:absolute;left:112px;top:680px;width:520px;font-size:24px;line-height:1.5;color:rgba(246,241,236,.65)">minimize to it, hover to peek,<br>click to bring it back</div>
+</div>
+
+<!-- B5: expose (clip) -->
+<div class="beat" id="b5" style="background:var(--sky)">
+  <div class="shot" id="s5" style="left:100px;top:166px;width:1120px;height:747px"><img class="clip" data-beat="4" data-rate="1" data-delay="0" data-name="expose" data-frames="111" alt=""></div>
+  <div class="tag" id="t5" style="left:1300px;top:250px;color:#0e2a3d">02 &mdash; Exposé</div>
+  <div class="cap" id="c5" style="left:1300px;top:310px;width:540px;font-size:96px;color:#fff">Every window. Live.</div>
+  <div id="k5" style="position:absolute;left:1300px;top:640px"><span class="key">PageUp</span><span class="mono" style="font-size:26px;color:#0e2a3d;margin-left:22px">or three fingers up</span></div>
+</div>
+
+<!-- B6: workspaces (clip) -->
+<div class="beat" id="b6" style="background:#15121a">
+  <div class="shot" id="s6" style="left:700px;top:166px;width:1120px;height:747px"><img class="clip" data-beat="5" data-rate="1.1" data-delay="0" data-name="workspaces" data-frames="120" alt=""></div>
+  <div class="tag" id="t6" style="left:110px;top:250px;color:var(--pink)">03 &mdash; Workspaces</div>
+  <div class="cap" id="c6" style="left:110px;top:310px;width:560px;font-size:96px">Drag it to another desk.</div>
+  <div class="mono" id="m6" style="position:absolute;left:112px;top:680px;width:520px;font-size:24px;line-height:1.5;color:rgba(246,241,236,.65)">independent workspaces<br>on every monitor</div>
+</div>
+
+<!-- B7: app switcher (clip) -->
+<div class="beat" id="b7" style="background:var(--pink)">
+  <div class="shot" id="s7" style="left:100px;top:166px;width:1120px;height:747px"><img class="clip" data-beat="6" data-rate="1" data-delay="0" data-name="switcher" data-frames="106" alt=""></div>
+  <div class="tag" id="t7" style="left:1300px;top:250px;color:#5a1030">04 &mdash; App switcher</div>
+  <div class="cap" id="c7" style="left:1300px;top:310px;width:540px;font-size:96px;color:var(--ink)">Apps, not just windows.</div>
+  <div id="k7" style="position:absolute;left:1300px;top:640px"><span class="key">Ctrl</span> <span class="key">Tab</span></div>
+</div>
+
+<!-- B8: tiling -->
+<div class="beat" id="b8" style="background:#1b1426">
+  <div class="shot" id="s8" style="left:700px;top:150px;width:1120px;height:700px"><img src="{{img:tiling}}"></div>
+  <div class="tag" id="t8" style="left:110px;top:250px;color:#bf5af2">05 &mdash; Tiling</div>
+  <div class="cap" id="c8a" style="left:110px;top:310px;width:560px;font-size:96px">Tiling</div>
+  <div class="cap serif" id="c8b" style="left:110px;top:405px;width:560px;font-size:110px;font-style:italic;font-weight:400;color:#bf5af2">or stacking.</div>
+  <div class="mono" id="m8" style="position:absolute;left:112px;top:600px;width:520px;font-size:24px;line-height:1.5;color:rgba(246,241,236,.65)">per workspace, one shortcut.<br>i3 commands via otto-msg.</div>
+</div>
+
+<!-- B7: rices -->
+<div class="beat" id="b9" style="background:var(--ink)">
+  <div id="grid" style="position:absolute;left:0;top:0;width:1920px;height:1080px">
+    <div class="shot" style="left:60px;top:60px;width:580px;height:360px"><img src="{{img:rice-crate-digger}}"></div>
+    <div class="shot" style="left:670px;top:60px;width:580px;height:360px"><img src="{{img:rice-deep-field}}"></div>
+    <div class="shot" style="left:1280px;top:60px;width:580px;height:360px"><img src="{{img:rice-section-9}}"></div>
+    <div class="shot" style="left:60px;top:660px;width:580px;height:360px"><img src="{{img:rice-yorha-bone}}"></div>
+    <div class="shot" style="left:670px;top:660px;width:580px;height:360px"><img src="{{img:rice-shibuya-heist}}"></div>
+    <div class="shot" style="left:1280px;top:660px;width:580px;height:360px"><img src="{{img:rice-beton-brut}}"></div>
+  </div>
+  <div class="c big" id="c9" style="top:470px;font-size:120px">One config file. <span class="serif" style="font-style:italic;font-weight:400;color:var(--pink)">Any look.</span></div>
+</div>
+
+<!-- B8: planes -->
+<div class="beat" id="b10" style="background:#0a0a0f">
+  <div id="stage" style="position:absolute;inset:0;perspective:2200px">
+    <div id="stack" style="position:absolute;inset:0;transform-style:preserve-3d">
+      <div class="plane grad" id="pl0" style="top:300px;color:#fff">Primary · wallpaper + windows</div>
+      <div class="plane" id="pl1" style="top:300px;background:rgba(246,241,236,.12);border:2px solid rgba(246,241,236,.5);color:#fff">Overlay · dock</div>
+      <div class="plane" id="pl2" style="top:300px;background:rgba(255,90,78,.18);border:2px solid var(--coral);color:var(--coral)">Overlay · popups</div>
+    </div>
+  </div>
+  <div class="tag" id="t10" style="left:110px;top:120px;color:var(--coral)">06 &mdash; Rendering</div>
+  <div class="cap" id="c10" style="left:110px;top:170px;font-size:84px">Skia + hardware planes.</div>
+  <div class="mono" id="m10" style="position:absolute;left:112px;top:950px;font-size:26px;color:rgba(246,241,236,.65)">KMS multi-plane scanout · cross-plane backdrop blur</div>
+</div>
+
+<!-- B9: feature ticker -->
+<div class="beat" id="b11" style="background:var(--coral);color:var(--ink)">
+  <div class="tag" style="left:110px;top:120px;color:var(--ink)">And also</div>
+  <div class="feat" id="f0" style="top:420px">Screen sharing</div>
+  <div class="feat" id="f1" style="top:420px">Remote desktop</div>
+  <div class="feat" id="f2" style="top:420px">Lock &amp; login</div>
+  <div class="feat" id="f3" style="top:420px">Files</div>
+  <div class="feat" id="f4" style="top:420px">Live settings</div>
+  <div class="feat" id="f5" style="top:420px">Launcher</div>
+  <div class="feat" id="f6" style="top:420px">11 languages</div>
+</div>
+
+<!-- B10: end card -->
+<div class="beat grad" id="b12">
+  <div class="c big" id="e1" style="top:210px;font-size:340px;color:#fff;letter-spacing:-.07em">otto</div>
+  <div class="c serif" id="e2" style="top:560px;font-size:84px;font-style:italic;color:#fff">A Wayland desktop that feels like someone cared.</div>
+  <div class="c" id="e3" style="top:760px"><span class="mono" style="display:inline-block;padding:18px 34px;border-radius:16px;background:rgba(14,12,18,.85);color:#fff;font-size:36px">$ otto --winit</span></div>
+  <div class="c mono" id="e4" style="top:900px;font-size:30px;letter-spacing:.08em;color:#fff">github.com/nongio/otto</div>
+</div>
+
+<!-- editorial frame -->
+<div id="frame">
+  <div class="tag" style="left:40px;top:34px">OTTO</div>
+  <div class="tag" id="beatno" style="right:40px;top:34px">01 / 12</div>
+  <div class="tag" style="left:40px;bottom:30px">Wayland · Rust · Smithay</div>
+  <div class="tag" id="tc" style="right:40px;bottom:30px">00:00.00</div>
+  <div id="bar"></div>
+</div>
+
+<script>
+const DUR = 45;
+const B = [["b1",0,2.7],["b2",2.7,5.9],["b3",5.9,8.9],["b4",8.9,14.2],["b5",14.2,18.4],["b6",18.4,22.8],["b7",22.8,26.6],["b8",26.6,30],["b9",30,33.4],["b10",33.4,37],["b11",37,40],["b12",40,45]];
+const N = B.length;
+const $ = id => document.getElementById(id);
+const clamp = (x,a=0,b=1) => Math.min(b,Math.max(a,x));
+const out = x => 1 - Math.pow(1-clamp(x),3);
+const inq = x => Math.pow(clamp(x),2);
+const back = x => { x = clamp(x); const c=1.4; return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+const seg = (t,a,b) => clamp((t-a)/(b-a));
+function set(el, o, tf, extra) { el.style.opacity = o; el.style.transform = tf || ""; if (extra) Object.assign(el.style, extra); }
+function rise(el, t, a, d=0.55, dy=60) { const p = out(seg(t,a,a+d)); set(el, p, `translateY(${(1-p)*dy}px)`); }
+let T = 0;
+
+// The renderer calls this after each __seek: puts every clip on the exact
+// frame for the current film time and waits for the decoder.
+window.__syncVideos = async () => {
+  const waits = [];
+  for (const img of document.querySelectorAll("img.clip")) {
+    const [, s] = B[+img.dataset.beat];
+    const t = Math.max(0, (T - s - +img.dataset.delay) * +img.dataset.rate);
+    const f = Math.min(+img.dataset.frames, 1 + Math.floor(t * 24 + 1e-6));
+    const src = `http://clips.local/${img.dataset.name}/${String(f).padStart(4, "0")}.jpg`;
+    if (img.getAttribute("src") !== src) { img.src = src; waits.push(img.decode().catch(() => {})); }
+  }
+  await Promise.all(waits);
+};
+
+function shotBeat(n, L, dir) {
+  const p = out(seg(L,0,0.9));
+  set($("s"+n), p, `translateX(${dir*(1-p)*400}px) perspective(2000px) rotateY(${dir*(-14+10*p)}deg) scale(${0.92+0.08*p+L*0.004})`);
+  rise($("t"+n), L, 0.25, 0.5, 30);
+}
+
+function frame(ms) {
+  T = ms/1000;
+  let active = 0;
+  B.forEach(([id,s,e],i) => { const on = (T>=s && T<e) || (i===N-1 && T>=s); $(id).style.opacity = on?1:0; if (on) active = i; });
+  const L = T - B[active][1];
+
+  $("beatno").textContent = String(active+1).padStart(2,"0") + " / " + N;
+  const cs = Math.floor(T*100); $("tc").textContent = String(Math.floor(cs/6000)).padStart(2,"0")+":"+String(Math.floor(cs/100)%60).padStart(2,"0")+"."+String(cs%100).padStart(2,"0");
+  $("bar").style.width = (clamp(T/DUR)*1920)+"px";
+  const light = active===1 || active===6;
+  document.querySelectorAll("#frame .tag").forEach(el => el.style.color = light ? "rgba(14,12,18,.5)" : "rgba(246,241,236,.6)");
+
+  switch (active) {
+    case 0: {
+      ["w1","w2","w3"].forEach((id,i) => {
+        const a = i*0.85, p = back(seg(L,a,a+0.35));
+        const vis = L>=a && (i===2 || L<a+0.85);
+        set($(id), vis?clamp(p*1.5):0, `scale(${0.6+0.4*p})`);
+      });
+      break;
+    }
+    case 1: {
+      rise($("p1"), L, 0.05, 0.5, 80);
+      const p = out(seg(L,0.6,1.3));
+      set($("p2"), p, `translateY(${(1-p)*50}px)`, {clipPath:`inset(0 ${(1-p)*100}% 0 0)`});
+      break;
+    }
+    case 2: {
+      const p = out(seg(L,0,1.1));
+      set($("name"), p, `scale(${1.35-0.35*p})`, {filter:`blur(${(1-p)*30}px)`});
+      rise($("sub"), L, 0.9, 0.6, 30);
+      break;
+    }
+    case 3: shotBeat(4, L, 1); rise($("c4"), L, 0.4); rise($("m4"), L, 1.1, 0.6, 20); break;
+    case 4: { shotBeat(5, L, -1); rise($("c5"), L, 0.4); const k = back(seg(L,1.0,1.4)); set($("k5"), clamp(k), `scale(${0.7+0.3*k})`); break; }
+    case 5: shotBeat(6, L, 1); rise($("c6"), L, 0.4); rise($("m6"), L, 1.1, 0.6, 20); break;
+    case 6: { shotBeat(7, L, -1); rise($("c7"), L, 0.4); const k = back(seg(L,1.0,1.4)); set($("k7"), clamp(k), `scale(${0.7+0.3*k})`); break; }
+    case 7: shotBeat(8, L, 1); rise($("c8a"), L, 0.4); rise($("c8b"), L, 0.75); rise($("m8"), L, 1.3, 0.6, 20); break;
+    case 8: {
+      const p = out(seg(L,0,2.2));
+      const g = $("grid");
+      set(g, 1, `scale(${1.5-0.5*p}) rotate(${(1-p)*-4}deg)`, {transformOrigin:"50% 50%"});
+      [...g.children].forEach((el,i) => { el.style.opacity = out(seg(L,i*0.12,i*0.12+0.5)); });
+      const c = back(seg(L,1.3,1.8)); set($("c9"), clamp(c), `scale(${0.85+0.15*c})`);
+      break;
+    }
+    case 9: {
+      const p = out(seg(L,0.3,1.8));
+      set($("stack"), 1, `translateY(${p*110}px) rotateX(${p*52}deg) rotateZ(${p*-22}deg)`);
+      [0,1,2].forEach(i => {
+        const q = out(seg(L,0.4+i*0.1,1.9+i*0.1));
+        const w = i===0 ? 800 : i===1 ? 420 : 320, h = i===0 ? 450 : i===1 ? 90 : 190;
+        const x = i===0 ? 560 : i===1 ? 750 : 600, y = i===0 ? 300 : i===1 ? 640 : 330;
+        set($("pl"+i), i===0 ? 1 : out(seg(L,0.1+i*0.15,0.5+i*0.15)), `translateZ(${q*(i===0?0:i===1?160:300)}px)`, {width:w+"px",height:h+"px",left:x+"px",top:y+"px"});
+      });
+      rise($("t10"), L, 0.2, 0.5, 30); rise($("c10"), L, 0.4); rise($("m10"), L, 1.6, 0.6, 20);
+      break;
+    }
+    case 10: {
+      const step = 3.0/7;
+      for (let i=0;i<7;i++) {
+        const a = i*step, el = $("f"+i);
+        const pin = out(seg(L,a,a+0.18)), pout = inq(seg(L,a+step-0.08,a+step));
+        const vis = L>=a && (i===6 || L<a+step);
+        set(el, vis ? (i===6?pin:pin*(1-pout)) : 0, `translateY(${(1-pin)*120 - (i===6?0:pout*120)}px)`);
+      }
+      break;
+    }
+    case 11: {
+      const p = out(seg(L,0,0.9));
+      set($("e1"), p, `translateY(${(1-p)*80}px) scale(${1.08-0.08*p})`, {filter:`blur(${(1-p)*18}px)`});
+      rise($("e2"), L, 0.5, 0.7, 40);
+      const k = back(seg(L,1.1,1.6)); set($("e3"), clamp(k), `scale(${0.8+0.2*k})`);
+      rise($("e4"), L, 1.5, 0.6, 20);
+      break;
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body></html>
