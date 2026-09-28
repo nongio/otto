@@ -32,10 +32,11 @@ impl Browser {
 
     /// The sort a view opens with. List shows the modified column, and the
     /// answer it is usually asked for is "what changed most recently", so it
-    /// leads with newest first; the other views sort by name.
+    /// leads with newest first, as does Photos, whose headings are days; the
+    /// other views sort by name.
     pub(super) fn default_sort(mode: ViewMode) -> (SortKey, bool) {
         match mode {
-            ViewMode::List => (SortKey::Modified, false),
+            ViewMode::List | ViewMode::Photos => (SortKey::Modified, false),
             ViewMode::Grid | ViewMode::Columns => (SortKey::Name, true),
         }
     }
@@ -196,6 +197,15 @@ impl Browser {
                 view::grid_cell_at_in(area, &self.recent_sections, x, y, count, scroll)
                     .map(|i| (depth, i))
             }
+            ViewMode::Photos => {
+                let depth = self.columns.len() - 1;
+                let scroll = self.columns[depth].scroll.offset();
+                let area = self.photos.area(width, height);
+                self.photos
+                    .tile_at(area, x, y, scroll)
+                    .filter(|&i| i < self.visible_len(depth))
+                    .map(|i| (depth, i))
+            }
             ViewMode::List => {
                 let depth = self.columns.len() - 1;
                 let count = self.visible_len(depth);
@@ -234,6 +244,10 @@ impl Browser {
                 index,
                 scroll,
             ),
+            ViewMode::Photos => {
+                self.photos
+                    .tile_rect(self.photos.area(width, height), index, scroll)
+            }
             ViewMode::List => view::list_row_rect(width, count, index, scroll),
             ViewMode::Columns => view::miller_row_rect(
                 depth,

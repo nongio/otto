@@ -62,7 +62,7 @@ Go to path: ~/Documents
 The part before the colon is fixed. What you type after it is your answer.
 
 - The list below shows suggestions: folders for a path, your sidebar places
-  for **Go to Place**, the three views for **Change View**. `↑` `↓` and
+  for **Go to Place**, the four views for **Change View**. `↑` `↓` and
   `Return` pick one.
 - `Tab` completes a path the way `Ctrl+L` does.
 - If your answer doesn't work, for example a path that doesn't exist or a name

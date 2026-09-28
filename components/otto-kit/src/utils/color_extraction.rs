@@ -79,6 +79,76 @@ pub fn extract_accent_color(image: &Image) -> Color {
     Color::from_rgb(boosted.0, boosted.1, boosted.2)
 }
 
+/// The `n` colours `image` is mostly made of, most common first.
+///
+/// Samples the image the way [`extract_accent_color`] does, sorts the coarse
+/// RGB buckets by how many samples fell in each, and walks down that list
+/// keeping a bucket only when it is visibly different from every colour
+/// already kept. Each colour is the average of the samples in its bucket, not
+/// the bucket's centre, so a flat red comes back as that red.
+///
+/// Unlike the accent, nothing is boosted or rejected: a palette of a grey
+/// photograph is greys. Fewer than `n` colours come back when the picture
+/// does not have that many distinct ones, and none for an empty image.
+pub fn extract_palette(image: &Image, n: usize) -> Vec<Color> {
+    palette_of(&sample_pixels(image), n)
+}
+
+/// The palette over already-sampled pixels. Split out so the choice of
+/// colours can be tested without a raster surface.
+fn palette_of(pixels: &[(u8, u8, u8)], n: usize) -> Vec<Color> {
+    /// How far apart two kept colours must be, as a Euclidean distance in
+    /// 0..255 RGB. Neighbouring buckets of one gradient are closer than this,
+    /// so a sky does not fill the whole palette with blues.
+    const MIN_DISTANCE: f32 = 48.0;
+
+    if pixels.is_empty() || n == 0 {
+        return Vec::new();
+    }
+    let mut sums = vec![(0u32, 0u32, 0u32, 0u32); BUCKETS];
+    for &(r, g, b) in pixels {
+        let ri = (r as usize * LEVELS / 256).min(LEVELS - 1);
+        let gi = (g as usize * LEVELS / 256).min(LEVELS - 1);
+        let bi = (b as usize * LEVELS / 256).min(LEVELS - 1);
+        let bucket = &mut sums[ri * LEVELS * LEVELS + gi * LEVELS + bi];
+        bucket.0 += r as u32;
+        bucket.1 += g as u32;
+        bucket.2 += b as u32;
+        bucket.3 += 1;
+    }
+    let mut buckets: Vec<(u32, (u8, u8, u8))> = sums
+        .iter()
+        .filter(|s| s.3 > 0)
+        .map(|&(r, g, b, count)| {
+            (
+                count,
+                ((r / count) as u8, (g / count) as u8, (b / count) as u8),
+            )
+        })
+        .collect();
+    // Most common first; ties broken by the colour so the answer is stable.
+    buckets.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+
+    let mut kept: Vec<(u8, u8, u8)> = Vec::with_capacity(n);
+    for (_, colour) in buckets {
+        if kept.len() == n {
+            break;
+        }
+        let distinct = kept.iter().all(|k| distance(*k, colour) >= MIN_DISTANCE);
+        if distinct {
+            kept.push(colour);
+        }
+    }
+    kept.into_iter()
+        .map(|(r, g, b)| Color::from_rgb(r, g, b))
+        .collect()
+}
+
+fn distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
+    let d = |x: u8, y: u8| x as f32 - y as f32;
+    (d(a.0, b.0).powi(2) + d(a.1, b.1).powi(2) + d(a.2, b.2).powi(2)).sqrt()
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -167,4 +237,62 @@ fn ensure_visible(r: f32, g: f32, b: f32) -> (u8, u8, u8) {
         ((g1 + m) * 255.0).round() as u8,
         ((b1 + m) * 255.0).round() as u8,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repeat(colour: (u8, u8, u8), times: usize) -> Vec<(u8, u8, u8)> {
+        vec![colour; times]
+    }
+
+    #[test]
+    fn the_palette_is_the_colours_the_picture_is_made_of_most_common_first() {
+        let mut pixels = repeat((242, 132, 92), 50);
+        pixels.extend(repeat((20, 40, 200), 30));
+        pixels.extend(repeat((250, 250, 250), 10));
+        let palette = palette_of(&pixels, 5);
+        assert_eq!(
+            palette,
+            vec![
+                Color::from_rgb(242, 132, 92),
+                Color::from_rgb(20, 40, 200),
+                Color::from_rgb(250, 250, 250),
+            ]
+        );
+    }
+
+    #[test]
+    fn near_neighbours_do_not_crowd_the_palette() {
+        // Two shades of one blue, a bucket apart, and one red.
+        let mut pixels = repeat((30, 60, 200), 40);
+        pixels.extend(repeat((30, 60, 232), 30));
+        pixels.extend(repeat((220, 30, 30), 5));
+        let palette = palette_of(&pixels, 2);
+        assert_eq!(
+            palette,
+            vec![Color::from_rgb(30, 60, 200), Color::from_rgb(220, 30, 30)]
+        );
+    }
+
+    #[test]
+    fn nothing_in_nothing_out() {
+        assert!(palette_of(&[], 5).is_empty());
+        assert!(palette_of(&repeat((1, 2, 3), 4), 0).is_empty());
+    }
+
+    #[test]
+    fn an_image_is_sampled() {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((40, 20)).unwrap();
+        let canvas = surface.canvas();
+        canvas.clear(Color::from_rgb(0, 160, 80));
+        let mut paint = skia_safe::Paint::default();
+        paint.set_color(Color::from_rgb(200, 20, 40));
+        canvas.draw_rect(skia_safe::Rect::from_xywh(0.0, 0.0, 10.0, 20.0), &paint);
+        let palette = extract_palette(&surface.image_snapshot(), 5);
+        assert_eq!(palette.len(), 2, "{palette:?}");
+        assert_eq!(palette[0], Color::from_rgb(0, 160, 80));
+        assert_eq!(palette[1], Color::from_rgb(200, 20, 40));
+    }
 }

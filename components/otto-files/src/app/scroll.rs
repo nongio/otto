@@ -12,6 +12,7 @@ impl Browser {
     /// wrong end.
     pub(super) fn sync_scroll_metrics(&mut self) {
         self.rebuild_recent_sections();
+        self.rebuild_photos_layout();
         let (width, height) = (self.size.0, self.content_h());
         let mode = self.mode;
         let miller_w = self.miller_w;
@@ -33,11 +34,22 @@ impl Browser {
         let pan = self.pan.offset();
 
         for (depth, &count) in counts.iter().enumerate() {
-            let viewport = view::pane_viewport(width, height, mode, depth, pan, miller_w);
+            let viewport = match mode {
+                // Beside the info panel, not under it: the bar, the wheel and
+                // the band all stop at the panel's edge.
+                ViewMode::Photos => self.photos.area(width, height),
+                _ => view::pane_viewport(width, height, mode, depth, pan, miller_w),
+            };
             // The day headings are part of the content: measured without them
             // the grid is short by their height and the last row is unreachable.
-            let content =
-                view::pane_content_height_in(width, height, mode, count, &self.recent_sections);
+            let content = view::pane_content_height_in(
+                width,
+                height,
+                mode,
+                count,
+                &self.recent_sections,
+                &self.photos,
+            );
             // A column being re-read has no entries *yet*, and telling its
             // scroll view how long *that* is would clamp the offset to the top
             // — permanently, since the offset is not restored when the listing
@@ -57,6 +69,14 @@ impl Browser {
             if !loading {
                 scroll.set_content_length(content);
             }
+        }
+        // The Photos wall was packed again at a new size: back to the picture
+        // that was at the top, now that the new length is known.
+        if let Some(offset) = self.scroll_to_after_layout.take() {
+            let depth = self.columns.len() - 1;
+            let scroll = &mut self.columns[depth].scroll;
+            scroll.stop();
+            scroll.state.set_offset(offset);
         }
     }
 

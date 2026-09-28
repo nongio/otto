@@ -342,7 +342,12 @@ impl FilesApp {
         });
     }
 
-    pub(super) fn install_pointer(&self, window: &Window, context_menu: ContextMenu) {
+    pub(super) fn install_pointer(
+        &self,
+        window: &Window,
+        context_menu: ContextMenu,
+        group_menu: Rc<otto_kit::components::dropdown::DropdownMenu>,
+    ) {
         let state = Arc::clone(&self.state);
         let window_for_events = window.clone();
         let modifiers = Arc::clone(&self.modifiers);
@@ -360,6 +365,9 @@ impl FilesApp {
                     After::Drag(drag) => start_drag(&window_for_events, drag),
                     After::Menu(menu) => {
                         show_context_menu(&window_for_events, &context_menu, &state, menu)
+                    }
+                    After::GroupMenu { rect, serial } => {
+                        show_group_menu(&window_for_events, &group_menu, &state, rect, serial)
                     }
                 }
             }
@@ -398,6 +406,54 @@ fn start_drag(window: &Window, drag: DragStart) {
             },
         );
     }
+}
+
+/// Open the Photos view's grouping menu under its button.
+fn show_group_menu(
+    window: &Window,
+    menu: &otto_kit::components::dropdown::DropdownMenu,
+    state: &Arc<Mutex<Browser>>,
+    rect: Rect,
+    serial: u32,
+) {
+    let Some(parent_xdg) = window
+        .surface()
+        .map(|s| s.xdg_window().xdg_surface().clone())
+    else {
+        return;
+    };
+    let options: Vec<String> = crate::photos::Grouping::ALL
+        .iter()
+        .map(|g| g.label().to_string())
+        .collect();
+    let selected = {
+        let browser = state.lock().unwrap();
+        crate::photos::Grouping::ALL
+            .iter()
+            .position(|g| *g == browser.photos_group)
+    };
+    let chosen = Arc::clone(state);
+    let dismissed = Arc::clone(state);
+    menu.open(
+        &parent_xdg,
+        rect,
+        serial,
+        &options,
+        selected,
+        move |index| {
+            if let Some(group) = crate::photos::Grouping::ALL.get(index) {
+                chosen.lock().unwrap().set_photos_group(*group);
+            }
+            AppContext::request_wakeup();
+        },
+        move || {
+            let mut browser = dismissed.lock().unwrap();
+            browser.photos_group_open = false;
+            browser.dirty = true;
+            drop(browser);
+            AppContext::request_wakeup();
+        },
+    );
 }
 
 /// Open the context menu at the press, acting on the browser when an item is

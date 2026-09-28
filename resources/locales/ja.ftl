@@ -1712,3 +1712,56 @@ a11y-preview-page = プレビュー、{ $pages } ページ中 { $page } ペー�
 a11y-preview-pages = プレビュー、{ $pages } ページ
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = プレビュー、短縮表示
+
+## The Photos view
+
+files-view-photos = 写真
+files-photos-day = { $month }{ $day }日（{ $weekday }）
+files-photos-day-year = { $year }年{ $month }{ $day }日（{ $weekday }）
+files-photos-undated = 日付なし
+files-photos-other = その他のファイル
+files-photos-summary = { $images }、{ $folders }
+files-photos-images =
+    { $count ->
+       *[other] { $count } 枚の画像
+    }
+files-photos-folders =
+    { $count ->
+       *[other] { $count } 個のフォルダ
+    }
+
+files-weekday-sun = 日
+files-weekday-mon = 月
+files-weekday-tue = 火
+files-weekday-wed = 水
+files-weekday-thu = 木
+files-weekday-fri = 金
+files-weekday-sat = 土
+
+files-month-long-jan = 1月
+files-month-long-feb = 2月
+files-month-long-mar = 3月
+files-month-long-apr = 4月
+files-month-long-may = 5月
+files-month-long-jun = 6月
+files-month-long-jul = 7月
+files-month-long-aug = 8月
+files-month-long-sep = 9月
+files-month-long-oct = 10月
+files-month-long-nov = 11月
+files-month-long-dec = 12月
+files-photos-month = { $year }年{ $month }
+files-photos-folders-title = フォルダ
+files-photos-group-day = 日ごとにグループ化
+files-photos-group-month = 月ごとにグループ化
+files-photos-group-none = グループ化しない
+files-photos-info-kind = { $format } 画像
+files-photos-info-copied = コピーしました
+files-photos-info-dimensions = サイズ
+files-photos-info-modified = 変更日
+files-photos-info-where = 場所
+files-photos-info-many =
+    { $count ->
+       *[other] { $count } 項目
+    }
+files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵ で開く

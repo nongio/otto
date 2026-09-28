@@ -1715,3 +1715,59 @@ a11y-preview = Vorschau
 a11y-preview-page = Vorschau, Seite { $page } von { $pages }
 a11y-preview-pages = Vorschau, { $pages } Seiten
 a11y-preview-shortened = Vorschau, gekürzt
+
+## The Photos view
+
+files-view-photos = Fotos
+files-photos-day = { $weekday }, { $day }. { $month }
+files-photos-day-year = { $weekday }, { $day }. { $month } { $year }
+files-photos-undated = Ohne Datum
+files-photos-other = Andere Dateien
+files-photos-summary = { $images }, { $folders }
+files-photos-images =
+    { $count ->
+        [one] 1 Bild
+       *[other] { $count } Bilder
+    }
+files-photos-folders =
+    { $count ->
+        [one] 1 Ordner
+       *[other] { $count } Ordner
+    }
+
+files-weekday-sun = Sonntag
+files-weekday-mon = Montag
+files-weekday-tue = Dienstag
+files-weekday-wed = Mittwoch
+files-weekday-thu = Donnerstag
+files-weekday-fri = Freitag
+files-weekday-sat = Samstag
+
+files-month-long-jan = Januar
+files-month-long-feb = Februar
+files-month-long-mar = März
+files-month-long-apr = April
+files-month-long-may = Mai
+files-month-long-jun = Juni
+files-month-long-jul = Juli
+files-month-long-aug = August
+files-month-long-sep = September
+files-month-long-oct = Oktober
+files-month-long-nov = November
+files-month-long-dec = Dezember
+files-photos-month = { $month } { $year }
+files-photos-folders-title = Ordner
+files-photos-group-day = Nach Tag
+files-photos-group-month = Nach Monat
+files-photos-group-none = Nicht gruppieren
+files-photos-info-kind = { $format }-Bild
+files-photos-info-copied = Kopiert
+files-photos-info-dimensions = Abmessungen
+files-photos-info-modified = Geändert
+files-photos-info-where = Ort
+files-photos-info-many =
+    { $count ->
+        [one] 1 Objekt
+       *[other] { $count } Objekte
+    }
+files-photos-one-selected = 1 ausgewählt · Leertaste für Vorschau · ↵ zum Öffnen

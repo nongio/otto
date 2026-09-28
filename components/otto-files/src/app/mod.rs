@@ -38,6 +38,7 @@ mod construct;
 mod cursor;
 mod drag_drop;
 mod file_ops;
+mod folder_views;
 mod frame;
 mod info;
 mod input;
@@ -52,7 +53,9 @@ mod ocr;
 mod open_with;
 mod opening;
 mod palette_session;
+mod panel_text;
 mod peek_session;
+mod photos_view;
 mod picking;
 mod pointer;
 mod present;
@@ -463,6 +466,45 @@ struct Browser {
     /// The recent listing's day sections, rebuilt whenever the listing is.
     /// Empty — a flat grid — whenever [`Self::recent`] is false.
     recent_sections: view::GridSections,
+    /// The Photos view's rows, rebuilt when the width, the listing or a
+    /// picture's size changes. Empty outside that view.
+    photos: view::PhotosLayout,
+    /// What [`Self::photos`] was built from; see `rebuild_photos_layout`.
+    photos_key: Option<photos_view::PhotosKey>,
+    /// The pictures' sizes, probed off the UI thread.
+    photo_dims: crate::photos::Dims,
+    /// The Photos tile under the pointer, which shows its name.
+    photo_hover: Option<usize>,
+    /// The info panel's colour swatch under the pointer.
+    photo_swatch_hover: Option<usize>,
+    /// Text selected in an info panel of the main window.
+    panel_text: Option<panel_text::PanelText>,
+    /// Text selected in Get Info.
+    info_selection: otto_kit::components::selectable_text::TextSelection,
+    /// The view the user chose for each folder, least recently chosen first.
+    folder_views: Vec<(PathBuf, ViewMode)>,
+    /// The Photos view's target row height, from the size slider.
+    photos_row_h: f32,
+    /// The icon view's icon size, from its size slider.
+    grid_icon: f32,
+    /// How the Photos view groups its pictures.
+    photos_group: crate::photos::Grouping,
+    /// The pictures shown on the Photos view's folder cards.
+    folder_previews: crate::photos::FolderPreviews,
+    /// A drag on the Photos size slider.
+    photos_slider: otto_kit::components::slider::SliderDrag,
+    /// The row height a pinch started from, while one is on the Photos view.
+    zoom_pinch: Option<f32>,
+    /// The grouping menu is up, so its button draws open.
+    photos_group_open: bool,
+    /// The info panel's swatch whose colour was just copied, and when.
+    photos_copied: Option<(usize, std::time::Instant)>,
+    /// Where the Photos wall should be scrolled to once it has been packed
+    /// again at a new size, so the picture that was at the top stays there.
+    photos_anchor: Option<(usize, f32)>,
+    /// The scroll offset that anchor resolved to, applied once the pane's
+    /// content length is known.
+    scroll_to_after_layout: Option<f32>,
     /// Which of the Trash header's two buttons is held down.
     trash_pressed: Option<view::TrashAction>,
     /// The Get Info panel, when one is open. Not modal: it is a window of its
@@ -751,6 +793,7 @@ fn view_id(mode: ViewMode) -> &'static str {
         ViewMode::List => "list",
         ViewMode::Grid => "grid",
         ViewMode::Columns => "columns",
+        ViewMode::Photos => "photos",
     }
 }
 
@@ -759,6 +802,7 @@ fn view_from_id(id: &str) -> Option<ViewMode> {
         "list" => Some(ViewMode::List),
         "grid" => Some(ViewMode::Grid),
         "columns" => Some(ViewMode::Columns),
+        "photos" => Some(ViewMode::Photos),
         _ => None,
     }
 }
@@ -851,6 +895,8 @@ struct PreviewPaneState {
     /// read while drawing: the answer comes off the disk, and the caption is
     /// rebuilt every frame.
     text: Option<ocrcache::Status>,
+    /// The picture's main colours, for the Photos info panel's swatches.
+    palette: Vec<skia_safe::Color>,
 }
 
 /// An in-place rename in progress: which row it belongs to and the text
@@ -1080,6 +1126,10 @@ struct FilesApp {
     /// until `on_app_ready` constructs it, which is the earliest point
     /// `AppContext` is set up.
     context_menu: Option<ContextMenu>,
+    /// The Photos view's grouping menu, built with the context menu and for
+    /// the same reason. Held here as well as by the pointer handler so the
+    /// keyboard can drive it while it is open.
+    group_menu: Option<Rc<otto_kit::components::dropdown::DropdownMenu>>,
     /// Peek's surfaces and its card's rect within its own, published by the
     /// render path for the pointer callback below. See
     /// [`pane_surfaces::PaneSurfaces::peek_target`].
@@ -1331,14 +1381,29 @@ fn info_pointer(
         .contains(point);
 
     match kind {
-        PointerEventKind::Press { .. } => {
+        PointerEventKind::Press { button, .. } if *button != BTN_RIGHT => {
             if over_close {
                 browser.close_info();
-            } else if let Some((who, what)) = view::perm_box_at(sheet, x, y) {
-                browser.toggle_permission(who, what);
-            } else if view::info_titlebar_rect(sheet).contains(point) {
-                return true;
+                return false;
             }
+            if let Some((who, what)) = view::perm_box_at(sheet, x, y) {
+                browser.toggle_permission(who, what);
+                return false;
+            }
+            // The facts are text to select; a press anywhere else lets go
+            // of what was selected.
+            let runs = browser.info_runs();
+            let had = browser.info_selection.has_selection();
+            let on_text = browser
+                .info_selection
+                .press(&runs, x, y, std::time::Instant::now());
+            if on_text || had {
+                browser.info_dirty = true;
+            }
+            !on_text && view::info_titlebar_rect(sheet).contains(point)
+        }
+        PointerEventKind::Release { .. } => {
+            browser.info_selection.release();
             false
         }
         PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
@@ -1346,6 +1411,21 @@ fn info_pointer(
                 browser.info_close_hovered = over_close;
                 browser.info_dirty = true;
             }
+            let runs = browser.info_runs();
+            if browser.info_selection.drag(&runs, x, y) {
+                browser.info_dirty = true;
+            }
+            AppContext::set_cursor_shape(
+                if browser.info_selection.is_dragging()
+                    || otto_kit::components::selectable_text::TextSelection::is_over_text(
+                        &runs, x, y,
+                    )
+                {
+                    CursorShape::Text
+                } else {
+                    CursorShape::Default
+                },
+            );
             false
         }
         PointerEventKind::Leave { .. } => {
@@ -1389,6 +1469,7 @@ fn run_app(
         opaque_region: None,
         modifiers: Arc::new(Mutex::new(Modifiers::default())),
         context_menu: None,
+        group_menu: None,
         peek_target: Arc::new(Mutex::new(None)),
         palette_target: Arc::new(Mutex::new(None)),
         picker_queue,
@@ -1420,6 +1501,12 @@ mod test_support;
 
 #[cfg(test)]
 mod sort_default_tests;
+
+#[cfg(test)]
+mod photos_tests;
+
+#[cfg(test)]
+mod folder_views_tests;
 
 #[cfg(test)]
 mod rename_tests;

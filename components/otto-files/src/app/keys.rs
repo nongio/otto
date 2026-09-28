@@ -1,6 +1,7 @@
 //! Keyboard handling.
 
 use super::*;
+use otto_kit::components::scroll::Direction;
 
 impl FilesApp {
     pub(super) fn handle_key(
@@ -10,6 +11,19 @@ impl FilesApp {
         serial: u32,
     ) {
         use smithay_client_toolkit::seat::keyboard::Keysym;
+
+        // The grouping menu has the keyboard while it is up: the arrows move
+        // through it, a letter jumps, Return picks and Escape closes. Its
+        // choice lands through the same callback a click does.
+        if let Some(menu) = self.group_menu.as_ref().filter(|menu| menu.is_open()) {
+            menu.handle_key_event(event, key_state);
+            if !menu.is_open() {
+                let mut browser = self.state.lock().unwrap();
+                browser.photos_group_open = false;
+                browser.dirty = true;
+            }
+            return;
+        }
 
         // A modifier key on its own is not a shortcut and not type-ahead:
         // the state it changed already arrived in `on_modifiers`.
@@ -74,6 +88,23 @@ impl FilesApp {
                     .unwrap()
                     .open_with_key(key, KeyMods { shift, ctrl });
             }
+            return;
+        }
+
+        // Get Info is a window of its own too. Its one key is the copy of
+        // the text selected in it; the rest reach the browser as before.
+        let info_focused = {
+            use wayland_client::Proxy;
+            let window = self.info_window.borrow().clone();
+            window
+                .and_then(|window| window.wl_surface())
+                .is_some_and(|surface| AppContext::keyboard_focus() == Some(surface.id()))
+        };
+        if info_focused
+            && ctrl
+            && event.keysym == Keysym::c
+            && self.state.lock().unwrap().copy_info_text(serial)
+        {
             return;
         }
 
@@ -436,6 +467,20 @@ impl FilesApp {
                         browser.navigate_to(&home);
                     }
                 }
+                // The Photos wall's rows are ragged, so every arrow asks the
+                // layout where the neighbouring tile is.
+                Keysym::Down if browser.mode == ViewMode::Photos => {
+                    browser.move_photo_cursor(Direction::Down, shift)
+                }
+                Keysym::Up if browser.mode == ViewMode::Photos => {
+                    browser.move_photo_cursor(Direction::Up, shift)
+                }
+                Keysym::Right if browser.mode == ViewMode::Photos => {
+                    browser.move_photo_cursor(Direction::Right, shift)
+                }
+                Keysym::Left if browser.mode == ViewMode::Photos => {
+                    browser.move_photo_cursor(Direction::Left, shift)
+                }
                 Keysym::Down => {
                     let step = browser.row_step();
                     browser.move_cursor(step, shift)
@@ -517,6 +562,8 @@ impl FilesApp {
                 // Words selected on a previewed picture are copied as text,
                 // in either host: copying text is not file management.
                 Keysym::c if ctrl && browser.copy_peek_selection(serial) => {}
+                // So is text selected in an info panel.
+                Keysym::c if ctrl && browser.copy_panel_text(serial) => {}
                 // Cut, copy and paste are file management: browser only.
                 Keysym::c if ctrl && browser.picker.is_none() => {
                     browser.copy_selection(false, serial)
@@ -605,13 +652,25 @@ impl FilesApp {
                     browser.add_selection_to_stash()
                 }
                 Keysym::_1 if ctrl => {
-                    browser.set_mode(ViewMode::List);
+                    browser.choose_mode(ViewMode::List);
                 }
                 Keysym::_2 if ctrl => {
-                    browser.set_mode(ViewMode::Grid);
+                    browser.choose_mode(ViewMode::Grid);
                 }
                 Keysym::_3 if ctrl => {
-                    browser.set_mode(ViewMode::Columns);
+                    browser.choose_mode(ViewMode::Columns);
+                }
+                Keysym::_4 if ctrl => {
+                    browser.choose_mode(ViewMode::Photos);
+                }
+                // Bigger and smaller pictures or icons, the zoom chords.
+                Keysym::equal | Keysym::plus | Keysym::KP_Add
+                    if ctrl && browser.zoom_range().is_some() =>
+                {
+                    browser.step_zoom(1.0)
+                }
+                Keysym::minus | Keysym::KP_Subtract if ctrl && browser.zoom_range().is_some() => {
+                    browser.step_zoom(-1.0)
                 }
                 // Anything else printable is type-ahead. It comes last so
                 // that every shortcut above keeps the key it already had.

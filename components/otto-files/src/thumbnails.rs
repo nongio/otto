@@ -52,8 +52,10 @@ pub const BUDGET_BYTES: usize = 96 << 20;
 
 /// Where one file's thumbnail has got to.
 enum State {
-    /// Somebody is looking for it.
-    Pending,
+    /// Somebody is looking for it. Carries the smaller picture it is
+    /// replacing, when a view has asked for more detail than was fetched
+    /// before, so the tile keeps showing that until the new one lands.
+    Pending(Option<skia::Image>),
     /// Found, decoded, ready to draw.
     Ready(skia::Image),
     /// Looked for and not available — no cached thumbnail, and either no way
@@ -69,15 +71,26 @@ struct Slot {
     modified: Option<SystemTime>,
     /// Insertion order, for eviction.
     stamp: u64,
+    /// The longest edge that was asked for, in pixels. A view that wants
+    /// more detail than this — the Photos wall after the icon grid — fetches
+    /// again.
+    size: u32,
 }
 
 impl Slot {
+    /// The picture this slot can draw, if any.
+    fn picture(&self) -> Option<&skia::Image> {
+        match &self.state {
+            State::Ready(image) | State::Pending(Some(image)) => Some(image),
+            _ => None,
+        }
+    }
+
     /// The decoded bytes this slot holds resident.
     fn bytes(&self) -> usize {
-        match &self.state {
-            State::Ready(image) => image.width() as usize * image.height() as usize * 4,
-            _ => 0,
-        }
+        self.picture().map_or(0, |image| {
+            image.width() as usize * image.height() as usize * 4
+        })
     }
 }
 
@@ -140,10 +153,7 @@ impl Store {
         if slot.modified != modified {
             return None;
         }
-        match &slot.state {
-            State::Ready(image) => Some(image),
-            _ => None,
-        }
+        slot.picture()
     }
 
     /// Which of `visible` are worth fetching, in the order given, up to the
@@ -163,7 +173,7 @@ impl Store {
             if self.in_flight + jobs.len() >= MAX_IN_FLIGHT {
                 break;
             }
-            if !self.needs_fetch(&request) {
+            if !self.needs_fetch(&request, size) {
                 continue;
             }
             // A file this application already failed on stays failed until it
@@ -171,10 +181,23 @@ impl Store {
             // "do not try this again", and honouring it is what keeps a folder
             // of unreadable files from re-forking a worker per visit.
             if thumbcache::is_known_failure(&request.path, request.modified) {
-                self.insert(request.path, request.modified, State::Absent);
+                self.insert(request.path, request.modified, State::Absent, size.pixels());
                 continue;
             }
-            self.insert(request.path.clone(), request.modified, State::Pending);
+            // A smaller picture of the same version of the file stays on
+            // screen while the larger one is fetched.
+            let current = self
+                .slots
+                .get(&request.path)
+                .filter(|slot| slot.modified == request.modified)
+                .and_then(Slot::picture)
+                .cloned();
+            self.insert(
+                request.path.clone(),
+                request.modified,
+                State::Pending(current),
+                size.pixels(),
+            );
             jobs.push(Job {
                 path: request.path,
                 modified: request.modified,
@@ -186,13 +209,15 @@ impl Store {
         jobs
     }
 
-    /// Whether this file is worth a fetch: not already known, and not already
-    /// being fetched.
-    fn needs_fetch(&self, request: &Request) -> bool {
+    /// Whether this file is worth a fetch: not already known at `size` or
+    /// better, and not already being fetched.
+    fn needs_fetch(&self, request: &Request, size: thumbcache::Size) -> bool {
         match self.slots.get(&request.path) {
             // Known against a different version of the file — the picture has
             // changed and the old answer, whatever it was, is void.
             Some(slot) if slot.modified != request.modified => true,
+            // Found, but for a smaller box than this one.
+            Some(slot) if matches!(slot.state, State::Ready(_)) => slot.size < size.pixels(),
             Some(_) => false,
             None => true,
         }
@@ -201,15 +226,25 @@ impl Store {
     /// Record what a job found. Wakes the panes that might draw it.
     pub fn finish(&mut self, path: PathBuf, modified: Option<SystemTime>, found: Found) {
         self.in_flight = self.in_flight.saturating_sub(1);
-        let state = match found {
-            Found::Thumbnail(image) => State::Ready(image),
-            Found::Nothing => State::Absent,
+        let (previous, size) = match self.slots.get(&path) {
+            Some(slot) if slot.modified == modified => match &slot.state {
+                State::Pending(previous) => (previous.clone(), slot.size),
+                _ => (None, slot.size),
+            },
+            _ => (None, 0),
+        };
+        let state = match (found, previous) {
+            (Found::Thumbnail(image), _) => State::Ready(image),
+            // Asked for in more detail and not found: the smaller one is
+            // still a picture of this file.
+            (Found::Nothing, Some(previous)) => State::Ready(previous),
+            (Found::Nothing, None) => State::Absent,
         };
         // Only a picture landing changes what is drawn. A miss changes only
         // what will be asked for again, and repainting for it would be a frame
         // that renders the same pixels.
         let repaint = matches!(state, State::Ready(_));
-        self.insert(path, modified, state);
+        self.insert(path, modified, state, size);
         if repaint {
             self.epoch = self.epoch.wrapping_add(1);
         }
@@ -221,13 +256,14 @@ impl Store {
         self.in_flight > 0
     }
 
-    fn insert(&mut self, path: PathBuf, modified: Option<SystemTime>, state: State) {
+    fn insert(&mut self, path: PathBuf, modified: Option<SystemTime>, state: State, size: u32) {
         self.clock = self.clock.wrapping_add(1);
         let stamp = self.clock;
         let slot = Slot {
             state,
             modified,
             stamp,
+            size,
         };
         self.bytes += slot.bytes();
         if let Some(replaced) = self.slots.insert(path, slot) {
@@ -250,7 +286,7 @@ impl Store {
                 // A pending slot is somebody's outstanding job; evicting it
                 // would let the same work be started again while the first is
                 // still running.
-                .filter(|(_, slot)| !matches!(slot.state, State::Pending))
+                .filter(|(_, slot)| !matches!(slot.state, State::Pending(_)))
                 .min_by_key(|(_, slot)| slot.stamp)
                 .map(|(path, _)| path.clone())
             else {
@@ -290,12 +326,27 @@ impl Store {
 /// A miss is remembered for the lifetime of the window instead, by the
 /// [`State::Absent`] the caller records.
 pub fn fetch(job: &Job) -> Found {
+    let cached = thumbcache::lookup(&job.path, job.modified, job.size);
     let found = if job.may_generate {
-        otto_peek::thumbnail(&job.path, job.modified, job.size)
+        match cached {
+            // The shared cache falls back to a smaller size when it has
+            // nothing at the one asked for. Far smaller than the box is a
+            // blur in it: worth decoding the file for, keeping the small one
+            // if that fails.
+            Some(image) if longest_edge(&image) * 2 < job.size.pixels() => {
+                otto_peek::generate_thumbnail(&job.path, job.size).or(Some(image))
+            }
+            Some(image) => Some(image),
+            None => otto_peek::generate_thumbnail(&job.path, job.size),
+        }
     } else {
-        thumbcache::lookup(&job.path, job.modified, job.size)
+        cached
     };
     found.map_or(Found::Nothing, Found::Thumbnail)
+}
+
+fn longest_edge(image: &skia::Image) -> u32 {
+    image.width().max(image.height()).max(0) as u32
 }
 
 /// One visible entry, as the store needs to see it.
@@ -441,6 +492,7 @@ mod tests {
                 PathBuf::from(format!("/tmp/shot-{i}.png")),
                 None,
                 State::Ready(big()),
+                0,
             );
         }
         assert!(store.bytes <= BUDGET_BYTES, "{} bytes held", store.bytes);
@@ -462,6 +514,7 @@ mod tests {
                 PathBuf::from(format!("/tmp/f{n}")),
                 mtime,
                 State::Ready(image()),
+                0,
             );
         }
         assert_eq!(store.slots.len(), CAPACITY);
@@ -478,15 +531,45 @@ mod tests {
     fn never_evicts_a_pending_slot() {
         let mut store = Store::new();
         let mtime = Some(SystemTime::UNIX_EPOCH);
-        store.insert(PathBuf::from("/tmp/pending"), mtime, State::Pending);
+        store.insert(
+            PathBuf::from("/tmp/pending"),
+            mtime,
+            State::Pending(None),
+            0,
+        );
         for n in 0..CAPACITY + 10 {
             store.insert(
                 PathBuf::from(format!("/tmp/f{n}")),
                 mtime,
                 State::Ready(image()),
+                0,
             );
         }
         assert!(store.slots.contains_key(Path::new("/tmp/pending")));
+    }
+
+    /// A bigger box asks again, and the smaller picture stays drawn — and
+    /// stays, if the bigger one cannot be had — rather than the tile going
+    /// blank.
+    #[test]
+    fn a_bigger_box_upgrades_the_thumbnail_without_losing_the_old_one() {
+        let mut store = Store::new();
+        let mtime = Some(SystemTime::UNIX_EPOCH);
+        store.wanted([request("a")], thumbcache::Size::Normal);
+        store.finish(PathBuf::from("/tmp/a"), mtime, Found::Thumbnail(image()));
+        assert!(store
+            .wanted([request("a")], thumbcache::Size::Normal)
+            .is_empty());
+
+        let jobs = store.wanted([request("a")], thumbcache::Size::XLarge);
+        assert_eq!(jobs.len(), 1);
+        assert!(store.image(Path::new("/tmp/a"), mtime).is_some());
+
+        store.finish(PathBuf::from("/tmp/a"), mtime, Found::Nothing);
+        assert!(store.image(Path::new("/tmp/a"), mtime).is_some());
+        assert!(store
+            .wanted([request("a")], thumbcache::Size::XLarge)
+            .is_empty());
     }
 
     #[test]

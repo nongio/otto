@@ -639,7 +639,7 @@ pub fn draw_runs(
 }
 
 /// Predefined text styles for a consistent design system
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextStyle {
     pub family: &'static str,
     pub weight: i32,

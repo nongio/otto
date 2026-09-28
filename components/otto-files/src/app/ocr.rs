@@ -398,6 +398,7 @@ mod tests {
             decoded: None,
             video: None,
             text: None,
+            palette: Vec::new(),
         });
 
         browser.begin_reading(path.clone());

@@ -926,6 +926,10 @@ impl PaneSurfaces {
             data.name.hash(&mut hasher);
             data.first_row.hash(&mut hasher);
             data.decoded.is_some().hash(&mut hasher);
+            data.caption_selection
+                .as_ref()
+                .and_then(|selection| selection.key())
+                .hash(&mut hasher);
             // A video painted here re-records on every frame of it; on its own
             // surface it is none of this one's business.
             if !data.video_on_surface {

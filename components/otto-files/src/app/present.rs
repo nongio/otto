@@ -332,6 +332,27 @@ impl FilesApp {
         });
     }
 
+    /// Measure a batch of pictures for the Photos view off the UI thread.
+    pub(super) fn start_photo_dims(&self, jobs: Vec<crate::photos::ProbeJob>) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let results = crate::photos::probe_all(jobs);
+            state.lock().unwrap().finish_photo_dims(results);
+            AppContext::request_wakeup();
+        });
+    }
+
+    /// Look into a batch of folders for their cards' pictures, off the UI
+    /// thread.
+    pub(super) fn start_folder_previews(&self, jobs: Vec<crate::photos::FolderJob>) {
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            let results = crate::photos::preview_all(jobs);
+            state.lock().unwrap().finish_folder_previews(results);
+            AppContext::request_wakeup();
+        });
+    }
+
     /// Keep repainting while a directory read is outstanding.
     ///
     /// Two constraints force this shape. A worker thread cannot ask for a
@@ -377,6 +398,10 @@ impl FilesApp {
                     // …and while thumbnails are being fetched, so they appear
                     // as they land rather than at the next keystroke.
                     || browser.thumbs.is_busy()
+                    // …and while the Photos view's sizes are being read, so
+                    // the rows settle as each batch lands.
+                    || browser.photo_dims.is_busy()
+                    || browser.folder_previews.is_busy()
             };
             if repaint {
                 window.request_frame();
@@ -468,6 +493,7 @@ impl FilesApp {
                 browser.info_error.as_deref(),
                 browser.info_close_hovered,
                 false,
+                Some(&browser.info_selection).filter(|s| s.has_selection()),
             );
         });
 

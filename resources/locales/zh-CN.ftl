@@ -1716,3 +1716,56 @@ a11y-preview-page = 预览，第 { $page } 页，共 { $pages } 页
 a11y-preview-pages = 预览，共 { $pages } 页
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = 预览，已截短
+
+## The Photos view
+
+files-view-photos = 照片
+files-photos-day = { $month }{ $day }日 { $weekday }
+files-photos-day-year = { $year }年{ $month }{ $day }日 { $weekday }
+files-photos-undated = 无日期
+files-photos-other = 其他文件
+files-photos-summary = { $images }，{ $folders }
+files-photos-images =
+    { $count ->
+       *[other] { $count } 张图片
+    }
+files-photos-folders =
+    { $count ->
+       *[other] { $count } 个文件夹
+    }
+
+files-weekday-sun = 星期日
+files-weekday-mon = 星期一
+files-weekday-tue = 星期二
+files-weekday-wed = 星期三
+files-weekday-thu = 星期四
+files-weekday-fri = 星期五
+files-weekday-sat = 星期六
+
+files-month-long-jan = 1月
+files-month-long-feb = 2月
+files-month-long-mar = 3月
+files-month-long-apr = 4月
+files-month-long-may = 5月
+files-month-long-jun = 6月
+files-month-long-jul = 7月
+files-month-long-aug = 8月
+files-month-long-sep = 9月
+files-month-long-oct = 10月
+files-month-long-nov = 11月
+files-month-long-dec = 12月
+files-photos-month = { $year }年{ $month }
+files-photos-folders-title = 文件夹
+files-photos-group-day = 按天分组
+files-photos-group-month = 按月分组
+files-photos-group-none = 不分组
+files-photos-info-kind = { $format } 图像
+files-photos-info-copied = 已拷贝
+files-photos-info-dimensions = 尺寸
+files-photos-info-modified = 修改时间
+files-photos-info-where = 位置
+files-photos-info-many =
+    { $count ->
+       *[other] { $count } 项
+    }
+files-photos-one-selected = 已选择 1 项 · 空格预览 · ↵ 打开

@@ -18,6 +18,7 @@ impl Browser {
         self.info_text = self.text_status(&info.path);
         self.info = Some(info);
         self.info_error = None;
+        self.info_selection.clear();
         self.info_dirty = true;
     }
 
@@ -26,6 +27,7 @@ impl Browser {
         self.info_text = None;
         self.info_error = None;
         self.info_close_hovered = false;
+        self.info_selection.clear();
         self.info_dirty = true;
     }
 
