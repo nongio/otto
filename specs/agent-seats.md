@@ -105,8 +105,9 @@ Constraints & Edge Cases.
   carries the agent's display name and returns the seat name and the colour.
 - A seat lives as long as the agent's session: it is removed when the agent
   releases it or its requesting connection goes away. Removing a seat ends
-  any grab it holds, clears the keyboard focus it gave, and ends every grant
-  it holds.
+  any grab it holds and clears the keyboard focus it gave. Its grants are
+  kept for the rest of the Otto session, in case the agent comes back (see
+  Workspace grants).
 - Each agent seat hides its cursor on its own idle timer.
 - Next to each agent cursor, a small label shows the agent's name, so the user
   can tell agents apart at a glance.
@@ -132,8 +133,11 @@ Rules for every grant:
 - The agent keyboard is only ever given to a window on a granted workspace.
   If that window moves to a workspace outside the grant, the agent loses its
   keyboard focus.
-- A grant ends when the user revokes it, the agent releases it, the agent's
-  seat goes away, or the workspace is removed. An agent-owned workspace that
+- A grant ends when the user revokes it, the agent releases it, or the
+  workspace is removed. An agent that disconnects and connects again under
+  the same name in the same Otto session gets its seat, colour and grants
+  back without a new prompt; they are held for it until then. Ending the
+  Otto session (logout, restart) ends every grant. An agent-owned workspace that
   ends its grant stays, with its windows, until the user closes it: it now
   belongs to the user.
 - Denying a prompt, or leaving it unanswered for 30 s, refuses the grant.
@@ -195,6 +199,8 @@ sign that an agent can act there.
 - Applications the agent launches through Otto open on the agent's
   workspace, including new windows of applications that are already running,
   and never take the user's focus.
+- An agent's workspace never brings itself on screen: the user goes there
+  (by scrolling, the workspace selector or exposé) when they want to watch.
 - When the user switches to the agent's workspace, the agent keeps working;
   the user's input and the agent's go to their own seats.
 
@@ -290,6 +296,15 @@ screen.
   stock tools work with no changes in the one-agent case.
 - **No raise or activation from agent clicks.** Otherwise the user's windows
   would jump around while they work.
+- **Agent workspaces stay where they are.** Switching the user's view is a
+  disruption; the user already has every way to get there, and the border
+  and topbar indicator tell them it exists.
+- **Grants survive a reconnect within the session.** Agents crash and
+  restart; asking again every time would train the user to click Allow
+  without reading. A new Otto session starts with none, so nothing is
+  granted that the user did not allow since they logged in. Until Phase 5,
+  an agent is recognised by its name alone, which a hostile client can
+  borrow — one more reason grants are not a boundary before then.
 - **Enforcement last, but planned.** Grants are useful to cooperative agents
   from Phase 3. They become a security boundary only when virtual input and
   capture are restricted, which is recorded here so no earlier phase is
@@ -305,18 +320,17 @@ screen.
   `org.otto.Compositor`, or a small Wayland protocol? D-Bus is simplest; a
   protocol would tie seat and grant lifetimes to the client connection for
   free.
-- Should an agent-owned workspace be allowed to become visible on its own
-  (for example, when the agent wants to show the user something), or only
-  when the user switches to it?
 - Should anything stop an agent's application from raising itself or taking
   focus on its own (xdg-activation), which would disturb the user?
 - Is 3 s the right idle default? Long enough to follow a slow agent between
   steps, short enough not to linger over the user's work.
 - Should the user be able to take over an agent seat's pointer, beyond
   pausing?
-- Should a grant survive the agent reconnecting (for example, after a crash),
-  or must it always be asked for again?
 - Should agents be allowed to use Otto's own UI (dock, exposé)? That needs a
   per-seat pointer in the scene engine.
-- Where does the chip go when the topbar is hidden or a fullscreen window
-  covers the top edge?
+- A fullscreen window (a video, a game, a presentation) covers the whole
+  screen, topbar included, and the chip is drawn on top of it at the top
+  centre — over the video's own controls or the game's HUD. Is that
+  acceptable, or should the chip shrink to a small coloured dot in a corner
+  while a window is fullscreen, and expand when the user's pointer
+  approaches it?
