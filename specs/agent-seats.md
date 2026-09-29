@@ -164,6 +164,8 @@ sign that an agent can act there.
 - A small chip at the top centre of the framed output shows the agent's name,
   in its colour, and a **Stop** control. Stop revokes the grant at once. The
   chip responds to the user's pointer only.
+- While a window is fullscreen on an output, that output shows no chip; the
+  border stays. The chip comes back when the window leaves fullscreen.
 - While the agent is active the border is at full strength; after the idle
   time it dims (to about 40 %) but never disappears — it signals the grant,
   not activity.
@@ -257,7 +259,9 @@ screen.
   new windows from an existing process.
 - A client can draw its own coloured frame and imitate the border. The chip,
   which only Otto draws and which sits above every surface, is the
-  authoritative sign; the topbar indicator is the second.
+  authoritative sign; the topbar indicator is the second. During fullscreen
+  neither is shown, so the border alone marks the grant, and the pause
+  shortcut is the way to stop agents without leaving fullscreen.
 - The lock screen must stop all agent input: no agent motion, clicks or keys
   reach any surface while the session is locked. **Not yet enforced in
   Phase 1:** an agent keyboard keeps the focus it had when the session
@@ -289,6 +293,9 @@ screen.
 - **Border on the workspace, not the output.** The grant is to a workspace;
   a frame that stayed on the output during a switch would mark the wrong
   content.
+- **No chip over fullscreen windows.** A video, game or presentation would
+  have its own controls covered. The border is thin and at the edges, so it
+  stays; the chip returns as soon as the window leaves fullscreen.
 - **The border cannot be turned off during a grant.** An indicator the user
   can disable is one they can forget they disabled.
 - **Advertised after the user's seat.** Clients that take the first seat keep
@@ -328,9 +335,3 @@ screen.
   pausing?
 - Should agents be allowed to use Otto's own UI (dock, exposé)? That needs a
   per-seat pointer in the scene engine.
-- A fullscreen window (a video, a game, a presentation) covers the whole
-  screen, topbar included, and the chip is drawn on top of it at the top
-  centre — over the video's own controls or the game's HUD. Is that
-  acceptable, or should the chip shrink to a small coloured dot in a corner
-  while a window is fullscreen, and expand when the user's pointer
-  approaches it?
