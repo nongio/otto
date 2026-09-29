@@ -930,6 +930,29 @@ impl CompositorInterface {
         ))
     }
 
+    /// Start a program for the calling agent: `argv[0]` with the rest as
+    /// its arguments, in Otto's session environment. Its windows open on
+    /// the agent's own workspace, and take the agent's keyboard, not the
+    /// user's. Returns its process id.
+    async fn launch_on_own_workspace(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        argv: Vec<String>,
+    ) -> zbus::fdo::Result<u32> {
+        let owner = sender_of(&header)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::LaunchOnOwnWorkspace {
+                owner,
+                argv,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::AccessDenied)
+    }
+
     /// End the caller's own-workspace grant. The workspace and its windows
     /// stay, for the user. Returns whether there was one.
     async fn release_own_workspace(

@@ -218,6 +218,12 @@ pub enum CompositorCommand {
         response_tx:
             tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::OwnWorkspace, String>>,
     },
+    /// An agent starts a program whose windows open on its own workspace.
+    LaunchOnOwnWorkspace {
+        owner: String,
+        argv: Vec<String>,
+        response_tx: tokio::sync::oneshot::Sender<Result<u32, String>>,
+    },
     /// An agent gives its own workspace to the user.
     ReleaseOwnWorkspace {
         owner: String,
@@ -763,6 +769,16 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         CompositorCommand::RequestOwnWorkspace { owner, response_tx } => {
             let result = state
                 .request_own_workspace(&owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::LaunchOnOwnWorkspace {
+            owner,
+            argv,
+            response_tx,
+        } => {
+            let result = state
+                .launch_on_own_workspace(&owner, &argv)
                 .map_err(|err| err.to_string());
             let _ = response_tx.send(result);
         }

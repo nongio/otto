@@ -73,6 +73,10 @@ pub enum AgentSeatError {
     NoSeat,
     /// There is no output to put a workspace on.
     NoOutput,
+    /// The caller has no workspace of its own to launch onto.
+    NoWorkspace,
+    /// The program could not be started.
+    Launch(String),
 }
 
 impl std::fmt::Display for AgentSeatError {
@@ -82,6 +86,8 @@ impl std::fmt::Display for AgentSeatError {
             Self::NameInUse => write!(f, "another agent holds a seat under this name"),
             Self::NoSeat => write!(f, "ask for a seat first"),
             Self::NoOutput => write!(f, "no output to put a workspace on"),
+            Self::NoWorkspace => write!(f, "ask for a workspace of your own first"),
+            Self::Launch(err) => write!(f, "could not start the program: {err}"),
         }
     }
 }
@@ -493,6 +499,135 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
         }
         self.backend_data.request_redraw();
+    }
+
+    /// Start `argv` for `owner`'s agent, so that its windows open on the
+    /// agent's own workspace. Returns the process id.
+    ///
+    /// The program gets an activation token Otto made for the agent. A new
+    /// process is recognised by the token in the environment it started
+    /// with; an application already running, that opens its window from an
+    /// existing process, hands the token back through xdg-activation.
+    pub fn launch_on_own_workspace(
+        &mut self,
+        owner: &str,
+        argv: &[String],
+    ) -> Result<u32, AgentSeatError> {
+        let agent = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.owner.as_deref() == Some(owner))
+            .ok_or(AgentSeatError::NoSeat)?;
+        if !matches!(agent.reach(&self.workspaces), Reach::Workspace { .. }) {
+            return Err(AgentSeatError::NoWorkspace);
+        }
+        let agent_name = agent.agent_name.clone().unwrap_or_default();
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| AgentSeatError::Launch("no program".into()))?;
+
+        let (token, _) = self.xdg_activation_state.create_external_token(None);
+        let token = token.as_str().to_string();
+        let mut command = self.program_command(program, args);
+        command
+            .env("XDG_ACTIVATION_TOKEN", &token)
+            .env("DESKTOP_STARTUP_ID", &token);
+        let child = command
+            .spawn()
+            .map_err(|err| AgentSeatError::Launch(err.to_string()))?;
+        let pid = child.id();
+        crate::input::actions::reap_in_background(program, child);
+        info!(agent = agent_name, program, pid, "Launched for an agent");
+        self.agent_launch_tokens.insert(token, agent_name);
+        Ok(pid)
+    }
+
+    /// The agent seat whose launch made the client of `surface`, found by the
+    /// activation token in the environment its process started with.
+    pub fn agent_seat_for_client(
+        &self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> Option<String> {
+        use smithay::reexports::wayland_server::Resource;
+
+        if self.agent_launch_tokens.is_empty() {
+            return None;
+        }
+        let client = surface.client()?;
+        let pid = client.get_credentials(&self.display_handle).ok()?.pid;
+        // What the process was started with: a toolkit unsetting the token
+        // after reading it does not change this.
+        let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+        let token = environ.split(|byte| *byte == 0).find_map(|entry| {
+            let entry = std::str::from_utf8(entry).ok()?;
+            entry
+                .strip_prefix("XDG_ACTIVATION_TOKEN=")
+                .or_else(|| entry.strip_prefix("DESKTOP_STARTUP_ID="))
+                .filter(|token| self.agent_launch_tokens.contains_key(*token))
+                .map(str::to_string)
+        })?;
+        self.agent_seat_for_token(&token)
+    }
+
+    /// The agent seat an activation token was made for, while the agent
+    /// still holds a workspace of its own.
+    pub fn agent_seat_for_token(&self, token: &str) -> Option<String> {
+        let agent_name = self.agent_launch_tokens.get(token)?;
+        let agent = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.agent_name.as_deref() == Some(agent_name.as_str()))?;
+        matches!(agent.reach(&self.workspaces), Reach::Workspace { .. }).then(|| agent.name())
+    }
+
+    /// Put `window` on the workspace of the agent on `seat_name`, without
+    /// raising it or taking the user's focus, and give it the agent's
+    /// keyboard: an agent types into what it launched.
+    pub fn place_on_agent_workspace(
+        &mut self,
+        seat_name: &str,
+        window: &crate::shell::WindowElement,
+    ) -> bool {
+        let Some(agent) = self.agent_seat(seat_name) else {
+            return false;
+        };
+        let Reach::Workspace { output, workspace } = agent.reach(&self.workspaces) else {
+            return false;
+        };
+        let seat = agent.seat.clone();
+        let Some(output) = self
+            .workspaces
+            .outputs()
+            .find(|candidate| candidate.name() == output)
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(position) = self
+            .workspaces
+            .output_workspaces
+            .get(&output.name())
+            .and_then(|ows| {
+                ows.workspace_views
+                    .iter()
+                    .position(|view| view.index == workspace)
+            })
+        else {
+            return false;
+        };
+        let location = self.workspaces.element_location(window).unwrap_or_default();
+        self.workspaces
+            .move_window_to_workspace_on_output_with_activate(
+                &output, window, position, location, false,
+            );
+        if let Some(keyboard) = seat.get_keyboard() {
+            keyboard.set_focus(
+                self,
+                Some(window.clone().into()),
+                SERIAL_COUNTER.next_serial(),
+            );
+        }
+        true
     }
 
     /// The agent seat named `seat_name`.

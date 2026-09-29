@@ -413,6 +413,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// The button whose press hit an agent chip's Stop: its release is
     /// swallowed too.
     pub agent_stop_button: Option<u32>,
+    /// Activation tokens Otto gave programs it launched for an agent, with
+    /// the agent's name: their windows open on its workspace.
+    pub agent_launch_tokens: HashMap<String, String>,
     /// Cached pointer location (logical) to avoid deadlock when accessing during button events
     pub last_pointer_location: (f64, f64),
     /// When and where the last press on a server-side titlebar landed, for
@@ -1160,6 +1163,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             agent_seats: Vec::new(),
             agent_history: HashMap::new(),
             agent_stop_button: None,
+            agent_launch_tokens: HashMap::new(),
             last_pointer_location: (0.0, 0.0),
             last_titlebar_press: None,
             cursor_physical_position: (0.0, 0.0),

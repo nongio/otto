@@ -118,9 +118,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             .cloned()
             .or_else(|| self.workspaces.primary_output().cloned());
 
+        // Launched for an agent: its window goes to the agent's workspace,
+        // and nothing of the user's changes.
+        let agent_seat = self.agent_seat_for_client(surface.wl_surface());
+
         // If the target output's current workspace is in fullscreen mode,
         // decide where to map the new window. Fullscreen is per-output.
-        if let Some(output) = target_output.as_ref() {
+        if let Some(output) = target_output.as_ref().filter(|_| agent_seat.is_none()) {
             let name = output.name();
             let (current_index, current_fullscreen) = self
                 .workspaces
@@ -228,6 +232,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         // Create the rendering layer for sc_layers to find
         self.get_or_create_layer_for_surface(surface.wl_surface());
+
+        if let Some(seat_name) = agent_seat {
+            if self.place_on_agent_workspace(&seat_name, &window_element) {
+                self.send_foreign_toplevel_state(&surface_id, false);
+                return;
+            }
+        }
 
         // A freshly mapped window is the most recent one for its app.
         self.workspaces.note_window_focused(&surface_id);

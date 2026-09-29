@@ -850,4 +850,40 @@ mod agent_seat_tests {
         assert!(handle.query(|state| state.agent_seat("agent-1").unwrap().grant.is_none()));
         handle.stop();
     }
+
+    /// An agent can launch only onto a workspace of its own; the launch's
+    /// token is tied to it for as long as it holds that workspace.
+    #[test]
+    #[serial]
+    fn an_agent_launches_onto_its_own_workspace_only() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let argv = vec!["true".to_string()];
+        let launch = |argv: Vec<String>| {
+            handle.query(move |state| {
+                state
+                    .launch_on_own_workspace(":1.10", &argv)
+                    .map_err(|e| e.to_string())
+            })
+        };
+        assert!(
+            launch(argv.clone()).is_err(),
+            "launched without a workspace"
+        );
+
+        request_workspace(&handle, ":1.10").expect("workspace");
+        assert!(launch(argv.clone()).is_ok());
+        let token_seat = || {
+            handle.query(|state| {
+                let token = state.agent_launch_tokens.keys().next().cloned()?;
+                state.agent_seat_for_token(&token)
+            })
+        };
+        assert_eq!(token_seat().as_deref(), Some("agent-1"));
+
+        // Once the workspace is the user's, the token places nothing.
+        handle.query(|state| state.release_own_workspace(":1.10"));
+        assert_eq!(token_seat(), None);
+        handle.stop();
+    }
 }
