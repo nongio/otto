@@ -11,14 +11,17 @@ use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 
 /// Number of bars an animator tracks, one per frequency band. Every bar style
 /// draws from these.
-pub const BAR_COUNT: usize = 8;
+pub const BAR_COUNT: usize = 12;
 
-/// Centre frequency of each band, an octave apart from bass to treble.
-const BAND_HZ: [f32; BAR_COUNT] = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0];
+/// Centre frequency of each band, evenly spaced on a log scale from bass to
+/// treble, about two thirds of an octave apart.
+const BAND_HZ: [f32; BAR_COUNT] = [
+    50.0, 80.0, 135.0, 225.0, 370.0, 610.0, 1000.0, 1650.0, 2750.0, 4500.0, 7500.0, 12000.0,
+];
 
-/// Band-pass Q for bands an octave wide: neighbours overlap a little, so a
+/// Band-pass Q for bands two thirds of an octave wide: neighbours overlap a little, so a
 /// note between two centres lights both rather than neither.
-const BAND_Q: f32 = 1.414;
+const BAND_Q: f32 = 2.0;
 
 /// The loudness of each band of one application stream, updated from a
 /// capture stream on its own thread.
@@ -119,7 +122,7 @@ impl BandPass {
     }
 }
 
-/// Splits a stream into [`BAR_COUNT`] octave bands and measures each.
+/// Splits a stream into [`BAR_COUNT`] bands and measures each.
 ///
 /// Eight small filters per sample, a few million operations a second at
 /// 48 kHz: far cheaper than an FFT and the redraw it feeds. The filters keep
@@ -427,7 +430,7 @@ pub fn draw_bars(
             }
         }
         BarStyle::Large => {
-            let (bar_w, gap) = (6.0f32, 4.0f32);
+            let (bar_w, gap) = (4.0f32, 3.0f32);
             let total = BAR_COUNT as f32 * bar_w + (BAR_COUNT - 1) as f32 * gap;
             let start_x = rect.left + (rect.width() - total) / 2.0;
             for (i, level) in levels.iter().enumerate() {
@@ -547,7 +550,7 @@ mod tests {
         let bands = analyser.process(&stereo_sine(1000.0, 1.0, 0.5), 2).unwrap();
         // A full-scale sine has an RMS of 1/sqrt(2).
         assert!(
-            (bands[4] - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.05,
+            (bands[6] - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.05,
             "{bands:?}"
         );
     }

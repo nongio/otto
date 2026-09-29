@@ -149,7 +149,7 @@ While an MPRIS player has a track loaded, the island shows a persistent live
 activity for it:
 - **Mini**: three bars in a circle, in the accent colour.
 - **Compact**: album art, title, artist and four bars.
-- **Expanded**: larger art, title and artist, eight bars, a progress bar with the
+- **Expanded**: larger art, title and artist, twelve bars, a progress bar with the
   elapsed and remaining time, and previous/play-pause/next controls.
 
 A track playing on another device shows a cast glyph in place of the bars (see
@@ -213,8 +213,8 @@ asks the player over MPRIS `Raise`, which lets a browser switch to the playing t
 An island is music by its `app_id` (`org.otto.music`), not by coming from inside
 otto-islands.
 
-The bars come from `audio_viz`: a PipeWire meter that splits the stream into eight
-octave bands (63 Hz to 8 kHz) with one band-pass filter each, an animator that turns
+The bars come from `audio_viz`: a PipeWire meter that splits the stream into twelve
+bands (50 Hz to 12 kHz) with one band-pass filter each, an animator that turns
 the bands into bar heights, and the bar drawing. The meter holds each band's loudest
 reading between redraws, so a beat between two frames still shows. The animator reads
 each band against its own recent peak rather than full scale, so a player at low
