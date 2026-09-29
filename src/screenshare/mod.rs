@@ -231,6 +231,8 @@ pub enum CompositorCommand {
     },
     /// Capture one workspace, shown or not, to a PNG.
     CaptureWorkspace {
+        /// The caller's unique bus name: only its own workspace is captured.
+        owner: String,
         workspace: String,
         response_tx: tokio::sync::oneshot::Sender<Result<String, String>>,
     },
@@ -791,11 +793,12 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             let _ = response_tx.send(state.release_own_workspace(&owner));
         }
         CompositorCommand::CaptureWorkspace {
+            owner,
             workspace,
             response_tx,
         } => {
             let result = state
-                .capture_workspace(&workspace)
+                .capture_workspace(&owner, &workspace)
                 .map(|path| path.display().to_string());
             let _ = response_tx.send(result);
         }

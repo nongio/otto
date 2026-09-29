@@ -901,50 +901,103 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// A workspace can be captured by its id or its name, shown or not; the
-    /// PNG is the size of its output.
+    fn capture(handle: &HeadlessHandle, owner: &str, selector: &str) -> Result<String, String> {
+        let (owner, selector) = (owner.to_string(), selector.to_string());
+        handle.query(move |state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            otto::screenshare::handle_screenshare_command(
+                state,
+                otto::screenshare::CompositorCommand::CaptureWorkspace {
+                    owner,
+                    workspace: selector,
+                    response_tx: tx,
+                },
+            );
+            rx.try_recv().expect("answered at once")
+        })
+    }
+
+    /// An agent captures its own workspace by id or name, although it is not
+    /// shown; the PNG is the size of its output.
     #[test]
     #[serial]
-    fn a_workspace_is_captured_by_id_or_name() {
+    fn an_agent_captures_its_own_workspace_by_id_or_name() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
-        let (id, mode) = handle.query(|state| {
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let (id, name, mode) = handle.query(|state| {
             let workspaces = state.workspaces_json();
-            let hidden = workspaces
+            let own = workspaces
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|w| w["visible"] == false)
+                .find(|w| w["visible"] == false && w["name"] == "Claude")
                 .cloned()
-                .expect("a hidden workspace");
+                .expect("the agent's hidden workspace");
             let output = state.workspaces.outputs().next().unwrap();
             let mode = output.current_mode().unwrap().size;
             (
-                hidden["id"].as_u64().unwrap(),
+                own["id"].as_u64().unwrap(),
+                own["name"].as_str().unwrap().to_string(),
                 (mode.w as u32, mode.h as u32),
             )
         });
-        let capture = |selector: String| {
-            handle.query(move |state| {
-                let (tx, mut rx) = tokio::sync::oneshot::channel();
-                otto::screenshare::handle_screenshare_command(
-                    state,
-                    otto::screenshare::CompositorCommand::CaptureWorkspace {
-                        workspace: selector,
-                        response_tx: tx,
-                    },
-                );
-                rx.try_recv().expect("answered at once")
-            })
-        };
-        for selector in [id.to_string(), "workspace 2".to_string()] {
-            let path = capture(selector.clone()).unwrap_or_else(|e| panic!("{selector}: {e}"));
+        for selector in [id.to_string(), name] {
+            let path =
+                capture(&handle, ":1.10", &selector).unwrap_or_else(|e| panic!("{selector}: {e}"));
             let png = std::fs::read(&path).expect("the capture was written");
             assert_eq!(&png[1..4], b"PNG");
             let size = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
             assert_eq!((size(16), size(20)), mode, "{selector}: wrong size");
             let _ = std::fs::remove_file(path);
         }
-        assert!(capture("no such workspace".to_string()).is_err());
+        assert!(capture(&handle, ":1.10", "no such workspace").is_err());
+        handle.stop();
+    }
+
+    /// No one captures a workspace that is not theirs: not an agent without
+    /// one, not an agent naming the user's, not another agent.
+    #[test]
+    #[serial]
+    fn only_the_granted_workspace_is_captured() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let users = handle.query(|state| {
+            state.workspaces_json().as_array().unwrap()[0]["id"]
+                .as_u64()
+                .unwrap()
+                .to_string()
+        });
+        assert!(capture(&handle, ":1.99", &users).is_err(), "no seat");
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        assert!(capture(&handle, ":1.10", &users).is_err(), "no grant");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        assert!(capture(&handle, ":1.10", &users).is_err(), "the user's");
+        request_seat(&handle, "Codex", ":1.11").expect("seat");
+        request_workspace(&handle, ":1.11").expect("workspace");
+        assert!(capture(&handle, ":1.11", "Claude").is_err(), "another's");
+        assert!(capture(&handle, ":1.11", "Codex").is_ok());
+        handle.stop();
+    }
+
+    /// Nothing is captured while the session is locked, not even an agent's
+    /// own workspace.
+    #[test]
+    #[serial]
+    fn a_locked_session_is_not_captured() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let mut driver = Driver::connect(&handle);
+        let lock = driver
+            .state
+            .lock_manager
+            .as_ref()
+            .expect("ext_session_lock_manager_v1 missing")
+            .lock(&driver.qh, ());
+        driver.settle(&handle);
+        assert!(handle.query(|state| state.is_session_locked()));
+        assert!(capture(&handle, ":1.10", "Claude").is_err());
+        drop(lock);
         handle.stop();
     }
 }

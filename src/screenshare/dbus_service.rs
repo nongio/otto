@@ -976,10 +976,19 @@ impl CompositorInterface {
     /// its id as `org.otto.Shell1.GetWorkspaces` lists it, or its name (any
     /// case). Returns the path of the PNG, under
     /// `$XDG_RUNTIME_DIR/otto/captures`.
-    async fn capture_workspace(&self, workspace: &str) -> zbus::fdo::Result<String> {
+    ///
+    /// Refused unless it is the calling agent's own workspace, and while the
+    /// session is locked.
+    async fn capture_workspace(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        workspace: &str,
+    ) -> zbus::fdo::Result<String> {
+        let owner = sender_of(&header)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.compositor_tx
             .send(CompositorCommand::CaptureWorkspace {
+                owner,
                 workspace: workspace.to_string(),
                 response_tx: tx,
             })

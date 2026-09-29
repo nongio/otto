@@ -239,7 +239,8 @@ thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
   lists or the workspace's name (any case; a name on several outputs is
   refused). The PNG is the wallpaper and the windows at the output's
   resolution, without the agent border and the output's bars and dock.
-  Until Phase 5 any client may capture any workspace this way. A window
+  Only the agent holding the workspace's grant may capture it (the caller
+  is known by its bus name), and never while the session is locked. A window
   promoted to its own plane on the shown workspace may be missing.
 - The agent cursor is drawn only where its workspace is visible: on an output
   showing it, in exposé previews of it, and during switches that bring it on

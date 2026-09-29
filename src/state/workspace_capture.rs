@@ -12,11 +12,11 @@
 //! that moment, and the layer-shell chrome (bars, dock), which belongs to
 //! the output rather than to the workspace.
 
-use std::path::PathBuf;
+use std::{os::unix::fs::DirBuilderExt, path::PathBuf};
 
 use layers::{drawing::render_node_tree, skia};
 
-use super::{Backend, Otto};
+use super::{agent_seats::Reach, Backend, Otto};
 
 /// A workspace picked for capture: where it is and what it is called.
 struct Target {
@@ -28,8 +28,24 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Capture the workspace `selector` names — its id as `GetWorkspaces`
     /// lists it, or its name — to a PNG under
     /// `$XDG_RUNTIME_DIR/otto/captures`, and return the file's path.
-    pub fn capture_workspace(&mut self, selector: &str) -> Result<PathBuf, String> {
+    ///
+    /// Only for `owner`'s agent, and only of the workspace it is granted;
+    /// never while the session is locked (`specs/permissions.md`).
+    pub fn capture_workspace(&mut self, owner: &str, selector: &str) -> Result<PathBuf, String> {
+        if self.is_session_locked() {
+            return Err("the session is locked".into());
+        }
         let target = self.find_workspace(selector)?;
+        let granted = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.owner.as_deref() == Some(owner))
+            .map(|agent| agent.reach(&self.workspaces));
+        match granted {
+            Some(Reach::Workspace { output, workspace })
+                if output == target.output && workspace == target.view.index => {}
+            _ => return Err(format!("{selector:?} is not the caller's own workspace")),
+        }
         let output = self
             .workspaces
             .outputs()
@@ -84,11 +100,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .encode(context.as_mut(), skia::EncodedImageFormat::PNG, None)
             .ok_or("could not encode the capture")?;
 
+        // Never a shared directory such as /tmp: other users could read it.
         let dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir)
+            .ok_or("XDG_RUNTIME_DIR is not set")?
             .join("otto/captures");
-        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|err| err.to_string())?;
         let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
