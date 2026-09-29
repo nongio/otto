@@ -568,6 +568,7 @@ pub mod trash_drop;
 pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
+pub mod workspace_capture;
 pub mod xdg_activation_handler;
 pub mod xdg_decoration_handler;
 pub mod xwayland_handler;

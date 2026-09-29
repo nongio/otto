@@ -216,7 +216,7 @@ Implemented: the grant, the workspace, hit-testing and keyboard rules while
 hidden, full-rate frames, the cursor drawn only where the workspace is
 shown, the border with its chip and Stop, the mark on exposé and selector
 thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
--> pid`). Not yet: hidden capture.
+-> pid`), and capture of a hidden workspace.
 
 - An agent can ask for a workspace of its own, which starts an own-workspace
   grant and draws its border. Over D-Bus: `RequestOwnWorkspace() ->
@@ -234,7 +234,13 @@ thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
 - Windows on a workspace with a grant keep receiving frame callbacks at full
   rate while it is hidden, so their applications keep painting.
 - The agent can capture its workspace's current image while it is hidden,
-  at the workspace's output scale.
+  at the workspace's output scale. Over D-Bus: `CaptureWorkspace(workspace)
+  -> path`, where `workspace` is the id `org.otto.Shell1.GetWorkspaces`
+  lists or the workspace's name (any case; a name on several outputs is
+  refused). The PNG is the wallpaper and the windows at the output's
+  resolution, without the agent border and the output's bars and dock.
+  Until Phase 5 any client may capture any workspace this way. A window
+  promoted to its own plane on the shown workspace may be missing.
 - The agent cursor is drawn only where its workspace is visible: on an output
   showing it, in exposé previews of it, and during switches that bring it on
   screen.

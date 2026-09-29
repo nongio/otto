@@ -900,4 +900,51 @@ mod agent_seat_tests {
         assert_eq!(token_seat(), None);
         handle.stop();
     }
+
+    /// A workspace can be captured by its id or its name, shown or not; the
+    /// PNG is the size of its output.
+    #[test]
+    #[serial]
+    fn a_workspace_is_captured_by_id_or_name() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let (id, mode) = handle.query(|state| {
+            let workspaces = state.workspaces_json();
+            let hidden = workspaces
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|w| w["visible"] == false)
+                .cloned()
+                .expect("a hidden workspace");
+            let output = state.workspaces.outputs().next().unwrap();
+            let mode = output.current_mode().unwrap().size;
+            (
+                hidden["id"].as_u64().unwrap(),
+                (mode.w as u32, mode.h as u32),
+            )
+        });
+        let capture = |selector: String| {
+            handle.query(move |state| {
+                let (tx, mut rx) = tokio::sync::oneshot::channel();
+                otto::screenshare::handle_screenshare_command(
+                    state,
+                    otto::screenshare::CompositorCommand::CaptureWorkspace {
+                        workspace: selector,
+                        response_tx: tx,
+                    },
+                );
+                rx.try_recv().expect("answered at once")
+            })
+        };
+        for selector in [id.to_string(), "workspace 2".to_string()] {
+            let path = capture(selector.clone()).unwrap_or_else(|e| panic!("{selector}: {e}"));
+            let png = std::fs::read(&path).expect("the capture was written");
+            assert_eq!(&png[1..4], b"PNG");
+            let size = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+            assert_eq!((size(16), size(20)), mode, "{selector}: wrong size");
+            let _ = std::fs::remove_file(path);
+        }
+        assert!(capture("no such workspace".to_string()).is_err());
+        handle.stop();
+    }
 }

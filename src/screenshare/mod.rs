@@ -229,6 +229,11 @@ pub enum CompositorCommand {
         owner: String,
         response_tx: tokio::sync::oneshot::Sender<bool>,
     },
+    /// Capture one workspace, shown or not, to a PNG.
+    CaptureWorkspace {
+        workspace: String,
+        response_tx: tokio::sync::oneshot::Sender<Result<String, String>>,
+    },
     /// An agent gives its seats back, or its bus name went away.
     ReleaseAgentSeats {
         owner: String,
@@ -784,6 +789,15 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         }
         CompositorCommand::ReleaseOwnWorkspace { owner, response_tx } => {
             let _ = response_tx.send(state.release_own_workspace(&owner));
+        }
+        CompositorCommand::CaptureWorkspace {
+            workspace,
+            response_tx,
+        } => {
+            let result = state
+                .capture_workspace(&workspace)
+                .map(|path| path.display().to_string());
+            let _ = response_tx.send(result);
         }
         CompositorCommand::ReleaseAgentSeats { owner, response_tx } => {
             let released = state.release_agent_seats(&owner);

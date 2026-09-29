@@ -971,6 +971,24 @@ impl CompositorInterface {
             .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))
     }
 
+    /// Capture a workspace to a PNG, whether it is on screen or not: its
+    /// wallpaper and windows, at its output's resolution. `workspace` is
+    /// its id as `org.otto.Shell1.GetWorkspaces` lists it, or its name (any
+    /// case). Returns the path of the PNG, under
+    /// `$XDG_RUNTIME_DIR/otto/captures`.
+    async fn capture_workspace(&self, workspace: &str) -> zbus::fdo::Result<String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::CaptureWorkspace {
+                workspace: workspace.to_string(),
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::Failed)
+    }
+
     /// Give back every seat the caller holds. Returns whether it held any.
     async fn release_agent_seat(
         &self,
