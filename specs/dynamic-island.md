@@ -213,10 +213,15 @@ asks the player over MPRIS `Raise`, which lets a browser switch to the playing t
 An island is music by its `app_id` (`org.otto.music`), not by coming from inside
 otto-islands.
 
-The bars come from `audio_viz`: a PipeWire level meter, an animator that turns one
-level into eight independently moving bars, and the bar drawing. The animator reads
-each level against the stream's recent peak rather than full scale, so a player at low
-volume or a quietly mastered video still fills the bars. The bars sit on a
+The bars come from `audio_viz`: a PipeWire meter that splits the stream into eight
+octave bands (63 Hz to 8 kHz) with one band-pass filter each, an animator that turns
+the bands into bar heights, and the bar drawing. The meter holds each band's loudest
+reading between redraws, so a beat between two frames still shows. The animator reads
+each band against its own recent peak rather than full scale, so a player at low
+volume or a quietly mastered video still fills the bars, and a band that is nearly
+empty beside the others stays low. Bars rise on the frame a hit lands and fall back
+within a few frames. Compact and mini islands draw an evenly spread subset of the
+bands. The bars sit on a
 child subsurface of the island, redrawn at ~24 fps only while a track plays and the
 island is on screen, so the island buffer itself stays retained. The capture stream is
 open only for as long as the bars move: a connected stream keeps the output running,

@@ -595,8 +595,7 @@ impl MusicMonitor {
 
     /// Advance the bars one frame.
     pub fn step_bars(&mut self) {
-        let Some(info) = self.info() else { return };
-        self.bars.step(self.meter.level(), &info.track_title);
+        self.bars.step(self.meter.take_bands());
     }
 
     /// Start loading the album art when the track's art URL changed. Returns
