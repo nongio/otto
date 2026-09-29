@@ -34,8 +34,9 @@ user always knows which parts of the desktop an agent can touch.
 
 ## Non-Goals
 
-- Agents operating Otto's own chrome (dock, exposé, app switcher, topbar).
-  The shell's UI has one pointer and it is the user's.
+- Agents operating Otto's own chrome before the last phase. Exposé comes
+  only with an "every workspace" grant, the dock after that; the app
+  switcher and topbar are not planned.
 - XWayland applications. X11 clients see a single seat.
 - Arbitrating between an agent and the user typing into the same window.
 - Deciding which agents are trustworthy. Otto asks the user and enforces the
@@ -77,8 +78,14 @@ user always knows which parts of the desktop an agent can touch.
 last position until Otto exits. It must instead get out of the way when the
 agent stops:
 
-- `[agent_cursor] hide_after_ms` (default `3000`; `0` never hides) is how long
+- `[agent_cursor] hide_after_ms` (default `5000`; `0` never hides) is how long
   the cursor stays after the agent's last activity.
+- On an agent's own workspace (Phase 3) the agent counts as active for as
+  long as it holds the workspace: its border stays at full strength until
+  the agent releases it, and its cursor uses the longer
+  `[agent_cursor] own_workspace_hide_after_ms` (default `30000`). The
+  workspace is the agent's, so there is nothing of the user's for the cursor
+  to get in the way of.
 - Activity is any agent input: pointer motion, button, scroll, or a key from
   a virtual keyboard on the agent seat. Typing keeps the cursor visible, so
   the user can see which window the agent is typing into.
@@ -99,6 +106,9 @@ Constraints & Edge Cases.
 
 ### Phase 2 — a seat per agent
 
+- Agents ask Otto for seats and grants over D-Bus, on
+  `org.otto.Compositor`. A seat is tied to the caller's bus name: when that
+  name leaves the bus, the seat is removed.
 - Agents ask Otto for a seat, and Otto creates one for them, named
   `agent-<n>`, with its own colour from a fixed palette of clearly distinct
   hues (none close to the user's cursor or the accent colour). The request
@@ -168,7 +178,8 @@ sign that an agent can act there.
   border stays. The chip comes back when the window leaves fullscreen.
 - While the agent is active the border is at full strength; after the idle
   time it dims (to about 40 %) but never disappears — it signals the grant,
-  not activity.
+  not activity. On an agent's own workspace it does not dim at all until the
+  agent releases the workspace.
 - It fades in over about 150 ms when a grant starts and fades out when it
   ends.
 - Several agents on one workspace: the border takes the colour of the agent
@@ -234,7 +245,17 @@ screen.
   explicit opt-in for stock tools, with an "every workspace" border while it
   is in use.
 
-### Phase 6 — polish
+### Phase 6 — Otto's own UI
+
+- An agent holding an "every workspace" grant can use exposé: open it, pick a
+  window, and leave it. Exposé shows every workspace, so nothing less than a
+  grant on all of them allows it.
+- Last of all, the dock: an agent can use it to launch and switch to
+  applications. Not needed until everything before it is in place.
+- Using either needs a pointer of the agent's own in Otto's scene; until
+  then, the user's pointer is the only one Otto's UI answers to.
+
+### Phase 7 — polish
 
 - Agent cursors appear in screen shares and recordings (configurable).
 - Agent cursors follow the cursor theme and size, and animated cursors.
@@ -312,6 +333,15 @@ screen.
   granted that the user did not allow since they logged in. Until Phase 5,
   an agent is recognised by its name alone, which a hostile client can
   borrow — one more reason grants are not a boundary before then.
+- **D-Bus for seats and grants.** Otto already serves D-Bus
+  (`org.otto.Compositor`, `org.otto.ScreenCast`), agents are processes that
+  can reach it without a Wayland connection, and the caller's bus name gives
+  a lifetime to tie the seat to.
+- **Exposé needs the whole desktop.** It shows and switches between every
+  workspace; granting it for less would reveal the rest.
+- **A longer idle on the agent's own workspace.** Watching an agent work
+  there is the point of going there; a cursor that keeps vanishing between
+  steps makes it hard to follow.
 - **Enforcement last, but planned.** Grants are useful to cooperative agents
   from Phase 3. They become a security boundary only when virtual input and
   capture are restricted, which is recorded here so no earlier phase is
@@ -323,15 +353,7 @@ screen.
 
 ## Open Questions
 
-- Allocation API for seats and grants: a D-Bus interface on
-  `org.otto.Compositor`, or a small Wayland protocol? D-Bus is simplest; a
-  protocol would tie seat and grant lifetimes to the client connection for
-  free.
 - Should anything stop an agent's application from raising itself or taking
   focus on its own (xdg-activation), which would disturb the user?
-- Is 3 s the right idle default? Long enough to follow a slow agent between
-  steps, short enough not to linger over the user's work.
 - Should the user be able to take over an agent seat's pointer, beyond
   pausing?
-- Should agents be allowed to use Otto's own UI (dock, exposé)? That needs a
-  per-seat pointer in the scene engine.
