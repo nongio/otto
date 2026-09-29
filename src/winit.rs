@@ -863,6 +863,7 @@ pub fn run_winit() {
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
             state.flush_dock_reserved_change();
+            state.sync_agent_frames();
             state.popups.cleanup();
             // Tell any window that has moved where it is now. Diffed against
             // what was last sent, so a desktop at rest sends nothing.

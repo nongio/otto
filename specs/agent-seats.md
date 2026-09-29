@@ -176,6 +176,9 @@ sign that an agent can act there.
   workspace to the agent's shows the frame sliding in.
 - It is drawn above every window, layer-shell panel and fullscreen surface,
   and below the user's cursor and agent cursors. A client cannot cover it.
+  **As built:** it is drawn above the workspace's windows, in the windows
+  plane; the top bar, the dock, top and overlay layer-shell surfaces, and a
+  window promoted to its own plane are drawn above it.
 - It takes no input and takes no space: the pointer passes through it, and no
   window moves or resizes because of it.
 - A small chip at the top centre of the framed output shows the agent's name,
@@ -205,9 +208,10 @@ sign that an agent can act there.
 ### Phase 3 — agent-owned workspaces
 
 Implemented: the grant, the workspace, hit-testing and keyboard rules while
-hidden, full-rate frames, and the cursor drawn only where the workspace is
-shown. Not yet: the border, hidden capture, and launching onto the
-workspace.
+hidden, full-rate frames, the cursor drawn only where the workspace is
+shown, and the border with its chip and Stop. Not yet: hidden capture,
+launching onto the workspace, and the frame on exposé and selector
+thumbnails.
 
 - An agent can ask for a workspace of its own, which starts an own-workspace
   grant and draws its border. Over D-Bus: `RequestOwnWorkspace() ->

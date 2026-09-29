@@ -758,4 +758,96 @@ mod agent_seat_tests {
         );
         handle.stop();
     }
+
+    /// The border look on the agent's own workspace, if any.
+    fn agent_frame(handle: &HeadlessHandle, owner: &str) -> Option<(Vec<String>, bool)> {
+        let owner = owner.to_string();
+        handle.query(move |state| {
+            let agent = state
+                .agent_seats
+                .iter()
+                .find(|agent| agent.owner.as_deref() == Some(owner.as_str()))?;
+            let otto::state::agent_seats::Grant::OwnWorkspace { output, workspace } =
+                agent.grant.clone()?;
+            state
+                .workspaces
+                .agent_frame_look(&output, workspace)
+                .map(|look| (look.names.clone(), look.chip))
+        })
+    }
+
+    /// A workspace an agent holds is framed, with its name on the chip; the
+    /// frame goes when the agent lets go.
+    #[test]
+    #[serial]
+    fn an_agent_workspace_is_framed() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        handle.settle(200);
+        assert_eq!(
+            agent_frame(&handle, ":1.10"),
+            Some((vec!["Claude".to_string()], true))
+        );
+
+        let frames = || {
+            handle.query(|state| {
+                let output = state.workspaces.outputs().next().unwrap().name();
+                let ows = state.workspaces.output_workspaces.get(&output).unwrap();
+                ows.workspace_views
+                    .iter()
+                    .filter(|view| {
+                        state
+                            .workspaces
+                            .agent_frame_look(&output, view.index)
+                            .is_some()
+                    })
+                    .count()
+            })
+        };
+        assert_eq!(frames(), 1);
+        handle.query(|state| state.release_own_workspace(":1.10"));
+        handle.settle(200);
+        assert_eq!(frames(), 0, "the frame outlived the grant");
+        handle.stop();
+    }
+
+    /// Stop on the chip ends the grant: the agent reaches nothing after.
+    #[test]
+    #[serial]
+    fn stop_on_the_chip_ends_the_grant() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        handle.settle(200);
+
+        let stopped = handle.query(|state| {
+            let output = state.workspaces.outputs().next().cloned().unwrap();
+            let geometry = state.workspaces.output_geometry(&output).unwrap();
+            // Show the agent's workspace, where the chip is.
+            let last = state.workspaces.output_workspaces[&output.name()]
+                .workspace_views
+                .len()
+                - 1;
+            state
+                .workspaces
+                .set_workspace_for_output(&output, last, None);
+            let chip =
+                otto::agent_cursor::chip_geometry(&["Claude".to_string()], geometry.size.w as f32);
+            let at = |x: f32, y: f32| {
+                smithay::utils::Point::<f64, smithay::utils::Logical>::from((
+                    geometry.loc.x as f64 + x as f64,
+                    geometry.loc.y as f64 + y as f64,
+                ))
+            };
+            // Beside the chip: nothing happens.
+            let missed = state.press_agent_stop(at(5.0, 5.0));
+            let (x, y, w, h) = chip.stop;
+            let hit = state.press_agent_stop(at(x + w / 2.0, y + h / 2.0));
+            (missed, hit)
+        });
+        assert_eq!(stopped, (false, true));
+        assert!(handle.query(|state| state.agent_seat("agent-1").unwrap().grant.is_none()));
+        handle.stop();
+    }
 }

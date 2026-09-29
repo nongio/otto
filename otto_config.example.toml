@@ -307,6 +307,10 @@ color = "#FF9500"
 # How long the agent cursor stays after the agent's last input, in
 # milliseconds, before it fades out; 0 never hides it. (default: 5000)
 hide_after_ms = 5000
+# The width of the frame drawn around a workspace an agent may act on, in
+# logical pixels. The frame is always drawn while an agent holds the
+# workspace; only its width can change. (default: 3)
+border_width = 3
 
 # Audio / Sound feedback
 [audio]

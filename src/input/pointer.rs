@@ -103,6 +103,20 @@ impl<BackendData: Backend> Otto<BackendData> {
             self.note_seat_press(&seat, serial, None);
         }
 
+        // Stop on an agent's chip is Otto's, and answers the user's pointer
+        // only. The press ends the grant and goes no further, nor does its
+        // release.
+        if wl_pointer::ButtonState::Pressed == state
+            && self.press_agent_stop(self.pointer.current_location())
+        {
+            self.agent_stop_button = Some(button);
+            return;
+        }
+        if wl_pointer::ButtonState::Released == state && self.agent_stop_button == Some(button) {
+            self.agent_stop_button = None;
+            return;
+        }
+
         if !self.workspaces.get_show_all() && wl_pointer::ButtonState::Pressed == state {
             self.focus_window_under_cursor(serial, RaiseTiming::for_button(button));
         }

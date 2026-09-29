@@ -43,6 +43,9 @@ use smithay::{
 
 use crate::{cursor::CursorManager, state::Backend, state::Otto};
 
+/// Where the chip on an agent border puts Stop.
+pub use crate::workspaces::agent_frame::{chip_geometry, ChipGeometry};
+
 /// The name the static agent seat (`[agent_cursor] enabled`) advertises.
 pub const AGENT_SEAT_NAME: &str = "agent";
 

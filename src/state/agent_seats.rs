@@ -381,6 +381,120 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         window.is_some_and(|window| space.elements().any(|candidate| *candidate == window))
     }
 
+    /// Bring the agent borders in line with the grants: one frame per
+    /// granted workspace, in the colour of its agent, with a chip unless a
+    /// window is fullscreen there. Cheap when nothing changed.
+    pub fn sync_agent_frames(&mut self) {
+        use crate::workspaces::agent_frame::AgentFrameLook;
+
+        let mut wanted: Vec<(String, usize, AgentFrameLook)> = Vec::new();
+        let live = self.agent_seats.iter().filter_map(|agent| {
+            Some((
+                agent.grant.as_ref()?,
+                agent.cursor.color(),
+                agent.agent_name.clone(),
+            ))
+        });
+        // An agent that has gone keeps its frame while its grant waits for it.
+        let held = self.agent_history.iter().filter_map(|(name, past)| {
+            Some((past.grant.as_ref()?, past.color, Some(name.clone())))
+        });
+        for (Grant::OwnWorkspace { output, workspace }, color, name) in live.chain(held) {
+            let Some(space) = self.workspaces.space_of_view(output, *workspace) else {
+                continue;
+            };
+            let fullscreen = space.elements().any(|window| window.is_fullscreen());
+            wanted.push((
+                output.clone(),
+                *workspace,
+                AgentFrameLook {
+                    color,
+                    names: name.into_iter().collect(),
+                    chip: !fullscreen,
+                    // An agent's own workspace does not dim until it lets go.
+                    strength: 1.0,
+                },
+            ));
+        }
+        self.workspaces.set_agent_frames(wanted);
+    }
+
+    /// The user pressed at `location`: if that is the Stop on an agent
+    /// chip, every grant on that workspace ends. Returns whether it was.
+    pub fn press_agent_stop(
+        &mut self,
+        location: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) -> bool {
+        let Some(output) = self
+            .workspaces
+            .outputs()
+            .find(|output| {
+                self.workspaces
+                    .output_geometry(output)
+                    .is_some_and(|geometry| geometry.to_f64().contains(location))
+            })
+            .cloned()
+        else {
+            return false;
+        };
+        let output_name = output.name();
+        let Some(view) = self.workspaces.current_view_index(&output_name) else {
+            return false;
+        };
+        let Some(look) = self.workspaces.agent_frame_look(&output_name, view) else {
+            return false;
+        };
+        if !look.chip {
+            return false;
+        }
+        let Some(geometry) = self.workspaces.output_geometry(&output) else {
+            return false;
+        };
+        let chip =
+            crate::workspaces::agent_frame::chip_geometry(&look.names, geometry.size.w as f32);
+        let local = location - geometry.loc.to_f64();
+        let (x, y, w, h) = chip.stop;
+        let (px, py) = (local.x as f32, local.y as f32);
+        if px < x || px >= x + w || py < y || py >= y + h {
+            return false;
+        }
+        self.revoke_workspace_grants(&output_name, view);
+        true
+    }
+
+    /// End every grant on the workspace `view` of `output`: the user said
+    /// stop. The workspace stays, with its windows.
+    pub fn revoke_workspace_grants(&mut self, output: &str, view: usize) {
+        let grant = Grant::OwnWorkspace {
+            output: output.to_string(),
+            workspace: view,
+        };
+        let seats: Vec<String> = self
+            .agent_seats
+            .iter()
+            .filter(|agent| agent.grant.as_ref() == Some(&grant))
+            .map(AgentSeat::name)
+            .collect();
+        for seat_name in seats {
+            info!(
+                seat = seat_name,
+                output,
+                workspace = view,
+                "Agent grant revoked by the user"
+            );
+            self.release_focus_of(&seat_name);
+            if let Some(agent) = self.agent_seat_mut(&seat_name) {
+                agent.grant = None;
+            }
+        }
+        for past in self.agent_history.values_mut() {
+            if past.grant.as_ref() == Some(&grant) {
+                past.grant = None;
+            }
+        }
+        self.backend_data.request_redraw();
+    }
+
     /// The agent seat named `seat_name`.
     pub fn agent_seat(&self, seat_name: &str) -> Option<&AgentSeat<BackendData>> {
         self.agent_seats

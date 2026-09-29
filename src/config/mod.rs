@@ -1605,6 +1605,9 @@ pub struct AgentCursorConfig {
     /// How long the agent cursor stays on screen after the agent's last
     /// input, in milliseconds; `0` never hides it.
     pub hide_after_ms: u64,
+    /// The width of the frame drawn around a workspace an agent may act on,
+    /// in logical pixels. The frame itself cannot be turned off.
+    pub border_width: u32,
 }
 
 impl Default for AgentCursorConfig {
@@ -1613,6 +1616,7 @@ impl Default for AgentCursorConfig {
             enabled: false,
             color: "#FF9500".to_string(),
             hide_after_ms: 5000,
+            border_width: 3,
         }
     }
 }

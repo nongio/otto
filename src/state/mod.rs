@@ -410,6 +410,9 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Agents that have had a seat this session, by the name they gave, so
     /// one that comes back gets its seat name and colour again.
     pub agent_history: HashMap<String, agent_seats::PastAgent>,
+    /// The button whose press hit an agent chip's Stop: its release is
+    /// swallowed too.
+    pub agent_stop_button: Option<u32>,
     /// Cached pointer location (logical) to avoid deadlock when accessing during button events
     pub last_pointer_location: (f64, f64),
     /// When and where the last press on a server-side titlebar landed, for
@@ -1156,6 +1159,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat_last_press: HashMap::new(),
             agent_seats: Vec::new(),
             agent_history: HashMap::new(),
+            agent_stop_button: None,
             last_pointer_location: (0.0, 0.0),
             last_titlebar_press: None,
             cursor_physical_position: (0.0, 0.0),
