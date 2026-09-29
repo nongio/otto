@@ -222,8 +222,13 @@ fn run_capture(
 /// and eases towards it, so the row looks like a spectrum without computing
 /// one. The seed (a track title, say) shifts the phases, so two tracks don't
 /// dance identically.
+///
+/// Levels are read against the stream's recent peak, not full scale: a player
+/// at half volume, or a quietly mastered video, still fills the bars.
 pub struct BarAnimator {
     phase: f32,
+    /// The loudest recent level, decaying slowly towards [`PEAK_FLOOR`].
+    peak: f32,
     levels: [f32; BAR_COUNT],
     offsets: [f32; BAR_COUNT],
     seed: String,
@@ -233,6 +238,7 @@ impl Default for BarAnimator {
     fn default() -> Self {
         Self {
             phase: 0.0,
+            peak: PEAK_FLOOR,
             levels: [0.12; BAR_COUNT],
             offsets: [0.0; BAR_COUNT],
             seed: String::new(),
@@ -249,7 +255,9 @@ impl BarAnimator {
         }
 
         self.phase += 0.35;
-        let envelope = (level.clamp(0.0, 1.0) * 1.4).clamp(0.0, 1.0);
+        let level = level.clamp(0.0, 1.0);
+        self.peak = (self.peak * PEAK_DECAY).max(level).max(PEAK_FLOOR);
+        let envelope = (level / self.peak * 1.2).clamp(0.0, 1.0);
 
         const FREQ: [f32; BAR_COUNT] = [0.6, 1.1, 0.8, 1.4, 0.5, 1.25, 0.7, 1.0];
         for ((level, freq), offset) in self.levels.iter_mut().zip(FREQ).zip(self.offsets) {
@@ -267,6 +275,15 @@ impl BarAnimator {
         self.levels
     }
 }
+
+/// The quietest level treated as loud. Below it the bars stay low, so
+/// near-silence (a fade, a hiss) doesn't get amplified into a full dance.
+const PEAK_FLOOR: f32 = 0.15;
+
+/// How fast the recent peak forgets, per frame. At ~24 fps it halves in about
+/// five seconds: long enough that a quiet verse stays quieter than the chorus,
+/// short enough that turning the volume down refills the bars soon.
+const PEAK_DECAY: f32 = 0.994;
 
 fn seed_offsets(seed: &str) -> [f32; BAR_COUNT] {
     // FNV-1a, then an LCG to spread it across the bars.
@@ -518,5 +535,19 @@ mod tests {
         }
         let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
         assert!(mean(&l) > mean(&q) * 2.0);
+    }
+
+    #[test]
+    fn a_quiet_player_fills_the_bars_like_a_loud_one() {
+        let mut quiet = BarAnimator::default();
+        let mut loud = BarAnimator::default();
+        let (mut q, mut l) = ([0.0; BAR_COUNT], [0.0; BAR_COUNT]);
+        for _ in 0..60 {
+            q = quiet.step(0.3, "t");
+            l = loud.step(0.9, "t");
+        }
+        let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+        assert!((mean(&q) - mean(&l)).abs() < 0.02, "{q:?} vs {l:?}");
+        assert!(mean(&q) > 0.5, "{q:?}");
     }
 }

@@ -950,9 +950,18 @@ fn decode_art(bytes: Vec<u8>) -> Option<Image> {
         skia_safe::FilterMode::Linear,
         skia_safe::MipmapMode::Linear,
     );
+    // The island shows art in a square; a wide video thumbnail keeps its
+    // centre rather than being squashed.
+    let side = size.width.min(size.height) as f32;
+    let crop = Rect::from_xywh(
+        (size.width as f32 - side) / 2.0,
+        (size.height as f32 - side) / 2.0,
+        side,
+        side,
+    );
     surface.canvas().draw_image_rect_with_sampling_options(
         &image,
-        None,
+        Some((&crop, skia_safe::canvas::SrcRectConstraint::Strict)),
         Rect::from_wh(ART_PX as f32, ART_PX as f32),
         sampling,
         &Paint::default(),
@@ -1088,5 +1097,26 @@ mod tests {
             .unwrap();
         let art = decode_art(png.as_bytes().to_vec()).unwrap();
         assert_eq!((art.width(), art.height()), (ART_PX, ART_PX));
+    }
+
+    #[test]
+    fn wide_art_is_cropped_not_squashed() {
+        // Red sides around a blue centre square: a crop shows only blue.
+        let mut surface = skia_safe::surfaces::raster_n32_premul((320, 180)).unwrap();
+        surface.canvas().clear(Color::RED);
+        let mut blue = Paint::default();
+        blue.set_color(Color::BLUE);
+        surface
+            .canvas()
+            .draw_rect(Rect::from_xywh(70.0, 0.0, 180.0, 180.0), &blue);
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .unwrap();
+        let art = decode_art(png.as_bytes().to_vec()).unwrap();
+        let pixels = art.peek_pixels().unwrap();
+        for x in [0, ART_PX / 2, ART_PX - 1] {
+            assert_eq!(pixels.get_color((x, ART_PX / 2)), Color::BLUE, "x {x}");
+        }
     }
 }

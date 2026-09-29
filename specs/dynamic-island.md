@@ -156,7 +156,8 @@ A track playing on another device shows a cast glyph in place of the bars (see
 below).
 
 The accent colour is extracted from the album art and used for the bars and the
-progress fill.
+progress fill. Art that isn't square, such as a video thumbnail, is cropped to its
+centre square rather than stretched.
 
 Players are followed over D-Bus (`mpris.rs`), with no external tool. The island
 listens for players appearing and going (`NameOwnerChanged`), and for their
@@ -213,7 +214,9 @@ An island is music by its `app_id` (`org.otto.music`), not by coming from inside
 otto-islands.
 
 The bars come from `audio_viz`: a PipeWire level meter, an animator that turns one
-level into eight independently moving bars, and the bar drawing. The bars sit on a
+level into eight independently moving bars, and the bar drawing. The animator reads
+each level against the stream's recent peak rather than full scale, so a player at low
+volume or a quietly mastered video still fills the bars. The bars sit on a
 child subsurface of the island, redrawn at ~24 fps only while a track plays and the
 island is on screen, so the island buffer itself stays retained. The capture stream is
 open only for as long as the bars move: a connected stream keeps the output running,
