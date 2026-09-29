@@ -86,8 +86,9 @@ pub struct VirtualPointerUserData {
     /// first output is used. Lets a driver target a specific output (e.g.
     /// an interactive virtual output) instead of whichever enumerates first.
     output: Option<smithay::output::Output>,
-    /// Created on the agent seat: drives that seat's pointer, not the user's.
-    agent: bool,
+    /// Created on an agent seat, named here: drives that seat's pointer, not
+    /// the user's. Once the seat is removed the pointer drives nothing.
+    agent: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -146,7 +147,7 @@ where
                 data_init.init(
                     id,
                     VirtualPointerUserData {
-                        agent: is_agent_seat(state, seat.as_ref()),
+                        agent: agent_seat_name(state, seat.as_ref()),
                         ..Default::default()
                     },
                 );
@@ -163,7 +164,7 @@ where
                     id,
                     VirtualPointerUserData {
                         output,
-                        agent: is_agent_seat(state, seat.as_ref()),
+                        agent: agent_seat_name(state, seat.as_ref()),
                         ..Default::default()
                     },
                 );
@@ -326,8 +327,8 @@ where
                 let axis = pending.axis.take();
                 drop(pending);
 
-                if data.agent {
-                    agent_frame(state, motion_rel, motion_abs, buttons, axis);
+                if let Some(seat_name) = data.agent.as_deref() {
+                    agent_frame(state, seat_name, motion_rel, motion_abs, buttons, axis);
                     return;
                 }
 
@@ -466,15 +467,25 @@ where
 
 /// Whether the seat a virtual pointer was created on is the agent seat. A
 /// pointer created without a seat belongs to the user's.
-fn is_agent_seat<BackendData: crate::state::Backend + 'static>(
+/// Which agent seat a pointer created on `seat` drives: `None` for the user's
+/// (asked for by name, or by giving no seat), otherwise the seat's name.
+///
+/// A seat that is neither the user's nor a live agent seat is one an agent
+/// held and has since lost: the pointer is tied to its name and drives
+/// nothing, rather than falling through to the user's.
+fn agent_seat_name<BackendData: crate::state::Backend + 'static>(
     state: &Otto<BackendData>,
     seat: Option<&WlSeat>,
-) -> bool {
-    seat.and_then(Seat::<Otto<BackendData>>::from_resource)
-        .is_some_and(|seat| state.is_agent_seat(&seat))
+) -> Option<String> {
+    let seat = seat?;
+    match Seat::<Otto<BackendData>>::from_resource(seat) {
+        Some(seat) if seat == state.seat => None,
+        Some(seat) => Some(seat.name().to_string()),
+        None => Some(String::new()),
+    }
 }
 
-/// Flush a frame from a pointer on the agent seat.
+/// Flush a frame from a pointer on the agent seat `seat_name`.
 ///
 /// Only client surfaces see the agent pointer: Otto's own chrome hit-tests
 /// against the lay-rs engine's single pointer, which is the user's, and
@@ -483,6 +494,7 @@ fn is_agent_seat<BackendData: crate::state::Backend + 'static>(
 /// user keeps theirs.
 fn agent_frame<BackendData: crate::state::Backend + 'static>(
     state: &mut Otto<BackendData>,
+    seat_name: &str,
     motion_rel: Option<(f64, f64)>,
     motion_abs: Option<(f64, f64)>,
     buttons: Vec<(u32, u32, ButtonState)>,
@@ -496,7 +508,7 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     if state.is_session_locked() {
         return;
     }
-    let Some(agent) = state.agent_seat.as_ref() else {
+    let Some(agent) = state.agent_seat(seat_name) else {
         return;
     };
     let pointer = agent.pointer.clone();
@@ -516,7 +528,7 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
             location += Point::from((dx, dy));
         }
         let location = state.clamp_coords(location);
-        if let Some(agent) = state.agent_seat.as_mut() {
+        if let Some(agent) = state.agent_seat_mut(seat_name) {
             agent.cursor.place(std::time::Instant::now());
         }
         let under = client_surface_under(state, location);
@@ -532,7 +544,7 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     }
 
     for (time, button, btn_state) in buttons {
-        if let Some(agent) = state.agent_seat.as_mut() {
+        if let Some(agent) = state.agent_seat_mut(seat_name) {
             agent.cursor.note_button(
                 button,
                 btn_state == ButtonState::Pressed,
@@ -579,7 +591,7 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     pointer.frame(state);
 
     // Shown again, and drawn where it is now.
-    state.note_agent_activity();
+    state.note_agent_activity(seat_name);
     state.backend_data.request_redraw();
 }
 

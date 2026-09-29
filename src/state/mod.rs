@@ -404,9 +404,12 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// name: what a popup grab's serial is checked against (see
     /// `crate::input::popup_grab`).
     pub seat_last_press: HashMap<String, crate::input::popup_grab::LastPress>,
-    /// The automation seat, when `[agent_cursor]` is enabled — see
-    /// `crate::agent_cursor`.
-    pub agent_seat: Option<crate::agent_cursor::AgentSeat<BackendData>>,
+    /// Agent seats: the static one when `[agent_cursor]` is enabled, and one
+    /// per agent that asked over D-Bus — see `crate::agent_cursor`.
+    pub agent_seats: Vec<crate::agent_cursor::AgentSeat<BackendData>>,
+    /// Agents that have had a seat this session, by the name they gave, so
+    /// one that comes back gets its seat name and colour again.
+    pub agent_history: HashMap<String, agent_seats::PastAgent>,
     /// Cached pointer location (logical) to avoid deadlock when accessing during button events
     pub last_pointer_location: (f64, f64),
     /// When and where the last press on a server-side titlebar landed, for
@@ -541,6 +544,7 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub render_metrics: Arc<crate::render_metrics::RenderMetrics>,
 }
 
+pub mod agent_seats;
 pub mod app_management;
 pub mod data_device_handler;
 pub mod dnd_grab_handler;
@@ -1150,7 +1154,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat,
             pointer,
             seat_last_press: HashMap::new(),
-            agent_seat: None,
+            agent_seats: Vec::new(),
+            agent_history: HashMap::new(),
             last_pointer_location: (0.0, 0.0),
             last_titlebar_press: None,
             cursor_physical_position: (0.0, 0.0),
@@ -3375,90 +3380,4 @@ fn add_configured_keyboard<BackendData: Backend + 'static>(seat: &mut Seat<Otto<
     };
     seat.add_keyboard(xkb_config, repeat_delay, repeat_rate)
         .expect("Failed to initialize the keyboard");
-}
-
-impl<BackendData: Backend + 'static> Otto<BackendData> {
-    /// Advertise the automation seat, if it is not already — see
-    /// `crate::agent_cursor`.
-    pub fn enable_agent_seat(&mut self) {
-        if self.agent_seat.is_some() {
-            return;
-        }
-        let mut seat = self
-            .seat_state
-            .new_wl_seat(&self.display_handle, crate::agent_cursor::AGENT_SEAT_NAME);
-        let pointer = seat.add_pointer();
-        add_configured_keyboard(&mut seat);
-        let (color, hide_after_ms) =
-            Config::with(|c| (c.agent_cursor.color.clone(), c.agent_cursor.hide_after_ms));
-        self.agent_seat = Some(crate::agent_cursor::AgentSeat {
-            seat,
-            pointer,
-            cursor: crate::agent_cursor::AgentCursor::new(
-                &color,
-                std::time::Duration::from_millis(hide_after_ms),
-            ),
-            idle_timer: None,
-        });
-    }
-
-    /// The agent did something: its cursor is shown again, and the timer
-    /// that will start hiding it starts over.
-    pub fn note_agent_activity(&mut self) {
-        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-
-        let Some(agent) = self.agent_seat.as_mut() else {
-            return;
-        };
-        agent.cursor.note_activity(std::time::Instant::now());
-        if let Some(token) = agent.idle_timer.take() {
-            self.handle.remove(token);
-        }
-        let Some(hide_after) = agent.cursor.hide_after() else {
-            return;
-        };
-        // Only the first frame of the fade needs waking for: the renderer
-        // keeps drawing while the cursor is part-way faded.
-        agent.idle_timer = self
-            .handle
-            .insert_source(Timer::from_duration(hide_after), |_, _, state| {
-                if let Some(agent) = state.agent_seat.as_mut() {
-                    agent.idle_timer = None;
-                }
-                state.backend_data.request_redraw();
-                TimeoutAction::Drop
-            })
-            .ok();
-    }
-
-    /// The session locked: the agent lets go of everything it was pointing
-    /// at or typing into, and gets none of it back on unlock.
-    pub fn release_agent_focus(&mut self) {
-        let Some(agent) = self.agent_seat.as_ref() else {
-            return;
-        };
-        let (seat, pointer) = (agent.seat.clone(), agent.pointer.clone());
-        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        if let Some(keyboard) = seat.get_keyboard() {
-            keyboard.set_focus(self, None, serial);
-        }
-        let location = pointer.current_location();
-        pointer.motion(
-            self,
-            None,
-            &smithay::input::pointer::MotionEvent {
-                location,
-                serial,
-                time: smithay::backend::input::InputTime::from_millis(0),
-            },
-        );
-        pointer.frame(self);
-    }
-
-    /// Whether `seat` is the automation seat.
-    pub fn is_agent_seat(&self, seat: &Seat<Otto<BackendData>>) -> bool {
-        self.agent_seat
-            .as_ref()
-            .is_some_and(|agent| &agent.seat == seat)
-    }
 }

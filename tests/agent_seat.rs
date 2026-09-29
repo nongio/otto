@@ -21,11 +21,14 @@ mod agent_seat_tests {
     };
 
     const BTN_LEFT: u32 = 0x110;
+    const AGENT: &str = otto::agent_cursor::AGENT_SEAT_NAME;
 
     /// Every seat, in the order the compositor advertised them.
     #[derive(Default)]
     struct DriverState {
         seats: Vec<wl_seat::WlSeat>,
+        /// `wl_seat.name` of each seat, by the same index.
+        seat_names: Vec<Option<String>>,
         pointer_manager: Option<zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1>,
         lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     }
@@ -48,9 +51,13 @@ mod agent_seat_tests {
                 return;
             };
             match interface.as_str() {
-                "wl_seat" => state
-                    .seats
-                    .push(registry.bind(name, version.min(5), qh, ())),
+                "wl_seat" => {
+                    let index = state.seats.len();
+                    state
+                        .seats
+                        .push(registry.bind(name, version.min(5), qh, index));
+                    state.seat_names.push(None);
+                }
                 "zwlr_virtual_pointer_manager_v1" => {
                     state.pointer_manager = Some(registry.bind(name, version.min(2), qh, ()))
                 }
@@ -62,7 +69,20 @@ mod agent_seat_tests {
         }
     }
 
-    delegate_noop!(DriverState: ignore wl_seat::WlSeat);
+    impl Dispatch<wl_seat::WlSeat, usize> for DriverState {
+        fn event(
+            state: &mut Self,
+            _: &wl_seat::WlSeat,
+            event: wl_seat::Event,
+            index: &usize,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let wl_seat::Event::Name { name } = event {
+                state.seat_names[*index] = Some(name);
+            }
+        }
+    }
     delegate_noop!(DriverState: zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1);
     delegate_noop!(DriverState: zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1);
     delegate_noop!(DriverState: ext_session_lock_manager_v1::ExtSessionLockManagerV1);
@@ -90,12 +110,21 @@ mod agent_seat_tests {
             conn.display().get_registry(&qh, ());
             let mut state = DriverState::default();
             queue.roundtrip(&mut state).expect("bind globals");
+            queue.roundtrip(&mut state).expect("seat names");
             Self {
                 conn,
                 queue,
                 qh,
                 state,
             }
+        }
+
+        /// The advertised seat named `name`.
+        fn seat_index(&self, name: &str) -> Option<usize> {
+            self.state
+                .seat_names
+                .iter()
+                .position(|seat| seat.as_deref() == Some(name))
         }
 
         /// A virtual pointer on the `index`th advertised seat.
@@ -156,8 +185,7 @@ mod agent_seat_tests {
     fn agent_cursor_opacity(handle: &HeadlessHandle) -> f32 {
         handle.query(|state| {
             state
-                .agent_seat
-                .as_ref()
+                .agent_seat(AGENT)
                 .map_or(0.0, |agent| agent.cursor.opacity(std::time::Instant::now()))
         })
     }
@@ -166,7 +194,7 @@ mod agent_seat_tests {
     fn agent_keyboard_focus(handle: &HeadlessHandle) -> Option<String> {
         handle.query(|state| {
             use smithay::wayland::seat::WaylandFocus;
-            let keyboard = state.agent_seat.as_ref()?.seat.get_keyboard()?;
+            let keyboard = state.agent_seat(AGENT)?.seat.get_keyboard()?;
             let focus = keyboard.current_focus()?;
             let surface = focus.wl_surface()?.into_owned();
             state
@@ -186,7 +214,7 @@ mod agent_seat_tests {
 
     fn agent_pointer(handle: &HeadlessHandle) -> Option<(f64, f64)> {
         handle.query(|state| {
-            state.agent_seat.as_ref().map(|agent| {
+            state.agent_seat(AGENT).map(|agent| {
                 let p = agent.pointer.current_location();
                 (p.x, p.y)
             })
@@ -312,8 +340,8 @@ mod agent_seat_tests {
     fn the_agent_cursor_hides_when_the_agent_is_idle() {
         let handle = start();
         handle.query(|state| {
-            state.agent_seat.as_mut().unwrap().cursor =
-                otto::agent_cursor::AgentCursor::new("#FF9500", Duration::from_millis(300));
+            state.agent_seat_mut(AGENT).unwrap().cursor =
+                otto::agent_cursor::AgentCursor::new("#FF9500", Duration::from_millis(1500));
         });
         let mut driver = Driver::connect(&handle);
         let pointer = driver.pointer_on(1);
@@ -321,7 +349,7 @@ mod agent_seat_tests {
         driver.settle(&handle);
         assert_eq!(agent_cursor_opacity(&handle), 1.0);
 
-        handle.wait(Duration::from_millis(700));
+        handle.wait(Duration::from_millis(2000));
         assert_eq!(agent_cursor_opacity(&handle), 0.0, "still shown when idle");
         assert_eq!(
             agent_pointer(&handle),
@@ -383,6 +411,147 @@ mod agent_seat_tests {
 
         drop(lock);
         drop(driver);
+        handle.stop();
+    }
+
+    /// Ask for a seat the way `RequestAgentSeat` does over D-Bus.
+    fn request_seat(
+        handle: &HeadlessHandle,
+        agent_name: &str,
+        owner: &str,
+    ) -> Result<(String, String), String> {
+        let (agent_name, owner) = (agent_name.to_string(), owner.to_string());
+        handle.query(move |state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            otto::screenshare::handle_screenshare_command(
+                state,
+                otto::screenshare::CompositorCommand::RequestAgentSeat {
+                    agent_name,
+                    owner,
+                    response_tx: tx,
+                },
+            );
+            rx.try_recv()
+                .expect("answered at once")
+                .map(|granted| (granted.seat, granted.color))
+        })
+    }
+
+    /// Release the way `ReleaseAgentSeat`, or the owner leaving the bus, does.
+    fn release_seats(handle: &HeadlessHandle, owner: &str) {
+        let owner = owner.to_string();
+        handle.query(move |state| {
+            otto::screenshare::handle_screenshare_command(
+                state,
+                otto::screenshare::CompositorCommand::ReleaseAgentSeats {
+                    owner,
+                    response_tx: None,
+                },
+            )
+        });
+    }
+
+    fn pointer_of(handle: &HeadlessHandle, seat: &str) -> Option<(f64, f64)> {
+        let seat = seat.to_string();
+        handle.query(move |state| {
+            state.agent_seat(&seat).map(|agent| {
+                let p = agent.pointer.current_location();
+                (p.x, p.y)
+            })
+        })
+    }
+
+    /// Each agent that asks gets a seat of its own, named and coloured apart
+    /// from the others, and advertised to clients.
+    #[test]
+    #[serial]
+    fn each_agent_gets_its_own_seat() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let first = request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let second = request_seat(&handle, "Helper", ":1.11").expect("seat");
+        assert_eq!(first.0, "agent-1");
+        assert_eq!(second.0, "agent-2");
+        assert_ne!(first.1, second.1, "two agents share a colour");
+
+        let driver = Driver::connect(&handle);
+        assert_eq!(
+            driver.state.seats.len(),
+            3,
+            "the user's seat and two agents'"
+        );
+        assert!(driver.seat_index("agent-1").is_some());
+        assert!(driver.seat_index("agent-2").is_some());
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// A pointer on one agent's seat moves that agent's pointer only.
+    #[test]
+    #[serial]
+    fn agents_move_their_own_pointers() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_seat(&handle, "Helper", ":1.11").expect("seat");
+        let mut driver = Driver::connect(&handle);
+        let before = user_pointer(&handle);
+
+        let pointer = driver.pointer_on(driver.seat_index("agent-2").unwrap());
+        move_to(&handle, &pointer, 200, 150);
+        driver.settle(&handle);
+
+        assert_eq!(pointer_of(&handle, "agent-2"), Some((200.0, 150.0)));
+        assert_eq!(pointer_of(&handle, "agent-1"), Some((0.0, 0.0)));
+        assert_eq!(user_pointer(&handle), before);
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// A name held by one connection cannot be taken by another; asking
+    /// again from the holder returns the seat it has.
+    #[test]
+    #[serial]
+    fn a_held_name_is_not_given_twice() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let seat = request_seat(&handle, "Claude", ":1.10").expect("seat");
+        assert_eq!(request_seat(&handle, "Claude", ":1.10"), Ok(seat));
+        assert!(request_seat(&handle, "Claude", ":1.99").is_err());
+        assert!(request_seat(&handle, "  ", ":1.99").is_err());
+        handle.stop();
+    }
+
+    /// Releasing removes the seat; the same agent coming back in the same
+    /// session gets the same seat name and colour.
+    #[test]
+    #[serial]
+    fn a_returning_agent_gets_its_seat_back() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let seat = request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_seat(&handle, "Helper", ":1.11").expect("seat");
+
+        let mut driver = Driver::connect(&handle);
+        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        release_seats(&handle, ":1.10");
+        handle.settle(200);
+        assert!(handle.query(|state| state.agent_seat("agent-1").is_none()));
+
+        // A pointer left on the removed seat drives nothing, not the user's.
+        let before = user_pointer(&handle);
+        move_to(&handle, &pointer, 300, 300);
+        driver.settle(&handle);
+        assert_eq!(user_pointer(&handle), before);
+        drop(driver);
+
+        let fresh = Driver::connect(&handle);
+        assert_eq!(
+            fresh.seat_index("agent-1"),
+            None,
+            "the seat is still advertised"
+        );
+        drop(fresh);
+
+        assert_eq!(request_seat(&handle, "Claude", ":1.20"), Ok(seat));
         handle.stop();
     }
 }

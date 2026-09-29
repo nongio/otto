@@ -1347,10 +1347,14 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             &self.cursor_manager,
             &self.cursor_texture_cache,
             // Every agent cursor goes when the session locks.
-            self.agent_seat
-                .as_ref()
-                .filter(|_| !self.lock_state.is_active())
-                .map(|agent| (&agent.cursor, agent.pointer.current_location())),
+            &if self.lock_state.is_active() {
+                Vec::new()
+            } else {
+                self.agent_seats
+                    .iter()
+                    .map(|agent| (&agent.cursor, agent.pointer.current_location()))
+                    .collect::<Vec<_>>()
+            },
             self.dnd_icon.as_ref(),
             &self.clock,
             scene_has_damage,
@@ -2418,8 +2422,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     pointer_location: Point<f64, Logical>,
     cursor_manager: &CursorManager,
     cursor_texture_cache: &CursorTextureCache,
-    // The agent seat's cursor and where it is, in global logical coordinates.
-    agent_cursor: Option<(&crate::agent_cursor::AgentCursor, Point<f64, Logical>)>,
+    // The agent seats' cursors and where they are, in global logical
+    // coordinates.
+    agent_cursors: &[(&crate::agent_cursor::AgentCursor, Point<f64, Logical>)],
     dnd_icon: Option<&wl_surface::WlSurface>,
     clock: &Clock<Monotonic>,
     scene_has_damage: bool,
@@ -2533,19 +2538,25 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     }
 
     // Under the user's cursor, which was pushed first and so draws on top.
-    let agent_cursor_drawn = agent_cursor.is_some_and(|(cursor, location)| {
-        let location = location - output.current_location().to_f64();
+    let mut agent_cursor_drawn = false;
+    let mut agent_cursor_fading = false;
+    let now = Instant::now();
+    for (cursor, location) in agent_cursors {
+        let location = *location - output.current_location().to_f64();
         if !output_geometry
             .to_f64()
             .contains(location.to_physical(scale))
         {
-            return false;
+            continue;
         }
-        cursor
-            .render_element(renderer, cursor_manager, location, output_scale)
-            .map(|elem| workspace_render_elements.push(WorkspaceRenderElements::from(elem)))
-            .is_some()
-    });
+        let elements = cursor.render_elements(renderer, cursor_manager, location, output_scale);
+        if elements.is_empty() {
+            continue;
+        }
+        agent_cursor_drawn = true;
+        agent_cursor_fading |= cursor.is_fading(now);
+        workspace_render_elements.extend(elements.into_iter().map(WorkspaceRenderElements::from));
+    }
     let agent_cursor_left_output = surface.agent_cursor_was_in_output && !agent_cursor_drawn;
     surface.agent_cursor_was_in_output = agent_cursor_drawn;
 
@@ -2564,8 +2575,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
         || dnd_needs_draw
         || (pointer_in_output
             && cursor_manager.is_current_cursor_animated(output_scale.round() as i32))
-        || (agent_cursor_drawn
-            && agent_cursor.is_some_and(|(cursor, _)| cursor.is_fading(Instant::now())));
+        || agent_cursor_fading;
 
     let (output_elements, clear_color, should_draw) = {
         let cursor_needs_draw = pointer_in_output

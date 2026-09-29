@@ -43,29 +43,55 @@ use smithay::{
 
 use crate::{cursor::CursorManager, state::Backend, state::Otto};
 
-/// The name the agent's `wl_seat` advertises.
+/// The name the static agent seat (`[agent_cursor] enabled`) advertises.
 pub const AGENT_SEAT_NAME: &str = "agent";
 
 /// The colour used when the configured one does not parse.
 const FALLBACK_COLOR: [u8; 3] = [0xff, 0x95, 0x00];
 
+/// Colours handed to agents that ask for a seat, in order. Clearly apart
+/// from each other, from the black-and-white user cursor, and from the blue
+/// of Otto's default accent.
+pub const PALETTE: [[u8; 3]; 6] = [
+    [0xff, 0x95, 0x00], // orange
+    [0xe0, 0x2d, 0x8c], // magenta
+    [0x2f, 0xb3, 0x4a], // green
+    [0x9b, 0x51, 0xe0], // violet
+    [0xe5, 0x3e, 0x2f], // red
+    [0x00, 0xa8, 0x9e], // teal
+];
+
 /// How long a hiding cursor takes to fade out.
 pub const FADE_OUT: Duration = Duration::from_millis(200);
 
-/// The automation seat: its own pointer and keyboard, and the cursor drawn
-/// for it.
+/// An agent's seat: its own pointer and keyboard, and the cursor drawn for it.
 pub struct AgentSeat<B: Backend + 'static> {
     pub seat: Seat<Otto<B>>,
     pub pointer: PointerHandle<Otto<B>>,
     pub cursor: AgentCursor,
+    /// The name the agent gave when it asked for the seat; `None` for the
+    /// static seat.
+    pub agent_name: Option<String>,
+    /// The D-Bus unique name the seat is tied to: when it leaves the bus, the
+    /// seat goes. `None` for the static seat, which lasts as long as Otto.
+    pub owner: Option<String>,
     /// Wakes the loop when the cursor is due to start fading, so the first
     /// frame of the fade is drawn although nothing else happens.
     pub idle_timer: Option<RegistrationToken>,
 }
 
+impl<B: Backend + 'static> AgentSeat<B> {
+    /// The `wl_seat` name.
+    pub fn name(&self) -> String {
+        self.seat.name().to_string()
+    }
+}
+
 /// The agent pointer's picture: the theme's default arrow, recoloured.
 pub struct AgentCursor {
     color: [u8; 3],
+    /// Drawn in a chip beside the arrow, so agents can be told apart.
+    label: Option<String>,
     /// Hidden until the agent first moves: before that the pointer sits at
     /// the origin, which is not somewhere the agent chose to be.
     placed: bool,
@@ -78,6 +104,8 @@ pub struct AgentCursor {
     /// Tinted buffers by output scale, for the arrow they were made from —
     /// a theme reload hands out a new arrow, and the cache starts over.
     cache: RefCell<(usize, HashMap<i32, TintedArrow>)>,
+    /// The label chip by output scale.
+    label_cache: RefCell<HashMap<i32, MemoryRenderBuffer>>,
 }
 
 /// A tinted arrow and its hotspot, in buffer pixels.
@@ -89,14 +117,25 @@ impl AgentCursor {
             tracing::warn!("agent_cursor.color {color:?} is not a #RRGGBB colour");
             FALLBACK_COLOR
         });
+        Self::with_rgb(color, None, hide_after)
+    }
+
+    /// A cursor in `color`, labelled with `label` when there is one.
+    pub fn with_rgb(color: [u8; 3], label: Option<String>, hide_after: Duration) -> Self {
         Self {
             color,
+            label,
             placed: false,
             last_activity: None,
             hide_after,
             held_buttons: HashSet::new(),
             cache: RefCell::new((0, HashMap::new())),
+            label_cache: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn color(&self) -> [u8; 3] {
+        self.color
     }
 
     /// The agent moved its pointer: from now on the cursor has somewhere to be.
@@ -156,22 +195,23 @@ impl AgentCursor {
         opacity > 0.0 && opacity < 1.0
     }
 
-    /// The element drawing the agent cursor at `location`, in the output's
-    /// logical coordinates, or `None` while it is hidden.
-    pub fn render_element<R>(
+    /// The elements drawing the agent cursor at `location`, in the output's
+    /// logical coordinates — the arrow, then its label — or none while it is
+    /// hidden.
+    pub fn render_elements<R>(
         &self,
         renderer: &mut R,
         cursor_manager: &CursorManager,
         location: Point<f64, Logical>,
         output_scale: f64,
-    ) -> Option<MemoryRenderBufferRenderElement<R>>
+    ) -> Vec<MemoryRenderBufferRenderElement<R>>
     where
         R: Renderer + ImportMem,
         R::TextureId: Send + Clone + 'static,
     {
         let alpha = self.opacity(Instant::now());
         if alpha <= 0.0 {
-            return None;
+            return Vec::new();
         }
         let scale = output_scale.round() as i32;
         let arrow = cursor_manager.get_default_cursor(scale);
@@ -200,20 +240,119 @@ impl AgentCursor {
                 .clone()
         };
 
-        let position = location.to_physical(output_scale) - hotspot.to_f64();
-        MemoryRenderBufferRenderElement::from_buffer(
-            renderer,
-            position.to_i32_round::<i32>().to_f64(),
-            &buffer,
-            Some(alpha),
-            None,
-            None,
-            // Not `Kind::Cursor`: the hardware cursor plane holds one cursor,
-            // and it is the user's.
-            Kind::Unspecified,
-        )
-        .ok()
+        let tip = location.to_physical(output_scale);
+        let mut elements = Vec::with_capacity(2);
+        let position = tip - hotspot.to_f64();
+        elements.extend(
+            MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                position.to_i32_round::<i32>().to_f64(),
+                &buffer,
+                Some(alpha),
+                None,
+                None,
+                // Not `Kind::Cursor`: the hardware cursor plane holds one
+                // cursor, and it is the user's.
+                Kind::Unspecified,
+            )
+            .ok(),
+        );
+
+        if let Some(label) = self.label_buffer(scale) {
+            // Below and to the right of the tip, clear of the arrow.
+            let offset = Point::<f64, Logical>::from(LABEL_OFFSET).to_physical(output_scale);
+            elements.extend(
+                MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    (tip + offset).to_i32_round::<i32>().to_f64(),
+                    &label,
+                    Some(alpha),
+                    None,
+                    None,
+                    Kind::Unspecified,
+                )
+                .ok(),
+            );
+        }
+        elements
     }
+
+    /// The label chip at `scale`, drawn once and kept.
+    fn label_buffer(&self, scale: i32) -> Option<MemoryRenderBuffer> {
+        let text = self.label.as_deref()?;
+        let mut cache = self.label_cache.borrow_mut();
+        if let Some(buffer) = cache.get(&scale) {
+            return Some(buffer.clone());
+        }
+        let buffer = draw_label(text, self.color, scale)?;
+        cache.insert(scale, buffer.clone());
+        Some(buffer)
+    }
+}
+
+/// Where the label's top-left corner sits from the arrow's tip, in logical
+/// pixels.
+const LABEL_OFFSET: (f64, f64) = (14.0, 22.0);
+
+/// A rounded chip in `color` with `text` on it, rasterized at `scale`.
+fn draw_label(text: &str, color: [u8; 3], scale: i32) -> Option<MemoryRenderBuffer> {
+    use layers::skia;
+
+    let s = scale as f32;
+    let font_family = crate::config::Config::with(|c| c.font_family.clone());
+    let style = skia::FontStyle::new(
+        skia::font_style::Weight::SEMI_BOLD,
+        skia::font_style::Width::NORMAL,
+        skia::font_style::Slant::Upright,
+    );
+    let font = crate::workspaces::utils::FONT_CACHE
+        .with(|fonts| fonts.make_font_with_fallback(font_family, style, 12.0 * s));
+    let [r, g, b] = color;
+    // Dark text on light colours, white on the rest.
+    let light = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0 > 0.6;
+    let mut text_paint = if light {
+        skia::Paint::new(skia::Color4f::new(0.0, 0.0, 0.0, 0.85), None)
+    } else {
+        skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None)
+    };
+    text_paint.set_anti_alias(true);
+
+    let (advance, _) = font.measure_str(text, Some(&text_paint));
+    let (_, metrics) = font.metrics();
+    let (pad_x, pad_y) = (7.0 * s, 3.0 * s);
+    let text_height = metrics.descent - metrics.ascent;
+    let width = (advance + pad_x * 2.0).ceil() as i32;
+    let height = (text_height + pad_y * 2.0).ceil() as i32;
+
+    let mut surface = skia::surfaces::raster_n32_premul((width, height))?;
+    let canvas = surface.canvas();
+    canvas.clear(skia::Color::TRANSPARENT);
+    let mut chip = skia::Paint::new(
+        skia::Color4f::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0),
+        None,
+    );
+    chip.set_anti_alias(true);
+    let rect = skia::Rect::from_xywh(0.0, 0.0, width as f32, height as f32);
+    let radius = height as f32 / 2.0;
+    canvas.draw_rrect(skia::RRect::new_rect_xy(rect, radius, radius), &chip);
+    canvas.draw_str(text, (pad_x, pad_y - metrics.ascent), &font, &text_paint);
+
+    let pixmap = surface.peek_pixels()?;
+    // N32 premultiplied is B, G, R, A in memory on little-endian machines:
+    // what `Fourcc::Argb8888` reads.
+    Some(MemoryRenderBuffer::from_slice(
+        pixmap.bytes()?,
+        Fourcc::Argb8888,
+        (width, height),
+        scale,
+        Transform::Normal,
+        None,
+    ))
+}
+
+/// `#RRGGBB` for `color`.
+pub fn to_hex(color: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2])
 }
 
 /// Read a `#RRGGBB` literal.

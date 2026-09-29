@@ -786,14 +786,57 @@ impl StreamInterface {
     }
 }
 
-/// Compositor D-Bus interface for health checks and app management.
+/// Compositor D-Bus interface for health checks, app management and agent
+/// seats.
 pub struct CompositorInterface {
     compositor_tx: Sender<CompositorCommand>,
+    /// Bus names holding agent seats whose departure is being watched for.
+    watched_agents: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl CompositorInterface {
     fn new(compositor_tx: Sender<CompositorCommand>) -> Self {
-        Self { compositor_tx }
+        Self {
+            compositor_tx,
+            watched_agents: Arc::default(),
+        }
+    }
+
+    /// Remove `owner`'s seats once its name leaves the bus — a crashed agent
+    /// cannot release them itself.
+    async fn watch_agent(&self, connection: &Connection, owner: String) -> zbus::Result<()> {
+        if !self.watched_agents.lock().unwrap().insert(owner.clone()) {
+            return Ok(());
+        }
+        let dbus = zbus::fdo::DBusProxy::new(connection).await?;
+        let mut changes = dbus
+            .receive_name_owner_changed_with_args(&[(0, owner.as_str())])
+            .await?;
+        let compositor_tx = self.compositor_tx.clone();
+        let watched = self.watched_agents.clone();
+        // Subscribed before this check, so a name that goes in between is
+        // still seen: either here, or as a change.
+        let gone_already = !dbus
+            .name_has_owner(owner.as_str().try_into()?)
+            .await
+            .unwrap_or(false);
+        tokio::spawn(async move {
+            use zbus::export::futures_util::StreamExt;
+            if !gone_already {
+                while let Some(change) = changes.next().await {
+                    if change.args().is_ok_and(|args| args.new_owner().is_none()) {
+                        break;
+                    }
+                }
+            }
+            info!(owner, "Agent left the bus; removing its seats");
+            watched.lock().unwrap().remove(&owner);
+            let _ = compositor_tx.send(CompositorCommand::ReleaseAgentSeats {
+                owner,
+                response_tx: None,
+            });
+        });
+        Ok(())
     }
 }
 
@@ -819,6 +862,61 @@ impl CompositorInterface {
             })
             .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
         Ok(true)
+    }
+
+    /// Give the calling agent a seat of its own: a pointer, keyboard and
+    /// cursor, beside the user's. `name` is shown next to its cursor.
+    ///
+    /// Returns the `wl_seat` name to create virtual input on, and the
+    /// cursor's colour as `#RRGGBB`. The seat is removed when the caller
+    /// calls `ReleaseAgentSeat` or leaves the bus; asking again under the
+    /// same name later in the session gives the same seat name and colour.
+    async fn request_agent_seat(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &Connection,
+        name: &str,
+    ) -> zbus::fdo::Result<(String, String)> {
+        let owner = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?
+            .to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::RequestAgentSeat {
+                agent_name: name.to_string(),
+                owner: owner.clone(),
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        let granted = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::AccessDenied)?;
+        if let Err(err) = self.watch_agent(connection, owner.clone()).await {
+            warn!(owner, "Cannot watch the agent's bus name: {err}");
+        }
+        Ok((granted.seat, granted.color))
+    }
+
+    /// Give back every seat the caller holds. Returns whether it held any.
+    async fn release_agent_seat(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<bool> {
+        let owner = header
+            .sender()
+            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?
+            .to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ReleaseAgentSeats {
+                owner,
+                response_tx: Some(tx),
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))
     }
 }
 

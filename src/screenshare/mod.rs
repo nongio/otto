@@ -204,6 +204,19 @@ pub enum CompositorCommand {
     GetShellInputs {
         response_tx: tokio::sync::oneshot::Sender<String>,
     },
+    /// An agent asks for a seat of its own (`specs/agent-seats.md`).
+    RequestAgentSeat {
+        agent_name: String,
+        /// The caller's unique bus name: the seat lasts as long as it does.
+        owner: String,
+        response_tx:
+            tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::GrantedSeat, String>>,
+    },
+    /// An agent gives its seats back, or its bus name went away.
+    ReleaseAgentSeats {
+        owner: String,
+        response_tx: Option<tokio::sync::oneshot::Sender<bool>>,
+    },
 }
 
 /// Information about an available output.
@@ -725,6 +738,22 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 tracing::warn!("Session not found for destruction: {}", session_id);
             }
             refresh_sharing_badges(state);
+        }
+        CompositorCommand::RequestAgentSeat {
+            agent_name,
+            owner,
+            response_tx,
+        } => {
+            let result = state
+                .request_agent_seat(&agent_name, &owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::ReleaseAgentSeats { owner, response_tx } => {
+            let released = state.release_agent_seats(&owner);
+            if let Some(response_tx) = response_tx {
+                let _ = response_tx.send(released);
+            }
         }
         CompositorCommand::FocusApp { app_id } => {
             tracing::info!("FocusApp: {}", app_id);

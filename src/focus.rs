@@ -504,7 +504,7 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
             if data.is_session_locked() {
                 return;
             }
-            data.note_agent_activity();
+            data.note_agent_activity(seat.name());
         }
         if state == KeyState::Pressed {
             data.note_seat_press(seat, serial, self.wl_surface().as_deref());

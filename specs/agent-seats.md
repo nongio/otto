@@ -104,11 +104,18 @@ click, scroll or key reaches any surface, the lock surface included. Locking
 takes the agent seat's pointer and keyboard focus away; unlocking does not
 give them back — the agent clicks again.
 
-### Phase 2 — a seat per agent
+### Phase 2 — a seat per agent (implemented, except grants)
 
 - Agents ask Otto for seats and grants over D-Bus, on
   `org.otto.Compositor`. A seat is tied to the caller's bus name: when that
   name leaves the bus, the seat is removed.
+- `RequestAgentSeat(name: s) -> (seat: s, color: s)` gives the caller a
+  seat; `ReleaseAgentSeat() -> b` gives back every seat it holds. A name is
+  1 to 32 visible characters. A name another connection holds a seat under
+  is refused (`AccessDenied`); asking again from the holder returns the
+  seat it has.
+- A virtual pointer or keyboard created on a seat that has since been
+  removed drives nothing — never the user's seat.
 - Agents ask Otto for a seat, and Otto creates one for them, named
   `agent-<n>`, with its own colour from a fixed palette of clearly distinct
   hues (none close to the user's cursor or the accent colour). The request
