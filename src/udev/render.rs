@@ -1346,6 +1346,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.pointer.current_location(),
             &self.cursor_manager,
             &self.cursor_texture_cache,
+            self.agent_seat
+                .as_ref()
+                .map(|agent| (&agent.cursor, agent.pointer.current_location())),
             self.dnd_icon.as_ref(),
             &self.clock,
             scene_has_damage,
@@ -2413,6 +2416,8 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     pointer_location: Point<f64, Logical>,
     cursor_manager: &CursorManager,
     cursor_texture_cache: &CursorTextureCache,
+    // The agent seat's cursor and where it is, in global logical coordinates.
+    agent_cursor: Option<(&crate::agent_cursor::AgentCursor, Point<f64, Logical>)>,
     dnd_icon: Option<&wl_surface::WlSurface>,
     clock: &Clock<Monotonic>,
     scene_has_damage: bool,
@@ -2525,6 +2530,23 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
         }
     }
 
+    // Under the user's cursor, which was pushed first and so draws on top.
+    let agent_cursor_drawn = agent_cursor.is_some_and(|(cursor, location)| {
+        let location = location - output.current_location().to_f64();
+        if !output_geometry
+            .to_f64()
+            .contains(location.to_physical(scale))
+        {
+            return false;
+        }
+        cursor
+            .render_element(renderer, cursor_manager, location, output_scale)
+            .map(|elem| workspace_render_elements.push(WorkspaceRenderElements::from(elem)))
+            .is_some()
+    });
+    let agent_cursor_left_output = surface.agent_cursor_was_in_output && !agent_cursor_drawn;
+    surface.agent_cursor_was_in_output = agent_cursor_drawn;
+
     #[cfg(feature = "fps_ticker")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
@@ -2542,7 +2564,10 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
             && cursor_manager.is_current_cursor_animated(output_scale.round() as i32));
 
     let (output_elements, clear_color, should_draw) = {
-        let cursor_needs_draw = pointer_in_output || cursor_left_output;
+        let cursor_needs_draw = pointer_in_output
+            || cursor_left_output
+            || agent_cursor_drawn
+            || agent_cursor_left_output;
         // Fullscreen scanout must always draw: the promoted buffer's
         // commits produce no scene damage, and gating on it would drop
         // video frames. `scanout_commit` is the same signal for promoted

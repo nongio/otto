@@ -24,6 +24,10 @@
 //!
 //! Pointer constraints, locked pointers, and relative-motion reporting are
 //! not honored from synthesized events — those are real-pointer concerns.
+//!
+//! A pointer created on the agent seat (`crate::agent_cursor`) drives that
+//! seat's own pointer instead, and none of the user's state: see
+//! [`agent_frame`].
 
 use std::sync::Mutex;
 
@@ -31,7 +35,7 @@ use smithay::{
     backend::input::{Axis, ButtonState},
     input::{
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
-        SeatHandler,
+        Seat, SeatHandler,
     },
     reexports::{
         wayland_protocols_wlr::virtual_pointer::v1::server::{
@@ -40,7 +44,7 @@ use smithay::{
         },
         wayland_server::{
             backend::{ClientId, GlobalId},
-            protocol::wl_pointer,
+            protocol::{wl_pointer, wl_seat::WlSeat},
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
         },
     },
@@ -82,6 +86,8 @@ pub struct VirtualPointerUserData {
     /// first output is used. Lets a driver target a specific output (e.g.
     /// an interactive virtual output) instead of whichever enumerates first.
     output: Option<smithay::output::Output>,
+    /// Created on the agent seat: drives that seat's pointer, not the user's.
+    agent: bool,
 }
 
 #[derive(Debug, Default)]
@@ -127,7 +133,7 @@ where
     Otto<BackendData>: Dispatch<ZwlrVirtualPointerV1, VirtualPointerUserData>,
 {
     fn request(
-        _state: &mut Otto<BackendData>,
+        state: &mut Otto<BackendData>,
         _client: &Client,
         _resource: &ZwlrVirtualPointerManagerV1,
         request: zwlr_virtual_pointer_manager_v1::Request,
@@ -136,11 +142,17 @@ where
         data_init: &mut DataInit<'_, Otto<BackendData>>,
     ) {
         match request {
-            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointer { seat: _, id } => {
-                data_init.init(id, VirtualPointerUserData::default());
+            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointer { seat, id } => {
+                data_init.init(
+                    id,
+                    VirtualPointerUserData {
+                        agent: is_agent_seat(state, seat.as_ref()),
+                        ..Default::default()
+                    },
+                );
             }
             zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput {
-                seat: _,
+                seat,
                 output,
                 id,
             } => {
@@ -151,6 +163,7 @@ where
                     id,
                     VirtualPointerUserData {
                         output,
+                        agent: is_agent_seat(state, seat.as_ref()),
                         ..Default::default()
                     },
                 );
@@ -313,6 +326,11 @@ where
                 let axis = pending.axis.take();
                 drop(pending);
 
+                if data.agent {
+                    agent_frame(state, motion_rel, motion_abs, buttons, axis);
+                    return;
+                }
+
                 let pointer = state.pointer.clone();
 
                 // Compute the new absolute location, clamped to screen
@@ -444,6 +462,112 @@ where
         _data: &VirtualPointerUserData,
     ) {
     }
+}
+
+/// Whether the seat a virtual pointer was created on is the agent seat. A
+/// pointer created without a seat belongs to the user's.
+fn is_agent_seat<BackendData: crate::state::Backend + 'static>(
+    state: &Otto<BackendData>,
+    seat: Option<&WlSeat>,
+) -> bool {
+    seat.and_then(Seat::<Otto<BackendData>>::from_resource)
+        .is_some_and(|seat| state.is_agent_seat(&seat))
+}
+
+/// Flush a frame from a pointer on the agent seat.
+///
+/// Only client surfaces see the agent pointer: Otto's own chrome hit-tests
+/// against the lay-rs engine's single pointer, which is the user's, and
+/// XWayland only knows the first seat. A press hands the agent seat's keyboard
+/// to the window under it, without raising or activating the window — the
+/// user keeps theirs.
+fn agent_frame<BackendData: crate::state::Backend + 'static>(
+    state: &mut Otto<BackendData>,
+    motion_rel: Option<(f64, f64)>,
+    motion_abs: Option<(f64, f64)>,
+    buttons: Vec<(u32, u32, ButtonState)>,
+    axis: Option<AxisFrame>,
+) {
+    use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
+    use smithay::reexports::wayland_server::Resource;
+
+    let Some(agent) = state.agent_seat.as_ref() else {
+        return;
+    };
+    let pointer = agent.pointer.clone();
+    let seat = agent.seat.clone();
+
+    let client_surface_under = |state: &Otto<BackendData>, location| {
+        state
+            .surface_under(location)
+            .filter(|(target, _)| matches!(target, PointerFocusTarget::WlSurface(_)))
+    };
+
+    if motion_rel.is_some() || motion_abs.is_some() {
+        let mut location = pointer.current_location();
+        if let Some((x, y)) = motion_abs {
+            location = Point::from((x, y));
+        } else if let Some((dx, dy)) = motion_rel {
+            location += Point::from((dx, dy));
+        }
+        let location = state.clamp_coords(location);
+        if let Some(agent) = state.agent_seat.as_mut() {
+            agent.cursor.visible = true;
+        }
+        let under = client_surface_under(state, location);
+        pointer.motion(
+            state,
+            under,
+            &MotionEvent {
+                location,
+                serial: SERIAL_COUNTER.next_serial(),
+                time: smithay::backend::input::InputTime::from_millis(0),
+            },
+        );
+    }
+
+    for (time, button, btn_state) in buttons {
+        let serial = SERIAL_COUNTER.next_serial();
+        if btn_state == ButtonState::Pressed && !pointer.is_grabbed() {
+            let target =
+                client_surface_under(state, pointer.current_location()).and_then(|(target, _)| {
+                    let PointerFocusTarget::WlSurface(surface) = target else {
+                        return None;
+                    };
+                    let mut root = surface;
+                    while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+                        root = parent;
+                    }
+                    if let Some(window) = state.workspaces.get_window_for_surface(&root.id()) {
+                        return Some(KeyboardFocusTarget::Window(window.clone()));
+                    }
+                    state
+                        .popups
+                        .find_popup(&root)
+                        .map(KeyboardFocusTarget::Popup)
+                });
+            if let (Some(target), Some(keyboard)) = (target, seat.get_keyboard()) {
+                keyboard.set_focus(state, Some(target), serial);
+            }
+        }
+        pointer.button(
+            state,
+            &ButtonEvent {
+                button,
+                state: btn_state,
+                serial,
+                time: smithay::backend::input::InputTime::from_millis(time),
+            },
+        );
+    }
+
+    if let Some(axis_frame) = axis {
+        pointer.axis(state, axis_frame);
+    }
+    pointer.frame(state);
+
+    // The agent cursor moved: draw it where it is now.
+    state.backend_data.request_redraw();
 }
 
 /// Macro to register the virtual pointer dispatch delegates for a concrete

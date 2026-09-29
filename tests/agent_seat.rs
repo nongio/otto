@@ -1,0 +1,283 @@
+//! The agent seat (`[agent_cursor]`, `src/agent_cursor.rs`): a virtual pointer
+//! created on it moves its own pointer and keyboard focus, never the user's.
+
+#[cfg(feature = "headless")]
+mod agent_seat_tests {
+    use std::time::Duration;
+
+    use otto::headless::{HeadlessConfig, HeadlessHandle};
+    use otto_kit::testing::TestClient;
+    use serial_test::serial;
+    use wayland_client::{
+        delegate_noop,
+        protocol::{wl_pointer, wl_registry, wl_seat},
+        Connection, Dispatch, EventQueue, QueueHandle,
+    };
+    use wayland_protocols_wlr::virtual_pointer::v1::client::{
+        zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
+    };
+
+    const BTN_LEFT: u32 = 0x110;
+
+    /// Every seat, in the order the compositor advertised them.
+    #[derive(Default)]
+    struct DriverState {
+        seats: Vec<wl_seat::WlSeat>,
+        pointer_manager: Option<zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1>,
+    }
+
+    impl Dispatch<wl_registry::WlRegistry, ()> for DriverState {
+        fn event(
+            state: &mut Self,
+            registry: &wl_registry::WlRegistry,
+            event: wl_registry::Event,
+            _: &(),
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+        ) {
+            let wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = event
+            else {
+                return;
+            };
+            match interface.as_str() {
+                "wl_seat" => state
+                    .seats
+                    .push(registry.bind(name, version.min(5), qh, ())),
+                "zwlr_virtual_pointer_manager_v1" => {
+                    state.pointer_manager = Some(registry.bind(name, version.min(2), qh, ()))
+                }
+                _ => {}
+            }
+        }
+    }
+
+    delegate_noop!(DriverState: ignore wl_seat::WlSeat);
+    delegate_noop!(DriverState: zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1);
+    delegate_noop!(DriverState: zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1);
+
+    /// An automation client, like `wlrctl` or an agent's MCP driver.
+    struct Driver {
+        conn: Connection,
+        queue: EventQueue<DriverState>,
+        qh: QueueHandle<DriverState>,
+        state: DriverState,
+    }
+
+    impl Driver {
+        fn connect(handle: &HeadlessHandle) -> Self {
+            let path = format!(
+                "{}/{}",
+                std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR"),
+                handle.socket_name
+            );
+            let stream = std::os::unix::net::UnixStream::connect(path).expect("connect");
+            let conn = Connection::from_socket(stream).expect("wayland connection");
+            let mut queue = conn.new_event_queue();
+            let qh = queue.handle();
+            conn.display().get_registry(&qh, ());
+            let mut state = DriverState::default();
+            queue.roundtrip(&mut state).expect("bind globals");
+            Self {
+                conn,
+                queue,
+                qh,
+                state,
+            }
+        }
+
+        /// A virtual pointer on the `index`th advertised seat.
+        fn pointer_on(&self, index: usize) -> zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1 {
+            let manager = self
+                .state
+                .pointer_manager
+                .as_ref()
+                .expect("zwlr_virtual_pointer_manager_v1 missing");
+            manager.create_virtual_pointer(Some(&self.state.seats[index]), &self.qh, ())
+        }
+
+        fn settle(&mut self, handle: &HeadlessHandle) {
+            self.conn.flush().expect("flush");
+            handle.wait(Duration::from_millis(120));
+            self.queue.roundtrip(&mut self.state).expect("roundtrip");
+            handle.settle(200);
+        }
+    }
+
+    /// A compositor with the agent seat advertised, as `enabled = true` does.
+    fn start() -> HeadlessHandle {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        handle.query(|state| state.enable_agent_seat());
+        handle
+    }
+
+    fn map_window(handle: &HeadlessHandle, client: &mut TestClient, title: &str) {
+        client.create_toplevel_with_app_id(title, &format!("org.otto.{title}"), 640, 480);
+        handle.wait(Duration::from_millis(100));
+        let _ = client.roundtrip();
+        handle.settle(200);
+    }
+
+    /// Move `pointer` to a logical position on the output.
+    fn move_to(
+        handle: &HeadlessHandle,
+        pointer: &zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+        x: i32,
+        y: i32,
+    ) {
+        let (w, h) = handle.query(|state| {
+            let output = state.workspaces.outputs().next().cloned().expect("output");
+            let geo = state.workspaces.output_geometry(&output).expect("geometry");
+            (geo.size.w, geo.size.h)
+        });
+        pointer.motion_absolute(0, x as u32, y as u32, w as u32, h as u32);
+        pointer.frame();
+    }
+
+    fn click(pointer: &zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1) {
+        pointer.button(1, BTN_LEFT, wl_pointer::ButtonState::Pressed);
+        pointer.frame();
+        pointer.button(2, BTN_LEFT, wl_pointer::ButtonState::Released);
+        pointer.frame();
+    }
+
+    fn user_pointer(handle: &HeadlessHandle) -> (f64, f64) {
+        handle.query(|state| {
+            let p = state.pointer.current_location();
+            (p.x, p.y)
+        })
+    }
+
+    fn agent_pointer(handle: &HeadlessHandle) -> Option<(f64, f64)> {
+        handle.query(|state| {
+            state.agent_seat.as_ref().map(|agent| {
+                let p = agent.pointer.current_location();
+                (p.x, p.y)
+            })
+        })
+    }
+
+    /// The agent seat comes second, so clients that take the first seat keep
+    /// the user's.
+    #[test]
+    #[serial]
+    fn the_agent_seat_is_advertised_after_the_users() {
+        let handle = start();
+        let driver = Driver::connect(&handle);
+        assert_eq!(
+            driver.state.seats.len(),
+            2,
+            "the user's seat and the agent's"
+        );
+        drop(driver);
+        handle.stop();
+    }
+
+    /// Motion on the agent seat moves the agent pointer and shows its cursor;
+    /// the user's cursor stays where it was.
+    #[test]
+    #[serial]
+    fn agent_motion_leaves_the_user_pointer_alone() {
+        let handle = start();
+        let mut driver = Driver::connect(&handle);
+        let before = user_pointer(&handle);
+        assert!(
+            !handle.query(|state| state.agent_seat.as_ref().unwrap().cursor.visible),
+            "the agent cursor is hidden until the agent first moves"
+        );
+
+        let pointer = driver.pointer_on(1);
+        move_to(&handle, &pointer, 480, 270);
+        driver.settle(&handle);
+
+        assert_eq!(agent_pointer(&handle), Some((480.0, 270.0)));
+        assert_eq!(user_pointer(&handle), before, "the user's pointer moved");
+        assert!(handle.query(|state| state.agent_seat.as_ref().unwrap().cursor.visible));
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// A pointer on the user's seat still drives the user's pointer while the
+    /// agent seat exists — that is how `otto-rdp` works.
+    #[test]
+    #[serial]
+    fn a_pointer_on_the_user_seat_still_moves_the_user_pointer() {
+        let handle = start();
+        let mut driver = Driver::connect(&handle);
+
+        let pointer = driver.pointer_on(0);
+        move_to(&handle, &pointer, 960, 540);
+        driver.settle(&handle);
+
+        assert_eq!(user_pointer(&handle), (960.0, 540.0));
+        assert_eq!(agent_pointer(&handle), Some((0.0, 0.0)));
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// An agent click gives the agent seat's keyboard to the clicked window;
+    /// the user's focused window keeps the user's keyboard.
+    #[test]
+    #[serial]
+    fn agent_click_does_not_take_the_users_focus() {
+        let handle = start();
+        let mut background = TestClient::connect(&handle.socket_name).expect("client");
+        let mut foreground = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut background, "Background");
+        map_window(&handle, &mut foreground, "Foreground");
+        let _ = background.roundtrip();
+        let _ = foreground.roundtrip();
+        assert!(
+            foreground.state.keyboard_focused,
+            "last mapped starts focused"
+        );
+
+        let (bx, by, _, _) = handle
+            .window_logical_geometry("Background")
+            .expect("background window mapped");
+        let (fx, fy, _, _) = handle
+            .window_logical_geometry("Foreground")
+            .expect("foreground window mapped");
+        let (target_x, target_y) = (bx + 8, by + 8);
+        assert!(
+            target_x < fx || target_y < fy,
+            "the background window must peek out from under the foreground one"
+        );
+
+        let mut driver = Driver::connect(&handle);
+        let pointer = driver.pointer_on(1);
+        move_to(&handle, &pointer, target_x, target_y);
+        driver.settle(&handle);
+        click(&pointer);
+        driver.settle(&handle);
+
+        let _ = background.roundtrip();
+        let _ = foreground.roundtrip();
+        assert!(
+            foreground.state.keyboard_focused,
+            "the user's window lost the user's keyboard"
+        );
+        assert!(!background.state.keyboard_focused);
+
+        let agent_focus = handle.query(|state| {
+            use smithay::wayland::seat::WaylandFocus;
+            let keyboard = state.agent_seat.as_ref()?.seat.get_keyboard()?;
+            let focus = keyboard.current_focus()?;
+            let surface = focus.wl_surface()?.into_owned();
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.wl_surface().is_some_and(|s| *s == surface))
+                .map(|w| w.xdg_title())
+        });
+        assert_eq!(agent_focus.as_deref(), Some("Background"));
+
+        drop(driver);
+        handle.stop();
+    }
+}

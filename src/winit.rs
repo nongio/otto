@@ -575,6 +575,20 @@ pub fn run_winit() {
                         elements.extend(cursor_elements);
                     }
 
+                    // The agent seat's cursor, under the user's.
+                    if let Some(agent) = state.agent_seat.as_ref() {
+                        let location = agent.pointer.current_location()
+                            - output.current_location().to_f64();
+                        if let Some(elem) = agent.cursor.render_element(
+                            renderer,
+                            &state.cursor_manager,
+                            location,
+                            output_scale,
+                        ) {
+                            elements.push(WorkspaceRenderElements::from(elem));
+                        }
+                    }
+
                     #[cfg(feature = "fps_ticker")]
                     elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 

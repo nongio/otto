@@ -670,6 +670,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 full_redraw_done: false,
                 rendered_damage_gen: 0,
                 cursor_was_in_output: false,
+                agent_cursor_was_in_output: false,
                 prefetched_scene_damage: None,
                 scene_dmabuf_element: None,
                 backdrop_surface: None,

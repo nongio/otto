@@ -294,6 +294,17 @@ on_power_button = "lock"
 # says. Requires at-spi2-core to be installed. (default: true)
 enabled = true
 
+# Agent cursor
+[agent_cursor]
+# Advertise a second seat, "agent", for automation. Virtual pointers and
+# keyboards created on it (wlr-virtual-pointer, virtual-keyboard) move their
+# own cursor and focus instead of yours, and its cursor is drawn as the
+# default arrow in `color`. Tools that take the last advertised seat, such as
+# wlrctl, land on it. Read at startup. (default: false)
+enabled = false
+# The agent cursor's colour, as #RRGGBB. (default: "#FF9500")
+color = "#FF9500"
+
 # Audio / Sound feedback
 [audio]
 # Enable sound effects for UI events like volume changes (default: true)
