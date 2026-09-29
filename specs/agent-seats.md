@@ -196,7 +196,12 @@ sign that an agent can act there.
   that acted most recently, and the chip lists every agent with its colour.
 - An "every workspace" grant frames every workspace on every output.
 - Exposé previews and the workspace selector frame the thumbnails of granted
-  workspaces in the agent's colour too.
+  workspaces in the agent's colour too. The mark must not be mistaken for the
+  accent border of the current workspace: it is a dashed ring outside the
+  preview, with a badge on the top-left corner holding the agent's cursor
+  arrow. Exposé showing a granted workspace keeps its frame, without the
+  chip (the workspace strip runs along the top); Stop is not offered in
+  exposé.
 - The lock screen hides every border; they come back on unlock if the grants
   still hold.
 - The border is part of what the user's screen shows, so the user's own
@@ -209,9 +214,9 @@ sign that an agent can act there.
 
 Implemented: the grant, the workspace, hit-testing and keyboard rules while
 hidden, full-rate frames, the cursor drawn only where the workspace is
-shown, and the border with its chip and Stop. Not yet: hidden capture,
-launching onto the workspace, and the frame on exposé and selector
-thumbnails.
+shown, the border with its chip and Stop, the mark on exposé and selector
+thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
+-> pid`). Not yet: hidden capture.
 
 - An agent can ask for a workspace of its own, which starts an own-workspace
   grant and draws its border. Over D-Bus: `RequestOwnWorkspace() ->

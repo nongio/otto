@@ -281,7 +281,9 @@ pub struct Workspaces {
     agent_frame_containers: HashMap<String, Layer>,
     /// The agent border on each granted workspace, by output and view id,
     /// with how it was last drawn.
-    agent_frames: HashMap<(String, usize), (Layer, agent_frame::AgentFrameLook)>,
+    /// Each has a twin, without the chip, in the workspace's exposé view:
+    /// exposé hides the windows plane the frame is drawn in.
+    agent_frames: HashMap<(String, usize), (Layer, Layer, agent_frame::AgentFrameLook)>,
     /// Windows in the order they were last focused, most recent LAST.
     ///
     /// Per-workspace stacking order cannot answer "which window of this app did
@@ -6909,9 +6911,14 @@ impl Workspaces {
             .filter(|key| !keys.contains(*key))
             .cloned()
             .collect();
+        let mut marks_changed = false;
         for key in gone {
-            if let Some((layer, _)) = self.agent_frames.remove(&key) {
+            if let Some((layer, twin, _)) = self.agent_frames.remove(&key) {
                 layer.remove();
+                twin.remove();
+            }
+            if let Some(view) = self.workspace_view(&key.0, key.1) {
+                marks_changed |= view.set_agent_mark(None);
             }
         }
 
@@ -6921,17 +6928,29 @@ impl Workspaces {
             if self
                 .agent_frames
                 .get(&key)
-                .is_some_and(|(_, drawn)| *drawn == look)
+                .is_some_and(|(_, _, drawn)| *drawn == look)
             {
                 continue;
+            }
+            if let Some(view) = self.workspace_view(&output, view) {
+                marks_changed |= view.set_agent_mark(Some((
+                    look.color,
+                    look.names.first().cloned().unwrap_or_default(),
+                )));
             }
             let Some((_, _, scale)) = self.output_physical_size(&output) else {
                 continue;
             };
-            let layer = match self.agent_frames.get(&key) {
-                Some((layer, _)) => layer.clone(),
+            let (layer, twin) = match self.agent_frames.get(&key) {
+                Some((layer, twin, _)) => (layer.clone(), twin.clone()),
                 None => {
                     let Some(container) = self.agent_frame_container(&output) else {
+                        continue;
+                    };
+                    let Some(expose_root) = self
+                        .workspace_view(&output, view)
+                        .map(|view| view.window_selector_view.window_selector_root.clone())
+                    else {
                         continue;
                     };
                     let layer = agent_frame::new_frame_layer(
@@ -6939,16 +6958,43 @@ impl Workspaces {
                         &format!("agent_frame_{output}_{view}"),
                     );
                     let _ = container.add_sublayer(&layer);
+                    let twin = agent_frame::new_frame_layer(
+                        &self.layers_engine,
+                        &format!("agent_frame_expose_{output}_{view}"),
+                    );
+                    let _ = expose_root.add_sublayer(&twin);
                     added = true;
-                    layer
+                    (layer, twin)
                 }
             };
             layer.set_draw_content(agent_frame::draw_frame(look.clone(), scale));
-            self.agent_frames.insert(key, (layer, look));
+            // In exposé the workspace strip runs along the top, where the
+            // chip would be; Stop is not offered there.
+            twin.set_draw_content(agent_frame::draw_frame(
+                agent_frame::AgentFrameLook {
+                    chip: false,
+                    ..look.clone()
+                },
+                scale,
+            ));
+            self.agent_frames.insert(key, (layer, twin, look));
         }
         if added {
             self.place_agent_frames();
         }
+        if marks_changed {
+            self.refresh_output_selectors();
+        }
+    }
+
+    /// The workspace with view id `view` on `output`.
+    fn workspace_view(&self, output: &str, view: usize) -> Option<Arc<WorkspaceView>> {
+        self.output_workspaces
+            .get(output)?
+            .workspace_views
+            .iter()
+            .find(|candidate| candidate.index == view)
+            .cloned()
     }
 
     /// How the agent border on a workspace is drawn now, if it has one.
@@ -6959,7 +7005,7 @@ impl Workspaces {
     ) -> Option<&agent_frame::AgentFrameLook> {
         self.agent_frames
             .get(&(output.to_string(), view))
-            .map(|(_, look)| look)
+            .map(|(_, _, look)| look)
     }
 
     /// The agent frame container for `output`, made on first use and kept
@@ -6982,7 +7028,7 @@ impl Workspaces {
 
     /// Put each agent frame over its workspace on the strip.
     fn place_agent_frames(&self) {
-        for ((output, view), (layer, _)) in &self.agent_frames {
+        for ((output, view), (layer, twin, _)) in &self.agent_frames {
             let (Some(ows), Some((w, h, scale))) = (
                 self.output_workspaces.get(output),
                 self.output_physical_size(output),
@@ -6991,6 +7037,9 @@ impl Workspaces {
             };
             if let Some(position) = ows.workspace_views.iter().position(|v| v.index == *view) {
                 agent_frame::place_frame(layer, position, w, h, scale);
+                // The exposé root is already where its workspace is.
+                twin.set_size(Size::points(w, h), None);
+                twin.set_position((0.0, 0.0), None);
             }
         }
     }

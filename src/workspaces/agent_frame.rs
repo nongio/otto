@@ -161,6 +161,65 @@ pub fn new_frame_layer(engine: &layers::engine::Engine, key: &str) -> Layer {
     layer
 }
 
+/// How far the agent mark on a selector preview reaches outside it: clear
+/// of the accent border, which is drawn inside the preview.
+pub const PREVIEW_MARK_OUTSET: f32 = 7.0;
+
+/// The agent mark on a workspace's selector preview: a dashed ring in the
+/// agent's colour just outside the preview, and a badge on the top-left
+/// corner holding the agent's cursor — the arrow the user sees it with.
+pub fn draw_preview_mark(
+    color: [u8; 3],
+) -> impl Fn(&skia::Canvas, f32, f32) -> skia::Rect + Send + Sync + 'static {
+    move |canvas: &skia::Canvas, w: f32, h: f32| {
+        let [r, g, b] = color.map(|c| c as f32 / 255.0);
+        let tint = skia::Color4f::new(r, g, b, 1.0);
+        let bounds = skia::Rect::from_xywh(0.0, 0.0, w, h);
+
+        let mut ring = skia::Paint::new(tint, None);
+        ring.set_anti_alias(true);
+        ring.set_style(skia::PaintStyle::Stroke);
+        ring.set_stroke_width(3.0);
+        ring.set_path_effect(skia::PathEffect::dash(&[10.0, 6.0], 0.0));
+        let inset = bounds.with_inset((1.5, 1.5));
+        let radius = otto_kit::corners::radius(20.0) + PREVIEW_MARK_OUTSET;
+        canvas.draw_rrect(skia::RRect::new_rect_xy(inset, radius, radius), &ring);
+
+        // The badge: a white disc rimmed in the colour, with the arrow in it.
+        let badge = 15.0;
+        let centre = (badge + 1.0, badge + 1.0);
+        let mut disc = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        disc.set_anti_alias(true);
+        canvas.draw_circle(centre, badge, &disc);
+        let mut rim = skia::Paint::new(tint, None);
+        rim.set_anti_alias(true);
+        rim.set_style(skia::PaintStyle::Stroke);
+        rim.set_stroke_width(2.5);
+        canvas.draw_circle(centre, badge - 1.25, &rim);
+
+        let mut arrow = skia::PathBuilder::new();
+        let (ox, oy, u) = (centre.0 - 5.0, centre.1 - 9.0, 1.05);
+        let points = [
+            (0.0, 0.0),
+            (0.0, 16.0),
+            (4.0, 12.5),
+            (6.8, 18.0),
+            (9.2, 17.0),
+            (6.6, 11.6),
+            (11.5, 11.6),
+        ];
+        arrow.move_to((ox + points[0].0 * u, oy + points[0].1 * u));
+        for (x, y) in &points[1..] {
+            arrow.line_to((ox + x * u, oy + y * u));
+        }
+        arrow.close();
+        let mut fill = skia::Paint::new(tint, None);
+        fill.set_anti_alias(true);
+        canvas.draw_path(&arrow.detach(), &fill);
+        bounds
+    }
+}
+
 /// Place a frame over the workspace at `logical_index` on the strip.
 pub fn place_frame(layer: &Layer, logical_index: usize, width: f32, height: f32, scale: f32) {
     let x = logical_index as f32 * (width + super::WORKSPACE_SPACING * scale);

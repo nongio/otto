@@ -188,6 +188,8 @@ pub struct WorkspaceViewState {
     workspace_height: f32,
     fullscreen: bool,
     window_count: usize,
+    /// The agent holding the workspace: colour and name.
+    agent: Option<([u8; 3], String)>,
 }
 
 impl Hash for WorkspaceViewState {
@@ -200,6 +202,7 @@ impl Hash for WorkspaceViewState {
         self.workspace_height.to_bits().hash(state);
         self.fullscreen.hash(state);
         self.window_count.hash(state);
+        self.agent.hash(state);
     }
 }
 
@@ -518,6 +521,7 @@ impl WorkspaceSelectorView {
                     workspace_height: height,
                     fullscreen: w.get_fullscreen_mode(),
                     window_count: w.windows_list.read().unwrap().len(),
+                    agent: w.agent_mark(),
                 })
                 .collect();
             known.retain(|idx, _| state.workspaces.iter().any(|w| w.index == *idx));
@@ -1430,6 +1434,32 @@ fn render_workspace_selector_view(
                             .build()
                             .unwrap(),
                         ),
+                        // An agent's workspace: a dashed ring in its colour,
+                        // outside the accent border so the two never read as
+                        // one, and its cursor as a badge on the corner.
+                        w.agent.clone().map(|(color, _)| -> LayerTree {
+                            let outset = super::agent_frame::PREVIEW_MARK_OUTSET;
+                            LayerTreeBuilder::with_key(format!(
+                                "workspace_selector_desktop_agent_{}",
+                                w.index
+                            ))
+                            .layout_style(taffy::Style {
+                                position: taffy::Position::Absolute,
+                                ..Default::default()
+                            })
+                            .position(Point::new(-outset, -outset))
+                            .size((
+                                layers::types::Size::points(
+                                    preview_width + outset * 2.0,
+                                    preview_height + outset * 2.0,
+                                ),
+                                None,
+                            ))
+                            .content(Some(super::agent_frame::draw_preview_mark(color)))
+                            .pointer_events(false)
+                            .build()
+                            .unwrap()
+                        }),
                         // Only show remove button if not current workspace and not a non-empty fullscreen workspace
                         (!(current || w.fullscreen && w.window_count > 0)).then(|| -> LayerTree {
                             LayerTreeBuilder::with_key(format!(

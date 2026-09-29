@@ -806,9 +806,23 @@ mod agent_seat_tests {
             })
         };
         assert_eq!(frames(), 1);
+        // Its selector preview carries the agent's mark.
+        let marks = || {
+            handle.query(|state| {
+                let ows = state.workspaces.primary_output_workspaces().unwrap();
+                ows.workspace_views
+                    .iter()
+                    .filter_map(|view| view.agent_mark())
+                    .map(|(_, name)| name)
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(marks(), vec!["Claude".to_string()]);
+
         handle.query(|state| state.release_own_workspace(":1.10"));
         handle.settle(200);
         assert_eq!(frames(), 0, "the frame outlived the grant");
+        assert!(marks().is_empty(), "the preview kept the agent's mark");
         handle.stop();
     }
 

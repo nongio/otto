@@ -450,7 +450,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let Some(look) = self.workspaces.agent_frame_look(&output_name, view) else {
             return false;
         };
-        if !look.chip {
+        // Exposé draws no chip, so there is no Stop to press.
+        if !look.chip || self.workspaces.get_show_all() {
             return false;
         }
         let Some(geometry) = self.workspaces.output_geometry(&output) else {
