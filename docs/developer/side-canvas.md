@@ -103,8 +103,11 @@ events and never reach the state machine as scrolls.
   `ack_configure`, `dismiss`, `destroy`; since version 2
   `set_keyboard_interactivity(none | on_show)`; since version 3 `show`,
   `set_order(int)` and the `never` interactivity.
+- Since version 4 the manager sends `drag_mime_type(string)` for each type a
+  starting drag offers, then `drag_started`, and `drag_ended` when it is
+  dropped or cancelled.
 
-Otto advertises version 3. otto-kit binds `1..=3`, and each
+Otto advertises version 4. otto-kit binds `1..=4`, and each
 `CanvasItemSurface` method for a newer request (`set_keyboard_interactivity`,
 `show`, `set_order`) sends it only when the bound version has it, returning
 false otherwise, so a new client keeps running against an older compositor
@@ -116,7 +119,9 @@ The server side is `src/otto_canvas/`: `protocol.rs` generates the bindings,
 and `mod.rs` the state and behaviour. The client side is
 `otto_kit::surfaces::CanvasItemSurface`, which acks configures, creates its
 Skia surface on the first one and forwards every event to an `on_event`
-handler.
+handler. Apps hear of drags through `App::on_canvas_drag_started(ctx,
+mime_types)` and `App::on_canvas_drag_ended(ctx)`; `AppData` gathers the
+`drag_mime_type` events until `drag_started`.
 
 ## Scene
 
@@ -176,8 +181,8 @@ overlay_plane_{output}
 - `surface_under` asks `canvas_surface_under` after the lock screen and the
   app switcher; it hit-tests each item's surface tree at its slot position.
 - `on_pointer_button` (and the headless synthetic button) run
-  `canvas_pointer_button` first: `Consumed` stops the event (a press outside
-  hides the canvas; its release is swallowed too), `Item` gives the item the
+  `canvas_pointer_button` first: `Consumed` stops the event (a press on the
+  column between items; its release is swallowed too), `Item` gives the item the
   keyboard through `KeyboardFocusTarget::CanvasItem`, unless the item's
   `ItemKeyboard` is `Never`, and skips click-to-focus either way. The
   previous focus is restored when the canvas hides.
@@ -190,19 +195,51 @@ overlay_plane_{output}
 - `canvas_item_show` (the `show` request) is ignored while shown or
   dragging, while locked and while `canvas_suspended()`. Otherwise it brings
   the canvas on screen as `canvas_show` does, calls `canvas_settle_open(false)`
-  and sets `CanvasState::passive`. `passive` is cleared by `canvas_show`, a
+  and sets `CanvasState::passive` (`canvas_show_passive`, shared with a
+  drag resting at the edge). `passive` is cleared by `canvas_show`, a
   gesture begin, a press on an item that takes the keyboard, and any hide.
-  While it is set, `canvas_pointer_button` passes a press outside the column
-  through and records it in `hide_on_release`; the matching release hides
-  the canvas if the pointer is outside the column then. That lets a drag
-  started in an app end on an item: DnD focus comes from `surface_under`,
-  which includes `canvas_surface_under`, so the item's `wl_data_device` gets
-  `enter`/`drop` like any other surface.
+- A press outside the shown column, passive or not, returns `Pass`, so it
+  reaches the window under it and click-to-focus runs as usual; it is
+  recorded as `CanvasState::press_outside` (`drag::PressOutside`). A drag
+  starting while it is down marks it `dragged`. On the matching release,
+  `drag::hide_on_release` hides the canvas only for a plain click released
+  outside the column. The release is routed through the canvas before
+  `pointer.button`, so it sees the drag still going on; the drop itself
+  comes after.
 - The keyboard filter asks `canvas_owns_escape()`: the canvas is shown, not
   passive, not suspended, and no canvas item has the keyboard
   (`canvas_item_has_keyboard`). Then Escape becomes
   `KeyAction::CanvasToggle`, which is also a bindable builtin (`CanvasToggle`,
   not bound by default). Otherwise Escape goes to whoever has the keyboard.
+
+## Drag and drop
+
+`src/otto_canvas/drag.rs` holds the decisions as plain functions and types,
+unit tested on their own: `at_right_edge` (within the canvas width, `EDGE_FRACTION`),
+`EdgeDwell` (fires once per rest of `DWELL`, 250 ms), `hide_when_drag_ends`
+and `hide_on_release`. `mod.rs` applies them:
+
+- `WaylandDndGrabHandler::dnd_requested` reads the source's mime types from
+  `Source::metadata()` and calls `canvas_drag_started`, which marks a
+  pending `press_outside` as dragged, sends every live version 4 manager the
+  `drag_mime_type` events and `drag_started`, stores a `DragSession` and
+  starts a calloop timer that calls `canvas_drag_tick` every `POLL` (50 ms).
+  Bound managers are kept in `CanvasState::managers`; one bound mid-drag is
+  told at once.
+- `canvas_drag_tick` checks whether the pointer is at the right edge of the
+  output under it. When the dwell fires and the canvas is not shown, it opens
+  it with `canvas_show_passive` and records `opened_canvas`; if there is no
+  item yet the dwell is rearmed, so a client adding one on `drag_started` is
+  picked up on the next tick.
+- `DndGrabHandler::dropped` (and `cancelled`) call `canvas_drag_ended` with
+  the drop target's surface, if any. The timer is removed, and a canvas the
+  drag opened hides unless the target's root is a canvas item
+  (`canvas_item_root_for`). Then every manager gets `drag_ended`. smithay
+  calls `dropped` after the target's `drop`, so the item has the data offer
+  by then.
+- DnD focus comes from `surface_under`, which includes
+  `canvas_surface_under`, so an item's `wl_data_device` gets `enter`/`drop`
+  like any other surface.
 
 ## Frame callbacks
 
@@ -220,7 +257,7 @@ every item a new configure and lays the column out again.
 
 ## Stash card
 
-`components/otto-stash` binds `otto_canvas_manager_v1` at exactly version 3
+`components/otto-stash` binds `otto_canvas_manager_v1` at version 3 or 4
 when the compositor offers it (it needs `show`, `set_order` and `never`) and
 then hosts its "Ask about…" card as a canvas item (`otto-stash/src/canvas.rs`)
 instead of the floating overlay balloon (`panel.rs`). `card.rs` holds the
@@ -238,6 +275,17 @@ away is removed at once. When the stash ends, or Ask holds it, the item is
 destroyed and the canvas otherwise stays as it is. A region pick sends
 `dismiss` first so the canvas is not in the capture. See
 [specs/stash.md](../../specs/stash.md).
+
+At version 4, `invite.rs` adds a drop invitation on `drag_started` when the
+drag may carry files (`text/uri-list`, or no types) and there is no card: a
+72-point item at the card's order with a dashed outline and the
+`stash-drop-invite` string, accented while a drag is over it. `drop.rs`
+accepts file drops on it as on the card and marks it `dropped`. On
+`drag_ended` an invitation nothing was dropped on is destroyed; one that took
+files stays until the new card's first buffer is committed (`draw_panel`), or
+until the files are read if no card is coming (`settle_invite`), so the
+column never empties in between and the canvas does not close under the
+drop.
 
 ## Sessions client and autostart
 
@@ -286,10 +334,15 @@ its query). Each is reaped on a thread and followed by `dismiss`.
   click-outside dismissal, and that an `on_show` item gets `wl_keyboard.enter`
   on every show and the window that had the keyboard gets it back on hide.
   Version 3: `show` opens the canvas passive without moving the keyboard (and
-  a later user open does focus the `on_show` item), a click outside a passive
-  canvas hides it on release, a click on a `never` item leaves the keyboard
-  with the window, and `set_order` restacks two items and ties go back to
-  creation order.
+  a later user open does focus the `on_show` item), a click outside a shown
+  canvas passes through and hides it on release, a click on a `never` item
+  leaves the keyboard with the window, and `set_order` restacks two items and
+  ties go back to creation order. Version 4, with `TestClient::start_drag`
+  from a window: a drag started beside an open canvas keeps it open, a drag
+  resting at the right edge opens it passive, managers get the mime types,
+  `drag_started` and `drag_ended`, a drop elsewhere hides it again, and a
+  drop on an item keeps it.
+- `cargo test --lib otto_canvas`: also the drag decisions in `drag.rs`.
 - `cargo test -p otto-launcher keys`: the shared list keys.
 
 ## Follow-ups

@@ -62,6 +62,18 @@ offers the same thing on its selection as **Add to Stash** (see
 **Dropping.** Files dragged from any app and dropped on the card are added,
 one item per file, in the side canvas as on the floating card.
 
+**Starting a stash by dropping.** When the side canvas announces drags
+(`otto-canvas-v1` version 4) and there is no card in it, a drag that offers
+`text/uri-list`, or does not say what it offers, puts a drop invitation in the
+canvas where the card would sit: a short card with a dashed outline that
+reads "Drop files here to stash them", in the accent colour while the drag is
+over it. The canvas opens when the drag rests at the right edge of the screen
+(see [side-canvas.md](./side-canvas.md)). Files dropped on the invitation
+start a stash with them on the card, which takes the invitation's place once
+drawn; the canvas stays open throughout. A drag that ends anywhere else takes
+the invitation away, and the canvas closes if the drag opened it. A drag that
+offers something else, or starts while the card is up, adds no invitation.
+
 **Adding a region.** `otto-stash add-region` hides the card, lets the person
 drag out a rectangle on screen, and adds a capture of it as a picture. The
 card is hidden for the pick so it is never in the capture (in the side
@@ -98,10 +110,11 @@ at the column's width and as tall as its content (up to the same limit).
   already shown, while the session is locked and during exposé; the next add
   asks again.
 - The canvas then stays open until the person hides it (swipe, toggle, a
-  click outside it) or the stash ends. Because the canvas opened by itself,
-  a click in the app reaches the app, and the canvas hides when the button
-  is released outside it; Escape stays with the app. See
-  [side-canvas.md](./side-canvas.md).
+  click outside it) or the stash ends. A click in the app reaches the app,
+  and the canvas hides when the button is released outside it; a press that
+  starts a drag leaves it open, so files dragged from a Files window can be
+  dropped on the card. Because the canvas opened by itself, Escape stays
+  with the app. See [side-canvas.md](./side-canvas.md).
 - Clicking the card never takes the keyboard. The card does not move; there
   is nothing to drag.
 - When the stash ends, or Ask shows it, the card leaves the canvas at once.

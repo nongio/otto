@@ -27,7 +27,7 @@ pub struct CanvasItemData {
 }
 
 /// The version of `otto-canvas-v1` advertised.
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// Owner of the `otto_canvas_manager_v1` global.
 #[derive(Debug)]
@@ -48,14 +48,15 @@ impl CanvasGlobal {
 
 impl<B: Backend> GlobalDispatch<OttoCanvasManagerV1, (), Otto<B>> for CanvasGlobal {
     fn bind(
-        _state: &mut Otto<B>,
+        state: &mut Otto<B>,
         _handle: &DisplayHandle,
         _client: &Client,
         resource: New<OttoCanvasManagerV1>,
         _global_data: &(),
         data_init: &mut DataInit<'_, Otto<B>>,
     ) {
-        data_init.init(resource, ());
+        let manager = data_init.init(resource, ());
+        state.canvas_manager_bound(manager);
     }
 }
 
@@ -86,8 +87,18 @@ impl<B: Backend> Dispatch<OttoCanvasManagerV1, (), Otto<B>> for CanvasGlobal {
                 );
                 state.canvas_item_created(item, surface);
             }
+            // The manager leaves the list in `destroyed`.
             otto_canvas_manager_v1::Request::Destroy => {}
         }
+    }
+
+    fn destroyed(
+        state: &mut Otto<B>,
+        _client: ClientId,
+        manager: &OttoCanvasManagerV1,
+        _data: &(),
+    ) {
+        state.canvas_manager_destroyed(&manager.id());
     }
 }
 

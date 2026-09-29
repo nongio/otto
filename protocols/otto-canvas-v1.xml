@@ -38,9 +38,14 @@
     to be shown (show, version 3), without taking the keyboard. Clients are
     told when the canvas shows and hides so they can pause work nobody can
     see.
+
+    The compositor also opens the canvas when a drag and drop operation
+    rests at the right edge of an output, so an item can take the drop, and
+    tells every manager when a drag starts and ends (version 4), so a client
+    can put an item in the column that is ready for it.
   </description>
 
-  <interface name="otto_canvas_manager_v1" version="3">
+  <interface name="otto_canvas_manager_v1" version="4">
     <description summary="creates canvas items">
       The manager global lets a client put surfaces in the side canvas.
     </description>
@@ -70,9 +75,44 @@
         Destroy the manager object. Items already created are unaffected.
       </description>
     </request>
+
+    <event name="drag_mime_type" since="4">
+      <description summary="a type the starting drag offers">
+        Sent once for each mime type the data of a starting drag and drop
+        operation is offered as, right before drag_started. There may be
+        none when the source has not said yet; the client should then treat
+        what the drag carries as unknown.
+      </description>
+      <arg name="mime_type" type="string" summary="a mime type the drag offers"/>
+    </event>
+
+    <event name="drag_started" since="4">
+      <description summary="a drag and drop operation began">
+        A drag and drop operation began somewhere in the session, from any
+        client. The drag_mime_type events sent since the last drag_started
+        or drag_ended list what it offers.
+
+        While it goes on, the compositor opens the canvas when the pointer
+        rests at the right edge of an output, the way show does: the
+        keyboard does not move. A client with nothing in the canvas may add
+        an item now, to be there when it opens. Items take the drop through
+        wl_data_device like any other surface.
+      </description>
+    </event>
+
+    <event name="drag_ended" since="4">
+      <description summary="the drag and drop operation ended">
+        The drag and drop operation announced by drag_started ended, with a
+        drop anywhere or cancelled. A client whose item the drop landed on
+        has had wl_data_device.drop before this event.
+
+        If the drag opened the canvas and the drop did not land on an item,
+        the canvas hides again.
+      </description>
+    </event>
   </interface>
 
-  <interface name="otto_canvas_item_v1" version="3">
+  <interface name="otto_canvas_item_v1" version="4">
     <description summary="a surface in the side canvas">
       One surface in the column. The compositor positions it; the client
       draws it at the configured width and at whatever height it needs.

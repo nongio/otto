@@ -1128,6 +1128,7 @@ launcher-agents-error = 失敗
 launcher-agents-none = エージェントセッションはまだありません
 canvas-sessions-heading = エージェント
 canvas-sessions-ask = Ask
+stash-drop-invite = ここにファイルをドロップして収集に追加
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

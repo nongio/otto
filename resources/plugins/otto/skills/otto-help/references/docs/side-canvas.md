@@ -49,12 +49,14 @@ app keeps the keyboard, so your selection and caret stay where they were,
 and clicking the card doesn't take the keyboard either. Drop files on the
 card to add them.
 
+You can start a stash by dropping files too: drag them from Files (or any
+app) over to the right side of the screen and hold them there for a moment. The
+canvas opens with a place to drop them, and dropping them there starts the
+stash.
+
 The canvas stays open until you close it. Since you didn't open it yourself,
-a click in your app goes through to the app, and the canvas slides away when
-you let go of the button (unless you let go over the canvas, which is how a
-drag from the app lands on the card). Escape stays with your app too. Each
-new add brings the canvas back. When you send the stash or clear it, the card
-leaves the canvas.
+Escape stays with your app. Each new add brings the canvas back. When you
+send the stash or clear it, the card leaves the canvas.
 
 ## Opening and closing
 
@@ -65,10 +67,13 @@ leaves the canvas.
 - **Keyboard:** bind the `CanvasToggle` action (see below). Escape closes it;
   when a panel has the keyboard, the panel decides what Escape does first
   (the Agents panel clears its search).
-- **Pointer:** click anywhere outside the canvas to close it. That click goes
-  no further, so it will not land on the window underneath. The exception is
-  a canvas that opened by itself to show you something, like a stash: see
-  above.
+- **Pointer:** click anywhere outside the canvas to close it. The click still
+  reaches the window you clicked, and the canvas slides away when you let go
+  of the button. If you pressed to drag something instead, the canvas stays
+  open so you can drop it on a panel.
+- **Dragging:** while you drag something, hold it near the right edge of
+  the screen for a moment and the canvas opens, so you can drop it on a panel.
+  Drop it anywhere else and the canvas closes again.
 
 The canvas opens on the screen the pointer is on. If no application has put
 anything in it, it does not open.

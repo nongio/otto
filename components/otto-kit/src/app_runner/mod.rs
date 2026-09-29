@@ -256,6 +256,26 @@ pub trait App {
         // Default: do nothing
     }
 
+    /// Called when a drag and drop operation starts anywhere in the session,
+    /// from Otto's side canvas (`otto-canvas-v1` version 4).
+    ///
+    /// `mime_types` is what the drag's data is offered as; empty when the
+    /// source has not said, which means unknown rather than nothing. The
+    /// canvas opens if the drag rests at the right edge of the screen, so
+    /// an app with nothing in it may add a
+    /// [`CanvasItemSurface`](crate::surfaces::CanvasItemSurface) now to take
+    /// the drop.
+    fn on_canvas_drag_started(&mut self, _ctx: &AppContext, _mime_types: &[String]) {
+        // Default: do nothing
+    }
+
+    /// Called when the drag announced by
+    /// [`App::on_canvas_drag_started`] ends, dropped or cancelled. An item
+    /// the drop landed on has had it already.
+    fn on_canvas_drag_ended(&mut self, _ctx: &AppContext) {
+        // Default: do nothing
+    }
+
     /// Called once per event loop iteration, after dispatching Wayland events.
     /// Use for periodic checks (timers, polling state changes) without frame callbacks.
     fn on_update(&mut self, _ctx: &AppContext) {
@@ -386,6 +406,12 @@ impl App for DefaultApp {
 
     fn on_dock_menu_requested(&mut self, ctx: &AppContext, x: i32, y: i32) {
         self.inner.on_dock_menu_requested(ctx, x, y)
+    }
+    fn on_canvas_drag_started(&mut self, ctx: &AppContext, mime_types: &[String]) {
+        self.inner.on_canvas_drag_started(ctx, mime_types)
+    }
+    fn on_canvas_drag_ended(&mut self, ctx: &AppContext) {
+        self.inner.on_canvas_drag_ended(ctx)
     }
     fn on_pointer_event(&mut self, ctx: &AppContext, events: &[PointerEvent]) {
         self.inner.on_pointer_event(ctx, events)
@@ -536,7 +562,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
         // The side canvas; Otto only, so optional like the dock.
-        let otto_canvas_manager = globals.bind(&qh, 1..=3, ()).ok();
+        let otto_canvas_manager = globals.bind(&qh, 1..=4, ()).ok();
         // Where the desktop's text cursor is, for a panel that wants to sit
         // beside the text rather than in the middle of the screen. Absent on
         // any compositor but Otto, which is why it is optional.
@@ -626,6 +652,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             hold_gestures: Vec::new(),
             pinch_gestures: Vec::new(),
             key_repeat: key_repeat::KeyRepeat::default(),
+            canvas_drag_mime_types: Vec::new(),
             exit: false,
         };
 
@@ -846,6 +873,9 @@ pub struct AppData<A: App + 'static> {
     pinch_gestures: Vec<ZwpPointerGesturePinchV1>,
     /// The key being held, repeated at the compositor's rate.
     key_repeat: key_repeat::KeyRepeat,
+    /// The mime types of the drag the side canvas is announcing, gathered
+    /// until its `drag_started`.
+    canvas_drag_mime_types: Vec<String>,
     exit: bool,
 }
 
@@ -1937,14 +1967,27 @@ impl<A: App + 'static> Dispatch<crate::protocols::otto_canvas_manager_v1::OttoCa
     for AppData<A>
 {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1,
-        _event: crate::protocols::otto_canvas_manager_v1::Event,
+        event: crate::protocols::otto_canvas_manager_v1::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // The manager has no events.
+        use crate::protocols::otto_canvas_manager_v1::Event;
+        match event {
+            Event::DragMimeType { mime_type } => state.canvas_drag_mime_types.push(mime_type),
+            Event::DragStarted => {
+                let mime_types = std::mem::take(&mut state.canvas_drag_mime_types);
+                let ctx = AppContext::new(&state.context_data);
+                state.app.on_canvas_drag_started(&ctx, &mime_types);
+            }
+            Event::DragEnded => {
+                state.canvas_drag_mime_types.clear();
+                let ctx = AppContext::new(&state.context_data);
+                state.app.on_canvas_drag_ended(&ctx);
+            }
+        }
     }
 }
 

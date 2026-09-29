@@ -21,6 +21,13 @@
 //! An item can ask for the canvas to be shown with
 //! [`CanvasItemSurface::show`], when it has something new to see. That
 //! show leaves the keyboard with the app that has it.
+//!
+//! A drag that rests at the right edge of the screen opens the canvas too,
+//! so an item can take the drop through the data device like any other
+//! surface. Apps hear of every drag through
+//! [`App::on_canvas_drag_started`](crate::app_runner::App::on_canvas_drag_started)
+//! and [`App::on_canvas_drag_ended`](crate::app_runner::App::on_canvas_drag_ended),
+//! so one with nothing in the canvas can add an item for the drop.
 
 // Rust guideline compliant 2026-02-21
 

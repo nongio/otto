@@ -16,13 +16,21 @@
 //! It is driven by a trackpad swipe from the right edge (the input side calls
 //! the `canvas_gesture_*` methods), by the `CanvasToggle` action, and by
 //! clients asking for it to be shown or dismissed. A canvas a client showed
-//! is passive until the user acts on it: the keyboard stays with the app,
-//! Escape goes to the app, and a press outside reaches the app and hides the
-//! canvas only when released outside it, so a drag can end on an item. While it is off screen its items get no
-//! frame callbacks and are told `hidden`, so they can stop drawing.
+//! is passive until the user acts on it: the keyboard stays with the app and
+//! Escape goes to the app. Shown either way, a press outside it reaches what
+//! is under the pointer, and the canvas hides when that button comes up
+//! outside it, unless the press started a drag: something dragged from a
+//! window can then be dropped on an item.
+//!
+//! A drag and drop operation that rests at the right edge of an output opens
+//! the canvas, passive, and every manager is told when a drag starts and
+//! ends, so a client can put an item there to take the drop (see [`drag`]).
+//! While it is off screen its items get no frame callbacks and are told
+//! `hidden`, so they can stop drawing.
 //!
 //! See `specs/side-canvas.md` and `docs/developer/side-canvas.md`.
 
+pub mod drag;
 pub mod handlers;
 pub mod protocol;
 
@@ -36,6 +44,8 @@ use layers::types::{Point, Size};
 use smithay::desktop::utils::{send_frames_surface_tree, under_from_surface_tree};
 use smithay::desktop::WindowSurfaceType;
 use smithay::output::Output;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource;
@@ -180,9 +190,16 @@ pub struct CanvasState<B: Backend> {
     /// The canvas was shown by a client and the user has not acted on it
     /// since. See the module docs.
     passive: bool,
-    /// A button pressed outside a passive canvas. The canvas hides when it
-    /// is released outside the column.
-    hide_on_release: Option<u32>,
+    /// A button pressed outside the shown canvas. The canvas hides when it
+    /// is released outside the column, unless it started a drag.
+    press_outside: Option<drag::PressOutside>,
+    /// Every bound manager, told when drags start and end.
+    managers: Vec<OttoCanvasManagerV1>,
+    /// The drag and drop operation going on, if any.
+    drag: Option<drag::DragSession>,
+    /// The timer that watches for the pointer resting at the edge during a
+    /// drag.
+    drag_timer: Option<RegistrationToken>,
 }
 
 impl<B: Backend> Default for CanvasState<B> {
@@ -199,7 +216,10 @@ impl<B: Backend> Default for CanvasState<B> {
             swallowed_buttons: Vec::new(),
             next_seq: 0,
             passive: false,
-            hide_on_release: None,
+            press_outside: None,
+            managers: Vec::new(),
+            drag: None,
+            drag_timer: None,
         }
     }
 }
@@ -219,6 +239,16 @@ impl<B: Backend> CanvasState<B> {
     pub fn on_screen(&self) -> bool {
         !matches!(self.phase, Phase::Hidden)
     }
+}
+
+/// The point to find the pointer's output from. Pushed against the right
+/// edge of the layout, the pointer is clamped to exactly the output's right
+/// bound, which no output rectangle contains; looking a little to the left
+/// finds the output it is resting on.
+fn edge_probe(
+    location: smithay::utils::Point<f64, Logical>,
+) -> smithay::utils::Point<f64, Logical> {
+    (location.x - 1.0, location.y).into()
 }
 
 impl<B: Backend> Otto<B> {
@@ -333,23 +363,31 @@ impl<B: Backend> Otto<B> {
     /// canvas is shown or following the fingers, while the session is
     /// locked and during exposé.
     pub(crate) fn canvas_item_show(&mut self, item: &OttoCanvasItemV1) {
-        self.canvas_finish_close_if_done();
         if !self
             .canvas
             .items
             .iter()
             .any(|entry| &entry.resource == item)
-            || self.is_session_locked()
-            || self.canvas_suspended()
-            || !self.canvas_available()
         {
             return;
         }
+        if self.canvas_show_passive() {
+            tracing::debug!("canvas shown by a client");
+        }
+    }
+
+    /// Slide the canvas in without moving the keyboard, as a client's show
+    /// or a drag resting at the edge does. Returns whether it is now opening.
+    fn canvas_show_passive(&mut self) -> bool {
+        self.canvas_finish_close_if_done();
+        if self.is_session_locked() || self.canvas_suspended() || !self.canvas_available() {
+            return false;
+        }
         match self.canvas.phase {
-            Phase::Shown | Phase::Dragging { .. } => return,
+            Phase::Shown | Phase::Dragging { .. } => return false,
             Phase::Hidden => {
                 if !self.canvas_bring_on_screen() {
-                    return;
+                    return false;
                 }
                 self.canvas_place_column(0.0, false);
             }
@@ -357,7 +395,7 @@ impl<B: Backend> Otto<B> {
         }
         self.canvas.passive = true;
         self.canvas_settle_open(false);
-        tracing::debug!("canvas shown by a client");
+        true
     }
 
     /// Whether Escape is the canvas's, to hide it: the canvas is shown and
@@ -374,6 +412,14 @@ impl<B: Backend> Otto<B> {
     /// since.
     pub fn canvas_is_passive(&self) -> bool {
         self.canvas.passive && self.canvas_is_shown()
+    }
+
+    /// Whether `pos` is on the column, while the canvas is on screen.
+    pub fn canvas_column_contains(&self, pos: smithay::utils::Point<f64, Logical>) -> bool {
+        self.canvas.on_screen()
+            && self
+                .canvas_column_rect()
+                .is_some_and(|rect| rect.contains(pos))
     }
 
     /// The canvas items' surfaces, top to bottom.
@@ -510,12 +556,13 @@ impl<B: Backend> Otto<B> {
     }
 
     /// Route a pointer button through the canvas before anything else sees
-    /// it. A press outside a shown canvas hides it and is taken, as is its
-    /// release; a press on an item gives that item the keyboard.
+    /// it. A press on an item gives that item the keyboard; a press on the
+    /// column between items is taken, as is its release.
     ///
-    /// On a passive canvas a press outside goes through, and the canvas
-    /// hides when that button is released outside it: a drag that started
-    /// in an app can still be dropped on an item.
+    /// A press outside a shown canvas goes through to what is under the
+    /// pointer, and the canvas hides when that button is released outside
+    /// it, unless the press started a drag: something dragged from a window
+    /// can then be dropped on an item.
     pub fn canvas_pointer_button(&mut self, button: u32, pressed: bool) -> CanvasButton {
         if !pressed {
             if let Some(index) = self
@@ -527,13 +574,17 @@ impl<B: Backend> Otto<B> {
                 self.canvas.swallowed_buttons.swap_remove(index);
                 return CanvasButton::Consumed;
             }
-            if self.canvas.hide_on_release == Some(button) {
-                self.canvas.hide_on_release = None;
+            if let Some(press) = self
+                .canvas
+                .press_outside
+                .filter(|press| press.button == button)
+            {
+                self.canvas.press_outside = None;
                 let location = self.pointer.current_location();
                 let inside = self
                     .canvas_column_rect()
                     .is_some_and(|rect| rect.contains(location));
-                if !inside && self.canvas.passive {
+                if drag::hide_on_release(press, inside) {
                     self.canvas_hide();
                 }
             }
@@ -550,13 +601,11 @@ impl<B: Backend> Otto<B> {
             .canvas_column_rect()
             .is_some_and(|rect| rect.contains(location));
         if !inside {
-            if self.canvas.passive {
-                self.canvas.hide_on_release = Some(button);
-                return CanvasButton::Pass;
-            }
-            self.canvas.swallowed_buttons.push(button);
-            self.canvas_hide();
-            return CanvasButton::Consumed;
+            self.canvas.press_outside = Some(drag::PressOutside {
+                button,
+                dragged: false,
+            });
+            return CanvasButton::Pass;
         }
         match self.canvas_item_root_under(location) {
             Some(surface) => {
@@ -743,6 +792,133 @@ impl<B: Backend> Otto<B> {
         self.canvas_request_redraw();
     }
 
+    // ── Drag and drop ────────────────────────────────────────────────────
+
+    /// A client bound the manager. One that binds while a drag goes on is
+    /// told about it at once.
+    pub(crate) fn canvas_manager_bound(&mut self, manager: OttoCanvasManagerV1) {
+        if let Some(session) = self.canvas.drag.as_ref() {
+            send_drag_started(&manager, &session.mime_types);
+        }
+        self.canvas.managers.push(manager);
+    }
+
+    /// A manager is gone, by request or with its client.
+    pub(crate) fn canvas_manager_destroyed(&mut self, id: &ObjectId) {
+        self.canvas
+            .managers
+            .retain(|manager| &manager.id() != id && manager.is_alive());
+    }
+
+    /// Whether a drag and drop operation is going on.
+    pub fn canvas_drag_active(&self) -> bool {
+        self.canvas.drag.is_some()
+    }
+
+    /// A drag and drop operation began, offering its data as `mime_types`.
+    /// Every manager is told, and the pointer is watched for a rest at the
+    /// right edge of an output, which opens the canvas.
+    pub fn canvas_drag_started(&mut self, mime_types: Vec<String>) {
+        if self.canvas.drag.is_some() {
+            self.canvas_drag_ended(None);
+        }
+        if let Some(press) = self.canvas.press_outside.as_mut() {
+            press.dragged = true;
+        }
+        self.canvas.managers.retain(Resource::is_alive);
+        for manager in &self.canvas.managers {
+            send_drag_started(manager, &mime_types);
+        }
+        self.canvas.drag = Some(drag::DragSession {
+            mime_types,
+            ..Default::default()
+        });
+        let inserted =
+            self.handle
+                .insert_source(Timer::from_duration(drag::POLL), |_, _, state| {
+                    if state.canvas_drag_tick() {
+                        TimeoutAction::ToDuration(drag::POLL)
+                    } else {
+                        state.canvas.drag_timer = None;
+                        TimeoutAction::Drop
+                    }
+                });
+        match inserted {
+            Ok(token) => self.canvas.drag_timer = Some(token),
+            Err(err) => {
+                tracing::warn!(error = %err.error, "cannot watch the drag for the canvas edge");
+            }
+        }
+        tracing::debug!("drag started");
+    }
+
+    /// The drag and drop operation ended, dropped on `target` or cancelled
+    /// (`None`). A canvas the drag opened goes again, unless the drop
+    /// landed on one of its items.
+    pub fn canvas_drag_ended(&mut self, target: Option<&WlSurface>) {
+        let Some(session) = self.canvas.drag.take() else {
+            return;
+        };
+        if let Some(token) = self.canvas.drag_timer.take() {
+            self.handle.remove(token);
+        }
+        let landed_on_item =
+            target.is_some_and(|surface| self.canvas_item_root_for(surface).is_some());
+        if drag::hide_when_drag_ends(session.opened_canvas, landed_on_item)
+            && self.canvas_is_shown()
+        {
+            self.canvas_hide();
+        }
+        for manager in &self.canvas.managers {
+            if manager.is_alive() && manager.version() >= DRAG_SINCE {
+                manager.drag_ended();
+            }
+        }
+        tracing::debug!(landed_on_item, "drag ended");
+    }
+
+    /// Look at the pointer during a drag: resting at the right edge of an
+    /// output long enough opens the canvas there. Returns whether the drag
+    /// is still going on.
+    fn canvas_drag_tick(&mut self) -> bool {
+        if self.canvas.drag.is_none() {
+            return false;
+        }
+        let location = self.pointer.current_location();
+        let at_edge = self
+            .workspaces
+            .output_under(edge_probe(location))
+            .next()
+            .and_then(|output| self.workspaces.output_geometry(output))
+            .is_some_and(|geo| {
+                drag::at_right_edge(
+                    location.x,
+                    f64::from(geo.loc.x + geo.size.w),
+                    f64::from(canvas_width_points()),
+                )
+            });
+        let now = std::time::Instant::now();
+        let Some(session) = self.canvas.drag.as_mut() else {
+            return false;
+        };
+        if !session.dwell.observe(at_edge, now) {
+            return true;
+        }
+        if self.canvas_is_shown() {
+            return true;
+        }
+        if self.canvas_show_passive() {
+            if let Some(session) = self.canvas.drag.as_mut() {
+                session.opened_canvas = true;
+            }
+            tracing::debug!("canvas opened by a drag at the edge");
+        } else if let Some(session) = self.canvas.drag.as_mut() {
+            // Nothing to show yet: a client may still be adding its item.
+            session.dwell.rearm();
+        }
+        true
+    }
+
     // ── Internals ────────────────────────────────────────────────────────
 
     /// The column layer, created on first use.
@@ -772,7 +948,7 @@ impl<B: Backend> Otto<B> {
         let pointer = self.pointer.current_location();
         let output = self
             .workspaces
-            .output_under(pointer)
+            .output_under(edge_probe(pointer))
             .next()
             .or_else(|| self.workspaces.primary_output())
             .cloned();
@@ -997,7 +1173,7 @@ impl<B: Backend> Otto<B> {
         self.canvas_restore_focus();
         self.canvas.phase = Phase::Hidden;
         self.canvas.passive = false;
-        self.canvas.hide_on_release = None;
+        self.canvas.press_outside = None;
         self.canvas.drag_progress = 0.0;
         for ows in self.workspaces.output_workspaces.values() {
             ows.canvas_plane.set_hidden(true);
@@ -1059,6 +1235,20 @@ fn settle_transition() -> Transition {
 /// The configured column width, in logical points.
 fn canvas_width_points() -> u32 {
     Config::with(|c| c.canvas.clamped_width())
+}
+
+/// The manager version that brought the drag events.
+const DRAG_SINCE: u32 = 4;
+
+/// Tell `manager` a drag began, offering `mime_types`.
+fn send_drag_started(manager: &OttoCanvasManagerV1, mime_types: &[String]) {
+    if !manager.is_alive() || manager.version() < DRAG_SINCE {
+        return;
+    }
+    for mime_type in mime_types {
+        manager.drag_mime_type(mime_type.clone());
+    }
+    manager.drag_started();
 }
 
 /// Send `resource` a configure for `width` logical points.

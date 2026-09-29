@@ -26,7 +26,7 @@ pub const CANVAS_VERSION: u32 = 3;
 
 /// Where the card sits in the column: above every item that keeps the
 /// default order of 0, the Agents panel included.
-const ORDER: i32 = -100;
+pub const ORDER: i32 = -100;
 
 /// The card in the side canvas, from the first add until the stash is sent
 /// or cancelled, or Ask shows it instead.

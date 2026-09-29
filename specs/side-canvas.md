@@ -28,6 +28,9 @@ one swipe away and out of the way the rest of the time.
   a click outside it.
 - A client can bring the canvas out when it has something new to show,
   without taking the keyboard from the app the user is working in.
+- Something dragged from any app can be dropped on an item: a drag resting at
+  the right edge opens the canvas, and a drag started beside an open canvas
+  does not close it.
 
 ## Non-Goals
 
@@ -66,9 +69,17 @@ one swipe away and out of the way the rest of the time.
   ties go by creation, the default is 0. The column is laid out again at
   once, and the first item "in the column" (for `on_show`) follows the new
   order.
-- The compositor advertises version 3. A client binds
-  `min(advertised, 3)` and sends each request only on a version that has it,
-  so a new client still runs against a version 1 or 2 compositor.
+- `drag_mime_type(mime_type)`, `drag_started` and `drag_ended` (version 4,
+  on the manager) tell every client when a drag and drop operation starts
+  and ends anywhere in the session, from any client. Each `drag_mime_type`
+  names a type the drag's data is offered as, all of them right before
+  `drag_started`; none means the source has not said, so unknown. A manager
+  bound while a drag goes on is told about it at once. `drag_ended` follows
+  the drop (after `wl_data_device.drop` for the client whose surface took
+  it) or the cancel. See Drag and drop.
+- The compositor advertises version 4. A client binds
+  `min(advertised, 4)` and sends each request only on a version that has it,
+  so a new client still runs against an older compositor.
 - Destroying the item (or disconnecting) removes it; the items below move up.
   When the last item goes, a visible canvas is taken down at once.
 
@@ -85,11 +96,7 @@ one swipe away and out of the way the rest of the time.
   - No item is given the keyboard, `on_show` ones included.
   - The canvas opens *passive*, and stays so until the user acts on it: a
     toggle, a swipe, or a press on an item that takes the keyboard. While
-    passive, Escape goes to the app with the keyboard, and a press outside
-    the column is not consumed: it reaches whatever is under the pointer,
-    and the canvas hides when that button is released outside the column.
-    Released over the column (a drag from an app dropped on an item), the
-    canvas stays.
+    passive, Escape goes to the app with the keyboard.
   - It stays open until the user hides it, or an item sends `dismiss`.
 - It opens on the output under the pointer and stays on that output until it
   is hidden again.
@@ -133,11 +140,14 @@ one swipe away and out of the way the rest of the time.
   first item in the column that asked for `on_show` gets the keyboard, unless
   an item already has it. Not while the session is locked. The keyboard goes
   back on hide as for a press.
-- A press outside the column while the canvas is shown hides the canvas and
-  is consumed, release included: nothing underneath sees the click. A
-  passive canvas (opened by `show`) lets the click through instead and hides
-  on its release, as above. A press
-  on the column between items is consumed without hiding.
+- A press outside the column while the canvas is shown is not consumed: it
+  reaches whatever is under the pointer, which is raised and focused as any
+  press would. The canvas hides when that button is released outside the
+  column, unless a drag and drop operation started while it was down (the
+  press picked something up, to drop on an item); released over the column,
+  the canvas stays too. This is the same whether the canvas is passive or
+  not. A press on the column between items is consumed, release included,
+  without hiding.
 - While no canvas item has the keyboard and the canvas is not passive,
   Escape hides a shown canvas and the key does not reach the focused client. While an item has it, Escape goes to
   the item, which decides what it means (Sessions clears its field first,
@@ -147,6 +157,23 @@ one swipe away and out of the way the rest of the time.
   item under the pointer.
 - The `CanvasToggle` action shows or hides the canvas. It is not bound by
   default.
+
+### Drag and drop
+
+- Every drag and drop operation is announced to every manager (version 4)
+  with `drag_mime_type` events and `drag_started`, and its end with
+  `drag_ended`, whether it was dropped or cancelled.
+- While a drag goes on, the pointer resting within the canvas width of the
+  right edge of an output for 250 ms opens the canvas there, as an item's `show`
+  does: passive, without moving the keyboard, and not while the session is
+  locked or during exposé. It opens only if an item exists by then; a client
+  may add one on `drag_started` for this. A rest that finds no item keeps
+  trying while the pointer stays at the edge. Leaving the edge and coming
+  back starts a new rest.
+- Items take the drop through `wl_data_device` like any other surface.
+- When the drag ends, a canvas that the drag opened hides again, unless the
+  drop landed on an item. A canvas that was already open when the drag
+  started stays open, wherever the drop lands.
 
 ### Configuration
 
@@ -247,10 +274,18 @@ are read the next time the column is laid out.
 - **A client's `show` leaves the keyboard alone.** It is for news (something
   was stashed), not for input. Taking the keyboard would drop the app's
   selection and caret, which is what the user was about to act on.
-- **A passive canvas lets clicks through.** The user did not open it, so the
-  first click in their app should still reach the app, and a drag from the
-  app has to be able to end on an item. Hiding on release rather than on
-  press is what makes that drop possible.
+- **Clicks outside go through.** The first click in an app beside the canvas
+  should reach the app, and a drag from the app has to be able to end on an
+  item. Hiding on release rather than on press, and not at all when the
+  press started a drag, is what makes that drop possible. A plain click
+  outside still closes the canvas.
+- **Rest at the edge to open.** A drag cannot swipe or press a shortcut, and
+  the right edge is where the canvas lives. The pause keeps a drag on its way
+  to an output further right from opening it.
+- **Drags are announced to everyone.** A client with nothing in the canvas
+  may still want the drop (the stash starts one); it cannot add an item for
+  it unless it knows a drag is on. The mime types let it add one only for
+  what it can take.
 - **`show` is ignored while locked or in exposé.** A lock hides the desktop
   for a reason, and exposé owns the screen; queueing the request would slide
   the canvas in over whatever the user unlocks or picks, long after the news.

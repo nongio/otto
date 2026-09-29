@@ -32,6 +32,7 @@ mod canvas;
 mod card;
 mod dbus;
 mod drop;
+mod invite;
 mod panel;
 mod primary;
 mod region;
@@ -78,7 +79,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::protocols::{
     otto_canvas_item_v1::{self, OttoCanvasItemV1},
-    otto_canvas_manager_v1::OttoCanvasManagerV1,
+    otto_canvas_manager_v1::{self, OttoCanvasManagerV1},
     otto_style_transaction_v1, otto_surface_style_manager_v1, otto_surface_style_v1,
     otto_timing_function_v1,
 };
@@ -89,6 +90,7 @@ use crate::canvas::{CanvasCard, CANVAS_VERSION};
 use crate::card::Card;
 use crate::dbus::{Command, Items};
 use crate::drop::Drops;
+use crate::invite::{Invite, DRAG_VERSION};
 use crate::panel::{Panel, Shell};
 use crate::primary::Primary;
 use crate::request::{Item, Stash, Surrounding};
@@ -187,9 +189,10 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
     // File icons come from the desktop's icon theme, as in Files.
     otto_kit::icon_theme::spawn_icon_theme_watcher();
     // Optional: without it, or at a version too old to show itself, the
-    // card floats as a balloon.
+    // card floats as a balloon. From version 4 drags are announced, and a
+    // drop can start a stash.
     let canvas_manager = globals
-        .bind::<OttoCanvasManagerV1, _, _>(&qh, CANVAS_VERSION..=CANVAS_VERSION, ())
+        .bind::<OttoCanvasManagerV1, _, _>(&qh, CANVAS_VERSION..=DRAG_VERSION, ())
         .ok();
     tracing::info!(in_canvas = canvas_manager.is_some(), "where the card goes");
     let pointer = seat.get_pointer(&qh, ());
@@ -254,6 +257,8 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
         canvas_manager,
         cursor_shape,
         panel: None,
+        invite: None,
+        drag_mime_types: Vec::new(),
         fading: None,
         reveal: false,
         pending: Field::default(),
@@ -313,6 +318,11 @@ struct State {
     cursor_shape: Option<WpCursorShapeDeviceV1>,
     /// The card, for as long as something is being stashed.
     panel: Option<Card>,
+    /// The drop invitation in the side canvas, while a drag that may carry
+    /// files goes on and there is no card.
+    invite: Option<Invite>,
+    /// The mime types of the drag being announced, until it starts.
+    drag_mime_types: Vec<String>,
     /// The balloon fading away after it closed, destroyed once it has.
     fading: Option<Card>,
     /// Something was added, or the card is new: once it is drawn, bring it
@@ -643,6 +653,7 @@ impl State {
             Err(error) => {
                 tracing::warn!(%error, "no pipe for the dropped files");
                 offer.destroy();
+                self.settle_invite();
                 return;
             }
         };
@@ -670,10 +681,57 @@ impl State {
                 for file in files {
                     state.on_command(Command::AddFile(file));
                 }
+                state.settle_invite();
                 Ok(PostAction::Remove)
             });
         if let Err(error) = inserted {
             tracing::warn!(%error, "cannot read the dropped files");
+            self.settle_invite();
+        }
+    }
+
+    /// A drag started somewhere. When it may carry files and there is no
+    /// card to drop them on, invite the drop in the side canvas.
+    fn on_drag_started(&mut self) {
+        let mime_types = std::mem::take(&mut self.drag_mime_types);
+        if self.panel.is_some() || !invite::may_carry_files(&mime_types) {
+            return;
+        }
+        let Some(manager) = self.canvas_manager.as_ref() else {
+            return;
+        };
+        if let Some(stale) = self.invite.take() {
+            stale.destroy();
+        }
+        tracing::debug!("invite a drop");
+        self.invite = Some(Invite::new(
+            manager,
+            &self.shell.compositor,
+            self.shell.style.as_ref(),
+            &self.qh,
+            BALLOON_SCALE,
+        ));
+    }
+
+    /// The drag ended. An invitation nothing was dropped on leaves; one that
+    /// took files stays until the card replaces it.
+    fn on_drag_ended(&mut self) {
+        self.drag_mime_types.clear();
+        if self.invite.as_ref().is_some_and(|invite| !invite.dropped()) {
+            if let Some(invite) = self.invite.take() {
+                invite.destroy();
+            }
+        }
+    }
+
+    /// The files dropped on the invitation are in, or could not be read.
+    /// It leaves now unless a card is on its way to take its place, which
+    /// removes it once drawn.
+    fn settle_invite(&mut self) {
+        if self.panel.is_none() {
+            if let Some(invite) = self.invite.take() {
+                invite.destroy();
+            }
         }
     }
 
@@ -835,6 +893,10 @@ impl State {
             panel.card().commit();
             if std::mem::take(&mut self.reveal) {
                 panel.reveal();
+            }
+            // The card is where drops go now.
+            if let Some(invite) = self.invite.take() {
+                invite.destroy();
             }
         }
     }
@@ -1214,7 +1276,26 @@ delegate_noop!(State: ignore otto_surface_style_manager_v1::OttoSurfaceStyleMana
 delegate_noop!(State: ignore otto_surface_style_v1::OttoSurfaceStyleV1);
 delegate_noop!(State: ignore otto_style_transaction_v1::OttoStyleTransactionV1);
 delegate_noop!(State: ignore otto_timing_function_v1::OttoTimingFunctionV1);
-delegate_noop!(State: ignore OttoCanvasManagerV1);
+
+impl Dispatch<OttoCanvasManagerV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &OttoCanvasManagerV1,
+        event: otto_canvas_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            otto_canvas_manager_v1::Event::DragMimeType { mime_type } => {
+                state.drag_mime_types.push(mime_type);
+            }
+            otto_canvas_manager_v1::Event::DragStarted => state.on_drag_started(),
+            otto_canvas_manager_v1::Event::DragEnded => state.on_drag_ended(),
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<OttoCanvasItemV1, ()> for State {
     fn event(
@@ -1225,6 +1306,12 @@ impl Dispatch<OttoCanvasItemV1, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let Some(invite) = state.invite.as_mut().filter(|invite| invite.is(item)) {
+            if let otto_canvas_item_v1::Event::Configure { serial, width } = event {
+                invite.configure(serial, width, &mut state.pool);
+            }
+            return;
+        }
         let Some(Card::Canvas(card)) = state.panel.as_mut().filter(|card| match card {
             Card::Canvas(card) => card.is(item),
             Card::Floating(_) => false,
