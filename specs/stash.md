@@ -1,7 +1,8 @@
 # Stash
 
 **Status:** draft
-**Related specs:** [launcher.md](./launcher.md), [file-browser.md](./file-browser.md)
+**Related specs:** [launcher.md](./launcher.md), [file-browser.md](./file-browser.md),
+[side-canvas.md](./side-canvas.md)
 
 ## Summary
 
@@ -59,12 +60,12 @@ offers the same thing on its selection as **Add to Stash** (see
 [file-browser.md](./file-browser.md)).
 
 **Dropping.** Files dragged from any app and dropped on the card are added,
-one item per file.
+one item per file, in the side canvas as on the floating card.
 
 **Adding a region.** `otto-stash add-region` hides the card, lets the person
 drag out a rectangle on screen, and adds a capture of it as a picture. The
-card is hidden for the pick so it is never in the capture, and comes back
-afterwards. A pick that is cancelled adds nothing. Only one pick runs at a
+card is hidden for the pick so it is never in the capture (in the side
+canvas, the canvas is hidden too), and comes back afterwards. A pick that is cancelled adds nothing. Only one pick runs at a
 time; a second request while one is open is ignored.
 
 **Deduplication.** An item equal to one already stashed is not added again:
@@ -72,20 +73,54 @@ the same text, the same file path, or the same region. Its place on the card
 does not change. When the equal item is struck out, adding it again brings it
 back instead.
 
-**Where a stash shows.** A new stash opens Ask with its first item attached,
-and what is added while Ask is up joins it there. When Ask closes without
+**Where a stash shows.** In the side canvas, a new stash starts on the card,
+which slides the canvas in; `otto-stash send` opens Ask with it. Otherwise
+a new stash opens Ask with its first item attached, and what is added while
+Ask is up joins it there. When Ask closes without
 sending, the stash is set aside on the card, and from then on adds go to the
 card until the stash ends. Ask closing on a stash that is still empty (nothing
 was selected) ends it instead of leaving an empty card. When Ask cannot be
 started, the stash goes to the card at once.
 
-**The card.** Once the stash is set aside and until it ends, a card shows what
-is stashed. It sits on top of everything, first placed in the top-right
-corner of the output, just below the bar, and can be dragged anywhere by
-pressing on it away from its buttons. It wears the launcher's frosted
-material, corners and shadow, and follows the desktop's colour scheme and
-accent; without the compositor's material it draws a plain, near-opaque
-background of its own. It never takes the keyboard.
+**Where the card goes.** When the compositor offers the side canvas
+(`otto-canvas-v1`) at version 3 or later, the card is an item in the canvas.
+Otherwise (another compositor, or an older Otto) it floats as a balloon.
+The choice is made once, when the service starts.
+
+**The card in the side canvas.** Once the stash is set aside and until it
+ends, the card sits at the top of the canvas column, above the Agents panel,
+at the column's width and as tall as its content (up to the same limit).
+
+- When the card appears, and after every add (a selection, files, a region,
+  a drop), it asks the canvas to show itself. The canvas slides in on the
+  output under the pointer; the keyboard stays with the app in front, so its
+  selection and caret are kept. The request is ignored while the canvas is
+  already shown, while the session is locked and during exposé; the next add
+  asks again.
+- The canvas then stays open until the person hides it (swipe, toggle, a
+  click outside it) or the stash ends. Because the canvas opened by itself,
+  a click in the app reaches the app, and the canvas hides when the button
+  is released outside it; Escape stays with the app. See
+  [side-canvas.md](./side-canvas.md).
+- Clicking the card never takes the keyboard. The card does not move; there
+  is nothing to drag.
+- When the stash ends, or Ask shows it, the card leaves the canvas at once.
+  The canvas stays as it is, open or closed, with its other items. When Ask
+  closes without sending, the card comes back and the canvas shows itself
+  again.
+- While the canvas is hidden the card does no frame work: a scroll glide
+  waits for the next show, and an item on its way out goes at once.
+
+**The floating card.** Once the stash is set aside and until it ends, a card
+shows what is stashed. It sits on top of everything, first placed in the
+top-right corner of the output, just below the bar, and can be dragged
+anywhere by pressing on it away from its buttons. It never takes the
+keyboard.
+
+**The card, either way.** It wears the launcher's frosted material and
+corners (the floating card also its shadow), and follows the desktop's
+colour scheme and accent; without the compositor's material it draws a
+plain, near-opaque background of its own.
 
 - The title reads "Ask about…".
 - While anything is stashed, a gray **Clear** button sits at the right end
@@ -102,12 +137,12 @@ background of its own. It never takes the keyboard.
   `otto-stash send`. The shortcut is looked up each time the card opens, so a
   rebound key shows. With no such shortcut, the line is left out.
 - The card grows with its items up to a limit (640 points), past which the
-  items scroll between the title and the footer. Changes of size spring, as
-  the launcher's card does.
+  items scroll between the title and the footer. On the floating card,
+  changes of size spring, as the launcher's card does.
 
 **On the card, with the pointer.** Pointing at an item highlights it. A click
-on an item (pressed and released on it without the card moving) strikes it
-out, or brings it back: a struck item stays on the card, dimmed, and is not
+on an item (pressed and released on it without the floating card moving)
+strikes it out, or brings it back: a struck item stays on the card, dimmed, and is not
 sent. Each item has a remove button; clicking it shrinks the item away and
 takes it out. Buttons take the hand cursor.
 
@@ -116,9 +151,10 @@ included. `otto-stash cancel` does the same from a shortcut. Taking out the
 last item also ends the stash.
 
 **Closing.** The card closes when the stash ends (sent, cleared, cancelled
-or emptied) and while Ask shows the stash in its place. It fades out
-rather than vanishing, in about 150 ms. Without the compositor's styles there
-is nothing to fade with, and it goes at once.
+or emptied) and while Ask shows the stash in its place. The floating card
+fades out rather than vanishing, in about 150 ms; without the compositor's
+styles there is nothing to fade with, and it goes at once. In the side
+canvas the card leaves at once, and the column closes up behind it.
 
 **Handing over to Ask.** `otto-stash send` opens Ask when something is
 stashed, and does nothing otherwise. However Ask is opened (by this command,
@@ -202,13 +238,19 @@ signal Changed(items: a(sb))    after every change
   rather than starting a new stash.
 - **Removing while an item shrinks away.** A second removal during the shrink
   finishes the first at once, so the right item goes.
-- **The card follows the output.** When the output the card is on goes away,
-  the card closes; the next change opens it again.
+- **The card follows the output.** When the output the floating card is on
+  goes away, the card closes; the next change opens it again.
+- **An older Otto.** A compositor with `otto-canvas-v1` below version 3
+  gets the floating card, since the card needs to show the canvas and to
+  never take the keyboard.
 
 ## Rationale
 
-- **A stash starts in Ask.** Most stashes are one thing to ask about right
-  away, so the first add goes where the question is typed. The card is for
+- **A stash starts in Ask, unless there is a side canvas.** Most stashes
+  are one thing to ask about right away, so without the canvas the first add
+  goes where the question is typed. With the canvas, the card shows up
+  beside the app without taking the keyboard, and sending is one shortcut
+  away. The card is for
   the other case: set aside by closing Ask, it collects more while the person
   keeps working. This makes `otto-launcher --selection` the same as the add
   shortcut, so it isn't bound by default.
@@ -235,11 +277,16 @@ signal Changed(items: a(sb))    after every change
   consumer handles one kind of thing.
 - **Fading out.** The card disappearing in one frame read as a glitch; the
   fade matches the launcher's.
+- **The side canvas when there is one.** A floating card covers whatever is
+  under it and has to be dragged out of the way; the canvas is where
+  glanceable panels already live, slides away with a swipe, and comes back
+  on the next add. Opening it without the keyboard keeps the one thing the
+  stash promises: the app keeps its selection.
 
 ## Open Questions
 
-- Where the card lives while collecting: at the pointer or caret, fixed, or a
-  small indicator that opens for review.
+- Where the floating card lives while collecting: at the pointer or caret,
+  fixed, or a small indicator that opens for review.
 - Whether a stash should survive a lock or a restart.
 - Whether the Esc key should throw the stash away, which needs the card to
   take the keyboard at least while it is pointed at.

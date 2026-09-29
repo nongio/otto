@@ -5,9 +5,11 @@
 //! the session bus, and waits. Bind the commands to shortcuts:
 //!
 //! - `otto-stash add`: start a stash, and add what is selected: the text
-//!   in the focused field, or the files in a focused Files window. A balloon
-//!   lists what was stashed until it is sent or cancelled; it starts in the
-//!   top-right corner and can be dragged.
+//!   in the focused field, or the files in a focused Files window. A card
+//!   lists what was stashed until it is sent or cancelled. Where Otto has a
+//!   side canvas (`otto-canvas-v1` version 3), the card sits at the top of
+//!   it and each add shows the canvas; elsewhere it is a balloon that starts
+//!   in the top-right corner and can be dragged (see [`card`]).
 //! - `otto-stash add-file PATH`: add a file.
 //! - `otto-stash add-region`: drag out a screen region and add a capture of
 //!   it (needs `slurp` and `grim`).
@@ -26,6 +28,8 @@
 //! - `OTTO_STASH_LAUNCHER`: the launcher to open (default `otto-launcher`).
 
 mod balloon;
+mod canvas;
+mod card;
 mod dbus;
 mod drop;
 mod panel;
@@ -73,12 +77,16 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::protocols::{
+    otto_canvas_item_v1::{self, OttoCanvasItemV1},
+    otto_canvas_manager_v1::OttoCanvasManagerV1,
     otto_style_transaction_v1, otto_surface_style_manager_v1, otto_surface_style_v1,
     otto_timing_function_v1,
 };
 use otto_kit::skia::Rect;
 
 use crate::balloon::{Balloon, Hit, Layout};
+use crate::canvas::{CanvasCard, CANVAS_VERSION};
+use crate::card::Card;
 use crate::dbus::{Command, Items};
 use crate::drop::Drops;
 use crate::panel::{Panel, Shell};
@@ -178,6 +186,12 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
     otto_kit::accent::spawn_accent_watcher();
     // File icons come from the desktop's icon theme, as in Files.
     otto_kit::icon_theme::spawn_icon_theme_watcher();
+    // Optional: without it, or at a version too old to show itself, the
+    // card floats as a balloon.
+    let canvas_manager = globals
+        .bind::<OttoCanvasManagerV1, _, _>(&qh, CANVAS_VERSION..=CANVAS_VERSION, ())
+        .ok();
+    tracing::info!(in_canvas = canvas_manager.is_some(), "where the card goes");
     let pointer = seat.get_pointer(&qh, ());
     // Optional: without it the cursor stays whatever it was.
     let cursor_shape = globals
@@ -237,9 +251,11 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
         drops,
         thumbnailer,
         shell,
+        canvas_manager,
         cursor_shape,
         panel: None,
         fading: None,
+        reveal: false,
         pending: Field::default(),
         field: Field::default(),
         stash: None,
@@ -292,11 +308,16 @@ struct State {
     /// Makes the thumbnails files on the card show.
     thumbnailer: Thumbnailer,
     shell: Shell,
+    /// The side canvas, when the card goes there rather than float.
+    canvas_manager: Option<OttoCanvasManagerV1>,
     cursor_shape: Option<WpCursorShapeDeviceV1>,
-    /// The balloon's surface, for as long as something is being stashed.
-    panel: Option<Panel>,
+    /// The card, for as long as something is being stashed.
+    panel: Option<Card>,
     /// The balloon fading away after it closed, destroyed once it has.
-    fading: Option<Panel>,
+    fading: Option<Card>,
+    /// Something was added, or the card is new: once it is drawn, bring it
+    /// into view (the side canvas shows itself).
+    reveal: bool,
     /// The field as announced, applied on the next `done`.
     pending: Field,
     field: Field,
@@ -308,8 +329,9 @@ struct State {
     held_by: Option<String>,
     /// Ask was opened for the stash and hasn't exited yet.
     ask_open: bool,
-    /// The stash was set aside on the card: Ask closed with it unsent. Until
-    /// then a stash opens Ask rather than the card.
+    /// The stash shows on the card: it started in the side canvas, or Ask
+    /// closed with it unsent. Until then a stash opens Ask rather than the
+    /// card.
     on_card: bool,
     /// Where changes to the stash go out on the bus, and the last that
     /// did.
@@ -343,6 +365,15 @@ struct State {
 
 impl State {
     fn on_command(&mut self, command: Command) {
+        if matches!(
+            command,
+            Command::Add(_)
+                | Command::AddFocusedFiles(..)
+                | Command::AddFile(_)
+                | Command::RegionCaptured(Some(_))
+        ) {
+            self.reveal = true;
+        }
         match command {
             Command::Add(done) => {
                 let selection = self
@@ -475,7 +506,9 @@ impl State {
     fn start_stash(&mut self) -> &mut Stash {
         if self.stash.is_none() {
             tracing::info!("start a stash");
-            self.on_card = false;
+            // In the side canvas the card is where a stash starts; the
+            // floating balloon starts it in Ask.
+            self.on_card = self.canvas_manager.is_some();
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis());
@@ -546,6 +579,10 @@ impl State {
             return;
         }
         self.picking = true;
+        // The canvas goes too, so it is not in the capture either.
+        if let Some(Card::Canvas(card)) = self.panel.as_ref() {
+            card.dismiss();
+        }
         let dir = runtime_dir().join("otto-stash");
         let commands = self.commands.clone();
         // slurp and grim block until the user is done, so off this thread.
@@ -651,6 +688,7 @@ impl State {
         }
         tracing::info!(chars = text.chars().count(), "add primary selection");
         stash.add(Item::Text(text.to_owned()));
+        self.reveal = true;
         self.refresh();
     }
 
@@ -677,8 +715,9 @@ impl State {
     }
 
     /// Show, redraw or remove the balloon to match the stash. A new stash
-    /// opens Ask; once Ask lets go of it unsent, the card shows it until it
-    /// is sent or cancelled.
+    /// goes to the card in the side canvas, and opens Ask otherwise; once
+    /// Ask lets go of it unsent, the card shows it until it is sent or
+    /// cancelled.
     fn refresh(&mut self) {
         self.announce();
         self.layout = None;
@@ -690,24 +729,36 @@ impl State {
             self.close_panel();
             return;
         }
-        // Until Ask has let go of it once, the stash is shown in Ask.
+        // Outside the canvas, the stash is shown in Ask until Ask has let go
+        // of it once.
         if !self.on_card {
             self.close_panel();
             self.open_ask();
             return;
         }
         if self.panel.is_none() {
-            let panel = Panel::new(&self.shell, &self.qh, BALLOON_SCALE);
+            let card = match self.canvas_manager.as_ref() {
+                Some(manager) => Card::Canvas(Box::new(CanvasCard::new(
+                    manager,
+                    &self.shell.compositor,
+                    self.shell.style.as_ref(),
+                    &self.qh,
+                    BALLOON_SCALE,
+                ))),
+                None => Card::Floating(Box::new(Panel::new(&self.shell, &self.qh, BALLOON_SCALE))),
+            };
             // Asked each time the card opens, so a rebound shortcut shows.
             self.balloon.send_shortcut = self.runtime.block_on(dbus::send_shortcut());
-            self.balloon.frosted = panel.frosted();
-            self.panel = Some(panel);
+            self.balloon.frosted = card.frosted();
+            self.panel = Some(card);
             self.scroll = ScrollView::new(Rect::default());
+            self.reveal = true;
         }
         self.draw_panel();
     }
 
-    /// Draw the balloon, once the compositor has sized the overlay.
+    /// Draw the card, once the compositor has sized it, and bring it into
+    /// view if something was added.
     fn draw_panel(&mut self) {
         let (Some(stash), Some(panel)) = (self.stash.as_ref(), self.panel.as_mut()) else {
             return;
@@ -723,7 +774,7 @@ impl State {
                     // Ease in: it holds a moment, then goes.
                     (index, 1.0 - t * t)
                 });
-                let layout = self.balloon.layout(stash, leaving, panel.max_card_height());
+                let layout = self.balloon.layout(stash, leaving, panel.bounds());
                 for path in self.balloon.thumbnails_wanted() {
                     self.thumbnailer.request(path);
                 }
@@ -774,11 +825,17 @@ impl State {
         );
         if buffer.attach_to(panel.card()).is_ok() {
             panel.card().damage_buffer(0, 0, w, h);
-            if (self.scroll.is_animating() || self.leaving.is_some()) && !self.frame_pending {
+            if (self.scroll.is_animating() || self.leaving.is_some())
+                && !self.frame_pending
+                && panel.animates()
+            {
                 panel.card().frame(&self.qh, ());
                 self.frame_pending = true;
             }
             panel.card().commit();
+            if std::mem::take(&mut self.reveal) {
+                panel.reveal();
+            }
         }
     }
 
@@ -985,8 +1042,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
                 height,
             } => {
                 match state.panel.as_mut() {
-                    Some(panel) => panel.configure(serial, (width, height), &mut state.pool),
-                    None => layer.ack_configure(serial),
+                    Some(Card::Floating(panel)) => {
+                        panel.configure(serial, (width, height), &mut state.pool);
+                    }
+                    _ => layer.ack_configure(serial),
                 }
                 state.draw_panel();
             }
@@ -1076,7 +1135,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     // A press on a button clicks it, one on the scrollbar
                     // scrolls, and anywhere else drags the card.
                     state.pressed = state.hit_at_pointer();
-                    let on_card = state.panel.as_ref().and_then(Panel::pointer_on_card);
+                    let on_card = state.panel.as_ref().and_then(Card::pointer_on_card);
                     let on_thumb = on_card
                         .is_some_and(|(x, y)| state.scroll.on_pointer_down(x as f32, y as f32));
                     if state.pressed.is_none() && !on_thumb {
@@ -1097,7 +1156,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                         state.on_click(hit);
                     }
                     // Clicked, not dragged: the card is where it was.
-                    let origin = state.panel.as_ref().map(Panel::card_origin);
+                    let origin = state.panel.as_ref().map(Card::card_origin);
                     if let Some((index, at)) = state.pressed_item.take() {
                         if state.item_at_pointer() == Some(index) && origin == Some(at) {
                             state.toggle_item(index);
@@ -1106,7 +1165,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 }
             },
             wl_pointer::Event::Leave { .. } => {
-                panel.pointer_released();
+                panel.pointer_left();
                 state.pressed = None;
                 state.scroll.on_pointer_up();
                 state.scroll.on_pointer_leave();
@@ -1155,6 +1214,46 @@ delegate_noop!(State: ignore otto_surface_style_manager_v1::OttoSurfaceStyleMana
 delegate_noop!(State: ignore otto_surface_style_v1::OttoSurfaceStyleV1);
 delegate_noop!(State: ignore otto_style_transaction_v1::OttoStyleTransactionV1);
 delegate_noop!(State: ignore otto_timing_function_v1::OttoTimingFunctionV1);
+delegate_noop!(State: ignore OttoCanvasManagerV1);
+
+impl Dispatch<OttoCanvasItemV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        item: &OttoCanvasItemV1,
+        event: otto_canvas_item_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(Card::Canvas(card)) = state.panel.as_mut().filter(|card| match card {
+            Card::Canvas(card) => card.is(item),
+            Card::Floating(_) => false,
+        }) else {
+            return;
+        };
+        match event {
+            otto_canvas_item_v1::Event::Configure { serial, width } => {
+                card.configure(serial, width);
+                state.layout = None;
+                state.draw_panel();
+            }
+            otto_canvas_item_v1::Event::Shown => {
+                card.set_shown(true);
+                state.draw_panel();
+            }
+            otto_canvas_item_v1::Event::Hidden => {
+                card.set_shown(false);
+                // No frames come while hidden: an item on its way out goes
+                // now rather than wait for the next show.
+                if let Some((index, _)) = state.leaving.take() {
+                    state.remove_now(index);
+                    state.refresh();
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
     fn event(

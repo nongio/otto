@@ -1,7 +1,9 @@
-//! Files dropped on the balloon join the stash.
+//! Files dropped on the card join the stash.
 //!
-//! The overlay takes the pointer only over the card, so a drag enters it
-//! only there, and whatever it carries as `text/uri-list` is taken.
+//! A drag enters only the surface that takes the card's pointer: the
+//! floating balloon's overlay, which takes the pointer only over the card,
+//! or the card itself in the side canvas. Whatever it carries as
+//! `text/uri-list` is taken.
 
 // Rust guideline compliant 2026-02-21
 
