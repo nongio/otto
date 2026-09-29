@@ -308,7 +308,7 @@ pub enum BarStyle {
     Mini,
     /// A few thin bars growing both ways from the middle, beside a title.
     Compact(usize),
-    /// Every bar, standing on the bottom edge, brighter towards the top.
+    /// Every bar, standing on the bottom edge, brighter as it rises.
     Large,
 }
 
@@ -368,23 +368,14 @@ pub fn draw_bars(
             let (bar_w, gap) = (6.0f32, 4.0f32);
             let total = BAR_COUNT as f32 * bar_w + (BAR_COUNT - 1) as f32 * gap;
             let start_x = rect.left + (rect.width() - total) / 2.0;
-            let bottom = rect.bottom;
             for (i, level) in levels.iter().enumerate() {
                 let level = level.clamp(0.08, 1.0);
                 let bar_h = level * rect.height();
                 let bx = start_x + i as f32 * (bar_w + gap);
-
-                paint.set_color(with_alpha((80.0 + level * 40.0) as u8));
-                let bot_h = bar_h * 0.6;
-                canvas.draw_rrect(
-                    RRect::new_rect_xy(Rect::from_xywh(bx, bottom - bot_h, bar_w, bot_h), 2.0, 2.0),
-                    &paint,
-                );
-
-                paint.set_color(with_alpha((180.0 + level * 75.0) as u8));
+                paint.set_color(with_alpha((190.0 + level * 65.0) as u8));
                 canvas.draw_rrect(
                     RRect::new_rect_xy(
-                        Rect::from_xywh(bx, bottom - bar_h, bar_w, bar_h * 0.5),
+                        Rect::from_xywh(bx, rect.bottom - bar_h, bar_w, bar_h),
                         2.0,
                         2.0,
                     ),

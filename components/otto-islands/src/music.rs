@@ -116,7 +116,8 @@ impl MusicActivityRenderer {
             IslandMode::Expanded => {
                 let pad = 12.0;
                 let rx = pad + (h - pad * 2.0) + pad;
-                (w - rx - pad, 22.0, rx, pad + 34.0)
+                // The whole band between the artist line and the progress bar.
+                (w - rx - pad, EQ_BUF_H as f32, rx, pad + 30.0)
             }
         }
     }
