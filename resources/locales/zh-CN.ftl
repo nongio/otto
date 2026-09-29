@@ -1129,6 +1129,8 @@ launcher-agents-working = 工作中
 launcher-agents-needs-input = 等待回答
 launcher-agents-error = 失败
 launcher-agents-none = 尚无智能体会话
+canvas-sessions-heading = 智能体
+canvas-sessions-ask = Ask
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

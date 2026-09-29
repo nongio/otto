@@ -563,11 +563,6 @@ impl<BackendData: Backend> Otto<BackendData> {
             return Some((focus, (0.0, 0.0).into()));
         }
 
-        // The side canvas sits above every window and the chrome.
-        if let Some(under) = self.canvas_surface_under(pos) {
-            return Some(under);
-        }
-
         // Workspace selector — per output. Skip when a window drag is active so the window
         // selector keeps receiving motion events and the dragged window keeps following the
         // pointer.
@@ -727,6 +722,12 @@ impl<BackendData: Backend> Otto<BackendData> {
                 self.workspaces.dock.as_ref().clone().into(),
                 (0.0, 0.0).into(),
             ));
+        }
+
+        // The side canvas sits under the layer-shell chrome and the dock and
+        // above every window.
+        if under.is_none() {
+            under = self.canvas_surface_under(pos);
         }
 
         // A window's popups, ahead of the strips Otto owns. A menu is free to

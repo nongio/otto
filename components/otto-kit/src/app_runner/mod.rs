@@ -535,6 +535,8 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let surface_style_manager = globals.bind(&qh, 1..=5, ()).ok();
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
+        // The side canvas; Otto only, so optional like the dock.
+        let otto_canvas_manager = globals.bind(&qh, 1..=3, ()).ok();
         // Where the desktop's text cursor is, for a panel that wants to sit
         // beside the text rather than in the middle of the screen. Absent on
         // any compositor but Otto, which is why it is optional.
@@ -605,6 +607,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
             xdg_wm_dialog,
             subcompositor,
             otto_dock_manager,
+            otto_canvas_manager,
             session_lock_manager,
             cursor_shape_manager,
             fractional_scale_manager,
@@ -1927,6 +1930,47 @@ impl<A: App + 'static> Dispatch<otto_timing_function_v1::OttoTimingFunctionV1, (
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl<A: App + 'static> Dispatch<crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        _proxy: &crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1,
+        _event: crate::protocols::otto_canvas_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // The manager has no events.
+    }
+}
+
+impl<A: App + 'static> Dispatch<crate::protocols::otto_canvas_item_v1::OttoCanvasItemV1, ()>
+    for AppData<A>
+{
+    fn event(
+        _state: &mut Self,
+        proxy: &crate::protocols::otto_canvas_item_v1::OttoCanvasItemV1,
+        event: crate::protocols::otto_canvas_item_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocols::otto_canvas_item_v1::Event;
+        use crate::surfaces::CanvasItemEvent;
+        use wayland_client::Proxy;
+        let event = match event {
+            Event::Configure { serial, width } => CanvasItemEvent::Configure {
+                serial,
+                width: i32::try_from(width).unwrap_or(i32::MAX),
+            },
+            Event::Shown => CanvasItemEvent::Shown,
+            Event::Hidden => CanvasItemEvent::Hidden,
+        };
+        AppContext::dispatch_canvas_item_event(&proxy.id(), event);
     }
 }
 

@@ -11,6 +11,7 @@ use crate::otto_canvas::protocol::{
     gen::{otto_canvas_item_v1, otto_canvas_manager_v1},
     OttoCanvasItemV1, OttoCanvasManagerV1,
 };
+use crate::otto_canvas::ItemKeyboard;
 use crate::state::{Backend, Otto};
 
 /// The role a surface takes when it becomes a canvas item.
@@ -25,6 +26,9 @@ pub struct CanvasItemData {
     pub surface: WlSurface,
 }
 
+/// The version of `otto-canvas-v1` advertised.
+const VERSION: u32 = 3;
+
 /// Owner of the `otto_canvas_manager_v1` global.
 #[derive(Debug)]
 pub struct CanvasGlobal;
@@ -38,7 +42,7 @@ impl CanvasGlobal {
             + Dispatch<OttoCanvasItemV1, CanvasItemData>
             + 'static,
     {
-        display.create_global::<D, OttoCanvasManagerV1, ()>(1, ());
+        display.create_global::<D, OttoCanvasManagerV1, ()>(VERSION, ());
     }
 }
 
@@ -100,6 +104,27 @@ impl<B: Backend> Dispatch<OttoCanvasItemV1, CanvasItemData, Otto<B>> for CanvasG
         match request {
             otto_canvas_item_v1::Request::AckConfigure { serial } => {
                 state.canvas_item_acked(item, serial);
+            }
+            otto_canvas_item_v1::Request::SetKeyboardInteractivity { interactivity } => {
+                use otto_canvas_item_v1::KeyboardInteractivity;
+                let keyboard = match interactivity.into_result() {
+                    Ok(KeyboardInteractivity::None) => ItemKeyboard::OnPress,
+                    Ok(KeyboardInteractivity::OnShow) => ItemKeyboard::OnShow,
+                    // `never` came with version 3.
+                    Ok(KeyboardInteractivity::Never) if item.version() >= 3 => ItemKeyboard::Never,
+                    _ => {
+                        item.post_error(
+                            otto_canvas_item_v1::Error::InvalidKeyboardInteractivity,
+                            "keyboard interactivity is not in the enum",
+                        );
+                        return;
+                    }
+                };
+                state.canvas_item_set_keyboard(item, keyboard);
+            }
+            otto_canvas_item_v1::Request::Show => state.canvas_item_show(item),
+            otto_canvas_item_v1::Request::SetOrder { order } => {
+                state.canvas_item_set_order(item, order);
             }
             otto_canvas_item_v1::Request::Dismiss => state.canvas_hide(),
             // The item leaves the canvas in `destroyed`, which also covers a

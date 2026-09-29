@@ -230,7 +230,7 @@ pub struct Palette {
     /// decoding the same icon on every keystroke is the one thing that would
     /// make typing feel slow. Behind a cell because painting a band only
     /// borrows the palette.
-    icons: RefCell<HashMap<String, Option<Image>>>,
+    icons: RowIcons,
     /// Pictures the agent sent, decoded once. Kept beside the icons and for the
     /// same reason: the log is laid out again on every chunk of an answer, and
     /// each pass asks every picture how large it is.
@@ -301,7 +301,7 @@ impl Palette {
             log_h: 0.0,
             centered: false,
             moved: (0.0, 0.0),
-            icons: RefCell::new(HashMap::new()),
+            icons: RowIcons::default(),
             pictures: RefCell::new(HashMap::new()),
             attachments: RefCell::new(AttachmentList::default()),
             dark,
@@ -336,11 +336,7 @@ impl Palette {
         self.card
             .set_size(LayerSize::points(CARD_W, MAX_CARD_H), None);
 
-        let line = if self.dark {
-            Color::from_argb(36, 255, 255, 255)
-        } else {
-            Color::from_argb(24, 0, 0, 0)
-        };
+        let line = divider_color(self.dark);
         for divider in [&self.divider, &self.log_divider] {
             divider.set_background_color(
                 PaintColor::Solid {
@@ -353,38 +349,21 @@ impl Palette {
 
     /// The selection's wash, which the list pane draws under the rows.
     pub fn highlight_color(&self) -> Color {
-        if self.dark {
-            Color::from_argb(46, 255, 255, 255)
-        } else {
-            Color::from_argb(20, 0, 0, 0)
-        }
+        row_highlight_color(self.dark)
     }
 
     /// Where the highlight goes for row `index`, in the list's content
     /// coordinates.
     pub fn highlight_rect(index: usize) -> Rect {
-        Rect::from_xywh(
-            ROW_INSET,
-            index as f32 * ROW_H + 2.0,
-            CARD_W - ROW_INSET * 2.0,
-            ROW_H - 4.0,
-        )
+        row_highlight_rect(index, CARD_W)
     }
 
     fn title_color(&self) -> Color {
-        if self.dark {
-            Color::from_argb(240, 255, 255, 255)
-        } else {
-            Color::from_argb(240, 12, 12, 14)
-        }
+        row_title_color(self.dark)
     }
 
     fn subtitle_color(&self) -> Color {
-        if self.dark {
-            Color::from_argb(150, 255, 255, 255)
-        } else {
-            Color::from_argb(140, 0, 0, 0)
-        }
+        row_subtitle_color(self.dark)
     }
 
     /// The surface's size changed. Everything that does not depend on the
@@ -1012,51 +991,7 @@ impl Palette {
         items: &[&Item],
         labels: &[&'static str],
     ) {
-        let title_font = self.font(15.0, FontStyle::normal());
-        let subtitle_font = self.font(11.5, FontStyle::normal());
-        let badge_font = self.font(10.5, FontStyle::normal());
-        let (title_color, subtitle_color) = (self.title_color(), self.subtitle_color());
-        let theme = if self.dark {
-            Theme::dark()
-        } else {
-            Theme::light()
-        };
-        let layout = RowLayout::new(ROW_H, items.len());
-        for index in layout.visible(band) {
-            let item = items[index];
-            let icon = item
-                .icon
-                .as_deref()
-                .and_then(|name| resolve_icon(&mut self.icons.borrow_mut(), name));
-            let dot = item.activity.map(|activity| match activity {
-                Activity::Working => theme.accent,
-                Activity::Idle => theme.text_tertiary,
-                Activity::Waiting => theme.accent_yellow,
-            });
-            let check = item.checked.map(|checked| Check {
-                checked,
-                accent: theme.accent,
-                outline: theme.text_tertiary,
-            });
-            let draw = draw_row(
-                icon,
-                dot,
-                check,
-                item.title.clone(),
-                item.subtitle.clone(),
-                labels.get(item.origin.source).copied().unwrap_or(""),
-                title_font.clone(),
-                subtitle_font.clone(),
-                badge_font.clone(),
-                title_color,
-                subtitle_color,
-            );
-            let row = layout.rect(index, CARD_W);
-            canvas.save();
-            canvas.translate((row.left, row.top));
-            draw(canvas, row.width(), row.height());
-            canvas.restore();
-        }
+        paint_item_rows(canvas, band, items, labels, CARD_W, self.dark, &self.icons);
     }
 
     /// Size the card for what is on it, and place what sits under the log.
@@ -1101,6 +1036,125 @@ impl Palette {
     fn font(&self, size: f32, style: FontStyle) -> Font {
         get_font_with_fallback(styles::BODY.family, style, size)
     }
+}
+
+/// Icons decoded for rows, by icon theme name.
+///
+/// Kept for as long as the list is: decoding the same icon on every keystroke
+/// is the one thing that would make typing feel slow. Misses are remembered
+/// too, so an app whose icon the theme does not have is not looked up again.
+/// Behind a cell because painting only borrows whoever holds it.
+#[derive(Default)]
+pub struct RowIcons(RefCell<HashMap<String, Option<Image>>>);
+
+/// Paint the rows of `items` that fall inside `band`, in the list's content
+/// coordinates — row 0 at the top — each [`ROW_H`] tall and `width` wide.
+/// `labels` name each item's source, as the badge at the row's end.
+///
+/// The launcher's list paints its rows with this, and so does anything else
+/// that lists the same things and should look like it.
+pub fn paint_item_rows(
+    canvas: &Canvas,
+    band: Rect,
+    items: &[&Item],
+    labels: &[&'static str],
+    width: f32,
+    dark: bool,
+    icons: &RowIcons,
+) {
+    let title_font = row_font(15.0);
+    let subtitle_font = row_font(11.5);
+    let badge_font = row_font(10.5);
+    let (title_color, subtitle_color) = (row_title_color(dark), row_subtitle_color(dark));
+    let theme = if dark { Theme::dark() } else { Theme::light() };
+    let layout = RowLayout::new(ROW_H, items.len());
+    for index in layout.visible(band) {
+        let item = items[index];
+        let icon = item
+            .icon
+            .as_deref()
+            .and_then(|name| resolve_icon(&mut icons.0.borrow_mut(), name));
+        let dot = item.activity.map(|activity| match activity {
+            Activity::Working => theme.accent,
+            Activity::Idle => theme.text_tertiary,
+            Activity::Waiting => theme.accent_yellow,
+        });
+        let check = item.checked.map(|checked| Check {
+            checked,
+            accent: theme.accent,
+            outline: theme.text_tertiary,
+        });
+        let draw = draw_row(
+            icon,
+            dot,
+            check,
+            item.title.clone(),
+            item.subtitle.clone(),
+            labels.get(item.origin.source).copied().unwrap_or(""),
+            title_font.clone(),
+            subtitle_font.clone(),
+            badge_font.clone(),
+            title_color,
+            subtitle_color,
+        );
+        let row = layout.rect(index, width);
+        canvas.save();
+        canvas.translate((row.left, row.top));
+        draw(canvas, row.width(), row.height());
+        canvas.restore();
+    }
+}
+
+/// The hairline between the field and the rows.
+pub fn divider_color(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(36, 255, 255, 255)
+    } else {
+        Color::from_argb(24, 0, 0, 0)
+    }
+}
+
+/// The selected row's wash, drawn under it.
+pub fn row_highlight_color(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(46, 255, 255, 255)
+    } else {
+        Color::from_argb(20, 0, 0, 0)
+    }
+}
+
+/// Where the highlight goes for row `index` of a list `width` wide, in the
+/// list's content coordinates.
+pub fn row_highlight_rect(index: usize, width: f32) -> Rect {
+    Rect::from_xywh(
+        ROW_INSET,
+        index as f32 * ROW_H + 2.0,
+        width - ROW_INSET * 2.0,
+        ROW_H - 4.0,
+    )
+}
+
+/// The colour of a row's title.
+pub fn row_title_color(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(240, 255, 255, 255)
+    } else {
+        Color::from_argb(240, 12, 12, 14)
+    }
+}
+
+/// The colour of a row's second line, its badge, and a list's message.
+pub fn row_subtitle_color(dark: bool) -> Color {
+    if dark {
+        Color::from_argb(150, 255, 255, 255)
+    } else {
+        Color::from_argb(140, 0, 0, 0)
+    }
+}
+
+/// The body face at `size`, as rows set their text.
+pub fn row_font(size: f32) -> Font {
+    get_font_with_fallback(styles::BODY.family, FontStyle::normal(), size)
 }
 
 // ---------------------------------------------------------------------------

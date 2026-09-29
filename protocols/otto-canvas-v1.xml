@@ -28,16 +28,19 @@
     right edge of an output. The compositor owns the column: where it sits,
     when it is shown and how it moves. Clients place surfaces in it as items.
 
-    Items are stacked top to bottom in the order they were created, each at
-    the full width of the column. The compositor chooses the width and tells
+    Items are stacked top to bottom by their order (set_order, version 3),
+    and in the order they were created where that is the same, each at the
+    full width of the column. The compositor chooses the width and tells
     the client through configure; the client chooses the height through the
     size of the buffer it attaches.
 
-    The canvas is shown and hidden by the user. Clients are told when that
-    happens so they can pause work nobody can see.
+    The canvas is shown and hidden by the user. A client may also ask for it
+    to be shown (show, version 3), without taking the keyboard. Clients are
+    told when the canvas shows and hides so they can pause work nobody can
+    see.
   </description>
 
-  <interface name="otto_canvas_manager_v1" version="1">
+  <interface name="otto_canvas_manager_v1" version="3">
     <description summary="creates canvas items">
       The manager global lets a client put surfaces in the side canvas.
     </description>
@@ -48,8 +51,8 @@
 
     <request name="get_canvas_item">
       <description summary="place a surface in the canvas">
-        Give the surface the canvas item role and add it at the bottom of the
-        column.
+        Give the surface the canvas item role and add it to the column, below
+        the items with the same or a lower order. A new item has order 0.
 
         It is a protocol error (role) to pass a surface that already has
         another role.
@@ -69,7 +72,7 @@
     </request>
   </interface>
 
-  <interface name="otto_canvas_item_v1" version="1">
+  <interface name="otto_canvas_item_v1" version="3">
     <description summary="a surface in the side canvas">
       One surface in the column. The compositor positions it; the client
       draws it at the configured width and at whatever height it needs.
@@ -77,7 +80,34 @@
 
       Destroying the item removes the surface from the canvas. The surface
       keeps its role and may only be given to a new canvas item.
+
+      An item gets the keyboard when the user presses on it, or when the
+      canvas is shown if it asked for that with set_keyboard_interactivity
+      (version 2). An item that set never (version 3) gets it in neither
+      case.
+      While an item has the keyboard the compositor passes Escape to it
+      rather than hiding the canvas itself, so the item decides what Escape
+      means; an item that has nothing else to do with it should send
+      dismiss. When the canvas hides, the keyboard goes back to whoever had
+      it before an item took it.
     </description>
+
+    <enum name="error" since="2">
+      <entry name="invalid_keyboard_interactivity" value="0"
+             summary="the keyboard interactivity value is not in the enum"/>
+    </enum>
+
+    <enum name="keyboard_interactivity" since="2">
+      <description summary="when the item takes the keyboard">
+        Whether the item is given the keyboard as the canvas comes on screen.
+      </description>
+      <entry name="none" value="0"
+             summary="the item gets the keyboard only when the user presses on it"/>
+      <entry name="on_show" value="1"
+             summary="the item gets the keyboard when the canvas is shown"/>
+      <entry name="never" value="2" since="3"
+             summary="the item never gets the keyboard, not even when pressed on"/>
+    </enum>
 
     <event name="configure">
       <description summary="the width to draw at">
@@ -113,11 +143,64 @@
       <arg name="serial" type="uint" summary="serial of the configure"/>
     </request>
 
+    <request name="set_keyboard_interactivity" since="2">
+      <description summary="take the keyboard when the canvas is shown">
+        Say whether the item takes the keyboard when the canvas is shown.
+        The default is none.
+
+        With on_show, the compositor gives the item the keyboard once the
+        canvas has settled open, from a toggle or a swipe, unless another
+        item already has it. When several items ask for it, the first one
+        in the column gets it. The change applies from the next time the
+        canvas is shown.
+
+        With never, the item takes no keyboard at all: presses on it reach
+        it as pointer events and the keyboard stays where it was, so the
+        app the user is working in keeps its focus, selection and caret.
+        This applies at once.
+
+        It is a protocol error (invalid_keyboard_interactivity) to pass a
+        value that is not in the keyboard_interactivity enum, or never on an
+        object of version 2.
+      </description>
+      <arg name="interactivity" type="uint" enum="keyboard_interactivity"
+           summary="when the item takes the keyboard"/>
+    </request>
+
     <request name="dismiss">
       <description summary="hide the canvas">
         Ask the compositor to hide the canvas, for example after the user
         acted on something in the item. Ignored while the canvas is hidden.
       </description>
+    </request>
+
+    <request name="show" since="3">
+      <description summary="show the canvas">
+        Ask the compositor to show the canvas, sliding it in on the output
+        under the pointer, for example because the item has something new
+        the user should see. Ignored while the canvas is shown or following
+        the user's fingers, while the session is locked and while the
+        compositor has the canvas set aside for another view (such as an
+        overview of the windows); ask again on the next change.
+
+        The keyboard does not move: no item is given it on this show, even
+        one that set on_show, so the app the user is working in keeps it.
+        The canvas then stays open until the user hides it, or an item sends
+        dismiss. Until the user acts on the canvas, a press outside it
+        still reaches what is under the pointer, and the canvas hides when
+        that button is released outside it; Escape goes to the app with the
+        keyboard.
+      </description>
+    </request>
+
+    <request name="set_order" since="3">
+      <description summary="where the item sits in the column">
+        Set the item's place in the column. Items with a lower order sit
+        higher; items with the same order sit in the order they were
+        created. The default is 0, and a negative order puts the item above
+        the items that never set one. The column is laid out again at once.
+      </description>
+      <arg name="order" type="int" summary="lower sits higher"/>
     </request>
 
     <request name="destroy" type="destructor">

@@ -180,6 +180,10 @@ thread_local! {
     /// the configure arrives on the lock surface, and the callback acks it.
     #[allow(clippy::type_complexity)]
     static LOCK_SURFACE_CONFIGURE_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(i32, i32, u32)>>> = RefCell::new(HashMap::new());
+    /// Keyed by `otto_canvas_item_v1` object: every event the compositor
+    /// sends a side canvas item.
+    #[allow(clippy::type_complexity)]
+    static CANVAS_ITEM_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnMut(crate::surfaces::CanvasItemEvent)>>> = RefCell::new(HashMap::new());
     static TRANSACTION_COMPLETION_CALLBACKS: RefCell<HashMap<ObjectId, Box<dyn FnOnce()>>> = RefCell::new(HashMap::new());
     /// Called with the `wl_surface` that just lost keyboard focus. Components
     /// that must not outlive the focus (menus, popovers) subscribe here.
@@ -276,6 +280,10 @@ pub struct AppContextData {
     pub wlr_layer_shell: Option<ZwlrLayerShellV1>,
     pub subcompositor: Option<wayland_client::protocol::wl_subcompositor::WlSubcompositor>,
     pub otto_dock_manager: Option<crate::protocols::otto_dock_manager_v1::OttoDockManagerV1>,
+    /// `otto_canvas_manager_v1`: places surfaces in the side canvas. `None`
+    /// on any compositor but Otto. See [`crate::surfaces::CanvasItemSurface`].
+    pub otto_canvas_manager:
+        Option<crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1>,
     pub otto_text_cursor_manager:
         Option<crate::protocols::otto_text_cursor_manager_v1::OttoTextCursorManagerV1>,
     /// The other side of the caret: `otto_text_cursor_manager_v1` says where
@@ -513,6 +521,16 @@ impl<'a> AppContext<'a> {
         Self::with_global(|ctx| unsafe {
             ctx.otto_dock_manager_ref()
                 .map(|r| &*(r as *const crate::protocols::otto_dock_manager_v1::OttoDockManagerV1))
+        })
+    }
+
+    /// The side canvas manager, when the compositor offers one.
+    pub fn otto_canvas_manager(
+    ) -> Option<&'static crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1> {
+        Self::with_global(|ctx| unsafe {
+            ctx.data.otto_canvas_manager.as_ref().map(|r| {
+                &*(r as *const crate::protocols::otto_canvas_manager_v1::OttoCanvasManagerV1)
+            })
         })
     }
 
@@ -1146,6 +1164,43 @@ impl<'a> AppContext<'a> {
                 .borrow_mut()
                 .insert(lock_surface_id, Box::new(callback));
         });
+    }
+
+    /// Called with every event the compositor sends a side canvas item.
+    /// Keyed by the `otto_canvas_item_v1` object.
+    pub fn register_canvas_item_callback<F>(item_id: ObjectId, callback: F)
+    where
+        F: FnMut(crate::surfaces::CanvasItemEvent) + 'static,
+    {
+        CANVAS_ITEM_CALLBACKS.with(|callbacks| {
+            callbacks.borrow_mut().insert(item_id, Box::new(callback));
+        });
+    }
+
+    /// Drop the callback of a canvas item that is going away.
+    pub fn unregister_canvas_item_callback(item_id: &ObjectId) {
+        let _ = CANVAS_ITEM_CALLBACKS.try_with(|callbacks| {
+            callbacks.borrow_mut().remove(item_id);
+        });
+    }
+
+    /// Hand `event` to the canvas item's callback. The callback is taken out
+    /// of the table while it runs, so it may register or drop callbacks of
+    /// its own.
+    pub(crate) fn dispatch_canvas_item_event(
+        item_id: &ObjectId,
+        event: crate::surfaces::CanvasItemEvent,
+    ) {
+        let taken = CANVAS_ITEM_CALLBACKS.with(|callbacks| callbacks.borrow_mut().remove(item_id));
+        if let Some(mut callback) = taken {
+            callback(event);
+            CANVAS_ITEM_CALLBACKS.with(|callbacks| {
+                callbacks
+                    .borrow_mut()
+                    .entry(item_id.clone())
+                    .or_insert(callback);
+            });
+        }
     }
 
     pub fn unregister_lock_surface_configure_callback(lock_surface_id: &ObjectId) {

@@ -1239,6 +1239,11 @@ launcher-agents-working = Working
 launcher-agents-needs-input = Waiting for an answer
 launcher-agents-error = Failed
 launcher-agents-none = No agent sessions yet
+# The heading of the panel in the side canvas that lists the agent sessions.
+canvas-sessions-heading = Agents
+# The button in that panel that starts a new request in the launcher.
+# Ask is the name of the feature, as in "Open in Ask".
+canvas-sessions-ask = Ask
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

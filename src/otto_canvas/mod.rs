@@ -3,8 +3,9 @@
 //!
 //! The column is the compositor's; what is in it belongs to clients, which
 //! place surfaces there through `otto-canvas-v1` (see [`handlers`]). Items
-//! stack top to bottom in creation order, each at the column's width, and
-//! each as tall as the buffer its client attached. Whatever does not fit in
+//! stack top to bottom by the order their clients set (creation order where
+//! it is the same), each at the column's width, and each as tall as the
+//! buffer its client attached. Whatever does not fit in
 //! the usable height is clipped.
 //!
 //! The canvas is an overlay: it slides over the desktop and moves nothing
@@ -14,7 +15,10 @@
 //!
 //! It is driven by a trackpad swipe from the right edge (the input side calls
 //! the `canvas_gesture_*` methods), by the `CanvasToggle` action, and by
-//! clients asking to be dismissed. While it is off screen its items get no
+//! clients asking for it to be shown or dismissed. A canvas a client showed
+//! is passive until the user acts on it: the keyboard stays with the app,
+//! Escape goes to the app, and a press outside reaches the app and hides the
+//! canvas only when released outside it, so a drag can end on an item. While it is off screen its items get no
 //! frame callbacks and are told `hidden`, so they can stop drawing.
 //!
 //! See `specs/side-canvas.md` and `docs/developer/side-canvas.md`.
@@ -71,6 +75,23 @@ struct CanvasItem {
     slot: Layer,
     /// The client surface's layer, registered in `surface_layers`.
     layer: Layer,
+    /// When the item takes the keyboard.
+    keyboard: ItemKeyboard,
+    /// Where the item sits: lower is higher in the column.
+    order: i32,
+    /// When the item was created, for items with the same order.
+    seq: u64,
+}
+
+/// When a canvas item takes the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemKeyboard {
+    /// When the user presses on it (`none` in the protocol).
+    OnPress,
+    /// When the user presses on it, and whenever the user shows the canvas.
+    OnShow,
+    /// Never: presses reach it as pointer events only.
+    Never,
 }
 
 /// Where the canvas is in its life on screen.
@@ -154,6 +175,14 @@ pub struct CanvasState<B: Backend> {
     previous_focus: Option<KeyboardFocusTarget<B>>,
     /// Buttons whose press the canvas took, so their release is taken too.
     swallowed_buttons: Vec<u32>,
+    /// Creation counter for [`CanvasItem::seq`].
+    next_seq: u64,
+    /// The canvas was shown by a client and the user has not acted on it
+    /// since. See the module docs.
+    passive: bool,
+    /// A button pressed outside a passive canvas. The canvas hides when it
+    /// is released outside the column.
+    hide_on_release: Option<u32>,
 }
 
 impl<B: Backend> Default for CanvasState<B> {
@@ -168,6 +197,9 @@ impl<B: Backend> Default for CanvasState<B> {
             closed_generation: Arc::new(AtomicU64::new(0)),
             previous_focus: None,
             swallowed_buttons: Vec::new(),
+            next_seq: 0,
+            passive: false,
+            hide_on_release: None,
         }
     }
 }
@@ -229,6 +261,7 @@ impl<B: Backend> Otto<B> {
         };
         self.canvas.drag_progress = progress;
         self.canvas.phase = Phase::Dragging { was_shown };
+        self.canvas.passive = false;
         self.canvas_place_column(progress, false);
     }
 
@@ -263,7 +296,7 @@ impl<B: Backend> Otto<B> {
             self.canvas.drag_progress >= 0.5
         };
         if open {
-            self.canvas_settle_open();
+            self.canvas_settle_open(true);
         } else {
             self.canvas_hide();
         }
@@ -278,20 +311,78 @@ impl<B: Backend> Otto<B> {
         }
     }
 
-    /// Slide the canvas in on the output under the pointer. Does nothing when
-    /// no client has put anything in it.
+    /// Slide the canvas in on the output under the pointer, for the user.
+    /// Does nothing when no client has put anything in it.
     pub fn canvas_show(&mut self) {
         self.canvas_finish_close_if_done();
         if matches!(self.canvas.phase, Phase::Shown) || !self.canvas_available() {
             return;
         }
+        self.canvas.passive = false;
         if matches!(self.canvas.phase, Phase::Hidden) {
             if !self.canvas_bring_on_screen() {
                 return;
             }
             self.canvas_place_column(0.0, false);
         }
-        self.canvas_settle_open();
+        self.canvas_settle_open(true);
+    }
+
+    /// A client asked for the canvas to be shown. It slides in as for the
+    /// user, but passive: the keyboard stays where it is. Ignored while the
+    /// canvas is shown or following the fingers, while the session is
+    /// locked and during exposé.
+    pub(crate) fn canvas_item_show(&mut self, item: &OttoCanvasItemV1) {
+        self.canvas_finish_close_if_done();
+        if !self
+            .canvas
+            .items
+            .iter()
+            .any(|entry| &entry.resource == item)
+            || self.is_session_locked()
+            || self.canvas_suspended()
+            || !self.canvas_available()
+        {
+            return;
+        }
+        match self.canvas.phase {
+            Phase::Shown | Phase::Dragging { .. } => return,
+            Phase::Hidden => {
+                if !self.canvas_bring_on_screen() {
+                    return;
+                }
+                self.canvas_place_column(0.0, false);
+            }
+            Phase::Closing { .. } => {}
+        }
+        self.canvas.passive = true;
+        self.canvas_settle_open(false);
+        tracing::debug!("canvas shown by a client");
+    }
+
+    /// Whether Escape is the canvas's, to hide it: the canvas is shown and
+    /// active, and no item has the keyboard. A passive canvas leaves Escape
+    /// to the app that has the keyboard.
+    pub fn canvas_owns_escape(&self) -> bool {
+        self.canvas_is_shown()
+            && !self.canvas.passive
+            && !self.canvas_suspended()
+            && !self.canvas_item_has_keyboard()
+    }
+
+    /// Whether a client showed the canvas and the user has not acted on it
+    /// since.
+    pub fn canvas_is_passive(&self) -> bool {
+        self.canvas.passive && self.canvas_is_shown()
+    }
+
+    /// The canvas items' surfaces, top to bottom.
+    pub fn canvas_item_surfaces(&self) -> Vec<WlSurface> {
+        self.canvas
+            .items
+            .iter()
+            .map(|item| item.surface.clone())
+            .collect()
     }
 
     /// Slide the canvas out, and give the keyboard back to whoever had it.
@@ -300,6 +391,7 @@ impl<B: Backend> Otto<B> {
             Phase::Hidden | Phase::Closing { .. } => return,
             Phase::Shown | Phase::Dragging { .. } => {}
         }
+        self.canvas.passive = false;
         self.canvas_restore_focus();
         self.canvas.close_generation += 1;
         let generation = self.canvas.close_generation;
@@ -364,13 +456,20 @@ impl<B: Backend> Otto<B> {
         }
     }
 
-    /// Whether `point` (global logical coordinates) is over the column while
-    /// the canvas is on screen, gaps between items included.
-    pub fn canvas_contains_point(&self, point: smithay::utils::Point<f64, Logical>) -> bool {
-        self.canvas.on_screen()
-            && self
-                .canvas_column_rect()
-                .is_some_and(|rect| rect.contains(point))
+    /// Whether a canvas item has the keyboard. It is then the item's to say
+    /// what Escape means.
+    pub fn canvas_item_has_keyboard(&self) -> bool {
+        self.seat
+            .get_keyboard()
+            .and_then(|keyboard| keyboard.current_focus())
+            .is_some_and(|focus| matches!(focus, KeyboardFocusTarget::CanvasItem(_)))
+    }
+
+    /// Whether exposé has the screen. The canvas stays open but fades out
+    /// with the rest of the overlay chrome and takes no input until exposé
+    /// closes.
+    pub fn canvas_suspended(&self) -> bool {
+        self.workspaces.get_show_all()
     }
 
     /// The canvas item under `pos`, if the canvas is on screen there.
@@ -378,7 +477,7 @@ impl<B: Backend> Otto<B> {
         &self,
         pos: smithay::utils::Point<f64, Logical>,
     ) -> Option<(PointerFocusTarget<B>, smithay::utils::Point<f64, Logical>)> {
-        if !self.canvas.on_screen() {
+        if !self.canvas.on_screen() || self.canvas_suspended() {
             return None;
         }
         let column = self.canvas_column_rect()?;
@@ -413,6 +512,10 @@ impl<B: Backend> Otto<B> {
     /// Route a pointer button through the canvas before anything else sees
     /// it. A press outside a shown canvas hides it and is taken, as is its
     /// release; a press on an item gives that item the keyboard.
+    ///
+    /// On a passive canvas a press outside goes through, and the canvas
+    /// hides when that button is released outside it: a drag that started
+    /// in an app can still be dropped on an item.
     pub fn canvas_pointer_button(&mut self, button: u32, pressed: bool) -> CanvasButton {
         if !pressed {
             if let Some(index) = self
@@ -424,9 +527,22 @@ impl<B: Backend> Otto<B> {
                 self.canvas.swallowed_buttons.swap_remove(index);
                 return CanvasButton::Consumed;
             }
+            if self.canvas.hide_on_release == Some(button) {
+                self.canvas.hide_on_release = None;
+                let location = self.pointer.current_location();
+                let inside = self
+                    .canvas_column_rect()
+                    .is_some_and(|rect| rect.contains(location));
+                if !inside && self.canvas.passive {
+                    self.canvas_hide();
+                }
+            }
             return CanvasButton::Pass;
         }
-        if self.is_session_locked() || !matches!(self.canvas.phase, Phase::Shown) {
+        if self.is_session_locked()
+            || self.canvas_suspended()
+            || !matches!(self.canvas.phase, Phase::Shown)
+        {
             return CanvasButton::Pass;
         }
         let location = self.pointer.current_location();
@@ -434,13 +550,26 @@ impl<B: Backend> Otto<B> {
             .canvas_column_rect()
             .is_some_and(|rect| rect.contains(location));
         if !inside {
+            if self.canvas.passive {
+                self.canvas.hide_on_release = Some(button);
+                return CanvasButton::Pass;
+            }
             self.canvas.swallowed_buttons.push(button);
             self.canvas_hide();
             return CanvasButton::Consumed;
         }
         match self.canvas_item_root_under(location) {
             Some(surface) => {
-                self.canvas_focus_item(surface);
+                let keyboard = self
+                    .canvas
+                    .items
+                    .iter()
+                    .find(|item| item.surface == surface)
+                    .map_or(ItemKeyboard::OnPress, |item| item.keyboard);
+                if keyboard != ItemKeyboard::Never {
+                    self.canvas.passive = false;
+                    self.canvas_focus_item(surface);
+                }
                 CanvasButton::Item
             }
             // The gap between two items, or the space below the last one:
@@ -520,13 +649,58 @@ impl<B: Backend> Otto<B> {
         }
         self.canvas_prefer_scale(&surface);
 
+        let seq = self.canvas.next_seq;
+        self.canvas.next_seq += 1;
         self.canvas.items.push(CanvasItem {
             resource,
             surface,
             slot,
             layer,
+            keyboard: ItemKeyboard::OnPress,
+            order: 0,
+            seq,
         });
+        self.canvas_sort_items();
         tracing::debug!(items = self.canvas.items.len(), "canvas item added");
+    }
+
+    /// A client said when its item takes the keyboard. `OnShow` applies from
+    /// the next show; `Never` from the next press.
+    pub(crate) fn canvas_item_set_keyboard(
+        &mut self,
+        item: &OttoCanvasItemV1,
+        keyboard: ItemKeyboard,
+    ) {
+        if let Some(item) = self
+            .canvas
+            .items
+            .iter_mut()
+            .find(|entry| &entry.resource == item)
+        {
+            item.keyboard = keyboard;
+        }
+    }
+
+    /// A client moved its item in the column. The column is laid out again
+    /// at once.
+    pub(crate) fn canvas_item_set_order(&mut self, item: &OttoCanvasItemV1, order: i32) {
+        let Some(entry) = self
+            .canvas
+            .items
+            .iter_mut()
+            .find(|entry| &entry.resource == item)
+        else {
+            return;
+        };
+        if entry.order == order {
+            return;
+        }
+        entry.order = order;
+        self.canvas_sort_items();
+        self.canvas_relayout();
+        if self.canvas.on_screen() {
+            self.canvas_request_redraw();
+        }
     }
 
     /// A client acknowledged a configure. Nothing waits on it: the next
@@ -639,11 +813,37 @@ impl<B: Backend> Otto<B> {
         true
     }
 
-    /// Slide the column to fully shown.
-    fn canvas_settle_open(&mut self) {
+    /// Slide the column to fully shown and, when `focus` says so, give the
+    /// keyboard to the item that asks for it on show.
+    fn canvas_settle_open(&mut self, focus: bool) {
         self.canvas.phase = Phase::Shown;
         self.canvas_place_column(1.0, true);
+        if focus {
+            self.canvas_focus_on_show();
+        }
         self.canvas_request_redraw();
+    }
+
+    /// Keep the items in column order: by order, then by creation.
+    fn canvas_sort_items(&mut self) {
+        self.canvas.items.sort_by_key(|item| (item.order, item.seq));
+    }
+
+    /// Give the keyboard to the first item that takes it on show, unless an
+    /// item has it already: one the user pressed on keeps it.
+    fn canvas_focus_on_show(&mut self) {
+        if self.is_session_locked() || self.canvas_item_has_keyboard() {
+            return;
+        }
+        let surface = self
+            .canvas
+            .items
+            .iter()
+            .find(|item| item.keyboard == ItemKeyboard::OnShow && item.surface.alive())
+            .map(|item| item.surface.clone());
+        if let Some(surface) = surface {
+            self.canvas_focus_item(surface);
+        }
     }
 
     /// Move the column to `progress` of the way out, animated or at once.
@@ -796,6 +996,8 @@ impl<B: Backend> Otto<B> {
         let was_on_screen = self.canvas.on_screen();
         self.canvas_restore_focus();
         self.canvas.phase = Phase::Hidden;
+        self.canvas.passive = false;
+        self.canvas.hide_on_release = None;
         self.canvas.drag_progress = 0.0;
         for ows in self.workspaces.output_workspaces.values() {
             ows.canvas_plane.set_hidden(true);

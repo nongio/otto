@@ -1167,6 +1167,8 @@ launcher-agents-working = In corso
 launcher-agents-needs-input = In attesa di risposta
 launcher-agents-error = Non riuscita
 launcher-agents-none = Ancora nessuna sessione degli agenti
+canvas-sessions-heading = Agenti
+canvas-sessions-ask = Ask
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

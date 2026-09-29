@@ -15,13 +15,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use otto_kit::accessibility::{A11yTree, Action, ActionRequest, Role};
-use otto_kit::clipboard;
 use otto_kit::components::attachments::ICON_SIZE;
 use otto_kit::components::scroll::{Axis, RowLayout, ScrollContent, ScrollPane};
 use otto_kit::components::stashed::Stashed;
-use otto_kit::components::text_input::{
-    self, KeyMods, TextInput, TextInputKey, TextInputResponse, CARET_BLINK_PERIOD,
-};
+use otto_kit::components::text_input::{TextInput, CARET_BLINK_PERIOD};
 use otto_kit::focus::FocusId;
 use otto_kit::frosted::Frosted;
 use otto_kit::preview::document;
@@ -47,12 +44,13 @@ use otto_launcher::apps::Apps;
 use otto_launcher::ask::{Ask, Note, Status, Step, Terminal};
 use otto_launcher::calc::Calculator;
 use otto_launcher::input;
+use otto_launcher::keys::{self, copy_to_clipboard, FieldEdit};
 use otto_launcher::log::{self as ask_log, lay_out, Block, Line as LogLine};
 use otto_launcher::selection::{self, Caret, Selection, Span};
 use otto_launcher::source::{rank, Item, Origin, Source};
 use otto_launcher::view::{
     field_style, AttachmentHit, Palette, CARD_W, FIELD_H, HIGHLIGHT_RADIUS, LIST_TOP, LOG_LINE_H,
-    LOG_W, MAX_CARD_H, MAX_ROWS, RADIUS, ROW_H,
+    LOG_W, MAX_CARD_H, RADIUS, ROW_H,
 };
 use otto_launcher::windows;
 
@@ -571,13 +569,11 @@ impl Launcher {
                 .count()
         } else {
             self.row_count()
-        } as isize;
+        };
         if count == 0 {
             return;
         }
-        // Wrapping, because a list that stops at the end makes someone check
-        // where the end was.
-        self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
+        self.selected = keys::wrap(self.selected, delta, count);
         // The field names whoever is highlighted while the agents are listed.
         self.refresh_composer_placeholder();
         // The keyboard has the selection now, wherever the pointer is.
@@ -1829,21 +1825,6 @@ impl ScrollContent for LogRows<'_> {
     }
 }
 
-/// Put `text` on the clipboard, so that it is still there afterwards.
-///
-/// The offer is made here first, which is what makes a paste work while the
-/// launcher is still up. But a Wayland selection dies with the client that
-/// made it, and the launcher is one keystroke from closing — so `wl-copy`,
-/// which forks and stays to serve the offer, is handed the same text and
-/// takes the selection over. Without it the copy still works until the
-/// launcher goes, which is better than refusing to copy at all.
-fn copy_to_clipboard(text: &str, serial: u32) {
-    clipboard::set_text(text, serial);
-    if let Err(err) = std::process::Command::new("wl-copy").arg(text).spawn() {
-        tracing::debug!(%err, "wl-copy is not available: the copy lasts as long as the launcher");
-    }
-}
-
 /// Run `changes` inside an animated transaction of `duration`.
 ///
 /// Every animated property the closure sets joins that one transaction, so
@@ -2123,14 +2104,7 @@ impl App for Launcher {
         }
         self.engaged = true;
 
-        // Ctrl combinations arrive as control characters rather than as a
-        // modifier flag, which is enough to recognise them by.
-        let control = event
-            .utf8
-            .as_deref()
-            .and_then(|text| text.chars().next())
-            .filter(|c| (*c as u32) < 0x20 && *c != '\r' && *c != '\n' && *c != '\t')
-            .map(|c| char::from(c as u8 + 0x60));
+        let control = keys::control_char(event);
         // Cmd+C stops an agent as Ctrl+C does.
         let modifiers = AppContext::current_modifiers();
         let stop_key = control == Some('c')
@@ -2350,110 +2324,31 @@ impl App for Launcher {
                 self.refresh_composer_placeholder();
                 return;
             }
-            (Keysym::Down, _) | (_, Some('n')) => {
-                self.move_selection(1);
-                return;
-            }
-            (Keysym::Up, _) | (_, Some('p')) => {
-                self.move_selection(-1);
-                return;
-            }
-            (Keysym::Tab, _) => {
-                // A completion on offer is what Tab is for; with none, it goes
-                // back to walking the rows.
-                if !self.shift && self.accept_completion() {
-                    return;
-                }
-                self.move_selection(if self.shift { -1 } else { 1 });
-                return;
-            }
-            (Keysym::ISO_Left_Tab, _) => {
-                self.move_selection(-1);
-                return;
-            }
-            (Keysym::Page_Down, _) => {
-                self.move_selection(MAX_ROWS as isize);
-                return;
-            }
-            (Keysym::Page_Up, _) => {
-                self.move_selection(-(MAX_ROWS as isize));
-                return;
-            }
-            // Clear the query without reaching for backspace — the fastest way
-            // to start a different search.
-            (_, Some('u')) => {
-                self.input.set_value("");
-                self.refilter();
-                return;
-            }
-            (_, Some('a')) => {
-                // With nothing typed, there is nothing in the field to select
-                // all of, and what is on screen is the conversation: Ctrl+A
-                // takes the whole log, ready to be copied.
-                if self.input.value().is_empty() && !self.log_spans.is_empty() {
-                    self.set_log_selection(selection::everything(&self.log_spans));
-                    return;
-                }
-                self.input
-                    .on_key(TextInputKey::SelectAll, KeyMods::default());
-                self.dirty = true;
-                return;
-            }
-            // Cut and copy hand the selection to the system clipboard; paste
-            // reads it back, since the field holds no clipboard of its own.
-            (_, Some('c')) | (_, Some('x')) => {
-                let cut = control == Some('x');
-                let key = if cut {
-                    TextInputKey::Cut
-                } else {
-                    TextInputKey::Copy
-                };
-                if let TextInputResponse::Clipboard(text) =
-                    self.input.on_key(key, KeyMods::default())
-                {
-                    copy_to_clipboard(&text, serial);
-                }
-                if cut {
-                    self.refilter();
-                } else {
-                    self.dirty = true;
-                }
-                return;
-            }
-            (_, Some('v')) => {
-                if let Some(text) = clipboard::text() {
-                    self.input
-                        .on_key(TextInputKey::Paste(text), KeyMods::default());
-                    self.refilter();
-                }
-                return;
-            }
-            (_, Some('w')) => {
-                self.input.on_key(TextInputKey::Backspace, KeyMods::word());
-                self.refilter();
-                return;
-            }
+            // A completion on offer is what Tab is for; with none, it walks
+            // the rows as the arrows do.
+            (Keysym::Tab, _) if !self.shift && self.accept_completion() => return,
             _ => {}
         }
 
-        // Everything else is the field's, with the keys every otto-kit field
-        // shares: Alt or Ctrl with the arrows and Backspace for a word at a
-        // time, Alt+B/F/D, Ctrl+E/K, Cmd with the arrows for the ends.
-        let mods = KeyMods {
-            shift: self.shift,
-            ..KeyMods::from(modifiers)
-        };
-        let Some((key, mods)) = text_input::key_for(event.keysym, event.utf8.as_deref(), mods)
-        else {
+        if let Some(delta) = keys::list_step(event.keysym, control, self.shift) {
+            self.move_selection(delta);
             return;
-        };
+        }
 
-        match self.input.on_key(key, mods) {
-            TextInputResponse::Changed => self.refilter(),
-            TextInputResponse::Moved => self.dirty = true,
-            TextInputResponse::Commit => self.activate(),
-            TextInputResponse::Cancel => self.close(),
-            _ => {}
+        // With nothing typed, there is nothing in the field to select all of,
+        // and what is on screen is the conversation: Ctrl+A takes the whole
+        // log, ready to be copied.
+        if control == Some('a') && self.input.value().is_empty() && !self.log_spans.is_empty() {
+            self.set_log_selection(selection::everything(&self.log_spans));
+            return;
+        }
+
+        match keys::edit_field(&mut self.input, event, control, self.shift, serial) {
+            FieldEdit::Changed => self.refilter(),
+            FieldEdit::Moved => self.dirty = true,
+            FieldEdit::Commit => self.activate(),
+            FieldEdit::Cancel => self.close(),
+            FieldEdit::None => {}
         }
     }
 
@@ -3024,10 +2919,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 scope = Scope::Ask;
                 with_selection = true;
             }
+            // Everything after `--` is the query, even what looks like an
+            // option.
+            "--" => {
+                words.extend(args.by_ref());
+                break;
+            }
             "--help" | "-h" => {
                 println!(
                     "usage: otto-launcher [--apps|--windows|--all|--ask|--agents] \
-                     [--file PATH]... [--session ID] [--selection] [query]\n\
+                     [--file PATH]... [--session ID] [--selection] [--] [query]\n\
                      otto-ask opens in --ask mode"
                 );
                 return Ok(());

@@ -5321,6 +5321,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-canvas"
+version = "1.5.0"
+dependencies = [
+ "otto-kit",
+ "otto-launcher",
+ "smithay-client-toolkit 0.19.2",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-client",
+]
+
+[[package]]
 name = "otto-emoji"
 version = "1.5.0"
 dependencies = [

@@ -79,6 +79,12 @@ args = []
 cmd = "otto-stash"
 args = []
 
+# The Agents panel for the side canvas, the column a two-finger swipe from the
+# right edge of the touchpad brings in. See [canvas] below.
+[[exec_once]]
+cmd = "otto-canvas"
+args = []
+
 # Third-party helpers work the same way:
 #
 # [[exec_once]]
@@ -321,6 +327,9 @@ sound_enabled = true
 "Ctrl+Alt+Shift+g" = { run = { cmd = "otto-stash", args = ["send"] } }
 "Ctrl+Alt+Shift+c" = { run = { cmd = "otto-stash", args = ["cancel"] } }
 # "Logo+Space" = { run = { cmd = "dolphin", args = [] } }
+# Show or hide the side canvas (also: a two-finger swipe from the right edge
+# of the touchpad; Escape or a click outside hides it).
+# "Ctrl+Alt+c" = "CanvasToggle"
 # "Logo+Shift+B" = { run = { cmd = "firefox", args = [] } }
 
 "Ctrl+1" = { builtin = "Workspace", index = 0 }
@@ -373,6 +382,13 @@ sound_enabled = true
 # "Logo+e" = "EqualizeContainer"            # even out the focused container
 # "Logo+Shift+space" = "FloatingToggle"     # float this tile, or tile this window
 # "Logo+space" = "FocusModeToggle"          # focus the other layer
+
+# The side canvas: a column of application panels that slides in over the
+# desktop from the right edge. All values are logical points.
+[canvas]
+width = 400   # column width, 200 to 1200
+margin = 12   # space between the column and the edges of the usable area
+gap = 12      # space between two panels
 
 [dock]
 size = 1.0  # Dock size multiplier (0.5 - 2.0, default: 1.0)

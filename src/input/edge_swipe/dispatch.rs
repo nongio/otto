@@ -186,10 +186,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         let from_edge = state.observe(&path);
         // The machine reads the context only when a scroll begins. A shown
         // canvas treats a rightward scroll that did not start at the edge as
-        // a dismiss, unless the pointer is over the canvas: that scroll
-        // belongs to the item under it and passes through untouched.
-        let over_canvas = idle && self.canvas_contains_point(self.pointer.current_location());
-        let ctx = if idle && !over_canvas {
+        // a dismiss, over the canvas too: its items scroll vertically, and a
+        // scroll that turns out not to be horizontal is replayed to them.
+        let ctx = if idle && !self.canvas_suspended() {
             Context {
                 available: self.canvas_available(),
                 shown: self.canvas_is_shown(),

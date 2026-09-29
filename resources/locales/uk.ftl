@@ -1188,6 +1188,8 @@ launcher-agents-working = Працює
 launcher-agents-needs-input = Чекає на відповідь
 launcher-agents-error = Помилка
 launcher-agents-none = Сеансів агентів ще немає
+canvas-sessions-heading = Агенти
+canvas-sessions-ask = Ask
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

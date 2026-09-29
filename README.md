@@ -295,6 +295,7 @@ Otto is the compositor plus a set of components, each under `components/` and bu
 | `otto` | Main compositor binary |
 | `otto-bar` | Top bar: clock, tray and application menus |
 | `otto-islands` | Dynamic island: notifications, activities and dialogs |
+| `otto-canvas` | Sample client placing one panel in the side canvas |
 | `otto-lock` | PAM-backed screen locker (`ext-session-lock-v1`) |
 | `otto-greeter` | Login screen client speaking greetd's IPC |
 | `otto-auth-ui` | Authentication panel shared by the locker and the greeter |
