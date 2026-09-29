@@ -72,11 +72,9 @@ user always knows which parts of the desktop an agent can touch.
 - The agent acts on every workspace — Phase 1 is, in effect, an "every
   workspace" grant with no prompt, no border and no enforcement.
 
-### Phase 1 follow-ups
+### Phase 1 follow-ups (implemented, except the own-workspace time)
 
-**Idle hiding.** Today the agent cursor, once shown, stays on screen at its
-last position until Otto exits. It must instead get out of the way when the
-agent stops:
+**Idle hiding.** The agent cursor gets out of the way when the agent stops:
 
 - `[agent_cursor] hide_after_ms` (default `5000`; `0` never hides) is how long
   the cursor stays after the agent's last activity.
@@ -101,8 +99,10 @@ agent stops:
   a hidden cursor adds no work to a frame.
 - The lock screen hides every agent cursor at once, whatever the timer says.
 
-**Lock screen.** Agent input must stop while the session is locked — see
-Constraints & Edge Cases.
+**Lock screen.** While the session is locked or locking, no agent motion,
+click, scroll or key reaches any surface, the lock surface included. Locking
+takes the agent seat's pointer and keyboard focus away; unlocking does not
+give them back — the agent clicks again.
 
 ### Phase 2 — a seat per agent
 
@@ -283,10 +283,9 @@ screen.
   authoritative sign; the topbar indicator is the second. During fullscreen
   neither is shown, so the border alone marks the grant, and the pause
   shortcut is the way to stop agents without leaving fullscreen.
-- The lock screen must stop all agent input: no agent motion, clicks or keys
-  reach any surface while the session is locked. **Not yet enforced in
-  Phase 1:** an agent keyboard keeps the focus it had when the session
-  locked. Fix before the setting is recommended to anyone.
+- The lock screen stops all agent input (see Phase 1 follow-ups). A button
+  an agent holds when the session locks is released to no one: the
+  application may see the press without the release.
 - Drag and drop from an agent seat is not supported until it is designed; a
   drag started there must not interfere with the user's.
 - The KMS path has one hardware cursor plane per output, and it belongs to the

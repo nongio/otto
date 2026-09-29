@@ -304,6 +304,9 @@ enabled = true
 enabled = false
 # The agent cursor's colour, as #RRGGBB. (default: "#FF9500")
 color = "#FF9500"
+# How long the agent cursor stays after the agent's last input, in
+# milliseconds, before it fades out; 0 never hides it. (default: 5000)
+hide_after_ms = 5000
 
 # Audio / Sound feedback
 [audio]

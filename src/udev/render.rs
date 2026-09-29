@@ -1346,8 +1346,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.pointer.current_location(),
             &self.cursor_manager,
             &self.cursor_texture_cache,
+            // Every agent cursor goes when the session locks.
             self.agent_seat
                 .as_ref()
+                .filter(|_| !self.lock_state.is_active())
                 .map(|agent| (&agent.cursor, agent.pointer.current_location())),
             self.dnd_icon.as_ref(),
             &self.clock,
@@ -2561,7 +2563,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     surface.continuous_frames = screencopy_pending
         || dnd_needs_draw
         || (pointer_in_output
-            && cursor_manager.is_current_cursor_animated(output_scale.round() as i32));
+            && cursor_manager.is_current_cursor_animated(output_scale.round() as i32))
+        || (agent_cursor_drawn
+            && agent_cursor.is_some_and(|(cursor, _)| cursor.is_fading(Instant::now())));
 
     let (output_elements, clear_color, should_draw) = {
         let cursor_needs_draw = pointer_in_output

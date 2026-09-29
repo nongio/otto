@@ -491,6 +491,11 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
     use smithay::reexports::wayland_server::Resource;
 
+    // Nothing of the agent's reaches anything while the session is locked —
+    // not even the lock surface.
+    if state.is_session_locked() {
+        return;
+    }
     let Some(agent) = state.agent_seat.as_ref() else {
         return;
     };
@@ -512,7 +517,7 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
         }
         let location = state.clamp_coords(location);
         if let Some(agent) = state.agent_seat.as_mut() {
-            agent.cursor.visible = true;
+            agent.cursor.place(std::time::Instant::now());
         }
         let under = client_surface_under(state, location);
         pointer.motion(
@@ -527,6 +532,13 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     }
 
     for (time, button, btn_state) in buttons {
+        if let Some(agent) = state.agent_seat.as_mut() {
+            agent.cursor.note_button(
+                button,
+                btn_state == ButtonState::Pressed,
+                std::time::Instant::now(),
+            );
+        }
         let serial = SERIAL_COUNTER.next_serial();
         if btn_state == ButtonState::Pressed && !pointer.is_grabbed() {
             let target =
@@ -566,7 +578,8 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     }
     pointer.frame(state);
 
-    // The agent cursor moved: draw it where it is now.
+    // Shown again, and drawn where it is now.
+    state.note_agent_activity();
     state.backend_data.request_redraw();
 }
 

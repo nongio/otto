@@ -1602,6 +1602,9 @@ pub struct AgentCursorConfig {
     pub enabled: bool,
     /// The agent cursor's colour, as `#RRGGBB`.
     pub color: String,
+    /// How long the agent cursor stays on screen after the agent's last
+    /// input, in milliseconds; `0` never hides it.
+    pub hide_after_ms: u64,
 }
 
 impl Default for AgentCursorConfig {
@@ -1609,6 +1612,7 @@ impl Default for AgentCursorConfig {
         Self {
             enabled: false,
             color: "#FF9500".to_string(),
+            hide_after_ms: 5000,
         }
     }
 }

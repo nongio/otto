@@ -637,6 +637,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Raise the blank on every output and cut the session off, with no
     /// locker yet: the start of every lock.
     fn raise_blank(&mut self) {
+        // Agents let go of whatever they were pointing at and typing into;
+        // the locker takes the user's focus below, and nothing gives an agent
+        // its focus back.
+        self.release_agent_focus();
+
         // A lock that arrives while the previous one's shade is still going up
         // takes the screen back over; the deadline it left behind would let the
         // plane path resume mid-lock.

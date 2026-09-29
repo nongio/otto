@@ -3389,12 +3389,70 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .new_wl_seat(&self.display_handle, crate::agent_cursor::AGENT_SEAT_NAME);
         let pointer = seat.add_pointer();
         add_configured_keyboard(&mut seat);
-        let color = Config::with(|c| c.agent_cursor.color.clone());
+        let (color, hide_after_ms) =
+            Config::with(|c| (c.agent_cursor.color.clone(), c.agent_cursor.hide_after_ms));
         self.agent_seat = Some(crate::agent_cursor::AgentSeat {
             seat,
             pointer,
-            cursor: crate::agent_cursor::AgentCursor::new(&color),
+            cursor: crate::agent_cursor::AgentCursor::new(
+                &color,
+                std::time::Duration::from_millis(hide_after_ms),
+            ),
+            idle_timer: None,
         });
+    }
+
+    /// The agent did something: its cursor is shown again, and the timer
+    /// that will start hiding it starts over.
+    pub fn note_agent_activity(&mut self) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+
+        let Some(agent) = self.agent_seat.as_mut() else {
+            return;
+        };
+        agent.cursor.note_activity(std::time::Instant::now());
+        if let Some(token) = agent.idle_timer.take() {
+            self.handle.remove(token);
+        }
+        let Some(hide_after) = agent.cursor.hide_after() else {
+            return;
+        };
+        // Only the first frame of the fade needs waking for: the renderer
+        // keeps drawing while the cursor is part-way faded.
+        agent.idle_timer = self
+            .handle
+            .insert_source(Timer::from_duration(hide_after), |_, _, state| {
+                if let Some(agent) = state.agent_seat.as_mut() {
+                    agent.idle_timer = None;
+                }
+                state.backend_data.request_redraw();
+                TimeoutAction::Drop
+            })
+            .ok();
+    }
+
+    /// The session locked: the agent lets go of everything it was pointing
+    /// at or typing into, and gets none of it back on unlock.
+    pub fn release_agent_focus(&mut self) {
+        let Some(agent) = self.agent_seat.as_ref() else {
+            return;
+        };
+        let (seat, pointer) = (agent.seat.clone(), agent.pointer.clone());
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        if let Some(keyboard) = seat.get_keyboard() {
+            keyboard.set_focus(self, None, serial);
+        }
+        let location = pointer.current_location();
+        pointer.motion(
+            self,
+            None,
+            &smithay::input::pointer::MotionEvent {
+                location,
+                serial,
+                time: smithay::backend::input::InputTime::from_millis(0),
+            },
+        );
+        pointer.frame(self);
     }
 
     /// Whether `seat` is the automation seat.

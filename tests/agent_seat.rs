@@ -13,6 +13,9 @@ mod agent_seat_tests {
         protocol::{wl_pointer, wl_registry, wl_seat},
         Connection, Dispatch, EventQueue, QueueHandle,
     };
+    use wayland_protocols::ext::session_lock::v1::client::{
+        ext_session_lock_manager_v1, ext_session_lock_v1,
+    };
     use wayland_protocols_wlr::virtual_pointer::v1::client::{
         zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
     };
@@ -24,6 +27,7 @@ mod agent_seat_tests {
     struct DriverState {
         seats: Vec<wl_seat::WlSeat>,
         pointer_manager: Option<zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1>,
+        lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     }
 
     impl Dispatch<wl_registry::WlRegistry, ()> for DriverState {
@@ -50,6 +54,9 @@ mod agent_seat_tests {
                 "zwlr_virtual_pointer_manager_v1" => {
                     state.pointer_manager = Some(registry.bind(name, version.min(2), qh, ()))
                 }
+                "ext_session_lock_manager_v1" => {
+                    state.lock_manager = Some(registry.bind(name, 1, qh, ()))
+                }
                 _ => {}
             }
         }
@@ -58,6 +65,8 @@ mod agent_seat_tests {
     delegate_noop!(DriverState: ignore wl_seat::WlSeat);
     delegate_noop!(DriverState: zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1);
     delegate_noop!(DriverState: zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1);
+    delegate_noop!(DriverState: ext_session_lock_manager_v1::ExtSessionLockManagerV1);
+    delegate_noop!(DriverState: ignore ext_session_lock_v1::ExtSessionLockV1);
 
     /// An automation client, like `wlrctl` or an agent's MCP driver.
     struct Driver {
@@ -144,6 +153,30 @@ mod agent_seat_tests {
         pointer.frame();
     }
 
+    fn agent_cursor_opacity(handle: &HeadlessHandle) -> f32 {
+        handle.query(|state| {
+            state
+                .agent_seat
+                .as_ref()
+                .map_or(0.0, |agent| agent.cursor.opacity(std::time::Instant::now()))
+        })
+    }
+
+    /// The window holding the agent seat's keyboard, by title.
+    fn agent_keyboard_focus(handle: &HeadlessHandle) -> Option<String> {
+        handle.query(|state| {
+            use smithay::wayland::seat::WaylandFocus;
+            let keyboard = state.agent_seat.as_ref()?.seat.get_keyboard()?;
+            let focus = keyboard.current_focus()?;
+            let surface = focus.wl_surface()?.into_owned();
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.wl_surface().is_some_and(|s| *s == surface))
+                .map(|w| w.xdg_title())
+        })
+    }
+
     fn user_pointer(handle: &HeadlessHandle) -> (f64, f64) {
         handle.query(|state| {
             let p = state.pointer.current_location();
@@ -184,8 +217,9 @@ mod agent_seat_tests {
         let handle = start();
         let mut driver = Driver::connect(&handle);
         let before = user_pointer(&handle);
-        assert!(
-            !handle.query(|state| state.agent_seat.as_ref().unwrap().cursor.visible),
+        assert_eq!(
+            agent_cursor_opacity(&handle),
+            0.0,
             "the agent cursor is hidden until the agent first moves"
         );
 
@@ -195,7 +229,7 @@ mod agent_seat_tests {
 
         assert_eq!(agent_pointer(&handle), Some((480.0, 270.0)));
         assert_eq!(user_pointer(&handle), before, "the user's pointer moved");
-        assert!(handle.query(|state| state.agent_seat.as_ref().unwrap().cursor.visible));
+        assert_eq!(agent_cursor_opacity(&handle), 1.0);
 
         drop(driver);
         handle.stop();
@@ -264,19 +298,90 @@ mod agent_seat_tests {
         );
         assert!(!background.state.keyboard_focused);
 
-        let agent_focus = handle.query(|state| {
-            use smithay::wayland::seat::WaylandFocus;
-            let keyboard = state.agent_seat.as_ref()?.seat.get_keyboard()?;
-            let focus = keyboard.current_focus()?;
-            let surface = focus.wl_surface()?.into_owned();
-            state
-                .workspaces
-                .spaces_elements()
-                .find(|w| w.wl_surface().is_some_and(|s| *s == surface))
-                .map(|w| w.xdg_title())
-        });
+        let agent_focus = agent_keyboard_focus(&handle);
         assert_eq!(agent_focus.as_deref(), Some("Background"));
 
+        drop(driver);
+        handle.stop();
+    }
+
+    /// Once the agent stops, its cursor fades out; its next move brings it
+    /// back at once.
+    #[test]
+    #[serial]
+    fn the_agent_cursor_hides_when_the_agent_is_idle() {
+        let handle = start();
+        handle.query(|state| {
+            state.agent_seat.as_mut().unwrap().cursor =
+                otto::agent_cursor::AgentCursor::new("#FF9500", Duration::from_millis(300));
+        });
+        let mut driver = Driver::connect(&handle);
+        let pointer = driver.pointer_on(1);
+        move_to(&handle, &pointer, 100, 100);
+        driver.settle(&handle);
+        assert_eq!(agent_cursor_opacity(&handle), 1.0);
+
+        handle.wait(Duration::from_millis(700));
+        assert_eq!(agent_cursor_opacity(&handle), 0.0, "still shown when idle");
+        assert_eq!(
+            agent_pointer(&handle),
+            Some((100.0, 100.0)),
+            "hiding moved the pointer"
+        );
+
+        move_to(&handle, &pointer, 120, 100);
+        driver.settle(&handle);
+        assert_eq!(agent_cursor_opacity(&handle), 1.0);
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// Locking takes the agent's keyboard away, and while locked the agent
+    /// can neither move nor click.
+    #[test]
+    #[serial]
+    fn a_locked_session_stops_agent_input() {
+        let handle = start();
+        let mut window = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut window, "Target");
+        let (x, y, _, _) = handle
+            .window_logical_geometry("Target")
+            .expect("window mapped");
+
+        let mut driver = Driver::connect(&handle);
+        let pointer = driver.pointer_on(1);
+        move_to(&handle, &pointer, x + 20, y + 20);
+        driver.settle(&handle);
+        click(&pointer);
+        driver.settle(&handle);
+        assert_eq!(agent_keyboard_focus(&handle).as_deref(), Some("Target"));
+
+        let lock = driver
+            .state
+            .lock_manager
+            .as_ref()
+            .expect("ext_session_lock_manager_v1 missing")
+            .lock(&driver.qh, ());
+        driver.settle(&handle);
+        assert!(handle.query(|state| state.is_session_locked()));
+        assert_eq!(
+            agent_keyboard_focus(&handle),
+            None,
+            "the agent kept its keyboard through the lock"
+        );
+
+        move_to(&handle, &pointer, x + 60, y + 60);
+        click(&pointer);
+        driver.settle(&handle);
+        assert_eq!(
+            agent_pointer(&handle),
+            Some(((x + 20) as f64, (y + 20) as f64)),
+            "the agent pointer moved while locked"
+        );
+        assert_eq!(agent_keyboard_focus(&handle), None);
+
+        drop(lock);
         drop(driver);
         handle.stop();
     }

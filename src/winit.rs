@@ -576,7 +576,11 @@ pub fn run_winit() {
                     }
 
                     // The agent seat's cursor, under the user's.
-                    if let Some(agent) = state.agent_seat.as_ref() {
+                    if let Some(agent) = state
+                        .agent_seat
+                        .as_ref()
+                        .filter(|_| !state.lock_state.is_active())
+                    {
                         let location = agent.pointer.current_location()
                             - output.current_location().to_f64();
                         if let Some(elem) = agent.cursor.render_element(

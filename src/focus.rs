@@ -498,6 +498,14 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
         serial: Serial,
         time: InputTime,
     ) {
+        // An agent's keys: none while the session is locked, and each one
+        // keeps its cursor on screen, beside the window it is typing into.
+        if data.is_agent_seat(seat) {
+            if data.is_session_locked() {
+                return;
+            }
+            data.note_agent_activity();
+        }
         if state == KeyState::Pressed {
             data.note_seat_press(seat, serial, self.wl_surface().as_deref());
         }
@@ -536,6 +544,9 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
         modifiers: ModifiersState,
         serial: Serial,
     ) {
+        if data.is_agent_seat(seat) && data.is_session_locked() {
+            return;
+        }
         match self {
             KeyboardFocusTarget::Window(w) => match w.underlying_surface() {
                 WindowSurface::Wayland(w) => {
