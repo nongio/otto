@@ -61,6 +61,33 @@ to a workspace and work there while the user is on another.
 - Keyboard focus, clipboard and primary selection are per seat: what the agent
   copies is on the agent seat's clipboard, not the user's.
 
+### Phase 1 follow-ups
+
+**Idle hiding.** Today the agent cursor, once shown, stays on screen at its
+last position until Otto exits. It must instead get out of the way when the
+agent stops:
+
+- `[agent_cursor] hide_after_ms` (default `3000`; `0` never hides) is how long
+  the cursor stays after the agent's last activity.
+- Activity is any agent input: pointer motion, button, scroll, or a key from
+  a virtual keyboard on the agent seat. Typing keeps the cursor visible, so
+  the user can see which window the agent is typing into.
+- When the time runs out the cursor fades out over a short animation
+  (~200 ms) and is no longer drawn. Nothing else changes: the agent's pointer
+  position, pointer focus and keyboard focus stay as they were.
+- The next activity shows it again at the agent pointer's current position,
+  at full opacity immediately, with no fade-in: a cursor that appears late
+  hides the start of what the agent does.
+- While an agent button is held (a drag or a text selection in progress),
+  the cursor is never hidden, however long the gap between events.
+- Hiding and showing cost a redraw only on the outputs the cursor is on;
+  a hidden cursor adds no work to a frame.
+- The lock screen hides every agent cursor at once, whatever the timer says
+  (see the lock-screen constraint below).
+
+**Lock screen.** Agent input must stop while the session is locked — see
+Constraints & Edge Cases.
+
 ### Phase 2 — a seat per agent
 
 - Agents ask Otto for a seat, and Otto creates one for them, named
@@ -70,10 +97,10 @@ to a workspace and work there while the user is on another.
 - A seat lives as long as the agent's session: it is removed when the agent
   releases it or its requesting connection goes away. Removing a seat ends
   any grab it holds and clears the keyboard focus it gave.
+- Each agent seat hides its cursor on its own idle timer (Phase 1
+  follow-ups).
 - Next to each agent cursor, a small label shows the agent's name when one was
   given, so the user can tell agents apart at a glance.
-- An agent cursor fades out after a configurable idle time and reappears on
-  the next motion.
 - `enabled = true` keeps its Phase 1 meaning: one static seat named `agent`,
   for stock tools.
 
@@ -148,6 +175,8 @@ to a workspace and work there while the user is on another.
   lifetime to the client connection for free.
 - Should anything stop an agent's application from raising itself or taking
   focus on its own (xdg-activation), which would disturb the user?
+- Is 3 s the right idle default? Long enough to follow a slow agent between
+  steps, short enough not to linger over the user's work.
 - Should the user be able to take over an agent seat's pointer, or pause all
   agents with one shortcut?
 - Should agents be allowed to use Otto's own UI (dock, exposé)? That needs a
