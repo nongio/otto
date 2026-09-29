@@ -251,6 +251,14 @@ impl<BackendData: Backend> CompositorHandler for Otto<BackendData> {
                 return;
             }
 
+            // A side canvas item, or a subsurface of one: like a lock surface
+            // it is in no space or layer map, and is mirrored into the canvas
+            // column directly.
+            if let Some(root) = self.canvas_item_root_for(surface) {
+                self.canvas_item_committed(&root);
+                return;
+            }
+
             if let Some(_layer_shell_surf) = self.layer_surfaces.get(&surface_id) {
                 // Layer shells don't need build_cache_for_view - they use the workspace layer directly
                 self.update_layer_shell_surface(&surface_id);

@@ -137,6 +137,8 @@ pub enum BuiltinAction {
     MediaPrev,
     MediaStop,
     LockSession,
+    /// Show the side canvas, or hide it if it is shown.
+    CanvasToggle,
     // ── Tiling (see specs/tiling.md) ─────────────────────────────────────
     /// Put the focused workspace into, or out of, tiling mode.
     TilingToggle,
@@ -300,6 +302,7 @@ fn parse_builtin(name: &str, index: Option<usize>) -> Result<BuiltinAction, Shor
         "MediaPrev" => BuiltinAction::MediaPrev,
         "MediaStop" => BuiltinAction::MediaStop,
         "LockSession" => BuiltinAction::LockSession,
+        "CanvasToggle" => BuiltinAction::CanvasToggle,
         "TilingToggle" => BuiltinAction::TilingToggle,
         "FocusLeft" => BuiltinAction::FocusLeft,
         "FocusRight" => BuiltinAction::FocusRight,

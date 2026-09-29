@@ -76,6 +76,9 @@ pub struct UdevData<A: RendererApi> {
     /// libinput has no way to enumerate its devices, so the list is
     /// maintained from the added/removed events instead.
     pub input_devices: Vec<smithay::reexports::input::Device>,
+    /// Touchpad slot sampling and the two-finger edge swipe that drives
+    /// the side canvas.
+    pub edge_swipe: crate::input::edge_swipe::dispatch::EdgeSwipeInput,
     #[cfg(feature = "fps_ticker")]
     pub(super) fps_texture: Option<smithay::backend::renderer::multigpu::MultiTexture>,
     pub context_id: Option<ContextId<MultiTexture>>,

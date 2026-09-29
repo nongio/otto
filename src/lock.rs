@@ -860,7 +860,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
     /// A frame has been presented on `output`. Sends frame callbacks to that
     /// output's lock surface and, while locking, counts the output as blanked.
+    ///
+    /// Every backend calls this once per presented frame, so the side canvas,
+    /// whose items are in no space or layer map either, takes its frame
+    /// callbacks from here too.
     pub fn lock_frame_presented(&mut self, output: &Output) {
+        self.canvas_frame_presented(output);
         if !self.lock_state.is_active() {
             return;
         }

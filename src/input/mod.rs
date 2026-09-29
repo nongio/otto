@@ -5,6 +5,7 @@
 //! - `keyboard`: Keyboard event handling and shortcuts
 //! - `pointer`: Mouse/pointer event handling
 //! - `gestures`: Gesture processing (swipe, pinch, hold)
+//! - `edge_swipe`: Two-finger touchpad swipe from the right edge (side canvas)
 //! - `tablet`: Tablet input support
 
 pub mod actions;
@@ -13,6 +14,8 @@ pub mod keyboard_layout;
 pub mod pointer;
 pub mod popup_grab;
 
+#[cfg(feature = "udev")]
+pub mod edge_swipe;
 #[cfg(feature = "udev")]
 pub mod gestures;
 #[cfg(feature = "udev")]

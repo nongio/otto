@@ -24,6 +24,7 @@ If you are installing Otto for the first time, start with
 | [Dock](dock.md) | Running apps, minimized windows, bookmarks, autohide, magnification |
 | [Top Bar](topbar.md) | Clock, system tray, global application menus |
 | [Dynamic Island](dynamic-island.md) | Notifications, live activities, permission dialogs |
+| [Side Canvas](side-canvas.md) | The column that slides in from the right edge |
 | [Keyboard Shortcuts](keyboard-shortcuts.md) | Binding syntax and the complete action list |
 | [Touchpad Gestures](gestures.md) | Three-finger swipes, four-finger pinch |
 

@@ -532,6 +532,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     // otto_dock protocol
     pub otto_dock: crate::otto_dock::handlers::OttoDockState,
     pub text_cursor: crate::text_cursor::TextCursorState,
+    /// The side canvas and the items clients placed in it (`otto-canvas-v1`).
+    pub canvas: crate::otto_canvas::CanvasState<BackendData>,
     pub dock_item_surfaces: HashMap<ObjectId, crate::otto_dock::DockItem>,
     // Rendering metrics
     #[cfg(feature = "metrics")]
@@ -707,6 +709,19 @@ smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 
 smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
     crate::otto_dock::protocol::gen::otto_dock_item_v1::OttoDockItemV1: crate::otto_dock::protocol::DockItem
 ] => crate::otto_dock::handlers::OttoDockState);
+
+// otto_canvas protocol delegates
+smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::otto_canvas::protocol::gen::otto_canvas_manager_v1::OttoCanvasManagerV1: ()
+] => crate::otto_canvas::CanvasGlobal);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::otto_canvas::protocol::gen::otto_canvas_manager_v1::OttoCanvasManagerV1: ()
+] => crate::otto_canvas::CanvasGlobal);
+
+smithay::reexports::wayland_server::delegate_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
+    crate::otto_canvas::protocol::gen::otto_canvas_item_v1::OttoCanvasItemV1: crate::otto_canvas::CanvasItemData
+] => crate::otto_canvas::CanvasGlobal);
 
 // otto_text_cursor protocol delegates
 smithay::reexports::wayland_server::delegate_global_dispatch!(@<BackendData: Backend + 'static> Otto<BackendData>: [
@@ -983,6 +998,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // Create otto_dock protocol global
         let otto_dock = crate::otto_dock::handlers::OttoDockState::new::<Self>(&dh);
         let text_cursor = crate::text_cursor::TextCursorState::new::<Self>(&dh);
+        crate::otto_canvas::CanvasGlobal::create::<Self>(&dh);
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -1230,6 +1246,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // otto_dock protocol
             otto_dock,
             text_cursor,
+            canvas: Default::default(),
             dock_item_surfaces: HashMap::new(),
             // render metrics
             #[cfg(feature = "metrics")]

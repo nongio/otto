@@ -99,6 +99,8 @@ pub struct Config {
     #[serde(default)]
     pub desk: DeskConfig,
     #[serde(default)]
+    pub canvas: CanvasConfig,
+    #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
     pub workspaces: WorkspacesConfig,
@@ -179,6 +181,7 @@ impl Default for Config {
             login: LoginConfig::default(),
             lock: LockConfig::default(),
             desk: DeskConfig::default(),
+            canvas: CanvasConfig::default(),
             search: SearchConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
@@ -1600,6 +1603,43 @@ pub struct DeskConfig {
     /// compositor starts it, restarts it if it crashes and stops it when this
     /// is switched off.
     pub enabled: bool,
+}
+
+/// The side canvas: the column of client surfaces that slides in from the
+/// right edge of an output (`specs/side-canvas.md`).
+///
+/// All values are logical points.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CanvasConfig {
+    /// Width of the column, and so of every item in it.
+    pub width: u32,
+    /// Space between the column and the edges of the usable area.
+    pub margin: u32,
+    /// Space between two items.
+    pub gap: u32,
+}
+
+impl CanvasConfig {
+    /// The narrowest column an item can usefully be drawn in.
+    pub const MIN_WIDTH: u32 = 200;
+    /// The widest column; past this it stops being a side panel.
+    pub const MAX_WIDTH: u32 = 1200;
+
+    /// [`CanvasConfig::width`], held to the range the layout supports.
+    pub fn clamped_width(&self) -> u32 {
+        self.width.clamp(Self::MIN_WIDTH, Self::MAX_WIDTH)
+    }
+}
+
+impl Default for CanvasConfig {
+    fn default() -> Self {
+        Self {
+            width: 400,
+            margin: 12,
+            gap: 12,
+        }
+    }
 }
 
 /// The file index behind search: which folders LocalSearch looks in and what
@@ -3159,6 +3199,10 @@ bookmarks = []
             "the dynamic island autostarts"
         );
         assert!(started.contains(&"otto-stash"), "the stash autostarts");
+        assert!(
+            started.contains(&"otto-canvas"),
+            "the side canvas sample autostarts"
+        );
 
         assert!(!config.dock.bookmarks.is_empty(), "the dock has bookmarks");
         assert!(
