@@ -215,6 +215,11 @@ where
                 let Some(output) = data
                     .output
                     .clone()
+                    .or_else(|| {
+                        data.agent
+                            .as_deref()
+                            .and_then(|seat_name| state.agent_output(seat_name))
+                    })
                     .or_else(|| state.workspaces.outputs().next().cloned())
                 else {
                     return;
@@ -501,7 +506,10 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     axis: Option<AxisFrame>,
 ) {
     use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
+    use crate::state::agent_seats::Reach;
+    use smithay::desktop::WindowSurfaceType;
     use smithay::reexports::wayland_server::Resource;
+    use smithay::utils::Logical;
 
     // Nothing of the agent's reaches anything while the session is locked —
     // not even the lock surface.
@@ -514,10 +522,28 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     let pointer = agent.pointer.clone();
     let seat = agent.seat.clone();
 
-    let client_surface_under = |state: &Otto<BackendData>, location| {
-        state
-            .surface_under(location)
-            .filter(|(target, _)| matches!(target, PointerFocusTarget::WlSurface(_)))
+    // Where the agent's input can land: anywhere (the static seat), the
+    // windows of its own workspace whether it is shown or not, or nowhere.
+    let reach = agent.reach(&state.workspaces);
+    let client_surface_under = |state: &Otto<BackendData>, location: Point<f64, Logical>| {
+        let under = match &reach {
+            Reach::Everywhere => state.surface_under(location),
+            Reach::Nowhere => None,
+            Reach::Workspace { output, workspace } => {
+                let space = state.workspaces.space_of_view(output, *workspace)?;
+                let (window, window_loc) = space.element_under(location)?;
+                if window.is_minimised() {
+                    return None;
+                }
+                window
+                    .surface_under::<BackendData>(
+                        location - window_loc.to_f64(),
+                        WindowSurfaceType::ALL,
+                    )
+                    .map(|(focus, surface_loc)| (focus, (surface_loc + window_loc).to_f64()))
+            }
+        };
+        under.filter(|(target, _)| matches!(target, PointerFocusTarget::WlSurface(_)))
     };
 
     if motion_rel.is_some() || motion_abs.is_some() {
@@ -527,7 +553,22 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
         } else if let Some((dx, dy)) = motion_rel {
             location += Point::from((dx, dy));
         }
-        let location = state.clamp_coords(location);
+        // Kept on its own workspace's output; otherwise on the outputs, like
+        // real input.
+        let location = match state.agent_output(seat_name) {
+            Some(output) => {
+                let geometry = state
+                    .workspaces
+                    .output_geometry(&output)
+                    .unwrap_or_default();
+                let max = geometry.loc + geometry.size;
+                Point::from((
+                    location.x.clamp(geometry.loc.x as f64, (max.x - 1) as f64),
+                    location.y.clamp(geometry.loc.y as f64, (max.y - 1) as f64),
+                ))
+            }
+            None => state.clamp_coords(location),
+        };
         if let Some(agent) = state.agent_seat_mut(seat_name) {
             agent.cursor.place(std::time::Instant::now());
         }

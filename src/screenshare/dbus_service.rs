@@ -877,10 +877,7 @@ impl CompositorInterface {
         #[zbus(connection)] connection: &Connection,
         name: &str,
     ) -> zbus::fdo::Result<(String, String)> {
-        let owner = header
-            .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?
-            .to_string();
+        let owner = sender_of(&header)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.compositor_tx
             .send(CompositorCommand::RequestAgentSeat {
@@ -899,15 +896,64 @@ impl CompositorInterface {
         Ok((granted.seat, granted.color))
     }
 
+    /// Give the calling agent a workspace of its own, on which its seat
+    /// acts. The workspace is new, named after the agent, and not switched
+    /// to: the user goes there when they want to watch. The agent's input
+    /// reaches that workspace's windows whether it is on screen or not.
+    ///
+    /// Returns the output it is on and that output's logical geometry and
+    /// scale: `(output, x, y, width, height, scale)`. Absolute pointer
+    /// motion addresses that rectangle.
+    async fn request_own_workspace(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<(String, i32, i32, i32, i32, f64)> {
+        let owner = sender_of(&header)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::RequestOwnWorkspace {
+                owner,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        let workspace = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::AccessDenied)?;
+        Ok((
+            workspace.output,
+            workspace.x,
+            workspace.y,
+            workspace.width,
+            workspace.height,
+            workspace.scale,
+        ))
+    }
+
+    /// End the caller's own-workspace grant. The workspace and its windows
+    /// stay, for the user. Returns whether there was one.
+    async fn release_own_workspace(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<bool> {
+        let owner = sender_of(&header)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ReleaseOwnWorkspace {
+                owner,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))
+    }
+
     /// Give back every seat the caller holds. Returns whether it held any.
     async fn release_agent_seat(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<bool> {
-        let owner = header
-            .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?
-            .to_string();
+        let owner = sender_of(&header)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.compositor_tx
             .send(CompositorCommand::ReleaseAgentSeats {

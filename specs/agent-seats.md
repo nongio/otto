@@ -204,8 +204,21 @@ sign that an agent can act there.
 
 ### Phase 3 — agent-owned workspaces
 
+Implemented: the grant, the workspace, hit-testing and keyboard rules while
+hidden, full-rate frames, and the cursor drawn only where the workspace is
+shown. Not yet: the border, hidden capture, and launching onto the
+workspace.
+
 - An agent can ask for a workspace of its own, which starts an own-workspace
-  grant and draws its border.
+  grant and draws its border. Over D-Bus: `RequestOwnWorkspace() ->
+  (output, x, y, width, height, scale)` — the output it is on, and the
+  logical rectangle the agent's absolute coordinates address;
+  `ReleaseOwnWorkspace() -> b` ends the grant. The workspace is added after
+  the last one on the primary output. Its name is not persisted: a restart
+  does not bring the agent's name back onto that position.
+- An agent seat with no grant reaches no surface; its pointer moves and its
+  cursor is drawn, and nothing more. Only the static seat reaches every
+  workspace without one.
 - The agent's coordinates address that workspace's space: hit-testing
   resolves against its windows whether or not it is shown on an output. The
   agent is told the workspace's logical size and scale.

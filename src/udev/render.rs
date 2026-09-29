@@ -963,11 +963,17 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let occluded_ids = self.workspaces.occluded_window_ids(&translucent_ids);
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let captured_ids = crate::screenshare::screencast_window_ids(
+        let mut captured_ids = crate::screenshare::screencast_window_ids(
             &self.screenshare_sessions,
             &self.workspaces,
             &self.foreign_toplevels,
         );
+        // Windows an agent works in are watched too, on screen or not.
+        captured_ids.extend(crate::state::agent_seats::agent_workspace_window_ids(
+            &self.agent_seats,
+            &self.agent_history,
+            &self.workspaces,
+        ));
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let interacting_ids =
             crate::state::window_throttle::interacting_ids(&self.pointer_interaction);
@@ -1352,6 +1358,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             } else {
                 self.agent_seats
                     .iter()
+                    .filter(|agent| agent.shown_on(&self.workspaces, &output.name()))
                     .map(|agent| (&agent.cursor, agent.pointer.current_location()))
                     .collect::<Vec<_>>()
             },

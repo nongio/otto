@@ -577,7 +577,11 @@ pub fn run_winit() {
 
                     // The agent seats' cursors, under the user's.
                     if !state.lock_state.is_active() {
-                        for agent in &state.agent_seats {
+                        for agent in state
+                            .agent_seats
+                            .iter()
+                            .filter(|agent| agent.shown_on(&state.workspaces, &output.name()))
+                        {
                             let location = agent.pointer.current_location()
                                 - output.current_location().to_f64();
                             elements.extend(

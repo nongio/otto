@@ -78,12 +78,47 @@ pub struct AgentSeat<B: Backend + 'static> {
     /// Wakes the loop when the cursor is due to start fading, so the first
     /// frame of the fade is drawn although nothing else happens.
     pub idle_timer: Option<RegistrationToken>,
+    /// Where the agent may act, if it was granted anywhere.
+    pub grant: Option<crate::state::agent_seats::Grant>,
 }
 
 impl<B: Backend + 'static> AgentSeat<B> {
     /// The `wl_seat` name.
     pub fn name(&self) -> String {
         self.seat.name().to_string()
+    }
+
+    /// Where the agent's input can land — see [`crate::state::agent_seats::Reach`].
+    pub fn reach(
+        &self,
+        workspaces: &crate::workspaces::Workspaces,
+    ) -> crate::state::agent_seats::Reach {
+        use crate::state::agent_seats::{Grant, Reach};
+        match &self.grant {
+            Some(Grant::OwnWorkspace { output, workspace })
+                if workspaces.space_of_view(output, *workspace).is_some() =>
+            {
+                Reach::Workspace {
+                    output: output.clone(),
+                    workspace: *workspace,
+                }
+            }
+            // The static seat is the explicit, unrestricted opt-in.
+            _ if self.owner.is_none() => Reach::Everywhere,
+            _ => Reach::Nowhere,
+        }
+    }
+
+    /// Whether the cursor belongs on `output` now: an agent on its own
+    /// workspace is drawn only where that workspace is shown.
+    pub fn shown_on(&self, workspaces: &crate::workspaces::Workspaces, output: &str) -> bool {
+        match self.reach(workspaces) {
+            crate::state::agent_seats::Reach::Workspace {
+                output: granted,
+                workspace,
+            } => granted == output && workspaces.current_view_index(output) == Some(workspace),
+            _ => true,
+        }
     }
 }
 

@@ -554,4 +554,208 @@ mod agent_seat_tests {
         assert_eq!(request_seat(&handle, "Claude", ":1.20"), Ok(seat));
         handle.stop();
     }
+
+    fn request_workspace(handle: &HeadlessHandle, owner: &str) -> Result<String, String> {
+        let owner = owner.to_string();
+        handle.query(move |state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            otto::screenshare::handle_screenshare_command(
+                state,
+                otto::screenshare::CompositorCommand::RequestOwnWorkspace {
+                    owner,
+                    response_tx: tx,
+                },
+            );
+            rx.try_recv()
+                .expect("answered at once")
+                .map(|workspace| workspace.output)
+        })
+    }
+
+    /// Names of the primary output's workspaces, in order.
+    fn workspace_names(handle: &HeadlessHandle) -> Vec<String> {
+        handle.query(|state| {
+            let ows = state
+                .workspaces
+                .primary_output_workspaces()
+                .expect("output");
+            ows.workspace_views
+                .iter()
+                .map(|view| view.display_name())
+                .collect()
+        })
+    }
+
+    /// The window on `seat`'s keyboard, by title.
+    fn keyboard_focus_of(handle: &HeadlessHandle, seat: &str) -> Option<String> {
+        let seat = seat.to_string();
+        handle.query(move |state| {
+            use smithay::wayland::seat::WaylandFocus;
+            let keyboard = state.agent_seat(&seat)?.seat.get_keyboard()?;
+            let focus = keyboard.current_focus()?;
+            let surface = focus.wl_surface()?.into_owned();
+            state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.wl_surface().is_some_and(|s| *s == surface))
+                .map(|w| w.xdg_title())
+        })
+    }
+
+    /// The user's window "User" on the current workspace, and the agent's
+    /// "Mine" on the agent's own workspace, overlapping it. Returns a point
+    /// inside both.
+    fn user_and_agent_windows(
+        handle: &HeadlessHandle,
+        user: &mut TestClient,
+        mine: &mut TestClient,
+    ) -> (i32, i32) {
+        map_window(handle, user, "User");
+        map_window(handle, mine, "Mine");
+        let position = workspace_names(handle).len() - 1;
+        handle.move_window_to_workspace("Mine", position);
+        handle.settle(200);
+        let _ = user.roundtrip();
+        let _ = mine.roundtrip();
+        let (ux, uy, uw, uh) = handle.window_logical_geometry("User").expect("User");
+        let (mx, my, mw, mh) = handle.window_logical_geometry("Mine").expect("Mine");
+        let (left, top) = (ux.max(mx), uy.max(my));
+        let (right, bottom) = ((ux + uw).min(mx + mw), (uy + uh).min(my + mh));
+        assert!(
+            left + 20 < right && top + 20 < bottom,
+            "the windows must overlap"
+        );
+        (left + 10, top + 10)
+    }
+
+    /// An agent asking for a workspace gets a new one, named after it; the
+    /// user stays where they are.
+    #[test]
+    #[serial]
+    fn an_agent_gets_a_workspace_of_its_own() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let before = workspace_names(&handle);
+        let current = handle.current_workspace_index();
+
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let after = workspace_names(&handle);
+        assert_eq!(after.len(), before.len() + 1);
+        assert_eq!(after.last().map(String::as_str), Some("Claude"));
+        assert_eq!(
+            handle.current_workspace_index(),
+            current,
+            "the user was moved"
+        );
+
+        // Asking again gives the same one.
+        request_workspace(&handle, ":1.10").expect("workspace");
+        assert_eq!(workspace_names(&handle).len(), after.len());
+        // No seat, no workspace.
+        assert!(request_workspace(&handle, ":1.99").is_err());
+        handle.stop();
+    }
+
+    /// The agent works on its hidden workspace: its click lands on its own
+    /// window, not on the user's window drawn at the same place.
+    #[test]
+    #[serial]
+    fn agent_input_reaches_its_hidden_workspace() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        let mut mine = TestClient::connect(&handle.socket_name).expect("client");
+        let (x, y) = user_and_agent_windows(&handle, &mut user, &mut mine);
+
+        let user_focus = || {
+            handle.query(|state| {
+                state
+                    .seat
+                    .get_keyboard()?
+                    .current_focus()
+                    .map(|f| format!("{f:?}"))
+            })
+        };
+        let before = user_focus();
+
+        let mut driver = Driver::connect(&handle);
+        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        move_to(&handle, &pointer, x, y);
+        driver.settle(&handle);
+        click(&pointer);
+        driver.settle(&handle);
+
+        assert_eq!(
+            keyboard_focus_of(&handle, "agent-1").as_deref(),
+            Some("Mine")
+        );
+        assert_eq!(user_focus(), before, "the agent moved the user's focus");
+        assert_eq!(
+            handle.current_workspace_index(),
+            0,
+            "the agent switched workspace"
+        );
+
+        // Watched by the agent: its window draws at full rate while hidden.
+        let states = handle.window_throttle_states();
+        assert_eq!(
+            states.get("Mine"),
+            Some(&otto::state::window_throttle::WindowThrottleState::Captured)
+        );
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// A seat with no grant reaches nothing, and neither does one whose
+    /// agent gave its workspace back — which stays, for the user.
+    #[test]
+    #[serial]
+    fn an_agent_without_a_grant_reaches_nothing() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        let (ux, uy, _, _) = handle.window_logical_geometry("User").expect("User");
+
+        let mut driver = Driver::connect(&handle);
+        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        move_to(&handle, &pointer, ux + 20, uy + 20);
+        driver.settle(&handle);
+        click(&pointer);
+        driver.settle(&handle);
+        assert_eq!(keyboard_focus_of(&handle, "agent-1"), None);
+
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let count = workspace_names(&handle).len();
+        let released = handle.query(|state| state.release_own_workspace(":1.10"));
+        assert!(released);
+        assert_eq!(workspace_names(&handle).len(), count, "the workspace went");
+        click(&pointer);
+        driver.settle(&handle);
+        assert_eq!(keyboard_focus_of(&handle, "agent-1"), None);
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// An agent that reconnects under its name gets its workspace back.
+    #[test]
+    #[serial]
+    fn a_returning_agent_gets_its_workspace_back() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let count = workspace_names(&handle).len();
+        release_seats(&handle, ":1.10");
+        request_seat(&handle, "Claude", ":1.20").expect("seat");
+        request_workspace(&handle, ":1.20").expect("workspace");
+        assert_eq!(
+            workspace_names(&handle).len(),
+            count,
+            "a second workspace was made"
+        );
+        handle.stop();
+    }
 }

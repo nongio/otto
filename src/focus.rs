@@ -504,6 +504,21 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
             if data.is_session_locked() {
                 return;
             }
+            // The focus was given on a granted workspace; if the window has
+            // since left it, or the grant ended, the agent loses the focus.
+            if !data.agent_may_type_into(seat.name(), self) {
+                let seat = seat.clone();
+                data.handle.insert_idle(move |state| {
+                    if let Some(keyboard) = seat.get_keyboard() {
+                        keyboard.set_focus(
+                            state,
+                            None,
+                            smithay::utils::SERIAL_COUNTER.next_serial(),
+                        );
+                    }
+                });
+                return;
+            }
             data.note_agent_activity(seat.name());
         }
         if state == KeyState::Pressed {
@@ -544,7 +559,9 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
         modifiers: ModifiersState,
         serial: Serial,
     ) {
-        if data.is_agent_seat(seat) && data.is_session_locked() {
+        if data.is_agent_seat(seat)
+            && (data.is_session_locked() || !data.agent_may_type_into(seat.name(), self))
+        {
             return;
         }
         match self {

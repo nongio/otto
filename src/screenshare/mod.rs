@@ -212,6 +212,17 @@ pub enum CompositorCommand {
         response_tx:
             tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::GrantedSeat, String>>,
     },
+    /// An agent asks for a workspace of its own.
+    RequestOwnWorkspace {
+        owner: String,
+        response_tx:
+            tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::OwnWorkspace, String>>,
+    },
+    /// An agent gives its own workspace to the user.
+    ReleaseOwnWorkspace {
+        owner: String,
+        response_tx: tokio::sync::oneshot::Sender<bool>,
+    },
     /// An agent gives its seats back, or its bus name went away.
     ReleaseAgentSeats {
         owner: String,
@@ -748,6 +759,15 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 .request_agent_seat(&agent_name, &owner)
                 .map_err(|err| err.to_string());
             let _ = response_tx.send(result);
+        }
+        CompositorCommand::RequestOwnWorkspace { owner, response_tx } => {
+            let result = state
+                .request_own_workspace(&owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::ReleaseOwnWorkspace { owner, response_tx } => {
+            let _ = response_tx.send(state.release_own_workspace(&owner));
         }
         CompositorCommand::ReleaseAgentSeats { owner, response_tx } => {
             let released = state.release_agent_seats(&owner);

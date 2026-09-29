@@ -6885,6 +6885,45 @@ impl Workspaces {
         None
     }
 
+    /// The Space of the workspace whose view id is `view_index` on
+    /// `output_name`, shown or not.
+    pub fn space_of_view(
+        &self,
+        output_name: &str,
+        view_index: usize,
+    ) -> Option<&Space<WindowElement>> {
+        let ows = self.output_workspaces.get(output_name)?;
+        let position = ows
+            .workspace_views
+            .iter()
+            .position(|view| view.index == view_index)?;
+        ows.spaces.get(position)
+    }
+
+    /// The view id of the workspace `output_name` shows.
+    pub fn current_view_index(&self, output_name: &str) -> Option<usize> {
+        let ows = self.output_workspaces.get(output_name)?;
+        ows.workspace_views
+            .get(ows.current_workspace)
+            .map(|view| view.index)
+    }
+
+    /// Name a workspace for as long as it exists, without persisting the name
+    /// to its position: an agent's workspace is not there next session.
+    pub fn name_workspace_for_session(&self, output_name: &str, view_index: usize, name: &str) {
+        let Some(ows) = self.output_workspaces.get(output_name) else {
+            return;
+        };
+        if let Some(view) = ows
+            .workspace_views
+            .iter()
+            .find(|view| view.index == view_index)
+        {
+            view.set_custom_name(Some(name.to_string()));
+            self.refresh_output_selectors();
+        }
+    }
+
     pub fn element_under(
         &self,
         point: impl Into<smithay::utils::Point<f64, smithay::utils::Logical>>,
