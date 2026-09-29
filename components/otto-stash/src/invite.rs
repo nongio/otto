@@ -12,7 +12,7 @@
 
 use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use wayland_client::protocol::{wl_compositor::WlCompositor, wl_shm, wl_surface::WlSurface};
-use wayland_client::QueueHandle;
+use wayland_client::{Proxy, QueueHandle};
 
 use otto_kit::color_scheme::current_color_scheme;
 use otto_kit::protocols::{
@@ -33,9 +33,6 @@ use otto_kit::theme::Theme;
 use otto_kit::typography::styles;
 
 use crate::State;
-
-/// The first `otto-canvas-v1` version that announces drags.
-pub const DRAG_VERSION: u32 = 4;
 
 /// The invitation's height, in logical pixels.
 const HEIGHT: f32 = 72.0;
@@ -83,6 +80,10 @@ impl Invite {
         let item = manager.get_canvas_item(&surface, qh, ());
         item.set_keyboard_interactivity(KeyboardInteractivity::Never);
         item.set_order(crate::canvas::ORDER);
+        // Always this tall, and short enough that its share is all of it.
+        if item.version() >= crate::canvas::SHARE_VERSION {
+            item.set_content_height(HEIGHT as u32);
+        }
         let style = styles.map(|manager| {
             let style = manager.get_surface_style(&surface, qh, ());
             crate::panel::apply_material(&style);

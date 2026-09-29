@@ -149,8 +149,11 @@ plain, near-opaque background of its own.
   bound: the shortcut bound to Ask, or failing that the one bound to
   `otto-stash send`. The shortcut is looked up each time the card opens, so a
   rebound key shows. With no such shortcut, the line is left out.
-- The card grows with its items up to a limit (640 points), past which the
-  items scroll between the title and the footer. On the floating card,
+- The card grows with its items up to a limit, past which the items scroll
+  between the title and the footer. In the side canvas the limit is the
+  card's share of the column's height, so the panels under it keep theirs
+  (640 points on a compositor that does not share the height); floating, it
+  is 640 points or the room on the screen, whichever is less. On the floating card,
   changes of size spring, as the launcher's card does.
 
 **On the card, with the pointer.** Pointing at an item highlights it. A click

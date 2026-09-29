@@ -2,6 +2,9 @@
 //!
 //! The canvas decides the card's width and where it sits; the card sits at
 //! the top of the column (a negative order) and is as tall as its content.
+//! From version 5 it tells the canvas how tall that is and keeps to the
+//! share of the column it is given, scrolling its items past that, so the
+//! items under it keep theirs.
 //! It asks the canvas to show itself when something is added, never takes
 //! the keyboard, not even when clicked, and does no frame work while the
 //! canvas is hidden. It does not move: the column is its place.
@@ -9,7 +12,7 @@
 // Rust guideline compliant 2026-02-21
 
 use wayland_client::protocol::{wl_compositor::WlCompositor, wl_surface::WlSurface};
-use wayland_client::QueueHandle;
+use wayland_client::{Proxy, QueueHandle};
 
 use otto_kit::protocols::{
     otto_canvas_item_v1::{KeyboardInteractivity, OttoCanvasItemV1},
@@ -18,11 +21,16 @@ use otto_kit::protocols::{
     otto_surface_style_v1::OttoSurfaceStyleV1,
 };
 
+use crate::panel::MAX_CARD_HEIGHT;
 use crate::State;
 
 /// The first `otto-canvas-v1` version with `show`, `set_order` and the
 /// `never` keyboard interactivity, all of which the card needs.
 pub const CANVAS_VERSION: u32 = 3;
+
+/// The first `otto-canvas-v1` version that shares the column's height:
+/// `set_content_height` and `max_height`.
+pub const SHARE_VERSION: u32 = 5;
 
 /// Where the card sits in the column: above every item that keeps the
 /// default order of 0, the Agents panel included.
@@ -43,6 +51,11 @@ pub struct CanvasCard {
     card_size: (i32, i32),
     /// Where the pointer is on the card, while it is over it.
     pointer: Option<(f64, f64)>,
+    /// The content height last sent, in logical pixels.
+    content_height: Option<u32>,
+    /// The most the card may be tall, in logical pixels, once the canvas
+    /// has said (version 5).
+    max_height: Option<u32>,
 }
 
 impl CanvasCard {
@@ -74,6 +87,8 @@ impl CanvasCard {
             shown: false,
             card_size: (0, 0),
             pointer: None,
+            content_height: None,
+            max_height: None,
         }
     }
 
@@ -93,9 +108,41 @@ impl CanvasCard {
         self.width = i32::try_from(width).unwrap_or(i32::MAX);
     }
 
-    /// Whether the compositor has said how wide to draw.
+    /// Whether the compositor has said how wide to draw and, where it
+    /// shares the column's height, how tall the card may be. The share
+    /// comes right after the first configure.
     pub fn configured(&self) -> bool {
-        self.width > 0
+        self.width > 0 && (self.item.version() < SHARE_VERSION || self.max_height.is_some())
+    }
+
+    /// Tell the canvas how tall the card's content is, in logical pixels:
+    /// its height with every item showing. Sent only when it changes, and
+    /// only where the canvas shares its height.
+    pub fn set_content_height(&mut self, height: f32) {
+        if self.item.version() < SHARE_VERSION {
+            return;
+        }
+        // Whole points, and never negative.
+        let height = height.ceil().max(0.0) as u32;
+        if self.content_height != Some(height) {
+            self.content_height = Some(height);
+            self.item.set_content_height(height);
+        }
+    }
+
+    /// The canvas gave the card at most `height` logical pixels. Returns
+    /// whether that changed, so the card is laid out again.
+    pub fn set_max_height(&mut self, height: u32) -> bool {
+        let changed = self.max_height != Some(height);
+        self.max_height = Some(height);
+        changed
+    }
+
+    /// The tallest the card may be, in logical pixels: its share of the
+    /// column, or [`MAX_CARD_HEIGHT`] where the canvas gives none.
+    pub fn max_height(&self) -> f32 {
+        self.max_height
+            .map_or(MAX_CARD_HEIGHT as f32, |height| height as f32)
     }
 
     /// The width to draw at, in logical pixels.

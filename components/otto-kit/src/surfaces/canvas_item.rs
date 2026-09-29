@@ -22,6 +22,12 @@
 //! [`CanvasItemSurface::show`], when it has something new to see. That
 //! show leaves the keyboard with the app that has it.
 //!
+//! The column is only so tall, and its items share it. An item says how
+//! tall its content is with [`CanvasItemSurface::set_content_height`], and
+//! the compositor answers with the most it may be tall
+//! ([`CanvasItemEvent::MaxHeight`]); [`CanvasItemSurface::fit_height`] gives
+//! the height to draw at, and the item scrolls whatever does not fit.
+//!
 //! A drag that rests at the right edge of the screen opens the canvas too,
 //! so an item can take the drop through the data device like any other
 //! surface. Apps hear of every drag through
@@ -47,6 +53,8 @@ const KEYBOARD_INTERACTIVITY_SINCE: u32 = 2;
 /// The protocol version that brought `show`, `set_order` and
 /// [`CanvasKeyboardInteractivity::Never`].
 const SHOW_SINCE: u32 = 3;
+/// The protocol version that brought `set_content_height` and `max_height`.
+const CONTENT_HEIGHT_SINCE: u32 = 5;
 
 /// Something the compositor told a canvas item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +67,12 @@ pub enum CanvasItemEvent {
     Shown,
     /// The canvas is off screen.
     Hidden,
+    /// The item may be at most `height` logical points tall, so that it and
+    /// its neighbours fit in the column. Sent from version 5, after the
+    /// item has said how tall its content is, and whenever its share
+    /// changes; [`CanvasItemSurface::fit_height`] has it by the time the
+    /// item's handler sees this.
+    MaxHeight { height: i32 },
 }
 
 type Handler = Box<dyn FnMut(&CanvasItemSurface, CanvasItemEvent)>;
@@ -68,6 +82,10 @@ struct Inner {
     item: OttoCanvasItemV1,
     configured: bool,
     shown: bool,
+    /// The last content height sent, so an unchanged one is not sent again.
+    content_height: Option<u32>,
+    /// The most the item may be tall, once the compositor has said.
+    max_height: Option<i32>,
 }
 
 /// A surface in the side canvas, with a Skia canvas to draw it into.
@@ -124,6 +142,8 @@ impl CanvasItemSurface {
                 item: item.clone(),
                 configured: false,
                 shown: false,
+                content_height: None,
+                max_height: None,
             })),
             handler: Rc::new(RefCell::new(None)),
         };
@@ -186,6 +206,50 @@ impl CanvasItemSurface {
         } else {
             inner.base_surface.height = height;
         }
+    }
+
+    /// Say how tall the item's content is, in logical points: the height it
+    /// would be with room for everything, not the height it is drawn at.
+    /// The compositor answers with [`CanvasItemEvent::MaxHeight`]. Call it
+    /// before the first draw and whenever the content grows or shrinks; an
+    /// unchanged height is not sent again.
+    ///
+    /// Returns false, and sends nothing, when the compositor has no such
+    /// request (before version 5): the column then clips whatever does not
+    /// fit, so the item should keep to a height of its own choosing.
+    pub fn set_content_height(&self, height: i32) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.item.version() < CONTENT_HEIGHT_SINCE {
+            return false;
+        }
+        let height = u32::try_from(height.max(0)).unwrap_or(0);
+        if inner.content_height != Some(height) {
+            inner.content_height = Some(height);
+            inner.item.set_content_height(height);
+        }
+        true
+    }
+
+    /// Whether the compositor shares the column's height among its items
+    /// (version 5): it then sends [`CanvasItemEvent::MaxHeight`] right
+    /// after the first configure, and the item should wait for it before
+    /// it first draws.
+    pub fn shares_height(&self) -> bool {
+        self.inner.borrow().item.version() >= CONTENT_HEIGHT_SINCE
+    }
+
+    /// The most the item may be tall, in logical points, once the
+    /// compositor has said (version 5).
+    pub fn max_height(&self) -> Option<i32> {
+        self.inner.borrow().max_height
+    }
+
+    /// The height to draw content `content` points tall at: all of it when
+    /// it fits the item's share of the column, and the share otherwise.
+    /// Until the compositor has given a share, or when it never will
+    /// (before version 5), `fallback_max` stands in for it.
+    pub fn fit_height(&self, content: i32, fallback_max: i32) -> i32 {
+        content.min(self.max_height().unwrap_or(fallback_max))
     }
 
     /// Draw the item. Does nothing before the first configure.
@@ -295,6 +359,7 @@ impl CanvasItemSurface {
                 }
                 CanvasItemEvent::Shown => inner.shown = true,
                 CanvasItemEvent::Hidden => inner.shown = false,
+                CanvasItemEvent::MaxHeight { height } => inner.max_height = Some(height),
             }
         }
         // Taken out while it runs, so it may draw, and even set a new handler.

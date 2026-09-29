@@ -660,6 +660,12 @@ impl<BackendData: Backend> Otto<BackendData> {
             }
         }
 
+        // The side canvas sits above the layer-shell chrome, the dock and
+        // every window, and below layer-shell popups.
+        if under.is_none() {
+            under = self.canvas_surface_under(pos);
+        }
+
         // Check Top/Overlay layer shell surfaces using lay-rs hit testing
         // (Smithay's layer_map geometry doesn't reflect Taffy/animated positions)
         // Sort by stacking order: Overlay above Top
@@ -722,12 +728,6 @@ impl<BackendData: Backend> Otto<BackendData> {
                 self.workspaces.dock.as_ref().clone().into(),
                 (0.0, 0.0).into(),
             ));
-        }
-
-        // The side canvas sits under the layer-shell chrome and the dock and
-        // above every window.
-        if under.is_none() {
-            under = self.canvas_surface_under(pos);
         }
 
         // A window's popups, ahead of the strips Otto owns. A menu is free to

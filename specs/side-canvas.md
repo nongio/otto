@@ -36,7 +36,8 @@ one swipe away and out of the way the rest of the time.
 
 - **Pushing the desktop aside.** The canvas slides over windows; nothing
   underneath moves or is resized.
-- **Scrolling.** Items that do not fit are clipped (see Open Questions).
+- **Scrolling the column.** Items share its height and scroll within
+  themselves; the column itself does not scroll (see Open Questions).
 - **User-chosen order.** Clients set the order; the user cannot drag items
   around.
 - **Per-item widths or client-chosen positions.** The compositor owns layout.
@@ -52,8 +53,9 @@ one swipe away and out of the way the rest of the time.
   with the same or a lower order. A surface that
   already has another role is a `role` protocol error.
 - The compositor answers every new item with `configure(serial, width)`,
-  followed by `shown` or `hidden` according to the canvas's current state.
-  `width` is the configured column width in logical points.
+  then, from version 5, `max_height(height)`, then `shown` or `hidden`
+  according to the canvas's current state. `width` is the configured column
+  width in logical points.
 - The client acknowledges with `ack_configure` and draws at that width, at a
   height of its choosing; the height is read from the buffer it attaches.
 - When the configured width changes, every item receives a new `configure`.
@@ -77,11 +79,45 @@ one swipe away and out of the way the rest of the time.
   bound while a drag goes on is told about it at once. `drag_ended` follows
   the drop (after `wl_data_device.drop` for the client whose surface took
   it) or the cancel. See Drag and drop.
-- The compositor advertises version 4. A client binds
-  `min(advertised, 4)` and sends each request only on a version that has it,
+- `set_content_height(height)` (version 5, on the item) says how tall the
+  item's content is in logical points, uncapped. `max_height(height)`
+  (version 5, event) is the most the item may be tall; the client draws at
+  `min(content, max_height)` and scrolls the rest. See Sharing the height.
+- The compositor advertises version 5. A client binds
+  `min(advertised, 5)` and sends each request only on a version that has it,
   so a new client still runs against an older compositor.
 - Destroying the item (or disconnecting) removes it; the items below move up.
   When the last item goes, a visible canvas is taken down at once.
+
+### Sharing the height
+
+- The height items share is the column's on the output it is on, or would
+  open on (under the pointer, else the primary output): the usable area
+  (below the top bar, above a dock that does not autohide) less the margin
+  above and below, in whole logical points. The gaps between items that
+  show are taken off first.
+- An item bound at version 5 that has sent `set_content_height` asks for its
+  content height. Every other item, including one at version 5 that has not
+  said yet, counts as fixed at the height of its buffer (zero, and no gap,
+  without one).
+- Shares are water-filled in stacking order: an item whose content fits an
+  even share of what the fixed items leave keeps its content height; the
+  rest split what is left equally, round after round until the shares
+  settle. A point left over from the division goes to the topmost of the
+  items at the level.
+- Every item keeps at least 120 pt, or its content when that is less. When
+  the fixed items leave less than that for everyone, each item gets exactly
+  its minimum and the column overflows (clipped at the bottom). Only a
+  column too short to hold the minimums on its own is shared equally.
+- An item at version 5 that has not sent a content height is offered what it
+  would get if it wanted the whole column. Every share is at least 1 pt.
+- `max_height` is sent only when an item's share changes, to version 5
+  items only: after the first configure; when an item's content height
+  changes; when items come, go, reorder or commit a buffer of a new height;
+  when `canvas.width`, `margin` or `gap` change; when the usable area of an
+  output changes; and whenever the column comes on screen, before `shown`.
+- Items still stack by the height of the buffers they attach, so a client
+  that resizes promptly on `max_height` never overflows the column.
 
 ### Showing and hiding
 
@@ -124,9 +160,9 @@ one swipe away and out of the way the rest of the time.
 
 ### Input
 
-- The canvas sits above every window, fullscreen ones included, and below
-  the workspace selector, the layer-shell chrome, the dock, popups, the app
-  switcher and the lock screen.
+- The canvas sits above every window, fullscreen ones included, the
+  layer-shell chrome and the dock, and below the workspace selector, popups,
+  the app switcher and the lock screen.
 - Entering exposé fades the canvas out with the overlay layer; leaving it
   fades the canvas back in. While exposé is up the canvas stays open but takes
   no pointer, keyboard (Escape) or edge swipe input.
@@ -211,10 +247,12 @@ are read the next time the column is laid out.
   dot.
 - The item wears the frosted popup material with the desktop corner radius
   and hairline border, drawn by the compositor through `otto-surface-style`.
-- Its height is the heading, the field and one row per session, capped at
-  480 pt; past
-  the cap the rows scroll (wheel, touchpad with momentum, scrollbar drag). The
-  surface is resized whenever the row count changes the height.
+- Its content height is the heading, the field and one row per session,
+  sent with `set_content_height`. It is drawn at the smaller of that and its
+  `max_height` (480 pt below version 5); past that the rows scroll (wheel,
+  touchpad with momentum, scrollbar drag). The surface is resized whenever
+  the row count or the share changes the height. At version 5 it does not
+  draw until the first `max_height` has arrived.
 - On `shown` it connects to the agent service and lists the sessions; while
   shown it lists them again whenever the service announces a session added,
   removed or changed on the root channel. On `hidden` it disconnects and does
@@ -290,15 +328,20 @@ are read the next time the column is laid out.
   for a reason, and exposé owns the screen; queueing the request would slide
   the canvas in over whatever the user unlocks or picks, long after the news.
   Clients show again on their next change.
+- **Items share the height rather than cap themselves.** A client cannot
+  know how tall the column is or what else is in it, so any cap it picks is
+  wrong somewhere: too short on a tall screen, too tall beside another item.
+  The compositor knows both. Water-filling lets short items keep all of
+  their content and gives the room that is left to the ones that scroll.
 - **`never` rather than a stash-only rule.** An item that must never steal
   the keyboard says so on the wire; the compositor needs no knowledge of
   which client it is.
 
 ## Open Questions
 
-- Overflow: items that do not fit the usable height are clipped. The column
-  should scroll, probably with the two-finger scroll that already passes
-  through to items.
+- Overflow: items bound below version 5, or so many items that the minimums
+  do not fit, can still overflow the column, which is clipped. Should the
+  column scroll then?
 - Ordering: should the user be able to reorder items by dragging?
 - Should the canvas remember the output it was last shown on?
 - The canvas does not follow its output being unplugged while shown; it is

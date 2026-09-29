@@ -1,6 +1,7 @@
 //! `otto-canvas-v1` end to end (headless): a client places an item in the
 //! side canvas, and showing, resizing and dismissing the canvas reach it as
-//! the protocol says they should, the keyboard included.
+//! the protocol says they should, the keyboard included, and items share
+//! the column's height.
 
 #[cfg(feature = "headless")]
 mod headless_tests {
@@ -33,6 +34,7 @@ mod headless_tests {
         Configure(u32),
         Shown,
         Hidden,
+        MaxHeight(u32),
     }
 
     /// What the manager was told about drags.
@@ -59,6 +61,10 @@ mod headless_tests {
         events: Vec<Seen>,
         keyboard: Vec<Keyboard>,
         drags: Vec<Drag>,
+        /// The version to bind the canvas manager at; 4 when unset.
+        canvas_version: Option<u32>,
+        /// The last `max_height` each item was sent.
+        max_heights: std::collections::HashMap<wayland_client::backend::ObjectId, u32>,
     }
 
     impl Dispatch<wl_registry::WlRegistry, ()> for Client {
@@ -81,7 +87,8 @@ mod headless_tests {
                         state.compositor = Some(registry.bind(name, version.min(4), qh, ()));
                     }
                     "otto_canvas_manager_v1" => {
-                        state.manager = Some(registry.bind(name, version.min(4), qh, ()));
+                        let wanted = state.canvas_version.unwrap_or(4);
+                        state.manager = Some(registry.bind(name, version.min(wanted), qh, ()));
                     }
                     "wl_seat" => {
                         state.seat = Some(registry.bind(name, version.min(7), qh, ()));
@@ -111,6 +118,10 @@ mod headless_tests {
                 }
                 otto_canvas_item_v1::Event::Shown => Seen::Shown,
                 otto_canvas_item_v1::Event::Hidden => Seen::Hidden,
+                otto_canvas_item_v1::Event::MaxHeight { height } => {
+                    state.max_heights.insert(item.id(), height);
+                    Seen::MaxHeight(height)
+                }
             });
         }
     }
@@ -199,6 +210,11 @@ mod headless_tests {
             (item, surface)
         }
 
+        /// The last `max_height` `item` was sent.
+        fn max_height(&self, item: &otto_canvas_item_v1::OttoCanvasItemV1) -> Option<u32> {
+            self.client.max_heights.get(&item.id()).copied()
+        }
+
         /// Give the first item a transparent buffer `width` x `height`.
         fn attach_buffer(&mut self, width: i32, height: i32) {
             use std::os::fd::AsFd;
@@ -219,12 +235,20 @@ mod headless_tests {
     }
 
     fn place_item(socket: &str) -> Placed {
+        place_item_at(socket, 4)
+    }
+
+    /// A client bound at `version` of the protocol, with one item.
+    fn place_item_at(socket: &str, version: u32) -> Placed {
         std::env::set_var("WAYLAND_DISPLAY", socket);
         let connection = Connection::connect_to_env().expect("connect");
         let mut queue = connection.new_event_queue();
         let qh = queue.handle();
         connection.display().get_registry(&qh, ());
-        let mut client = Client::default();
+        let mut client = Client {
+            canvas_version: Some(version),
+            ..Client::default()
+        };
         queue.roundtrip(&mut client).expect("bind globals");
 
         let compositor = client.compositor.clone().expect("wl_compositor");
@@ -786,6 +810,66 @@ mod headless_tests {
             handle.query(|state| state.canvas_is_shown()),
             "the drop landed on an item, so the canvas stays"
         );
+
+        handle.stop();
+    }
+
+    /// Items at version 5 share the column: a short one keeps its content's
+    /// height, a tall one gets the rest, and an item bound below version 5
+    /// counts at its buffer's height and hears nothing of it.
+    #[test]
+    #[serial]
+    fn items_share_the_column_height() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let available = handle
+            .query(|state| state.canvas_available_height())
+            .expect("the column has a height on the headless output");
+        let mut placed = place_item_at(&handle.socket_name, 5);
+        let width = configured_width(&handle);
+        assert_eq!(
+            placed.take(),
+            vec![
+                Seen::Configure(width),
+                Seen::MaxHeight(available),
+                Seen::Hidden
+            ],
+            "a new item hears its share after its width and before it is hidden"
+        );
+
+        // Together far taller than the column.
+        let tall = placed.item.clone();
+        tall.set_content_height(available * 3);
+        let (short, _short_surface) = placed.add_item();
+        short.set_content_height(200);
+        placed.roundtrip();
+        let tall_max = placed.max_height(&tall).expect("the tall item has a share");
+        let short_max = placed
+            .max_height(&short)
+            .expect("the short item has a share");
+        assert_eq!(short_max, 200, "the short item keeps its content's height");
+        assert!(
+            tall_max + short_max < available,
+            "the shares fit in the column with a gap: {tall_max} + {short_max} of {available}"
+        );
+        let gap = available - tall_max - short_max;
+        assert!(gap < 100, "all that is left over is the gap between them");
+
+        // An item bound at version 4, 60 points tall, keeps that; the tall
+        // item gives up the room it takes and the gap above it. (The
+        // headless column is short: much more and the short item would
+        // have to give up room too.)
+        let mut older = place_item_at(&handle.socket_name, 4);
+        older.attach_buffer(i32::try_from(width).expect("a width"), 60);
+        placed.roundtrip();
+        assert!(
+            !older
+                .take()
+                .iter()
+                .any(|seen| matches!(seen, Seen::MaxHeight(_))),
+            "an item below version 5 is never told a share"
+        );
+        assert_eq!(placed.max_height(&short), Some(200));
+        assert_eq!(placed.max_height(&tall), Some(tall_max - 60 - gap));
 
         handle.stop();
     }

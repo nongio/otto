@@ -25,8 +25,10 @@
 //! is hidden there is no connection and nothing to do.
 //!
 //! The panel is a rounded pane of the desktop's frosted material, as wide as
-//! the compositor makes it. It grows with its rows up to [`MAX_HEIGHT`] and
-//! scrolls past that.
+//! the compositor makes it. It tells the compositor how tall its rows would
+//! make it, grows with them up to the share of the column it is given, and
+//! scrolls past that. A compositor that gives no share (before version 5 of
+//! the protocol) gets a panel no taller than [`MAX_HEIGHT`].
 
 // Rust guideline compliant 2026-02-21
 
@@ -58,12 +60,13 @@ use wayland_client::protocol::wl_keyboard;
 /// its corners. The same radius the desktop's other panels use.
 const PANEL_CORNER: f32 = 16.0;
 
-/// Tallest the panel grows, in logical points; past it the rows scroll.
+/// Tallest the panel grows, in logical points, when the compositor does not
+/// share the column's height out; past it the rows scroll.
 ///
-/// The client cannot know the output's height, so this is fixed: eight rows
-/// under the heading and the field, which leaves room below for other items
-/// on any screen the canvas is likely to be on.
-const MAX_HEIGHT: f32 = 480.0;
+/// Such a compositor never says how tall the column is, so this is fixed:
+/// eight rows under the heading and the field, which leaves room below for
+/// other items on any screen the canvas is likely to be on.
+const MAX_HEIGHT: i32 = 480;
 
 /// Height of the heading's band, which also holds the Ask button, in
 /// logical points.
@@ -223,11 +226,19 @@ impl Sessions {
         }
     }
 
-    /// Height the panel asks for, in whole points.
+    /// Height the panel would be with every row showing, in whole points.
+    fn natural_height(&self) -> i32 {
+        (LIST_TOP + self.content_height() + BOTTOM_PAD).ceil() as i32
+    }
+
+    /// Height the panel is drawn at, in whole points: all of it when it
+    /// fits its share of the column, and the share otherwise.
     fn panel_height(&self) -> i32 {
-        (LIST_TOP + self.content_height() + BOTTOM_PAD)
-            .min(MAX_HEIGHT)
-            .ceil() as i32
+        let natural = self.natural_height();
+        match self.item.as_ref() {
+            Some(item) => item.fit_height(natural, MAX_HEIGHT),
+            None => natural.min(MAX_HEIGHT),
+        }
     }
 
     /// Where the rows are shown, in the item's coordinates, for an item
@@ -366,7 +377,9 @@ impl Sessions {
         let events: Vec<_> = self.events.borrow_mut().drain(..).collect();
         for event in events {
             match event {
-                CanvasItemEvent::Configure { .. } => self.dirty = true,
+                CanvasItemEvent::Configure { .. } | CanvasItemEvent::MaxHeight { .. } => {
+                    self.dirty = true;
+                }
                 CanvasItemEvent::Shown => {
                     // A fresh connection lists the sessions afresh. What was
                     // shown last time stays up until the new list arrives,
@@ -424,9 +437,14 @@ impl Sessions {
         let Some(item) = self.item.as_ref() else {
             return;
         };
-        if !item.is_configured() {
+        // A compositor that shares the column's height says how much of it
+        // is the panel's right after the first configure.
+        if !item.is_configured() || (item.shares_height() && item.max_height().is_none()) {
             return;
         }
+        // The compositor answers a new content height with a new share,
+        // which draws again.
+        item.set_content_height(self.natural_height());
         let height = self.panel_height();
         let (width, current) = item.dimensions();
         if height != current {
@@ -743,6 +761,8 @@ impl Sessions {
 impl App for Sessions {
     fn on_app_ready(&mut self, _ctx: &AppContext) -> Result<(), Box<dyn std::error::Error>> {
         let item = CanvasItemSurface::new(self.panel_height())?;
+        // Said before the first draw, so the first share fits it.
+        item.set_content_height(self.natural_height());
         let events = Rc::clone(&self.events);
         item.on_event(move |_, event| events.borrow_mut().push(event));
         // Typing goes straight into the field when the canvas opens. A

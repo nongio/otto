@@ -86,11 +86,11 @@ use otto_kit::protocols::{
 use otto_kit::skia::Rect;
 
 use crate::balloon::{Balloon, Hit, Layout};
-use crate::canvas::{CanvasCard, CANVAS_VERSION};
+use crate::canvas::{CanvasCard, CANVAS_VERSION, SHARE_VERSION};
 use crate::card::Card;
 use crate::dbus::{Command, Items};
 use crate::drop::Drops;
-use crate::invite::{Invite, DRAG_VERSION};
+use crate::invite::Invite;
 use crate::panel::{Panel, Shell};
 use crate::primary::Primary;
 use crate::request::{Item, Stash, Surrounding};
@@ -190,9 +190,10 @@ fn serve(runtime: &tokio::runtime::Runtime) -> anyhow::Result<()> {
     otto_kit::icon_theme::spawn_icon_theme_watcher();
     // Optional: without it, or at a version too old to show itself, the
     // card floats as a balloon. From version 4 drags are announced, and a
-    // drop can start a stash.
+    // drop can start a stash; from version 5 the card keeps to its share of
+    // the column's height.
     let canvas_manager = globals
-        .bind::<OttoCanvasManagerV1, _, _>(&qh, CANVAS_VERSION..=DRAG_VERSION, ())
+        .bind::<OttoCanvasManagerV1, _, _>(&qh, CANVAS_VERSION..=SHARE_VERSION, ())
         .ok();
     tracing::info!(in_canvas = canvas_manager.is_some(), "where the card goes");
     let pointer = seat.get_pointer(&qh, ());
@@ -836,6 +837,7 @@ impl State {
                 for path in self.balloon.thumbnails_wanted() {
                     self.thumbnailer.request(path);
                 }
+                panel.set_content_height(layout.natural_height);
                 self.scroll.set_viewport(layout.viewport);
                 self.scroll.set_content_length(layout.body_length);
                 // Still in range after an item was taken out.
@@ -1323,6 +1325,12 @@ impl Dispatch<OttoCanvasItemV1, ()> for State {
                 card.configure(serial, width);
                 state.layout = None;
                 state.draw_panel();
+            }
+            otto_canvas_item_v1::Event::MaxHeight { height } => {
+                if card.set_max_height(height) {
+                    state.layout = None;
+                    state.draw_panel();
+                }
             }
             otto_canvas_item_v1::Event::Shown => {
                 card.set_shown(true);

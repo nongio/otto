@@ -106,17 +106,23 @@ events and never reach the state machine as scrolls.
 - Since version 4 the manager sends `drag_mime_type(string)` for each type a
   starting drag offers, then `drag_started`, and `drag_ended` when it is
   dropped or cancelled.
+- Since version 5 the item has `set_content_height(uint)`, its natural
+  height in points, and the compositor sends `max_height(uint)`, the most it
+  may be tall, after the first configure and whenever its share changes.
+  See [Sharing the height](#sharing-the-height).
 
-Otto advertises version 4. otto-kit binds `1..=4`, and each
+Otto advertises version 5. otto-kit binds `1..=5`, and each
 `CanvasItemSurface` method for a newer request (`set_keyboard_interactivity`,
-`show`, `set_order`) sends it only when the bound version has it, returning
+`show`, `set_order`, `set_content_height`) sends it only when the bound
+version has it, returning
 false otherwise, so a new client keeps running against an older compositor
 (an unknown request would get it disconnected). Clients that speak the wire
 directly, like otto-stash, gate the same way on the bound version.
 
 The server side is `src/otto_canvas/`: `protocol.rs` generates the bindings,
 `handlers.rs` holds the `GlobalDispatch`/`Dispatch` impls (`CanvasGlobal`),
-and `mod.rs` the state and behaviour. The client side is
+`allot.rs` shares the column's height, and `mod.rs` the state and
+behaviour. The client side is
 `otto_kit::surfaces::CanvasItemSurface`, which acks configures, creates its
 Skia surface on the first one and forwards every event to an `on_event`
 handler. Apps hear of drags through `App::on_canvas_drag_started(ctx,
@@ -127,19 +133,21 @@ mime_types)` and `App::on_canvas_drag_ended(ctx)`; `AppData` gathers the
 
 ```
 overlay_plane_{output}
+├── … layer_shell_top, layer_shell_overlay, dock_plane (primary only)
 ├── canvas_plane_{output}         hidden unless the canvas is on this output
 │   └── canvas_column             positioned and clipped by the canvas
 │       ├── canvas_slot           one per item, stacked by the canvas
 │       │   └── canvas_item       the client's surface layer (surface_layers)
 │       └── …
 ├── workspace_selector_{output}
-├── … layer_shell_top, layer_shell_overlay, dock_plane, overlay_layer (primary only)
+├── overlay_layer (primary only)
 └── popup_overlay (primary only)
 ```
 
-- Every output gets a `canvas_plane` as the bottom sublayer of its overlay
-  plane, right below the workspace selector, so the selector, the
-  layer-shell chrome, the dock and the popups all draw over it. The single
+- Every output gets a `canvas_plane` in its overlay plane, above the
+  layer-shell chrome and the dock and right below the workspace selector,
+  the OSD and the popups. The selector only shows in exposé, where the
+  canvas has faded out. The single
   `canvas_column` is re-parented into the plane of the output under the
   pointer when the canvas comes on screen.
 - Exposé fades every `canvas_plane` together with `layer_shell_overlay`,
@@ -157,6 +165,44 @@ overlay_plane_{output}
   plane is pushed while the canvas is on screen. Fullscreen direct scanout is
   refused while the canvas is on screen, and the backdrop-blur interest falls
   back to the whole output, since the column moves and its items may blur.
+
+## Sharing the height
+
+`src/otto_canvas/allot.rs` holds the pure share function,
+`allot(available, gap, &[Demand]) -> Vec<u32>`, with its unit tests. A
+`Demand` is `Content(h)` for an item that takes part or `Fixed(h)` for one
+that does not. It takes the gaps between showing items (height > 0) and the
+fixed heights off the column, then water-fills the rest: contents under the
+level keep their height, the others get the level, and the points the
+division leaves go to the topmost items at the level. `MIN_SHARE` (120 pt,
+or the content if less) is what fixed items can never squeeze an item below;
+when they leave less, each item gets its minimum and the column overflows,
+and a column too short for the minimums alone is water-filled whole.
+
+`Otto::canvas_share_height` builds the demands from `CanvasItem`
+(`content_height` from `set_content_height`, otherwise the buffer height from
+`item_size_points`), and sends `max_height` to each version 5 item whose
+share differs from the `max_height` it was last sent. An item that has not
+sent a content height is offered what `allot` would give it wanting the
+whole column. The height is `canvas_available_height()`: the column geometry
+(`canvas_geometry_on`) of the canvas's output, or of the output under the
+pointer or the primary one while hidden, in whole points.
+
+It runs from `canvas_relayout` (every item commit, `set_order`, a removed
+item, a width or config change, and `canvas_bring_on_screen` before
+`shown`), from `canvas_item_created` between `configure` and `shown`/`hidden`,
+from `set_content_height`, and from `layer_zones_changed` when an output's
+usable area moves. Stacking still uses buffer heights, so an item that has
+not yet resized to its share overflows for a frame rather than being
+squeezed by the compositor.
+
+On the client side `CanvasItemSurface::set_content_height` sends only a
+changed height, `max_height()` holds the last share
+(`CanvasItemEvent::MaxHeight` reaches the handler after it is stored), and
+`fit_height(content, fallback_max)` is `min(content, share)`, using
+`fallback_max` until a share arrives or below version 5.
+`shares_height()` says whether one will come; the Agents panel does not draw
+until it has.
 
 ## State and animation
 
@@ -257,7 +303,7 @@ every item a new configure and lays the column out again.
 
 ## Stash card
 
-`components/otto-stash` binds `otto_canvas_manager_v1` at version 3 or 4
+`components/otto-stash` binds `otto_canvas_manager_v1` at version 3 to 5
 when the compositor offers it (it needs `show`, `set_order` and `never`) and
 then hosts its "Ask about…" card as a canvas item (`otto-stash/src/canvas.rs`)
 instead of the floating overlay balloon (`panel.rs`). `card.rs` holds the
@@ -268,7 +314,11 @@ than `CanvasItemSurface`.
 The canvas card sets order -100 (above the Agents panel), `never` keyboard
 interactivity, and the launcher's frost through `otto-surface-style` without
 the balloon's shadow or position. It draws with `balloon.rs` at the
-configured width, as tall as its content up to 640 points. After an add, or
+configured width. At version 5 it sends its natural height
+(`Layout::natural_height`, the card with every item showing) with
+`set_content_height` whenever a layout changes it, counts as configured only once the first `max_height` has
+arrived, and lays out again on each new `max_height`, scrolling the items
+past it; below version 5 it grows up to 640 points. After an add, or
 when the card appears, it sends `show` once the new buffer is committed. It
 requests frame callbacks only while `shown`; on `hidden` an item shrinking
 away is removed at once. When the stash ends, or Ask holds it, the item is
@@ -278,7 +328,8 @@ destroyed and the canvas otherwise stays as it is. A region pick sends
 
 At version 4, `invite.rs` adds a drop invitation on `drag_started` when the
 drag may carry files (`text/uri-list`, or no types) and there is no card: a
-72-point item at the card's order with a dashed outline and the
+72-point item at the card's order (at version 5 it sends 72 as its content
+height, below any minimum share, and ignores `max_height`) with a dashed outline and the
 `stash-drop-invite` string, accented while a drag is over it. `drop.rs`
 accepts file drops on it as on the card and marks it `dropped`. On
 `drag_ended` an invitation nothing was dropped on is destroyed; one that took
@@ -342,10 +393,19 @@ its query). Each is reaped on a thread and followed by `dismiss`.
   resting at the right edge opens it passive, managers get the mime types,
   `drag_started` and `drag_ended`, a drop elsewhere hides it again, and a
   drop on an item keeps it.
-- `cargo test --lib otto_canvas`: also the drag decisions in `drag.rs`.
+- `cargo test --lib otto_canvas`: also the drag decisions in `drag.rs`, and
+  the height shares in `allot.rs` (content that fits, even splits over
+  several rounds, fixed items, the minimum, tiny columns).
+- Version 5, `items_share_the_column_height`: an item hears `max_height`
+  between `configure` and `hidden`; a tall and a short item get shares that
+  fit the column, the short one its content; a version 4 item with a buffer
+  counts as fixed and is told nothing.
 - `cargo test -p otto-launcher keys`: the shared list keys.
 
 ## Follow-ups
 
-- Overflow is clipped; the column should scroll.
+- Items below version 5, or more items than the minimums fit, can still
+  overflow the column, which is clipped.
+- Output scale or mode changes reach the shares only through the usable
+  area or the next show.
 - Popups of canvas items are not placed yet.

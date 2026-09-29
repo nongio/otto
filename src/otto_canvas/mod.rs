@@ -6,7 +6,9 @@
 //! stack top to bottom by the order their clients set (creation order where
 //! it is the same), each at the column's width, and each as tall as the
 //! buffer its client attached. Whatever does not fit in
-//! the usable height is clipped.
+//! the usable height is clipped. Clients bound at version 5 say how tall
+//! their content is and are told how tall they may be, so the column's
+//! height is shared rather than cut off at the bottom (see [`allot`]).
 //!
 //! The canvas is an overlay: it slides over the desktop and moves nothing
 //! underneath. It lives in the output's overlay plane (`canvas_plane` in
@@ -30,6 +32,7 @@
 //!
 //! See `specs/side-canvas.md` and `docs/developer/side-canvas.md`.
 
+pub mod allot;
 pub mod drag;
 pub mod handlers;
 pub mod protocol;
@@ -55,6 +58,7 @@ use smithay::wayland::fractional_scale::with_fractional_scale;
 
 use crate::config::Config;
 use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
+use crate::otto_canvas::allot::Demand;
 use crate::state::{Backend, Otto};
 
 pub use handlers::{CanvasGlobal, CanvasItemData, CANVAS_ITEM_ROLE};
@@ -91,6 +95,11 @@ struct CanvasItem {
     order: i32,
     /// When the item was created, for items with the same order.
     seq: u64,
+    /// How tall the item's content is, in logical points, once its client
+    /// has said (version 5).
+    content_height: Option<u32>,
+    /// The last `max_height` the item was sent, in logical points.
+    max_height: Option<u32>,
 }
 
 /// When a canvas item takes the keyboard.
@@ -691,25 +700,29 @@ impl<B: Backend> Otto<B> {
         self.surface_layers.insert(surface.id(), layer.clone());
 
         send_configure(&resource, canvas_width_points());
-        if self.canvas.on_screen() {
-            resource.shown();
-        } else {
-            resource.hidden();
-        }
         self.canvas_prefer_scale(&surface);
 
         let seq = self.canvas.next_seq;
         self.canvas.next_seq += 1;
         self.canvas.items.push(CanvasItem {
-            resource,
+            resource: resource.clone(),
             surface,
             slot,
             layer,
             keyboard: ItemKeyboard::OnPress,
             order: 0,
             seq,
+            content_height: None,
+            max_height: None,
         });
         self.canvas_sort_items();
+        // The new item's share comes before it hears whether it is seen.
+        self.canvas_share_height();
+        if self.canvas.on_screen() {
+            resource.shown();
+        } else {
+            resource.hidden();
+        }
         tracing::debug!(items = self.canvas.items.len(), "canvas item added");
     }
 
@@ -749,6 +762,77 @@ impl<B: Backend> Otto<B> {
         self.canvas_relayout();
         if self.canvas.on_screen() {
             self.canvas_request_redraw();
+        }
+    }
+
+    /// A client said how tall its item's content is. The column's height is
+    /// shared out again, which the item and its neighbours hear of as
+    /// `max_height`.
+    pub(crate) fn canvas_item_set_content_height(&mut self, item: &OttoCanvasItemV1, height: u32) {
+        let Some(entry) = self
+            .canvas
+            .items
+            .iter_mut()
+            .find(|entry| &entry.resource == item)
+        else {
+            return;
+        };
+        if entry.content_height == Some(height) {
+            return;
+        }
+        entry.content_height = Some(height);
+        self.canvas_share_height();
+    }
+
+    /// The column's height on the output it is on, or would open on, in
+    /// logical points: what the items share.
+    pub fn canvas_available_height(&self) -> Option<u32> {
+        let output = self.canvas_target_output()?;
+        let geometry = self.canvas_geometry_on(&output)?;
+        Some(available_points(&geometry))
+    }
+
+    /// Share the column's height among the items again, and tell those
+    /// bound at version 5 whose share changed.
+    ///
+    /// An item that has not said how tall its content is counts at its
+    /// buffer's height for the others, and is offered what it could have if
+    /// it wanted all of the column.
+    pub(crate) fn canvas_share_height(&mut self) {
+        if self.canvas.items.is_empty() {
+            return;
+        }
+        let Some(available) = self.canvas_available_height() else {
+            return;
+        };
+        let gap = Config::with(|c| c.canvas.gap);
+        let demands: Vec<Demand> = self
+            .canvas
+            .items
+            .iter()
+            .map(|item| match item.content_height {
+                Some(height) if item.resource.version() >= MAX_HEIGHT_SINCE => {
+                    Demand::Content(height)
+                }
+                _ => Demand::Fixed(buffer_height_points(&item.surface)),
+            })
+            .collect();
+        let shares = allot::allot(available, gap, &demands);
+        for (index, item) in self.canvas.items.iter_mut().enumerate() {
+            if item.resource.version() < MAX_HEIGHT_SINCE || !item.resource.is_alive() {
+                continue;
+            }
+            let share = if item.content_height.is_some() {
+                shares[index]
+            } else {
+                let mut wanting = demands.clone();
+                wanting[index] = Demand::Content(available);
+                allot::allot(available, gap, &wanting)[index]
+            };
+            if item.max_height != Some(share) {
+                item.max_height = Some(share);
+                item.resource.max_height(share);
+            }
         }
     }
 
@@ -1041,9 +1125,12 @@ impl<B: Backend> Otto<B> {
     }
 
     /// Stack the items top to bottom, each at the column's width and at its
-    /// buffer's height, a gap apart.
+    /// buffer's height, a gap apart. Their shares of the column's height are
+    /// worked out again first, since a buffer or the column may have
+    /// changed.
     fn canvas_relayout(&mut self) {
         self.canvas.items.retain(|item| item.resource.is_alive());
+        self.canvas_share_height();
         let Some(geometry) = self.canvas_geometry() else {
             return;
         };
@@ -1072,7 +1159,26 @@ impl<B: Backend> Otto<B> {
 
     /// Where the column goes on the canvas output.
     fn canvas_geometry(&self) -> Option<ColumnGeometry> {
-        let output = self.canvas.output.as_ref()?;
+        self.canvas_geometry_on(self.canvas.output.as_ref()?)
+    }
+
+    /// The output the column is on, or the one it would open on: under the
+    /// pointer, or the primary output.
+    fn canvas_target_output(&self) -> Option<Output> {
+        self.canvas
+            .output
+            .as_ref()
+            .or_else(|| {
+                self.workspaces
+                    .output_under(edge_probe(self.pointer.current_location()))
+                    .next()
+            })
+            .or_else(|| self.workspaces.primary_output())
+            .cloned()
+    }
+
+    /// Where the column goes on `output`.
+    fn canvas_geometry_on(&self, output: &Output) -> Option<ColumnGeometry> {
         let output_geo = self.workspaces.output_geometry(output)?;
         let scale = output.current_scale().fractional_scale();
         let usable = self.usable_zone(output);
@@ -1255,6 +1361,23 @@ fn send_drag_started(manager: &OttoCanvasManagerV1, mime_types: &[String]) {
 fn send_configure(resource: &OttoCanvasItemV1, width: u32) {
     let serial = SERIAL_COUNTER.next_serial();
     resource.configure(serial.into(), width);
+}
+
+/// The item version that brought `set_content_height` and `max_height`.
+const MAX_HEIGHT_SINCE: u32 = 5;
+
+/// The column's height in whole logical points, rounded down so that
+/// items sized to it never reach past the bottom.
+fn available_points(geometry: &ColumnGeometry) -> u32 {
+    let points = (geometry.height_px / geometry.scale.max(f64::EPSILON)).floor();
+    // A height is never negative, and no output is four billion points tall.
+    points.clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+/// The logical height of the buffer `surface` has attached; zero without
+/// one.
+fn buffer_height_points(surface: &WlSurface) -> u32 {
+    item_size_points(surface).map_or(0, |(_, h)| u32::try_from(h).unwrap_or(0))
 }
 
 /// The logical size of the buffer `surface` has attached, if any.

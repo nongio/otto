@@ -76,6 +76,9 @@ pub struct Layout {
     /// Size in logical pixels.
     pub width: f32,
     pub height: f32,
+    /// How tall the card would be with every item showing, in logical
+    /// pixels, however tall that is.
+    pub natural_height: f32,
 }
 
 impl Layout {
@@ -267,6 +270,7 @@ impl Balloon {
             body_length,
             width,
             height: (viewport.bottom + foot_h).ceil(),
+            natural_height: (head_h + body_length.max(MIN_VIEW_H).floor() + foot_h).ceil(),
         }
     }
 

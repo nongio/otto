@@ -7,7 +7,7 @@
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::canvas::CanvasCard;
-use crate::panel::{Panel, MAX_CARD_HEIGHT};
+use crate::panel::Panel;
 
 /// The card on screen, from the first add until it is sent or cancelled.
 #[derive(Debug)]
@@ -57,7 +57,15 @@ impl Card {
     pub fn bounds(&self) -> (f32, f32) {
         match self {
             Self::Floating(panel) => (crate::balloon::WIDTH, panel.max_card_height()),
-            Self::Canvas(card) => (card.width(), MAX_CARD_HEIGHT as f32),
+            Self::Canvas(card) => (card.width(), card.max_height()),
+        }
+    }
+
+    /// The card was laid out `height` logical pixels tall with room for
+    /// everything: in the canvas, the column shares its height by it.
+    pub fn set_content_height(&mut self, height: f32) {
+        if let Self::Canvas(card) = self {
+            card.set_content_height(height);
         }
     }
 

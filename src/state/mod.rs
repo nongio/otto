@@ -1379,6 +1379,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         self.workspaces.refresh_dock_metrics();
         if self.usable_zone(output) != before {
             self.refit_zoned_windows(Some(output));
+            // The column's height follows the usable area.
+            self.canvas_share_height();
         }
     }
 

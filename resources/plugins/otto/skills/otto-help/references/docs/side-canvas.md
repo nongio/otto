@@ -103,7 +103,9 @@ The canvas has no shortcut by default. To add one:
 
 ## Limits
 
-- Panels that do not fit in the height of the screen are cut off at the
-  bottom; the canvas does not scroll yet.
+- Panels share the height of the screen: a short panel shows all of itself,
+  and taller ones split the room that is left and scroll within it. The
+  canvas itself does not scroll, so with a great many panels the last ones
+  can still be cut off at the bottom.
 - Panels appear in the order their applications created them, unless an
   application asks for a place (the stash card goes on top).

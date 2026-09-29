@@ -27,7 +27,7 @@ pub struct CanvasItemData {
 }
 
 /// The version of `otto-canvas-v1` advertised.
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 /// Owner of the `otto_canvas_manager_v1` global.
 #[derive(Debug)]
@@ -138,6 +138,9 @@ impl<B: Backend> Dispatch<OttoCanvasItemV1, CanvasItemData, Otto<B>> for CanvasG
                 state.canvas_item_set_order(item, order);
             }
             otto_canvas_item_v1::Request::Dismiss => state.canvas_hide(),
+            otto_canvas_item_v1::Request::SetContentHeight { height } => {
+                state.canvas_item_set_content_height(item, height);
+            }
             // The item leaves the canvas in `destroyed`, which also covers a
             // client that goes away without asking.
             otto_canvas_item_v1::Request::Destroy => {}

@@ -562,7 +562,7 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let wlr_layer_shell: Option<ZwlrLayerShellV1> = globals.bind(&qh, 1..=4, ()).ok();
         let otto_dock_manager = globals.bind(&qh, 1..=1, ()).ok();
         // The side canvas; Otto only, so optional like the dock.
-        let otto_canvas_manager = globals.bind(&qh, 1..=4, ()).ok();
+        let otto_canvas_manager = globals.bind(&qh, 1..=5, ()).ok();
         // Where the desktop's text cursor is, for a panel that wants to sit
         // beside the text rather than in the middle of the screen. Absent on
         // any compositor but Otto, which is why it is optional.
@@ -2012,6 +2012,9 @@ impl<A: App + 'static> Dispatch<crate::protocols::otto_canvas_item_v1::OttoCanva
             },
             Event::Shown => CanvasItemEvent::Shown,
             Event::Hidden => CanvasItemEvent::Hidden,
+            Event::MaxHeight { height } => CanvasItemEvent::MaxHeight {
+                height: i32::try_from(height).unwrap_or(i32::MAX),
+            },
         };
         AppContext::dispatch_canvas_item_event(&proxy.id(), event);
     }

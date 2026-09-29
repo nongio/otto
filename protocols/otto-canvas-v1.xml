@@ -43,9 +43,14 @@
     rests at the right edge of an output, so an item can take the drop, and
     tells every manager when a drag starts and ends (version 4), so a client
     can put an item in the column that is ready for it.
+
+    The column has a fixed height, and items share it (version 5): each
+    tells the compositor how tall its content is, and the compositor tells
+    each how tall it may be, so every item keeps a share of the column and
+    scrolls what does not fit.
   </description>
 
-  <interface name="otto_canvas_manager_v1" version="4">
+  <interface name="otto_canvas_manager_v1" version="5">
     <description summary="creates canvas items">
       The manager global lets a client put surfaces in the side canvas.
     </description>
@@ -63,8 +68,9 @@
         another role.
 
         The compositor answers with a configure event. The client must
-        acknowledge it before it attaches a buffer. A visibility event
-        (shown or hidden) follows the first configure.
+        acknowledge it before it attaches a buffer. From version 5 a
+        max_height event follows the first configure. A visibility event
+        (shown or hidden) comes next.
       </description>
       <arg name="id" type="new_id" interface="otto_canvas_item_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
@@ -112,11 +118,16 @@
     </event>
   </interface>
 
-  <interface name="otto_canvas_item_v1" version="4">
+  <interface name="otto_canvas_item_v1" version="5">
     <description summary="a surface in the side canvas">
       One surface in the column. The compositor positions it; the client
       draws it at the configured width and at whatever height it needs.
       Content taller than the space left in the column is clipped.
+
+      From version 5 the column's height is shared: the client says how
+      tall its content is with set_content_height, and the compositor
+      answers with max_height, the most the item may be tall. A client that
+      keeps to it is never clipped.
 
       Destroying the item removes the surface from the canvas. The surface
       keeps its role and may only be given to a new canvas item.
@@ -242,6 +253,41 @@
       </description>
       <arg name="order" type="int" summary="lower sits higher"/>
     </request>
+
+    <request name="set_content_height" since="5">
+      <description summary="how tall the item's content is">
+        Say how tall, in logical points, the item would be with room for
+        all of its content: its natural height, however tall that is, not
+        the height it is drawn at. Send it before the first buffer and
+        again whenever it changes.
+
+        The compositor shares the column's height among the items by what
+        they ask for and answers with max_height. Until an item has sent
+        one, the compositor counts it at the height of its buffer.
+      </description>
+      <arg name="height" type="uint" summary="content height in logical points"/>
+    </request>
+
+    <event name="max_height" since="5">
+      <description summary="the most the item may be tall">
+        The most, in logical points, the item may be tall, so that it and
+        the items around it fit in the column. The client draws its next
+        buffer no taller than the smaller of this and its content's height,
+        and scrolls whatever does not fit.
+
+        An item whose content fits in its share is given its content's
+        height. Items that want more share what is left equally, and every
+        item keeps a share of the column, however tall the others are,
+        unless the column is too short to give each one a useful height.
+
+        Sent after the first configure, before shown, and again whenever
+        the share changes: an item's content height changes, items come,
+        go or move, or the column changes size or moves to another output.
+        The client should resize promptly, since items stack by the height
+        of their buffers.
+      </description>
+      <arg name="height" type="uint" summary="maximum height in logical points"/>
+    </event>
 
     <request name="destroy" type="destructor">
       <description summary="remove the item">

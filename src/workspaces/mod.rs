@@ -134,8 +134,8 @@ pub struct OutputWorkspaces {
     /// hidden whenever the session is unlocked. See `src/lock.rs`.
     pub lock_plane: Layer,
     /// Holds the side canvas column while it is on this output. Lives in
-    /// `overlay_plane`, right below the workspace selector (and so under the
-    /// dock, the layer-shell chrome and the popups), and is hidden whenever
+    /// `overlay_plane`, above the dock and the layer-shell chrome and right
+    /// below the workspace selector and the popups, and is hidden whenever
     /// the canvas is somewhere else or off screen. Fades out with exposé. See `src/otto_canvas/`.
     pub canvas_plane: Layer,
     /// Per-output workspace selector strip (expose UI). Each output shows its
@@ -4659,7 +4659,9 @@ impl Workspaces {
         ));
         // The side canvas container. Empty and hidden until the canvas opens
         // on this output; the column is moved in here when it does. It sits
-        // right below the workspace selector, under all the overlay chrome.
+        // above the dock and the layer-shell chrome, right below the
+        // workspace selector; both are attached with the rest of the overlay
+        // plane below.
         let canvas_plane = self.layers_engine.new_layer();
         canvas_plane.set_key(format!("canvas_plane_{}", output.name()));
         canvas_plane.set_layout_style(taffy::Style {
@@ -4668,8 +4670,6 @@ impl Workspaces {
         });
         canvas_plane.set_pointer_events(false);
         canvas_plane.set_hidden(true);
-        let _ = overlay_plane.add_sublayer(&canvas_plane);
-        let _ = overlay_plane.add_sublayer(&selector_layer);
 
         let switcher_plane = self.layers_engine.new_layer();
         switcher_plane.set_key(format!("switcher_plane_{}", output.name()));
@@ -4747,6 +4747,11 @@ impl Workspaces {
             // Below the OSD and the popups, above the layer-shell chrome.
             let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
             let _ = overlay_plane.add_sublayer(&dock_plane.clone());
+            // The side canvas covers the dock and the chrome. The workspace
+            // selector is above it; it only shows in exposé, where the canvas
+            // and the layer-shell chrome have faded out.
+            let _ = overlay_plane.add_sublayer(&canvas_plane);
+            let _ = overlay_plane.add_sublayer(&selector_layer);
             let _ = overlay_plane.add_sublayer(&self.overlay_layer);
             let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
@@ -4756,6 +4761,8 @@ impl Workspaces {
             let _ = switcher_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
         } else {
+            let _ = overlay_plane.add_sublayer(&canvas_plane);
+            let _ = overlay_plane.add_sublayer(&selector_layer);
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
             let _ = output_layer.add_sublayer(&dock_plane.clone());
