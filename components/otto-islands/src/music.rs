@@ -822,8 +822,11 @@ fn window_named_after_player(info: &PlaybackInfo, app_id: &str) -> bool {
 }
 
 fn window_titled_after_track(info: &PlaybackInfo, title: &str) -> bool {
-    let track = info.track_title.trim();
-    track.chars().count() >= 3 && title.contains(track)
+    // A browser collapses runs of whitespace in the page title it names the
+    // window after, but not in the media metadata the track title comes from.
+    let collapse = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let track = collapse(&info.track_title);
+    track.chars().count() >= 3 && collapse(title).contains(&track)
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1039,19 @@ mod tests {
         let open = [playing_tab.clone(), other_tab.clone()];
         assert!(player_owns_window(&info, &playing_tab, &open));
         assert!(!player_owns_window(&info, &other_tab, &open));
+    }
+
+    #[test]
+    fn a_track_title_matches_the_tab_despite_extra_spaces() {
+        let info = playing(
+            "Róisín Murphy  - Incapable | Glastonbury 2022",
+            &["chromium"],
+        );
+        let tab = window(
+            "google-chrome",
+            "Róisín Murphy - Incapable | Glastonbury 2022 - YouTube - Google Chrome",
+        );
+        assert!(player_owns_window(&info, &tab, std::slice::from_ref(&tab)));
     }
 
     #[test]
