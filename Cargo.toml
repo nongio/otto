@@ -77,12 +77,6 @@ features = [
     "renderer_pixman",
 ]
 
-
-
-# [workspace]
-# members = ["wlcs_screencomposer"]
-
-
 [features]
 perf-counters = []
 default = ["egl", "winit", "udev", "renderer_sync", "xwayland", "vulkan"]

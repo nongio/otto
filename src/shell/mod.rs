@@ -45,7 +45,6 @@ pub(crate) mod commands;
 mod element;
 mod grabs;
 pub mod layer;
-pub(crate) mod ssd;
 mod tiling;
 mod tiling_drag;
 #[cfg(feature = "xwayland")]
