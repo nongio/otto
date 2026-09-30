@@ -127,8 +127,10 @@ args = []
 
 # The desk: the files in your Desktop folder, shown behind the windows. Otto
 # runs it as `otto-files --desk`, restarts it if it crashes and stops it when
-# this is switched off. Off by default. Its folder, size and arrangement are
-# set in ~/.config/otto/files.toml.
+# this is switched off. Off by default. Its folder, size, arrangement and what
+# it does with icons that don't fit are set in ~/.config/otto/files.toml;
+# Settings ▸ Appearance ▸ Desk edits the folder and the overflow, and moves
+# and resizes the panel with the pointer.
 #
 # [desk]
 # enabled = true

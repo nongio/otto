@@ -99,6 +99,20 @@ settings-background-image-unavailable = Impossibile da mostrare
 settings-show-desk = Mostra i file sulla scrivania
 settings-show-desk-detail = I file della cartella Scrivania, dietro le finestre
 
+settings-group-desk = Scrivania
+settings-desk-folder = Cartella
+settings-desk-folder-default = La tua cartella Scrivania
+settings-desk-choose-folder-title = Scegli una cartella per la scrivania
+settings-desk-layout = Dimensioni e posizione
+settings-desk-layout-edit = Modifica…
+settings-desk-layout-reset = Ripristina
+settings-desk-layout-fill = Occupa tutto lo schermo. Modifica mostra le maniglie sulla scrivania per sistemarla
+settings-desk-layout-placed = Sistemata a mano. Ripristina la riporta a tutto schermo
+settings-desk-overflow = Quando le icone non entrano
+settings-desk-overflow-scroll = Scorri
+settings-desk-overflow-stack = Impila
+settings-desk-overflow-detail = Scorri sposta la griglia. Impila raccoglie le icone in più nell’ultima casella.
+
 settings-group-pointer-and-icons = Puntatore e icone
 settings-cursor-theme = Tema del cursore
 settings-cursor-size = Dimensione del cursore
@@ -509,6 +523,15 @@ files-open-with-always = Usa sempre questa app per “{ $kind }”
 files-open-with-not-remembered = Aperto, ma la scelta non è stata salvata: { $error }
 files-new-folder = Nuova cartella
 files-desk-open-in-files = Apri in File
+files-desk-edit-done = Fine
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = Altri elementi
+files-desk-pile =
+    { $count ->
+        [one] 1 altro elemento
+       *[other] Altri { $count } elementi
+    }
 files-move-to-trash = Sposta nel Cestino
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

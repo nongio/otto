@@ -99,6 +99,20 @@ settings-background-image-unavailable = Não é possível exibir
 settings-show-desk = Mostrar arquivos na área de trabalho
 settings-show-desk-detail = Os arquivos da pasta Área de trabalho, atrás das janelas
 
+settings-group-desk = Mesa
+settings-desk-folder = Pasta
+settings-desk-folder-default = Sua pasta Área de trabalho
+settings-desk-choose-folder-title = Escolha uma pasta para a mesa
+settings-desk-layout = Tamanho e posição
+settings-desk-layout-edit = Editar…
+settings-desk-layout-reset = Redefinir
+settings-desk-layout-fill = Ocupa a tela toda. Editar mostra alças na mesa para posicioná-la
+settings-desk-layout-placed = Posicionada à mão. Redefinir faz ela ocupar a tela toda de novo
+settings-desk-overflow = Quando os ícones não cabem
+settings-desk-overflow-scroll = Rolar
+settings-desk-overflow-stack = Empilhar
+settings-desk-overflow-detail = Rolar move a grade. Empilhar junta os ícones que sobram na última casa.
+
 settings-group-pointer-and-icons = Ponteiro e ícones
 settings-cursor-theme = Tema do cursor
 settings-cursor-size = Tamanho do cursor
@@ -509,6 +523,15 @@ files-open-with-always = Sempre usar este aplicativo para “{ $kind }”
 files-open-with-not-remembered = Aberto, mas a escolha não foi salva: { $error }
 files-new-folder = Nova pasta
 files-desk-open-in-files = Abrir em Arquivos
+files-desk-edit-done = Concluído
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = Mais itens
+files-desk-pile =
+    { $count ->
+        [one] Mais 1 item
+       *[other] Mais { $count } itens
+    }
 files-move-to-trash = Mover para o lixo
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

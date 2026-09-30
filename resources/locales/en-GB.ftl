@@ -99,6 +99,20 @@ settings-background-image-unavailable = Cannot be shown
 settings-show-desk = Show files on the desktop
 settings-show-desk-detail = The files in your Desktop folder, behind the windows
 
+settings-group-desk = Desk
+settings-desk-folder = Folder
+settings-desk-folder-default = Your Desktop folder
+settings-desk-choose-folder-title = Choose a Folder for the Desk
+settings-desk-layout = Size and position
+settings-desk-layout-edit = Edit…
+settings-desk-layout-reset = Reset
+settings-desk-layout-fill = Fills the screen. Edit shows handles on the desk to drag it into place
+settings-desk-layout-placed = Placed by hand. Reset makes it fill the screen again
+settings-desk-overflow = When icons don’t fit
+settings-desk-overflow-scroll = Scroll
+settings-desk-overflow-stack = Stack in a pile
+settings-desk-overflow-detail = Scroll moves the grid. Stack gathers the extra icons into the last cell.
+
 settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
 settings-cursor-size = Cursor size
@@ -510,6 +524,15 @@ files-open-with-not-remembered = Opened, but couldn’t save the choice: { $erro
 files-new-folder = New Folder
 # The desk's background menu: shows the desk's own folder in a Files window.
 files-desk-open-in-files = Open in Files
+files-desk-edit-done = Done
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = More items
+files-desk-pile =
+    { $count ->
+        [one] 1 more item
+       *[other] { $count } more items
+    }
 files-new-folder-with-selection = New Folder with Selection
 # $count is always two or more; the single-item case uses
 # files-new-folder-with-selection.

@@ -382,8 +382,20 @@ are:
 - **Appearance** — sits right after General. Colour scheme (light/dark),
   accent colour, rounded corners, frosting, which end of a title bar the
   window controls sit at, the maximize button, font family and GTK theme; the
-  desktop's background colour and image and whether the desk is shown; the
-  cursor theme and size and the icon theme; and the top bar's clock.
+  desktop's background colour and image; the desk; the cursor theme and size
+  and the icon theme; and the top bar's clock.
+
+  The Desk group holds *Show files on the desktop* (`desk.enabled`), then
+  three rows that are not `org.otto.Settings` settings but the desk's own, in
+  the `[desk]` section of `~/.config/otto/files.toml`: *Folder*, whose
+  **Choose…** opens the portal's folder picker and writes `folder`; *When
+  icons don't fit*, a pop-up offering Scroll and Stack in a pile that writes
+  `overflow = "scroll"` or `"stack"` (an unset or unknown value shows as
+  Scroll, the desk's default); and *Size and position*, whose **Edit…** asks
+  the running desk for its edit mode over `org.otto.Desk1` and whose
+  **Reset** writes `anchor = "fill"`. All are edited in place with
+  everything else in the file kept, and the desk follows the file live. *Size and position* is inactive while the desk
+  is off ([desk.md](./desk.md)).
 
   The font family is a pop-up that lists every family fontconfig knows of, so
   like the language it caps its height, scrolls and is walked by typing.

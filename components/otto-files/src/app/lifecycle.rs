@@ -166,6 +166,25 @@ impl App for FilesApp {
                     strip.visible(pane),
                 )
             }
+            ViewMode::Grid if browser.desk_pile().is_some() => {
+                // The desk's pile: the cells up to it, and the fan's items
+                // while it is open. Closed, the pile is one node.
+                let cells =
+                    view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
+                let pile = browser.desk_pile().expect("checked by the guard");
+                let end = match pile.fan {
+                    Some(_) => browser.desk_pile_shown().unwrap_or_default().end,
+                    None => pile.pile.first + 1,
+                };
+                (
+                    Box::new(move |index| {
+                        pile.entry_rect(cells, index).unwrap_or_else(|| {
+                            view::grid_cell_rect_in(cells, view::GridSections::FLAT, index, 0.0)
+                        })
+                    }),
+                    0..end.min(count),
+                )
+            }
             ViewMode::Grid => {
                 let cells =
                     view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
@@ -202,6 +221,10 @@ impl App for FilesApp {
         // The keyboard's row is described wherever it is: it is what the focus
         // names, and a focus pointing at an undescribed node reads as nothing.
         let off_screen_cursor = cursor.filter(|c| *c < count && !shown.contains(c));
+        let closed_pile = browser
+            .desk_pile()
+            .filter(|pile| pile.fan.is_none())
+            .map(|pile| pile.pile);
 
         tree.region(
             FILES_LIST,
@@ -215,6 +238,19 @@ impl App for FilesApp {
                     tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
                         node.set_size_of_set(count);
                         node.set_position_in_set(index + 1);
+                        if let Some(pile) = closed_pile.filter(|pile| pile.first == index) {
+                            node.set_label(otto_kit::t_owned!(
+                                "files-desk-pile",
+                                count = pile.count as i64
+                            ));
+                            node.set_selected(
+                                pile.range()
+                                    .filter_map(|i| entries.get(i))
+                                    .any(|e| selection.contains(&e.selection_key())),
+                            );
+                            node.add_action(Action::Click);
+                            return;
+                        }
                         node.set_label(entry.name.clone());
                         // What the Kind column says, plus the size for a file: the
                         // two things that tell one listing row from another when
@@ -291,7 +327,11 @@ impl App for FilesApp {
         });
         let Some(index) = target else { return };
 
-        browser.press_entry(depth, index);
+        if browser.closed_pile_at(index).is_some() {
+            browser.open_desk_fan();
+        } else {
+            browser.press_entry(depth, index);
+        }
         drop(browser);
         self.render();
     }
@@ -322,6 +362,7 @@ impl App for FilesApp {
         // surface has no activated state — and it is read here.
         if view::is_desk() {
             self.follow_desk_focus();
+            self.follow_desk_edit();
         } else if let Some(window) = self.window.as_ref() {
             let area = {
                 let browser = self.state.lock().unwrap();
@@ -583,8 +624,15 @@ impl App for FilesApp {
         let (width, height) = (width as f32, height as f32);
         // Presses land only on the panel. Under `fill` that is the whole
         // surface; a smaller panel leaves the rest of the desktop to the
-        // wallpaper's own clients.
-        window.set_input_region(Some(&[view::desk_panel_rect(width, height)]));
+        // wallpaper's own clients. In edit mode, everywhere: a handle sits
+        // half outside the panel, and a press beside it must not fall through.
+        let region = if self.desk_surface_editing {
+            Rect::from_wh(width, height)
+        } else {
+            view::desk_panel_rect(width, height)
+        };
+        window.set_input_region(Some(&[region]));
+        self.desk_input_region = Some(region);
         {
             let mut browser = self.state.lock().unwrap();
             browser.size = (width, height);
@@ -757,13 +805,16 @@ impl FilesApp {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => view::grid_rename_rect(
-                        width,
-                        height,
-                        &browser.recent_sections,
-                        scroll,
-                        index,
-                    ),
+                    ViewMode::Grid => match browser.desk_pile_entry_rect(index) {
+                        Some(cell) => view::grid_rename_rect_over(cell),
+                        None => view::grid_rename_rect(
+                            width,
+                            height,
+                            &browser.recent_sections,
+                            scroll,
+                            index,
+                        ),
+                    },
                     ViewMode::Photos => {
                         view::photos_rename_rect(width, height, &browser.photos, scroll, index)
                     }
@@ -913,6 +964,69 @@ impl FilesApp {
         let scene = Arc::new(Mutex::new(window.layer_node().map(scene::Scene::new)));
         self.install_window(window, scene);
         Ok(())
+    }
+
+    /// Keep the desk's surface in step with its config and its edit mode.
+    ///
+    /// A call to `org.otto.Desk1.EditLayout` starts edit mode; a change to
+    /// `files.toml` is re-read; and the surface follows edit mode: above the
+    /// windows and holding the keyboard while it is up, so the outline is not
+    /// hidden under Settings and Escape reaches it, back below them after.
+    fn follow_desk_edit(&mut self) {
+        use otto_kit::surfaces::layer_shell::{KeyboardInteractivity, Layer};
+
+        if self.desk_config_watch.is_none() {
+            let dir = crate::places_config::config_path()
+                .and_then(|path| path.parent().map(Path::to_path_buf));
+            if let Some(dir) = dir {
+                // The folder Otto's own configuration lives in. Made here if
+                // missing, since a folder that does not exist cannot be
+                // watched for the file appearing in it.
+                let _ = std::fs::create_dir_all(&dir);
+                self.desk_config_watch = Some(crate::watch::DirWatch::new(&dir));
+            }
+        }
+        let config_changed = self
+            .desk_config_watch
+            .as_ref()
+            .is_some_and(|watch| watch.take().is_some());
+
+        let (editing, size) = {
+            let mut browser = self.state.lock().unwrap();
+            if crate::desk_service::take_edit_request() {
+                browser.begin_desk_edit();
+            }
+            if config_changed {
+                browser.reload_desk_config();
+            }
+            (browser.desk_editing.is_some(), browser.size)
+        };
+
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if editing != self.desk_surface_editing {
+            self.desk_surface_editing = editing;
+            if let Some(surface) = window.layer_surface() {
+                if editing {
+                    surface.set_layer(Layer::Top);
+                    surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+                } else {
+                    surface.set_layer(Layer::Bottom);
+                    surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+                }
+            }
+        }
+        let region = if editing {
+            Rect::from_wh(size.0, size.1)
+        } else {
+            view::desk_panel_rect(size.0, size.1)
+        };
+        if self.desk_input_region != Some(region) {
+            self.desk_input_region = Some(region);
+            window.set_input_region(Some(&[region]));
+            window.request_frame();
+        }
     }
 
     /// Whether the desk holds the keyboard, as the browser's chrome reads

@@ -563,6 +563,8 @@ fn open_menu(
             choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::desk::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::appearance::menu_choices(select.id, &select.current) {
             choices
         } else if let Some(values) = display_slot {
@@ -634,7 +636,10 @@ fn open_menu(
         selected,
         move |index| {
             if let Some(value) = values.get(index) {
-                if panes::privacy::choose(id, value) || panes::keyboard_layouts::choose(id, value) {
+                if panes::privacy::choose(id, value)
+                    || panes::keyboard_layouts::choose(id, value)
+                    || panes::desk::choose(id, value)
+                {
                 } else if displays::menu_choices(id).is_some() {
                     displays::choose(id, value);
                 } else if agents::owns(id) {
@@ -706,6 +711,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             panes::general::press(row, button);
             panes::agents::press(row, button);
             panes::search::press(row, button);
+            panes::desk::press(row, button);
             panes::keyboard_layouts::press(row, button);
             if let Some((id, name)) = agents::take_rename() {
                 start_edit(
@@ -980,6 +986,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
             let shown = match row.id {
                 Some(id) => panes::keyboard_layouts::display(id, current)
                     .or_else(|| panes::appearance::display(id, current))
+                    .or_else(|| panes::desk::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
             };
@@ -2286,6 +2293,7 @@ impl App for SettingsApp {
         if settings_client::take_dirty()
             | agents::take_service_dirty()
             | panes::search::take_dirty()
+            | panes::desk::take_dirty()
         {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);

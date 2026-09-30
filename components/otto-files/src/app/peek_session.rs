@@ -10,6 +10,12 @@ impl Browser {
     /// Both are usable now that the panel is drawn into this same surface.
     pub(super) fn peek_anchor(&self) -> Rect {
         let depth = self.active.min(self.columns.len().saturating_sub(1));
+        if let Some(cell) = self.columns[depth]
+            .cursor
+            .and_then(|index| self.desk_pile_entry_rect(index))
+        {
+            return view::entry_icon_rect(cell, ViewMode::Grid);
+        }
         let entries = self.visible(depth);
         let column = &self.columns[depth];
         let pane = view::PaneData {

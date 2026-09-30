@@ -98,6 +98,20 @@ settings-background-image-unavailable = 无法显示
 settings-show-desk = 在桌面上显示文件
 settings-show-desk-detail = “桌面”文件夹中的文件，显示在窗口后面
 
+settings-group-desk = 桌面
+settings-desk-folder = 文件夹
+settings-desk-folder-default = 你的“桌面”文件夹
+settings-desk-choose-folder-title = 选择桌面要显示的文件夹
+settings-desk-layout = 大小和位置
+settings-desk-layout-edit = 编辑…
+settings-desk-layout-reset = 重置
+settings-desk-layout-fill = 占满屏幕。“编辑”会在桌面上显示手柄，可拖动调整
+settings-desk-layout-placed = 已手动放置。“重置”可恢复为占满屏幕
+settings-desk-overflow = 图标放不下时
+settings-desk-overflow-scroll = 滚动
+settings-desk-overflow-stack = 堆叠
+settings-desk-overflow-detail = 滚动会移动网格。堆叠会把多出的图标收进最后一格。
+
 settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
 settings-cursor-size = 光标大小
@@ -501,6 +515,14 @@ files-open-with-always = 始终使用此应用程序打开“{ $kind }”
 files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
 files-desk-open-in-files = 在文件中打开
+files-desk-edit-done = 完成
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = 更多项目
+files-desk-pile =
+    { $count ->
+       *[other] 另外 { $count } 项
+    }
 files-move-to-trash = 移到废纸篓
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

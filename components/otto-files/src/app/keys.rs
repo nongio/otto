@@ -43,6 +43,21 @@ impl FilesApp {
         if key_state != wl_keyboard::KeyState::Pressed {
             return;
         }
+        // The desk's edit mode has the keyboard while it is up: Escape and
+        // Return both finish it and keep the new geometry, the way Done does,
+        // and nothing else reaches the icons behind it.
+        {
+            let mut browser = self.state.lock().unwrap();
+            if browser.desk_editing.is_some() {
+                if matches!(
+                    event.keysym,
+                    Keysym::Escape | Keysym::Return | Keysym::KP_Enter
+                ) {
+                    browser.finish_desk_edit(true);
+                }
+                return;
+            }
+        }
         let mods = *self.modifiers.lock().unwrap();
         let (ctrl, shift) = (mods.ctrl, mods.shift);
         // What the text fields are handed: Alt and Cmd move and delete by word
@@ -499,8 +514,11 @@ impl FilesApp {
                 Keysym::Return | Keysym::KP_Enter => {
                     // In the picker, Return means "this one" — descend into a
                     // directory or accept a file. Renaming is file management,
-                    // which the picker does not do.
-                    if browser.picker.is_some() {
+                    // which the picker does not do. On the desk's closed
+                    // pile it opens the fan: the pile is not a file to rename.
+                    if browser.cursor_on_closed_pile() {
+                        browser.open_desk_fan();
+                    } else if browser.picker.is_some() {
                         browser.open_selection();
                     } else {
                         browser.start_rename();
@@ -577,6 +595,7 @@ impl FilesApp {
                 Keysym::z if ctrl && browser.picker.is_none() => browser.undo_last(),
                 // Space toggles: the second press dismisses what the first
                 // opened, which is the gesture people already have.
+                Keysym::space if browser.cursor_on_closed_pile() => browser.open_desk_fan(),
                 Keysym::space => {
                     if !browser.close_peek() {
                         self.start_peek(&mut browser);
@@ -603,6 +622,13 @@ impl FilesApp {
                         browser.clear_search();
                     } else if browser.close_peek() {
                         // The preview took it.
+                    } else if browser.close_desk_fan() {
+                        // The desk's fan took it; the keyboard goes back to
+                        // the pile.
+                        if let Some(pile) = browser.desk_pile() {
+                            let depth = browser.columns.len() - 1;
+                            browser.columns[depth].cursor = Some(pile.pile.first);
+                        }
                     } else if menu_open {
                         if let Some(session) = browser.picker.as_mut() {
                             session.filter_open = false;

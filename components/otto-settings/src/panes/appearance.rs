@@ -1,6 +1,7 @@
 //! The appearance pane: how the desktop looks.
 //!
-//! Rows carrying an `id` are bound to `org.otto.Settings`. The font, cursor
+//! Rows carrying an `id` are bound to `org.otto.Settings`; the desk's group
+//! is [`super::desk`]'s, which also writes the desk's own file. The font, cursor
 //! and icon theme pop-ups are filled by [`crate::discovery`], which scans what
 //! is installed; the clock format pop-up is filled here, with each format
 //! shown as it would render the current time.
@@ -100,11 +101,9 @@ pub fn build() -> Pane {
                     )
                     .detail(otto_kit::t!("settings-background-image-detail"))
                     .id("background_image"),
-                    Row::new(otto_kit::t!("settings-show-desk"), Control::Toggle(false))
-                        .detail(otto_kit::t!("settings-show-desk-detail"))
-                        .id("desk.enabled"),
                 ],
             ),
+            super::desk::group_rows(),
             group(
                 otto_kit::t!("settings-group-pointer-and-icons"),
                 vec![

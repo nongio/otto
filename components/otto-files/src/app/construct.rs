@@ -80,6 +80,9 @@ impl Browser {
             peek_follow: false,
             trash: false,
             desk: false,
+            desk_editing: None,
+            desk_config: None,
+            desk_fan: None,
             recent: false,
             search: None,
             search_where: String::new(),
@@ -185,11 +188,7 @@ impl Browser {
     /// else to go.
     pub(super) fn for_desk(config: &crate::desk::DeskConfig) -> Self {
         view::set_shell(view::Shell::Desk);
-        view::set_desk_layout(view::DeskLayout {
-            anchor: config.anchor,
-            size: config.size,
-            padding: config.padding,
-        });
+        view::set_desk_layout(view::DeskLayout::from_config(config));
         view::set_grid_icon(config.icon_size);
         Self::listing_the_desk(config)
     }
@@ -210,6 +209,7 @@ impl Browser {
         // the way a window in the background does.
         browser.focused = false;
         browser.desk = true;
+        browser.desk_config = Some(config.clone());
         browser
     }
 

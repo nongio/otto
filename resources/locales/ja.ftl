@@ -98,6 +98,20 @@ settings-background-image-unavailable = 表示できません
 settings-show-desk = デスクトップにファイルを表示
 settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
 
+settings-group-desk = デスク
+settings-desk-folder = フォルダ
+settings-desk-folder-default = 「デスクトップ」フォルダ
+settings-desk-choose-folder-title = デスクに表示するフォルダを選択
+settings-desk-layout = サイズと位置
+settings-desk-layout-edit = 編集…
+settings-desk-layout-reset = リセット
+settings-desk-layout-fill = 画面全体に表示。「編集」でデスクにハンドルが表示され、ドラッグで配置できます
+settings-desk-layout-placed = 手動で配置済み。「リセット」で画面全体に戻ります
+settings-desk-overflow = アイコンが収まらないとき
+settings-desk-overflow-scroll = スクロール
+settings-desk-overflow-stack = 重ねる
+settings-desk-overflow-detail = スクロールはグリッドを動かします。重ねるは収まらないアイコンを最後のマスにまとめます。
+
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
 settings-cursor-size = カーソルサイズ
@@ -500,6 +514,14 @@ files-open-with-always = 「{ $kind }」には常にこのAppを使用
 files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
 files-desk-open-in-files = ファイルで開く
+files-desk-edit-done = 完了
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = その他
+files-desk-pile =
+    { $count ->
+       *[other] ほか { $count } 項目
+    }
 files-move-to-trash = ゴミ箱に入れる
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

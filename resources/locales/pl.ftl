@@ -98,6 +98,20 @@ settings-background-image-unavailable = Nie można wyświetlić
 settings-show-desk = Pokazuj pliki na pulpicie
 settings-show-desk-detail = Pliki z folderu Pulpit, za oknami
 
+settings-group-desk = Pulpit
+settings-desk-folder = Folder
+settings-desk-folder-default = Twój folder Pulpit
+settings-desk-choose-folder-title = Wybierz folder dla pulpitu
+settings-desk-layout = Rozmiar i położenie
+settings-desk-layout-edit = Edytuj…
+settings-desk-layout-reset = Resetuj
+settings-desk-layout-fill = Wypełnia ekran. Edytuj pokazuje uchwyty na pulpicie do przeciągania
+settings-desk-layout-placed = Ustawiony ręcznie. Resetuj przywraca wypełnienie ekranu
+settings-desk-overflow = Gdy ikony się nie mieszczą
+settings-desk-overflow-scroll = Przewijaj
+settings-desk-overflow-stack = Układaj w stos
+settings-desk-overflow-detail = Przewijaj przesuwa siatkę. Układaj w stos zbiera nadmiarowe ikony w ostatnim polu.
+
 settings-group-pointer-and-icons = Wskaźnik i ikony
 settings-cursor-theme = Motyw kursora
 settings-cursor-size = Rozmiar kursora
@@ -516,6 +530,17 @@ files-open-with-always = Zawsze używaj tej aplikacji dla typu „{ $kind }”
 files-open-with-not-remembered = Otwarto, ale nie zapisano wyboru: { $error }
 files-new-folder = Nowy folder
 files-desk-open-in-files = Otwórz w Plikach
+files-desk-edit-done = Gotowe
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = Więcej
+files-desk-pile =
+    { $count ->
+        [one] Jeszcze 1 element
+        [few] Jeszcze { $count } elementy
+        [many] Jeszcze { $count } elementów
+       *[other] Jeszcze { $count } elementu
+    }
 files-move-to-trash = Przenieś do kosza
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

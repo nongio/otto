@@ -5,6 +5,7 @@
 
 pub mod agents;
 pub mod appearance;
+pub mod desk;
 pub mod displays;
 pub mod dock;
 pub mod general;

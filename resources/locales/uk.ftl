@@ -99,6 +99,20 @@ settings-background-image-unavailable = Неможливо показати
 settings-show-desk = Показувати файли на робочому столі
 settings-show-desk-detail = Файли з папки «Стільниця», позаду вікон
 
+settings-group-desk = Стільниця
+settings-desk-folder = Тека
+settings-desk-folder-default = Ваша тека «Стільниця»
+settings-desk-choose-folder-title = Виберіть теку для стільниці
+settings-desk-layout = Розмір і положення
+settings-desk-layout-edit = Змінити…
+settings-desk-layout-reset = Скинути
+settings-desk-layout-fill = На весь екран. «Змінити» показує маркери, щоб перетягнути її на місце
+settings-desk-layout-placed = Розміщено вручну. «Скинути» знову розтягне її на весь екран
+settings-desk-overflow = Коли значки не вміщаються
+settings-desk-overflow-scroll = Прокручувати
+settings-desk-overflow-stack = Складати в стос
+settings-desk-overflow-detail = Прокручування зсуває сітку. Стос збирає зайві значки в останній клітинці.
+
 settings-group-pointer-and-icons = Вказівник і піктограми
 settings-cursor-theme = Тема курсора
 settings-cursor-size = Розмір курсора
@@ -517,6 +531,17 @@ files-open-with-always = Завжди використовувати для ти
 files-open-with-not-remembered = Відкрито, але вибір не збережено: { $error }
 files-new-folder = Нова папка
 files-desk-open-in-files = Відкрити у Файлах
+files-desk-edit-done = Готово
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = Ще
+files-desk-pile =
+    { $count ->
+        [one] Ще { $count } об’єкт
+        [few] Ще { $count } об’єкти
+        [many] Ще { $count } об’єктів
+       *[other] Ще { $count } об’єкта
+    }
 files-move-to-trash = Перемістити в кошик
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

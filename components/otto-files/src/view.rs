@@ -222,22 +222,72 @@ fn nav_hidden() -> bool {
 }
 
 /// Where the desk's panel sits inside its surface and how far its icons stay
-/// from the panel's edges. Set once from the `[desk]` config before the first
-/// frame; unused by every other shell.
-#[derive(Debug, Clone, Copy)]
+/// from the panel's edges. Set from the `[desk]` config before the first
+/// frame, and again whenever the config changes; unused by every other shell.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeskLayout {
     pub anchor: crate::desk::Anchor,
     pub size: [crate::desk::Extent; 2],
+    pub position: Option<[crate::desk::Extent; 2]>,
     /// Points between the panel's edges and the grid.
     pub padding: f32,
+}
+
+impl DeskLayout {
+    /// The layout `config` asks for.
+    pub fn from_config(config: &crate::desk::DeskConfig) -> Self {
+        Self {
+            anchor: config.anchor,
+            size: config.size,
+            position: config.position,
+            padding: config.padding,
+        }
+    }
 }
 
 /// The whole surface, unpadded: what the desk is until its config is read.
 const UNSET_DESK_LAYOUT: DeskLayout = DeskLayout {
     anchor: crate::desk::Anchor::Fill,
     size: [crate::desk::Extent::Percent(100.0); 2],
+    position: None,
     padding: 0.0,
 };
+
+/// The desk's edit mode, as the view draws it: the panel being dragged, in
+/// surface points, and which of the two buttons is held down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeskEdit {
+    pub panel: Rect,
+    pub pressed: Option<DeskEditButton>,
+}
+
+/// The two buttons edit mode shows on the panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeskEditButton {
+    Cancel,
+    Done,
+}
+
+static DESK_EDIT: std::sync::RwLock<Option<DeskEdit>> = std::sync::RwLock::new(None);
+
+/// Enter, update or (with `None`) leave the desk's edit mode. While it is on,
+/// the panel is the edited rect rather than the configured one, so the grid
+/// reflows under the pointer as it drags.
+pub fn set_desk_edit(edit: Option<DeskEdit>) {
+    if let Ok(mut current) = DESK_EDIT.write() {
+        *current = edit;
+    }
+}
+
+/// The desk's edit mode, while it is on.
+pub fn desk_edit() -> Option<DeskEdit> {
+    DESK_EDIT.read().ok().and_then(|edit| *edit)
+}
+
+/// The desk's layout as last set.
+pub fn desk_layout() -> DeskLayout {
+    DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT)
+}
 
 static DESK_LAYOUT: std::sync::RwLock<DeskLayout> = std::sync::RwLock::new(UNSET_DESK_LAYOUT);
 
@@ -251,8 +301,165 @@ pub fn set_desk_layout(layout: DeskLayout) {
 /// The desk's panel inside a surface `width` × `height` points: what takes
 /// the pointer, and what the grid is laid out in once padded.
 pub fn desk_panel_rect(width: f32, height: f32) -> Rect {
-    let layout = DESK_LAYOUT.read().map(|l| *l).unwrap_or(UNSET_DESK_LAYOUT);
-    crate::desk::panel_rect(layout.anchor, layout.size, (width, height))
+    if let Some(edit) = desk_edit() {
+        return edit.panel;
+    }
+    let layout = desk_layout();
+    crate::desk::panel_rect(layout.anchor, layout.size, layout.position, (width, height))
+}
+
+/// Edit mode's two buttons: side by side, centred along the bottom of
+/// `panel`, inside it.
+pub fn desk_edit_button_rects(panel: Rect) -> [(DeskEditButton, Rect); 2] {
+    let y = panel.bottom - DESK_EDIT_INSET - DESK_EDIT_BTN_H;
+    let total = DESK_EDIT_BTN_W * 2.0 + DESK_EDIT_GAP;
+    let left = (panel.center_x() - total / 2.0).round();
+    [
+        (
+            DeskEditButton::Cancel,
+            Rect::from_xywh(left, y, DESK_EDIT_BTN_W, DESK_EDIT_BTN_H),
+        ),
+        (
+            DeskEditButton::Done,
+            Rect::from_xywh(
+                left + DESK_EDIT_BTN_W + DESK_EDIT_GAP,
+                y,
+                DESK_EDIT_BTN_W,
+                DESK_EDIT_BTN_H,
+            ),
+        ),
+    ]
+}
+
+/// Which of edit mode's buttons is at (`x`, `y`), if either.
+pub fn desk_edit_button_at(panel: Rect, x: f32, y: f32) -> Option<DeskEditButton> {
+    desk_edit_button_rects(panel)
+        .into_iter()
+        .find(|(_, rect)| rect.contains(Point::new(x, y)))
+        .map(|(button, _)| button)
+}
+
+/// Edit mode's button size and spacing, in points. Two of them and the gap
+/// fit inside [`crate::desk::MIN_PANEL`], so the smallest panel still shows
+/// both.
+const DESK_EDIT_BTN_W: f32 = 76.0;
+const DESK_EDIT_BTN_H: f32 = 28.0;
+const DESK_EDIT_GAP: f32 = 8.0;
+/// How far the buttons sit above the panel's bottom edge.
+const DESK_EDIT_INSET: f32 = 16.0;
+/// The side handles are pills lying along the outline: long enough to find,
+/// thin enough not to hide the icons under them. Sizes in points.
+const DESK_EDIT_PILL_LENGTH: f32 = 36.0;
+const DESK_EDIT_PILL_THICKNESS: f32 = 6.0;
+/// The corner handles are brackets that follow the outline's rounded corner,
+/// drawn as a stroke this thick with arms this long.
+const DESK_EDIT_BRACKET_THICKNESS: f32 = 6.0;
+const DESK_EDIT_BRACKET_ARM: f32 = 22.0;
+/// The outline's corner radius, which the brackets bend round.
+const DESK_EDIT_RADIUS: f32 = 12.0;
+
+/// The desk's edit mode over its grid: the panel's rounded outline in the accent with a bracket at each corner and a
+/// pill on each side, and the Cancel and Done buttons.
+fn draw_desk_edit(canvas: &Canvas, theme: &Theme, surface: Rect, edit: DeskEdit) {
+    let panel = edit.panel;
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+
+    // Inset by half the stroke, so the whole line sits on the panel and none
+    // of it is cut off at the edge of the screen.
+    paint.set_style(skia_safe::PaintStyle::Stroke);
+    paint.set_stroke_width(1.5);
+    paint.set_color(accent(theme));
+    let outline = panel.with_inset((0.75, 0.75));
+    canvas.draw_rrect(
+        RRect::new_rect_xy(outline, DESK_EDIT_RADIUS, DESK_EDIT_RADIUS),
+        &paint,
+    );
+
+    // Each handle is drawn twice: a blurred dark pass for the shadow that
+    // lifts it off any wallpaper, then the white shape itself.
+    let shadow = |paint: &mut Paint| {
+        paint.set_color(Color::from_argb(0x60, 0, 0, 0));
+        paint.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            2.0,
+            None,
+        ));
+    };
+    let face = |paint: &mut Paint| {
+        paint.set_color(Color::WHITE);
+        paint.set_mask_filter(None);
+    };
+
+    let inset = DESK_EDIT_BRACKET_THICKNESS / 2.0;
+    for (i, (x, y)) in crate::desk::Grip::handles(outline).into_iter().enumerate() {
+        if i % 2 == 0 {
+            // A corner: which way the arms run from it.
+            let sx = if x <= outline.center_x() { 1.0 } else { -1.0 };
+            let sy = if y <= outline.center_y() { 1.0 } else { -1.0 };
+            // Pulled in to stay on screen when the panel meets an edge.
+            let x = x.clamp(surface.left + inset, surface.right - inset);
+            let y = y.clamp(surface.top + inset, surface.bottom - inset);
+            let r = DESK_EDIT_RADIUS;
+            let arm = DESK_EDIT_BRACKET_ARM;
+            let mut builder = PathBuilder::new();
+            builder.move_to(Point::new(x + sx * arm, y));
+            builder.line_to(Point::new(x + sx * r, y));
+            builder.quad_to(Point::new(x, y), Point::new(x, y + sy * r));
+            builder.line_to(Point::new(x, y + sy * arm));
+            let path = builder.detach();
+            paint.set_style(skia_safe::PaintStyle::Stroke);
+            paint.set_stroke_width(DESK_EDIT_BRACKET_THICKNESS);
+            paint.set_stroke_cap(skia_safe::paint::Cap::Round);
+            paint.set_stroke_join(skia_safe::paint::Join::Round);
+            for pass in [shadow, face] {
+                pass(&mut paint);
+                canvas.draw_path(&path, &paint);
+            }
+        } else {
+            // A side: the pill lies along it.
+            let along_x = i == 1 || i == 5;
+            let (w, h) = if along_x {
+                (DESK_EDIT_PILL_LENGTH, DESK_EDIT_PILL_THICKNESS)
+            } else {
+                (DESK_EDIT_PILL_THICKNESS, DESK_EDIT_PILL_LENGTH)
+            };
+            let x = x.clamp(surface.left + w / 2.0, surface.right - w / 2.0);
+            let y = y.clamp(surface.top + h / 2.0, surface.bottom - h / 2.0);
+            let pill = Rect::from_xywh(x - w / 2.0, y - h / 2.0, w, h);
+            let rrect = RRect::new_rect_xy(pill, w.min(h) / 2.0, w.min(h) / 2.0);
+            paint.set_style(skia_safe::PaintStyle::Fill);
+            for pass in [shadow, face] {
+                pass(&mut paint);
+                canvas.draw_rrect(rrect, &paint);
+            }
+        }
+    }
+    paint.set_mask_filter(None);
+
+    for (button, rect) in desk_edit_button_rects(panel) {
+        let pressed = edit.pressed == Some(button);
+        match button {
+            DeskEditButton::Cancel => draw_footer_button(
+                canvas,
+                rect,
+                otto_kit::t!("common-cancel"),
+                theme.fill_secondary,
+                theme.text_primary,
+                pressed,
+                true,
+            ),
+            DeskEditButton::Done => draw_footer_button(
+                canvas,
+                rect,
+                otto_kit::t!("files-desk-edit-done"),
+                accent(theme),
+                Color::WHITE,
+                pressed,
+                true,
+            ),
+        }
+    }
 }
 
 fn desk_padding() -> f32 {
@@ -980,6 +1187,229 @@ pub fn grid_cells_in_rect_in(
         band.with_offset((-area.left, scroll - area.top)),
         area.width(),
     )
+}
+
+/// How many whole cells fit in `area` without scrolling: every column,
+/// times every row whose cells end inside it.
+pub fn grid_capacity(area: Rect) -> usize {
+    let columns = grid_columns(area);
+    let mut rows = 0;
+    // Half a point of slack: a panel sized to exactly a whole number of rows
+    // must not lose its last one to rounding.
+    while grid_cell_rect(area, rows * columns, 0.0).bottom <= area.bottom + 0.5 {
+        rows += 1;
+    }
+    rows * columns
+}
+
+// --- The desk's pile --------------------------------------------------------
+
+/// The desk's pile as a frame draws it: which entries it holds and, while
+/// it is open, the fan they are laid out in with the fan's scroll. See
+/// [`crate::desk::pile`] and `specs/desk.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeskPile {
+    pub pile: crate::desk::Pile,
+    pub fan: Option<(crate::desk::Fan, f32)>,
+}
+
+impl DeskPile {
+    /// The pile over `count` entries in the grid at `area`, if they make one.
+    /// `fan_scroll` opens its fan, scrolled that far.
+    pub fn new(area: Rect, count: usize, fan_scroll: Option<f32>) -> Option<Self> {
+        let pile = crate::desk::pile(count, grid_capacity(area))?;
+        let fan = fan_scroll.map(|scroll| {
+            let fan = crate::desk::Fan::new(
+                area,
+                grid_cell_rect(area, pile.first, 0.0),
+                pile.count,
+                (cell_w(), cell_h()),
+            );
+            (fan, scroll.clamp(0.0, fan.max_scroll()))
+        });
+        Some(Self { pile, fan })
+    }
+
+    /// Where entry `index` is drawn and hit, when the pile holds it: its cell
+    /// in the fan while the fan is open, the pile's own cell while it is not.
+    /// `None` for an entry in the grid.
+    pub fn entry_rect(&self, area: Rect, index: usize) -> Option<Rect> {
+        if !self.pile.contains(index) {
+            return None;
+        }
+        Some(match self.fan {
+            Some((fan, scroll)) => fan.cell_rect(index - self.pile.first, scroll),
+            None => grid_cell_rect(area, self.pile.first, 0.0),
+        })
+    }
+
+    /// The pile's own cell in the grid at `area`.
+    pub fn cell(&self, area: Rect) -> Rect {
+        grid_cell_rect(area, self.pile.first, 0.0)
+    }
+}
+
+/// How many of a pile's icons are drawn on top of one another. Enough to
+/// read as a pile; more only adds edges.
+pub const PILE_LAYERS: usize = 3;
+/// How far each icon under the top one sits up and to the right, in points.
+const PILE_OFFSET: f32 = 5.0;
+/// How far each icon under the top one is turned, in degrees, alternating
+/// sides so the pile looks put down by hand.
+const PILE_TILT: f32 = 3.0;
+/// The count badge's height, and its narrowest width.
+const PILE_BADGE_H: f32 = 20.0;
+
+/// The desk's pile in `cell`: its first few items' icons on top of one
+/// another, the first on top, a badge with how many it holds, and its
+/// caption.
+fn draw_desk_pile(
+    canvas: &Canvas,
+    f: &Frame,
+    entries: &[&Entry],
+    pile: crate::desk::Pile,
+    cell: Rect,
+    selected: bool,
+) {
+    let icon = grid_icon();
+    let icon_top = cell.top + 8.0;
+    if selected {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(f.theme.material_selection_focused);
+        paint.set_alpha(60);
+        canvas.draw_rrect(
+            RRect::new_rect_xy(grid_icon_highlight_rect(cell, icon_top), 8.0, 8.0),
+            &paint,
+        );
+    }
+    let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
+    let layers = pile.count.min(PILE_LAYERS);
+    for depth in (0..layers).rev() {
+        let Some(entry) = entries.get(pile.first + depth) else {
+            continue;
+        };
+        let step = depth as f32;
+        let tilt = match depth {
+            0 => 0.0,
+            odd if odd % 2 == 1 => PILE_TILT,
+            _ => -PILE_TILT,
+        };
+        canvas.save();
+        canvas.translate((box_rect.center_x(), box_rect.center_y()));
+        canvas.rotate(tilt, None);
+        canvas.translate((
+            PILE_OFFSET * step - box_rect.width() / 2.0,
+            -PILE_OFFSET * step - box_rect.height() / 2.0,
+        ));
+        draw_grid_icon(
+            canvas,
+            entry,
+            Rect::from_wh(box_rect.width(), box_rect.height()),
+            f.thumbnail(entry),
+        );
+        canvas.restore();
+    }
+    draw_pile_badge(canvas, f.theme, box_rect, pile.count);
+    draw_grid_caption(
+        canvas,
+        f.theme,
+        otto_kit::t!("files-desk-pile-caption"),
+        cell,
+        selected,
+        false,
+        None,
+    );
+}
+
+/// The pile's count, in a pill of the accent colour over the icon's top
+/// trailing corner.
+fn draw_pile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
+    let text = if count > 999 {
+        "999+".to_string()
+    } else {
+        count.to_string()
+    };
+    let style = styles::FOOTNOTE_EMPHASIZED;
+    let text_w = style.font().measure_str(&text, None).0;
+    let width = (text_w + 12.0).max(PILE_BADGE_H);
+    let badge = Rect::from_xywh(
+        icon.right - width + 6.0,
+        icon.top - 6.0,
+        width,
+        PILE_BADGE_H,
+    );
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, 1.0),
+        (2.0, 2.0),
+        Color::from_argb(90, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    paint.set_color(theme.accent);
+    let radius = PILE_BADGE_H / 2.0;
+    canvas.draw_rrect(RRect::new_rect_xy(badge, radius, radius), &paint);
+    Label::new(text.as_str())
+        .with_style(style)
+        .with_color(Color::WHITE)
+        .centered_on(badge.center_x(), badge.center_y())
+        .render(canvas);
+}
+
+/// The ground under an open fan: dark and see-through, so the desk's white
+/// captions read on it the way they do on the wallpaper, in either theme.
+const FAN_GROUND: Color = Color::from_argb(150, 24, 24, 28);
+/// The fan's corner radius.
+const FAN_RADIUS: f32 = 14.0;
+
+/// The open fan: its ground, and the pile's items in their cells.
+fn draw_desk_fan(canvas: &Canvas, f: &Frame, pane: &PaneData, pile: &DeskPile) {
+    let Some((fan, scroll)) = pile.fan else {
+        return;
+    };
+    let rrect = RRect::new_rect_xy(fan.rect, FAN_RADIUS, FAN_RADIUS);
+    let mut ground = Paint::default();
+    ground.set_anti_alias(true);
+    ground.set_image_filter(skia_safe::image_filters::drop_shadow(
+        (0.0, 6.0),
+        (12.0, 12.0),
+        Color::from_argb(80, 0, 0, 0),
+        None,
+        None,
+        None,
+    ));
+    ground.set_color(FAN_GROUND);
+    canvas.draw_rrect(rrect, &ground);
+    let mut edge = Paint::default();
+    edge.set_anti_alias(true);
+    edge.set_style(skia_safe::paint::Style::Stroke);
+    edge.set_stroke_width(1.0);
+    edge.set_color(Color::from_argb(60, 255, 255, 255));
+    canvas.draw_rrect(rrect.with_inset((0.5, 0.5)), &edge);
+
+    canvas.save();
+    canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+    let first = pile.pile.first;
+    for k in fan.visible(pile.pile.count, scroll) {
+        let index = first + k;
+        let Some(entry) = pane.entries.get(index).copied() else {
+            continue;
+        };
+        draw_grid_cell_with(
+            canvas,
+            f.theme,
+            entry,
+            fan.cell_rect(k, scroll),
+            pane.is_selected(index),
+            f.renaming == Some((f.panes.len() - 1, index)),
+            f.thumbnail(entry),
+            None,
+        );
+    }
+    canvas.restore();
 }
 
 /// Total height `count` cells need in `area`.
@@ -2116,7 +2546,11 @@ pub fn grid_rename_rect(
     index: usize,
 ) -> Rect {
     let area = content_viewport(width, height, ViewMode::Grid);
-    let cell = grid_cell_rect_in(area, sections, index, scroll);
+    grid_rename_rect_over(grid_cell_rect_in(area, sections, index, scroll))
+}
+
+/// [`grid_rename_rect`] over a cell already placed: the caption of `cell`.
+pub fn grid_rename_rect_over(cell: Rect) -> Rect {
     let center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
     Rect::from_ltrb(
         cell.left + 2.0,
@@ -2263,13 +2697,14 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
         }
         DropHighlight::Row { depth, index } => {
             let pane = f.panes.get(depth)?;
+            let grid = content_viewport(f.width, f.height, ViewMode::Grid);
             let rect = match f.mode {
-                ViewMode::Grid => grid_cell_rect_in(
-                    content_viewport(f.width, f.height, ViewMode::Grid),
-                    f.grid_sections,
-                    index,
-                    pane.scroll,
-                ),
+                ViewMode::Grid => f
+                    .desk_pile
+                    .and_then(|pile| pile.entry_rect(grid, index))
+                    .unwrap_or_else(|| {
+                        grid_cell_rect_in(grid, f.grid_sections, index, pane.scroll)
+                    }),
                 ViewMode::Photos => {
                     f.photos
                         .tile_rect(f.photos.area(f.width, f.height), index, pane.scroll)
@@ -3550,6 +3985,8 @@ impl PaneData<'_> {
 
 /// Everything the view needs for one frame. Rebuilt each frame; owns nothing.
 pub struct Frame<'a> {
+    /// The desk's pile, when it stacks and has more icons than cells.
+    pub desk_pile: Option<DeskPile>,
     pub width: f32,
     pub height: f32,
     pub theme: &'a Theme,
@@ -3846,6 +4283,9 @@ pub fn draw(canvas: &Canvas, f: &Frame) {
         draw_grid(canvas, f);
         draw_drop_highlight(canvas, f);
         draw_open_pulse(canvas, f);
+        if let Some(edit) = desk_edit() {
+            draw_desk_edit(canvas, f.theme, Rect::from_wh(f.width, f.height), edit);
+        }
         return;
     }
 
@@ -5346,10 +5786,14 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     } else if pane.entries.is_empty() {
         draw_centered(canvas, area, empty_message(f), theme.text_tertiary);
     } else {
-        // Only the rows of cells the viewport is asking for are drawn.
+        // Only the rows of cells the viewport is asking for are drawn. On a
+        // desk that stacks, the grid stops at the pile.
         let band = pane.band(area);
         let sections = f.grid_sections;
-        for index in grid_visible_range_in(area, sections, pane.entries.len(), pane.scroll, band) {
+        let in_grid = f
+            .desk_pile
+            .map_or(pane.entries.len(), |pile| pile.pile.first);
+        for index in grid_visible_range_in(area, sections, in_grid, pane.scroll, band) {
             let cell = grid_cell_rect_in(area, sections, index, pane.scroll);
             let entry = pane.entries[index];
             draw_grid_cell_with(
@@ -5364,6 +5808,19 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             );
         }
         draw_grid_headers(canvas, theme, area, sections, pane.scroll, band);
+        if let Some(pile) = f.desk_pile.as_ref() {
+            // While the fan is open its items are lit there, not on the pile.
+            let selected =
+                pile.fan.is_none() && pile.pile.range().any(|index| pane.is_selected(index));
+            draw_desk_pile(
+                canvas,
+                f,
+                &pane.entries,
+                pile.pile,
+                pile.cell(area),
+                selected,
+            );
+        }
     }
 
     if let Some(band) = f.marquee {
@@ -5371,6 +5828,9 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     }
 
     canvas.restore();
+    if let Some(pile) = f.desk_pile.as_ref() {
+        draw_desk_fan(canvas, f, pane, pile);
+    }
     pane.draw_scrollbar(canvas, theme);
 }
 
@@ -5975,9 +6435,6 @@ pub fn draw_grid_cell_with(
 
     let icon_top = cell.top + 8.0;
     let icon = grid_icon();
-    // The optical centre of the caption's first line, not its top: that is what
-    // `Label::centered_at` wants, and the pill is measured off the same point.
-    let label_center_y = icon_top + icon + GRID_LABEL_GAP;
 
     if selected {
         // The highlight hugs the icon, not the cell — a cell-wide wash reads as
@@ -5991,17 +6448,55 @@ pub fn draw_grid_cell_with(
     }
 
     let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
+    draw_grid_icon(canvas, entry, box_rect, thumb);
+    draw_grid_caption(
+        canvas,
+        theme,
+        &entry.name,
+        cell,
+        selected,
+        renaming,
+        subline,
+    );
+}
+
+/// A grid cell's picture in `box_rect`: the thumbnail when there is one, the
+/// file's icon otherwise.
+fn draw_grid_icon(
+    canvas: &Canvas,
+    entry: &Entry,
+    box_rect: Rect,
+    thumb: Option<&skia_safe::Image>,
+) {
     if let Some(image) = thumb {
         draw_thumbnail(canvas, image, box_rect, false);
     } else {
         let chain = entry.icon_chain();
         let refs: Vec<&str> = chain.iter().map(String::as_str).collect();
         if let Some(image) =
-            icons::cached_icon_chain_at(&refs, icon as i32, icons::FULL_COLOUR_SIZE)
+            icons::cached_icon_chain_at(&refs, box_rect.width() as i32, icons::FULL_COLOUR_SIZE)
         {
             canvas.draw_image_rect(&image, None, box_rect, &Paint::default());
         }
     }
+}
+
+/// A grid cell's caption, `name` on up to two lines under the icon, with
+/// its pill behind it when `selected`, and `subline` under it.
+fn draw_grid_caption(
+    canvas: &Canvas,
+    theme: &Theme,
+    name: &str,
+    cell: Rect,
+    selected: bool,
+    renaming: bool,
+    subline: Option<&str>,
+) {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    // The optical centre of the caption's first line, not its top: that is what
+    // `Label::centered_at` wants, and the pill is measured off the same point.
+    let label_center_y = cell.top + 8.0 + grid_icon() + GRID_LABEL_GAP;
 
     // Two lines at most, the second elided — a long name must not push the
     // grid out of alignment.
@@ -6011,11 +6506,8 @@ pub fn draw_grid_cell_with(
     // heading. In a listing sorted by date the folder is the more useful of
     // the two anyway — the tail of a long file name is what can go.
     let (first, second) = match subline {
-        Some(_) => (
-            one_line_label(&entry.name, grid_label_chars(cell)),
-            String::new(),
-        ),
-        None => split_label(&entry.name, grid_label_chars(cell)),
+        Some(_) => (one_line_label(name, grid_label_chars(cell)), String::new()),
+        None => split_label(name, grid_label_chars(cell)),
     };
     // The desk's ground is the wallpaper, which follows no colour scheme, so
     // its captions are white over a soft shadow whatever the theme: legible
@@ -7783,17 +8275,22 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         return;
     };
 
-    let rect = cursor_entry_rect_in(
-        f.width,
-        f.height,
-        f.mode,
-        f.grid_sections,
-        f.photos,
-        pane,
-        depth,
-        f.pan,
-        &f.miller,
-    );
+    let in_pile = f.desk_pile.and_then(|pile| {
+        pile.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
+    });
+    let rect = in_pile.unwrap_or_else(|| {
+        cursor_entry_rect_in(
+            f.width,
+            f.height,
+            f.mode,
+            f.grid_sections,
+            f.photos,
+            pane,
+            depth,
+            f.pan,
+            &f.miller,
+        )
+    });
     if rect.is_empty() {
         return;
     }
@@ -9590,14 +10087,16 @@ mod geometry_tests {
         }
     }
 
-    /// Draw ops `draw_list` emits for one window height, scrolled to `offset`.
-    fn list_ops(owned: &[Entry], height: f32, offset: f32) -> usize {
-        let state = scrolled(owned.len(), height, offset);
-        let mut data = pane(owned, None, state.offset());
-        data.bar = Some(&state);
-
-        let theme = Theme::light();
-        let frame = Frame {
+    /// A frame over `panes`, `height` points tall and 1100 wide, with
+    /// nothing else up.
+    fn test_frame<'a>(
+        theme: &'a Theme,
+        mode: ViewMode,
+        panes: Vec<PaneData<'a>>,
+        height: f32,
+    ) -> Frame<'a> {
+        Frame {
+            desk_pile: None,
             search: None,
             index_available: true,
             search_focused: false,
@@ -9627,13 +10126,13 @@ mod geometry_tests {
             path_entry: false,
             width: 1100.0,
             height,
-            theme: &theme,
+            theme,
             title: "Home",
             subtitle: String::new(),
             places: &[],
             selected_place: None,
-            mode: ViewMode::List,
-            panes: vec![data],
+            mode,
+            panes,
             active: 0,
             pan: 0.0,
             pan_bar: None,
@@ -9654,7 +10153,91 @@ mod geometry_tests {
             // No store: this measures the cost of drawing rows, and every
             // entry falling back to its icon is the case being counted.
             thumbs: None,
-        };
+        }
+    }
+
+    /// The grid drawn with a desk pile over `count` entries into a
+    /// transparent surface 1100 by 700 points, with its fan open or not.
+    fn draw_piled_grid(count: usize, fan: bool) -> (skia_safe::Surface, DeskPile, Rect) {
+        let owned = entries(count);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let pile = DeskPile::new(area, count, fan.then_some(0.0)).expect("a pile");
+        let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+        frame.desk_pile = Some(pile);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw_grid(surface.canvas(), &frame);
+        (surface, pile, area)
+    }
+
+    fn pixel(surface: &mut skia_safe::Surface, x: f32, y: f32) -> Color {
+        let image = surface.image_snapshot();
+        let info = skia_safe::ImageInfo::new(
+            (1, 1),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut bytes = [0u8; 4];
+        assert!(image.read_pixels(
+            &info,
+            &mut bytes,
+            4,
+            (x as i32, y as i32),
+            skia_safe::image::CachingHint::Allow,
+        ));
+        Color::from_argb(bytes[3], bytes[0], bytes[1], bytes[2])
+    }
+
+    /// The pile carries its count on an accent badge over its icon, and the
+    /// grid draws nothing past it.
+    #[test]
+    fn the_pile_shows_its_count_and_the_grid_stops_there() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        // Six in the pile: one digit, so the badge is a round dot.
+        let (mut surface, pile, area) = draw_piled_grid(capacity + 5, false);
+        assert_eq!(pile.pile.count, 6);
+        let cell = pile.cell(area);
+        let icon = grid_icon();
+        let right = cell.center_x() + icon / 2.0;
+        let top = cell.top + 8.0;
+        // The top of the dot, clear of the digit in its middle.
+        let badge = pixel(
+            &mut surface,
+            right + 6.0 - PILE_BADGE_H / 2.0,
+            top - 6.0 + 3.0,
+        );
+        assert_eq!(badge, Theme::light().accent, "{badge:?}");
+        // The pile ends the last row that fits whole.
+        assert_eq!((pile.pile.first + 1) % grid_columns(area), 0);
+        let below = grid_cell_rect(area, pile.pile.first + 1, 0.0);
+        assert!(below.bottom > area.bottom + 0.5);
+    }
+
+    /// Open, the fan lays its dark ground over the grid near the pile.
+    #[test]
+    fn the_open_fan_is_drawn_over_the_grid() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        let (mut surface, pile, _) = draw_piled_grid(capacity + 20, true);
+        let (fan, _) = pile.fan.expect("open");
+        // In the fan's padding, where only its ground is.
+        let ground = pixel(&mut surface, fan.rect.left + 4.0, fan.rect.center_y());
+        assert!(ground.a() >= 140, "{ground:?}");
+        assert!(
+            ground.r() < 60 && ground.g() < 60 && ground.b() < 60,
+            "{ground:?}"
+        );
+    }
+
+    /// Draw ops `draw_list` emits for one window height, scrolled to `offset`.
+    fn list_ops(owned: &[Entry], height: f32, offset: f32) -> usize {
+        let state = scrolled(owned.len(), height, offset);
+        let mut data = pane(owned, None, state.offset());
+        data.bar = Some(&state);
+
+        let theme = Theme::light();
+        let frame = test_frame(&theme, ViewMode::List, vec![data], height);
 
         let mut recorder = skia_safe::PictureRecorder::new();
         let canvas = recorder.begin_recording(Rect::from_wh(1100.0, height), false);

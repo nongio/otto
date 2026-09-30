@@ -196,6 +196,9 @@ impl Browser {
         match self.mode {
             ViewMode::Grid => {
                 let depth = self.columns.len() - 1;
+                if let Some(hit) = self.desk_pile_entry_at(x, y) {
+                    return hit.map(|index| (depth, index));
+                }
                 let count = self.visible_len(depth);
                 let scroll = self.columns[depth].scroll.offset();
                 let area = view::content_viewport(width, height, ViewMode::Grid);
@@ -243,12 +246,14 @@ impl Browser {
         let scroll = self.columns[depth].scroll.offset();
 
         match self.mode {
-            ViewMode::Grid => view::grid_cell_rect_in(
-                view::content_viewport(width, height, ViewMode::Grid),
-                &self.recent_sections,
-                index,
-                scroll,
-            ),
+            ViewMode::Grid => self.desk_pile_entry_rect(index).unwrap_or_else(|| {
+                view::grid_cell_rect_in(
+                    view::content_viewport(width, height, ViewMode::Grid),
+                    &self.recent_sections,
+                    index,
+                    scroll,
+                )
+            }),
             ViewMode::Photos => {
                 self.photos
                     .tile_rect(self.photos.area(width, height), index, scroll)

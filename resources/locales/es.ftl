@@ -99,6 +99,20 @@ settings-background-image-unavailable = No se puede mostrar
 settings-show-desk = Mostrar archivos en el escritorio
 settings-show-desk-detail = Los archivos de la carpeta Escritorio, detrás de las ventanas
 
+settings-group-desk = Escritorio
+settings-desk-folder = Carpeta
+settings-desk-folder-default = Tu carpeta Escritorio
+settings-desk-choose-folder-title = Elige una carpeta para el escritorio
+settings-desk-layout = Tamaño y posición
+settings-desk-layout-edit = Editar…
+settings-desk-layout-reset = Restablecer
+settings-desk-layout-fill = Ocupa toda la pantalla. Editar muestra tiradores en el escritorio para colocarlo
+settings-desk-layout-placed = Colocado a mano. Restablecer hace que vuelva a ocupar toda la pantalla
+settings-desk-overflow = Cuando los iconos no caben
+settings-desk-overflow-scroll = Desplazar
+settings-desk-overflow-stack = Apilar
+settings-desk-overflow-detail = Desplazar mueve la cuadrícula. Apilar reúne los iconos que sobran en la última casilla.
+
 settings-group-pointer-and-icons = Puntero e iconos
 settings-cursor-theme = Tema del cursor
 settings-cursor-size = Tamaño del cursor
@@ -509,6 +523,15 @@ files-open-with-always = Usar siempre esta aplicación para «{ $kind }»
 files-open-with-not-remembered = Se abrió, pero no se guardó la elección: { $error }
 files-new-folder = Nueva carpeta
 files-desk-open-in-files = Abrir en Archivos
+files-desk-edit-done = Listo
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = Más elementos
+files-desk-pile =
+    { $count ->
+        [one] 1 elemento más
+       *[other] { $count } elementos más
+    }
 files-move-to-trash = Mover a la papelera
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

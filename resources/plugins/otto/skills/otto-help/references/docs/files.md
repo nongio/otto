@@ -427,6 +427,33 @@ Items in the Trash cannot be opened, renamed, copied or pasted into. Put one
 back first and it is an ordinary file again. Trashed *folders* can be opened,
 so you can look inside before deciding.
 
+## The desk
+
+The desk shows the files in your Desktop folder on the desktop itself, behind
+the windows. Turn it on in **Settings ▸ Appearance ▸ Desk ▸ Show files on the
+desktop**. The same group picks another folder with **Choose…**.
+
+It fills the screen by default. To make it smaller or move it, click
+**Edit…** beside *Size and position*. The desk comes to the front with an
+outline and handles: drag inside it to move it, drag an edge or a corner to
+resize it. **Done** (or Return, or Escape) keeps the result, **Cancel** puts
+it back. **Reset** makes it fill the screen again.
+
+All of this is kept in `~/.config/otto/files.toml`, and the desk picks up
+changes to that file as soon as they are saved:
+
+```toml
+[desk]
+folder = "~/Desktop"      # default: your Desktop folder
+sort = "name"             # name | kind | modified
+anchor = "fill"           # fill | top-left | top | top-right | left | center
+                          # | right | bottom-left | bottom | bottom-right
+size = ["40%", "60%"]     # ignored with fill; points or percentages
+position = ["5%", "10%"]  # top-left corner, optional; ignored with fill
+padding = 24              # points between the edge and the icons
+icon_size = 64            # points
+```
+
 ## Not there yet
 
 - Tabs, split views, and persisted column widths.

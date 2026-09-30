@@ -99,6 +99,20 @@ settings-background-image-unavailable = Kann nicht angezeigt werden
 settings-show-desk = Dateien auf dem Schreibtisch anzeigen
 settings-show-desk-detail = Die Dateien im Ordner „Schreibtisch“, hinter den Fenstern
 
+settings-group-desk = Schreibtisch
+settings-desk-folder = Ordner
+settings-desk-folder-default = Dein Ordner „Schreibtisch“
+settings-desk-choose-folder-title = Ordner für den Schreibtisch auswählen
+settings-desk-layout = Größe und Position
+settings-desk-layout-edit = Bearbeiten …
+settings-desk-layout-reset = Zurücksetzen
+settings-desk-layout-fill = Füllt den Bildschirm. „Bearbeiten“ zeigt Griffe auf dem Schreibtisch, um ihn zurechtzuziehen
+settings-desk-layout-placed = Von Hand platziert. „Zurücksetzen“ lässt ihn wieder den Bildschirm füllen
+settings-desk-overflow = Wenn Symbole nicht passen
+settings-desk-overflow-scroll = Scrollen
+settings-desk-overflow-stack = Stapeln
+settings-desk-overflow-detail = Scrollen verschiebt das Raster. Stapeln sammelt die übrigen Symbole im letzten Feld.
+
 settings-group-pointer-and-icons = Zeiger & Symbole
 settings-cursor-theme = Zeigerdesign
 settings-cursor-size = Zeigergröße
@@ -507,6 +521,15 @@ files-open-with-always = Diese App immer für „{ $kind }“ verwenden
 files-open-with-not-remembered = Geöffnet, aber die Auswahl wurde nicht gespeichert: { $error }
 files-new-folder = Neuer Ordner
 files-desk-open-in-files = In Dateien öffnen
+files-desk-edit-done = Fertig
+# The desk's pile: the caption under it, and what a screen reader says for
+# it. $count is how many items it holds.
+files-desk-pile-caption = Weitere
+files-desk-pile =
+    { $count ->
+        [one] 1 weiteres Objekt
+       *[other] { $count } weitere Objekte
+    }
 files-move-to-trash = In den Papierkorb legen
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =

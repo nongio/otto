@@ -23,6 +23,7 @@ pub mod app;
 pub mod command;
 pub mod dbus;
 pub mod desk;
+pub mod desk_service;
 pub mod files_service;
 pub mod imagesize;
 pub mod launch;

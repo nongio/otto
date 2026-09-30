@@ -406,6 +406,17 @@ impl LayerShellSurface {
         self.inner.borrow().layer_surface.set_exclusive_zone(zone);
     }
 
+    /// Move the surface to another layer, taking effect on the next commit.
+    ///
+    /// Needs version 2 of the protocol. On a compositor that only offers
+    /// version 1 the surface stays on the layer it was made on.
+    pub fn set_layer(&self, layer: Layer) {
+        let inner = self.inner.borrow();
+        if wayland_client::Proxy::version(&inner.layer_surface) >= 2 {
+            inner.layer_surface.set_layer(layer);
+        }
+    }
+
     /// Set keyboard interactivity
     pub fn set_keyboard_interactivity(&self, interactivity: KeyboardInteractivity) {
         self.inner

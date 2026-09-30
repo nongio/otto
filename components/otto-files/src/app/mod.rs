@@ -36,6 +36,8 @@ use view::ViewMode;
 
 mod construct;
 mod cursor;
+mod desk_edit;
+mod desk_pile;
 mod drag_drop;
 mod file_ops;
 mod folder_views;
@@ -433,6 +435,15 @@ struct Browser {
     ///
     /// A shell like [`Self::trash`], set once at startup.
     desk: bool,
+    /// The desk's edit mode, while the panel is being moved and resized with
+    /// the pointer. See [`desk_edit`].
+    desk_editing: Option<desk_edit::Editing>,
+    /// The `[desk]` config the desk is showing, so a change to the file can
+    /// be told from a write that changed nothing. `None` outside the desk.
+    desk_config: Option<crate::desk::DeskConfig>,
+    /// The desk's pile, opened into its fan, with how far the fan is
+    /// scrolled. `None` while it is closed. See [`desk_pile`].
+    desk_fan: Option<f32>,
     /// This window is showing the Recent listing rather than a directory:
     /// what was written most recently across the user's folders, newest first,
     /// under a heading per day.
@@ -1157,6 +1168,16 @@ struct FilesApp {
     /// The Open With chooser's window, while one is open. Shared with its
     /// pointer callback for the same reason as [`Self::info_window`].
     open_with_window: Rc<RefCell<Option<Window>>>,
+    /// Whether the desk's surface is set up for edit mode: above the windows,
+    /// taking the keyboard and every press. Compared with the browser's
+    /// [`Browser::desk_editing`] each update, so the surface follows it.
+    desk_surface_editing: bool,
+    /// The desk's input region as last set, so it is only sent again when
+    /// the panel moves or edit mode comes or goes.
+    desk_input_region: Option<Rect>,
+    /// A watch on the folder `files.toml` lives in, so the desk follows an
+    /// edit to its config. `None` outside the desk.
+    desk_config_watch: Option<crate::watch::DirWatch>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,6 +1320,15 @@ pub fn run_desk() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let config = crate::desk::DeskConfig::load();
+    // Settings asks the desk for edit mode over the bus. Without a runtime or
+    // a bus the desk still runs; it just cannot be asked.
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        runtime.spawn(async {
+            if let Err(error) = crate::desk_service::serve().await {
+                tracing::warn!(%error, "cannot serve org.otto.Desk1");
+            }
+        });
+    }
     run_app(Browser::for_desk(&config), None)
 }
 
@@ -1473,6 +1503,9 @@ fn run_app(
         palette_target: Arc::new(Mutex::new(None)),
         picker_queue,
         selection_queue,
+        desk_surface_editing: false,
+        desk_input_region: None,
+        desk_config_watch: None,
     };
 
     AppRunner::new(app).run()
@@ -1519,6 +1552,10 @@ mod palette_tests;
 
 #[cfg(test)]
 mod dnd_tests;
+
+/// The desk's pile and its fan, under `overflow = "stack"`.
+#[cfg(test)]
+mod desk_pile_tests;
 
 #[cfg(test)]
 mod watch_tests;
