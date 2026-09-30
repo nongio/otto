@@ -20,7 +20,8 @@ use smithay::wayland::shell::xdg::XdgShellHandler;
 use crate::config::Config;
 use crate::state::{Backend, Otto};
 use crate::workspaces::tiling::command::{
-    self, Amount, AxisArg, Command, Criteria, GapScope, GapTarget, Toggle, WorkspaceTarget,
+    self, Amount, AxisArg, Command, Criteria, GapScope, GapTarget, Toggle, WindowFacts,
+    WorkspaceTarget,
 };
 use crate::workspaces::tiling::tree::{Axis, NodeId};
 use crate::workspaces::tiling::{layout, Gaps, Rect};
@@ -155,9 +156,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let found = self
             .workspaces
             .windows_map
-            .values()
-            .find(|window| criteria.matches(&window.xdg_app_id(), &window.xdg_title()))
-            .map(|window| window.id());
+            .iter()
+            .find(|(id, window)| {
+                criteria.matches(&WindowFacts {
+                    app_id: &window.xdg_app_id(),
+                    title: &window.xdg_title(),
+                    con_id: window_con_id(id),
+                    pid: window.client_pid(&self.display_handle),
+                })
+            })
+            .map(|(_, window)| window.id());
         match found {
             Some(id) => {
                 self.activate_window(&id);
@@ -873,9 +881,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let window = self.workspaces.windows_map.get(id);
         let title = window.map(|w| w.xdg_title()).unwrap_or_default();
         let app_id = window.map(|w| w.xdg_app_id()).unwrap_or_default();
+        let pid = window.and_then(|w| w.client_pid(&self.display_handle));
         #[cfg_attr(not(feature = "xwayland"), allow(unused_mut))]
         let mut node = json!({
-            "id": hash_id("window", &format!("{id:?}")),
+            "id": window_con_id(id),
             "type": "con",
             "name": title,
             "layout": "none",
@@ -885,6 +894,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             "focused": focused == Some(id),
             "urgent": false,
             "app_id": app_id,
+            "pid": pid,
             "focus": Vec::<Value>::new(),
             "nodes": Vec::<Value>::new(),
             "floating_nodes": Vec::<Value>::new(),
@@ -972,6 +982,11 @@ fn hash_id(tag: &str, key: &str) -> u64 {
     // Keep it inside 2^53 so a JSON reader with float numbers (jq, JavaScript)
     // round-trips it exactly.
     hasher.finish() & 0x1f_ffff_ffff_ffff
+}
+
+/// A window's `id` in the tree, which `[con_id=…]` matches.
+fn window_con_id(id: &ObjectId) -> u64 {
+    hash_id("window", &format!("{id:?}"))
 }
 
 fn container_id(node: NodeId) -> u64 {

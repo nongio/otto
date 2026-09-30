@@ -141,29 +141,47 @@ pub enum Command {
 
 /// i3's `[app_id="…" title="…"]`, the window matcher that prefixes a command.
 ///
-/// Matching is a case-insensitive substring test, not i3's regex: it covers
-/// what a person means by "focus Chrome" without pulling in a regex engine.
-/// An empty criteria matches nothing, so `[] focus` cannot focus at random.
+/// `app_id` and `title` are a case-insensitive substring test, not i3's
+/// regex: it covers what a person means by "focus Chrome" without pulling in
+/// a regex engine. `con_id` and `pid` are exact, for a script that has read
+/// the window out of `GetTree`. An empty criteria matches nothing, so
+/// `[] focus` cannot focus at random.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Criteria {
     /// Wayland `app_id`, or an X11 window's class.
     pub app_id: Option<String>,
     /// The window title.
     pub title: Option<String>,
+    /// The window's `id` in the tree.
+    pub con_id: Option<u64>,
+    /// The process that owns the window.
+    pub pid: Option<u32>,
+}
+
+/// What a [`Criteria`] can test a window on.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowFacts<'a> {
+    pub app_id: &'a str,
+    pub title: &'a str,
+    pub con_id: u64,
+    pub pid: Option<u32>,
 }
 
 impl Criteria {
-    /// Whether this matches a window with the given `app_id` and title. Every
-    /// field that is set must match; a criteria with no fields matches nothing.
-    pub fn matches(&self, app_id: &str, title: &str) -> bool {
-        if self.app_id.is_none() && self.title.is_none() {
+    /// Whether this matches `window`. Every field that is set must match; a
+    /// criteria with no fields matches nothing.
+    pub fn matches(&self, window: &WindowFacts<'_>) -> bool {
+        if *self == Criteria::default() {
             return false;
         }
         let holds = |want: &Option<String>, have: &str| match want {
             None => true,
             Some(want) => have.to_lowercase().contains(&want.to_lowercase()),
         };
-        holds(&self.app_id, app_id) && holds(&self.title, title)
+        holds(&self.app_id, window.app_id)
+            && holds(&self.title, window.title)
+            && self.con_id.is_none_or(|id| id == window.con_id)
+            && self.pid.is_none_or(|pid| Some(pid) == window.pid)
     }
 }
 
@@ -242,11 +260,20 @@ fn split_criteria(
     };
     let mut criteria = Criteria::default();
     for (key, value) in criteria_pairs(&trimmed[1..end]) {
+        let at = offset + lead;
         let field = match key {
             // `class` and `instance` are what an X11 window answers to; both
             // land on the same place a Wayland `app_id` does.
             "app_id" | "class" | "instance" => &mut criteria.app_id,
             "title" | "name" => &mut criteria.title,
+            "con_id" => {
+                criteria.con_id = Some(criteria_number(key, &value, at)?);
+                continue;
+            }
+            "pid" => {
+                criteria.pid = Some(criteria_number(key, &value, at)?);
+                continue;
+            }
             other => {
                 return Err(unsupported(
                     offset + lead,
@@ -258,6 +285,18 @@ fn split_criteria(
     }
     let rest = &trimmed[end + 1..];
     Ok((Some(criteria), rest, offset + lead + end + 1))
+}
+
+/// The number a `con_id` or `pid` criteria holds.
+fn criteria_number<T: std::str::FromStr>(
+    key: &str,
+    value: &str,
+    offset: usize,
+) -> Result<T, ParseError> {
+    value.parse().map_err(|_| ParseError {
+        offset,
+        message: format!("Invalid {key} '{value}': expected a number"),
+    })
 }
 
 /// `key="value"` pairs inside a criteria, quotes optional, spaces allowed
@@ -1163,7 +1202,7 @@ mod tests {
             parse(r#"[app_id="firefox"] focus"#).unwrap(),
             vec![Command::FocusWindow(Criteria {
                 app_id: Some("firefox".into()),
-                title: None,
+                ..Criteria::default()
             })]
         );
     }
@@ -1193,24 +1232,60 @@ mod tests {
         );
     }
 
+    fn window<'a>(app_id: &'a str, title: &'a str) -> WindowFacts<'a> {
+        WindowFacts {
+            app_id,
+            title,
+            con_id: 7,
+            pid: Some(4242),
+        }
+    }
+
     #[test]
     fn matching_is_case_insensitive_substring_and_never_matches_nothing() {
         let chrome = Criteria {
             app_id: Some("chrome".into()),
-            title: None,
+            ..Criteria::default()
         };
-        assert!(chrome.matches("google-chrome", "anything"));
-        assert!(chrome.matches("Google-Chrome", ""));
-        assert!(!chrome.matches("firefox", "chrome is in the title"));
+        assert!(chrome.matches(&window("google-chrome", "anything")));
+        assert!(chrome.matches(&window("Google-Chrome", "")));
+        assert!(!chrome.matches(&window("firefox", "chrome is in the title")));
         // Both fields set means both must hold.
         let narrow = Criteria {
             app_id: Some("foot".into()),
             title: Some("build".into()),
+            ..Criteria::default()
         };
-        assert!(narrow.matches("foot", "build — make"));
-        assert!(!narrow.matches("foot", "editing"));
+        assert!(narrow.matches(&window("foot", "build — make")));
+        assert!(!narrow.matches(&window("foot", "editing")));
         // An empty criteria must not focus something at random.
-        assert!(!Criteria::default().matches("foot", "anything"));
+        assert!(!Criteria::default().matches(&window("foot", "anything")));
+    }
+
+    #[test]
+    fn con_id_and_pid_pick_one_window_exactly() {
+        let only = |text: &str| match parse(text).unwrap().remove(0) {
+            Command::FocusWindow(criteria) => criteria,
+            other => panic!("{other:?}"),
+        };
+        let by_id = only("[con_id=7] focus");
+        assert!(by_id.matches(&window("foot", "")));
+        assert!(!by_id.matches(&WindowFacts {
+            con_id: 70,
+            ..window("foot", "")
+        }));
+        let by_pid = only(r#"[pid="4242"] focus"#);
+        assert!(by_pid.matches(&window("foot", "")));
+        assert!(!by_pid.matches(&WindowFacts {
+            pid: Some(42),
+            ..window("foot", "")
+        }));
+        // A window whose process is unknown matches no pid.
+        assert!(!by_pid.matches(&WindowFacts {
+            pid: None,
+            ..window("foot", "")
+        }));
+        assert!(error("[con_id=seven] focus").message.contains("expected a number"));
     }
 
     #[test]
