@@ -52,8 +52,6 @@ pub struct RunCommandConfig {
 pub struct ShortcutBinding {
     pub trigger: ShortcutTrigger,
     pub action: ShortcutAction,
-    #[allow(dead_code)]
-    pub trigger_repr: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -196,11 +194,7 @@ pub fn build_bindings(map: &ShortcutMap) -> Vec<ShortcutBinding> {
                             "duplicate shortcut definition, new entry replaces the previous one"
                         );
                     }
-                    bindings.push(ShortcutBinding {
-                        trigger,
-                        action,
-                        trigger_repr: trigger_str.clone(),
-                    });
+                    bindings.push(ShortcutBinding { trigger, action });
                 }
                 Err(err) => {
                     warn!(trigger = %trigger_str, error = %err, "skipping shortcut due to invalid action")

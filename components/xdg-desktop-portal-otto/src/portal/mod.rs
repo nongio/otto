@@ -38,8 +38,6 @@ pub const DESKTOP_PATH: &str = "/org/freedesktop/portal/desktop";
 // Source type bitmask values per XDG Desktop Portal spec.
 pub const SOURCE_TYPE_MONITOR: u32 = 1;
 pub const SOURCE_TYPE_WINDOW: u32 = 2;
-#[allow(dead_code)]
-pub const SOURCE_TYPE_VIRTUAL: u32 = 4;
 
 // Cursor mode bitmask values per XDG Desktop Portal spec.
 pub const CURSOR_MODE_HIDDEN: u32 = 1;

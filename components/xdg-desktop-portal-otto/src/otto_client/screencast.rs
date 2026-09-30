@@ -186,18 +186,6 @@ impl OttoClient {
         proxy.stop().await
     }
 
-    /// Starts an individual stream (usually called via session start).
-    #[allow(dead_code)]
-    pub async fn start_stream(&self, stream_path: &OwnedObjectPath) -> Result<()> {
-        let proxy = ScreenCastStreamProxy::builder(&self.connection)
-            .path(stream_path)?
-            .build()
-            .await?;
-
-        debug!(%stream_path, "Starting stream");
-        proxy.start().await
-    }
-
     /// Gets the PipeWire node ID for a stream.
     pub async fn get_pipewire_node_id(&self, stream_path: &OwnedObjectPath) -> Result<u32> {
         let proxy = ScreenCastStreamProxy::builder(&self.connection)

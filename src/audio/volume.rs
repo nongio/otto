@@ -161,27 +161,6 @@ impl AudioManager {
 
         Ok(())
     }
-
-    /// Query current volume from PipeWire (future implementation)
-    #[allow(dead_code)]
-    fn query_volume_pipewire(&self) -> Result<AudioState, VolumeError> {
-        // TODO: Use Registry to find default sink
-        // TODO: Query node parameters for volume
-        // TODO: Parse volume and mute state
-        Err(VolumeError::OperationFailed(
-            "Native PipeWire query not yet implemented".to_string(),
-        ))
-    }
-
-    /// Set volume via PipeWire (future implementation)
-    #[allow(dead_code)]
-    fn set_volume_pipewire(&self, _volume: u32) -> Result<(), VolumeError> {
-        // TODO: Use Registry to find default sink
-        // TODO: Set node parameters
-        Err(VolumeError::OperationFailed(
-            "Native PipeWire control not yet implemented".to_string(),
-        ))
-    }
 }
 
 impl Default for AudioManager {

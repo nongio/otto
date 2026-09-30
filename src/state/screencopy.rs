@@ -57,7 +57,6 @@ pub struct ScreencopyFrameData {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
-    #[allow(dead_code)]
     state: Mutex<FrameState>,
 }
 

@@ -175,16 +175,6 @@ impl Row {
         self.detail = Some(detail.into());
         self
     }
-
-    /// Mark a row as restart-required by hand.
-    ///
-    /// Bound rows take this from the served schema instead, so this is only
-    /// for rows that have no identifier yet and are known to need a restart.
-    #[allow(dead_code)]
-    pub(crate) fn restart(mut self) -> Self {
-        self.restart_required = true;
-        self
-    }
 }
 
 impl Control {

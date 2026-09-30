@@ -2209,18 +2209,6 @@ pub struct DisplayDescriptor<'a> {
     pub kind: Option<DisplayKind>,
 }
 
-impl<'a> DisplayDescriptor<'a> {
-    #[allow(dead_code)]
-    pub fn new(connector: &'a str) -> Self {
-        Self {
-            connector,
-            vendor: None,
-            model: None,
-            kind: None,
-        }
-    }
-}
-
 fn equals_ignore_case(actual: &str, expected: &str) -> bool {
     actual.eq_ignore_ascii_case(expected)
 }

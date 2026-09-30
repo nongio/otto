@@ -31,15 +31,7 @@ pub enum Value {
     List(Vec<String>),
 }
 
-#[allow(dead_code)] // the full accessor set is used as more panes are wired
 impl Value {
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            Value::Bool(v) => Some(*v),
-            _ => None,
-        }
-    }
-
     pub fn as_f32(&self) -> Option<f32> {
         match self {
             Value::Double(v) => Some(*v as f32),
@@ -125,35 +117,16 @@ impl Kind {
     }
 }
 
-/// What the compositor says happens when a setting is changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Apply {
-    Live,
-    Restart,
-    Unsupported,
-}
-
-impl Apply {
-    fn parse(raw: &str) -> Self {
-        match raw {
-            "live" => Apply::Live,
-            "restart" => Apply::Restart,
-            _ => Apply::Unsupported,
-        }
-    }
-}
-
 /// One entry of the served schema. Only the fields the app actually renders
 /// from are kept; unknown keys in the reply are ignored, as the contract
 /// requires, so the compositor can add more without breaking this build.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // ditto: panes read more of the schema as they are wired
+#[allow(dead_code)] // panes read more of the schema as they are wired
 pub struct Desc {
     pub id: String,
     pub kind: Kind,
     pub label: String,
     pub description: String,
-    pub apply: Apply,
     pub min: Option<f64>,
     pub max: Option<f64>,
     /// Granularity to snap a slider to, when the setting has one.
@@ -216,21 +189,6 @@ pub fn is_online() -> bool {
 /// The current value of a setting, if the compositor served one.
 pub fn value(id: &str) -> Option<Value> {
     store().read().ok()?.values.get(id).cloned()
-}
-
-/// Whether a setting is set in the user's own config file, and so offers a
-/// revert.
-///
-/// Nothing reads this yet: the badge that used to show it was an unlabelled
-/// glyph that could not be clicked and read as a restart marker, so it was
-/// removed. The override set is still tracked here, and [`reset`] still
-/// written, for the undo affordance that replaces it.
-#[allow(dead_code)]
-pub fn is_overridden(id: &str) -> bool {
-    store()
-        .read()
-        .map(|s| s.overridden.contains(id))
-        .unwrap_or(false)
 }
 
 /// Whether this session has changed a setting that is waiting on a restart.
@@ -435,7 +393,6 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
                 kind: Kind::parse(&string_field(&entry, "type").unwrap_or_default()),
                 label: string_field(&entry, "label").unwrap_or_else(|| id.clone()),
                 description: string_field(&entry, "description").unwrap_or_default(),
-                apply: Apply::parse(&string_field(&entry, "apply").unwrap_or_default()),
                 min: entry.get("min").and_then(number_field),
                 max: entry.get("max").and_then(number_field),
                 step: entry.get("step").and_then(number_field),
@@ -681,31 +638,6 @@ pub fn remove_virtual_output(name: &str) -> SetOutcome {
     }
 }
 
-/// Drop a setting back to whatever the lower config layers provide.
-#[allow(dead_code)] // wired when rows grow a revert affordance
-pub fn reset(id: &str) -> SetOutcome {
-    let Some(Some(connection)) = CONNECTION.get() else {
-        return SetOutcome::Failed("not connected to the compositor".into());
-    };
-
-    let status: zbus::Result<String> = call(connection, "Reset", &(id,));
-
-    match status {
-        Ok(_) => {
-            // The effective value now comes from a lower layer and we do not
-            // know it, so re-read rather than guess.
-            if let Ok(values) = fetch_values(connection) {
-                if let Ok(mut store) = store().write() {
-                    store.values = values;
-                    store.overridden.remove(id);
-                }
-            }
-            SetOutcome::Applied
-        }
-        Err(err) => SetOutcome::Failed(err.to_string()),
-    }
-}
-
 #[cfg(test)]
 mod commit_type_tests {
     use super::*;
@@ -724,7 +656,6 @@ mod commit_type_tests {
                 kind,
                 label: String::new(),
                 description: String::new(),
-                apply: Apply::Restart,
                 min: None,
                 max: None,
                 step: None,

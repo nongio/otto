@@ -18,10 +18,6 @@ pub const BAR_MARGIN_SIDE: i32 = 0;
 /// Horizontal padding inside a panel.
 pub const BAR_PADDING_H: f32 = 14.0;
 
-/// Spacing between tray icons.
-#[allow(dead_code)]
-pub const TRAY_ICON_SPACING: f32 = 8.0;
-
 /// Tray icon size in logical points.
 pub const TRAY_ICON_SIZE: f32 = 22.0;
 
@@ -165,12 +161,6 @@ impl Default for TopbarConfig {
 }
 
 static CONFIG: LazyLock<TopbarConfig> = LazyLock::new(load_config);
-
-/// Access the current topbar configuration.
-#[allow(dead_code)]
-pub fn config() -> &'static TopbarConfig {
-    &CONFIG
-}
 
 /// Return the clock format string.
 pub fn clock_format() -> &'static str {
