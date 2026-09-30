@@ -23,6 +23,7 @@ use skia_safe::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 use crate::audio_route::{self, AudioStreams, Player, Route};
 use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, BAR_COUNT};
 use crate::mpris::{self, Control, PlaybackInfo, SharedPlayback};
+use crate::shell_windows::{self, ShellWindow};
 use crate::state::SharedState;
 use crate::IslandMode;
 
@@ -705,37 +706,26 @@ impl MusicMonitor {
             .map(|since| since + Duration::from_secs_f64(GONE_GRACE_SECS))
     }
 
-    /// Bring the player forward: its own window, the one showing the track
-    /// if it has several; failing that, the window showing the track; failing
-    /// that, the player itself over MPRIS, which lets a browser switch to the
-    /// tab that is playing.
+    /// Bring the player forward: its window, found by [`player_window`] in
+    /// the compositor's tree; failing that, the player itself over MPRIS,
+    /// which lets a browser that supports it switch to the playing tab.
     pub fn focus_player(&self) {
         let Some(info) = self.shown.clone() else {
             return;
         };
-        let windows = focus_watcher::windows();
-        let target = windows
-            .iter()
-            .filter(|w| window_named_after_player(&info, &w.app_id))
-            .max_by_key(|w| window_titled_after_track(&info, &w.title))
-            .or_else(|| {
-                windows
-                    .iter()
-                    .find(|w| window_titled_after_track(&info, &w.title))
-            });
-        if let Some(window) = target {
-            if focus_watcher::activate_window(|app_id, title| {
-                app_id == window.app_id && title == window.title
-            }) {
-                return;
+        thread::spawn(move || {
+            match focus_player_window(&info) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "finding the player's window failed"),
             }
-        }
-        thread::spawn(move || match mpris::raise(&info) {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::info!(bus_name = %info.bus_name, "no window to focus for the player")
+            match mpris::raise(&info) {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::info!(bus_name = %info.bus_name, "no window to focus for the player")
+                }
+                Err(error) => tracing::warn!(%error, "raising the player over MPRIS failed"),
             }
-            Err(error) => tracing::warn!(%error, "raising the player over MPRIS failed"),
         });
     }
 
@@ -773,6 +763,50 @@ impl MusicMonitor {
             pressed: None,
         })
     }
+}
+
+/// Focus the window [`player_window`] picks. Returns whether one was focused.
+fn focus_player_window(info: &PlaybackInfo) -> zbus::Result<bool> {
+    let conn = zbus::blocking::Connection::session()?;
+    let windows = shell_windows::windows(&conn)?;
+    match player_window(info, &windows, audio_route::parent_pid) {
+        Some(window) => shell_windows::focus(&conn, window.con_id),
+        None => Ok(false),
+    }
+}
+
+/// The window that plays `info`, among `windows`.
+///
+/// The windows of the player's own process (or one it started) come first,
+/// then those whose app id is the player's `DesktopEntry` (a sandboxed
+/// player's D-Bus peer is a proxy, not the app), then any window titled after
+/// the track. Among several, the one showing the track wins: a browser titles
+/// each window after its active tab. A browser playing in a tab that isn't
+/// showing still has its window found by process.
+fn player_window<'a>(
+    info: &PlaybackInfo,
+    windows: &'a [ShellWindow],
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> Option<&'a ShellWindow> {
+    let by_process = |window: &ShellWindow| {
+        window.pid.is_some_and(|pid| {
+            info.player_pids
+                .iter()
+                .any(|&player| audio_route::descends_from(pid, player, &parent_of))
+        })
+    };
+    let by_desktop_entry = |window: &ShellWindow| {
+        !info.desktop_entry.is_empty() && window.app_id.eq_ignore_ascii_case(&info.desktop_entry)
+    };
+    let showing_track = |window: &ShellWindow| window_titled_after_track(info, &window.title);
+    let pick = |belongs: &dyn Fn(&ShellWindow) -> bool| {
+        let mut candidates = windows.iter().filter(|w| belongs(w)).peekable();
+        let first = candidates.peek().copied();
+        candidates.find(|w| showing_track(w)).or(first)
+    };
+    pick(&by_process)
+        .or_else(|| pick(&by_desktop_entry))
+        .or_else(|| windows.iter().find(|w| showing_track(w)))
 }
 
 /// Whether the pill drawn from `shown` is out of date for `info`.
@@ -994,6 +1028,7 @@ mod tests {
             track_id: String::new(),
             player_names: players.iter().map(|p| p.to_string()).collect(),
             player_pids: Vec::new(),
+            desktop_entry: String::new(),
         }
     }
 
@@ -1053,6 +1088,79 @@ mod tests {
             "Róisín Murphy - Incapable | Glastonbury 2022 - YouTube - Google Chrome",
         );
         assert!(player_owns_window(&info, &tab, std::slice::from_ref(&tab)));
+    }
+
+    fn shell_window(con_id: u64, pid: Option<u32>, app_id: &str, title: &str) -> ShellWindow {
+        ShellWindow {
+            con_id,
+            pid,
+            app_id: app_id.into(),
+            title: title.into(),
+        }
+    }
+
+    /// 100 is the terminal, 200 the browser, 201 its child, 300 a player
+    /// the terminal started.
+    fn parent_of(pid: u32) -> Option<u32> {
+        match pid {
+            201 => Some(200),
+            300 => Some(100),
+            _ => None,
+        }
+    }
+
+    fn with_pid(mut info: PlaybackInfo, pid: u32) -> PlaybackInfo {
+        info.player_pids = vec![pid];
+        info
+    }
+
+    #[test]
+    fn a_browser_playing_in_a_hidden_tab_is_found_by_process() {
+        let info = with_pid(playing("Veridis Quo", &["chromium"]), 200);
+        let windows = [
+            shell_window(1, Some(100), "com.mitchellh.ghostty", "Veridis Quo lyrics"),
+            shell_window(2, Some(200), "google-chrome", "Hacker News - Google Chrome"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+    }
+
+    #[test]
+    fn of_the_player_s_windows_the_one_showing_the_track_wins() {
+        let info = with_pid(playing("Veridis Quo", &["chromium"]), 200);
+        let windows = [
+            shell_window(1, Some(200), "google-chrome", "Hacker News - Google Chrome"),
+            shell_window(2, Some(201), "google-chrome", "Veridis Quo - YouTube"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+    }
+
+    #[test]
+    fn the_terminal_that_started_a_player_is_not_its_window() {
+        let info = with_pid(playing("Veridis Quo", &["mpv"]), 300);
+        let windows = [shell_window(1, Some(100), "foot", "~/music")];
+        assert!(player_window(&info, &windows, parent_of).is_none());
+    }
+
+    #[test]
+    fn a_sandboxed_player_is_found_by_its_desktop_entry() {
+        let mut info = playing("Veridis Quo", &["spotify"]);
+        info.desktop_entry = "com.spotify.Client".into();
+        let windows = [
+            shell_window(1, Some(100), "foot", "~"),
+            shell_window(2, Some(900), "com.spotify.Client", "Spotify Premium"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+    }
+
+    #[test]
+    fn with_nothing_else_the_window_showing_the_track_is_the_player_s() {
+        let info = playing("Veridis Quo", &["chromium"]);
+        let windows = [
+            shell_window(1, None, "otto-files", "Files"),
+            shell_window(2, None, "brave-browser", "Veridis Quo - YouTube - Brave"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+        assert!(player_window(&info, &windows[..1], parent_of).is_none());
     }
 
     #[test]

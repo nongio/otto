@@ -107,7 +107,7 @@ fn player_names(names: &[String]) -> Vec<String> {
 }
 
 /// Whether `pid` is `ancestor` or one of its descendants.
-fn descends_from(pid: u32, ancestor: u32, parent_of: impl Fn(u32) -> Option<u32>) -> bool {
+pub fn descends_from(pid: u32, ancestor: u32, parent_of: impl Fn(u32) -> Option<u32>) -> bool {
     // Deep enough for any real process tree, and a guard against a cycle
     // read from a /proc that changed underneath.
     const MAX_DEPTH: usize = 64;

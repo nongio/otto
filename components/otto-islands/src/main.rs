@@ -8,6 +8,7 @@ mod mpris;
 mod music;
 mod notifications;
 mod renderer;
+mod shell_windows;
 mod state;
 
 use std::sync::{Arc, Mutex};

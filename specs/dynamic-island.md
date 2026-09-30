@@ -205,10 +205,15 @@ app_id, but title their window after the active tab, so the island hides only wh
 the playing tab is showing. Track titles shorter than three characters don't match by
 title.
 
-Clicking the album art brings the player forward. It activates the player's own
-window (the one showing the track, if it has several), or else the window showing the
-track, through `focus_watcher::activate_window` in otto-kit. With no such window it
-asks the player over MPRIS `Raise`, which lets a browser switch to the playing tab.
+Clicking the album art brings the player forward. The island reads the windows from
+`org.otto.Shell1` `GetTree`, which gives each window's process, and picks, in order:
+the windows of the player's own process or one it started (its D-Bus peer), those
+whose app id is the player's MPRIS `DesktopEntry` (a sandboxed player's peer is a
+proxy), then any window titled after the track. Among several, the one titled after
+the track wins, since a browser titles each window after its active tab. It focuses
+the pick with `[con_id=…] focus`, so a browser playing in a tab that isn't showing
+comes forward on whatever tab it shows. With no window it asks the player over
+MPRIS `Raise`, which lets a browser that supports it switch to the playing tab.
 
 An island is music by its `app_id` (`org.otto.music`), not by coming from inside
 otto-islands.
