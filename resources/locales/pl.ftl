@@ -62,6 +62,7 @@ dock-quit = Zakończ
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Ogólne
+settings-pane-appearance = Wygląd
 settings-pane-displays = Ekrany
 settings-pane-dock = Dock
 settings-pane-tiling = Kafelki
@@ -101,6 +102,13 @@ settings-group-pointer-and-icons = Wskaźnik i ikony
 settings-cursor-theme = Motyw kursora
 settings-cursor-size = Rozmiar kursora
 settings-icon-theme = Motyw ikon
+
+settings-group-bar-clock = Zegar na górnym pasku
+settings-show-clock = Pokazuj datę i godzinę
+settings-show-clock-detail = Na prawym końcu górnego paska
+settings-clock-format = Format
+settings-clock-format-detail = Działa też dowolny format strftime, jako clock_format w sekcji [topbar] pliku konfiguracji
+settings-clock-format-automatic = { $preview } (domyślny dla języka)
 
 settings-group-window-switcher = Przełącznik okien
 settings-follow-cursor = Pokazuj na ekranie ze wskaźnikiem
@@ -999,6 +1007,10 @@ schema-desk-enabled-label = Pokazuj pliki na pulpicie
 schema-desk-enabled-description = Pliki z folderu Pulpit, za oknami.
 schema-canvas-width-label = Szerokość bocznego płótna
 schema-canvas-width-description = Szerokość bocznego płótna w punktach logicznych. Wszystko, co się na nim znajduje, jest rysowane w tej szerokości.
+schema-topbar-show-clock-label = Pokazuj datę i godzinę
+schema-topbar-show-clock-description = Zegar na prawym końcu górnego paska.
+schema-topbar-clock-format-label = Format zegara
+schema-topbar-clock-format-description = Jak górny pasek zapisuje datę i godzinę, w formacie strftime. Puste — według języka.
 schema-background-color-label = Kolor tła
 schema-background-color-description = Kolor tła pulpitu, jako ciąg szesnastkowy.
 schema-background-image-label = Obraz tła

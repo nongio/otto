@@ -63,6 +63,7 @@ dock-quit = Esci
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Generali
+settings-pane-appearance = Aspetto
 settings-pane-displays = Monitor
 settings-pane-dock = Dock
 settings-pane-tiling = Affiancamento
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Puntatore e icone
 settings-cursor-theme = Tema del cursore
 settings-cursor-size = Dimensione del cursore
 settings-icon-theme = Tema delle icone
+
+settings-group-bar-clock = Orologio della barra superiore
+settings-show-clock = Mostra data e ora
+settings-show-clock-detail = All’estremità destra della barra superiore
+settings-clock-format = Formato
+settings-clock-format-detail = Va bene anche qualsiasi formato strftime, come clock_format sotto [topbar] nel file di configurazione
+settings-clock-format-automatic = { $preview } (predefinito della lingua)
 
 settings-group-window-switcher = Cambio finestra
 settings-follow-cursor = Mostra sul monitor del puntatore
@@ -967,6 +975,10 @@ schema-desk-enabled-label = Mostra i file sulla scrivania
 schema-desk-enabled-description = I file della cartella Scrivania, dietro le finestre.
 schema-canvas-width-label = Larghezza della tela laterale
 schema-canvas-width-description = Larghezza della tela laterale, in punti logici. Tutto ciò che contiene viene disegnato a questa larghezza.
+schema-topbar-show-clock-label = Mostra data e ora
+schema-topbar-show-clock-description = L’orologio all’estremità destra della barra superiore.
+schema-topbar-clock-format-label = Formato dell’orologio
+schema-topbar-clock-format-description = Come la barra superiore scrive data e ora, in formato strftime. Vuoto segue la lingua.
 schema-background-color-label = Colore di sfondo
 schema-background-color-description = Colore di sfondo della scrivania, come stringa esadecimale.
 schema-background-image-label = Immagine di sfondo

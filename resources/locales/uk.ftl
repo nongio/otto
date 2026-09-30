@@ -63,6 +63,7 @@ dock-quit = Завершити
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Загальні
+settings-pane-appearance = Вигляд
 settings-pane-displays = Дисплеї
 settings-pane-dock = Dock
 settings-pane-tiling = Мозаїка
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Вказівник і піктограми
 settings-cursor-theme = Тема курсора
 settings-cursor-size = Розмір курсора
 settings-icon-theme = Тема піктограм
+
+settings-group-bar-clock = Годинник на верхній панелі
+settings-show-clock = Показувати дату й час
+settings-show-clock-detail = Біля правого краю верхньої панелі
+settings-clock-format = Формат
+settings-clock-format-detail = Підійде й будь-який формат strftime: clock_format у розділі [topbar] файлу конфігурації
+settings-clock-format-automatic = { $preview } (типово для мови)
 
 settings-group-window-switcher = Перемикач вікон
 settings-follow-cursor = Показувати на дисплеї з вказівником
@@ -987,6 +995,10 @@ schema-desk-enabled-label = Показувати файли на робочом�
 schema-desk-enabled-description = Файли з папки «Стільниця», позаду вікон.
 schema-canvas-width-label = Ширина бічного полотна
 schema-canvas-width-description = Ширина бічного полотна в логічних точках. Усе, що на ньому є, малюється такої ширини.
+schema-topbar-show-clock-label = Показувати дату й час
+schema-topbar-show-clock-description = Годинник біля правого краю верхньої панелі.
+schema-topbar-clock-format-label = Формат годинника
+schema-topbar-clock-format-description = Як верхня панель пише дату й час, у форматі strftime. Порожньо — за мовою.
 schema-background-color-label = Колір тла
 schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка.
 schema-background-image-label = Зображення тла

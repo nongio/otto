@@ -28,6 +28,9 @@ and the contract a settings client can build against.
 > the Settings portal. The seven that need a restart are `screen_scale`,
 > `font_family`, `gtk_theme`, `locales`, `login.greeter_command`,
 > `login.greeter_args` and `rendering.renderer`.
+> `topbar.show_clock` and `topbar.clock_format` are live with nothing for the
+> compositor to do: otto-bar reads them over this interface and follows
+> `Changed` itself.
 > No setting is `unsupported`. Keyed collections (dock bookmarks, shortcuts,
 > display profiles) have no single identifier and are not in the schema.
 

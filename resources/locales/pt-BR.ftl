@@ -63,6 +63,7 @@ dock-quit = Sair
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Geral
+settings-pane-appearance = Aparência
 settings-pane-displays = Monitores
 settings-pane-dock = Dock
 settings-pane-tiling = Lado a lado
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Ponteiro e ícones
 settings-cursor-theme = Tema do cursor
 settings-cursor-size = Tamanho do cursor
 settings-icon-theme = Tema de ícones
+
+settings-group-bar-clock = Relógio da barra superior
+settings-show-clock = Mostrar data e hora
+settings-show-clock-detail = Na ponta direita da barra superior
+settings-clock-format = Formato
+settings-clock-format-detail = Qualquer formato strftime também serve, como clock_format em [topbar] no arquivo de configuração
+settings-clock-format-automatic = { $preview } (padrão do idioma)
 
 settings-group-window-switcher = Alternador de janelas
 settings-follow-cursor = Mostrar no monitor do ponteiro
@@ -962,6 +970,10 @@ schema-desk-enabled-label = Mostrar arquivos na área de trabalho
 schema-desk-enabled-description = Os arquivos da pasta Área de trabalho, atrás das janelas.
 schema-canvas-width-label = Largura da tela lateral
 schema-canvas-width-description = Largura da tela lateral, em pontos lógicos. Tudo nela é desenhado com essa largura.
+schema-topbar-show-clock-label = Mostrar data e hora
+schema-topbar-show-clock-description = O relógio na ponta direita da barra superior.
+schema-topbar-clock-format-label = Formato do relógio
+schema-topbar-clock-format-description = Como a barra superior escreve a data e a hora, em formato strftime. Vazio segue o idioma.
 schema-background-color-label = Cor do plano de fundo
 schema-background-color-description = Cor do plano de fundo da área de trabalho, como uma string hexadecimal.
 schema-background-image-label = Imagem do plano de fundo

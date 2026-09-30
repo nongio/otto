@@ -106,7 +106,9 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ### Clock (Right Zone)
 
-40. The clock displays the current local time. The default format is the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). An explicit clock format in the bar's own configuration overrides it. Whether seconds are shown is a user setting, and it changes how often the bar redraws.
+40. The clock displays the current local time. Its format is, in order: the `topbar.clock_format` setting (Settings, Appearance, "Format") when it is not empty; else `clock_format` in the bar's own configuration file; else the one the active locale's catalogue carries — weekday, day, month and a 24-hour time in most locales, a 12-hour time with the month first in `en-US` (see localisation.md). A format chrono cannot render is skipped for the next one, and `%H:%M` is the last resort, so a typo never takes the clock down. Whether seconds are shown follows from the format, and it changes how often the bar redraws.
+40a. The clock is drawn only while the `topbar.show_clock` setting (Settings, Appearance, "Show date and time", on by default) is true. Hidden, it takes no room: the battery, or whatever comes next, moves up to the bar's edge padding with no gap left behind, the panel shrinks to fit, and the clock leaves the accessibility tree.
+40b. The bar reads both settings from `org.otto.Settings` when it starts, or when the compositor's bus name appears, and reads them back whenever the `Changed` signal names either one. A change applies at once. Without a compositor serving the interface, the clock is shown in the file's or the locale's format.
 41. Clicking the clock opens a calendar popup (future milestone; not in initial implementation).
 
 ### Animations & Visual Behavior

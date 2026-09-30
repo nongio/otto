@@ -63,6 +63,7 @@ dock-quit = Quit
 ## sidebar does not grow to fit them.
 
 settings-pane-general = General
+settings-pane-appearance = Appearance
 settings-pane-displays = Displays
 settings-pane-dock = Dock
 settings-pane-tiling = Tiling
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
 settings-cursor-size = Cursor size
 settings-icon-theme = Icon theme
+
+settings-group-bar-clock = Top bar clock
+settings-show-clock = Show date and time
+settings-show-clock-detail = At the right end of the top bar
+settings-clock-format = Format
+settings-clock-format-detail = Any strftime format works too, as clock_format under [topbar] in the configuration file
+settings-clock-format-automatic = { $preview } (language default)
 
 settings-group-window-switcher = Window switcher
 settings-follow-cursor = Show on the pointer's display
@@ -1038,6 +1046,10 @@ schema-desk-enabled-label = Show files on the desktop
 schema-desk-enabled-description = The files in your Desktop folder, behind the windows.
 schema-canvas-width-label = Side canvas width
 schema-canvas-width-description = Width of the side canvas, in logical points. Everything in it is drawn at this width.
+schema-topbar-show-clock-label = Show date and time
+schema-topbar-show-clock-description = The clock at the right end of the top bar.
+schema-topbar-clock-format-label = Clock format
+schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
 schema-background-color-label = Background colour
 schema-background-color-description = Desktop background colour, as a hex string.
 schema-background-image-label = Background image

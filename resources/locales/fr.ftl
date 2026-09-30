@@ -63,6 +63,7 @@ dock-quit = Quitter
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Général
+settings-pane-appearance = Apparence
 settings-pane-displays = Écrans
 settings-pane-dock = Dock
 settings-pane-tiling = Mosaïque
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Pointeur et icônes
 settings-cursor-theme = Thème du curseur
 settings-cursor-size = Taille du curseur
 settings-icon-theme = Thème d’icônes
+
+settings-group-bar-clock = Horloge de la barre supérieure
+settings-show-clock = Afficher la date et l’heure
+settings-show-clock-detail = À l’extrémité droite de la barre supérieure
+settings-clock-format = Format
+settings-clock-format-detail = Tout format strftime convient aussi, en clock_format sous [topbar] dans le fichier de configuration
+settings-clock-format-automatic = { $preview } (par défaut pour la langue)
 
 settings-group-window-switcher = Alternateur de fenêtres
 settings-follow-cursor = Afficher sur l’écran du pointeur
@@ -972,6 +980,10 @@ schema-desk-enabled-label = Afficher les fichiers sur le bureau
 schema-desk-enabled-description = Les fichiers du dossier Bureau, derrière les fenêtres.
 schema-canvas-width-label = Largeur du canevas latéral
 schema-canvas-width-description = Largeur du canevas latéral, en points logiques. Tout ce qu’il contient est dessiné à cette largeur.
+schema-topbar-show-clock-label = Afficher la date et l’heure
+schema-topbar-show-clock-description = L’horloge à l’extrémité droite de la barre supérieure.
+schema-topbar-clock-format-label = Format de l’horloge
+schema-topbar-clock-format-description = Comment la barre supérieure écrit la date et l’heure, au format strftime. Vide suit la langue.
 schema-background-color-label = Couleur d’arrière-plan
 schema-background-color-description = Couleur d’arrière-plan du bureau, sous forme de chaîne hexadécimale.
 schema-background-image-label = Image d’arrière-plan

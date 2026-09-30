@@ -368,25 +368,44 @@ caused it.
 The window presents a list of panes and the selected pane's contents. The panes
 are:
 
-- **General** — appearance (light/dark), accent colour, rounded corners, frosting, which
-  end of a title bar the window controls sit at, font family, background
-  colour and image, cursor theme and size, icon theme, the renderer (see below), and the display
-  language, which is what every part of Otto localises itself against. That
-  setting requires a restart to take effect, and the app says so like any
-  other; its *System language* entry asks Otto to take the language from the
-  environment instead ([localisation.md](./localisation.md)).
+- **General** — the app switcher's display, the display language, which is
+  what every part of Otto localises itself against, the renderer (see below)
+  and where the configuration file is. The language requires a restart to take
+  effect, and the app says so like any other; its *System language* entry
+  asks Otto to take the language from the environment instead
+  ([localisation.md](./localisation.md)).
 
-  The font family and the display language are pop-up buttons rather than text
-  fields. Both list more values than a menu can show at once — every family
-  fontconfig knows of, in the first case — so both are menus that cap their
-  height, scroll, and are walked by typing the start of a name
+  The display language is a pop-up button rather than a text field. It lists
+  more values than a menu can show at once, so the menu caps its height,
+  scrolls, and is walked by typing the start of a name
   ([context-menus.md](./context-menus.md)).
+- **Appearance** — sits right after General. Colour scheme (light/dark),
+  accent colour, rounded corners, frosting, which end of a title bar the
+  window controls sit at, the maximize button, font family and GTK theme; the
+  desktop's background colour and image and whether the desk is shown; the
+  cursor theme and size and the icon theme; and the top bar's clock.
+
+  The font family is a pop-up that lists every family fontconfig knows of, so
+  like the language it caps its height, scrolls and is walked by typing.
 
   The accent is a `color` setting rather than an enumeration: the colour well
   offers the palette's named accents as swatches, and picking one sends the
   name, so the accent keeps following the light and dark schemes. A colour
   dragged out of the picker that the palette has no name for is sent as
   `#RRGGBB` and is taken as-is under both schemes.
+
+  The clock group has a toggle, *Show date and time* (`topbar.show_clock`,
+  live, on by default), and a *Format* pop-up (`topbar.clock_format`, live).
+  The format is a `string` setting; the pop-up offers a fixed set of formats
+  (time only, weekday and time, short and long date with time, each on a
+  24- and a 12-hour clock), each entry showing the current time in that
+  format in the interface's language. The first entry is the empty string,
+  the language's own format, shown as a preview marked as the language
+  default. A format written by hand in the configuration file that the list
+  does not offer is added to the menu so the field always shows what is in
+  force. otto-bar reads both settings over `org.otto.Settings` and follows
+  `Changed`, so both apply live; the compositor has nothing to reconcile
+  ([topbar.md](./topbar.md)).
 - **Displays** — see below.
 - **Dock** — size, position, autohide, magnification, minimise effect, and the
   icon tint: what is tinted — the dock's icons, and whether the app switcher

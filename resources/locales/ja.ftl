@@ -63,6 +63,7 @@ dock-quit = 終了
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 一般
+settings-pane-appearance = 外観
 settings-pane-displays = ディスプレイ
 settings-pane-dock = Dock
 settings-pane-tiling = タイル表示
@@ -101,6 +102,13 @@ settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
 settings-cursor-size = カーソルサイズ
 settings-icon-theme = アイコンテーマ
+
+settings-group-bar-clock = 上部バーの時計
+settings-show-clock = 日付と時刻を表示
+settings-show-clock-detail = 上部バーの右端に表示
+settings-clock-format = 表示形式
+settings-clock-format-detail = 設定ファイルの [topbar] に clock_format として任意の strftime 形式も書けます
+settings-clock-format-automatic = { $preview }（言語の既定）
 
 settings-group-window-switcher = ウインドウスイッチャー
 settings-follow-cursor = ポインタのあるディスプレイに表示
@@ -925,6 +933,10 @@ schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
 schema-canvas-width-label = サイドキャンバスの幅
 schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
+schema-topbar-show-clock-label = 日付と時刻を表示
+schema-topbar-show-clock-description = 上部バーの右端の時計。
+schema-topbar-clock-format-label = 時計の表示形式
+schema-topbar-clock-format-description = 上部バーに表示する日付と時刻の strftime 形式。空なら言語に従います。
 schema-background-color-label = 背景色
 schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
 schema-background-image-label = 背景画像

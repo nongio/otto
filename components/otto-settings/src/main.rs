@@ -563,6 +563,8 @@ fn open_menu(
             choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::appearance::menu_choices(select.id, &select.current) {
+            choices
         } else if let Some(values) = display_slot {
             values
                 .into_iter()
@@ -977,6 +979,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
             // What the field shows, not the configuration token behind it.
             let shown = match row.id {
                 Some(id) => panes::keyboard_layouts::display(id, current)
+                    .or_else(|| panes::appearance::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
             };

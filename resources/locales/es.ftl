@@ -63,6 +63,7 @@ dock-quit = Salir
 ## sidebar does not grow to fit them.
 
 settings-pane-general = General
+settings-pane-appearance = Apariencia
 settings-pane-displays = Pantallas
 settings-pane-dock = Dock
 settings-pane-tiling = Mosaico
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Puntero e iconos
 settings-cursor-theme = Tema del cursor
 settings-cursor-size = Tamaño del cursor
 settings-icon-theme = Tema de iconos
+
+settings-group-bar-clock = Reloj de la barra superior
+settings-show-clock = Mostrar fecha y hora
+settings-show-clock-detail = En el extremo derecho de la barra superior
+settings-clock-format = Formato
+settings-clock-format-detail = También sirve cualquier formato strftime, como clock_format en [topbar] del archivo de configuración
+settings-clock-format-automatic = { $preview } (predeterminado del idioma)
 
 settings-group-window-switcher = Selector de ventanas
 settings-follow-cursor = Mostrar en la pantalla del puntero
@@ -961,6 +969,10 @@ schema-desk-enabled-label = Mostrar archivos en el escritorio
 schema-desk-enabled-description = Los archivos de la carpeta Escritorio, detrás de las ventanas.
 schema-canvas-width-label = Ancho del lienzo lateral
 schema-canvas-width-description = Ancho del lienzo lateral, en puntos lógicos. Todo lo que contiene se dibuja con este ancho.
+schema-topbar-show-clock-label = Mostrar fecha y hora
+schema-topbar-show-clock-description = El reloj en el extremo derecho de la barra superior.
+schema-topbar-clock-format-label = Formato del reloj
+schema-topbar-clock-format-description = Cómo escribe la barra superior la fecha y la hora, como formato strftime. Vacío sigue al idioma.
 schema-background-color-label = Color de fondo
 schema-background-color-description = Color de fondo del escritorio, en formato hexadecimal.
 schema-background-image-label = Imagen de fondo

@@ -62,6 +62,7 @@ dock-quit = 退出
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 通用
+settings-pane-appearance = 外观
 settings-pane-displays = 显示器
 settings-pane-dock = Dock
 settings-pane-tiling = 平铺
@@ -101,6 +102,13 @@ settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
 settings-cursor-size = 光标大小
 settings-icon-theme = 图标主题
+
+settings-group-bar-clock = 顶部栏时钟
+settings-show-clock = 显示日期和时间
+settings-show-clock-detail = 位于顶部栏的右端
+settings-clock-format = 格式
+settings-clock-format-detail = 也可以在配置文件的 [topbar] 中将任意 strftime 格式写为 clock_format
+settings-clock-format-automatic = { $preview }（语言默认）
 
 settings-group-window-switcher = 窗口切换器
 settings-follow-cursor = 在指针所在的显示器上显示
@@ -928,6 +936,10 @@ schema-desk-enabled-label = 在桌面上显示文件
 schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
 schema-canvas-width-label = 侧边画布宽度
 schema-canvas-width-description = 侧边画布的宽度，以逻辑点为单位。其中的所有内容都按此宽度绘制。
+schema-topbar-show-clock-label = 显示日期和时间
+schema-topbar-show-clock-description = 顶部栏右端的时钟。
+schema-topbar-clock-format-label = 时钟格式
+schema-topbar-clock-format-description = 顶部栏显示日期和时间所用的 strftime 格式。留空则跟随语言。
 schema-background-color-label = 背景颜色
 schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
 schema-background-image-label = 背景图片

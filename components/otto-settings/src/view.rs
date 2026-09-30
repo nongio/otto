@@ -2289,6 +2289,7 @@ impl Settings {
                 // the schema's human name for it where there is one.
                 let shown = match row.id {
                     Some(id) => crate::panes::keyboard_layouts::display(id, value)
+                        .or_else(|| crate::panes::appearance::display(id, value))
                         .unwrap_or_else(|| settings_client::display_choice(id, value)),
                     None => value.clone(),
                 };

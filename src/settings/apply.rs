@@ -67,6 +67,8 @@ pub fn is_applied_live(id: &str) -> bool {
             | "input.show_layout_in_bar"
             | "desk.enabled"
             | "canvas.width"
+            | "topbar.show_clock"
+            | "topbar.clock_format"
             | "search.folders"
             | "search.skip_code_repositories"
             | "search.index_removable_drives"
@@ -377,6 +379,9 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.canvas_config_changed();
             Ok(())
         }
+        // Nothing to do here: otto-bar follows `Changed` and reads the new
+        // value back itself.
+        "topbar.show_clock" | "topbar.clock_format" => Ok(()),
         // LocalSearch's own settings: pushed to it on a thread of its own,
         // since writing them runs `gsettings`.
         "search.folders" => {
@@ -504,6 +509,8 @@ mod tests {
             "lock.locker_args",
             "lock.auto_lock_timeout",
             "lock.on_suspend",
+            "topbar.show_clock",
+            "topbar.clock_format",
         ] {
             assert_eq!(
                 schema::lookup(id).expect("in schema").apply,

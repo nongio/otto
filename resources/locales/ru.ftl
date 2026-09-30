@@ -62,6 +62,7 @@ dock-quit = Завершить
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Основные
+settings-pane-appearance = Оформление
 settings-pane-displays = Дисплеи
 settings-pane-dock = Dock
 settings-pane-tiling = Мозаика
@@ -101,6 +102,13 @@ settings-group-pointer-and-icons = Указатель и значки
 settings-cursor-theme = Тема курсора
 settings-cursor-size = Размер курсора
 settings-icon-theme = Тема значков
+
+settings-group-bar-clock = Часы на верхней панели
+settings-show-clock = Показывать дату и время
+settings-show-clock-detail = У правого края верхней панели
+settings-clock-format = Формат
+settings-clock-format-detail = Подойдёт и любой формат strftime: clock_format в разделе [topbar] файла конфигурации
+settings-clock-format-automatic = { $preview } (по умолчанию для языка)
 
 settings-group-window-switcher = Переключатель окон
 settings-follow-cursor = Показывать на дисплее с указателем
@@ -992,6 +1000,10 @@ schema-desk-enabled-label = Показывать файлы на рабочем 
 schema-desk-enabled-description = Файлы из папки «Рабочий стол», за окнами.
 schema-canvas-width-label = Ширина бокового холста
 schema-canvas-width-description = Ширина бокового холста в логических точках. Всё, что на нём есть, рисуется такой ширины.
+schema-topbar-show-clock-label = Показывать дату и время
+schema-topbar-show-clock-description = Часы у правого края верхней панели.
+schema-topbar-clock-format-label = Формат часов
+schema-topbar-clock-format-description = Как верхняя панель пишет дату и время, в формате strftime. Пусто — по языку.
 schema-background-color-label = Цвет фона
 schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки.
 schema-background-image-label = Изображение фона

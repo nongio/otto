@@ -63,6 +63,7 @@ dock-quit = Beenden
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Allgemein
+settings-pane-appearance = Erscheinungsbild
 settings-pane-displays = Monitore
 settings-pane-dock = Dock
 settings-pane-tiling = Kacheln
@@ -102,6 +103,13 @@ settings-group-pointer-and-icons = Zeiger & Symbole
 settings-cursor-theme = Zeigerdesign
 settings-cursor-size = Zeigergröße
 settings-icon-theme = Symboldesign
+
+settings-group-bar-clock = Uhr in der oberen Leiste
+settings-show-clock = Datum und Uhrzeit anzeigen
+settings-show-clock-detail = Am rechten Ende der oberen Leiste
+settings-clock-format = Format
+settings-clock-format-detail = Jedes strftime-Format geht auch, als clock_format unter [topbar] in der Konfigurationsdatei
+settings-clock-format-automatic = { $preview } (Standard der Sprache)
 
 settings-group-window-switcher = Fensterumschalter
 settings-follow-cursor = Auf dem Bildschirm des Zeigers anzeigen
@@ -949,6 +957,10 @@ schema-desk-enabled-label = Dateien auf dem Schreibtisch anzeigen
 schema-desk-enabled-description = Die Dateien im Ordner „Schreibtisch“, hinter den Fenstern.
 schema-canvas-width-label = Breite der Seitenleinwand
 schema-canvas-width-description = Breite der Seitenleinwand in logischen Punkten. Alles darin wird in dieser Breite gezeichnet.
+schema-topbar-show-clock-label = Datum und Uhrzeit anzeigen
+schema-topbar-show-clock-description = Die Uhr am rechten Ende der oberen Leiste.
+schema-topbar-clock-format-label = Uhrformat
+schema-topbar-clock-format-description = Wie die obere Leiste Datum und Uhrzeit schreibt, als strftime-Format. Leer folgt der Sprache.
 schema-background-color-label = Hintergrundfarbe
 schema-background-color-description = Hintergrundfarbe des Schreibtischs, als Hex-Zeichenfolge.
 schema-background-image-label = Hintergrundbild

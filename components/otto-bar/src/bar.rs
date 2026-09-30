@@ -296,31 +296,19 @@ impl RightPanel {
     /// technologies all come through here, so a click, the menu it opens and
     /// the box a screen reader highlights cannot drift apart.
     pub fn layout(&self) -> RightLayout {
-        let clock_width = self.clock_width();
-
         let battery_width = crate::battery::width();
-        let battery_gap = if battery_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-        let battery_x = self.width - clock_width - battery_gap - battery_width;
-
         let keyboard_width = crate::keyboard_layout::width();
-        let keyboard_gap = if keyboard_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-        let keyboard_x = battery_x - keyboard_gap - keyboard_width;
-
         let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let tray_gap = if tray_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-        let tray_x = keyboard_x - tray_gap - tray_width;
+
+        let [_, battery_x, keyboard_x, tray_x] = pack_right_to_left(
+            self.width - BAR_PADDING_H,
+            [
+                self.clock_text_width(),
+                battery_width,
+                keyboard_width,
+                tray_width,
+            ],
+        );
 
         RightLayout {
             battery_x,
@@ -412,39 +400,25 @@ impl RightPanel {
     /// Compute the ideal panel width from the clock text, the battery and the
     /// tray icon count.
     pub fn target_width(&self) -> f32 {
-        let font = typography::styles::BODY_MEDIUM.font();
-        let clock_text_width = font.measure_str(&self.clock.text, None).0;
-
-        let battery_width = crate::battery::width();
-        let battery_gap = if battery_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-
-        let keyboard_width = crate::keyboard_layout::width();
-        let keyboard_gap = if keyboard_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-
-        let tray_width = MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style);
-        let tray_gap = if tray_width > 0.0 {
-            TRAY_CLOCK_GAP
-        } else {
-            0.0
-        };
-
-        let content = clock_text_width
-            + BAR_PADDING_H * 2.0
-            + battery_gap
-            + battery_width
-            + keyboard_gap
-            + keyboard_width
-            + tray_gap
-            + tray_width;
+        let content = packed_width([
+            self.clock_text_width(),
+            crate::battery::width(),
+            crate::keyboard_layout::width(),
+            MenuBarRenderer::measure_width(&self.tray_menu_state, &self.tray_style),
+        ]) + BAR_PADDING_H * 2.0;
         content.max(MIN_RIGHT_WIDTH as f32)
+    }
+
+    /// The clock's text alone. Zero while the clock is hidden, whose text is
+    /// then empty.
+    fn clock_text_width(&self) -> f32 {
+        if self.clock.text.is_empty() {
+            return 0.0;
+        }
+        typography::styles::BODY_MEDIUM
+            .font()
+            .measure_str(&self.clock.text, None)
+            .0
     }
 
     /// Hit-test: return the tray item index at position x (in panel coords).
@@ -453,11 +427,7 @@ impl RightPanel {
     /// Measured the same way the panel draws and hit-tests it, so the
     /// rectangle a screen reader is given is the one on screen.
     pub fn clock_width(&self) -> f32 {
-        typography::styles::BODY_MEDIUM
-            .font()
-            .measure_str(&self.clock.text, None)
-            .0
-            + BAR_PADDING_H
+        self.clock_text_width() + BAR_PADDING_H
     }
 
     /// Whether `x` (in panel coords) is on the battery indicator.
@@ -587,8 +557,69 @@ impl RightPanel {
     }
 }
 
+/// Where each of `widths` starts when laid right to left from `right_edge`,
+/// with `TRAY_CLOCK_GAP` between neighbours that are there at all.
+///
+/// A zero width is an item that is not shown: it takes no room and no gap,
+/// and its x is where it would start, the left edge of what is placed so far.
+fn pack_right_to_left<const N: usize>(right_edge: f32, widths: [f32; N]) -> [f32; N] {
+    let mut edge = right_edge;
+    let mut placed_any = false;
+    widths.map(|width| {
+        if width > 0.0 {
+            if placed_any {
+                edge -= TRAY_CLOCK_GAP;
+            }
+            edge -= width;
+            placed_any = true;
+        }
+        edge
+    })
+}
+
+/// How much room [`pack_right_to_left`] takes for `widths`.
+fn packed_width<const N: usize>(widths: [f32; N]) -> f32 {
+    let shown = widths.iter().filter(|w| **w > 0.0).count();
+    widths.iter().sum::<f32>() + TRAY_CLOCK_GAP * shown.saturating_sub(1) as f32
+}
+
 /// Vertically center text using cap-height.
 fn baseline_y(height: f32, font: &skia_safe::Font) -> f32 {
     let (_, metrics) = font.metrics();
     (height + metrics.cap_height) / 2.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hidden_clock_leaves_no_gap_at_the_edge() {
+        // Clock, battery, keyboard, tray.
+        let shown = pack_right_to_left(100.0, [40.0, 20.0, 0.0, 10.0]);
+        assert_eq!(
+            shown,
+            [
+                60.0,
+                60.0 - TRAY_CLOCK_GAP - 20.0,
+                28.0,
+                28.0 - TRAY_CLOCK_GAP - 10.0
+            ]
+        );
+
+        // Without the clock the battery takes its place against the edge.
+        let hidden = pack_right_to_left(100.0, [0.0, 20.0, 0.0, 10.0]);
+        assert_eq!(hidden[1], 80.0);
+        assert_eq!(hidden[3], 80.0 - TRAY_CLOCK_GAP - 10.0);
+    }
+
+    #[test]
+    fn the_packed_width_counts_gaps_only_between_shown_items() {
+        assert_eq!(
+            packed_width([40.0, 20.0, 0.0, 10.0]),
+            70.0 + 2.0 * TRAY_CLOCK_GAP
+        );
+        assert_eq!(packed_width([0.0, 20.0, 0.0, 0.0]), 20.0);
+        assert_eq!(packed_width([0.0, 0.0, 0.0, 0.0]), 0.0);
+    }
 }

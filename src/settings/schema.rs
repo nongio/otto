@@ -507,6 +507,22 @@ pub static SETTINGS: &[SettingSpec] = &[
             Restart,
         )
     },
+    // ---- Top bar ---------------------------------------------------------
+    spec(
+        "topbar.show_clock",
+        Bool,
+        "Show date and time",
+        "The clock at the right end of the top bar.",
+        Live,
+    ),
+    spec(
+        "topbar.clock_format",
+        Str,
+        "Clock format",
+        "How the top bar writes the date and time, as a strftime format. \
+         Empty follows your language.",
+        Live,
+    ),
     // ---- Tiling ----------------------------------------------------------
     choice(
         "tiling.decoration",

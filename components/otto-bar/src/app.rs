@@ -806,6 +806,7 @@ impl App for TopBarApp {
         crate::appmenu::spawn_appmenu_registrar();
         crate::power::spawn_power_watcher();
         crate::keyboard_layout::spawn_watcher();
+        crate::clock::spawn_watcher();
 
         Ok(())
     }
@@ -1038,7 +1039,11 @@ impl App for TopBarApp {
         }
 
         // The clock reads as what it says, and is announced when it changes:
-        // it is the one thing on the bar that moves on its own.
+        // it is the one thing on the bar that moves on its own. A hidden one
+        // is not there to read.
+        if !crate::clock::shown() {
+            return Some(tree);
+        }
         let clock = Rect::from_xywh(
             self.right.width - self.right.clock_width(),
             0.0,

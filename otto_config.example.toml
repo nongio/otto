@@ -133,6 +133,17 @@ args = []
 # [desk]
 # enabled = true
 
+# The top bar's clock. otto-bar reads these from Otto and follows changes live.
+# Settings ▸ Appearance edits them.
+#
+# [topbar]
+# Show the date and time at the right end of the bar (default true).
+# show_clock = true
+# A chrono strftime format (https://docs.rs/chrono/latest/chrono/format/strftime/).
+# Empty (the default) uses clock_format from otto-bar.toml if set, otherwise
+# your language's own format.
+# clock_format = "%a %-d %b  %H:%M"
+
 # File search: the folders LocalSearch, the file indexer, looks in, and what it
 # leaves out. Otto pushes these to LocalSearch's own settings; a key left
 # unset here leaves LocalSearch's value alone. Settings ▸ Search edits them.
