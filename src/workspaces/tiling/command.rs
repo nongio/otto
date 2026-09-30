@@ -1285,7 +1285,9 @@ mod tests {
             pid: None,
             ..window("foot", "")
         }));
-        assert!(error("[con_id=seven] focus").message.contains("expected a number"));
+        assert!(error("[con_id=seven] focus")
+            .message
+            .contains("expected a number"));
     }
 
     #[test]
