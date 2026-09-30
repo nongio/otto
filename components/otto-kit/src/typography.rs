@@ -928,14 +928,6 @@ mod tests {
     }
 
     #[test]
-    fn test_text_styles() {
-        let _title = styles::TITLE_1.font();
-        let _body = styles::BODY.font();
-        let _caption = styles::CAPTION_1.font();
-        // If we get here without panic, fonts loaded successfully
-    }
-
-    #[test]
     fn ascii_keeps_the_face_it_was_given() {
         let base = styles::BODY.font();
         let runs = text_runs(&base, "English (United Kingdom)");

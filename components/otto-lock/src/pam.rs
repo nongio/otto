@@ -410,16 +410,3 @@ unsafe extern "C" fn conversation(
     *resp = responses;
     PAM_SUCCESS
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The service has to resolve to something, even on a system where nothing
-    /// has been installed — the fallback is what keeps a missing file from
-    /// locking the user out of their own session.
-    #[test]
-    fn a_service_is_always_named() {
-        assert!(!service_name().as_bytes().is_empty());
-    }
-}

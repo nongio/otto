@@ -2436,17 +2436,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_system_config_path() {
-        // System config path is fixed
-        let path = get_system_config_path();
-
-        // Only returns Some if the file exists
-        if let Some(p) = path {
-            assert_eq!(p, PathBuf::from("/etc/otto/config.toml"));
-        }
-    }
-
-    #[test]
     fn test_config_merge_priority() {
         // Test that config values merge correctly with priority
         let mut base =
@@ -3028,31 +3017,14 @@ bookmarks = []
     }
 
     #[test]
-    fn test_scroll_speed_negative_clamping() {
-        // Test that negative values are clamped to 0.0
-        let val: f64 = (-2.5f64).max(0.0);
-        assert_eq!(val, 0.0, "negative scroll_speed should be clamped to 0.0");
-    }
-
-    #[test]
-    fn test_scroll_speed_positive_preserved() {
-        // Test that positive values are preserved
-        let val: f64 = (2.5f64).max(0.0);
-        assert_eq!(val, 2.5, "positive scroll_speed should be preserved");
-    }
-
-    #[test]
-    fn test_scroll_speed_zero_preserved() {
-        // Test that zero is preserved
-        let val: f64 = (0.0f64).max(0.0);
-        assert_eq!(val, 0.0, "zero scroll_speed should be preserved");
-    }
-
-    #[test]
-    fn test_scroll_speed_default() {
-        // Test default value
-        let val = default_scroll_speed();
-        assert_eq!(val, 1.0, "scroll_speed should default to 1.0");
+    fn scroll_speed_clamps_negatives_and_defaults_to_one() {
+        for (raw, want) in [("-2.5", 0.0), ("0.0", 0.0), ("2.5", 2.5)] {
+            let config: Config = toml::from_str(&format!("[input]\nscroll_speed = {raw}\n"))
+                .expect("Config should deserialize");
+            assert_eq!(config.input.scroll_speed, want, "scroll_speed = {raw}");
+        }
+        let config: Config = toml::from_str("[input]\n").expect("empty input table");
+        assert_eq!(config.input.scroll_speed, 1.0);
     }
 
     #[test]

@@ -5600,24 +5600,6 @@ impl Workspaces {
         self.with_model(|m| m.workspaces.get(i).cloned())
     }
 
-    /// Windows eligible for direct client-buffer scanout ("shadow-only" mode).
-    ///
-    /// Ported from the reference implementation in `../otto`
-    /// (feat/window-scanout-new) and adapted to the plane pipeline: the app
-    /// switcher, OSD and layer-shell panels render on the overlay plane, so
-    /// they do not gate scanout globally — only windows they geometrically
-    /// overlap are demoted (their pixels must be in the windows plane for the
-    /// overlay's backdrop blur to sample).
-    ///
-    /// Selection is intentionally based on *stable* geometry (dock bar,
-    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
-    /// scene state like bubbled blur regions — those are cleared and rebuilt
-    /// every engine update, so sampling them oscillates between promote and
-    /// demote and flickers the window content.
-    pub fn get_scanout_candidates(&self, output: &Output) -> Vec<ObjectId> {
-        self.get_plane_candidates(output).raw
-    }
-
     /// Debug: which global gate closed plane promotion, logged when it changes.
     fn plane_gate_log(reason: &'static str) {
         use std::sync::Mutex;
@@ -5631,6 +5613,12 @@ impl Workspaces {
 
     /// Both promotion tiers for `output`, computed in one top-to-bottom walk
     /// (they share every stability gate and the same occlusion state).
+    ///
+    /// Selection is intentionally based on *stable* geometry (dock bar,
+    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
+    /// scene state like bubbled blur regions — those are cleared and rebuilt
+    /// every engine update, so sampling them oscillates between promote and
+    /// demote and flickers the window content.
     pub fn get_plane_candidates(&self, output: &Output) -> PlaneCandidates {
         use smithay::utils::{Physical, Rectangle};
 

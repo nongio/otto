@@ -470,51 +470,6 @@ impl HeadlessHandle {
         self.query(|state| state.layers_engine.scene().snapshot().nodes.len())
     }
 
-    /// The keys of every parentless node in the scene arena.
-    ///
-    /// A node with no parent is either a real scene root or an orphan: one
-    /// detached from the tree and never freed. `cleanup_nodes` only walks the
-    /// root's descendants, so an orphan is invisible to it and stays in the
-    /// arena for good — which makes this list the place a leak shows itself.
-    pub fn scene_root_keys(&self) -> Vec<String> {
-        self.query(|state| {
-            state
-                .layers_engine
-                .scene()
-                .snapshot()
-                .nodes
-                .iter()
-                .map(|n| n.key.clone())
-                .collect()
-        })
-    }
-
-    /// One line per parentless scene node: key, size, child count.
-    /// Diagnostic company for [`Self::scene_root_keys`].
-    pub fn scene_root_details(&self) -> Vec<String> {
-        self.query(|state| {
-            state
-                .layers_engine
-                .scene()
-                .snapshot()
-                .nodes
-                .iter()
-                .map(|n| {
-                    format!(
-                        "{} id={} {}x{} children={} hidden={} content={:?}",
-                        n.key,
-                        n.id,
-                        n.local_bounds.width,
-                        n.local_bounds.height,
-                        n.children.len(),
-                        n.hidden,
-                        n.content
-                    )
-                })
-                .collect()
-        })
-    }
-
     /// Whether a drag icon is currently being carried.
     pub fn dnd_icon_present(&self) -> bool {
         self.query(|state| state.dnd_icon.is_some())
@@ -632,21 +587,6 @@ impl HeadlessHandle {
                 .values()
                 .all(|ows| ows.workspaces_layer.hidden());
             (hidden, state.workspaces.mirrors_active())
-        })
-    }
-
-    /// Click, and report whether expose still counts as transitioning the
-    /// instant the click has been handled — sampled inside the same state
-    /// callback, so no frame can be processed in between.
-    ///
-    /// Anything that reads `is_expose_transitioning` to decide whether expose
-    /// is at rest (scanout promotion above all) must see `true` here: the close
-    /// animation has only just been scheduled.
-    pub fn click_and_sample_expose_transitioning(&self) -> bool {
-        self.query(|state| {
-            state.synthetic_pointer_button(true);
-            state.synthetic_pointer_button(false);
-            state.workspaces.is_expose_transitioning()
         })
     }
 
@@ -1131,13 +1071,6 @@ impl HeadlessHandle {
         });
     }
 
-    /// Even out the shares of the focused container.
-    pub fn tiling_equalize(&self) {
-        self.with_state(|state| {
-            state.handle_tiling_equalize();
-        });
-    }
-
     // ── Pointer drags on a tile ──────────────────────────────────────────
     //
     // The grab entry points, called with logical pointer positions, rather
@@ -1181,16 +1114,6 @@ impl HeadlessHandle {
         self.with_state(|state| {
             state.tiling_drag_cancel();
         });
-    }
-
-    /// Press on `title`'s titlebar, drag to `(x, y)` and let go — the whole
-    /// gesture in one call.
-    pub fn tiling_drag_window(&self, title: &str, x: f64, y: f64) {
-        self.tiling_drag_begin(title);
-        self.settle(200);
-        self.tiling_drag_motion(x, y);
-        self.tiling_drag_drop(x, y);
-        self.settle(400);
     }
 
     /// Is a drag out of a tree in flight?

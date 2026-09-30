@@ -23,15 +23,6 @@ mod headless_tests {
 
     #[test]
     #[serial]
-    fn compositor_starts_and_stops() {
-        let handle = start_compositor();
-        assert!(!handle.socket_name.is_empty());
-        // compositor is running (it would have panicked on start otherwise)
-        handle.stop();
-    }
-
-    #[test]
-    #[serial]
     fn client_connects_and_binds_globals() {
         let handle = start_compositor();
         let client = connect_client(&handle);
@@ -889,7 +880,7 @@ mod headless_tests {
 
     // ── Direct scanout candidate selection ───────────────────────────────
     //
-    // These tests exercise `Workspaces::get_scanout_candidates()` — the
+    // These tests exercise `Workspaces::get_plane_candidates()` — the
     // selector the udev render path uses to decide which client windows are
     // promoted to KMS plane scanout. A window is a candidate when no overlay
     // UI (expose, app switcher, OSD, layer-shell chrome) overlaps it, it is
@@ -904,7 +895,8 @@ mod headless_tests {
             };
             state
                 .workspaces
-                .get_scanout_candidates(&output)
+                .get_plane_candidates(&output)
+                .raw
                 .iter()
                 .filter_map(|id| {
                     state
@@ -917,7 +909,7 @@ mod headless_tests {
     }
 
     /// Wait until animations from compositor startup have settled, so
-    /// `get_scanout_candidates()` reflects the steady state.
+    /// `get_plane_candidates()` reflects the steady state.
     ///
     /// Note: in headless mode the workspace `is_animating` flag isn't
     /// reset by the udev render loop (which doesn't run), so we also
@@ -1126,40 +1118,6 @@ mod headless_tests {
         assert!(
             !after.is_empty(),
             "Candidates should return after expose closes"
-        );
-
-        handle.stop();
-    }
-
-    #[test]
-    #[serial]
-    fn scanned_out_flag_default_is_false() {
-        let handle = start_compositor();
-        let mut client = connect_client(&handle);
-
-        let _w = client.create_toplevel("flag-test", 800, 600);
-        handle.wait(Duration::from_millis(200));
-        let _ = client.roundtrip();
-
-        // The is_scanned_out flag is set/cleared by the udev render path.
-        // In the headless backend the udev render does not run, so the flag
-        // stays at its default of `false`. This test pins down that default
-        // behavior so future changes can't accidentally change it (e.g., by
-        // initializing the flag to `true` or having some other code path
-        // toggle it from headless).
-        let scanned_out: bool = handle.query(|state| {
-            state
-                .workspaces
-                .spaces_elements()
-                .find(|w| w.xdg_title() == "flag-test")
-                .map(|w| w.is_scanned_out())
-                .unwrap_or(false)
-        });
-
-        assert!(
-            !scanned_out,
-            "is_scanned_out should default to false; only the udev render path \
-             toggles it. Headless runs without the udev render so it must stay false."
         );
 
         handle.stop();

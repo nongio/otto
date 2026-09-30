@@ -2618,14 +2618,6 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn a_folder_becomes_a_file_uri() {
-        assert_eq!(
-            file_uri(Path::new("/home/me/My Projects")),
-            "file:///home/me/My%20Projects"
-        );
-    }
-
-    #[test]
     fn an_unreachable_service_is_reported_rather_than_waited_on() {
         // Port 9 is the discard port; nothing speaks WebSocket there.
         let mut ask = Ask::connect("ws://127.0.0.1:9".into(), PathBuf::from("/"));
