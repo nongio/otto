@@ -148,7 +148,7 @@ itself is in [notification-daemon](notification-daemon.md).
 While an MPRIS player has a track loaded, the island shows a persistent live
 activity for it:
 - **Mini**: three bars in a circle, in the accent colour.
-- **Compact**: album art, title, artist and eight thin bars.
+- **Compact**: album art, title, artist and six thin bars.
 - **Expanded**: larger art, title and artist, twelve bars, a progress bar with the
   elapsed and remaining time, and previous/play-pause/next controls.
 

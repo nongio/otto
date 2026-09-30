@@ -48,7 +48,7 @@ pub const MUSIC_APP_ID: &str = "org.otto.music";
 pub const EQ_BUF_W: i32 = 220;
 pub const EQ_BUF_H: i32 = 32;
 /// Bars in the compact pill.
-const COMPACT_BARS: usize = 8;
+const COMPACT_BARS: usize = 6;
 /// Seconds a track may be gone before the island lets go of it, so skipping
 /// to the next one doesn't close and reopen it.
 const GONE_GRACE_SECS: f64 = 3.0;
@@ -110,9 +110,8 @@ impl MusicActivityRenderer {
             IslandMode::Mini => (w, h, 0.0, 0.0),
             IslandMode::Compact => {
                 let v_pad = 7.0;
-                let h_pad = 8.0;
                 let eq_w = compact_bars_width();
-                (eq_w, h - v_pad * 2.0, w - h_pad - eq_w, v_pad)
+                (eq_w, h - v_pad * 2.0, compact_bars_x(w), v_pad)
             }
             IslandMode::Expanded => {
                 let pad = 12.0;
@@ -221,16 +220,15 @@ impl MusicActivityRenderer {
 
     fn draw_compact(&self, canvas: &Canvas, w: f32, h: f32) {
         let v_pad = 7.0;
-        let h_pad = 10.0;
+        let h_pad = COMPACT_EDGE_PAD;
         let art_size = h - v_pad * 2.0;
         let art_x = h_pad;
         let art_y = v_pad;
 
         self.draw_art(canvas, art_x, art_y, art_size);
 
-        let eq_x = w - h_pad - compact_bars_width();
         let text_x = art_x + art_size + h_pad;
-        let text_max_w = eq_x - text_x - h_pad;
+        let text_max_w = compact_bars_x(w) - text_x - COMPACT_TEXT_GAP;
 
         let mid = h / 2.0;
         Self::draw_text(
@@ -449,6 +447,18 @@ impl MusicActivityRenderer {
             &paint,
         );
     }
+}
+
+/// Space between the compact pill's edge and the art on the left, the bars
+/// on the right.
+const COMPACT_EDGE_PAD: f32 = 10.0;
+
+/// The least space between the compact pill's text and its bars.
+const COMPACT_TEXT_GAP: f32 = 6.0;
+
+/// Where the bars start in a compact pill `w` wide.
+fn compact_bars_x(w: f32) -> f32 {
+    w - COMPACT_EDGE_PAD - compact_bars_width()
 }
 
 fn compact_bars_width() -> f32 {
