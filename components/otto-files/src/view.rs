@@ -860,12 +860,7 @@ pub fn grid_section_headers(
         .collect()
 }
 
-/// The cell index under `(x, y)`, if any.
-pub fn grid_cell_at(area: Rect, x: f32, y: f32, count: usize, scroll: f32) -> Option<usize> {
-    grid_cell_at_in(area, GridSections::FLAT, x, y, count, scroll)
-}
-
-/// [`grid_cell_at`] against a sectioned grid.
+/// The cell index under `(x, y)` in a sectioned grid, if any.
 pub fn grid_cell_at_in(
     area: Rect,
     sections: &GridSections,
@@ -923,7 +918,7 @@ pub fn grid_visible_range_in(
 }
 
 /// The cells `band` touches — the rubber band's hit test, the counterpart of
-/// [`grid_cell_at`] for a rectangle rather than a point.
+/// [`grid_cell_at_in`] for a rectangle rather than a point.
 ///
 /// Closed-form over the rows and columns the band spans, so sweeping a band
 /// across a directory of ten thousand files costs what the band covers rather
