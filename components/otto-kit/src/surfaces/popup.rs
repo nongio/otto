@@ -169,24 +169,6 @@ impl PopupSurface {
         Ok(popup_surface)
     }
 
-    /// Create a new popup surface for a layer shell parent using global AppContext
-    ///
-    /// This simplified constructor uses the global AppContext and AppRunnerDefault.
-    ///
-    /// # Arguments
-    /// * `layer_surface` - The parent layer shell surface
-    /// * `positioner` - XDG positioner defining popup position and size
-    /// * `width` - Width in logical pixels
-    /// * `height` - Height in logical pixels
-    pub fn new_for_layer(
-        layer_surface: &ZwlrLayerSurfaceV1,
-        positioner: &XdgPositioner,
-        width: i32,
-        height: i32,
-    ) -> Result<Self, SurfaceError> {
-        Self::new_for_layer_with_grab(layer_surface, positioner, width, height, None)
-    }
-
     /// Create a new popup surface for a layer shell parent with optional keyboard grab.
     pub fn new_for_layer_with_grab(
         layer_surface: &ZwlrLayerSurfaceV1,

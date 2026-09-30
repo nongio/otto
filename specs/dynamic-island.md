@@ -110,10 +110,8 @@ island is quiet. Changes smaller than a percent are not sent.
 callers may pass them, but nothing reads them yet:
 
 - `timeout_ms` — expiry marks the activity `expired` (which stops it announcing
-  itself) but never removes it. `IslandState::expire_timeouts` exists and is not
-  called. Removal is `DismissActivity`, a user dismissal, or `CloseNotification`.
-- `Priority::rank` and `IslandState::top_activity`/`second_activity` — left from
-  the superseded two-slot model, kept for a future priority-based selection.
+  itself) but never removes it. Removal is `DismissActivity`, a user dismissal,
+  or `CloseNotification`.
 
 ### D-Bus API — `org.otto.Dialog1`
 
