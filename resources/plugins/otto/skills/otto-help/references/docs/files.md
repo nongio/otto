@@ -439,6 +439,16 @@ outline and handles: drag inside it to move it, drag an edge or a corner to
 resize it. **Done** (or Return, or Escape) keeps the result, **Cancel** puts
 it back. **Reset** makes it fill the screen again.
 
+When there are more files than fit, *When icons don't fit* in the same group
+decides what happens. **Scroll** (the default) lets the grid run on and scroll.
+**Stack in a pile** keeps the grid still: the last cell becomes a pile of
+everything that didn't fit, with a badge saying how many. Click the pile, or
+press Return or Space with it selected, and it opens into a small grid of its
+own where the files work like any other icon on the desk: select them, open
+them, rename them, drag them out. Escape or a click anywhere else closes it.
+Dropping files on the pile puts them on the desk, like dropping them anywhere
+else on it.
+
 All of this is kept in `~/.config/otto/files.toml`, and the desk picks up
 changes to that file as soon as they are saved:
 
@@ -452,6 +462,7 @@ size = ["40%", "60%"]     # ignored with fill; points or percentages
 position = ["5%", "10%"]  # top-left corner, optional; ignored with fill
 padding = 24              # points between the edge and the icons
 icon_size = 64            # points
+overflow = "scroll"       # scroll | stack
 ```
 
 ## Not there yet

@@ -26,7 +26,7 @@ them.**
 
 | The request is about | Open this page |
 |---|---|
-| Dark mode, accent colour, wallpaper, fonts, cursors, icons, rounded corners, frosting, interface language | [configure/appearance.md](configure/appearance.md) |
+| Dark mode, accent colour, wallpaper, files on the desktop, the desktop widget, fonts, cursors, icons, rounded corners, frosting, interface language | [configure/appearance.md](configure/appearance.md) |
 | Monitors, resolution, refresh rate, arrangement, scale, panel zones | [configure/displays.md](configure/displays.md) |
 | A screen with no monitor behind it, for recording or remote desktop | [configure/virtual-outputs.md](configure/virtual-outputs.md) |
 | Keyboard layout, xkb options, key repeat, the Cmd key | [configure/keyboard.md](configure/keyboard.md) |
