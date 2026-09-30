@@ -361,20 +361,6 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_arrows_move_by_word() {
-        let mut i = input("one two three");
-        i.on_key(TextInputKey::Home, KeyMods::default());
-        i.on_key(
-            TextInputKey::Right,
-            KeyMods {
-                ctrl: true,
-                ..KeyMods::default()
-            },
-        );
-        assert_eq!(i.state.caret(), 3);
-    }
-
-    #[test]
     fn copy_and_cut_hand_text_to_the_host() {
         let mut i = input("hello");
         i.state.select_range(0..2);

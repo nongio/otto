@@ -43,7 +43,6 @@ const MENU_REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_mil
 
 /// A context menu fetched from dbusmenu, ready for the UI to display.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct PendingMenu {
     pub service: String,
     /// SNI object path — used to match back to the owning TrayItem.
@@ -51,7 +50,6 @@ pub struct PendingMenu {
     pub menu_path: String,
     pub layout: crate::dbusmenu::MenuLayout,
     pub anchor_x: i32,
-    pub anchor_y: i32,
 }
 
 /// Thread-safe list of tray items shared between D-Bus tasks and renderer.
@@ -168,7 +166,6 @@ pub fn context_menu_item(index: usize, x: i32, y: i32) {
                 menu_path: mpath.clone(),
                 layout,
                 anchor_x: x,
-                anchor_y: y,
             });
             TRAY_GENERATION.fetch_add(1, Ordering::Relaxed);
             AppContext::request_wakeup();
@@ -753,7 +750,6 @@ async fn watch_menu_signals(
             menu_path: menu_path.to_string(),
             layout,
             anchor_x: 0,
-            anchor_y: 0,
         });
         MENU_GENERATION.fetch_add(1, Ordering::Relaxed);
         AppContext::request_wakeup();

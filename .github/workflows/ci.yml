@@ -251,10 +251,21 @@ jobs:
         # otto-files has its own step below, gated on its own paths.
         if: needs.changes.outputs.compositor == 'true' || needs.changes.outputs.ui == 'true'
         run: cargo test --locked --lib --workspace --exclude otto-files
+      - name: Run app unit tests
+        timeout-minutes: 20
+        # `--lib` above skips binary targets, so the apps with no lib target —
+        # lock screen and greeter auth included — and the main.rs tests of
+        # the launcher and search need a --bins run of their own.
+        if: needs.changes.outputs.ui == 'true'
+        run: >-
+          cargo test --locked --bins
+          -p otto-bar -p otto-greeter -p otto-input-overlay -p otto-islands
+          -p otto-lock -p otto-msg -p otto-preview -p otto-settings
+          -p otto-stash -p otto-launcher -p otto-search
       - name: Run file browser tests
         timeout-minutes: 15
         if: needs.changes.outputs.files == 'true'
-        run: cargo test --locked --lib -p otto-files
+        run: cargo test --locked --lib --bins -p otto-files
       - name: Run agent service tests
         timeout-minutes: 15
         # The workspace step above is --lib, so the agent service's integration

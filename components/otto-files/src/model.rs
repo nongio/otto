@@ -599,16 +599,6 @@ pub fn entry_for_dir_entry(entry: &std::fs::DirEntry) -> Entry {
     }
 }
 
-/// One entry, built from a path rather than from a directory read.
-///
-/// What [`read_directory`] does per row, for a caller that already has the
-/// path and no `DirEntry` to go with it — a search result, most of all, where
-/// the paths come from somewhere that is not a `readdir`. `None` when there is
-/// nothing at that path any more, which is how a stale index entry is dropped.
-pub fn entry_for_path(path: &Path) -> Option<Entry> {
-    otto_search::Found::stat(path).map(Entry::from)
-}
-
 impl From<otto_search::Found> for Entry {
     /// A file as the search statted it. The stat is the same one a listing
     /// makes, so a result is an ordinary entry to everything that shows it.

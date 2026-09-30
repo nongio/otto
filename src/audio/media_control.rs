@@ -150,33 +150,4 @@ impl MediaController {
         });
         Ok(())
     }
-
-    /// Get current playback metadata (for future OSD)
-    #[allow(dead_code)]
-    pub fn get_metadata() -> Option<MediaMetadata> {
-        match Self::find_active_player() {
-            Ok(player) => {
-                if let Ok(metadata) = player.get_metadata() {
-                    Some(MediaMetadata {
-                        title: metadata.title().map(|s| s.to_string()),
-                        artist: metadata
-                            .artists()
-                            .and_then(|a| a.first().map(|s| s.to_string())),
-                        album: metadata.album_name().map(|s| s.to_string()),
-                    })
-                } else {
-                    None
-                }
-            }
-            Err(_) => None,
-        }
-    }
-}
-
-/// Media metadata for OSD display
-#[derive(Debug, Clone)]
-pub struct MediaMetadata {
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
 }

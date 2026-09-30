@@ -1007,14 +1007,6 @@ impl Workspaces {
         }
     }
 
-    /// Get all spaces across all outputs and all workspaces (for window search)
-    #[allow(dead_code)]
-    fn all_spaces(&self) -> impl Iterator<Item = &Space<WindowElement>> {
-        self.output_workspaces
-            .values()
-            .flat_map(|ows| ows.spaces.iter())
-    }
-
     /// Get workspaces_layer for primary output (for animations/expose)
     pub fn primary_workspaces_layer(&self) -> Option<&Layer> {
         self.primary_output_workspaces()
@@ -1425,13 +1417,6 @@ impl Workspaces {
             || self.get_show_all()
             || self.get_show_desktop()
             || self.is_show_desktop_transitioning()
-    }
-
-    /// Set the window selection mode
-    #[allow(dead_code)]
-    fn set_show_all(&self, show_all: bool) {
-        self.show_all
-            .store(show_all, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Return if we are in show desktop mode
@@ -5615,24 +5600,6 @@ impl Workspaces {
         self.with_model(|m| m.workspaces.get(i).cloned())
     }
 
-    /// Windows eligible for direct client-buffer scanout ("shadow-only" mode).
-    ///
-    /// Ported from the reference implementation in `../otto`
-    /// (feat/window-scanout-new) and adapted to the plane pipeline: the app
-    /// switcher, OSD and layer-shell panels render on the overlay plane, so
-    /// they do not gate scanout globally — only windows they geometrically
-    /// overlap are demoted (their pixels must be in the windows plane for the
-    /// overlay's backdrop blur to sample).
-    ///
-    /// Selection is intentionally based on *stable* geometry (dock bar,
-    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
-    /// scene state like bubbled blur regions — those are cleared and rebuilt
-    /// every engine update, so sampling them oscillates between promote and
-    /// demote and flickers the window content.
-    pub fn get_scanout_candidates(&self, output: &Output) -> Vec<ObjectId> {
-        self.get_plane_candidates(output).raw
-    }
-
     /// Debug: which global gate closed plane promotion, logged when it changes.
     fn plane_gate_log(reason: &'static str) {
         use std::sync::Mutex;
@@ -5646,6 +5613,12 @@ impl Workspaces {
 
     /// Both promotion tiers for `output`, computed in one top-to-bottom walk
     /// (they share every stability gate and the same occlusion state).
+    ///
+    /// Selection is intentionally based on *stable* geometry (dock bar,
+    /// switcher and OSD layer bounds, layer-shell rects), never on per-frame
+    /// scene state like bubbled blur regions — those are cleared and rebuilt
+    /// every engine update, so sampling them oscillates between promote and
+    /// demote and flickers the window content.
     pub fn get_plane_candidates(&self, output: &Output) -> PlaneCandidates {
         use smithay::utils::{Physical, Rectangle};
 
@@ -6826,15 +6799,6 @@ impl Workspaces {
         outputs.dedup_by_key(|o| o.name());
         outputs
     }
-    #[allow(dead_code)]
-    fn apply_scroll_offset(
-        &self,
-        offset: f32,
-        transition: Option<Transition>,
-    ) -> Option<TransactionRef> {
-        self.apply_scroll_offset_filtered(offset, transition, None)
-    }
-
     /// Scroll only the specified output's workspaces_layer (or all if None).
     fn apply_scroll_offset_filtered(
         &self,
@@ -6993,23 +6957,6 @@ impl Workspaces {
         self.output_workspaces
             .values()
             .find_map(|ows| ows.spaces.iter().find_map(|s| s.element_geometry(we)))
-    }
-
-    // Add these helper methods
-    #[allow(dead_code)]
-    fn find_space_for_element(&self, element: &WindowElement) -> Option<&Space<WindowElement>> {
-        self.primary_output_workspaces()?
-            .spaces
-            .iter()
-            .find(|space| space.elements().any(|e| e.id() == element.id()))
-    }
-
-    #[allow(dead_code)]
-    fn find_space_index_for_element(&self, element: &WindowElement) -> Option<usize> {
-        self.primary_output_workspaces()?
-            .spaces
-            .iter()
-            .position(|space| space.elements().any(|e| e.id() == element.id()))
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

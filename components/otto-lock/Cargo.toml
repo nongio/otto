@@ -18,10 +18,6 @@ libc = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[dependencies.skia-safe]
-version = "=0.93"
-features = ["gl", "textlayout", "svg", "skottie"]
-
 # Locks and unlocks with no PAM in the way, to exercise the protocol lifecycle.
 [[example]]
 name = "lock_cycle"

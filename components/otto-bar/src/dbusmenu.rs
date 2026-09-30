@@ -49,7 +49,6 @@ pub(crate) trait DBusMenu {
 
 /// A single menu item parsed from the dbusmenu layout.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct MenuItem {
     pub id: i32,
     pub label: String,
@@ -59,8 +58,6 @@ pub struct MenuItem {
     /// Raw ARGB32 pixmap from `icon-data` property: (width, height, bytes)
     pub icon_data: Option<(i32, i32, Vec<u8>)>,
     pub item_type: MenuItemType,
-    pub toggle_type: ToggleType,
-    pub toggle_state: i32,
     pub children: Vec<MenuItem>,
 }
 
@@ -70,18 +67,9 @@ pub enum MenuItemType {
     Separator,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ToggleType {
-    None,
-    Checkmark,
-    Radio,
-}
-
 /// The full menu tree fetched from a dbusmenu service.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct MenuLayout {
-    pub revision: u32,
     pub items: Vec<MenuItem>,
 }
 
@@ -104,11 +92,11 @@ pub async fn fetch_menu(
     // Notify the app the root menu is about to show
     let _ = proxy.about_to_show(0).await;
 
-    let (revision, layout) = proxy.get_layout(0, -1, &[]).await?;
+    let (_revision, layout) = proxy.get_layout(0, -1, &[]).await?;
 
     let items = parse_children(&layout.2);
 
-    Ok(MenuLayout { revision, items })
+    Ok(MenuLayout { items })
 }
 
 /// Activate a menu item by sending a "clicked" event.
@@ -255,19 +243,11 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
     let icon_data = prop_icon_data(&props, "icon-data");
 
     let type_str = prop_string(&props, "type").unwrap_or_default();
-    let toggle_type_str = prop_string(&props, "toggle-type").unwrap_or_default();
-    let toggle_state = prop_i32(&props, "toggle-state").unwrap_or(-1);
 
     let item_type = if type_str == "separator" {
         MenuItemType::Separator
     } else {
         MenuItemType::Standard
-    };
-
-    let toggle_type = match toggle_type_str.as_str() {
-        "checkmark" => ToggleType::Checkmark,
-        "radio" => ToggleType::Radio,
-        _ => ToggleType::None,
     };
 
     Some(MenuItem {
@@ -278,8 +258,6 @@ fn parse_menu_item(value: &OwnedValue) -> Option<MenuItem> {
         icon_name,
         icon_data,
         item_type,
-        toggle_type,
-        toggle_state,
         children: children_val,
     })
 }
@@ -323,15 +301,6 @@ fn prop_bool(props: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
     let v: Value<'_> = Value::try_from(val).ok()?;
     match v {
         Value::Bool(b) => Some(b),
-        _ => None,
-    }
-}
-
-fn prop_i32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<i32> {
-    let val = props.get(key)?;
-    let v: Value<'_> = Value::try_from(val).ok()?;
-    match v {
-        Value::I32(i) => Some(i),
         _ => None,
     }
 }

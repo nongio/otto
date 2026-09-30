@@ -36,8 +36,6 @@ pub struct ScreenCastInterface {
 /// Internal state for a session.
 #[derive(Clone)]
 struct SessionState {
-    #[allow(dead_code)]
-    cursor_mode: u32,
     streams: Vec<String>, // Stream object paths
     started: bool,
 }
@@ -81,7 +79,6 @@ impl ScreenCastInterface {
             sessions.insert(
                 session_path.clone(),
                 SessionState {
-                    cursor_mode,
                     streams: Vec::new(),
                     started: false,
                 },
@@ -256,11 +253,7 @@ impl SessionInterface {
         }
 
         // Register the stream D-Bus object
-        let stream_iface = StreamInterface::new(
-            stream_path.clone(),
-            self.compositor_tx.clone(),
-            self.streams.clone(),
-        );
+        let stream_iface = StreamInterface::new(stream_path.clone(), self.streams.clone());
 
         let path = ObjectPath::try_from(stream_path.as_str())
             .map_err(|e| zbus::fdo::Error::Failed(format!("Invalid stream path: {e}")))?;
@@ -551,22 +544,14 @@ impl SessionInterface {
 pub struct StreamInterface {
     /// The stream's object path.
     stream_path: String,
-    /// Channel to send commands to the compositor's main loop.
-    #[allow(dead_code)]
-    compositor_tx: Sender<CompositorCommand>,
     /// Shared stream state.
     streams: Arc<RwLock<HashMap<String, StreamState>>>,
 }
 
 impl StreamInterface {
-    fn new(
-        stream_path: String,
-        compositor_tx: Sender<CompositorCommand>,
-        streams: Arc<RwLock<HashMap<String, StreamState>>>,
-    ) -> Self {
+    fn new(stream_path: String, streams: Arc<RwLock<HashMap<String, StreamState>>>) -> Self {
         Self {
             stream_path,
-            compositor_tx,
             streams,
         }
     }

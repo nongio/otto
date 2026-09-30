@@ -432,23 +432,3 @@ impl<B: crate::state::Backend> crate::Otto<B> {
         }
     }
 }
-
-#[cfg(all(test, feature = "udev"))]
-mod tests {
-
-    #[test]
-    fn test_gesture_swipe_velocity_calculation() {
-        // Test velocity averaging
-        let samples = [100.0, 200.0, 300.0];
-        let avg = samples.iter().sum::<f64>() / samples.len() as f64;
-        assert_eq!(avg, 200.0);
-    }
-
-    #[test]
-    fn test_pinch_scale_delta() {
-        let current = 1.5_f32;
-        let last = 1.0_f32;
-        let delta = current - last;
-        assert_eq!(delta, 0.5);
-    }
-}

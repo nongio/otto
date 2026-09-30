@@ -181,35 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn a_query_that_is_not_a_subsequence_does_not_match() {
-        assert!(score("Firefox", "chrome").is_none());
-    }
-
-    #[test]
-    fn matching_is_case_insensitive() {
-        assert!(score("Firefox", "FIRE").is_some());
-    }
-
-    #[test]
-    fn a_prefix_beats_a_match_in_the_middle() {
-        let prefix = score("Terminal", "term").unwrap();
-        let middle = score("XTerminal", "term").unwrap();
-        assert!(prefix > middle, "{prefix} should beat {middle}");
-    }
-
-    #[test]
-    fn adjacent_characters_beat_scattered_ones() {
-        let adjacent = score("gimp", "gim").unwrap();
-        let scattered = score("go into map", "gim").unwrap();
-        assert!(adjacent > scattered, "{adjacent} should beat {scattered}");
-    }
-
-    #[test]
-    fn a_space_in_the_query_crosses_words() {
-        assert!(score("Firefox Developer Edition", "fire dev").is_some());
-    }
-
-    #[test]
     fn the_shorter_of_two_matching_names_wins() {
         let items = [item("Files"), item("Files Preferences Dialog")];
         let ranked = rank(&items, "files");

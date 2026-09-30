@@ -48,6 +48,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reserved_bytes_are_escaped_and_separators_are_not() {
+        assert_eq!(
+            from_path(Path::new("/home/me/My Projects")),
+            "file:///home/me/My%20Projects"
+        );
+    }
+
+    #[test]
     fn a_path_round_trips_through_a_uri() {
         for path in ["/home/me/My Projects", "/tmp/a+b", "/srv/ünicode"] {
             assert_eq!(to_path(&from_path(Path::new(path))), Some(path.into()));

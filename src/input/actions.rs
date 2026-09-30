@@ -22,7 +22,6 @@ use crate::{
 };
 
 /// Possible results of a keyboard action
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum KeyAction {
     /// Quit the compositor

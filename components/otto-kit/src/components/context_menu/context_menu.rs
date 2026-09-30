@@ -421,51 +421,6 @@ impl ContextMenu {
         }
     }
 
-    /// Internal: Show layer shell popup at depth (usually just root)
-    #[allow(dead_code)]
-    fn show_at_depth_layer(
-        &self,
-        depth: usize,
-        parent: &wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        positioner: &smithay_client_toolkit::shell::xdg::XdgPositioner,
-    ) {
-        while self.popups.borrow().len() <= depth {
-            self.popups.borrow_mut().push(Rc::new(RefCell::new(None)));
-        }
-        let style = self.style.borrow().clone();
-        *self.popups.borrow()[depth].borrow_mut() = None;
-
-        let (width, height) = {
-            let state = self.state.borrow();
-            let items = state.items_at_depth(depth);
-            ContextMenuRenderer::measure_items(items, &style)
-        };
-
-        if let Ok(popup) =
-            PopupSurface::new_for_layer(parent, positioner, width as i32, height as i32)
-        {
-            ContextMenu::apply_surface_effects(&style, &popup);
-            let surface_id = popup.wl_surface().id();
-
-            self.registered_surfaces
-                .borrow_mut()
-                .insert(surface_id.clone(), depth);
-            *self.popups.borrow()[depth].borrow_mut() = Some(popup);
-
-            let popup_ref = self.popups.borrow()[depth].clone();
-            let state = self.state.clone();
-
-            AppContext::register_popup_configure_callback(surface_id, move |_serial| {
-                if let Some(popup) = popup_ref.borrow_mut().as_mut() {
-                    ContextMenu::apply_surface_effects(&style, popup);
-                    popup.mark_configured();
-
-                    Self::render_menu_at_depth(&state, &style, &popup_ref, depth);
-                }
-            });
-        }
-    }
-
     /// Hide the menu immediately (closes all popups)
     pub fn hide(&self) {
         tracing::debug!("context_menu: hide()");

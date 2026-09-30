@@ -460,6 +460,7 @@ mod tests {
     #[test]
     fn draw_selection_paints_nothing_without_words() {
         let mut surface = skia_safe::surfaces::raster_n32_premul((800, 240)).expect("surface");
+        surface.canvas().clear(skia_safe::Color::TRANSPARENT);
         let preview = Preview::Pixels {
             pixels: Pixels {
                 width: 400,
@@ -480,6 +481,20 @@ mod tests {
             &Theme::light_palette(),
             Zoom::FIT,
             WordSelection::word(0),
+        );
+        let image = surface.image_snapshot();
+        let info = image.image_info();
+        let mut pixels = vec![0u8; info.compute_min_byte_size()];
+        assert!(image.read_pixels(
+            info,
+            &mut pixels,
+            info.min_row_bytes(),
+            (0, 0),
+            skia_safe::image::CachingHint::Allow,
+        ));
+        assert!(
+            pixels.iter().all(|&b| b == 0),
+            "a word-less preview painted"
         );
     }
 }

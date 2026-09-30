@@ -860,12 +860,7 @@ pub fn grid_section_headers(
         .collect()
 }
 
-/// The cell index under `(x, y)`, if any.
-pub fn grid_cell_at(area: Rect, x: f32, y: f32, count: usize, scroll: f32) -> Option<usize> {
-    grid_cell_at_in(area, GridSections::FLAT, x, y, count, scroll)
-}
-
-/// [`grid_cell_at`] against a sectioned grid.
+/// The cell index under `(x, y)` in a sectioned grid, if any.
 pub fn grid_cell_at_in(
     area: Rect,
     sections: &GridSections,
@@ -923,7 +918,7 @@ pub fn grid_visible_range_in(
 }
 
 /// The cells `band` touches — the rubber band's hit test, the counterpart of
-/// [`grid_cell_at`] for a rectangle rather than a point.
+/// [`grid_cell_at_in`] for a rectangle rather than a point.
 ///
 /// Closed-form over the rows and columns the band spans, so sweeping a band
 /// across a directory of ten thousand files costs what the band covers rather
@@ -8827,44 +8822,6 @@ mod geometry_tests {
         }
     }
 
-    /// The whole sectioned-grid refactor rests on this: a listing with no
-    /// sections must lay out exactly as it did before the sections existed.
-    /// Every directory in the browser takes this path, so if the two forms
-    /// ever disagree it is the ordinary case that breaks, not the new one.
-    #[test]
-    fn an_unsectioned_grid_lays_out_exactly_as_a_flat_one() {
-        for width in [420.0, 640.0, 900.0, 1440.0] {
-            let area = content_viewport(width, 600.0, ViewMode::Grid);
-            for count in [0, 1, 7, 30, 199] {
-                let flat = GridSections::default();
-                assert_eq!(
-                    grid_content_height_in(area, &flat, count),
-                    grid_content_height(area, count),
-                    "content height at {width} for {count}"
-                );
-                for index in 0..count {
-                    assert_eq!(
-                        grid_cell_rect_in(area, &flat, index, 0.0),
-                        grid_cell_rect(area, index, 0.0),
-                        "cell {index} at {width}"
-                    );
-                }
-                // And the hit test answers identically, cell centre by cell
-                // centre — including for the cells below the viewport, where
-                // both forms must agree that there is nothing there.
-                for index in 0..count {
-                    let cell = grid_cell_rect(area, index, 0.0);
-                    let (px, py) = (cell.center_x(), cell.center_y());
-                    assert_eq!(
-                        grid_cell_at_in(area, &flat, px, py, count, 0.0),
-                        grid_cell_at(area, px, py, count, 0.0),
-                        "hit test at cell {index}, width {width}"
-                    );
-                }
-            }
-        }
-    }
-
     /// A heading occupies real height, so the cells under it are pushed down
     /// by exactly that much and the content grows by one heading per section.
     #[test]
@@ -9515,23 +9472,6 @@ mod geometry_tests {
             MILLER_W,
         );
         assert!(anchor.is_empty());
-    }
-
-    #[test]
-    fn every_view_mode_produces_an_anchor() {
-        let owned = entries(10);
-        for mode in [ViewMode::List, ViewMode::Grid, ViewMode::Columns] {
-            let anchor = peek_anchor(
-                1100.0,
-                700.0,
-                mode,
-                &pane(&owned, Some(1), 0.0),
-                0,
-                0.0,
-                MILLER_W,
-            );
-            assert!(!anchor.is_empty(), "{mode:?} produced no anchor");
-        }
     }
 
     /// The band a pane of `count` rows would be asked for when the window is

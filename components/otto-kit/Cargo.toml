@@ -15,12 +15,10 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wayland-egl = "0.32"
-wayland-cursor = "0.31"
 wayland-scanner = "0.31"
 wayland-backend = "0.3"
 gl = "0.14"
 khronos-egl = { version = "6", features = ["dynamic"] }
-calloop = "0.13"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
@@ -28,9 +26,7 @@ futures-util = "0.3"
 freedesktop-icons = "0.2.4"
 resvg = "0.44.0"
 usvg = "0.44.0"
-lazy_static = "1.4"
 libc = "0.2"
-pipewire = "0.9"
 freedesktop-desktop-entry = "0.7.5"
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
 # the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.
