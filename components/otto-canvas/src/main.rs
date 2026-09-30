@@ -36,6 +36,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use otto_agents_kit::item::Item;
+use otto_agents_kit::keys::{self, FieldEdit};
+use otto_agents_kit::rows::{
+    divider_color, field_style, paint_item_rows, row_font, row_highlight_color, row_highlight_rect,
+    row_subtitle_color, RowIcons, HIGHLIGHT_RADIUS, ROW_H,
+};
+use otto_agents_kit::sessions::{FeedStatus, SessionFeed};
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::components::text_input::{TextInput, CARET_BLINK_PERIOD};
 use otto_kit::prelude::*;
@@ -45,13 +52,6 @@ use otto_kit::surfaces::{
     apply_hairline_border, CanvasItemEvent, CanvasItemSurface, CanvasKeyboardInteractivity,
 };
 use otto_kit::CursorShape;
-use otto_launcher::keys::{self, FieldEdit};
-use otto_launcher::sessions::{FeedStatus, SessionFeed};
-use otto_launcher::source::Item;
-use otto_launcher::view::{
-    divider_color, field_style, paint_item_rows, row_font, row_highlight_color, row_highlight_rect,
-    row_subtitle_color, RowIcons, HIGHLIGHT_RADIUS, ROW_H,
-};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::wl_keyboard;

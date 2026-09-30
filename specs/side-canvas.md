@@ -260,7 +260,7 @@ are read the next time the column is laid out.
   new one arrives.
 - Typing in the field narrows the rows to the sessions whose titles contain
   the text, ignoring case, exactly as the launcher's agents mode filters
-  (`otto_launcher::sessions::session_items`). A change to the text highlights
+  (`otto_agents_kit::sessions::session_items`). A change to the text highlights
   the first row left.
 - With no sessions it says "No agent sessions yet"; with sessions but none
   matching, "No results"; with the service not running, "The agent service
@@ -270,7 +270,7 @@ are read the next time the column is laid out.
   press on the item gives it the keyboard.
 - Whenever there are rows, one is highlighted (the first by default). The row
   under the pointer is highlighted too.
-- Keys, as in the launcher's agents mode (`otto_launcher::keys` is shared):
+- Keys, as in the launcher's agents mode (`otto_agents_kit::keys` is shared):
   - Down, Ctrl+N, Tab: next row; Up, Ctrl+P, Shift+Tab: previous row; Page
     Down / Page Up: eight rows. All wrap around, and scroll the highlight into
     view.

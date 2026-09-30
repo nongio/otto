@@ -5270,6 +5270,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto-agents-kit"
+version = "1.5.0"
+dependencies = [
+ "ahp",
+ "ahp-types",
+ "otto-agents-client",
+ "otto-kit",
+ "serde_json",
+ "smithay-client-toolkit 0.19.2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "otto-auth-ui"
 version = "1.5.0"
 dependencies = [
@@ -5324,8 +5338,8 @@ dependencies = [
 name = "otto-canvas"
 version = "1.5.0"
 dependencies = [
+ "otto-agents-kit",
  "otto-kit",
- "otto-launcher",
  "smithay-client-toolkit 0.19.2",
  "tracing",
  "tracing-subscriber",
@@ -5463,6 +5477,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "laye-rs",
  "otto-agents-client",
+ "otto-agents-kit",
  "otto-kit",
  "otto-md-kit",
  "otto-peek",

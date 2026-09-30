@@ -8,10 +8,10 @@ repository.workspace = true
 description = "The agent sessions, in a panel in Otto's side canvas"
 
 [dependencies]
+# The session rows, and the feed that lists them, are shared with the
+# launcher's agents mode, so a session reads the same in either place.
+otto-agents-kit = { path = "../otto-agents-kit" }
 otto-kit = { path = "../otto-kit" }
-# The session rows, and the feed that lists them, are the launcher's: a session
-# reads the same in the canvas as it does in the launcher's agents mode.
-otto-launcher = { path = "../otto-launcher" }
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

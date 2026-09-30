@@ -14,7 +14,7 @@ use otto_kit::clipboard;
 use otto_kit::components::text_input::{self, KeyMods, TextInput, TextInputKey, TextInputResponse};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 
-use crate::view::MAX_ROWS;
+use crate::rows::MAX_ROWS;
 
 /// The letter of a Ctrl combination, as `'a'` for Ctrl+A.
 ///

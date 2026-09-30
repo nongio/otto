@@ -170,6 +170,7 @@ members = [
     "components/otto-input-overlay",
     "components/otto-agents",
     "components/otto-agents-client",
+    "components/otto-agents-kit",
     "components/otto-stash",
     "components/otto-canvas",
     "components/otto-search",

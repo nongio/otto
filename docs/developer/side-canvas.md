@@ -344,19 +344,22 @@ drop.
 agent sessions list. Like `otto-bar` and `otto-islands` it is started from
 `[[exec_once]]` in the shipped config and installed by the packaging lists.
 
-It shares its pieces with the launcher's agents mode through the
-`otto-launcher` library:
+It shares its pieces with the launcher's agents mode through
+`components/otto-agents-kit`, which both depend on:
 
-- `otto_launcher::sessions` has the session rows (`session_items`, used by
+- `otto_agents_kit::item` has the row model (`Item`, `Activity`, `Origin`)
+  and `rank`, which the launcher's sources also use.
+- `otto_agents_kit::sessions` has the session rows (`session_items`, used by
   `Ask::session_rows` too) and `SessionFeed`, a background connection that
   lists agents and sessions and lists again on `root/sessionAdded`,
   `root/sessionRemoved` and `root/sessionSummaryChanged`. The canvas holds a
   feed only between `shown` and `hidden`, so a hidden canvas has no
   connection.
-- `otto_launcher::view::paint_item_rows` paints rows exactly as the launcher's
-  list does (`Palette::paint_rows` calls it at the card width).
-
-- `otto_launcher::keys` has the keys the launcher's field and list share:
+- `otto_agents_kit::rows::paint_item_rows` paints rows exactly as the
+  launcher's list does (`Palette::paint_rows` calls it at the card width).
+  `rows` also has `field_style`, the divider and highlight colours, `ROW_H`
+  and `MAX_ROWS`.
+- `otto_agents_kit::keys` has the keys the launcher's field and list share:
   `list_step` (Down/Up, Ctrl+N/P, Tab/Shift+Tab, Page Down/Up), `wrap`,
   `edit_field` (Ctrl+U/A/C/X/V/W, then otto-kit's `key_for`) and
   `copy_to_clipboard`. The launcher's `on_key_event` and the canvas both go
@@ -367,7 +370,7 @@ It shares its pieces with the launcher's agents mode through the
 
 The item draws immediate-mode into its one surface: the heading band with the
 Ask button, the launcher's `TextInput` with `field_style` at 16 pt, a hairline
-(`view::divider_color`), then the rows, with otto-kit's `ScrollView` for the
+(`rows::divider_color`), then the rows, with otto-kit's `ScrollView` for the
 scroll physics and scrollbar. Scroll animation steps only when
 `CanvasItemSurface::frame_in_flight` is false. The field's caret shows while
 `CanvasItemSurface::has_keyboard` is true and blinks on the idle timeout.
@@ -400,7 +403,7 @@ its query). Each is reaped on a thread and followed by `dismiss`.
   between `configure` and `hidden`; a tall and a short item get shares that
   fit the column, the short one its content; a version 4 item with a buffer
   counts as fixed and is told nothing.
-- `cargo test -p otto-launcher keys`: the shared list keys.
+- `cargo test -p otto-agents-kit keys`: the shared list keys.
 
 ## Follow-ups
 

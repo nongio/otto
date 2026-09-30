@@ -66,8 +66,8 @@ use tokio::sync::mpsc as async_mpsc;
 
 use crate::input::{self, Change, InputRequest, Outcome};
 use crate::log::Style;
-use crate::sessions::{self, list_sessions, session_items, BoxError};
-use crate::source::{Item, Origin};
+use otto_agents_kit::item::{Item, Origin};
+use otto_agents_kit::sessions::{self, list_sessions, session_items, BoxError};
 
 /// The folder a session starts in when neither the agent nor anyone else
 /// names one: a scratch folder of Ask's own, `$XDG_STATE_HOME/otto/ask`.
@@ -2516,13 +2516,13 @@ fn attachment(file: &Path) -> MessageAttachment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::{session_activity, session_subtitle};
-    use crate::source::Activity;
     use ahp_types::state::{
         ActiveTurn, ConfirmationOption, ErrorInfo, ErrorResponsePart, MarkdownResponsePart,
         PendingMessage, ReasoningResponsePart, ToolCallCancellationReason, ToolCallCancelledState,
         ToolCallPendingConfirmationState, ToolCallResponsePart, Turn,
     };
+    use otto_agents_kit::item::Activity;
+    use otto_agents_kit::sessions::{session_activity, session_subtitle};
     use std::time::Instant;
 
     #[test]

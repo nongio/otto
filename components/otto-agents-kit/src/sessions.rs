@@ -8,7 +8,7 @@
 //! [`SessionFeed`] is the list without a conversation: it connects, lists the
 //! agents and the sessions, and lists the sessions again whenever the service
 //! announces a change to them, until it is dropped. The launcher's own
-//! connection, which also follows a session, lives in [`crate::ask`].
+//! connection, which also follows a session, lives in its Ask mode.
 
 // Rust guideline compliant 2026-02-21
 
@@ -28,7 +28,7 @@ use otto_agents_client::uri::to_path as path_from_uri;
 use serde_json::json;
 use tokio::sync::oneshot;
 
-use crate::source::{Activity, Item, Origin};
+use crate::item::{Activity, Item, Origin};
 
 /// How long connecting may take before the service counts as not running.
 ///
@@ -209,7 +209,7 @@ impl Reporter {
 /// # Examples
 ///
 /// ```no_run
-/// use otto_launcher::sessions::{FeedStatus, SessionFeed};
+/// use otto_agents_kit::sessions::{FeedStatus, SessionFeed};
 ///
 /// let mut feed = SessionFeed::start("otto-canvas");
 /// // In the caller's loop, once `feed.poll_fd()` is readable:
