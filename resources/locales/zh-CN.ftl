@@ -93,6 +93,8 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
+settings-desktop-widget = 桌面小组件
+settings-desktop-widget-needs-ewwii = 需要 ewwii，但尚未安装
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = 无法显示
 settings-show-desk = 在桌面上显示文件
@@ -474,6 +476,11 @@ settings-choice-power-ignore = 不执行任何操作
 settings-choice-power-lock = 锁定屏幕
 settings-choice-power-suspend = 睡眠
 settings-choice-power-shutdown = 关机
+settings-choice-widget-none = 无
+settings-choice-widget-calendar = 日历
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自动
 
@@ -958,6 +965,8 @@ schema-desk-enabled-label = 在桌面上显示文件
 schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
 schema-canvas-width-label = 侧边画布宽度
 schema-canvas-width-description = 侧边画布的宽度，以逻辑点为单位。其中的所有内容都按此宽度绘制。
+schema-desktop-widget-label = 桌面小组件
+schema-desktop-widget-description = 绘制在壁纸之上、窗口后面的全屏页面。需要 ewwii。
 schema-topbar-show-clock-label = 显示日期和时间
 schema-topbar-show-clock-description = 顶部栏右端的时钟。
 schema-topbar-clock-format-label = 时钟格式

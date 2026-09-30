@@ -30,7 +30,9 @@ and the contract a settings client can build against.
 > `login.greeter_args` and `rendering.renderer`.
 > `topbar.show_clock` and `topbar.clock_format` are live with nothing for the
 > compositor to do: otto-bar reads them over this interface and follows
-> `Changed` itself.
+> `Changed` itself. `desktop.widget` is live too: the compositor runs ewwii
+> for it and swaps the window it shows, or stops it for `none`
+> ([desktop-widget.md](../../specs/desktop-widget.md)).
 > No setting is `unsupported`. Keyed collections (dock bookmarks, shortcuts,
 > display profiles) have no single identifier and are not in the schema.
 

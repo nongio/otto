@@ -94,6 +94,8 @@ settings-group-desktop = Робочий стіл
 settings-background-colour = Колір тла
 settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
+settings-desktop-widget = Віджет робочого столу
+settings-desktop-widget-needs-ewwii = Потрібен ewwii, а його не встановлено
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Неможливо показати
 settings-show-desk = Показувати файли на робочому столі
@@ -487,6 +489,11 @@ settings-choice-power-ignore = Нічого не робити
 settings-choice-power-lock = Блокувати екран
 settings-choice-power-suspend = Присипляти
 settings-choice-power-shutdown = Вимикати комп'ютер
+settings-choice-widget-none = Немає
+settings-choice-widget-calendar = Календар
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -1020,6 +1027,8 @@ schema-desk-enabled-label = Показувати файли на робочом�
 schema-desk-enabled-description = Файли з папки «Стільниця», позаду вікон.
 schema-canvas-width-label = Ширина бічного полотна
 schema-canvas-width-description = Ширина бічного полотна в логічних точках. Усе, що на ньому є, малюється такої ширини.
+schema-desktop-widget-label = Віджет робочого столу
+schema-desktop-widget-description = Сторінка на весь екран поверх шпалер, позаду вікон. Потрібен ewwii.
 schema-topbar-show-clock-label = Показувати дату й час
 schema-topbar-show-clock-description = Годинник біля правого краю верхньої панелі.
 schema-topbar-clock-format-label = Формат годинника

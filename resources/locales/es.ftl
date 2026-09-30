@@ -94,6 +94,8 @@ settings-group-desktop = Escritorio
 settings-background-colour = Color de fondo
 settings-background-image = Imagen de fondo
 settings-background-image-detail = Elegida a través del selector de archivos del portal de escritorio
+settings-desktop-widget = Widget del escritorio
+settings-desktop-widget-needs-ewwii = Necesita ewwii, que no está instalado
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = No se puede mostrar
 settings-show-desk = Mostrar archivos en el escritorio
@@ -480,6 +482,11 @@ settings-choice-power-ignore = No hacer nada
 settings-choice-power-lock = Bloquear la pantalla
 settings-choice-power-suspend = Suspender
 settings-choice-power-shutdown = Apagar
+settings-choice-widget-none = Ninguno
+settings-choice-widget-calendar = Calendario
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -992,6 +999,8 @@ schema-desk-enabled-label = Mostrar archivos en el escritorio
 schema-desk-enabled-description = Los archivos de la carpeta Escritorio, detrás de las ventanas.
 schema-canvas-width-label = Ancho del lienzo lateral
 schema-canvas-width-description = Ancho del lienzo lateral, en puntos lógicos. Todo lo que contiene se dibuja con este ancho.
+schema-desktop-widget-label = Widget del escritorio
+schema-desktop-widget-description = Una página a pantalla completa sobre el fondo, detrás de las ventanas. Necesita ewwii.
 schema-topbar-show-clock-label = Mostrar fecha y hora
 schema-topbar-show-clock-description = El reloj en el extremo derecho de la barra superior.
 schema-topbar-clock-format-label = Formato del reloj

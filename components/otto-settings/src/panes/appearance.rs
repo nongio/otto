@@ -4,9 +4,12 @@
 //! is [`super::desk`]'s, which also writes the desk's own file. The font, cursor
 //! and icon theme pop-ups are filled by [`crate::discovery`], which scans what
 //! is installed; the clock format pop-up is filled here, with each format
-//! shown as it would render the current time.
+//! shown as it would render the current time. The desktop widget pop-up is
+//! inactive, with a note, where ewwii is not installed.
 
 // Rust guideline compliant 2026-02-21
+
+use std::sync::OnceLock;
 
 use chrono::Local;
 
@@ -15,6 +18,9 @@ use crate::model::{group, Control, Pane, Row};
 
 /// The setting the clock format pop-up edits.
 const CLOCK_FORMAT_ID: &str = "topbar.clock_format";
+
+/// The setting the desktop widget pop-up edits.
+const DESKTOP_WIDGET_ID: &str = "desktop.widget";
 
 /// The formats the clock format pop-up offers, as strftime strings.
 ///
@@ -101,6 +107,7 @@ pub fn build() -> Pane {
                     )
                     .detail(otto_kit::t!("settings-background-image-detail"))
                     .id("background_image"),
+                    desktop_widget_row(),
                 ],
             ),
             super::desk::group_rows(),
@@ -145,6 +152,37 @@ pub fn build() -> Pane {
             ),
         ],
     }
+}
+
+/// The desktop widget pop-up. ewwii draws the widgets and is not a
+/// dependency of Otto's, so without it the row says so and cannot be opened.
+fn desktop_widget_row() -> Row {
+    let row = Row::new(
+        otto_kit::t!("settings-desktop-widget"),
+        Control::Select("none".into()),
+    );
+    if ewwii_installed() {
+        row.id(DESKTOP_WIDGET_ID)
+    } else {
+        row.detail(otto_kit::t!("settings-desktop-widget-needs-ewwii"))
+            .id(DESKTOP_WIDGET_ID)
+            .inactive(true)
+    }
+}
+
+/// Whether `ewwii` is an executable on `PATH`. Looked up once: the pane is
+/// rebuilt every frame.
+fn ewwii_installed() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    static INSTALLED: OnceLock<bool> = OnceLock::new();
+    *INSTALLED.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| {
+                std::fs::metadata(dir.join("ewwii"))
+                    .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            })
+        })
+    })
 }
 
 /// The clock format pop-up's entries, each labelled with the current time in

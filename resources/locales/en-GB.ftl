@@ -94,6 +94,8 @@ settings-group-desktop = Desktop
 settings-background-colour = Background colour
 settings-background-image = Background image
 settings-background-image-detail = Chosen through the desktop portal's file picker
+settings-desktop-widget = Desktop widget
+settings-desktop-widget-needs-ewwii = Needs ewwii, which isn't installed
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Cannot be shown
 settings-show-desk = Show files on the desktop
@@ -481,6 +483,11 @@ settings-choice-power-ignore = Do nothing
 settings-choice-power-lock = Lock the screen
 settings-choice-power-suspend = Suspend
 settings-choice-power-shutdown = Shut down
+settings-choice-widget-none = None
+settings-choice-widget-calendar = Calendar
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1069,6 +1076,8 @@ schema-desk-enabled-label = Show files on the desktop
 schema-desk-enabled-description = The files in your Desktop folder, behind the windows.
 schema-canvas-width-label = Side canvas width
 schema-canvas-width-description = Width of the side canvas, in logical points. Everything in it is drawn at this width.
+schema-desktop-widget-label = Desktop widget
+schema-desktop-widget-description = A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii.
 schema-topbar-show-clock-label = Show date and time
 schema-topbar-show-clock-description = The clock at the right end of the top bar.
 schema-topbar-clock-format-label = Clock format

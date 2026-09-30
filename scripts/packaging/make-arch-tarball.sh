@@ -99,6 +99,13 @@ while IFS= read -r f; do
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/plugins/otto -type f)
 
+# The desktop widgets' ewwii configuration, likewise a tree with executable
+# scripts in it.
+while IFS= read -r f; do
+    if [ -x "$f" ]; then m=755; else m=644; fi
+    install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
+done < <(find resources/widgets -type f)
+
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 
 # Which build this is, as the nightly package's pkgver. PKGBUILD-nightly-bin

@@ -94,6 +94,8 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-desktop-widget = デスクトップウィジェット
+settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
 settings-background-image-unavailable = 表示できません
 settings-show-desk = デスクトップにファイルを表示
 settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
@@ -473,6 +475,11 @@ settings-choice-power-ignore = 何もしない
 settings-choice-power-lock = 画面をロック
 settings-choice-power-suspend = スリープ
 settings-choice-power-shutdown = システム終了
+settings-choice-widget-none = なし
+settings-choice-widget-calendar = カレンダー
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 
@@ -955,6 +962,8 @@ schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
 schema-canvas-width-label = サイドキャンバスの幅
 schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
+schema-desktop-widget-label = デスクトップウィジェット
+schema-desktop-widget-description = 壁紙の上、ウインドウの背後に描く全画面のページ。ewwii が必要です。
 schema-topbar-show-clock-label = 日付と時刻を表示
 schema-topbar-show-clock-description = 上部バーの右端の時計。
 schema-topbar-clock-format-label = 時計の表示形式

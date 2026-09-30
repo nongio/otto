@@ -219,7 +219,7 @@ fn parse_mimeapps(path: &Path, map: &mut HashMap<String, Vec<String>>) {
     }
 }
 
-fn xdg_config_home() -> Option<PathBuf> {
+pub(crate) fn xdg_config_home() -> Option<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| Path::new(&home).join(".config")))
@@ -237,7 +237,7 @@ fn xdg_config_dirs() -> Vec<PathBuf> {
         .unwrap_or_else(|_| vec![PathBuf::from("/etc/xdg")])
 }
 
-fn xdg_data_dirs() -> Vec<PathBuf> {
+pub(crate) fn xdg_data_dirs() -> Vec<PathBuf> {
     env::var("XDG_DATA_DIRS")
         .map(|dirs| dirs.split(':').map(PathBuf::from).collect())
         .unwrap_or_else(|_| {

@@ -18,7 +18,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Pane | Covers |
 |------|--------|
 | General | The window switcher, the display language, the renderer, and where the configuration file is |
-| Appearance | Light or dark, accent colour, corners, frosting, window controls, interface font, GTK theme, desktop background, the desk, pointer and icon themes, and the top bar's clock |
+| Appearance | Light or dark, accent colour, corners, frosting, window controls, interface font, GTK theme, desktop background and widget, the desk, pointer and icon themes, and the top bar's clock |
 | Displays | Resolution, refresh rate and arrangement of connected monitors, and the global interface scale |
 | Dock | Size, position, auto-hide, magnification, icon colorization |
 | Keyboard | Layout and options, repeat rate, and the shortcut list |

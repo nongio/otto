@@ -93,6 +93,8 @@ settings-group-desktop = Рабочий стол
 settings-background-colour = Цвет фона
 settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
+settings-desktop-widget = Виджет рабочего стола
+settings-desktop-widget-needs-ewwii = Нужен ewwii, а он не установлен
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Невозможно показать
 settings-show-desk = Показывать файлы на рабочем столе
@@ -486,6 +488,11 @@ settings-choice-power-ignore = Ничего не делать
 settings-choice-power-lock = Заблокировать экран
 settings-choice-power-suspend = Перейти в спящий режим
 settings-choice-power-shutdown = Выключить
+settings-choice-widget-none = Нет
+settings-choice-widget-calendar = Календарь
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -1025,6 +1032,8 @@ schema-desk-enabled-label = Показывать файлы на рабочем 
 schema-desk-enabled-description = Файлы из папки «Рабочий стол», за окнами.
 schema-canvas-width-label = Ширина бокового холста
 schema-canvas-width-description = Ширина бокового холста в логических точках. Всё, что на нём есть, рисуется такой ширины.
+schema-desktop-widget-label = Виджет рабочего стола
+schema-desktop-widget-description = Страница во весь экран поверх обоев, за окнами. Нужен ewwii.
 schema-topbar-show-clock-label = Показывать дату и время
 schema-topbar-show-clock-description = Часы у правого края верхней панели.
 schema-topbar-clock-format-label = Формат часов

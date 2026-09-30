@@ -1,9 +1,82 @@
 # Desktop Widgets
 
 Clocks, system monitors and dashboards that sit on the desktop behind your
-windows, using the `wlr-layer-shell` protocol Otto implements. This page walks
-through setting up [eww](https://github.com/elkowar/eww) on Otto, from
-installing it to a complete working configuration you can copy.
+windows, using the `wlr-layer-shell` protocol Otto implements. Otto ships a
+few full-screen widgets of its own that you pick in Settings; the rest of this
+page walks through setting up [eww](https://github.com/elkowar/eww) on Otto,
+from installing it to a complete working configuration you can copy.
+
+## Otto's widgets
+
+Settings ▸ Appearance ▸ Desktop ▸ **Desktop widget** puts a full-screen page
+over the wallpaper, behind the desk and the windows:
+
+| Widget | What it shows |
+|--------|---------------|
+| Calendar | The month in large type, today's date, and every day of the month by week, today in bold |
+| Stay Focused | A grid of small crosses with a title, the date up the left edge and a short note |
+| Don't be busy | A drafting grid with rulers and a diagonal, a title, the date and a short note |
+
+The change applies at once, and the widget comes back when you log in.
+Choose **None** to take it away.
+
+They are drawn by [ewwii](https://github.com/Ewwii-sh/ewwii), a GTK4 widget
+engine that Otto uses when it is installed but doesn't need. Without it the
+menu is dimmed and says so. On Arch it comes from the AUR:
+
+```sh
+yay -S ewwii           # or: paru -S ewwii
+```
+
+The widgets also use Python for their scripts and Libertinus Serif
+(`otf-libertinus`) for their titles. Otto starts and stops ewwii itself, on
+its own copy of the widgets, so it never gets in the way of an ewwii or eww
+setup of yours.
+
+The setting is `widget` under `[desktop]` in the config file:
+
+```toml
+[desktop]
+widget = "calendar"   # or "stay_focused", "dont_be_busy", "none"
+```
+
+### Changing them
+
+The widgets are an ordinary ewwii configuration in
+`/usr/share/otto/widgets/ewwii`. To change one, copy the folder to
+`~/.config/otto/widgets/ewwii` and edit it there; Otto uses your copy from then
+on. Choose the widget again, or log in again, to see an edit.
+
+Otto doesn't run your copy in place. Each time a widget starts it copies the
+folder to `~/.cache/otto/widgets/ewwii`, runs every script in its
+`generators/` folder with the width and height of the usable area (the screen
+less the top bar, the dock and any other panel, in logical pixels), and puts
+what they print, SCSS variables, ahead of `ewwii.scss`, along with
+`$theme-dir`, the copy's absolute `file://` URL. That's how the grids fit
+your screen: GTK only loads a background image from an absolute URL. A window
+you add to your copy can be shown by writing its name as `widget` in the
+config file.
+
+The widgets keep clear of the top bar and the dock. Otto writes the space they
+take, measured from the widget window's edges, to a `reserved-area` file in
+the copy as a CSS padding shorthand such as `0px 0px 108px 0px` (top first,
+then clockwise), and rewrites it whenever a panel or the dock moves. The
+configuration follows it with a `Listen` and pads each window by it:
+
+```
+Listen "reserved_area" {
+    cmd = "tail -F -n 1 reserved-area 2>/dev/null"
+    initial = "0px 0px 0px 0px"
+}
+
+Box {
+    style = global("reserved_area").mutate(|area| f"padding: ${area};")
+    MyPage {}
+}
+```
+
+A window you add can do the same. When the usable area changes size, Otto
+runs the generators again and ewwii reloads the widget.
 
 ![An eww system HUD on the Otto desktop, with clock, CPU, memory, network and process panels over the wallpaper](images/desktop-widgets.jpg)
 

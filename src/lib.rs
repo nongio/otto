@@ -18,6 +18,7 @@ pub mod cursor;
 pub mod debug_gesture;
 pub mod debug_hooks;
 pub mod desk;
+pub mod desktop_widget;
 pub mod drawing;
 pub mod focus;
 #[cfg(feature = "headless")]

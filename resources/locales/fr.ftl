@@ -94,6 +94,8 @@ settings-group-desktop = Bureau
 settings-background-colour = Couleur d’arrière-plan
 settings-background-image = Image d’arrière-plan
 settings-background-image-detail = Choisie via le sélecteur de fichiers du portail de bureau
+settings-desktop-widget = Widget du bureau
+settings-desktop-widget-needs-ewwii = Nécessite ewwii, qui n’est pas installé
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Impossible à afficher
 settings-show-desk = Afficher les fichiers sur le bureau
@@ -480,6 +482,11 @@ settings-choice-power-ignore = Ne rien faire
 settings-choice-power-lock = Verrouiller l’écran
 settings-choice-power-suspend = Mettre en veille
 settings-choice-power-shutdown = Éteindre
+settings-choice-widget-none = Aucun
+settings-choice-widget-calendar = Calendrier
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1003,6 +1010,8 @@ schema-desk-enabled-label = Afficher les fichiers sur le bureau
 schema-desk-enabled-description = Les fichiers du dossier Bureau, derrière les fenêtres.
 schema-canvas-width-label = Largeur du canevas latéral
 schema-canvas-width-description = Largeur du canevas latéral, en points logiques. Tout ce qu’il contient est dessiné à cette largeur.
+schema-desktop-widget-label = Widget du bureau
+schema-desktop-widget-description = Une page plein écran dessinée sur le fond d’écran, derrière les fenêtres. Nécessite ewwii.
 schema-topbar-show-clock-label = Afficher la date et l’heure
 schema-topbar-show-clock-description = L’horloge à l’extrémité droite de la barre supérieure.
 schema-topbar-clock-format-label = Format de l’horloge

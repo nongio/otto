@@ -63,8 +63,9 @@ pub struct Row {
     /// The `org.otto.Settings` identifier this row edits. `None` means the row
     /// is not wired to the compositor yet and is display-only.
     pub id: Option<&'static str>,
-    /// The row's push buttons have nothing to do right now — Apply with
-    /// nothing to apply — and are drawn dimmed and take no press.
+    /// The row's push buttons or pop-up have nothing to do right now — Apply
+    /// with nothing to apply, a choice nothing can act on — and are drawn
+    /// dimmed and take no press.
     pub inactive: bool,
     /// A pop-up row that can be taken out of its list: a "−" button sits at
     /// its trailing edge, and the pop-up moves in to make room for it.
@@ -102,7 +103,8 @@ impl Row {
         self
     }
 
-    /// Dim the row's push buttons and ignore presses on them while `inactive`.
+    /// Dim the row's push buttons or pop-up and ignore presses on them while
+    /// `inactive`.
     pub(crate) fn inactive(mut self, inactive: bool) -> Self {
         self.inactive = inactive;
         self

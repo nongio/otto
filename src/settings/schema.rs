@@ -445,6 +445,20 @@ pub static SETTINGS: &[SettingSpec] = &[
         1200.0,
         10.0,
     ),
+    labelled_choice(
+        "desktop.widget",
+        "Desktop widget",
+        "A full-screen page drawn over the wallpaper, behind the windows. \
+         Needs ewwii.",
+        Live,
+        crate::desktop_widget::WIDGET_CHOICES,
+        &[
+            "settings-choice-widget-none",
+            "settings-choice-widget-calendar",
+            "settings-choice-widget-stay-focused",
+            "settings-choice-widget-dont-be-busy",
+        ],
+    ),
     spec(
         "background_color",
         Str,

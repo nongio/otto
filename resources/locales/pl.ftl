@@ -93,6 +93,8 @@ settings-group-desktop = Pulpit
 settings-background-colour = Kolor tła
 settings-background-image = Obraz tła
 settings-background-image-detail = Wybierany w oknie wyboru plików portalu pulpitu
+settings-desktop-widget = Widżet pulpitu
+settings-desktop-widget-needs-ewwii = Wymaga ewwii, który nie jest zainstalowany
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Nie można wyświetlić
 settings-show-desk = Pokazuj pliki na pulpicie
@@ -486,6 +488,11 @@ settings-choice-power-ignore = Nic nie rób
 settings-choice-power-lock = Zablokuj ekran
 settings-choice-power-suspend = Uśpij
 settings-choice-power-shutdown = Wyłącz komputer
+settings-choice-widget-none = Brak
+settings-choice-widget-calendar = Kalendarz
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automatycznie
 
@@ -1032,6 +1039,8 @@ schema-desk-enabled-label = Pokazuj pliki na pulpicie
 schema-desk-enabled-description = Pliki z folderu Pulpit, za oknami.
 schema-canvas-width-label = Szerokość bocznego płótna
 schema-canvas-width-description = Szerokość bocznego płótna w punktach logicznych. Wszystko, co się na nim znajduje, jest rysowane w tej szerokości.
+schema-desktop-widget-label = Widżet pulpitu
+schema-desktop-widget-description = Strona na cały ekran, rysowana na tapecie, za oknami. Wymaga ewwii.
 schema-topbar-show-clock-label = Pokazuj datę i godzinę
 schema-topbar-show-clock-description = Zegar na prawym końcu górnego paska.
 schema-topbar-clock-format-label = Format zegara

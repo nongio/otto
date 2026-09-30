@@ -2,7 +2,7 @@
 
 **Status:** draft — compositor side of the settings interface implemented
 **Wire contract:** [docs/developer/settings-dbus-api.md](../docs/developer/settings-dbus-api.md)
-**Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md#recent-and-find), [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [localisation.md](./localisation.md)
+**Related specs:** [search-language.md](./search-language.md), [file-browser.md](./file-browser.md#recent-and-find), [multi-output.md](./multi-output.md), [lock-screen.md](./lock-screen.md), [login-mode.md](./login-mode.md), [lid-power.md](./lid-power.md), [topbar.md](./topbar.md), [desktop-widget.md](./desktop-widget.md), [localisation.md](./localisation.md)
 
 ## Summary
 
@@ -382,7 +382,7 @@ are:
 - **Appearance** — sits right after General. Colour scheme (light/dark),
   accent colour, rounded corners, frosting, which end of a title bar the
   window controls sit at, the maximize button, font family and GTK theme; the
-  desktop's background colour and image; the desk; the cursor theme and size
+  desktop's background colour and image and the desktop widget; the desk; the cursor theme and size
   and the icon theme; and the top bar's clock.
 
   The Desk group holds *Show files on the desktop* (`desk.enabled`), then
@@ -396,6 +396,12 @@ are:
   **Reset** writes `anchor = "fill"`. All are edited in place with
   everything else in the file kept, and the desk follows the file live. *Size and position* is inactive while the desk
   is off ([desk.md](./desk.md)).
+
+  The desktop widget is a pop-up (`desktop.widget`, live) offering None,
+  Calendar, Stay Focused and Don't be busy, pages ewwii draws behind the
+  windows. ewwii is optional: where it is not on `PATH` the pop-up is dimmed
+  and cannot be opened, and the row's detail says ewwii is needed
+  ([desktop-widget.md](./desktop-widget.md)).
 
   The font family is a pop-up that lists every family fontconfig knows of, so
   like the language it caps its height, scrolls and is walked by typing.

@@ -94,6 +94,8 @@ settings-group-desktop = Área de trabalho
 settings-background-colour = Cor do plano de fundo
 settings-background-image = Imagem do plano de fundo
 settings-background-image-detail = Escolhida através do seletor de arquivos do portal da área de trabalho
+settings-desktop-widget = Widget da área de trabalho
+settings-desktop-widget-needs-ewwii = Precisa do ewwii, que não está instalado
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Não é possível exibir
 settings-show-desk = Mostrar arquivos na área de trabalho
@@ -480,6 +482,11 @@ settings-choice-power-ignore = Não fazer nada
 settings-choice-power-lock = Bloquear a tela
 settings-choice-power-suspend = Suspender
 settings-choice-power-shutdown = Desligar
+settings-choice-widget-none = Nenhum
+settings-choice-widget-calendar = Calendário
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-stay-focused = Stay Focused
+settings-choice-widget-dont-be-busy = Don't be busy
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automático
 
@@ -993,6 +1000,8 @@ schema-desk-enabled-label = Mostrar arquivos na área de trabalho
 schema-desk-enabled-description = Os arquivos da pasta Área de trabalho, atrás das janelas.
 schema-canvas-width-label = Largura da tela lateral
 schema-canvas-width-description = Largura da tela lateral, em pontos lógicos. Tudo nela é desenhado com essa largura.
+schema-desktop-widget-label = Widget da área de trabalho
+schema-desktop-widget-description = Uma página em tela cheia sobre o plano de fundo, atrás das janelas. Precisa do ewwii.
 schema-topbar-show-clock-label = Mostrar data e hora
 schema-topbar-show-clock-description = O relógio na ponta direita da barra superior.
 schema-topbar-clock-format-label = Formato do relógio

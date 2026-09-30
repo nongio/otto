@@ -224,10 +224,11 @@ pub fn pane_focus_id(id: &str) -> FocusId {
 /// A pop-up row's field, in the same rect [`Settings::select_hit`] tests and
 /// the menu is anchored to, given the row's rect in window coordinates.
 ///
-/// `None` for any other kind of row. Shared with the hit test so a menu opened
-/// from the keyboard drops out of the same button a click would have opened.
+/// `None` for any other kind of row, or an inactive one. Shared with the hit
+/// test so a menu opened from the keyboard drops out of the same button a
+/// click would have opened.
 pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
-    if !matches!(row.control, Control::Select(_)) {
+    if !matches!(row.control, Control::Select(_)) || row.inactive {
         return None;
     }
     Some(select_rect(
@@ -1398,6 +1399,9 @@ impl Settings {
         let Control::Select(current) = &row.control else {
             return None;
         };
+        if row.inactive {
+            return None;
+        }
 
         let field = select_rect(
             select_right(row, rect.right - 14.0),
@@ -2298,7 +2302,9 @@ impl Settings {
                     canvas,
                     select_rect(select_right(row, right), cy),
                     &shown,
-                    if open {
+                    if row.inactive {
+                        DropdownInteraction::Disabled
+                    } else if open {
                         DropdownInteraction::Open
                     } else {
                         DropdownInteraction::Normal

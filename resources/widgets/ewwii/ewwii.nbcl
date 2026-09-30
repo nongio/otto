@@ -1,0 +1,265 @@
+# The area the top bar, the dock and other panels reserve on the screen, as
+# a CSS padding shorthand: top first, then clockwise ("30px 0px 92px 0px").
+# Otto rewrites the reserved-area file whenever that area changes, and each
+# window pads its page by it, so the page sits inside the usable area.
+Listen "reserved_area" {
+    cmd = "tail -F -n 1 reserved-area 2>/dev/null"
+    initial = "0px 0px 0px 0px"
+}
+
+Poll "cal_month" {
+    interval = "10m"
+    cmd = "scripts/month.py month"
+    initial = ""
+}
+
+Poll "cal_num" {
+    interval = "10m"
+    cmd = "scripts/month.py num"
+    initial = ""
+}
+
+Poll "cal_year" {
+    interval = "10m"
+    cmd = "scripts/month.py year"
+    initial = ""
+}
+
+Poll "cal_days" {
+    interval = "10m"
+    cmd = "scripts/month.py days"
+    initial = ""
+}
+
+Poll "cal_weekends" {
+    interval = "10m"
+    cmd = "scripts/month.py weekends"
+    initial = ""
+}
+
+Poll "cal_begins" {
+    interval = "10m"
+    cmd = "scripts/month.py begins"
+    initial = ""
+}
+
+Poll "cal_ends" {
+    interval = "10m"
+    cmd = "scripts/month.py ends"
+    initial = ""
+}
+
+Poll "cal_issue" {
+    interval = "10m"
+    cmd = "scripts/month.py issue"
+    initial = ""
+}
+
+Poll "cal_w1" {
+    interval = "10m"
+    cmd = "scripts/month.py w1"
+    initial = ""
+}
+
+Poll "cal_w2" {
+    interval = "10m"
+    cmd = "scripts/month.py w2"
+    initial = ""
+}
+
+Poll "cal_w3" {
+    interval = "10m"
+    cmd = "scripts/month.py w3"
+    initial = ""
+}
+
+Poll "cal_w4" {
+    interval = "10m"
+    cmd = "scripts/month.py w4"
+    initial = ""
+}
+
+Poll "cal_w5" {
+    interval = "10m"
+    cmd = "scripts/month.py w5"
+    initial = ""
+}
+
+Poll "cal_w6" {
+    interval = "10m"
+    cmd = "scripts/month.py w6"
+    initial = ""
+}
+
+component Rule () {
+    Box { class = "rule" height = 1 }
+}
+
+component DoubleRule () {
+    Box {
+        orientation = "v"
+        space_evenly = false
+        spacing = 4
+        Rule {}
+        Rule {}
+    }
+}
+
+component Meta (a, b, align) {
+    Box {
+        orientation = "v"
+        space_evenly = false
+        halign = align
+        Label { class = "meta" halign = align text = a }
+        Label { class = "meta" halign = align text = b }
+    }
+}
+
+component MonthPage () {
+    OverLay {
+        Box {
+            class = "page"
+            orientation = "v"
+            space_evenly = false
+            OverLay {
+            Box {
+                class = "header"
+                orientation = "h"
+                space_evenly = true
+                Meta { a = global("cal_days") b = global("cal_weekends") align = "start" }
+                Meta { a = global("cal_begins") b = global("cal_ends") align = "start" }
+                Meta { a = global("cal_issue") b = global("cal_year") align = "end" }
+            }
+            Box { class = "rule cap-line" height = 1 valign = "start" }
+            }
+            Box { vexpand = true }
+            OverLay {
+                Label { class = "month" xalign = 0 text = global("cal_month") }
+                Box { class = "month-cap" valign = "start" DoubleRule {} }
+                Box { class = "rule month-baseline" height = 1 valign = "end" }
+            }
+            Box { vexpand = true }
+            DoubleRule {}
+            Box {
+                class = "weeks"
+                orientation = "v"
+                space_evenly = false
+                Label { class = "week" xalign = 0 markup = global("cal_w1") }
+                Label { class = "week" xalign = 0 markup = global("cal_w2") }
+                Label { class = "week" xalign = 0 markup = global("cal_w3") }
+                Label { class = "week" xalign = 0 markup = global("cal_w4") }
+                Label { class = "week" xalign = 0 markup = global("cal_w5") }
+                Label { class = "week" xalign = 0 markup = global("cal_w6") }
+            }
+            Rule {}
+        }
+        Label { class = "number" halign = "end" valign = "end" text = global("cal_num") }
+    }
+}
+
+Window "calendar" {
+    monitor = 0
+    stacking = "bg"
+    exclusive = false
+    focusable = "none"
+    geometry = {
+        x = "0px"
+        y = "0px"
+        width = "100%"
+        height = "100%"
+        anchor = "center"
+    }
+    Box {
+        style = global("reserved_area").mutate(|area| f"padding: ${area};")
+        MonthPage {}
+    }
+}
+
+Poll "long_date" {
+    interval = "10m"
+    cmd = "date '+%A, %d %B %Y — Week %V'"
+    initial = ""
+}
+
+component LinesPage () {
+    OverLay {
+        Box { class = "lines-grid" hexpand = true vexpand = true }
+        Box {
+            orientation = "v"
+            space_evenly = false
+            halign = "center"
+            valign = "center"
+            Label { class = "lines-title" text = "Don't be busy." }
+            Label { class = "lines-title" text = "Be productive." }
+        }
+        Label { class = "lines-date" xalign = 1 halign = "start" valign = "start" text = global("long_date") }
+        Box {
+            class = "lines-note-box"
+            orientation = "v"
+            space_evenly = false
+            halign = "start"
+            valign = "start"
+            Label { class = "lines-note" xalign = 0 text = "Don't be busy merely for the sake of activity." }
+            Label { class = "lines-note" xalign = 0 text = "Instead, channel your energy into purposeful" }
+            Label { class = "lines-note" xalign = 0 text = "action that moves you closer to your goals," }
+            Label { class = "lines-note" xalign = 0 text = "transforms aspirations into achievements," }
+            Label { class = "lines-note" xalign = 0 text = "and enriches your life with meaning." }
+        }
+    }
+}
+
+Window "dont_be_busy" {
+    monitor = 0
+    stacking = "bg"
+    exclusive = false
+    focusable = "none"
+    geometry = {
+        x = "0px"
+        y = "0px"
+        width = "100%"
+        height = "100%"
+        anchor = "center"
+    }
+    Box {
+        style = global("reserved_area").mutate(|area| f"padding: ${area};")
+        LinesPage {}
+    }
+}
+
+component FocusPage () {
+    OverLay {
+        Box { class = "focus-grid" hexpand = true vexpand = true }
+        Label { class = "focus-title" halign = "center" valign = "center" text = "Stay Focused." }
+        Label { class = "focus-date" xalign = 1 halign = "start" valign = "start" text = global("long_date") }
+        Box {
+            class = "focus-note-box"
+            orientation = "v"
+            space_evenly = false
+            halign = "end"
+            valign = "end"
+            Label { class = "focus-note" xalign = 0 text = "Don't let distractions dilute your potential." }
+            Label { class = "focus-note" xalign = 0 text = "Instead, direct your attention toward what truly" }
+            Label { class = "focus-note" xalign = 0 text = "matters, silence the noise that surrounds you," }
+            Label { class = "focus-note" xalign = 0 text = "pursue your priorities with intention, and watch" }
+            Label { class = "focus-note" xalign = 0 text = "clarity transform into extraordinary results." }
+        }
+    }
+}
+
+Window "stay_focused" {
+    monitor = 0
+    stacking = "bg"
+    exclusive = false
+    focusable = "none"
+    geometry = {
+        x = "0px"
+        y = "0px"
+        width = "100%"
+        height = "100%"
+        anchor = "center"
+    }
+    Box {
+        style = global("reserved_area").mutate(|area| f"padding: ${area};")
+        FocusPage {}
+    }
+}

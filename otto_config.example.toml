@@ -135,6 +135,15 @@ args = []
 # [desk]
 # enabled = true
 
+# A desktop widget: a full-screen page over the wallpaper, behind the desk and
+# the windows. Needs ewwii, which Otto runs itself and follows changes to live.
+# "none" (the default), "calendar", "stay_focused" or "dont_be_busy". The
+# themes are in /usr/share/otto/widgets/ewwii; copy them to
+# ~/.config/otto/widgets/ewwii to change them. Settings ▸ Appearance edits it.
+#
+# [desktop]
+# widget = "calendar"
+
 # The top bar's clock. otto-bar reads these from Otto and follows changes live.
 # Settings ▸ Appearance edits them.
 #

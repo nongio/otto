@@ -1,0 +1,159 @@
+// Otto puts $theme-dir, the absolute file:// URL of this directory, and the
+// variables the generators print ahead of this file.
+//
+// Each window pads its page by the area the top bar, the dock and other
+// panels reserve (the reserved_area variable in ewwii.nbcl), so the
+// measurements below are taken from the edges of the usable area, not the
+// screen's.
+
+$ink: #f4efe8;
+
+* {
+  all: unset;
+  font-family: "Inter Display", "Inter", sans-serif;
+}
+
+window {
+  background-color: transparent;
+}
+
+.page {
+  color: $ink;
+  padding: 14px 40px 13px 40px;
+}
+
+// Inter's vertical metrics, in em: ascent 0.969, descent 0.241, cap
+// height 0.728. A label's box runs from ascent to descent, so a rule meets
+// the type when the margins cancel the gap between box edge and cap line or
+// baseline.
+
+// GTK4 ignores negative margins, so rules that meet the type are overlaid
+// on their label and pushed in from the box edge.
+
+// Ascent less cap height: 0.241em of 11px.
+.cap-line {
+  margin-top: 1px;
+}
+
+.meta {
+  font-size: 11px;
+}
+
+// Thin rules take the text colour at low alpha, so they suit light and dark months.
+.rule {
+  min-height: 1px;
+  background-color: unquote("alpha(currentColor, 0.28)");
+}
+
+.month {
+  font-size: 190px;
+  letter-spacing: -11px;
+  margin: 0 0 0 -8px;
+}
+
+// Pulls the double rule down from the top of the month's box, towards its
+// cap line.
+.month-cap {
+  margin-top: 12px;
+}
+
+// Descent of the 190px month.
+.month-baseline {
+  margin-bottom: 46px;
+}
+
+.weeks {
+  margin: 24px 0 6px 0;
+}
+
+.week {
+  font-size: 13px;
+  letter-spacing: -0.2px;
+}
+
+.number {
+  color: $ink;
+  font-size: 380px;
+  letter-spacing: -34px;
+  // Right margin makes up for the trailing letter spacing. Moved down past
+  // the bottom of the usable area until the baseline lands on the last rule:
+  // GTK4 ignores negative margins, and the digits have nothing below the
+  // baseline to lose if that runs off the screen.
+  margin: 0 18px 0 0;
+  transform: translateY(73px);
+  font-feature-settings: "tnum";
+}
+
+
+// Don't be busy. Positions come from generators/lines-grid.py: the title
+// fills the middle row, the date runs up the left half column, the note fills
+// the end of the bottom row one minor step in from its left edge.
+.lines-grid {
+  background-image: url("#{$theme-dir}/lines/grid@2x.png");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+// Classes land on a wrapper, and the reset at the top would give the inner
+// label Inter again.
+.lines-title,
+.lines-title * {
+  color: $ink;
+  font-family: "Libertinus Serif Display", serif;
+  font-size: 44px;
+}
+
+.lines-date {
+  color: rgba($ink, 0.8);
+  font-size: 11px;
+  letter-spacing: 1px;
+  // A fixed length, reading upwards and ending one minor step below the
+  // frame, then turned about its centre into the left half column.
+  min-width: $lines-date-length;
+  margin-top: $lines-date-top;
+  transform: translate($lines-date-shift-x, $lines-date-shift-y) rotate(-90deg);
+}
+
+.lines-note-box {
+  margin: $lines-note-top 0 0 $lines-note-left;
+}
+
+.lines-note {
+  color: $ink;
+  font-size: 13px;
+}
+
+// Stay Focused. The crosses and the note's margins come from
+// generators/focus-grid.py; the crosses stop short of the title and the note.
+.focus-grid {
+  background-image: url("#{$theme-dir}/focus/grid@2x.png");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.focus-title,
+.focus-title * {
+  color: $ink;
+  font-family: "Libertinus Serif Display", serif;
+  font-size: 46px;
+}
+
+// Reads upwards from 170px down the left edge, ending at the top: a fixed
+// length turned about its centre, as for the Don't be busy date.
+.focus-date {
+  color: rgba($ink, 0.8);
+  font-size: 12px;
+  letter-spacing: 1px;
+  min-width: 300px;
+  margin: 170px 0 0 14px;
+  transform: translate(-143px, 143px) rotate(-90deg);
+}
+
+.focus-note-box {
+  margin: 0 $focus-note-right $focus-note-bottom 0;
+}
+
+.focus-note {
+  color: $ink;
+  font-size: 13px;
+}
