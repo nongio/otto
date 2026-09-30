@@ -23,6 +23,7 @@ use skia_safe::{Canvas, Color, Data, Image, Paint, RRect, Rect};
 use crate::audio_route::{self, AudioStreams, Player, Route};
 use crate::audio_viz::{self, BarAnimator, BarStyle, LevelMeter, BAR_COUNT};
 use crate::mpris::{self, Control, PlaybackInfo, SharedPlayback};
+use crate::shell_windows::{self, ShellWindow};
 use crate::state::SharedState;
 use crate::IslandMode;
 
@@ -47,7 +48,7 @@ pub const MUSIC_APP_ID: &str = "org.otto.music";
 pub const EQ_BUF_W: i32 = 220;
 pub const EQ_BUF_H: i32 = 32;
 /// Bars in the compact pill.
-const COMPACT_BARS: usize = 4;
+const COMPACT_BARS: usize = 6;
 /// Seconds a track may be gone before the island lets go of it, so skipping
 /// to the next one doesn't close and reopen it.
 const GONE_GRACE_SECS: f64 = 3.0;
@@ -109,14 +110,14 @@ impl MusicActivityRenderer {
             IslandMode::Mini => (w, h, 0.0, 0.0),
             IslandMode::Compact => {
                 let v_pad = 7.0;
-                let h_pad = 8.0;
                 let eq_w = compact_bars_width();
-                (eq_w, h - v_pad * 2.0, w - h_pad - eq_w, v_pad)
+                (eq_w, h - v_pad * 2.0, compact_bars_x(w), v_pad)
             }
             IslandMode::Expanded => {
                 let pad = 12.0;
                 let rx = pad + (h - pad * 2.0) + pad;
-                (w - rx - pad, 22.0, rx, pad + 34.0)
+                // The whole band between the artist line and the progress bar.
+                (w - rx - pad, EQ_BUF_H as f32, rx, pad + 30.0)
             }
         }
     }
@@ -219,16 +220,15 @@ impl MusicActivityRenderer {
 
     fn draw_compact(&self, canvas: &Canvas, w: f32, h: f32) {
         let v_pad = 7.0;
-        let h_pad = 10.0;
+        let h_pad = COMPACT_EDGE_PAD;
         let art_size = h - v_pad * 2.0;
         let art_x = h_pad;
         let art_y = v_pad;
 
         self.draw_art(canvas, art_x, art_y, art_size);
 
-        let eq_x = w - h_pad - compact_bars_width();
         let text_x = art_x + art_size + h_pad;
-        let text_max_w = eq_x - text_x - h_pad;
+        let text_max_w = compact_bars_x(w) - text_x - COMPACT_TEXT_GAP;
 
         let mid = h / 2.0;
         Self::draw_text(
@@ -449,8 +449,21 @@ impl MusicActivityRenderer {
     }
 }
 
+/// Space between the compact pill's edge and the art on the left, the bars
+/// on the right.
+const COMPACT_EDGE_PAD: f32 = 10.0;
+
+/// The least space between the compact pill's text and its bars.
+const COMPACT_TEXT_GAP: f32 = 6.0;
+
+/// Where the bars start in a compact pill `w` wide.
+fn compact_bars_x(w: f32) -> f32 {
+    w - COMPACT_EDGE_PAD - compact_bars_width()
+}
+
 fn compact_bars_width() -> f32 {
-    COMPACT_BARS as f32 * 3.0 + (COMPACT_BARS as f32 - 1.0) * 2.0
+    COMPACT_BARS as f32 * audio_viz::COMPACT_BAR_W
+        + (COMPACT_BARS as f32 - 1.0) * audio_viz::COMPACT_BAR_GAP
 }
 
 // ---------------------------------------------------------------------------
@@ -594,8 +607,7 @@ impl MusicMonitor {
 
     /// Advance the bars one frame.
     pub fn step_bars(&mut self) {
-        let Some(info) = self.info() else { return };
-        self.bars.step(self.meter.level(), &info.track_title);
+        self.bars.step(self.meter.take_bands());
     }
 
     /// Start loading the album art when the track's art URL changed. Returns
@@ -704,37 +716,26 @@ impl MusicMonitor {
             .map(|since| since + Duration::from_secs_f64(GONE_GRACE_SECS))
     }
 
-    /// Bring the player forward: its own window, the one showing the track
-    /// if it has several; failing that, the window showing the track; failing
-    /// that, the player itself over MPRIS, which lets a browser switch to the
-    /// tab that is playing.
+    /// Bring the player forward: its window, found by [`player_window`] in
+    /// the compositor's tree; failing that, the player itself over MPRIS,
+    /// which lets a browser that supports it switch to the playing tab.
     pub fn focus_player(&self) {
         let Some(info) = self.shown.clone() else {
             return;
         };
-        let windows = focus_watcher::windows();
-        let target = windows
-            .iter()
-            .filter(|w| window_named_after_player(&info, &w.app_id))
-            .max_by_key(|w| window_titled_after_track(&info, &w.title))
-            .or_else(|| {
-                windows
-                    .iter()
-                    .find(|w| window_titled_after_track(&info, &w.title))
-            });
-        if let Some(window) = target {
-            if focus_watcher::activate_window(|app_id, title| {
-                app_id == window.app_id && title == window.title
-            }) {
-                return;
+        thread::spawn(move || {
+            match focus_player_window(&info) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "finding the player's window failed"),
             }
-        }
-        thread::spawn(move || match mpris::raise(&info) {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::info!(bus_name = %info.bus_name, "no window to focus for the player")
+            match mpris::raise(&info) {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::info!(bus_name = %info.bus_name, "no window to focus for the player")
+                }
+                Err(error) => tracing::warn!(%error, "raising the player over MPRIS failed"),
             }
-            Err(error) => tracing::warn!(%error, "raising the player over MPRIS failed"),
         });
     }
 
@@ -772,6 +773,50 @@ impl MusicMonitor {
             pressed: None,
         })
     }
+}
+
+/// Focus the window [`player_window`] picks. Returns whether one was focused.
+fn focus_player_window(info: &PlaybackInfo) -> zbus::Result<bool> {
+    let conn = zbus::blocking::Connection::session()?;
+    let windows = shell_windows::windows(&conn)?;
+    match player_window(info, &windows, audio_route::parent_pid) {
+        Some(window) => shell_windows::focus(&conn, window.con_id),
+        None => Ok(false),
+    }
+}
+
+/// The window that plays `info`, among `windows`.
+///
+/// The windows of the player's own process (or one it started) come first,
+/// then those whose app id is the player's `DesktopEntry` (a sandboxed
+/// player's D-Bus peer is a proxy, not the app), then any window titled after
+/// the track. Among several, the one showing the track wins: a browser titles
+/// each window after its active tab. A browser playing in a tab that isn't
+/// showing still has its window found by process.
+fn player_window<'a>(
+    info: &PlaybackInfo,
+    windows: &'a [ShellWindow],
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> Option<&'a ShellWindow> {
+    let by_process = |window: &ShellWindow| {
+        window.pid.is_some_and(|pid| {
+            info.player_pids
+                .iter()
+                .any(|&player| audio_route::descends_from(pid, player, &parent_of))
+        })
+    };
+    let by_desktop_entry = |window: &ShellWindow| {
+        !info.desktop_entry.is_empty() && window.app_id.eq_ignore_ascii_case(&info.desktop_entry)
+    };
+    let showing_track = |window: &ShellWindow| window_titled_after_track(info, &window.title);
+    let pick = |belongs: &dyn Fn(&ShellWindow) -> bool| {
+        let mut candidates = windows.iter().filter(|w| belongs(w)).peekable();
+        let first = candidates.peek().copied();
+        candidates.find(|w| showing_track(w)).or(first)
+    };
+    pick(&by_process)
+        .or_else(|| pick(&by_desktop_entry))
+        .or_else(|| windows.iter().find(|w| showing_track(w)))
 }
 
 /// Whether the pill drawn from `shown` is out of date for `info`.
@@ -822,8 +867,11 @@ fn window_named_after_player(info: &PlaybackInfo, app_id: &str) -> bool {
 }
 
 fn window_titled_after_track(info: &PlaybackInfo, title: &str) -> bool {
-    let track = info.track_title.trim();
-    track.chars().count() >= 3 && title.contains(track)
+    // A browser collapses runs of whitespace in the page title it names the
+    // window after, but not in the media metadata the track title comes from.
+    let collapse = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let track = collapse(&info.track_title);
+    track.chars().count() >= 3 && collapse(title).contains(&track)
 }
 
 // ---------------------------------------------------------------------------
@@ -950,9 +998,18 @@ fn decode_art(bytes: Vec<u8>) -> Option<Image> {
         skia_safe::FilterMode::Linear,
         skia_safe::MipmapMode::Linear,
     );
+    // The island shows art in a square; a wide video thumbnail keeps its
+    // centre rather than being squashed.
+    let side = size.width.min(size.height) as f32;
+    let crop = Rect::from_xywh(
+        (size.width as f32 - side) / 2.0,
+        (size.height as f32 - side) / 2.0,
+        side,
+        side,
+    );
     surface.canvas().draw_image_rect_with_sampling_options(
         &image,
-        None,
+        Some((&crop, skia_safe::canvas::SrcRectConstraint::Strict)),
         Rect::from_wh(ART_PX as f32, ART_PX as f32),
         sampling,
         &Paint::default(),
@@ -981,6 +1038,7 @@ mod tests {
             track_id: String::new(),
             player_names: players.iter().map(|p| p.to_string()).collect(),
             player_pids: Vec::new(),
+            desktop_entry: String::new(),
         }
     }
 
@@ -1027,6 +1085,92 @@ mod tests {
         let open = [playing_tab.clone(), other_tab.clone()];
         assert!(player_owns_window(&info, &playing_tab, &open));
         assert!(!player_owns_window(&info, &other_tab, &open));
+    }
+
+    #[test]
+    fn a_track_title_matches_the_tab_despite_extra_spaces() {
+        let info = playing(
+            "Róisín Murphy  - Incapable | Glastonbury 2022",
+            &["chromium"],
+        );
+        let tab = window(
+            "google-chrome",
+            "Róisín Murphy - Incapable | Glastonbury 2022 - YouTube - Google Chrome",
+        );
+        assert!(player_owns_window(&info, &tab, std::slice::from_ref(&tab)));
+    }
+
+    fn shell_window(con_id: u64, pid: Option<u32>, app_id: &str, title: &str) -> ShellWindow {
+        ShellWindow {
+            con_id,
+            pid,
+            app_id: app_id.into(),
+            title: title.into(),
+        }
+    }
+
+    /// 100 is the terminal, 200 the browser, 201 its child, 300 a player
+    /// the terminal started.
+    fn parent_of(pid: u32) -> Option<u32> {
+        match pid {
+            201 => Some(200),
+            300 => Some(100),
+            _ => None,
+        }
+    }
+
+    fn with_pid(mut info: PlaybackInfo, pid: u32) -> PlaybackInfo {
+        info.player_pids = vec![pid];
+        info
+    }
+
+    #[test]
+    fn a_browser_playing_in_a_hidden_tab_is_found_by_process() {
+        let info = with_pid(playing("Veridis Quo", &["chromium"]), 200);
+        let windows = [
+            shell_window(1, Some(100), "com.mitchellh.ghostty", "Veridis Quo lyrics"),
+            shell_window(2, Some(200), "google-chrome", "Hacker News - Google Chrome"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+    }
+
+    #[test]
+    fn of_the_player_s_windows_the_one_showing_the_track_wins() {
+        let info = with_pid(playing("Veridis Quo", &["chromium"]), 200);
+        let windows = [
+            shell_window(1, Some(200), "google-chrome", "Hacker News - Google Chrome"),
+            shell_window(2, Some(201), "google-chrome", "Veridis Quo - YouTube"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+    }
+
+    #[test]
+    fn the_terminal_that_started_a_player_is_not_its_window() {
+        let info = with_pid(playing("Veridis Quo", &["mpv"]), 300);
+        let windows = [shell_window(1, Some(100), "foot", "~/music")];
+        assert!(player_window(&info, &windows, parent_of).is_none());
+    }
+
+    #[test]
+    fn a_sandboxed_player_is_found_by_its_desktop_entry() {
+        let mut info = playing("Veridis Quo", &["spotify"]);
+        info.desktop_entry = "com.spotify.Client".into();
+        let windows = [
+            shell_window(1, Some(100), "foot", "~"),
+            shell_window(2, Some(900), "com.spotify.Client", "Spotify Premium"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+    }
+
+    #[test]
+    fn with_nothing_else_the_window_showing_the_track_is_the_player_s() {
+        let info = playing("Veridis Quo", &["chromium"]);
+        let windows = [
+            shell_window(1, None, "otto-files", "Files"),
+            shell_window(2, None, "brave-browser", "Veridis Quo - YouTube - Brave"),
+        ];
+        assert_eq!(player_window(&info, &windows, parent_of).unwrap().con_id, 2);
+        assert!(player_window(&info, &windows[..1], parent_of).is_none());
     }
 
     #[test]
@@ -1088,5 +1232,26 @@ mod tests {
             .unwrap();
         let art = decode_art(png.as_bytes().to_vec()).unwrap();
         assert_eq!((art.width(), art.height()), (ART_PX, ART_PX));
+    }
+
+    #[test]
+    fn wide_art_is_cropped_not_squashed() {
+        // Red sides around a blue centre square: a crop shows only blue.
+        let mut surface = skia_safe::surfaces::raster_n32_premul((320, 180)).unwrap();
+        surface.canvas().clear(Color::RED);
+        let mut blue = Paint::default();
+        blue.set_color(Color::BLUE);
+        surface
+            .canvas()
+            .draw_rect(Rect::from_xywh(70.0, 0.0, 180.0, 180.0), &blue);
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .unwrap();
+        let art = decode_art(png.as_bytes().to_vec()).unwrap();
+        let pixels = art.peek_pixels().unwrap();
+        for x in [0, ART_PX / 2, ART_PX - 1] {
+            assert_eq!(pixels.get_color((x, ART_PX / 2)), Color::BLUE, "x {x}");
+        }
     }
 }

@@ -8,6 +8,7 @@ mod mpris;
 mod music;
 mod notifications;
 mod renderer;
+mod shell_windows;
 mod state;
 
 use std::sync::{Arc, Mutex};
@@ -1760,10 +1761,22 @@ impl IslandApp {
                 let (eq_w, eq_h, _, _) = music::MusicActivityRenderer::eq_layout(mode, w, h);
                 let buf_w = music::EQ_BUF_W as f32;
                 let buf_h = music::EQ_BUF_H as f32;
+                let bars = skia_safe::Rect::from_xywh(
+                    (buf_w - eq_w) / 2.0,
+                    (buf_h - eq_h) / 2.0,
+                    eq_w,
+                    eq_h,
+                );
+                // A frame of the same layout changes only the bars. After a
+                // layout change the whole buffer goes out, so bars drawn at
+                // the old size don't linger outside the new rect.
+                if visualiser.drawn {
+                    visualiser.surface.base_surface().add_frame_damage(&[bars]);
+                }
                 visualiser.surface.draw(|canvas| {
                     canvas.clear(skia_safe::Color::TRANSPARENT);
                     canvas.save();
-                    canvas.translate(((buf_w - eq_w) / 2.0, (buf_h - eq_h) / 2.0));
+                    canvas.translate((bars.left, bars.top));
                     mr.draw_eq_only(canvas, mode, eq_w, eq_h);
                     canvas.restore();
                 });

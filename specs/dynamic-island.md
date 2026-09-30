@@ -148,15 +148,16 @@ itself is in [notification-daemon](notification-daemon.md).
 While an MPRIS player has a track loaded, the island shows a persistent live
 activity for it:
 - **Mini**: three bars in a circle, in the accent colour.
-- **Compact**: album art, title, artist and four bars.
-- **Expanded**: larger art, title and artist, eight bars, a progress bar with the
+- **Compact**: album art, title, artist and six thin bars.
+- **Expanded**: larger art, title and artist, twelve bars, a progress bar with the
   elapsed and remaining time, and previous/play-pause/next controls.
 
 A track playing on another device shows a cast glyph in place of the bars (see
 below).
 
 The accent colour is extracted from the album art and used for the bars and the
-progress fill.
+progress fill. Art that isn't square, such as a video thumbnail, is cropped to its
+centre square rather than stretched.
 
 Players are followed over D-Bus (`mpris.rs`), with no external tool. The island
 listens for players appearing and going (`NameOwnerChanged`), and for their
@@ -204,16 +205,28 @@ app_id, but title their window after the active tab, so the island hides only wh
 the playing tab is showing. Track titles shorter than three characters don't match by
 title.
 
-Clicking the album art brings the player forward. It activates the player's own
-window (the one showing the track, if it has several), or else the window showing the
-track, through `focus_watcher::activate_window` in otto-kit. With no such window it
-asks the player over MPRIS `Raise`, which lets a browser switch to the playing tab.
+Clicking the album art brings the player forward. The island reads the windows from
+`org.otto.Shell1` `GetTree`, which gives each window's process, and picks, in order:
+the windows of the player's own process or one it started (its D-Bus peer), those
+whose app id is the player's MPRIS `DesktopEntry` (a sandboxed player's peer is a
+proxy), then any window titled after the track. Among several, the one titled after
+the track wins, since a browser titles each window after its active tab. It focuses
+the pick with `[con_id=…] focus`, so a browser playing in a tab that isn't showing
+comes forward on whatever tab it shows. With no window it asks the player over
+MPRIS `Raise`, which lets a browser that supports it switch to the playing tab.
 
 An island is music by its `app_id` (`org.otto.music`), not by coming from inside
 otto-islands.
 
-The bars come from `audio_viz`: a PipeWire level meter, an animator that turns one
-level into eight independently moving bars, and the bar drawing. The bars sit on a
+The bars come from `audio_viz`: a PipeWire meter that splits the stream into twelve
+bands (50 Hz to 12 kHz) with one band-pass filter each, an animator that turns
+the bands into bar heights, and the bar drawing. The meter holds each band's loudest
+reading between redraws, so a beat between two frames still shows. The animator reads
+each band against its own recent peak rather than full scale, so a player at low
+volume or a quietly mastered video still fills the bars, and a band that is nearly
+empty beside the others stays low. Bars rise on the frame a hit lands and fall back
+within a few frames. Compact and mini islands draw an evenly spread subset of the
+bands. The bars sit on a
 child subsurface of the island, redrawn at ~24 fps only while a track plays and the
 island is on screen, so the island buffer itself stays retained. The capture stream is
 open only for as long as the bars move: a connected stream keeps the output running,

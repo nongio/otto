@@ -1,5 +1,5 @@
-//! Audio visualiser: a PipeWire level meter, the bar animation it drives and
-//! the bars themselves.
+//! Audio visualiser: a PipeWire spectrum meter, the bar animation it drives
+//! and the bars themselves.
 //!
 //! The music island listens to the player's own stream, never to the whole
 //! output: other sounds must not move the bars.
@@ -9,17 +9,29 @@ use std::thread;
 
 use skia_safe::{Canvas, Color, Paint, RRect, Rect};
 
-/// Number of bars an animator tracks. Every bar style draws from these.
-pub const BAR_COUNT: usize = 8;
+/// Number of bars an animator tracks, one per frequency band. Every bar style
+/// draws from these.
+pub const BAR_COUNT: usize = 12;
 
-/// The loudness of one application stream, 0.0 to 1.0, updated from a capture
-/// stream on its own thread.
+/// Centre frequency of each band, evenly spaced on a log scale from bass to
+/// treble, about two thirds of an octave apart.
+const BAND_HZ: [f32; BAR_COUNT] = [
+    50.0, 80.0, 135.0, 225.0, 370.0, 610.0, 1000.0, 1650.0, 2750.0, 4500.0, 7500.0, 12000.0,
+];
+
+/// Band-pass Q for bands two thirds of an octave wide: neighbours overlap a little, so a
+/// note between two centres lights both rather than neither.
+const BAND_Q: f32 = 2.0;
+
+/// The loudness of each band of one application stream, updated from a
+/// capture stream on its own thread.
 ///
 /// The stream exists only while the meter listens. A connected capture stream
 /// keeps its target running, so a meter left on would stop the sound card
 /// from ever suspending.
 pub struct LevelMeter {
-    level: Arc<Mutex<f32>>,
+    /// The loudest reading of each band since the last [`LevelMeter::take_bands`].
+    bands: Arc<Mutex<[f32; BAR_COUNT]>>,
     /// The `object.serial` of the stream listened to, and how to stop.
     capture: Option<(u32, pipewire::channel::Sender<()>)>,
 }
@@ -28,7 +40,7 @@ impl LevelMeter {
     /// A meter, not yet listening.
     pub fn new() -> Self {
         Self {
-            level: Arc::new(Mutex::new(0.0)),
+            bands: Arc::new(Mutex::new([0.0; BAR_COUNT])),
             capture: None,
         }
     }
@@ -43,22 +55,27 @@ impl LevelMeter {
         if let Some((_, stop)) = self.capture.take() {
             let _ = stop.send(());
         }
-        if let Ok(mut level) = self.level.lock() {
-            *level = 0.0;
-        }
+        self.take_bands();
         let Some(serial) = serial else { return };
         let (stop_tx, stop_rx) = pipewire::channel::channel();
-        let level = self.level.clone();
+        let bands = self.bands.clone();
         thread::spawn(move || {
-            if let Err(error) = run_capture(serial, level, stop_rx) {
+            if let Err(error) = run_capture(serial, bands, stop_rx) {
                 tracing::error!(%error, "PipeWire level meter failed");
             }
         });
         self.capture = Some((serial, stop_tx));
     }
 
-    pub fn level(&self) -> f32 {
-        self.level.lock().map(|v| *v).unwrap_or(0.0)
+    /// The loudest RMS of each band since the last call, and start over.
+    ///
+    /// Holding the loudest reading between frames keeps a drum hit that
+    /// lands between two redraws from being missed.
+    pub fn take_bands(&self) -> [f32; BAR_COUNT] {
+        self.bands
+            .lock()
+            .map(|mut bands| std::mem::take(&mut *bands))
+            .unwrap_or_default()
     }
 }
 
@@ -68,31 +85,93 @@ impl Drop for LevelMeter {
     }
 }
 
-/// Loudness of one buffer of interleaved f32 samples, from the first channel.
-/// Weighted towards the peak so the bars jump on a beat, with enough RMS in it
-/// that a sustained note doesn't read as silence.
-pub fn buffer_level(bytes: &[u8], channels: usize) -> Option<f32> {
-    const SAMPLE: usize = std::mem::size_of::<f32>();
-    let frame = SAMPLE * channels.max(1);
-    let mut peak = 0.0f32;
-    let mut sum_sq = 0.0f32;
-    let mut seen = 0usize;
-    for chunk in bytes.chunks_exact(frame) {
-        let val = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]).abs();
-        peak = peak.max(val);
-        sum_sq += val * val;
-        seen += 1;
+/// A second-order band-pass filter (the RBJ cookbook's, 0 dB at its peak), in
+/// transposed direct form II.
+#[derive(Debug, Clone, Copy, Default)]
+struct BandPass {
+    b0: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
+}
+
+impl BandPass {
+    fn new(rate: f32, centre: f32, q: f32) -> Self {
+        // A centre at or past Nyquist can't be filtered; keep it just under.
+        let centre = centre.min(rate * 0.45);
+        let w0 = std::f32::consts::TAU * centre / rate;
+        let alpha = w0.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        Self {
+            b0: alpha / a0,
+            b2: -alpha / a0,
+            a1: -2.0 * w0.cos() / a0,
+            a2: (1.0 - alpha) / a0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
-    if seen == 0 {
-        return None;
+
+    fn run(&mut self, x: f32) -> f32 {
+        let y = self.b0 * x + self.z1;
+        self.z1 = -self.a1 * y + self.z2;
+        self.z2 = self.b2 * x - self.a2 * y;
+        y
     }
-    let rms = (sum_sq / seen as f32).sqrt();
-    Some((peak * 1.35 + rms * 0.65).clamp(0.0, 1.0))
+}
+
+/// Splits a stream into [`BAR_COUNT`] bands and measures each.
+///
+/// Eight small filters per sample, a few million operations a second at
+/// 48 kHz: far cheaper than an FFT and the redraw it feeds. The filters keep
+/// their state between buffers, so the stream has to be fed in order.
+pub struct BandAnalyser {
+    rate: u32,
+    filters: [BandPass; BAR_COUNT],
+}
+
+impl BandAnalyser {
+    /// An analyser for a stream sampled at `rate` Hz.
+    pub fn new(rate: u32) -> Self {
+        let rate = rate.max(1);
+        Self {
+            rate,
+            filters: BAND_HZ.map(|hz| BandPass::new(rate as f32, hz, BAND_Q)),
+        }
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// The RMS of each band over one buffer of interleaved f32 samples, the
+    /// channels mixed to mono. `None` for a buffer with no whole frame.
+    pub fn process(&mut self, bytes: &[u8], channels: usize) -> Option<[f32; BAR_COUNT]> {
+        const SAMPLE: usize = std::mem::size_of::<f32>();
+        let channels = channels.max(1);
+        let mut sum_sq = [0.0f32; BAR_COUNT];
+        let mut frames = 0usize;
+        for frame in bytes.chunks_exact(SAMPLE * channels) {
+            let mono = frame
+                .chunks_exact(SAMPLE)
+                .map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+                .sum::<f32>()
+                / channels as f32;
+            for (filter, sum) in self.filters.iter_mut().zip(sum_sq.iter_mut()) {
+                let y = filter.run(mono);
+                *sum += y * y;
+            }
+            frames += 1;
+        }
+        (frames > 0).then(|| sum_sq.map(|sum| (sum / frames as f32).sqrt()))
+    }
 }
 
 fn run_capture(
     serial: u32,
-    shared_level: Arc<Mutex<f32>>,
+    shared_bands: Arc<Mutex<[f32; BAR_COUNT]>>,
     stop: pipewire::channel::Receiver<()>,
 ) -> Result<(), pipewire::Error> {
     use pipewire as pw;
@@ -100,6 +179,9 @@ fn run_capture(
     use spa::param::format::{MediaSubtype, MediaType};
     use spa::param::format_utils;
     use spa::pod::Pod;
+
+    /// PipeWire's usual graph rate, until the format says otherwise.
+    const DEFAULT_RATE: u32 = 48_000;
 
     pw::init();
 
@@ -113,8 +195,8 @@ fn run_capture(
 
     struct UserData {
         channels: u32,
-        level: Arc<Mutex<f32>>,
-        skip_count: u32,
+        analyser: BandAnalyser,
+        bands: Arc<Mutex<[f32; BAR_COUNT]>>,
     }
 
     let mut props = pw::properties::properties! {
@@ -134,8 +216,8 @@ fn run_capture(
 
     let user_data = UserData {
         channels: 2,
-        level: shared_level,
-        skip_count: 0,
+        analyser: BandAnalyser::new(DEFAULT_RATE),
+        bands: shared_bands,
     };
 
     let _listener = stream
@@ -154,19 +236,15 @@ fn run_capture(
             let mut audio_info = spa::param::audio::AudioInfoRaw::default();
             if audio_info.parse(param).is_ok() {
                 user_data.channels = audio_info.channels().max(1);
+                if audio_info.rate() > 0 && audio_info.rate() != user_data.analyser.rate() {
+                    user_data.analyser = BandAnalyser::new(audio_info.rate());
+                }
             }
         })
         .process(|stream, user_data| {
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
-            // The bars redraw at ~24 fps; measuring every 6th buffer is plenty.
-            user_data.skip_count += 1;
-            if user_data.skip_count < 6 {
-                return;
-            }
-            user_data.skip_count = 0;
-
             let datas = buffer.datas_mut();
             let Some(data) = datas.first_mut() else {
                 return;
@@ -179,9 +257,12 @@ fn run_capture(
             if end <= start {
                 return;
             }
-            if let Some(level) = buffer_level(&samples[start..end], user_data.channels as usize) {
-                if let Ok(mut shared) = user_data.level.lock() {
-                    *shared = level;
+            let channels = user_data.channels as usize;
+            if let Some(bands) = user_data.analyser.process(&samples[start..end], channels) {
+                if let Ok(mut shared) = user_data.bands.lock() {
+                    for (held, band) in shared.iter_mut().zip(bands) {
+                        *held = held.max(band);
+                    }
                 }
             }
         })
@@ -216,49 +297,42 @@ fn run_capture(
     Ok(())
 }
 
-/// Turns a single loudness reading into bars that each move on their own.
+/// Turns band readings into bar heights.
 ///
-/// Every bar follows its own sine at its own frequency, scaled by the level,
-/// and eases towards it, so the row looks like a spectrum without computing
-/// one. The seed (a track title, say) shifts the phases, so two tracks don't
-/// dance identically.
+/// Each band is read against its own recent peak rather than full scale:
+/// music has far more energy in the bass than the treble, and a player at
+/// half volume should still fill the bars. Bars jump up at once and fall back
+/// quickly, so a beat reads as a beat.
 pub struct BarAnimator {
-    phase: f32,
+    /// The loudest recent reading of each band, decaying by [`PEAK_DECAY`].
+    peaks: [f32; BAR_COUNT],
     levels: [f32; BAR_COUNT],
-    offsets: [f32; BAR_COUNT],
-    seed: String,
 }
 
 impl Default for BarAnimator {
     fn default() -> Self {
         Self {
-            phase: 0.0,
-            levels: [0.12; BAR_COUNT],
-            offsets: [0.0; BAR_COUNT],
-            seed: String::new(),
+            peaks: [SILENCE_RMS; BAR_COUNT],
+            levels: [IDLE_LEVEL; BAR_COUNT],
         }
     }
 }
 
 impl BarAnimator {
-    /// Advance one frame.
-    pub fn step(&mut self, level: f32, seed: &str) -> [f32; BAR_COUNT] {
-        if seed != self.seed {
-            self.offsets = seed_offsets(seed);
-            self.seed = seed.to_string();
+    /// Advance one frame with the latest band readings.
+    pub fn step(&mut self, bands: [f32; BAR_COUNT]) -> [f32; BAR_COUNT] {
+        for (peak, band) in self.peaks.iter_mut().zip(bands) {
+            *peak = (*peak * PEAK_DECAY).max(band);
         }
-
-        self.phase += 0.35;
-        let envelope = (level.clamp(0.0, 1.0) * 1.4).clamp(0.0, 1.0);
-
-        const FREQ: [f32; BAR_COUNT] = [0.6, 1.1, 0.8, 1.4, 0.5, 1.25, 0.7, 1.0];
-        for ((level, freq), offset) in self.levels.iter_mut().zip(FREQ).zip(self.offsets) {
-            let wave = ((self.phase * freq + offset).sin() * 0.5) + 0.5;
-            let idle = 0.08 + wave * 0.07;
-            let driven = envelope * (0.4 + wave * 0.5);
-            let target = (idle + driven).clamp(0.0, 1.0);
-            // Rise fast, fall slower, like a VU needle.
-            *level += (target - *level) * if target > *level { 0.45 } else { 0.30 };
+        // A band that is nearly empty next to the others (no treble in a
+        // lo-fi track) is read against the loudest band, so its noise isn't
+        // blown up into a full bar.
+        let loudest = self.peaks.iter().copied().fold(0.0, f32::max);
+        let floor = (loudest * QUIET_BAND_RATIO).max(SILENCE_RMS);
+        for ((level, peak), band) in self.levels.iter_mut().zip(self.peaks).zip(bands) {
+            let ratio = (band / peak.max(floor)).clamp(0.0, 1.0);
+            let target = IDLE_LEVEL + (1.0 - IDLE_LEVEL) * ratio;
+            *level += (target - *level) * if target > *level { ATTACK } else { RELEASE };
         }
         self.levels
     }
@@ -268,21 +342,34 @@ impl BarAnimator {
     }
 }
 
-fn seed_offsets(seed: &str) -> [f32; BAR_COUNT] {
-    // FNV-1a, then an LCG to spread it across the bars.
-    let mut hash: u32 = 2166136261;
-    for b in seed.bytes() {
-        hash ^= b as u32;
-        hash = hash.wrapping_mul(16777619);
-    }
-    let mut out = [0.0f32; BAR_COUNT];
-    for item in out.iter_mut() {
-        let normalized = (hash & 0xFFFF) as f32 / 65535.0;
-        hash = hash.wrapping_mul(1664525).wrapping_add(1013904223);
-        *item = normalized * std::f32::consts::TAU;
-    }
-    out
-}
+/// Where a bar rests in silence, so the row stays visible.
+const IDLE_LEVEL: f32 = 0.06;
+
+/// Band RMS treated as silence, about -48 dBFS. Peaks never fall below it, so
+/// a fade or hiss doesn't get amplified into a full dance.
+const SILENCE_RMS: f32 = 0.004;
+
+/// How far below the loudest band another band's peak is floored.
+const QUIET_BAND_RATIO: f32 = 0.08;
+
+/// How fast each band's recent peak forgets, per frame. At ~24 fps it halves
+/// in about three seconds: long enough that a quiet verse stays quieter than
+/// the chorus, short enough that turning the volume down refills the bars.
+const PEAK_DECAY: f32 = 0.99;
+
+/// Share of the way to a higher target a bar covers per frame: nearly all
+/// of it, so a hit shows on the frame it lands.
+const ATTACK: f32 = 0.85;
+
+/// Share of the way down per frame: a bar drops most of the way within a
+/// few frames, like a meter's needle.
+const RELEASE: f32 = 0.35;
+
+/// Width of one bar beside a compact island's title.
+pub const COMPACT_BAR_W: f32 = 2.0;
+
+/// Space between two bars beside a compact island's title.
+pub const COMPACT_BAR_GAP: f32 = 2.0;
 
 /// How a row of bars is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,7 +378,7 @@ pub enum BarStyle {
     Mini,
     /// A few thin bars growing both ways from the middle, beside a title.
     Compact(usize),
-    /// Every bar, standing on the bottom edge, brighter towards the top.
+    /// Every bar, standing on the bottom edge, brighter as it rises.
     Large,
 }
 
@@ -315,7 +402,8 @@ pub fn draw_bars(
             let center_y = rect.top + rect.height() / 2.0;
             let max_h = rect.height() * 0.5;
             paint.set_color(with_alpha(220));
-            for (i, level) in levels.iter().take(count).enumerate() {
+            for i in 0..count {
+                let level = levels[i * BAR_COUNT / count];
                 let bar_h = level.clamp(0.1, 1.0) * max_h;
                 let bx = start_x + i as f32 * (bar_w + gap);
                 canvas.draw_rrect(
@@ -329,13 +417,13 @@ pub fn draw_bars(
             }
         }
         BarStyle::Compact(count) => {
-            let (bar_w, gap) = (3.0f32, 2.0f32);
+            let (bar_w, gap) = (COMPACT_BAR_W, COMPACT_BAR_GAP);
             let total = count as f32 * bar_w + (count as f32 - 1.0) * gap;
             let start_x = rect.left + (rect.width() - total) / 2.0;
             let center_y = rect.top + rect.height() / 2.0;
             paint.set_color(with_alpha(220));
             for i in 0..count {
-                let bar_h = levels[i % BAR_COUNT].clamp(0.05, 1.0) * rect.height();
+                let bar_h = levels[i * BAR_COUNT / count].clamp(0.05, 1.0) * rect.height();
                 let bx = start_x + i as f32 * (bar_w + gap);
                 canvas.draw_rrect(
                     RRect::new_rect_xy(
@@ -348,26 +436,17 @@ pub fn draw_bars(
             }
         }
         BarStyle::Large => {
-            let (bar_w, gap) = (6.0f32, 4.0f32);
+            let (bar_w, gap) = (4.0f32, 3.0f32);
             let total = BAR_COUNT as f32 * bar_w + (BAR_COUNT - 1) as f32 * gap;
             let start_x = rect.left + (rect.width() - total) / 2.0;
-            let bottom = rect.bottom;
             for (i, level) in levels.iter().enumerate() {
                 let level = level.clamp(0.08, 1.0);
                 let bar_h = level * rect.height();
                 let bx = start_x + i as f32 * (bar_w + gap);
-
-                paint.set_color(with_alpha((80.0 + level * 40.0) as u8));
-                let bot_h = bar_h * 0.6;
-                canvas.draw_rrect(
-                    RRect::new_rect_xy(Rect::from_xywh(bx, bottom - bot_h, bar_w, bot_h), 2.0, 2.0),
-                    &paint,
-                );
-
-                paint.set_color(with_alpha((180.0 + level * 75.0) as u8));
+                paint.set_color(with_alpha((190.0 + level * 65.0) as u8));
                 canvas.draw_rrect(
                     RRect::new_rect_xy(
-                        Rect::from_xywh(bx, bottom - bar_h, bar_w, bar_h * 0.5),
+                        Rect::from_xywh(bx, rect.bottom - bar_h, bar_w, bar_h),
                         2.0,
                         2.0,
                     ),
@@ -437,86 +516,117 @@ pub fn draw_elsewhere_glyph(canvas: &Canvas, rect: Rect, colour: Color) {
 mod tests {
     use super::*;
 
-    fn samples(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
-        values.into_iter().flat_map(f32::to_le_bytes).collect()
+    const RATE: u32 = 48_000;
+
+    /// `seconds` of a sine at `hz`, amplitude `amp`, as interleaved stereo.
+    fn stereo_sine(hz: f32, amp: f32, seconds: f32) -> Vec<u8> {
+        let frames = (RATE as f32 * seconds) as usize;
+        (0..frames)
+            .map(|n| amp * (n as f32 * std::f32::consts::TAU * hz / RATE as f32).sin())
+            .flat_map(|v| [v, v])
+            .flat_map(f32::to_le_bytes)
+            .collect()
+    }
+
+    fn loudest_band(bands: [f32; BAR_COUNT]) -> usize {
+        (0..BAR_COUNT)
+            .max_by(|&a, &b| bands[a].total_cmp(&bands[b]))
+            .unwrap()
     }
 
     #[test]
-    fn silence_reads_zero() {
-        let bytes = samples(std::iter::repeat_n(0.0, 512));
-        assert_eq!(buffer_level(&bytes, 2), Some(0.0));
+    fn silence_reads_zero_in_every_band() {
+        let mut analyser = BandAnalyser::new(RATE);
+        let bands = analyser.process(&vec![0; 4096], 2).unwrap();
+        assert_eq!(bands, [0.0; BAR_COUNT]);
     }
 
     #[test]
-    fn a_full_scale_sine_saturates() {
-        let sine = (0..480).map(|n| (n as f32 * std::f32::consts::TAU / 48.0).sin());
-        let level = buffer_level(&samples(sine), 1).unwrap();
-        assert!(level > 0.99, "level {level}");
-    }
-
-    #[test]
-    fn a_quiet_sine_reads_quiet() {
-        let sine = (0..480).map(|n| 0.05 * (n as f32 * std::f32::consts::TAU / 48.0).sin());
-        let level = buffer_level(&samples(sine), 1).unwrap();
-        assert!(level > 0.05 && level < 0.15, "level {level}");
-    }
-
-    #[test]
-    fn only_the_first_channel_is_measured() {
-        // Left silent, right at full scale.
-        let stereo = (0..256).flat_map(|_| [0.0, 1.0]);
-        assert_eq!(buffer_level(&samples(stereo), 2), Some(0.0));
-    }
-
-    #[test]
-    fn an_empty_buffer_has_no_level() {
-        assert_eq!(buffer_level(&[], 2), None);
-    }
-
-    #[test]
-    fn the_animator_is_deterministic_for_a_seed() {
-        let mut a = BarAnimator::default();
-        let mut b = BarAnimator::default();
-        for _ in 0..20 {
-            assert_eq!(a.step(0.6, "track"), b.step(0.6, "track"));
+    fn a_tone_lights_its_own_band() {
+        for (band, hz) in BAND_HZ.iter().enumerate() {
+            let mut analyser = BandAnalyser::new(RATE);
+            let bands = analyser.process(&stereo_sine(*hz, 0.5, 0.25), 2).unwrap();
+            assert_eq!(loudest_band(bands), band, "{hz} Hz: {bands:?}");
         }
     }
 
     #[test]
-    fn different_seeds_move_differently() {
-        let mut a = BarAnimator::default();
-        let mut b = BarAnimator::default();
-        let (mut la, mut lb) = ([0.0; BAR_COUNT], [0.0; BAR_COUNT]);
-        for _ in 0..10 {
-            la = a.step(0.6, "one");
-            lb = b.step(0.6, "two");
-        }
-        assert_ne!(la, lb);
+    fn a_band_passes_its_centre_at_full_level() {
+        let mut analyser = BandAnalyser::new(RATE);
+        let bands = analyser.process(&stereo_sine(1000.0, 1.0, 0.5), 2).unwrap();
+        // A full-scale sine has an RMS of 1/sqrt(2).
+        assert!(
+            (bands[6] - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.05,
+            "{bands:?}"
+        );
     }
 
     #[test]
-    fn silence_settles_to_a_low_shimmer() {
+    fn an_empty_buffer_has_no_reading() {
+        assert!(BandAnalyser::new(RATE).process(&[], 2).is_none());
+    }
+
+    #[test]
+    fn a_low_rate_keeps_the_filters_stable() {
+        // The top band sits past Nyquist at 8 kHz.
+        let mut analyser = BandAnalyser::new(8_000);
+        let bands = analyser
+            .process(&stereo_sine(1000.0, 0.5, 0.25), 2)
+            .unwrap();
+        assert!(bands.iter().all(|b| b.is_finite() && *b < 1.0), "{bands:?}");
+    }
+
+    #[test]
+    fn a_hit_shows_on_the_frame_it_lands() {
         let mut anim = BarAnimator::default();
         for _ in 0..30 {
-            anim.step(1.0, "loud");
+            anim.step([0.1; BAR_COUNT]);
         }
-        let mut levels = anim.levels();
-        for _ in 0..200 {
-            levels = anim.step(0.0, "loud");
+        // A quarter of a second between beats.
+        for _ in 0..6 {
+            anim.step([0.01; BAR_COUNT]);
         }
-        assert!(levels.iter().all(|l| *l <= 0.16), "levels {levels:?}");
+        let low = anim.levels()[0];
+        let hit = anim.step([0.1; BAR_COUNT])[0];
+        assert!(hit - low > 0.5, "{low} -> {hit}");
     }
 
     #[test]
-    fn loud_audio_raises_the_bars() {
+    fn silence_settles_low() {
+        let mut anim = BarAnimator::default();
+        for _ in 0..30 {
+            anim.step([0.2; BAR_COUNT]);
+        }
+        let mut levels = anim.levels();
+        for _ in 0..20 {
+            levels = anim.step([0.0; BAR_COUNT]);
+        }
+        assert!(levels.iter().all(|l| *l < IDLE_LEVEL + 0.01), "{levels:?}");
+    }
+
+    #[test]
+    fn a_quiet_player_fills_the_bars_like_a_loud_one() {
         let mut quiet = BarAnimator::default();
         let mut loud = BarAnimator::default();
         let (mut q, mut l) = ([0.0; BAR_COUNT], [0.0; BAR_COUNT]);
-        for _ in 0..30 {
-            q = quiet.step(0.0, "t");
-            l = loud.step(0.9, "t");
+        for _ in 0..60 {
+            q = quiet.step([0.03; BAR_COUNT]);
+            l = loud.step([0.3; BAR_COUNT]);
         }
         let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
-        assert!(mean(&l) > mean(&q) * 2.0);
+        assert!((mean(&q) - mean(&l)).abs() < 0.02, "{q:?} vs {l:?}");
+        assert!(mean(&q) > 0.9, "{q:?}");
+    }
+
+    #[test]
+    fn an_empty_band_beside_loud_ones_stays_low() {
+        let mut anim = BarAnimator::default();
+        let mut bands = [0.3; BAR_COUNT];
+        bands[7] = 0.005;
+        let mut levels = [0.0; BAR_COUNT];
+        for _ in 0..60 {
+            levels = anim.step(bands);
+        }
+        assert!(levels[7] < 0.3, "{levels:?}");
     }
 }

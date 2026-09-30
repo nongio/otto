@@ -107,7 +107,7 @@ fn player_names(names: &[String]) -> Vec<String> {
 }
 
 /// Whether `pid` is `ancestor` or one of its descendants.
-fn descends_from(pid: u32, ancestor: u32, parent_of: impl Fn(u32) -> Option<u32>) -> bool {
+pub fn descends_from(pid: u32, ancestor: u32, parent_of: impl Fn(u32) -> Option<u32>) -> bool {
     // Deep enough for any real process tree, and a guard against a cycle
     // read from a /proc that changed underneath.
     const MAX_DEPTH: usize = 64;
@@ -200,7 +200,7 @@ fn stream_node(
 fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
     use pipewire as pw;
     use pw::client::{Client, ClientListener};
-    use pw::node::{Node, NodeListener, NodeState};
+    use pw::node::{Node, NodeChangeMask, NodeListener, NodeState};
     use pw::types::ObjectType;
 
     pw::init();
@@ -324,7 +324,17 @@ fn watch(shared: &Arc<Mutex<Snapshot>>) -> Result<(), pipewire::Error> {
                         let publish = publish.clone();
                         move |info| {
                             let running = matches!(info.state(), NodeState::Running);
-                            let stream = match info.props() {
+                            // An update that doesn't flag its props carries
+                            // none worth reading: the one sent when the meter
+                            // links to the stream has no `application.*` keys,
+                            // and reading it would disown the stream from
+                            // its player.
+                            let props = info
+                                .change_mask()
+                                .contains(NodeChangeMask::PROPS)
+                                .then(|| info.props())
+                                .flatten();
+                            let stream = match props {
                                 Some(props) => stream_node(serial, props, running),
                                 None => StreamNode {
                                     running,

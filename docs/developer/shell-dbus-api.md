@@ -81,7 +81,9 @@ and Otto has not built it. Commands that parse and are refused at run time
 
 A criteria is parsed, but only `focus` reads one: `[app_id="firefox"] focus`
 and `[title="…"] focus` work, and `class` and `instance` are accepted as
-spellings of `app_id`. A criteria in front of any other command is refused
+spellings of `app_id`. `[con_id=<id>]` and `[pid=<pid>]` match a window's `id`
+and `pid` from `GetTree` exactly, for a script that has picked the window out
+of the tree. A criteria in front of any other command is refused
 rather than quietly acted on the focused window.
 
 **Not implemented yet**, and refused by name rather than ignored:
@@ -127,6 +129,7 @@ and windows.
 | `floating_nodes` | workspaces | windows the tree does not hold |
 | `urgent` | every node | always `false`; Otto has no urgency hint yet |
 | `app_id` | windows | the xdg app id |
+| `pid` | windows | the process that owns the window (an X11 window's `_NET_WM_PID`), `null` when unknown |
 | `window_properties` | X11 windows | `{class, instance, title}` |
 | `gaps` | workspaces | Otto's own: `{inner, outer}` when the workspace has an override, else `null` |
 

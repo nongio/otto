@@ -469,6 +469,20 @@ impl WindowElement {
         String::new()
     }
 
+    /// The process that owns this window: the Wayland client's, or the one an
+    /// X11 window reports through `_NET_WM_PID` (its Wayland client would be
+    /// Xwayland itself).
+    pub fn client_pid(&self, display_handle: &DisplayHandle) -> Option<u32> {
+        #[cfg(feature = "xwayland")]
+        if let WindowSurface::X11(x11) = self.underlying_surface() {
+            return x11.pid();
+        }
+        let surface = self.wl_surface()?;
+        let client = display_handle.get_client(surface.id()).ok()?;
+        let pid = client.get_credentials(display_handle).ok()?.pid;
+        u32::try_from(pid).ok()
+    }
+
     /// Resolve the actual app_id by examining the client's PID
     fn resolve_app_id_from_pid(&self, display_handle: &DisplayHandle) -> Option<String> {
         let surface = self.wl_surface()?;
