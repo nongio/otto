@@ -47,7 +47,7 @@ pub const MUSIC_APP_ID: &str = "org.otto.music";
 pub const EQ_BUF_W: i32 = 220;
 pub const EQ_BUF_H: i32 = 32;
 /// Bars in the compact pill.
-const COMPACT_BARS: usize = 4;
+const COMPACT_BARS: usize = 8;
 /// Seconds a track may be gone before the island lets go of it, so skipping
 /// to the next one doesn't close and reopen it.
 const GONE_GRACE_SECS: f64 = 3.0;
@@ -451,7 +451,8 @@ impl MusicActivityRenderer {
 }
 
 fn compact_bars_width() -> f32 {
-    COMPACT_BARS as f32 * 3.0 + (COMPACT_BARS as f32 - 1.0) * 2.0
+    COMPACT_BARS as f32 * audio_viz::COMPACT_BAR_W
+        + (COMPACT_BARS as f32 - 1.0) * audio_viz::COMPACT_BAR_GAP
 }
 
 // ---------------------------------------------------------------------------

@@ -365,6 +365,12 @@ const ATTACK: f32 = 0.85;
 /// few frames, like a meter's needle.
 const RELEASE: f32 = 0.35;
 
+/// Width of one bar beside a compact island's title.
+pub const COMPACT_BAR_W: f32 = 2.0;
+
+/// Space between two bars beside a compact island's title.
+pub const COMPACT_BAR_GAP: f32 = 2.0;
+
 /// How a row of bars is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarStyle {
@@ -411,7 +417,7 @@ pub fn draw_bars(
             }
         }
         BarStyle::Compact(count) => {
-            let (bar_w, gap) = (3.0f32, 2.0f32);
+            let (bar_w, gap) = (COMPACT_BAR_W, COMPACT_BAR_GAP);
             let total = count as f32 * bar_w + (count as f32 - 1.0) * gap;
             let start_x = rect.left + (rect.width() - total) / 2.0;
             let center_y = rect.top + rect.height() / 2.0;
