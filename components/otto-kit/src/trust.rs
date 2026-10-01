@@ -8,19 +8,45 @@
 //! Unix socket from `SO_PEERPIDFD` (Linux 6.5). Without either the pid is
 //! used as it is, and [`Peer::pinned`] says so.
 //!
-//! An executable is one of Otto's own when it sits in the same directory as
-//! the running program, or when it has one of the names asked for and root
-//! owns it and its directory with no group or world write. A build run from
-//! a checkout thereby trusts the components built beside it exactly as far
-//! as it trusts itself: whoever can write there can replace the running
-//! program too. A name alone proves nothing; a user-writable file called
-//! `otto-islands` is anybody's.
+//! An executable is one of Otto's own when it has one of the names asked for
+//! and root owns it and its directory, with no group or world write; or when
+//! it sits beside the running program in a directory the user can write to.
+//! A build run from a checkout thereby trusts the components built beside it
+//! exactly as far as it trusts itself: whoever can write there can replace
+//! the running program too. Beside it in a system directory proves nothing,
+//! since `/usr/bin` holds every program there is; nor does a name alone, as
+//! a user-writable file called `otto-islands` is anybody's.
 
 use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+
+/// Otto's own programs, as their executables are named: the ones a
+/// compositor may let onto its privileged interfaces when they are installed
+/// where only root can change them, or built beside it.
+pub const COMPONENTS: &[&str] = &[
+    "otto",
+    "otto-agents",
+    "otto-auth-ui",
+    "otto-authorize",
+    "otto-bar",
+    "otto-emoji",
+    "otto-files",
+    "otto-greeter",
+    "otto-input-overlay",
+    "otto-islands",
+    "otto-launcher",
+    "otto-lock",
+    "otto-media-worker",
+    "otto-peek",
+    "otto-preview",
+    "otto-rdp",
+    "otto-settings",
+    "otto-stash",
+    "xdg-desktop-portal-otto",
+];
 
 /// A process on the other end.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,18 +181,15 @@ pub async fn bus_caller(
     bus_peer(connection, &sender).await
 }
 
-/// Whether the executable at `exe` is one of Otto's own programs: beside the
-/// running one, or called one of `names` and installed where only root can
-/// change it.
+/// Whether the executable at `exe` is one of Otto's own programs: called one
+/// of `names` and installed where only root can change it, or beside the
+/// running one in the user's own build directory.
 pub fn is_component(exe: &Path, names: &[&str]) -> bool {
-    if beside_self(exe) {
-        return true;
-    }
     let named = exe
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| names.contains(&name));
-    named && root_owned(exe)
+    (named && root_owned(exe)) || (beside_self(exe) && !exe.parent().is_some_and(root_owned))
 }
 
 fn beside_self(exe: &Path) -> bool {
@@ -231,7 +254,12 @@ mod tests {
     fn components_are_beside_us_or_roots() {
         let own = std::env::current_exe().unwrap();
         let beside = own.parent().unwrap().join("anything");
-        assert!(is_component(&beside, &[]), "beside the running program");
+        assert!(
+            is_component(&beside, &[]),
+            "beside the running program, in our own build dir"
+        );
+        // Beside an installed program means nothing: /usr/bin holds everything.
+        assert!(!is_component(Path::new("/usr/bin/grim"), &["otto-islands"]));
         assert!(!is_component(
             Path::new("/tmp/otto-islands"),
             &["otto-islands"]

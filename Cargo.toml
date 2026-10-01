@@ -166,7 +166,6 @@ members = [
     "components/otto-media-kit",
     "components/otto-md-kit",
     "components/otto-msg",
-    "components/otto-sandbox",
     "components/otto-input-overlay",
     "components/otto-agents",
     "components/otto-agents-client",

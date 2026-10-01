@@ -46,9 +46,6 @@ use crate::{cursor::CursorManager, state::Backend, state::Otto};
 /// Where the chip on an agent border puts Stop.
 pub use crate::workspaces::agent_frame::{chip_geometry, ChipGeometry};
 
-/// The name the static agent seat (`[agent_cursor] enabled`) advertises.
-pub const AGENT_SEAT_NAME: &str = "agent";
-
 /// The colour used when the configured one does not parse.
 const FALLBACK_COLOR: [u8; 3] = [0xff, 0x95, 0x00];
 
@@ -112,8 +109,6 @@ impl<B: Backend + 'static> AgentSeat<B> {
                     workspace: *workspace,
                 }
             }
-            // The static seat is the explicit, unrestricted opt-in.
-            _ if self.owner.is_none() => Reach::Everywhere,
             _ => Reach::Nowhere,
         }
     }

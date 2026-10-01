@@ -1,11 +1,9 @@
 //! Agent seats: creating, finding and removing them — see
 //! `crate::agent_cursor` for what a seat is, and `specs/agent-seats.md`.
 //!
-//! There are two kinds. The static seat (`[agent_cursor] enabled = true`) is
-//! named `agent`, has no owner, and lasts as long as Otto: it is there for
-//! stock tools. Every other seat was asked for over D-Bus by an agent, is
-//! named `agent-<n>`, carries the agent's name as a label, and goes when the
-//! agent releases it or its bus connection closes.
+//! Every seat was asked for over D-Bus by an agent: it is named `agent-<n>`,
+//! carries the agent's name as a label, and goes when the agent releases it
+//! or its bus connection closes.
 
 use std::time::{Duration, Instant};
 
@@ -23,7 +21,7 @@ use smithay::reexports::{
 
 use super::{add_configured_keyboard, Backend, ClientState, Otto};
 use crate::{
-    agent_cursor::{to_hex, AgentCursor, AgentSeat, AGENT_SEAT_NAME, PALETTE},
+    agent_cursor::{to_hex, AgentCursor, AgentSeat, PALETTE},
     config::Config,
 };
 
@@ -47,8 +45,6 @@ pub enum Grant {
 /// Where an agent's input can land now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reach {
-    /// Any client window on any shown workspace: the static seat.
-    Everywhere,
     /// The windows of one workspace, whether or not it is on screen.
     Workspace { output: String, workspace: usize },
     /// Nothing: a seat with no grant, or one whose workspace is gone.
@@ -108,16 +104,6 @@ pub struct GrantedSeat {
 }
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
-    /// Advertise the static agent seat, if it is not already.
-    pub fn enable_agent_seat(&mut self) {
-        if self.agent_seat(AGENT_SEAT_NAME).is_some() {
-            return;
-        }
-        let color = Config::with(|c| c.agent_cursor.color.clone());
-        let cursor = AgentCursor::new(&color, agent_hide_after());
-        self.add_agent_seat(AGENT_SEAT_NAME, cursor, None, None);
-    }
-
     /// Give the agent called `agent_name`, on the bus connection `owner`, a
     /// seat of its own.
     ///
@@ -501,7 +487,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             return false;
         };
         let (output, workspace) = match agent.reach(&self.workspaces) {
-            Reach::Everywhere => return true,
             Reach::Nowhere => return false,
             Reach::Workspace { output, workspace } => (output, workspace),
         };

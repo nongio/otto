@@ -5565,15 +5565,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "otto-sandbox"
-version = "1.5.0"
-dependencies = [
- "libc",
- "serde_json",
- "zbus 4.4.0",
-]
-
-[[package]]
 name = "otto-search"
 version = "1.5.0"
 dependencies = [

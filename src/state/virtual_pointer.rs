@@ -110,9 +110,11 @@ where
     Otto<BackendData>: Dispatch<ZwlrVirtualPointerManagerV1, ()>,
     Otto<BackendData>: Dispatch<ZwlrVirtualPointerV1, VirtualPointerUserData>,
 {
-    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    /// For the clients that get the privileged interfaces, and agents'
+    /// connections, which drive their own seat (see `src/sandbox.rs`).
     fn can_view(client: Client, _global_data: &()) -> bool {
-        !crate::sandbox::is_sandboxed_client(&client)
+        crate::sandbox::is_privileged_client(&client)
+            || crate::state::ClientState::agent_seat_of(&client).is_some()
     }
 
     fn bind(
@@ -477,7 +479,7 @@ where
 /// An agent's connection drives its own seat whichever it names: stock
 /// tools take the first seat they see, which is the user's.
 fn permitted_seat<BackendData: crate::state::Backend + 'static>(
-    state: &mut Otto<BackendData>,
+    state: &Otto<BackendData>,
     client: &Client,
     seat: Option<&WlSeat>,
 ) -> Option<String> {
@@ -487,43 +489,14 @@ fn permitted_seat<BackendData: crate::state::Backend + 'static>(
     let agent = agent_seat_name(state, seat);
     let user_seat = state.seat.name();
     let seat_name = agent.as_deref().unwrap_or(user_seat);
-    let owned = state
-        .agent_seat(seat_name)
-        .is_some_and(|agent| agent.owner.is_some());
-    let seat_name = seat_name.to_string();
-    let on_user_seat = seat_name == user_seat;
-    if !crate::sandbox::may_drive_seat(client, &seat_name, user_seat, owned) {
+    if crate::sandbox::may_drive_seat(client, seat_name, user_seat) {
+        agent
+    } else {
         tracing::warn!(
             seat = seat_name,
             "virtual pointer refused: this connection may not drive that seat"
         );
-        return Some(String::new());
-    }
-    if on_user_seat && !user_input_allowed(state, client) {
-        return Some(String::new());
-    }
-    agent
-}
-
-/// Whether `client` may inject input on the user's seat
-/// ([`crate::program_access`]). A program nobody has answered for is
-/// refused, and the user asked: it may try again once they allow it.
-pub fn user_input_allowed<BackendData: crate::state::Backend + 'static>(
-    state: &mut Otto<BackendData>,
-    client: &Client,
-) -> bool {
-    use crate::program_access::{Access, Capability};
-    match crate::program_access::access(client, Capability::Input) {
-        Access::Allowed => true,
-        Access::Denied => {
-            tracing::warn!("virtual input refused: the program may not control the user's seat");
-            false
-        }
-        Access::Ask(exe) => {
-            tracing::warn!("virtual input refused until the user answers");
-            state.ask_program_access(Capability::Input, exe);
-            false
-        }
+        Some(String::new())
     }
 }
 
@@ -577,12 +550,11 @@ fn agent_frame<BackendData: crate::state::Backend + 'static>(
     let pointer = agent.pointer.clone();
     let seat = agent.seat.clone();
 
-    // Where the agent's input can land: anywhere (the static seat), the
-    // windows of its own workspace whether it is shown or not, or nowhere.
+    // Where the agent's input can land: the windows of its own workspace
+    // whether it is shown or not, or nowhere.
     let reach = agent.reach(&state.workspaces);
     let client_surface_under = |state: &Otto<BackendData>, location: Point<f64, Logical>| {
         let under = match &reach {
-            Reach::Everywhere => state.surface_under(location),
             Reach::Nowhere => None,
             Reach::Workspace { output, workspace } => {
                 let space = state.workspaces.space_of_view(output, *workspace)?;

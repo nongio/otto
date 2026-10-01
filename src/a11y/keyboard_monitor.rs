@@ -288,7 +288,12 @@ impl KeyboardMonitor {
     /// Take every key: the caller receives it through `KeyEvent` and the
     /// session does not see it at all, toggles included. In effect until the
     /// same client calls `UngrabKeyboard` or disconnects.
-    async fn grab_keyboard(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
+    async fn grab_keyboard(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        crate::sandbox::require_trusted_caller(connection, &header, "KeyboardMonitor").await?;
         let sender = Self::sender(&header)?;
         trace!(%sender, "a11y: GrabKeyboard");
         self.handle
@@ -311,7 +316,12 @@ impl KeyboardMonitor {
     }
 
     /// Report every key to the caller, but let the session handle it as usual.
-    async fn watch_keyboard(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<()> {
+    async fn watch_keyboard(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<()> {
+        crate::sandbox::require_trusted_caller(connection, &header, "KeyboardMonitor").await?;
         let sender = Self::sender(&header)?;
         trace!(%sender, "a11y: WatchKeyboard");
         self.handle
@@ -339,10 +349,12 @@ impl KeyboardMonitor {
     /// the XKB modifier mask it must be pressed under.
     async fn set_key_grabs(
         &self,
+        #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         modifiers: Vec<u32>,
         keystrokes: Vec<(u32, u32)>,
     ) -> fdo::Result<()> {
+        crate::sandbox::require_trusted_caller(connection, &header, "KeyboardMonitor").await?;
         let sender = Self::sender(&header)?;
         trace!(
             %sender,

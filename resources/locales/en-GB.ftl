@@ -1915,12 +1915,3 @@ agent-prompt-title = Let { $app } use an agent cursor?
 agent-prompt-body = It asks for a cursor of its own, named “{ $agent }”, and a new workspace where it can open apps, click and type. It can't reach your other workspaces.
 agent-prompt-allow = Allow
 agent-prompt-deny = Don't Allow
-
-## Asking before one of the user's programs captures the screen or controls
-## the mouse and keyboard. $app is the program's name.
-access-capture-title = Let { $app } see your screen?
-access-capture-body = It asks to capture everything on your screen, other apps' windows included.
-access-input-title = Let { $app } control your mouse and keyboard?
-access-input-body = It asks to move your pointer and type into any window, as if it were you. If you allow it, start it again.
-access-allow = Allow
-access-deny = Don't Allow

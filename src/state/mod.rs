@@ -188,9 +188,9 @@ pub struct ClientState {
     /// [`Otto::connect_agent_client`]): it may drive that seat and nothing
     /// else, and is kept off the globals a sandboxed client is kept off.
     pub agent_seat: Option<String>,
-    /// The program that connected, for a client of Otto's own socket (see
-    /// [`crate::program_access`]).
-    pub program: Option<crate::program_access::Program>,
+    /// The program on the other end, for a client of Otto's public socket
+    /// (see [`crate::sandbox`]).
+    pub peer: Option<otto_kit::trust::Peer>,
 }
 impl ClientData for ClientState {
     /// Notification that a client was initialized
@@ -365,8 +365,6 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
     pub screencopy_manager_state: screencopy::ScreencopyManagerState,
     pub pending_screencopy_frames: Vec<screencopy::PendingScreencopy>,
-    /// Questions about the user's programs, and what waits on them.
-    pub program_access: program_access_state::ProgramAccessState,
     pub virtual_pointer_manager_state: virtual_pointer::VirtualPointerManagerState,
 
     #[cfg(feature = "xwayland")]
@@ -420,8 +418,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// name: what a popup grab's serial is checked against (see
     /// `crate::input::popup_grab`).
     pub seat_last_press: HashMap<String, crate::input::popup_grab::LastPress>,
-    /// Agent seats: the static one when `[agent_cursor]` is enabled, and one
-    /// per agent that asked over D-Bus — see `crate::agent_cursor`.
+    /// Agent seats, one per agent that asked over D-Bus — see
+    /// `crate::agent_cursor`.
     pub agent_seats: Vec<crate::agent_cursor::AgentSeat<BackendData>>,
     /// Agents that have had a seat this session, by the name they gave, so
     /// one that comes back gets its seat name and colour again.
@@ -575,7 +573,6 @@ pub mod foreign_toplevel_shared;
 pub mod fractional_scale_handler;
 pub mod gamma_control;
 pub mod input_method_handler;
-pub mod program_access_state;
 pub mod screencopy;
 pub mod seat_handler;
 pub mod security_context_handler;
@@ -790,12 +787,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle
                 .insert_source(source, |client_stream, _, data| {
-                    let program = crate::program_access::identify(
-                        &client_stream,
-                        data.program_access.trust_own_process,
-                    );
                     let client_state = ClientState {
-                        program,
+                        peer: otto_kit::trust::peer_of_socket(&client_stream),
                         ..ClientState::default()
                     };
                     if let Ok(_client) = data
@@ -947,16 +940,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // `src/sandbox.rs`; the hand-rolled globals check the same helper in
         // their `can_view`.
         let unconfined = |client: &Client| !crate::sandbox::is_confined_client(client);
-        // The clipboard without focus: only for programs trusted or allowed
-        // (`crate::program_access`). The rest keep the clipboard every app
-        // has, while it has focus.
-        let clipboard = |client: &Client| {
-            !crate::sandbox::is_confined_client(client)
-                && crate::program_access::offered(
-                    client,
-                    crate::program_access::Capability::Clipboard,
-                )
-        };
+        // The clipboard without focus is privileged (`crate::sandbox`).
+        let privileged = |client: &Client| crate::sandbox::is_privileged_client(client);
         // Layer shell too: an overlay surface with exclusive keyboard looks
         // and behaves like the lock screen, and keeps every key.
         let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(&dh, unconfined);
@@ -974,9 +959,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
-            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), clipboard);
+            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), privileged);
         let ext_data_control_state =
-            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), clipboard);
+            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), privileged);
         let mut seat_state = SeatState::new();
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
@@ -1125,7 +1110,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         #[cfg(feature = "metrics")]
         let backend_name = backend_data.backend_name();
 
-        let mut otto = Otto {
+        let otto = Otto {
             backend_data,
             display_handle: dh,
             socket_name,
@@ -1186,7 +1171,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             virtual_keyboard_manager_state,
             screencopy_manager_state,
             pending_screencopy_frames: Vec::new(),
-            program_access: Default::default(),
             virtual_pointer_manager_state,
             dnd_icon: None,
             dnd_layer_ids: Vec::new(),
@@ -1274,10 +1258,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             #[cfg(feature = "metrics")]
             render_metrics: Arc::new(crate::render_metrics::RenderMetrics::new(backend_name)),
         };
-        if Config::with(|c| c.agent_cursor.enabled) {
-            otto.enable_agent_seat();
-        }
-        otto.watch_program_access();
+        crate::sandbox::init_policy();
         otto
     }
 

@@ -1600,11 +1600,6 @@ impl Default for AccessibilityConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentCursorConfig {
-    /// Advertise the `agent` seat. Virtual pointers and keyboards created on
-    /// it move their own cursor and focus, not the user's. Read at startup.
-    pub enabled: bool,
-    /// The agent cursor's colour, as `#RRGGBB`.
-    pub color: String,
     /// How long the agent cursor stays on screen after the agent's last
     /// input, in milliseconds; `0` never hides it.
     pub hide_after_ms: u64,
@@ -1616,23 +1611,25 @@ pub struct AgentCursorConfig {
 impl Default for AgentCursorConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            color: "#FF9500".to_string(),
             hide_after_ms: 5000,
             border_width: 3,
         }
     }
 }
 
-/// Which of the user's programs may capture the screen, inject input or read
-/// the clipboard without being asked (`specs/agent-seats.md`, Phase 5c).
+/// Which of the user's programs get the privileged Wayland interfaces: the
+/// ones that capture the screen, inject input, read the clipboard without
+/// focus or control other apps' windows (`src/sandbox.rs`,
+/// `specs/security-model.md`). Read at startup.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PrivacyConfig {
-    /// Programs, by the full path of their executable, trusted as Otto's own
-    /// components are: for scripted setups whose tools must not wait on a
-    /// question. Read at startup.
-    pub trusted_programs: Vec<String>,
+    /// Keep the user's programs off those interfaces. Otto's own components
+    /// keep them; everything else goes through the portals, or is listed in
+    /// `allow`.
+    pub strict: bool,
+    /// Executables allowed them under `strict`, by full path.
+    pub allow: Vec<String>,
 }
 
 /// The desk: the files of the desktop folder drawn behind the windows.

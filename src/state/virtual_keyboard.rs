@@ -2,10 +2,8 @@
 //!
 //! smithay's virtual keyboard manager types a keyboard into whichever seat
 //! the client names. Otto puts its own manager in front: a keyboard on a
-//! seat the client may not drive (see [`crate::sandbox::may_drive_seat`]),
-//! or on the user's seat by a program not allowed to
-//! ([`crate::program_access`]), is refused with the protocol's
-//! `unauthorized` error, and every other request
+//! seat the client may not drive (see [`crate::sandbox::may_drive_seat`]) is
+//! refused with the protocol's `unauthorized` error, and every other request
 //! goes to smithay unchanged.
 //!
 //! An agent's connection types on its own seat whichever it names, as long
@@ -50,10 +48,11 @@ impl<B: Backend + 'static> GlobalDispatch2<ZwpVirtualKeyboardManagerV1, Otto<B>>
         data_init.init(resource, SeatCheckedKeyboardManager);
     }
 
-    /// Never offered to sandboxed clients (see `src/sandbox.rs`). Agents'
-    /// connections see it, to type on their own seat.
+    /// For the clients that get the privileged interfaces, and agents'
+    /// connections, which type on their own seat (see `src/sandbox.rs`).
     fn can_view(&self, client: &Client) -> bool {
-        !crate::sandbox::is_sandboxed_client(client)
+        crate::sandbox::is_privileged_client(client)
+            || crate::state::ClientState::agent_seat_of(client).is_some()
     }
 }
 
@@ -82,14 +81,7 @@ impl<B: Backend + 'static> Dispatch2<ZwpVirtualKeyboardManagerV1, Otto<B>>
             .map(|seat| seat.name().to_string())
             .unwrap_or_default();
         let user_seat = state.seat.name();
-        let owned = state
-            .agent_seat(&seat_name)
-            .is_some_and(|agent| agent.owner.is_some());
-        let user_seat = user_seat.to_string();
-        let refused = !crate::sandbox::may_drive_seat(client, &seat_name, &user_seat, owned)
-            || (seat_name == user_seat
-                && !crate::state::virtual_pointer::user_input_allowed(state, client));
-        if refused {
+        if !crate::sandbox::may_drive_seat(client, &seat_name, user_seat) {
             tracing::warn!(
                 seat = seat_name,
                 "virtual keyboard refused: this connection may not drive that seat"

@@ -24,7 +24,8 @@ mod agent_seat_tests {
     };
 
     const BTN_LEFT: u32 = 0x110;
-    const AGENT: &str = otto::agent_cursor::AGENT_SEAT_NAME;
+    /// The seat of the first agent to ask.
+    const AGENT: &str = "agent-1";
 
     /// Every seat, in the order the compositor advertised them.
     #[derive(Default)]
@@ -186,10 +187,10 @@ mod agent_seat_tests {
         }
     }
 
-    /// A compositor with the agent seat advertised, as `enabled = true` does.
+    /// A compositor with one agent seat, asked for by the connection `:1.10`.
     fn start() -> HeadlessHandle {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
-        handle.query(|state| state.enable_agent_seat());
+        request_seat(&handle, "Agent", ":1.10").expect("seat");
         handle
     }
 
@@ -284,7 +285,7 @@ mod agent_seat_tests {
     #[serial]
     fn agent_motion_leaves_the_user_pointer_alone() {
         let handle = start();
-        let mut driver = Driver::connect(&handle);
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
         let before = user_pointer(&handle);
         assert_eq!(
             agent_cursor_opacity(&handle),
@@ -292,7 +293,7 @@ mod agent_seat_tests {
             "the agent cursor is hidden until the agent first moves"
         );
 
-        let pointer = driver.pointer_on(1);
+        let pointer = driver.pointer_on(driver.seat_index(AGENT).unwrap());
         move_to(&handle, &pointer, 480, 270);
         driver.settle(&handle);
 
@@ -323,57 +324,6 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// An agent click gives the agent seat's keyboard to the clicked window;
-    /// the user's focused window keeps the user's keyboard.
-    #[test]
-    #[serial]
-    fn agent_click_does_not_take_the_users_focus() {
-        let handle = start();
-        let mut background = TestClient::connect(&handle.socket_name).expect("client");
-        let mut foreground = TestClient::connect(&handle.socket_name).expect("client");
-        map_window(&handle, &mut background, "Background");
-        map_window(&handle, &mut foreground, "Foreground");
-        let _ = background.roundtrip();
-        let _ = foreground.roundtrip();
-        assert!(
-            foreground.state.keyboard_focused,
-            "last mapped starts focused"
-        );
-
-        let (bx, by, _, _) = handle
-            .window_logical_geometry("Background")
-            .expect("background window mapped");
-        let (fx, fy, _, _) = handle
-            .window_logical_geometry("Foreground")
-            .expect("foreground window mapped");
-        let (target_x, target_y) = (bx + 8, by + 8);
-        assert!(
-            target_x < fx || target_y < fy,
-            "the background window must peek out from under the foreground one"
-        );
-
-        let mut driver = Driver::connect(&handle);
-        let pointer = driver.pointer_on(1);
-        move_to(&handle, &pointer, target_x, target_y);
-        driver.settle(&handle);
-        click(&pointer);
-        driver.settle(&handle);
-
-        let _ = background.roundtrip();
-        let _ = foreground.roundtrip();
-        assert!(
-            foreground.state.keyboard_focused,
-            "the user's window lost the user's keyboard"
-        );
-        assert!(!background.state.keyboard_focused);
-
-        let agent_focus = agent_keyboard_focus(&handle);
-        assert_eq!(agent_focus.as_deref(), Some("Background"));
-
-        drop(driver);
-        handle.stop();
-    }
-
     /// Once the agent stops, its cursor fades out; its next move brings it
     /// back at once.
     #[test]
@@ -384,8 +334,8 @@ mod agent_seat_tests {
             state.agent_seat_mut(AGENT).unwrap().cursor =
                 otto::agent_cursor::AgentCursor::new("#FF9500", Duration::from_millis(1500));
         });
-        let mut driver = Driver::connect(&handle);
-        let pointer = driver.pointer_on(1);
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
+        let pointer = driver.pointer_on(driver.seat_index(AGENT).unwrap());
         move_to(&handle, &pointer, 100, 100);
         driver.settle(&handle);
         assert_eq!(agent_cursor_opacity(&handle), 1.0);
@@ -412,14 +362,19 @@ mod agent_seat_tests {
     #[serial]
     fn a_locked_session_stops_agent_input() {
         let handle = start();
+        request_workspace(&handle, ":1.10").expect("workspace");
         let mut window = TestClient::connect(&handle.socket_name).expect("client");
         map_window(&handle, &mut window, "Target");
+        let position = workspace_names(&handle).len() - 1;
+        handle.move_window_to_workspace("Target", position);
+        handle.settle(200);
+        let _ = window.roundtrip();
         let (x, y, _, _) = handle
             .window_logical_geometry("Target")
             .expect("window mapped");
 
-        let mut driver = Driver::connect(&handle);
-        let pointer = driver.pointer_on(1);
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
+        let pointer = driver.pointer_on(driver.seat_index(AGENT).unwrap());
         move_to(&handle, &pointer, x + 20, y + 20);
         driver.settle(&handle);
         click(&pointer);

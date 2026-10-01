@@ -296,14 +296,8 @@ enabled = true
 
 # Agent cursor
 [agent_cursor]
-# Advertise a second seat, "agent", for automation. Virtual pointers and
-# keyboards created on it (wlr-virtual-pointer, virtual-keyboard) move their
-# own cursor and focus instead of yours, and its cursor is drawn as the
-# default arrow in `color`. Tools that take the last advertised seat, such as
-# wlrctl, land on it. Read at startup. (default: false)
-enabled = false
-# The agent cursor's colour, as #RRGGBB. (default: "#FF9500")
-color = "#FF9500"
+# Agents that ask Otto for a seat (`specs/agent-seats.md`) get a cursor of
+# their own, drawn beside yours in a colour of its own.
 # How long the agent cursor stays after the agent's last input, in
 # milliseconds, before it fades out; 0 never hides it. (default: 5000)
 hide_after_ms = 5000
@@ -313,12 +307,16 @@ hide_after_ms = 5000
 border_width = 3
 
 [privacy]
-# Programs that may capture the screen, move the pointer and type as you, or
-# read the clipboard, without being asked first. Any other program outside a
-# sandbox is asked about once, and the answer is kept in Settings › Privacy.
-# Otto's own programs are always trusted. Give each one by the full path of
-# its executable. Read at startup. (default: [])
-trusted_programs = []
+# Keep your programs off the interfaces that capture the screen, move the
+# pointer and type as you, read the clipboard without focus or control other
+# apps' windows. Otto's own components keep them; everything else goes
+# through the portals, which ask you, or is listed in `allow`. Read at
+# startup. (default: false)
+strict = false
+# Executables allowed those interfaces under `strict`, by full path: a
+# clipboard manager, a screenshot tool, a remote control.
+# (default: [])
+allow = []
 
 # Audio / Sound feedback
 [audio]

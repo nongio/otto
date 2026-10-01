@@ -118,6 +118,17 @@ impl ShellInterface {
     }
 }
 
+/// Under `[privacy] strict`, the shell is for Otto's own programs and the
+/// executables allowed: it lists every window's title and runs any command.
+async fn gate(
+    connection: &Connection,
+    header: &zbus::message::Header<'_>,
+) -> Result<(), ShellFault> {
+    crate::sandbox::require_trusted_caller(connection, header, "Shell1")
+        .await
+        .map_err(|err| ShellFault::ZBus(zbus::Error::FDO(Box::new(err))))
+}
+
 #[interface(name = "org.otto.Shell1")]
 impl ShellInterface {
     /// Run a `;`-separated i3-syntax command string.
@@ -128,7 +139,13 @@ impl ShellInterface {
     /// that does not parse comes back as a single failure naming the
     /// character it stumbled on, because i3 and sway also abandon the whole
     /// string rather than run half of it.
-    async fn run_command(&self, command: &str) -> Result<Vec<(bool, String)>, ShellFault> {
+    async fn run_command(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        command: &str,
+    ) -> Result<Vec<(bool, String)>, ShellFault> {
+        gate(connection, &header).await?;
         let command = command.to_string();
         let results = self
             .ask(|response_tx| CompositorCommand::RunShellCommand {
@@ -146,19 +163,34 @@ impl ShellInterface {
     }
 
     /// The whole tree as JSON, in i3's `GET_TREE` node shape.
-    async fn get_tree(&self) -> Result<String, ShellFault> {
+    async fn get_tree(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<String, ShellFault> {
+        gate(connection, &header).await?;
         self.ask(|response_tx| CompositorCommand::GetShellTree { response_tx })
             .await
     }
 
     /// Every workspace on every output, in i3's `GET_WORKSPACES` shape.
-    async fn get_workspaces(&self) -> Result<String, ShellFault> {
+    async fn get_workspaces(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<String, ShellFault> {
+        gate(connection, &header).await?;
         self.ask(|response_tx| CompositorCommand::GetShellWorkspaces { response_tx })
             .await
     }
 
     /// Every output, in i3's `GET_OUTPUTS` shape.
-    async fn get_outputs(&self) -> Result<String, ShellFault> {
+    async fn get_outputs(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<String, ShellFault> {
+        gate(connection, &header).await?;
         self.ask(|response_tx| CompositorCommand::GetShellOutputs { response_tx })
             .await
     }
@@ -166,7 +198,12 @@ impl ShellInterface {
     /// The keyboard, in sway's `GET_INPUTS` shape: its layouts by name, the
     /// active one, and the `otto_layout_codes` and `otto_show_in_bar` a bar
     /// draws its indicator from.
-    async fn get_inputs(&self) -> Result<String, ShellFault> {
+    async fn get_inputs(
+        &self,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<String, ShellFault> {
+        gate(connection, &header).await?;
         self.ask(|response_tx| CompositorCommand::GetShellInputs { response_tx })
             .await
     }

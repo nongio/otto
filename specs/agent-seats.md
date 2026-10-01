@@ -352,39 +352,22 @@ agent cannot change (the seat consent is asked of `otto-sandbox`, with the
 agent's name in the prompt), and `otto-agents` starting its ACP agents this
 way.
 
-#### 5c — the user's other programs (implemented, `feat/agent-lockdown`)
+#### 5c — the user's other programs (planned)
 
-For agents that run without the sandbox, and any other program running as
-the user (`src/program_access.rs`). A client of Otto's socket is named by
-its executable when it connects (`SO_PEERCRED`, `/proc/<pid>/exe`).
+For agents that run without the launcher: screen capture, virtual input on
+the user's seat, data control (the clipboard), input method and
+foreign-toplevel control are offered to Otto's own components, the RDP
+bridge and agents' connections without asking. Any other unsandboxed program
+is asked once through the islands dialog, named as `otto_kit::process_app`
+names it, and the answer is kept in xdg-permission-store and listed in
+Settings › Privacy. The global stays advertised and the first frame or
+device waits for the answer, since a global's visibility cannot wait for the
+user. A configuration switch lets scripted setups allow their tools up
+front.
 
-- Trusted without asking: Otto's components (by the socket Otto handed
-  them), XWayland, Otto's own programs (`otto*`) installed where only root
-  can change them (and, in a `dev` build, beside the compositor), and the
-  executables `[privacy] trusted_programs` lists.
-- Screen capture: a frame from a program nobody has answered for waits, and
-  the user is asked through the islands dialog. Allowed, the capture goes
-  ahead; refused, it fails.
-- Virtual pointers and keyboards on the user's seat: created at once, so
-  they cannot wait. An unanswered program's pointer drives nothing and its
-  keyboard is refused (`unauthorized`), and the user is asked; once
-  allowed, the program's next attempt works.
-- The clipboard without focus (data-control) and control of every app's
-  windows (wlr-foreign-toplevel) are offered only to programs trusted or
-  allowed beforehand: whether a global is offered cannot wait for the user.
-  The rest keep the clipboard of the focused window, as every app has.
-- Input methods are left alone: they are not offered to sandboxed clients,
-  and asking would break the user's IME.
-- Answers are kept per executable in xdg-permission-store's `otto-wayland`
-  table, one entry per capability (`screen-capture`, `input`, `clipboard`,
-  `window-control`), and read again whenever the table changes.
-
-This keeps a program that does not know the rules from capturing the screen
+This keeps an agent that does not know the rules from capturing the screen
 or typing as the user unnoticed. It is not a boundary: a program running as
-the user can impersonate one that is allowed (an interpreter is one program
-for every script it runs). Not yet: Settings › Privacy listing these
-answers; input injected below Otto (`/dev/uinput`, which the sandbox hides,
-is the host's to restrict).
+the user can impersonate one that is allowed.
 
 ### Phase 6 — Otto's own UI
 
