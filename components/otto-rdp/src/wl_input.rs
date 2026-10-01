@@ -101,7 +101,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         } = event
         {
             match interface.as_str() {
-                "wl_seat" => {
+                // The first seat is the user's; Otto may advertise an agent
+                // seat after it (`[agent_cursor]`), which is not ours to drive.
+                "wl_seat" if state.seat.is_none() => {
                     state.seat = Some(registry.bind(name, version.min(5), qh, ()));
                 }
                 "zwlr_virtual_pointer_manager_v1" => {

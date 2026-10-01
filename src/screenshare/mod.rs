@@ -204,6 +204,43 @@ pub enum CompositorCommand {
     GetShellInputs {
         response_tx: tokio::sync::oneshot::Sender<String>,
     },
+    /// An agent asks for a seat of its own (`specs/agent-seats.md`).
+    RequestAgentSeat {
+        agent_name: String,
+        /// The caller's unique bus name: the seat lasts as long as it does.
+        owner: String,
+        response_tx:
+            tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::GrantedSeat, String>>,
+    },
+    /// An agent asks for a workspace of its own.
+    RequestOwnWorkspace {
+        owner: String,
+        response_tx:
+            tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::OwnWorkspace, String>>,
+    },
+    /// An agent starts a program whose windows open on its own workspace.
+    LaunchOnOwnWorkspace {
+        owner: String,
+        argv: Vec<String>,
+        response_tx: tokio::sync::oneshot::Sender<Result<u32, String>>,
+    },
+    /// An agent gives its own workspace to the user.
+    ReleaseOwnWorkspace {
+        owner: String,
+        response_tx: tokio::sync::oneshot::Sender<bool>,
+    },
+    /// Capture one workspace, shown or not, to a PNG.
+    CaptureWorkspace {
+        /// The caller's unique bus name: only its own workspace is captured.
+        owner: String,
+        workspace: String,
+        response_tx: tokio::sync::oneshot::Sender<Result<String, String>>,
+    },
+    /// An agent gives its seats back, or its bus name went away.
+    ReleaseAgentSeats {
+        owner: String,
+        response_tx: Option<tokio::sync::oneshot::Sender<bool>>,
+    },
 }
 
 /// Information about an available output.
@@ -725,6 +762,51 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
                 tracing::warn!("Session not found for destruction: {}", session_id);
             }
             refresh_sharing_badges(state);
+        }
+        CompositorCommand::RequestAgentSeat {
+            agent_name,
+            owner,
+            response_tx,
+        } => {
+            let result = state
+                .request_agent_seat(&agent_name, &owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::RequestOwnWorkspace { owner, response_tx } => {
+            let result = state
+                .request_own_workspace(&owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::LaunchOnOwnWorkspace {
+            owner,
+            argv,
+            response_tx,
+        } => {
+            let result = state
+                .launch_on_own_workspace(&owner, &argv)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::ReleaseOwnWorkspace { owner, response_tx } => {
+            let _ = response_tx.send(state.release_own_workspace(&owner));
+        }
+        CompositorCommand::CaptureWorkspace {
+            owner,
+            workspace,
+            response_tx,
+        } => {
+            let result = state
+                .capture_workspace(&owner, &workspace)
+                .map(|path| path.display().to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::ReleaseAgentSeats { owner, response_tx } => {
+            let released = state.release_agent_seats(&owner);
+            if let Some(response_tx) = response_tx {
+                let _ = response_tx.send(released);
+            }
         }
         CompositorCommand::FocusApp { app_id } => {
             tracing::info!("FocusApp: {}", app_id);

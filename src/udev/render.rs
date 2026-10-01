@@ -963,11 +963,17 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let occluded_ids = self.workspaces.occluded_window_ids(&translucent_ids);
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let captured_ids = crate::screenshare::screencast_window_ids(
+        let mut captured_ids = crate::screenshare::screencast_window_ids(
             &self.screenshare_sessions,
             &self.workspaces,
             &self.foreign_toplevels,
         );
+        // Windows an agent works in are watched too, on screen or not.
+        captured_ids.extend(crate::state::agent_seats::agent_workspace_window_ids(
+            &self.agent_seats,
+            &self.agent_history,
+            &self.workspaces,
+        ));
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let interacting_ids =
             crate::state::window_throttle::interacting_ids(&self.pointer_interaction);
@@ -1346,6 +1352,16 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.pointer.current_location(),
             &self.cursor_manager,
             &self.cursor_texture_cache,
+            // Every agent cursor goes when the session locks.
+            &if self.lock_state.is_active() {
+                Vec::new()
+            } else {
+                self.agent_seats
+                    .iter()
+                    .filter(|agent| agent.shown_on(&self.workspaces, &output.name()))
+                    .map(|agent| (&agent.cursor, agent.pointer.current_location()))
+                    .collect::<Vec<_>>()
+            },
             self.dnd_icon.as_ref(),
             &self.clock,
             scene_has_damage,
@@ -1794,6 +1810,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // dirty; a no-op flag read when nothing changed.
             self.flush_tiling_relayout();
             self.flush_dock_reserved_change();
+            self.sync_agent_frames();
             self.popups.cleanup();
             self.update_dnd();
         }
@@ -2413,6 +2430,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     pointer_location: Point<f64, Logical>,
     cursor_manager: &CursorManager,
     cursor_texture_cache: &CursorTextureCache,
+    // The agent seats' cursors and where they are, in global logical
+    // coordinates.
+    agent_cursors: &[(&crate::agent_cursor::AgentCursor, Point<f64, Logical>)],
     dnd_icon: Option<&wl_surface::WlSurface>,
     clock: &Clock<Monotonic>,
     scene_has_damage: bool,
@@ -2525,6 +2545,29 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
         }
     }
 
+    // Under the user's cursor, which was pushed first and so draws on top.
+    let mut agent_cursor_drawn = false;
+    let mut agent_cursor_fading = false;
+    let now = Instant::now();
+    for (cursor, location) in agent_cursors {
+        let location = *location - output.current_location().to_f64();
+        if !output_geometry
+            .to_f64()
+            .contains(location.to_physical(scale))
+        {
+            continue;
+        }
+        let elements = cursor.render_elements(renderer, cursor_manager, location, output_scale);
+        if elements.is_empty() {
+            continue;
+        }
+        agent_cursor_drawn = true;
+        agent_cursor_fading |= cursor.is_fading(now);
+        workspace_render_elements.extend(elements.into_iter().map(WorkspaceRenderElements::from));
+    }
+    let agent_cursor_left_output = surface.agent_cursor_was_in_output && !agent_cursor_drawn;
+    surface.agent_cursor_was_in_output = agent_cursor_drawn;
+
     #[cfg(feature = "fps_ticker")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
@@ -2539,10 +2582,14 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     surface.continuous_frames = screencopy_pending
         || dnd_needs_draw
         || (pointer_in_output
-            && cursor_manager.is_current_cursor_animated(output_scale.round() as i32));
+            && cursor_manager.is_current_cursor_animated(output_scale.round() as i32))
+        || agent_cursor_fading;
 
     let (output_elements, clear_color, should_draw) = {
-        let cursor_needs_draw = pointer_in_output || cursor_left_output;
+        let cursor_needs_draw = pointer_in_output
+            || cursor_left_output
+            || agent_cursor_drawn
+            || agent_cursor_left_output;
         // Fullscreen scanout must always draw: the promoted buffer's
         // commits produce no scene damage, and gating on it would drop
         // video frames. `scanout_commit` is the same signal for promoted

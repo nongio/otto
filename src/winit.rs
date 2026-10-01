@@ -575,6 +575,30 @@ pub fn run_winit() {
                         elements.extend(cursor_elements);
                     }
 
+                    // The agent seats' cursors, under the user's.
+                    if !state.lock_state.is_active() {
+                        for agent in state
+                            .agent_seats
+                            .iter()
+                            .filter(|agent| agent.shown_on(&state.workspaces, &output.name()))
+                        {
+                            let location = agent.pointer.current_location()
+                                - output.current_location().to_f64();
+                            elements.extend(
+                                agent
+                                    .cursor
+                                    .render_elements(
+                                        renderer,
+                                        &state.cursor_manager,
+                                        location,
+                                        output_scale,
+                                    )
+                                    .into_iter()
+                                    .map(WorkspaceRenderElements::from),
+                            );
+                        }
+                    }
+
                     #[cfg(feature = "fps_ticker")]
                     elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
@@ -839,6 +863,7 @@ pub fn run_winit() {
             // left dirty; a no-op flag read when nothing changed.
             state.flush_tiling_relayout();
             state.flush_dock_reserved_change();
+            state.sync_agent_frames();
             state.popups.cleanup();
             // Tell any window that has moved where it is now. Diffed against
             // what was last sent, so a desktop at rest sends nothing.

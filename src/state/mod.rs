@@ -404,6 +404,18 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// name: what a popup grab's serial is checked against (see
     /// `crate::input::popup_grab`).
     pub seat_last_press: HashMap<String, crate::input::popup_grab::LastPress>,
+    /// Agent seats: the static one when `[agent_cursor]` is enabled, and one
+    /// per agent that asked over D-Bus — see `crate::agent_cursor`.
+    pub agent_seats: Vec<crate::agent_cursor::AgentSeat<BackendData>>,
+    /// Agents that have had a seat this session, by the name they gave, so
+    /// one that comes back gets its seat name and colour again.
+    pub agent_history: HashMap<String, agent_seats::PastAgent>,
+    /// The button whose press hit an agent chip's Stop: its release is
+    /// swallowed too.
+    pub agent_stop_button: Option<u32>,
+    /// Activation tokens Otto gave programs it launched for an agent, with
+    /// the agent's name: their windows open on its workspace.
+    pub agent_launch_tokens: HashMap<String, String>,
     /// Cached pointer location (logical) to avoid deadlock when accessing during button events
     pub last_pointer_location: (f64, f64),
     /// When and where the last press on a server-side titlebar landed, for
@@ -538,6 +550,7 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub render_metrics: Arc<crate::render_metrics::RenderMetrics>,
 }
 
+pub mod agent_seats;
 pub mod app_management;
 pub mod data_device_handler;
 pub mod dnd_grab_handler;
@@ -555,6 +568,7 @@ pub mod trash_drop;
 pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
+pub mod workspace_capture;
 pub mod xdg_activation_handler;
 pub mod xdg_decoration_handler;
 pub mod xwayland_handler;
@@ -993,30 +1007,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let cursor_manager = CursorManager::new(&cursor_theme, cursor_size as u8);
         let cursor_texture_cache = CursorTextureCache::default();
         let pointer = seat.add_pointer();
-        let (layout, variant, options, repeat_delay, repeat_rate) = Config::with(|c| {
-            let layout = c.input.xkb_layout.clone().unwrap_or_default();
-            let variant = c.input.xkb_variant.clone().unwrap_or_default();
-            let options = if c.input.xkb_options.is_empty() {
-                None
-            } else {
-                Some(c.input.xkb_options.join(","))
-            };
-            (
-                layout,
-                variant,
-                options,
-                c.keyboard_repeat_delay,
-                c.keyboard_repeat_rate,
-            )
-        });
-        let xkb_config = XkbConfig {
-            layout: &layout,
-            variant: &variant,
-            options,
-            ..Default::default()
-        };
-        seat.add_keyboard(xkb_config, repeat_delay, repeat_rate)
-            .expect("Failed to initialize the keyboard");
+        add_configured_keyboard(&mut seat);
 
         // Every client that asks is granted the inhibitor (see
         // `new_inhibitor`), and an inhibited keyboard delivers the
@@ -1091,7 +1082,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         #[cfg(feature = "metrics")]
         let backend_name = backend_data.backend_name();
 
-        Otto {
+        let mut otto = Otto {
             backend_data,
             display_handle: dh,
             socket_name,
@@ -1170,6 +1161,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat,
             pointer,
             seat_last_press: HashMap::new(),
+            agent_seats: Vec::new(),
+            agent_history: HashMap::new(),
+            agent_stop_button: None,
+            agent_launch_tokens: HashMap::new(),
             last_pointer_location: (0.0, 0.0),
             last_titlebar_press: None,
             cursor_physical_position: (0.0, 0.0),
@@ -1234,7 +1229,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // render metrics
             #[cfg(feature = "metrics")]
             render_metrics: Arc::new(crate::render_metrics::RenderMetrics::new(backend_name)),
+        };
+        if Config::with(|c| c.agent_cursor.enabled) {
+            otto.enable_agent_seat();
         }
+        otto
     }
 
     /// Whether `surface` (root or subsurface) belongs to a layer-shell surface
@@ -3362,4 +3361,32 @@ pub trait Backend {
             "Input settings stored; this backend has no libinput devices to reconfigure"
         );
     }
+}
+
+/// Give `seat` a keyboard with the configured layout and repeat rate.
+fn add_configured_keyboard<BackendData: Backend + 'static>(seat: &mut Seat<Otto<BackendData>>) {
+    let (layout, variant, options, repeat_delay, repeat_rate) = Config::with(|c| {
+        let layout = c.input.xkb_layout.clone().unwrap_or_default();
+        let variant = c.input.xkb_variant.clone().unwrap_or_default();
+        let options = if c.input.xkb_options.is_empty() {
+            None
+        } else {
+            Some(c.input.xkb_options.join(","))
+        };
+        (
+            layout,
+            variant,
+            options,
+            c.keyboard_repeat_delay,
+            c.keyboard_repeat_rate,
+        )
+    });
+    let xkb_config = XkbConfig {
+        layout: &layout,
+        variant: &variant,
+        options,
+        ..Default::default()
+    };
+    seat.add_keyboard(xkb_config, repeat_delay, repeat_rate)
+        .expect("Failed to initialize the keyboard");
 }

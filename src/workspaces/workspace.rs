@@ -16,6 +16,9 @@ use std::{
 /// Spacing between workspaces in logical pixels (multiply by screen scale when used)
 pub const WORKSPACE_SPACING: f32 = 50.0;
 
+/// An agent holding a workspace: its colour and name.
+pub type AgentMark = ([u8; 3], String);
+
 #[derive(Clone)]
 pub struct WorkspaceView {
     pub index: usize,
@@ -62,6 +65,9 @@ pub struct WorkspaceView {
     /// lives here rather than on the compositor. Disabled by default: Otto is
     /// a floating desktop, and a workspace tiles because the user asked.
     pub tiling: Arc<RwLock<crate::workspaces::tiling::TilingState>>,
+    /// The agent holding this workspace, if one does: its colour and name,
+    /// for the mark on the workspace's selector preview.
+    agent_mark: Arc<RwLock<Option<AgentMark>>>,
 }
 
 impl fmt::Debug for WorkspaceView {
@@ -234,6 +240,7 @@ impl WorkspaceView {
             window_base_layers: Arc::new(RwLock::new(HashMap::new())),
             pre_expose_order: Arc::new(RwLock::new(Vec::new())),
             tiling: Arc::new(RwLock::new(Default::default())),
+            agent_mark: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -447,6 +454,22 @@ impl WorkspaceView {
     ///
     /// None of the three depends on where the workspace currently sits, so a
     /// workspace dragged to a new place in the strip keeps the label it had.
+    /// The agent holding this workspace, as its colour and name.
+    pub fn agent_mark(&self) -> Option<AgentMark> {
+        self.agent_mark.read().unwrap().clone()
+    }
+
+    /// Mark this workspace as held by an agent, or clear the mark. Returns
+    /// whether it changed.
+    pub fn set_agent_mark(&self, mark: Option<AgentMark>) -> bool {
+        let mut current = self.agent_mark.write().unwrap();
+        if *current == mark {
+            return false;
+        }
+        *current = mark;
+        true
+    }
+
     pub fn display_name(&self) -> String {
         self.get_custom_name()
             .or_else(|| self.get_name())

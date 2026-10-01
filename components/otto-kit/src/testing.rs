@@ -993,7 +993,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                 "wl_shm" => {
                     state.wl_shm = Some(registry.bind(name, version.min(1), qh, ()));
                 }
-                "wl_seat" => {
+                // The first seat is the user's; Otto may advertise an agent
+                // seat after it (`[agent_cursor]`).
+                "wl_seat" if state.wl_seat.is_none() => {
                     state.wl_seat = Some(registry.bind(name, version.min(9), qh, ()));
                 }
                 "xdg_wm_base" => {

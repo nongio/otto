@@ -105,10 +105,20 @@ impl<BackendData: Backend> SeatHandler for Otto<BackendData> {
         set_data_device_focus(dh, seat, focus.clone());
         set_primary_focus(dh, seat, focus);
 
+        // Which window looks active is the user's focus alone; the agent
+        // seat typing into a window does not take it from them.
+        if self.is_agent_seat(seat) {
+            return;
+        }
         self.update_toplevel_activation(target);
     }
 
-    fn cursor_image(&mut self, _seat: &smithay::input::Seat<Self>, image: CursorImageStatus) {
+    fn cursor_image(&mut self, seat: &smithay::input::Seat<Self>, image: CursorImageStatus) {
+        // The agent cursor is always its tinted arrow; a client under it
+        // asking for another shape must not change the user's.
+        if self.is_agent_seat(seat) {
+            return;
+        }
         self.log_cursor_image(&image);
         *self.cursor_status.lock().unwrap() = image.clone();
         self.cursor_manager.set_cursor_image(image);
