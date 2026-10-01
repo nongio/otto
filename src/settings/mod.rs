@@ -571,12 +571,6 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
 /// own identifier instead — `dock.autohide` becomes `schema-dock-autohide-label`
 /// — which means adding a setting needs no catalogue entry to keep working:
 /// the English written beside it in the schema is the fallback.
-/// The setting's label as the schema shows it, in the session's language.
-pub fn label_of(id: &str) -> Option<String> {
-    let spec = schema::lookup(id)?;
-    Some(schema_text(spec.id, "label", spec.label))
-}
-
 fn schema_text(id: &str, part: &str, english: &str) -> String {
     let slug: String = id
         .chars()

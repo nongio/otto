@@ -57,14 +57,17 @@ fn run(
             text: text.to_string(),
             secret: !echo_on,
         }));
+        otto_kit::AppContext::request_wakeup();
     });
     let said = events.clone();
     session.connect_show_error(move |_, text| {
         let _ = said.send(Event::Said(Message::Error(text.to_string())));
+        otto_kit::AppContext::request_wakeup();
     });
     let said = events.clone();
     session.connect_show_info(move |_, text| {
         let _ = said.send(Event::Said(Message::Info(text.to_string())));
+        otto_kit::AppContext::request_wakeup();
     });
     let gained: Rc<Cell<Option<bool>>> = Rc::default();
     let completed = gained.clone();

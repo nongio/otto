@@ -1863,17 +1863,6 @@ a11y-preview-shortened = Preview, shortened
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = Cancel
-authorize-reason-locker-command = Change the program that locks your screen to “{ $value }”?
-authorize-reason-locker-args = Change the options passed to the program that locks your screen to “{ $value }”?
-authorize-reason-locker-args-clear = Remove the options passed to the program that locks your screen?
-authorize-reason-auto-lock = Change how long your screen waits before it locks by itself?
-authorize-reason-auto-lock-off = Stop your screen from locking by itself?
-authorize-reason-lock-on-suspend = Lock your screen whenever the computer goes to sleep?
-authorize-reason-lock-on-suspend-off = Stop your screen from locking when the computer goes to sleep?
-authorize-reason-greeter-command = Change the login screen program to “{ $value }”?
-authorize-reason-greeter-args = Change the options passed to the login screen program to “{ $value }”?
-authorize-reason-greeter-args-clear = Remove the options passed to the login screen program?
-authorize-reason-generic = Change the setting “{ $setting }”?
 # Under the password field when the password or fingerprint was not accepted.
 authorize-error-failed = Authentication failed
 
@@ -1881,5 +1870,6 @@ authorize-error-failed = Authentication failed
 ## { $program } is the program that asked, as “name (in /folder)”; { $message } is polkit's own description of what it wants to do.
 
 polkit-reason = { $program } asks: { $message }
+authorize-path-in = { $name } (in { $dir })
 # In place of { $program } when the program that asked cannot be found.
 polkit-unknown-program = An unknown program

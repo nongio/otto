@@ -246,11 +246,7 @@ impl<P: Prompt> Agent<P> {
             );
         }
 
-        let reason = if begin.action == SETTINGS_ACTION {
-            settings_reason(&begin.details)
-        } else {
-            reason_line(&caller, &begin.message)
-        };
+        let reason = reason_line(&caller, &begin.message);
         let mut prompt = (self.make_prompt)(Question {
             reason,
             user: user.clone(),
@@ -462,50 +458,6 @@ fn describe_path(path: &str) -> Option<String> {
         name = keep_tail(&name, MAX_PROGRAM_CHARS),
         dir = keep_tail(&dir, MAX_PROGRAM_CHARS)
     ))
-}
-
-/// The action Otto's settings service asks for before a protected setting
-/// changes (`src/settings/polkit.rs` in the compositor).
-const SETTINGS_ACTION: &str = "org.otto.settings.lock";
-
-/// The reason line for a protected setting: the change itself, from the
-/// details the compositor passed (`otto.setting`, `otto.value`, `otto.label`).
-fn settings_reason(details: &HashMap<String, String>) -> String {
-    let setting = details
-        .get("otto.setting")
-        .map(String::as_str)
-        .unwrap_or("");
-    let label = visible(
-        details
-            .get("otto.label")
-            .map(String::as_str)
-            .unwrap_or(setting),
-    );
-    let Some(value) = details.get("otto.value").map(|v| visible(v)) else {
-        return otto_kit::t_owned!("authorize-reason-generic", setting = label);
-    };
-    let empty = value.trim().is_empty();
-    match setting {
-        "lock.locker_command" => {
-            otto_kit::t_owned!("authorize-reason-locker-command", value = value)
-        }
-        "lock.locker_args" if empty => otto_kit::t_owned!("authorize-reason-locker-args-clear"),
-        "lock.locker_args" => otto_kit::t_owned!("authorize-reason-locker-args", value = value),
-        "lock.auto_lock_timeout" if value == "0" => {
-            otto_kit::t_owned!("authorize-reason-auto-lock-off")
-        }
-        "lock.auto_lock_timeout" => otto_kit::t_owned!("authorize-reason-auto-lock"),
-        "lock.on_suspend" if value == "false" => {
-            otto_kit::t_owned!("authorize-reason-lock-on-suspend-off")
-        }
-        "lock.on_suspend" => otto_kit::t_owned!("authorize-reason-lock-on-suspend"),
-        "login.greeter_command" => {
-            otto_kit::t_owned!("authorize-reason-greeter-command", value = value)
-        }
-        "login.greeter_args" if empty => otto_kit::t_owned!("authorize-reason-greeter-args-clear"),
-        "login.greeter_args" => otto_kit::t_owned!("authorize-reason-greeter-args", value = value),
-        _ => otto_kit::t_owned!("authorize-reason-generic", setting = label),
-    }
 }
 
 /// The dialog's reason line: who asked, then what polkit says it is for.

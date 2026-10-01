@@ -1803,17 +1803,7 @@ files-photos-one-selected = 1 ausgewählt · Leertaste für Vorschau · ↵ zum 
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = Abbrechen
-authorize-reason-locker-command = Das Programm, das deinen Bildschirm sperrt, zu „{ $value }“ ändern?
-authorize-reason-locker-args = Die Optionen für das Programm, das deinen Bildschirm sperrt, zu „{ $value }“ ändern?
-authorize-reason-locker-args-clear = Die Optionen für das Programm, das deinen Bildschirm sperrt, entfernen?
-authorize-reason-auto-lock = Ändern, wie lange dein Bildschirm wartet, bevor er sich von selbst sperrt?
-authorize-reason-auto-lock-off = Verhindern, dass sich dein Bildschirm von selbst sperrt?
-authorize-reason-lock-on-suspend = Deinen Bildschirm immer sperren, wenn der Computer in den Ruhezustand geht?
-authorize-reason-lock-on-suspend-off = Verhindern, dass sich dein Bildschirm sperrt, wenn der Computer in den Ruhezustand geht?
-authorize-reason-greeter-command = Das Programm für den Anmeldebildschirm zu „{ $value }“ ändern?
-authorize-reason-greeter-args = Die Optionen für das Programm des Anmeldebildschirms zu „{ $value }“ ändern?
-authorize-reason-greeter-args-clear = Die Optionen für das Programm des Anmeldebildschirms entfernen?
-authorize-reason-generic = Die Einstellung „{ $setting }“ ändern?
 authorize-error-failed = Authentifizierung fehlgeschlagen
 polkit-reason = { $program } fragt: { $message }
+authorize-path-in = { $name } (in { $dir })
 polkit-unknown-program = Ein unbekanntes Programm

@@ -1794,17 +1794,7 @@ files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = キャンセル
-authorize-reason-locker-command = 画面をロックするプログラムを「{ $value }」に変更しますか？
-authorize-reason-locker-args = 画面をロックするプログラムのオプションを「{ $value }」に変更しますか？
-authorize-reason-locker-args-clear = 画面をロックするプログラムのオプションを削除しますか？
-authorize-reason-auto-lock = 画面が自動的にロックされるまでの時間を変更しますか？
-authorize-reason-auto-lock-off = 画面が自動的にロックされないようにしますか？
-authorize-reason-lock-on-suspend = コンピュータがスリープするたびに画面をロックしますか？
-authorize-reason-lock-on-suspend-off = コンピュータがスリープするときに画面がロックされないようにしますか？
-authorize-reason-greeter-command = ログイン画面のプログラムを「{ $value }」に変更しますか？
-authorize-reason-greeter-args = ログイン画面のプログラムのオプションを「{ $value }」に変更しますか？
-authorize-reason-greeter-args-clear = ログイン画面のプログラムのオプションを削除しますか？
-authorize-reason-generic = 設定「{ $setting }」を変更しますか？
 authorize-error-failed = 認証に失敗しました
 polkit-reason = { $program } からの要求：{ $message }
+authorize-path-in = { $name }（{ $dir } 内）
 polkit-unknown-program = 不明なプログラム

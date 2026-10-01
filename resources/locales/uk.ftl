@@ -1886,17 +1886,7 @@ files-photos-one-selected = 1 вибрано · Пробіл — перегля�
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = Скасувати
-authorize-reason-locker-command = Замінити програму блокування екрана на «{ $value }»?
-authorize-reason-locker-args = Замінити параметри програми блокування екрана на «{ $value }»?
-authorize-reason-locker-args-clear = Видалити параметри програми блокування екрана?
-authorize-reason-auto-lock = Змінити час, через який екран блокується сам?
-authorize-reason-auto-lock-off = Вимкнути автоматичне блокування екрана?
-authorize-reason-lock-on-suspend = Блокувати екран щоразу, коли комп’ютер переходить у сон?
-authorize-reason-lock-on-suspend-off = Не блокувати екран, коли комп’ютер переходить у сон?
-authorize-reason-greeter-command = Замінити програму екрана входу на «{ $value }»?
-authorize-reason-greeter-args = Замінити параметри програми екрана входу на «{ $value }»?
-authorize-reason-greeter-args-clear = Видалити параметри програми екрана входу?
-authorize-reason-generic = Змінити параметр «{ $setting }»?
 authorize-error-failed = Не вдалося пройти автентифікацію
 polkit-reason = { $program } просить: { $message }
+authorize-path-in = { $name } (у { $dir })
 polkit-unknown-program = Невідома програма

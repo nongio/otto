@@ -1828,17 +1828,7 @@ files-photos-one-selected = 1 sélectionné · Espace pour l’aperçu · ↵ po
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = Annuler
-authorize-reason-locker-command = Remplacer le programme qui verrouille l’écran par « { $value } » ?
-authorize-reason-locker-args = Remplacer les options du programme qui verrouille l’écran par « { $value } » ?
-authorize-reason-locker-args-clear = Supprimer les options du programme qui verrouille l’écran ?
-authorize-reason-auto-lock = Modifier le délai avant que l’écran se verrouille tout seul ?
-authorize-reason-auto-lock-off = Empêcher l’écran de se verrouiller tout seul ?
-authorize-reason-lock-on-suspend = Verrouiller l’écran chaque fois que l’ordinateur se met en veille ?
-authorize-reason-lock-on-suspend-off = Empêcher l’écran de se verrouiller quand l’ordinateur se met en veille ?
-authorize-reason-greeter-command = Remplacer le programme de l’écran de connexion par « { $value } » ?
-authorize-reason-greeter-args = Remplacer les options du programme de l’écran de connexion par « { $value } » ?
-authorize-reason-greeter-args-clear = Supprimer les options du programme de l’écran de connexion ?
-authorize-reason-generic = Modifier le réglage « { $setting } » ?
 authorize-error-failed = Échec de l’authentification
 polkit-reason = { $program } demande : { $message }
+authorize-path-in = { $name } (dans { $dir })
 polkit-unknown-program = Un programme inconnu

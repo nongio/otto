@@ -1798,17 +1798,7 @@ files-photos-one-selected = 已选择 1 项 · 空格预览 · ↵ 打开
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = 取消
-authorize-reason-locker-command = 将锁定屏幕的程序更改为“{ $value }”？
-authorize-reason-locker-args = 将锁定屏幕的程序的选项更改为“{ $value }”？
-authorize-reason-locker-args-clear = 移除锁定屏幕的程序的选项？
-authorize-reason-auto-lock = 更改屏幕自动锁定前的等待时间？
-authorize-reason-auto-lock-off = 停止屏幕自动锁定？
-authorize-reason-lock-on-suspend = 每次电脑进入睡眠时都锁定屏幕？
-authorize-reason-lock-on-suspend-off = 电脑进入睡眠时不再锁定屏幕？
-authorize-reason-greeter-command = 将登录界面程序更改为“{ $value }”？
-authorize-reason-greeter-args = 将登录界面程序的选项更改为“{ $value }”？
-authorize-reason-greeter-args-clear = 移除登录界面程序的选项？
-authorize-reason-generic = 更改设置“{ $setting }”？
 authorize-error-failed = 认证失败
 polkit-reason = { $program } 请求：{ $message }
+authorize-path-in = { $name }（位于 { $dir }）
 polkit-unknown-program = 未知程序

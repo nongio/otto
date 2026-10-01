@@ -160,6 +160,9 @@ impl Dialog {
         self.panel = Some(panel);
         self.surface = Some(surface);
         self.deadline = Instant::now() + TIMEOUT;
+        // Opened from `on_update`, after the run loop's flush for this pass:
+        // sent now, or the surface waits for whatever wakes the loop next.
+        AppContext::flush();
 
         self.authenticate();
         Ok(())
