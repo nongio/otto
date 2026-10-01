@@ -11,10 +11,12 @@
 //!     xdg-desktop-portal checks itself: **Ask / Allow / Don't Allow** and
 //!     Forget.
 //! - **Notifications** lists the apps in the `notifications` table, each
-//!   with a switch. The portal's Notification interface records an app there
-//!   the first time it notifies and drops its notifications while the entry
-//!   says `no`, so the switch works for apps that notify through the portal
-//!   (Flatpak apps).
+//!   with a switch. An app is recorded there the first time it notifies, and
+//!   its notifications are dropped while the entry says `no`: by the portal's
+//!   Notification interface for apps that notify through it (Flatpak apps),
+//!   and by otto-islands' notification daemon for every app that calls it
+//!   directly, named by its desktop entry (see islands'
+//!   `notification_permission`).
 //!
 //! Settings writes the store directly and asks for nothing: a sandboxed app
 //! cannot reach the store, and a program running as the user can anyway.
