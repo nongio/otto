@@ -18,6 +18,7 @@
 //! next start will use.
 
 pub mod apply;
+pub mod polkit;
 pub mod schema;
 pub mod value;
 
@@ -509,6 +510,13 @@ pub fn describe() -> Vec<std::collections::HashMap<String, zbus::zvariant::Owned
                 SettingValue::Str(spec.apply.wire_name().to_string()),
             );
             entry.insert("default".to_string(), default_of(spec).to_variant());
+            if schema::is_protected(spec.id) {
+                put(
+                    &mut entry,
+                    "confirm",
+                    SettingValue::Str("password".to_string()),
+                );
+            }
             if let Some(min) = spec.min {
                 entry.insert("min".to_string(), numeric(spec.ty, min).to_variant());
             }

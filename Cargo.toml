@@ -155,6 +155,7 @@ members = [
     "components/otto-auth-ui",
     "components/otto-greeter",
     "components/otto-lock",
+    "components/otto-authorize",
     "components/otto-bar",
     "components/otto-islands",
     "components/otto-launcher",
@@ -232,12 +233,14 @@ priority = "optional"
 # to play a file in Peek — so dpkg-shlibdeps cannot see them.
 # Recommended, not required: the desktop works without them, but the RDP
 # bridge and Peek's video playback do not.
-recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire"
+recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, polkitd"
 assets = [
     ["target/release/otto", "usr/bin/", "755"],
     ["target/release/otto-bar", "usr/bin/", "755"],
     ["target/release/otto-islands", "usr/bin/", "755"],
     ["target/release/otto-lock", "usr/bin/", "755"],
+    ["target/release/otto-authorize", "usr/bin/", "755"],
+    ["resources/polkit/org.otto.settings.policy", "usr/share/polkit-1/actions/", "644"],
     ["target/release/otto-settings", "usr/bin/", "755"],
     ["target/release/otto-files", "usr/bin/", "755"],
     ["target/release/otto-launcher", "usr/bin/", "755"],
@@ -334,6 +337,8 @@ assets = [
     { source = "components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg", dest = "/usr/share/icons/hicolor/scalable/apps/otto-files.svg", mode = "644" },
     { source = "target/release/otto-islands", dest = "/usr/bin/otto-islands", mode = "755" },
     { source = "target/release/otto-lock", dest = "/usr/bin/otto-lock", mode = "755" },
+    { source = "target/release/otto-authorize", dest = "/usr/bin/otto-authorize", mode = "755" },
+    { source = "resources/polkit/org.otto.settings.policy", dest = "/usr/share/polkit-1/actions/org.otto.settings.policy", mode = "644" },
     { source = "target/release/otto-greeter", dest = "/usr/bin/otto-greeter", mode = "755" },
     { source = "target/release/otto-rdp", dest = "/usr/bin/otto-rdp", mode = "755" },
     { source = "target/release/xdg-desktop-portal-otto", dest = "/usr/libexec/xdg-desktop-portal-otto", mode = "755" },
@@ -364,6 +369,7 @@ gstreamer1-plugins-good = "*"
 gstreamer1-plugins-bad-free = "*"
 gstreamer1-libav = "*"
 pipewire-gstreamer = "*"
+polkit = "*"
 
 [package.metadata.generate-rpm.requires]
 libdrm = "*"
@@ -380,6 +386,7 @@ pipewire-libs = "*"
 freetype = "*"
 fontconfig = "*"
 pixman = "*"
+polkit-libs = "*"
 google-noto-sans-fonts = "*"
 rsms-inter-fonts = "*"
 wireplumber = "*"
@@ -403,10 +410,11 @@ depends = [
     "wireplumber",
     "gstreamer",
     "gst-plugins-base-libs",
+    "polkit",
 ]
 optdepends = [
     "xdg-desktop-portal: Desktop integration",
-    "fprintd: fingerprint unlock for otto-lock and otto-greeter",
+    "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize",
     "greetd: login manager otto --login hosts a greeter for",
     "gst-plugin-pipewire: otto-rdp video capture",
     "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)",
@@ -419,6 +427,8 @@ files = [
     ["target/release/otto-bar", "/usr/bin/otto-bar", "755"],
     ["target/release/otto-islands", "/usr/bin/otto-islands", "755"],
     ["target/release/otto-lock", "/usr/bin/otto-lock", "755"],
+    ["target/release/otto-authorize", "/usr/bin/otto-authorize", "755"],
+    ["resources/polkit/org.otto.settings.policy", "/usr/share/polkit-1/actions/org.otto.settings.policy", "644"],
     ["target/release/otto-greeter", "/usr/bin/otto-greeter", "755"],
     ["target/release/otto-rdp", "/usr/bin/otto-rdp", "755"],
     ["target/release/otto-settings", "/usr/bin/otto-settings", "755"],

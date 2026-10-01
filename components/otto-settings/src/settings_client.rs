@@ -145,6 +145,10 @@ pub struct Desc {
     /// one tied to other backends, such as the renderer under a windowed
     /// session.
     pub applies_here: bool,
+    /// The compositor asks for the user's password before applying a change
+    /// (`confirm = "password"`), so a `Set` can take as long as the user
+    /// takes to answer.
+    pub sensitive: bool,
 }
 
 impl Desc {
@@ -237,10 +241,30 @@ pub fn snap(id: &str, raw: f32) -> f32 {
 /// holding the configuration token, so hit-testing and `Set` are unaffected.
 pub fn display_choice(id: &str, value: &str) -> String {
     let store = STORE.get_or_init(Default::default).read().unwrap();
-    match store.schema.get(id) {
+    let shown = match store.schema.get(id) {
         Some(desc) => desc.display(value),
         None => value.to_string(),
+    };
+    // A value the schema has no name for, which this app can name — an
+    // interval in seconds, shown as minutes.
+    if shown == value {
+        if let Some(label) = crate::discovery::label_for(id, value) {
+            return label;
+        }
     }
+    shown
+}
+
+/// Whether a change to `id` waits on the user's password. See [`Desc::sensitive`].
+pub fn is_sensitive(id: &str) -> bool {
+    describe(id).is_some_and(|desc| desc.sensitive)
+}
+
+/// Ask for a redraw from any thread, the way the `Changed` listener does:
+/// for a `Set` that answered on a thread of its own.
+pub fn request_redraw() {
+    DIRTY.store(true, Ordering::Relaxed);
+    otto_kit::AppContext::request_wakeup();
 }
 
 pub fn describe(id: &str) -> Option<Desc> {
@@ -404,6 +428,7 @@ fn fetch_schema(connection: &Connection) -> zbus::Result<HashMap<String, Desc>> 
                     entry.get("applies_here").and_then(Value::from_zbus),
                     Some(Value::Bool(false))
                 ),
+                sensitive: string_field(&entry, "confirm").as_deref() == Some("password"),
                 id: id.clone(),
             };
             Some((id, desc))
@@ -468,6 +493,12 @@ pub fn number_for(id: &str, value: f32) -> Value {
 /// does not become an empty locale.
 pub fn text_for(id: &str, value: &str) -> Value {
     match describe(id).map(|d| d.kind) {
+        // An integer offered as a pop-up of choices (the auto-lock interval)
+        // comes back from the menu as its text.
+        Some(Kind::Int) => match value.trim().parse::<i32>() {
+            Ok(number) => Value::Int(number),
+            Err(_) => Value::Text(value.to_string()),
+        },
         Some(Kind::List) => Value::List(
             value
                 .split(',')
@@ -664,6 +695,7 @@ mod commit_type_tests {
                 choice_labels: Vec::new(),
                 unavailable_choices: Vec::new(),
                 applies_here: true,
+                sensitive: false,
             },
         );
     }

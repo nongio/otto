@@ -29,6 +29,7 @@ pub mod locale_env;
 pub mod lock;
 pub mod login;
 pub mod otto_dock;
+pub mod polkit_agent;
 pub mod render;
 pub mod render_elements;
 #[cfg(feature = "metrics")]

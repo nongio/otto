@@ -183,6 +183,10 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         }
 
+        // Before `exec_once`, so the session's agent is Otto's unless the
+        // configuration turns it off for one of the user's own.
+        self.start_polkit_agent();
+
         let entries = Config::with(|c| c.exec_once.clone());
         for entry in entries {
             self.launch_program(entry.cmd, entry.args);

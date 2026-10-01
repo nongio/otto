@@ -252,10 +252,31 @@ settings-lock-after = 多久后锁定
 settings-lock-screen = 锁屏程序
 settings-lock-screen-detail = 下次锁定屏幕时生效
 settings-lock-screen-arguments = 锁屏程序参数
+settings-lock-on-suspend = 电脑睡眠时锁定
 settings-group-login = 登录
 settings-greeter = 登录界面
 settings-greeter-detail = 下次登录时生效
 settings-greeter-arguments = 登录界面参数
+settings-lock-never = 从不
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = 更改此项需要输入密码
+settings-login-background-failed = 无法更改登录界面背景
+settings-login-background-not-image = 不是 PNG、JPEG 或 WebP 图片
+settings-login-background-too-large = 大于 20 MB
+settings-images-filter = 图片
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+       *[other] { $count } 分钟
+    }
+settings-interval-hours =
+    { $count ->
+       *[other] { $count } 小时
+    }
+settings-interval-seconds =
+    { $count ->
+       *[other] { $count } 秒
+    }
 
 
 ## Settings — Search
@@ -1019,6 +1040,8 @@ schema-lock-locker-args-label = 锁屏程序参数
 schema-lock-locker-args-description = 传递给锁屏程序的参数。
 schema-lock-auto-lock-timeout-label = 多久后锁定
 schema-lock-auto-lock-timeout-description = 锁定前的闲置秒数。0 表示从不锁定。
+schema-lock-on-suspend-label = 电脑睡眠时锁定
+schema-lock-on-suspend-description = 在电脑挂起前锁定屏幕，唤醒时显示锁屏。
 
 # --- login ---
 schema-login-greeter-command-label = 登录界面命令
@@ -1769,3 +1792,12 @@ files-photos-info-many =
        *[other] { $count } 项
     }
 files-photos-one-selected = 已选择 1 项 · 空格预览 · ↵ 打开
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = 取消
+authorize-error-failed = 认证失败
+authorize-path-in = { $name }（位于 { $dir }）
+polkit-unknown-program = 未知程序

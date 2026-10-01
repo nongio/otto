@@ -55,6 +55,11 @@ keyboard_repeat_rate = 30
 # Disabled by default.
 # xdg_autostart = true
 
+# Polkit — Otto asks for the password when a program needs polkit's
+# permission (pkexec, system services), with the same panel as Lock & Login.
+# Set to false only if you start another polkit agent yourself.
+# polkit_agent = true
+
 # Autostart — commands to run once at startup, in order.
 # Each entry is spawned non-blocking (fire-and-forget). Otto does not
 # restart crashed processes; use systemd or another supervisor for that.

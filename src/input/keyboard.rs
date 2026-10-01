@@ -241,11 +241,29 @@ fn function_key_vt(keycode: u32) -> Option<i32> {
     }
 }
 
+/// Whether `surface` belongs to the polkit agent Otto started.
+pub fn is_authorize_surface(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) -> bool {
+    use smithay::reexports::wayland_server::Resource;
+    surface.client().is_some_and(|client| {
+        crate::state::ClientState::component_of(&client)
+            == Some(crate::state::OttoComponent::Authorize)
+    })
+}
+
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// The layer surface that takes every key: the newest mapped top or
     /// overlay surface asking for exclusive keyboard interactivity.
+    ///
+    /// Except while the password panel is up: then it is the panel, whatever
+    /// else asks. An overlay mapped after the panel would otherwise be newer,
+    /// take the keys, and receive the password typed into what looks like
+    /// the panel. The locker needs no such rule: a locked session sends every
+    /// key to the lock surface before any layer surface is looked at.
     pub fn modal_keyboard_layer(&self) -> Option<smithay::desktop::LayerSurface> {
-        self.layer_shell_state
+        let modal: Vec<_> = self
+            .layer_shell_state
             .layer_surfaces()
             .rev()
             .filter(|layer| {
@@ -258,13 +276,26 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 data.keyboard_interactivity == KeyboardInteractivity::Exclusive
                     && (data.layer == WlrLayer::Top || data.layer == WlrLayer::Overlay)
             })
-            .find_map(|layer| {
+            .filter_map(|layer| {
                 self.workspaces.outputs().find_map(|o| {
                     let map = layer_map_for_output(o);
                     let cloned = map.layers().find(|l| l.layer_surface() == &layer).cloned();
                     cloned
                 })
             })
+            .collect();
+        modal
+            .iter()
+            .find(|surface| is_authorize_surface(surface.wl_surface()))
+            .or_else(|| modal.first())
+            .cloned()
+    }
+
+    /// Whether the polkit agent has its password panel up.
+    pub fn authorize_panel_up(&self) -> bool {
+        self.layer_surfaces
+            .values()
+            .any(|layer| is_authorize_surface(layer.layer_surface().wl_surface()))
     }
 
     /// Resolve a key event to what Otto does with it, then announce the
@@ -392,12 +423,25 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // over a modal layer surface. Committing focuses a window, and a modal
         // that loses the keyboard (the launcher) closes, so the switcher,
         // being the later of the two, wins.
-        let modal_layer = if self.workspaces.app_switcher.alive() {
+        //
+        // The password panel is the exception to the exception: while it is
+        // up, the switcher does not get the keys either.
+        let modal_layer = if self.workspaces.app_switcher.alive() && !self.authorize_panel_up() {
             None
         } else {
             self.modal_keyboard_layer()
         };
         if let Some(surface) = modal_layer {
+            // The password panel's keys go to the panel whatever grab is in
+            // place: a popup grab would ignore the focus change below, and an
+            // input method's would be sent the password.
+            if is_authorize_surface(surface.wl_surface()) {
+                let seat = self.seat.clone();
+                let panel =
+                    smithay::reexports::wayland_server::Resource::client(surface.wl_surface())
+                        .map(|c| c.id());
+                self.release_grabs_not_held_by(&seat, panel.as_ref(), false);
+            }
             keyboard.set_focus(self, Some(surface.into()), serial);
             // Every key is the surface's except the shortcuts that leave
             // the windows under it alone: see `fires_over_modal_layers`.

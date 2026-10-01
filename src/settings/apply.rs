@@ -43,6 +43,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "lock.locker_command"
             | "lock.locker_args"
             | "lock.auto_lock_timeout"
+            | "lock.on_suspend"
             | "accent_color"
             | "background_image"
             | "background_color"
@@ -361,6 +362,8 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.rearm_auto_lock_timer();
             Ok(())
         }
+        // Read by `lock::prepare_for_sleep` when logind announces a suspend.
+        "lock.on_suspend" => Ok(()),
         // The desk is a process the compositor owns, so the setting starts or
         // stops it.
         "desk.enabled" => {
@@ -493,6 +496,7 @@ mod tests {
             "lock.locker_command",
             "lock.locker_args",
             "lock.auto_lock_timeout",
+            "lock.on_suspend",
         ] {
             assert_eq!(
                 schema::lookup(id).expect("in schema").apply,

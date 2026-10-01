@@ -255,10 +255,34 @@ settings-lock-after = Verrouiller après
 settings-lock-screen = Écran de verrouillage
 settings-lock-screen-detail = S’applique au prochain verrouillage de l’écran
 settings-lock-screen-arguments = Arguments de l’écran de verrouillage
+settings-lock-on-suspend = Verrouiller quand l’ordinateur se met en veille
 settings-group-login = Connexion
 settings-greeter = Écran de connexion
 settings-greeter-detail = Applicable à la prochaine connexion
 settings-greeter-arguments = Arguments de l’écran de connexion
+settings-lock-never = Jamais
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = La modification demande votre mot de passe
+settings-login-background-failed = Impossible de modifier l’arrière-plan de l’écran de connexion
+settings-login-background-not-image = Ce n’est pas une image PNG, JPEG ou WebP
+settings-login-background-too-large = Plus de 20 Mo
+settings-images-filter = Images
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+        [one] { $count } minute
+       *[other] { $count } minutes
+    }
+settings-interval-hours =
+    { $count ->
+        [one] { $count } heure
+       *[other] { $count } heures
+    }
+settings-interval-seconds =
+    { $count ->
+        [one] { $count } seconde
+       *[other] { $count } secondes
+    }
 
 
 ## Settings — Search
@@ -1060,6 +1084,8 @@ schema-lock-locker-args-label = Arguments de l’écran de verrouillage
 schema-lock-locker-args-description = Arguments transmis au verrouilleur.
 schema-lock-auto-lock-timeout-label = Verrouiller après
 schema-lock-auto-lock-timeout-description = Secondes d’inactivité avant le verrouillage. 0 ne verrouille jamais.
+schema-lock-on-suspend-label = Verrouiller quand l’ordinateur se met en veille
+schema-lock-on-suspend-description = Verrouiller l’écran avant la mise en veille, pour que l’ordinateur se réveille sur l’écran de verrouillage.
 
 # --- login ---
 schema-login-greeter-command-label = Commande de l’écran de connexion
@@ -1796,3 +1822,12 @@ files-photos-info-many =
        *[other] { $count } éléments
     }
 files-photos-one-selected = 1 sélectionné · Espace pour l’aperçu · ↵ pour ouvrir
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = Annuler
+authorize-error-failed = Échec de l’authentification
+authorize-path-in = { $name } (dans { $dir })
+polkit-unknown-program = Un programme inconnu

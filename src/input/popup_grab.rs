@@ -1,11 +1,12 @@
 //! Who may take the keyboard with a popup grab, and keeping every other grab
-//! off the lock screen.
+//! off the lock screen and the password panel.
 //!
 //! `xdg_popup.grab` hands a client the keyboard: smithay's popup keyboard
 //! grab ignores later focus changes, so whatever Otto focuses next — the lock
-//! surface — types into the popup instead. The protocol ties the grab to "the
-//! serial of the user event" that opened the menu; Otto checks that, and
-//! refuses popup grabs outright while the session is locked.
+//! surface, the password panel — types into the popup instead. The protocol
+//! ties the grab to "the serial of the user event" that opened the menu; Otto
+//! checks that, and refuses popup grabs outright while the session is locked
+//! or the panel is up.
 //!
 //! **The serial rule.** Each press (button, key, touch down, tablet tip or
 //! button) delivered to a surface is noted per seat, with the client that got
@@ -40,6 +41,7 @@ pub struct LastPress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupGrabRefusal {
     SessionLocked,
+    PasswordPanelUp,
     /// The seat's latest press went to another client, or nowhere.
     NotTheLatestPress,
     /// Older than the client's latest press, or never handed out.
@@ -63,7 +65,8 @@ impl<BackendData: Backend> Otto<BackendData> {
     /// Whether a popup of `client` may grab `seat` with `serial`; the reason
     /// it may not otherwise.
     ///
-    /// While locked only the locker Otto started may grab: its keys are its.
+    /// While locked only the locker Otto started may grab, and while the
+    /// password panel is up only the polkit agent: their keys are theirs.
     pub fn popup_grab_refusal(
         &self,
         seat: &Seat<Self>,
@@ -73,6 +76,9 @@ impl<BackendData: Backend> Otto<BackendData> {
         let component = client.and_then(ClientState::component_of);
         if self.is_session_locked() && component != Some(OttoComponent::Locker) {
             return Some(PopupGrabRefusal::SessionLocked);
+        }
+        if self.authorize_panel_up() && component != Some(OttoComponent::Authorize) {
+            return Some(PopupGrabRefusal::PasswordPanelUp);
         }
         let client = client.map(|c| c.id());
         let client = client.as_ref();

@@ -254,10 +254,36 @@ settings-lock-after = Lock after
 settings-lock-screen = Lock screen
 settings-lock-screen-detail = Applies the next time the screen locks
 settings-lock-screen-arguments = Lock screen arguments
+settings-lock-on-suspend = Lock when the computer sleeps
 settings-group-login = Login
 settings-greeter = Greeter
 settings-greeter-detail = Applies at the next login
 settings-greeter-arguments = Greeter arguments
+settings-lock-never = Never
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = Changing this asks for your password
+# Under the login screen's Background image row when the last change did not go through.
+settings-login-background-failed = Couldn't change the login screen background
+settings-login-background-not-image = Not a PNG, JPEG or WebP image
+settings-login-background-too-large = Larger than 20 MB
+# The file picker's filter for pictures.
+settings-images-filter = Images
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+        [one] { $count } minute
+       *[other] { $count } minutes
+    }
+settings-interval-hours =
+    { $count ->
+        [one] { $count } hour
+       *[other] { $count } hours
+    }
+settings-interval-seconds =
+    { $count ->
+        [one] { $count } second
+       *[other] { $count } seconds
+    }
 
 
 ## Settings — Search
@@ -1124,6 +1150,8 @@ schema-lock-locker-args-label = Lock screen arguments
 schema-lock-locker-args-description = Arguments passed to the locker.
 schema-lock-auto-lock-timeout-label = Lock after
 schema-lock-auto-lock-timeout-description = Seconds of inactivity before locking. 0 never locks.
+schema-lock-on-suspend-label = Lock when the computer sleeps
+schema-lock-on-suspend-description = Lock the screen before the computer suspends, so it wakes to the lock screen.
 
 # --- login ---
 schema-login-greeter-command-label = Greeter command
@@ -1829,3 +1857,18 @@ a11y-preview-page = Preview, page { $page } of { $pages }
 a11y-preview-pages = Preview, { $pages } pages
 # Said of a preview that shows only the beginning of a long file.
 a11y-preview-shortened = Preview, shortened
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+
+authorize-cancel = Cancel
+# Under the password field when the password or fingerprint was not accepted.
+authorize-error-failed = Authentication failed
+
+## otto-authorize --polkit-agent — the same panel, when a program asks polkit for something that needs a password.
+## Under polkit's own message, a line names the program that asked.
+
+# The program that asked: its name and the folder it runs from.
+authorize-path-in = { $name } (in { $dir })
+# In place of the program's name when the program that asked cannot be found.
+polkit-unknown-program = An unknown program

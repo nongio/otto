@@ -30,7 +30,7 @@ outdir="${1:-dist}"
 mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
 
-BINARIES=(otto otto-bar otto-islands otto-lock otto-greeter otto-rdp
+BINARIES=(otto otto-bar otto-islands otto-lock otto-authorize otto-greeter otto-rdp
           otto-settings otto-files otto-launcher otto-emoji otto-stash otto-peek otto-preview
           otto-media-worker otto-msg otto-search otto-agents xdg-desktop-portal-otto)
 
@@ -88,6 +88,8 @@ done
 install -Dm644 components/otto-agents/otto-agents.service "$tmpdir/$PKGDIR/components/otto-agents/otto-agents.service"
 install -Dm644 components/otto-lock/otto-lock.pam \
     "$tmpdir/$PKGDIR/components/otto-lock/otto-lock.pam"
+install -Dm644 resources/polkit/org.otto.settings.policy \
+    "$tmpdir/$PKGDIR/resources/polkit/org.otto.settings.policy"
 
 # The agent skills, as a tree: PKGBUILD and PKGBUILD-nightly-bin install
 # whatever is under resources/plugins/otto, so the tarball has to carry all of

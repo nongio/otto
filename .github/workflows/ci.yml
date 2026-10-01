@@ -218,7 +218,7 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       # Clippy mirrors the test steps below: every crate CI compiles is
       # linted, and each area is linted only when that area changed.
       # `--all-targets` reaches tests, examples and benches, and the headless
@@ -324,9 +324,9 @@ jobs:
           shared-key: workspace-build
           cache-on-failure: true
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Build workspace binaries
-        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-emoji -p otto-stash -p otto-peek -p otto-preview -p otto-media-kit -p otto-msg -p otto-search -p otto-agents
+        run: cargo build --locked --release -p otto -p otto-bar -p otto-islands -p otto-lock -p otto-authorize -p otto-greeter -p otto-rdp -p xdg-desktop-portal-otto -p otto-settings -p otto-files -p otto-launcher -p otto-emoji -p otto-stash -p otto-peek -p otto-preview -p otto-media-kit -p otto-msg -p otto-search -p otto-agents
       - name: Upload workspace binaries
         uses: actions/upload-artifact@v4
         with:
@@ -336,6 +336,7 @@ jobs:
             target/release/otto-bar
             target/release/otto-islands
             target/release/otto-lock
+            target/release/otto-authorize
             target/release/otto-greeter
             target/release/otto-rdp
             target/release/xdg-desktop-portal-otto
@@ -373,7 +374,7 @@ jobs:
       - name: System dependencies
         # Nothing is compiled here, but dpkg-shlibdeps reads the binaries to
         # resolve runtime dependencies, so the shared libraries must be present.
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Cargo cache (packaging tools)
         uses: Swatinem/rust-cache@v2
         with:
@@ -420,7 +421,7 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.0
       - name: System dependencies
-        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev hicolor-icon-theme fonts-dejavu-core
+        run: sudo apt-get update; sudo apt-get install -y libdrm-dev libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libfreetype-dev libfontconfig-dev libdisplay-info-dev libpixman-1-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev libpolkit-agent-1-dev hicolor-icon-theme fonts-dejavu-core
       - name: Cargo cache (packaging tools)
         uses: Swatinem/rust-cache@v2
         with:

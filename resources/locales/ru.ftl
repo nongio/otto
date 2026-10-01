@@ -255,10 +255,40 @@ settings-lock-after = Блокировать через
 settings-lock-screen = Экран блокировки
 settings-lock-screen-detail = Применяется при следующей блокировке экрана
 settings-lock-screen-arguments = Аргументы экрана блокировки
+settings-lock-on-suspend = Блокировать при переходе в сон
 settings-group-login = Вход
 settings-greeter = Экран приветствия
 settings-greeter-detail = Применяется при следующем входе
 settings-greeter-arguments = Аргументы экрана приветствия
+settings-lock-never = Никогда
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = Для изменения потребуется пароль
+settings-login-background-failed = Не удалось изменить фон экрана входа
+settings-login-background-not-image = Это не изображение PNG, JPEG или WebP
+settings-login-background-too-large = Больше 20 МБ
+settings-images-filter = Изображения
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+        [one] { $count } минута
+        [few] { $count } минуты
+        [many] { $count } минут
+       *[other] { $count } минуты
+    }
+settings-interval-hours =
+    { $count ->
+        [one] { $count } час
+        [few] { $count } часа
+        [many] { $count } часов
+       *[other] { $count } часа
+    }
+settings-interval-seconds =
+    { $count ->
+        [one] { $count } секунда
+        [few] { $count } секунды
+        [many] { $count } секунд
+       *[other] { $count } секунды
+    }
 
 
 ## Settings — Search
@@ -1074,6 +1104,8 @@ schema-lock-locker-args-label = Аргументы экрана блокиров
 schema-lock-locker-args-description = Аргументы, передаваемые программе блокировки.
 schema-lock-auto-lock-timeout-label = Блокировать через
 schema-lock-auto-lock-timeout-description = Секунды бездействия до блокировки. 0 отключает блокировку.
+schema-lock-on-suspend-label = Блокировать при переходе в сон
+schema-lock-on-suspend-description = Блокировать экран перед переходом компьютера в сон, чтобы он просыпался на экране блокировки.
 
 # --- login ---
 schema-login-greeter-command-label = Команда экрана приветствия
@@ -1853,3 +1885,12 @@ files-photos-info-many =
        *[other] { $count } объекта
     }
 files-photos-one-selected = 1 выбран · Пробел — просмотр · ↵ — открыть
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = Отмена
+authorize-error-failed = Не удалось пройти проверку подлинности
+authorize-path-in = { $name } (в { $dir })
+polkit-unknown-program = Неизвестная программа

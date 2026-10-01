@@ -119,6 +119,9 @@ pub struct CalloopData<BackendData: Backend + 'static> {
 /// Records which clients are Otto's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OttoComponent {
+    /// `otto-authorize`, the polkit agent, whose password panel keeps the
+    /// keyboard while it is up — see `src/polkit_agent.rs`.
+    Authorize,
     /// The screen locker Otto started — the only client offered
     /// `ext_session_lock_manager_v1`. See [`crate::lock`].
     Locker,
@@ -283,6 +286,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub auto_lock_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// The desk process, while `desk.enabled` is on — see `src/desk.rs`.
     pub desk: crate::desk::Desk,
+    /// The session's polkit authentication agent — see `src/polkit_agent.rs`.
+    pub polkit_agent: crate::polkit_agent::PolkitAgent,
     pub workspaces: Workspaces,
 
     // smithay state
@@ -1122,6 +1127,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             last_press: None,
             auto_lock_timer,
             desk: Default::default(),
+            polkit_agent: Default::default(),
             output_manager_state,
             primary_selection_state,
             data_control_state,

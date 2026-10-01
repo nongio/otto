@@ -255,10 +255,34 @@ settings-lock-after = Blocca dopo
 settings-lock-screen = Blocco schermo
 settings-lock-screen-detail = Si applica al prossimo blocco dello schermo
 settings-lock-screen-arguments = Argomenti del blocco schermo
+settings-lock-on-suspend = Blocca quando il computer va in sospensione
 settings-group-login = Accesso
 settings-greeter = Schermata di accesso
 settings-greeter-detail = Si applica al prossimo accesso
 settings-greeter-arguments = Argomenti della schermata di accesso
+settings-lock-never = Mai
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = Per modificarlo ti verrà chiesta la password
+settings-login-background-failed = Impossibile cambiare lo sfondo della schermata di accesso
+settings-login-background-not-image = Non è un’immagine PNG, JPEG o WebP
+settings-login-background-too-large = Più grande di 20 MB
+settings-images-filter = Immagini
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+        [one] { $count } minuto
+       *[other] { $count } minuti
+    }
+settings-interval-hours =
+    { $count ->
+        [one] { $count } ora
+       *[other] { $count } ore
+    }
+settings-interval-seconds =
+    { $count ->
+        [one] { $count } secondo
+       *[other] { $count } secondi
+    }
 
 
 ## Settings — Search
@@ -1055,6 +1079,8 @@ schema-lock-locker-args-label = Argomenti del blocco schermo
 schema-lock-locker-args-description = Argomenti passati al programma di blocco.
 schema-lock-auto-lock-timeout-label = Blocca dopo
 schema-lock-auto-lock-timeout-description = Secondi di inattività prima del blocco. 0 non blocca mai.
+schema-lock-on-suspend-label = Blocca quando il computer va in sospensione
+schema-lock-on-suspend-description = Blocca lo schermo prima che il computer vada in sospensione, così si riattiva sul blocco schermo.
 
 # --- login ---
 schema-login-greeter-command-label = Comando della schermata di accesso
@@ -1791,3 +1817,12 @@ files-photos-info-many =
        *[other] { $count } elementi
     }
 files-photos-one-selected = 1 selezionato · Spazio per l’anteprima · ↵ per aprire
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = Annulla
+authorize-error-failed = Autenticazione non riuscita
+authorize-path-in = { $name } (in { $dir })
+polkit-unknown-program = Un programma sconosciuto

@@ -84,6 +84,15 @@ Otto hands the locker its own connection (`WAYLAND_SOCKET`) rather than the
 session's display. Lockers built on `libwayland` or `wayland-rs` pick that up
 without being told.
 
+You can also change the locker, its options, the auto-lock timeout and locking
+on suspend in **Settings › Lock & Login**. These decide what you type your
+password into, so Otto asks for your password first, in its own panel, naming
+the change ("Change the program that locks your screen to “swaylock”?"). The
+same happens when a script changes them with `busctl`. The question goes
+through polkit, so it needs polkit installed; without it, edit `config.toml`
+instead, which works as before. The greeter and the lid and power-button
+actions ask the same way.
+
 ## Using it
 
 The `otto-lock` panel is a frosted card with your avatar, a password field, and

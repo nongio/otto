@@ -110,6 +110,11 @@ pub struct Config {
     pub exec_once: Vec<RunCommandConfig>,
     #[serde(default)]
     pub xdg_autostart: bool,
+    /// Run Otto's polkit authentication agent (`otto-authorize
+    /// --polkit-agent`) for the session — see `src/polkit_agent.rs`. Off only
+    /// for someone who runs another agent of their own.
+    #[serde(default = "default_polkit_agent")]
+    pub polkit_agent: bool,
     #[serde(default)]
     pub systemd_notify: bool,
     #[serde(skip)]
@@ -180,6 +185,7 @@ impl Default for Config {
             rendering: RenderingConfig::default(),
             exec_once: Vec::new(),
             xdg_autostart: false,
+            polkit_agent: true,
             systemd_notify: false,
         };
         config.rebuild_shortcut_bindings();
@@ -1745,6 +1751,10 @@ fn default_frosting() -> bool {
 }
 
 fn default_occlusion_culling() -> bool {
+    true
+}
+
+fn default_polkit_agent() -> bool {
     true
 }
 
