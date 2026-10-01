@@ -21,9 +21,9 @@ use crate::portal::remembered;
 const REMEMBER_GROUP: &str = "otto.remember";
 use crate::portal::{
     build_streams_value_from_descriptors, decode_restore_data, encode_restore_data,
-    make_output_mapping_id, resolve_restored, session_program, PortalState, Request,
-    RestoredSource, SelectedWindow, Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED,
-    SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
+    make_output_mapping_id, program_display_name, resolve_restored, session_program, PortalState,
+    Request, RestoredSource, SelectedWindow, Session, SessionState, StreamDescriptor,
+    CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
 
@@ -109,12 +109,14 @@ impl ScreenCastPortal {
     /// and `Err` only when no dialog renderer answered (see the caller's
     /// fallback).
     ///
-    /// For an app a share can be remembered for, the picker carries a
-    /// "Remember for <app>" checkbox (islands words it; the group's label is
-    /// the app's name), and the answer says whether it was ticked.
+    /// When the share can be remembered, `remember_for` names the app and the
+    /// picker carries a "Remember for <app>" checkbox, ticked to start with
+    /// (islands words it; the group's label is the app's name). The answer
+    /// says whether it was still ticked.
     async fn pick_source(
         &self,
         app_id: &str,
+        remember_for: Option<String>,
         outputs: &[String],
         windows: &[WindowSource],
     ) -> zbus::Result<Option<(SourceSelection, bool)>> {
@@ -152,13 +154,13 @@ impl ScreenCastPortal {
         };
 
         // The Access portal's checkbox: a choice with no options, answered
-        // `true` or `false`. Off unless the user ticks it.
-        let remember = remembered::can_remember(app_id).then(|| {
+        // `true` or `false`. On unless the user unticks it.
+        let remember = remember_for.map(|name| {
             (
                 REMEMBER_GROUP.to_string(),
-                display_app_name(app_id),
+                name,
                 Vec::new(),
-                "false".to_string(),
+                "true".to_string(),
             )
         });
 
@@ -520,8 +522,31 @@ impl ScreenCastPortal {
                 return Ok((0, results));
             }
 
+            // Whether this share can be remembered, and who for. An app that
+            // asks to be remembered gets a token only it holds, whatever its
+            // app id; Otto remembers one that does not ask only under a real
+            // app id, as the empty one is every unsandboxed program's.
+            let asked_to_persist = persist_mode.is_some_and(|mode| mode != 0);
+            let remember_for = if !app_id.is_empty() {
+                Some(display_app_name(&app_id))
+            } else if asked_to_persist {
+                let program = session_program(connection, session_handle.as_str()).await;
+                Some(
+                    program
+                        .as_deref()
+                        .map(program_display_name)
+                        .unwrap_or_else(|| display_app_name(&app_id)),
+                )
+            } else {
+                None
+            };
             let (selection, remember) = match self
-                .pick_source(&app_id, &available_outputs, &available_windows)
+                .pick_source(
+                    &app_id,
+                    remember_for,
+                    &available_outputs,
+                    &available_windows,
+                )
                 .await
             {
                 Ok(Some(answer)) => answer,
@@ -538,9 +563,16 @@ impl ScreenCastPortal {
                 }
             };
 
+            // Unticked, an app that asked to be remembered is not: no restore
+            // data goes back from Start, so the frontend hands it no token.
+            let persist_mode = if asked_to_persist && !remember {
+                None
+            } else {
+                persist_mode
+            };
             self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
                 .await?;
-            if remember {
+            if remember && !asked_to_persist {
                 remembered::remember(connection, &app_id, &selection.restorable()).await;
             }
 
