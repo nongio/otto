@@ -13,6 +13,12 @@
 //!
 //! Otto never sees any of this: the locker runs as the session's user and
 //! authenticates that user, exactly as the greeter delegates to greetd.
+//!
+//! Shared by the two clients that prove the session's own user is at the
+//! keyboard: otto-lock, to unlock, and otto-authorize, to confirm a change to
+//! a sensitive setting. Each names its own PAM stack with a [`Service`].
+//! Behind the `pam` feature, so the greeter (which talks to greetd, not PAM)
+//! does not link libpam.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -119,18 +125,81 @@ pub struct Attempt {
     finished: bool,
 }
 
+/// Which PAM stack an [`Attempt`] runs, and how it falls back.
+#[derive(Debug, Clone, Copy)]
+pub struct Service {
+    /// The service Otto ships for this client, `/etc/pam.d/<preferred>`.
+    pub preferred: &'static str,
+    /// Tried in order when the preferred file is not installed.
+    pub fallbacks: &'static [&'static str],
+    /// An environment variable that names a different service outright, for
+    /// exercising the client against a stack whose answer is known. `None`
+    /// for a client whose environment is not the user's to choose.
+    pub env_override: Option<&'static str>,
+    /// Whether a success refreshes credentials that expire with time
+    /// (`PAM_REFRESH_CRED`): right for an unlock, pointless for a one-off
+    /// confirmation.
+    pub refresh_credentials: bool,
+}
+
+impl Service {
+    /// otto-lock's stack. See `components/otto-lock/otto-lock.pam`.
+    ///
+    /// `$OTTO_LOCK_PAM_SERVICE` names a different service. It is no weaker
+    /// than the rest of the session's environment: whoever can set it already
+    /// runs as this user, and the person a lock screen exists to stop is at
+    /// the keyboard of a session they cannot type into.
+    pub const LOCK: Service = Service {
+        preferred: "otto-lock",
+        fallbacks: &["system-auth", "login"],
+        env_override: Some("OTTO_LOCK_PAM_SERVICE"),
+        refresh_credentials: true,
+    };
+
+    /// otto-authorize's stack. See `components/otto-authorize/otto-authorize.pam`.
+    ///
+    /// Falls back to the lock screen's stack first, which is the same
+    /// question — is the session's own user at the keyboard — and then to the
+    /// system's. No environment override: the helper is started by the
+    /// compositor, and a confirmation that could be pointed at `pam_permit`
+    /// would confirm nothing.
+    pub const AUTHORIZE: Service = Service {
+        preferred: "otto-authorize",
+        fallbacks: &["otto-lock", "system-auth", "login"],
+        env_override: None,
+        refresh_credentials: false,
+    };
+}
+
 impl Attempt {
-    /// Start authenticating `user` against the `otto-lock` PAM service.
-    pub fn start(user: &str) -> Self {
+    /// Start authenticating `user` against `service`.
+    pub fn start(service: &Service, user: &str) -> Self {
+        let user = user.to_string();
+        let refresh = service.refresh_credentials;
+        let service = service_name(service);
+        Self::with_conversation(move |events, answers| {
+            converse(&service, &user, refresh, events, answers)
+        })
+    }
+
+    /// Run a conversation that is not this process's own PAM stack — polkit's
+    /// setuid helper, which runs PAM on the far side of a pipe — on a thread
+    /// of its own, exactly as [`Attempt::start`] runs PAM.
+    ///
+    /// `converse` sends what it is told as [`Event::Said`], blocks on
+    /// `answers` for each prompt, and returns how it ended. A closed answer
+    /// channel means the attempt was dropped: it should give up.
+    pub fn with_conversation<F>(converse: F) -> Self
+    where
+        F: FnOnce(&Sender<Event>, &Receiver<String>) -> Outcome + Send + 'static,
+    {
         let (event_tx, events) = std::sync::mpsc::channel();
         let (answers, answer_rx) = std::sync::mpsc::channel();
 
-        let user = user.to_string();
-        let service = service_name();
         std::thread::Builder::new()
             .name("pam".to_string())
             .spawn(move || {
-                let outcome = converse(&service, &user, &event_tx, &answer_rx);
+                let outcome = converse(&event_tx, &answer_rx);
                 // A send that fails means the panel is gone — the process is
                 // exiting, and there is nobody left to tell.
                 let _ = event_tx.send(Event::Ended(outcome));
@@ -182,58 +251,79 @@ impl Attempt {
 
 /// The PAM service to authenticate against.
 ///
-/// `otto-lock` is what Otto ships and what should be used. Without it PAM falls
-/// through to `other`, which on a sane system denies everything — so rather
-/// than lock the user out of their own session because a file was not
-/// installed, fall back to a stack that is known to authenticate a local user.
-///
-/// `$OTTO_LOCK_PAM_SERVICE` names a different service, for exercising the lock
-/// against a stack whose answer is known. It is no weaker than the rest of the
-/// session's environment: whoever can set it already runs as this user, and
-/// the person a lock screen exists to stop is at the keyboard of a session
-/// they cannot type into.
-fn service_name() -> CString {
-    const PREFERRED: &str = "otto-lock";
-    const FALLBACKS: [&str; 2] = ["system-auth", "login"];
+/// The preferred service is what Otto ships and what should be used. Without
+/// it PAM falls through to `other`, which on a sane system denies everything —
+/// so rather than lock the user out of their own session because a file was
+/// not installed, fall back to a stack that is known to authenticate a local
+/// user.
+fn service_name(service: &Service) -> CString {
+    resolve_service(service, |name| {
+        std::path::Path::new("/etc/pam.d").join(name).is_file()
+    })
+}
 
-    let installed = |service: &str| std::path::Path::new("/etc/pam.d").join(service).is_file();
+fn resolve_service(service: &Service, installed: impl Fn(&str) -> bool) -> CString {
+    let preferred = service.preferred;
 
-    if let Some(service) = std::env::var("OTTO_LOCK_PAM_SERVICE")
-        .ok()
-        .filter(|service| !service.is_empty())
+    if let Some(name) = service
+        .env_override
+        .and_then(|var| std::env::var(var).ok())
+        .filter(|name| !name.is_empty())
     {
-        tracing::warn!(service, "using a PAM service from the environment");
-        if let Ok(service) = CString::new(service) {
-            return service;
+        tracing::warn!(service = name, "using a PAM service from the environment");
+        if let Ok(name) = CString::new(name) {
+            return name;
         }
     }
 
-    if installed(PREFERRED) {
-        return CString::new(PREFERRED).expect("no interior nul");
+    if installed(preferred) {
+        return CString::new(preferred).expect("no interior nul");
     }
 
-    let fallback = FALLBACKS.into_iter().find(|service| installed(service));
+    let fallback = service.fallbacks.iter().find(|name| installed(name));
     match fallback {
-        Some(service) => {
+        Some(name) => {
             tracing::warn!(
-                service,
-                "/etc/pam.d/{PREFERRED} is not installed; falling back"
+                service = *name,
+                "/etc/pam.d/{preferred} is not installed; falling back"
             );
-            CString::new(service).expect("no interior nul")
+            CString::new(*name).expect("no interior nul")
         }
         // Nothing to fall back to. Ask for the service that should exist and
         // let PAM report what it makes of it.
         None => {
             tracing::error!("no PAM service found; authentication will fail");
-            CString::new(PREFERRED).expect("no interior nul")
+            CString::new(preferred).expect("no interior nul")
         }
     }
+}
+
+/// Overwrite a secret before its memory goes back to the allocator.
+///
+/// Only what is still in the buffer: a `String` that grew has already left
+/// copies behind, which nothing here can reach. The volatile writes are what
+/// keep the compiler from dropping stores to memory it can see is about to be
+/// freed.
+pub fn wipe(secret: &mut String) {
+    // SAFETY: zero is valid UTF-8, so the string stays a string throughout.
+    let bytes = unsafe { secret.as_bytes_mut() };
+    wipe_bytes(bytes);
+    secret.clear();
+}
+
+fn wipe_bytes(bytes: &mut [u8]) {
+    for byte in bytes.iter_mut() {
+        // SAFETY: `byte` is a valid, exclusive reference.
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
 /// The whole conversation, on the PAM thread.
 fn converse(
     service: &CStr,
     user: &str,
+    refresh_credentials: bool,
     events: &Sender<Event>,
     answers: &Receiver<String>,
 ) -> Outcome {
@@ -256,7 +346,7 @@ fn converse(
         return Outcome::Denied(otto_kit::t_owned!("lock-error-unavailable"));
     }
 
-    let outcome = authenticate(pamh);
+    let outcome = authenticate(pamh, refresh_credentials);
 
     // `pam_end` takes the last status so the stack can clean up accordingly.
     let end_status = if matches!(outcome, Outcome::Authenticated) {
@@ -269,7 +359,7 @@ fn converse(
     outcome
 }
 
-fn authenticate(pamh: *mut PamHandle) -> Outcome {
+fn authenticate(pamh: *mut PamHandle, refresh_credentials: bool) -> Outcome {
     let status = unsafe { pam_authenticate(pamh, 0) };
     if status != PAM_SUCCESS {
         return Outcome::Denied(strerror(pamh, status));
@@ -280,6 +370,10 @@ fn authenticate(pamh: *mut PamHandle) -> Outcome {
     let status = unsafe { pam_acct_mgmt(pamh, 0) };
     if status != PAM_SUCCESS {
         return Outcome::Denied(strerror(pamh, status));
+    }
+
+    if !refresh_credentials {
+        return Outcome::Authenticated;
     }
 
     // Best effort: a session whose Kerberos ticket could not be refreshed is
@@ -393,12 +487,21 @@ unsafe extern "C" fn conversation(
         };
 
         // A response of NULL is right for a message that asked nothing.
-        if let Some(answer) = answer {
-            let Ok(answer) = CString::new(answer) else {
+        if let Some(mut answer) = answer {
+            // Copied into a buffer sized for the terminator up front, so the
+            // answer is not reallocated (and left behind) on the way to C,
+            // and both copies are wiped once PAM has its own.
+            let mut terminated = Vec::with_capacity(answer.len() + 1);
+            terminated.extend_from_slice(answer.as_bytes());
+            terminated.push(0);
+            wipe(&mut answer);
+            if terminated[..terminated.len() - 1].contains(&0) {
+                wipe_bytes(&mut terminated);
                 libc::free(responses as *mut c_void);
                 return PAM_CONV_ERR;
-            };
-            let copy = libc::strdup(answer.as_ptr());
+            }
+            let copy = libc::strdup(terminated.as_ptr() as *const c_char);
+            wipe_bytes(&mut terminated);
             if copy.is_null() {
                 libc::free(responses as *mut c_void);
                 return PAM_BUF_ERR;
@@ -409,4 +512,28 @@ unsafe extern "C" fn conversation(
 
     *resp = responses;
     PAM_SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// otto-authorize without its own file falls back the way otto-lock
+    /// does — through the lock screen's stack first, which asks the same
+    /// question.
+    #[test]
+    fn authorize_falls_back_to_the_lock_screen_stack() {
+        let only = |present: &'static [&'static str]| move |name: &str| present.contains(&name);
+        let pick = |present| resolve_service(&Service::AUTHORIZE, only(present));
+        assert_eq!(
+            pick(&["otto-authorize", "otto-lock"]).to_str(),
+            Ok("otto-authorize")
+        );
+        assert_eq!(
+            pick(&["otto-lock", "system-auth"]).to_str(),
+            Ok("otto-lock")
+        );
+        assert_eq!(pick(&["system-auth"]).to_str(), Ok("system-auth"));
+        assert_eq!(pick(&[]).to_str(), Ok("otto-authorize"));
+    }
 }

@@ -192,7 +192,7 @@ pub fn locker_command() -> (String, Vec<String>) {
 }
 
 /// Let `fd` survive into the child's `exec`. Called between fork and exec.
-fn inherit(fd: i32) -> std::io::Result<()> {
+pub(crate) fn inherit(fd: i32) -> std::io::Result<()> {
     // SAFETY: fcntl on a descriptor this process holds open; async-signal-safe.
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFD);

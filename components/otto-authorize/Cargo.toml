@@ -1,0 +1,26 @@
+[package]
+name = "otto-authorize"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Otto's polkit authentication agent: the password panel for pkexec, system services and protected settings"
+
+[dependencies]
+otto-kit = { path = "../otto-kit" }
+otto-auth-ui = { path = "../otto-auth-ui", features = ["pam"] }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+libc = "0.2"
+# The polkit agent (`--polkit-agent`): its object on the system bus, on a
+# runtime of its own thread. Both already come in through otto-kit.
+zbus = { version = "4", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

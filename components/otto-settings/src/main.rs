@@ -751,8 +751,31 @@ fn stop_recording() -> bool {
 
 /// Push one change to the compositor, reporting a refusal rather than letting
 /// the UI show a value that was never accepted.
+///
+/// A sensitive setting (Lock & Login) waits on the user's password: the
+/// compositor holds the call while its own panel asks, for up to a minute. That
+/// wait happens on a thread of its own, so the window keeps drawing; the store
+/// is updated there when the answer comes and a redraw is requested, exactly
+/// as for a `Changed` signal.
 fn apply(id: &str, value: settings_client::Value) {
-    match settings_client::set(id, value) {
+    if settings_client::is_sensitive(id) {
+        let owned = id.to_string();
+        let spawned = std::thread::Builder::new()
+            .name("confirm-set".into())
+            .spawn(move || {
+                report(&owned, settings_client::set(&owned, value));
+                settings_client::request_redraw();
+            });
+        if let Err(err) = spawned {
+            eprintln!("{id}: could not start the confirmation thread ({err})");
+        }
+        return;
+    }
+    report(id, settings_client::set(id, value));
+}
+
+fn report(id: &str, outcome: settings_client::SetOutcome) {
+    match outcome {
         settings_client::SetOutcome::Applied => {}
         settings_client::SetOutcome::PendingRestart => {
             println!("{id}: saved, takes effect after a restart");

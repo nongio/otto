@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The authentication panel Otto shows when it needs a password — shared by the greeter and the lock screen"
+description = "The authentication panel Otto shows when it needs a password — shared by the greeter, the lock screen and otto-authorize"
 
 [dependencies]
 laye-rs.workspace = true
@@ -17,7 +17,12 @@ taffy = "0.5"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
+libc = { version = "0.2", optional = true }
 
+[features]
+# The PAM conversation otto-lock and otto-authorize share. Off by default so
+# the greeter, which talks to greetd rather than PAM, does not link libpam.
+pam = ["dep:libc"]
 
 [dependencies.skia-safe]
 version = "=0.93"

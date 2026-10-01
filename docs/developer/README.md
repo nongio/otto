@@ -43,7 +43,7 @@ is the place to start.
 | [Foreign Toplevel](foreign-toplevel.md) | Exposing the window list to taskbars and launchers |
 | [Surface Style Protocol](surface-style-protocol.md) | `otto-surface-style-unstable-v1`: letting a client style and animate its own surface |
 | [Screen Sharing](screenshare.md) | Portal, PipeWire, wlr-screencopy, window capture |
-| [Sandboxed Clients](permissions.md) | What Flatpak apps cannot reach, and the lock screen's guarantees |
+| [Permissions](permissions.md) | What Flatpak apps cannot reach, the lock screen, and the polkit auth panel |
 | [File Previews](file-previews.md) | Thumbnails, the preview column, Peek, the sandboxed decode worker, video |
 | [otto-media-kit](otto-media-kit.md) | Video playback: the embeddable player and its GStreamer worker |
 | [File Icons](file-icons.md) | What goes in the icon box: file types, the icon-name chain, themes, animated previews |

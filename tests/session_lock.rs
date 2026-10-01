@@ -3,8 +3,9 @@
 //! The lock is the compositor's: the blank goes up before any locker has
 //! asked, a locker that dies leaves the session locked, and the next locker
 //! Otto starts takes the standing lock over instead of being refused.
-//! Also: a popup grab takes the keyboard only after a press on its own
-//! client, never while locked.
+//! Also: the password panel keeps the keyboard over other clients' overlays,
+//! and a popup grab takes the keyboard only after a press on its own client,
+//! never while locked.
 
 #[cfg(feature = "headless")]
 mod session_lock_tests {
@@ -12,7 +13,8 @@ mod session_lock_tests {
     use std::time::Duration;
 
     use otto::headless::{HeadlessConfig, HeadlessHandle};
-    use otto_kit::testing::TestClient;
+    use otto::state::OttoComponent;
+    use otto_kit::testing::{KeyboardInteractivity, Layer, TestClient};
     use serial_test::serial;
     use wayland_client::{
         delegate_noop,
@@ -407,6 +409,67 @@ mod session_lock_tests {
             !still_blanking,
             "outputs added after the unlock would be blanked"
         );
+
+        handle.stop();
+    }
+
+    /// While the polkit agent asks for the password, an exclusive overlay put
+    /// up by another client neither takes the keyboard nor is the surface
+    /// keys are routed to.
+    #[test]
+    #[serial]
+    fn the_password_panel_keeps_the_keyboard() {
+        let handle = start();
+
+        let stream = handle.query(|state| {
+            state
+                .connect_component_client(OttoComponent::Authorize)
+                .expect("connect the panel")
+                .1
+        });
+        let mut panel_client = TestClient::from_stream(stream).expect("panel client");
+        let _panel = panel_client.create_layer_surface(
+            "otto-authorize",
+            Layer::Overlay,
+            400,
+            300,
+            KeyboardInteractivity::Exclusive,
+        );
+        handle.wait(Duration::from_millis(100));
+        let _ = panel_client.roundtrip();
+        handle.settle(20);
+        assert_eq!(
+            handle.focused_layer_namespace().as_deref(),
+            Some("otto-authorize")
+        );
+
+        let mut other = TestClient::connect(&handle.socket_name).expect("client");
+        let _overlay = other.create_layer_surface(
+            "lookalike",
+            Layer::Overlay,
+            400,
+            300,
+            KeyboardInteractivity::Exclusive,
+        );
+        handle.wait(Duration::from_millis(100));
+        let _ = other.roundtrip();
+        handle.settle(20);
+
+        assert_eq!(
+            handle.focused_layer_namespace().as_deref(),
+            Some("otto-authorize"),
+            "an overlay mapped over the password panel took the keyboard"
+        );
+        let routed = handle.query(|state| {
+            state.modal_keyboard_layer().and_then(|layer| {
+                use smithay::reexports::wayland_server::Resource;
+                state
+                    .layer_surfaces
+                    .get(&layer.wl_surface().id())
+                    .map(|s| s.namespace().to_string())
+            })
+        });
+        assert_eq!(routed.as_deref(), Some("otto-authorize"));
 
         handle.stop();
     }

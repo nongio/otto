@@ -173,9 +173,18 @@ does not offer is edited by hand.
 | `choice_labels` | `as` | optional; human names for `choices`, same order |
 | `unavailable_choices` | `as` | optional; entries of `choices` this build cannot take |
 | `applies_here` | `b` | optional; `false` when the setting has no effect under the running backend |
+| `confirm` | `s` | optional; `password` when `Set` and `Reset` first ask the user through polkit |
 
 Unknown keys must be ignored by clients, so the schema can grow without
 breaking them.
+
+A setting with `confirm = "password"` (the locker, greeter, auto-lock,
+locking on suspend, the lid and power button) is changed only after polkit
+authorizes `org.otto.settings.lock`: Otto's auth panel names the change and the
+user types their password. The call waits for the answer, which can take as
+long as the user takes, so call it without a short timeout. A refusal, or
+polkit not running, is `org.freedesktop.DBus.Error.AccessDenied`. Setting such
+a value to what it already is asks nothing.
 
 `step` exists because a slider maps pixels to values: without it a drag lands
 on whatever float the pixel happened to hit, and a pointer speed the user meant

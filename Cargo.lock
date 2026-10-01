@@ -5190,12 +5190,30 @@ version = "1.5.0"
 dependencies = [
  "chrono",
  "laye-rs",
+ "libc",
  "otto-kit",
  "serde",
  "skia-safe",
  "taffy",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "otto-authorize"
+version = "1.5.0"
+dependencies = [
+ "futures-util",
+ "libc",
+ "otto-auth-ui",
+ "otto-kit",
+ "smithay-client-toolkit 0.19.2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "zbus 4.4.0",
 ]
 
 [[package]]
@@ -5371,7 +5389,6 @@ name = "otto-lock"
 version = "1.5.0"
 dependencies = [
  "chrono",
- "libc",
  "otto-auth-ui",
  "otto-kit",
  "smithay-client-toolkit 0.19.2",

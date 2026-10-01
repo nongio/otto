@@ -30,6 +30,9 @@ pub struct Choice {
 /// else is not ours to answer — `open_menu` falls back to this only when the
 /// served schema has no `choices` of its own.
 pub fn choices_for(id: &str, current: &str) -> Option<Vec<Choice>> {
+    if id == AUTO_LOCK_ID {
+        return Some(auto_lock_choices(current));
+    }
     let discovered: &'static [String] = match id {
         "font_family" => font_families(),
         "cursor_theme" => cursor_themes(),
@@ -275,6 +278,59 @@ fn is_executable_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------
+// The auto-lock interval: an integer number of seconds on the wire, offered
+// as a handful of intervals. Not discovered, but not the schema's to serve
+// either — the setting takes any number of seconds, and these are only the
+// ones worth a row in a menu.
+// ---------------------------------------------------------------------
+
+const AUTO_LOCK_ID: &str = "lock.auto_lock_timeout";
+
+/// Seconds. 0 never locks.
+const AUTO_LOCK_INTERVALS: &[u32] = &[0, 60, 120, 300, 600, 900, 1800, 3600];
+
+/// The intervals, plus whatever is set now if it is not one of them (a value
+/// written into `config.toml` by hand).
+fn auto_lock_choices(current: &str) -> Vec<Choice> {
+    let mut seconds: Vec<u32> = AUTO_LOCK_INTERVALS.to_vec();
+    if let Ok(current) = current.trim().parse::<u32>() {
+        if !seconds.contains(&current) {
+            seconds.push(current);
+            seconds.sort_unstable();
+        }
+    }
+    seconds
+        .into_iter()
+        .map(|s| Choice {
+            label: interval_label(s),
+            value: s.to_string(),
+        })
+        .collect()
+}
+
+/// A name for `value` of `id` where the schema has none. Only the auto-lock
+/// interval has one: seconds, shown as minutes.
+pub fn label_for(id: &str, value: &str) -> Option<String> {
+    if id != AUTO_LOCK_ID {
+        return None;
+    }
+    value.trim().parse::<u32>().ok().map(interval_label)
+}
+
+fn interval_label(seconds: u32) -> String {
+    match seconds {
+        0 => otto_kit::t_owned!("settings-lock-never"),
+        s if s % 3600 == 0 => {
+            otto_kit::t_owned!("settings-interval-hours", count = f64::from(s / 3600))
+        }
+        s if s % 60 == 0 => {
+            otto_kit::t_owned!("settings-interval-minutes", count = f64::from(s / 60))
+        }
+        s => otto_kit::t_owned!("settings-interval-seconds", count = f64::from(s)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +419,28 @@ mod tests {
         assert_eq!(found, vec!["otto-lock"]);
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn auto_lock_offers_intervals_and_keeps_a_hand_written_one() {
+        let offered = auto_lock_choices("600");
+        assert_eq!(offered.first().map(|c| c.value.as_str()), Some("0"));
+        assert!(offered.iter().any(|c| c.value == "600"));
+        assert_eq!(offered.len(), AUTO_LOCK_INTERVALS.len());
+
+        let odd = auto_lock_choices("450");
+        assert_eq!(odd.len(), AUTO_LOCK_INTERVALS.len() + 1);
+        let values: Vec<&str> = odd.iter().map(|c| c.value.as_str()).collect();
+        assert!(values
+            .windows(2)
+            .all(|w| w[0].parse::<u32>().unwrap() < w[1].parse::<u32>().unwrap()));
+    }
+
+    #[test]
+    fn only_the_auto_lock_interval_gets_a_label() {
+        assert!(label_for("lock.auto_lock_timeout", "300").is_some());
+        assert_eq!(label_for("cursor_theme", "300"), None);
+        assert_eq!(label_for("lock.auto_lock_timeout", "soon"), None);
     }
 
     #[test]

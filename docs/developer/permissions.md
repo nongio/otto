@@ -1,7 +1,8 @@
-# Sandboxed Clients
+# Permissions
 
-What Otto keeps away from sandboxed apps, and why it stops there. The code is
-`src/sandbox.rs` and the filters on each global in `src/state/`; the tests are
+What Otto keeps away from sandboxed apps and why it stops there, and how it
+asks for the password. The sandbox code is `src/sandbox.rs` and the filters on
+each global in `src/state/`; the tests are
 `tests/sandboxed_globals.rs`, `tests/session_lock.rs` and
 `tests/idle_inhibit.rs`.
 
@@ -58,6 +59,32 @@ These are about the lock being reliable rather than about sandboxes:
 - Popup and input-method grabs are dropped while locked, and a popup grab
   needs the serial of the latest press on that client.
 - An idle inhibitor counts only while its surface is on screen.
+
+## The auth panel
+
+Every password Otto asks for outside the lock screen goes through polkit, and
+Otto is the session's polkit authentication agent:
+
+- The compositor starts `otto-authorize --polkit-agent` on a socketpair
+  marked `OttoComponent::Authorize` and restarts it if it dies
+  (`src/polkit_agent.rs`; `polkit_agent = false` turns it off). It registers
+  for the compositor's logind session.
+- polkitd calls `BeginAuthentication`; the agent shows the shared auth panel
+  (`otto-auth-ui`) and hands the password to polkit's own helper
+  (`polkit-agent-helper-1`), which runs PAM and reports to polkitd. The agent
+  never decides the answer itself.
+- While the panel is up it holds the keyboard: an overlay mapped later
+  neither takes the keys nor draws over it, and popup and input-method grabs
+  are released (`src/input/keyboard.rs`, `src/shell/mod.rs`,
+  `src/input/popup_grab.rs`).
+
+Protected settings (`settings::schema::PROTECTED`: the locker, greeter,
+auto-lock, locking on suspend, the lid and power button) ask polkit for
+`org.otto.settings.lock` (`auth_self`) before `Set` or `Reset` applies them
+(`src/settings/polkit.rs`). The subject is the compositor's own process, so
+polkitd asks Otto's agent, which words the panel from the `otto.setting`,
+`otto.value` and `otto.label` details. The schema marks these settings with
+`confirm = "password"`, so Settings knows a `Set` may wait for the user.
 
 ## Screen capture
 

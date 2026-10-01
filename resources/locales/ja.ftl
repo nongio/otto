@@ -251,10 +251,31 @@ settings-lock-after = ロックするまでの時間
 settings-lock-screen = ロック画面
 settings-lock-screen-detail = 次に画面がロックされるときから適用されます
 settings-lock-screen-arguments = ロック画面の引数
+settings-lock-on-suspend = スリープ時にロック
 settings-group-login = ログイン
 settings-greeter = グリーター
 settings-greeter-detail = 次回のログインから適用されます
 settings-greeter-arguments = グリーターの引数
+settings-lock-never = ロックしない
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = 変更するにはパスワードが必要です
+settings-login-background-failed = ログイン画面の背景を変更できませんでした
+settings-login-background-not-image = PNG、JPEG、WebP 画像ではありません
+settings-login-background-too-large = 20 MB を超えています
+settings-images-filter = 画像
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+       *[other] { $count } 分
+    }
+settings-interval-hours =
+    { $count ->
+       *[other] { $count } 時間
+    }
+settings-interval-seconds =
+    { $count ->
+       *[other] { $count } 秒
+    }
 
 
 ## Settings — Search
@@ -1016,6 +1037,8 @@ schema-lock-locker-args-label = ロック画面の引数
 schema-lock-locker-args-description = ロッカーに渡す引数。
 schema-lock-auto-lock-timeout-label = ロックするまでの時間
 schema-lock-auto-lock-timeout-description = ロックするまでの無操作の秒数。0ならロックしません。
+schema-lock-on-suspend-label = スリープ時にロック
+schema-lock-on-suspend-description = コンピュータがサスペンドする前に画面をロックし、復帰時にロック画面が表示されるようにします。
 
 # --- login ---
 schema-login-greeter-command-label = グリーターのコマンド
@@ -1765,3 +1788,23 @@ files-photos-info-many =
        *[other] { $count } 項目
     }
 files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵ で開く
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = キャンセル
+authorize-reason-locker-command = 画面をロックするプログラムを「{ $value }」に変更しますか？
+authorize-reason-locker-args = 画面をロックするプログラムのオプションを「{ $value }」に変更しますか？
+authorize-reason-locker-args-clear = 画面をロックするプログラムのオプションを削除しますか？
+authorize-reason-auto-lock = 画面が自動的にロックされるまでの時間を変更しますか？
+authorize-reason-auto-lock-off = 画面が自動的にロックされないようにしますか？
+authorize-reason-lock-on-suspend = コンピュータがスリープするたびに画面をロックしますか？
+authorize-reason-lock-on-suspend-off = コンピュータがスリープするときに画面がロックされないようにしますか？
+authorize-reason-greeter-command = ログイン画面のプログラムを「{ $value }」に変更しますか？
+authorize-reason-greeter-args = ログイン画面のプログラムのオプションを「{ $value }」に変更しますか？
+authorize-reason-greeter-args-clear = ログイン画面のプログラムのオプションを削除しますか？
+authorize-reason-generic = 設定「{ $setting }」を変更しますか？
+authorize-error-failed = 認証に失敗しました
+polkit-reason = { $program } からの要求：{ $message }
+polkit-unknown-program = 不明なプログラム

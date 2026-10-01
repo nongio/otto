@@ -642,6 +642,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         if self.is_session_locked() {
             return;
         }
+        // Nor while the password panel is up: the panel keeps the keyboard,
+        // and a surface mapped over it must not be typed into. The grant
+        // stays owed, for after the panel has gone.
+        let is_panel =
+            crate::input::keyboard::is_authorize_surface(layer.layer_surface().wl_surface());
+        if !is_panel && self.authorize_panel_up() {
+            return;
+        }
         // Only once the surface is actually mapped can it hold focus; an
         // unmapped surface with no buffer would take the keyboard into a void.
         // Not recording the exclusive commit here keeps the grant owed until
@@ -662,6 +670,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             let Some(layer) = state.layer_surfaces.get(&surface_id) else {
                 return;
             };
+            if !is_panel && state.authorize_panel_up() {
+                return;
+            }
             if !layer.can_receive_keyboard_focus() {
                 return;
             }
@@ -683,10 +694,36 @@ impl<BackendData: Backend> Otto<BackendData> {
                     _ => None,
                 };
                 layer.note_focus_taken_from(taken_from);
+                // The password panel takes the keys from under any grab: a
+                // popup's would ignore the focus change, an input method's
+                // would be sent the password.
+                if is_panel {
+                    let seat = state.seat.clone();
+                    let panel = layer.layer_surface().wl_surface().client().map(|c| c.id());
+                    state.release_grabs_not_held_by(&seat, panel.as_ref(), true);
+                }
                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                 keyboard.set_focus(state, Some(target), serial);
             }
         });
+    }
+
+    /// Put the password panel back at the top of the overlay layer.
+    fn raise_authorize_panel(&mut self) {
+        let panels: Vec<_> = self
+            .layer_surfaces
+            .values()
+            .filter(|s| {
+                s.wlr_layer() == Layer::Overlay
+                    && crate::input::keyboard::is_authorize_surface(s.layer_surface().wl_surface())
+            })
+            .map(|s| s.layer.clone())
+            .collect();
+        for panel in panels {
+            if let Some(parent) = self.layers_engine.scene_get_node_parent(panel.id()) {
+                let _ = self.layers_engine.append_layer(&panel, parent);
+            }
+        }
     }
 
     /// Is a modal overlay layer-shell surface on screen?
@@ -913,6 +950,15 @@ impl<BackendData: Backend> WlrLayerShellHandler for Otto<BackendData> {
 
         // Store in our map
         self.layer_surfaces.insert(surface_id, layer_shell_surface);
+
+        // The password panel stays on top of the overlay layer: a surface
+        // put up after it would otherwise be drawn over it, and could pass
+        // itself off as the panel while the real one takes the keys.
+        if wlr_layer == Layer::Overlay
+            && !crate::input::keyboard::is_authorize_surface(surface.wl_surface())
+        {
+            self.raise_authorize_panel();
+        }
 
         // Also register with Smithay's layer map for protocol compliance
         let mut map = layer_map_for_output(&output);

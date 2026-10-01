@@ -481,7 +481,7 @@ impl Greeter {
             Asked::Start,
             Request::StartSession {
                 cmd: session.command,
-                env: Vec::new(),
+                env: session_env(),
             },
         );
     }
@@ -741,6 +741,8 @@ impl Greeter {
             Action::CycleSession => self.cycle_session(),
             Action::Power(power) => self.power(power),
             Action::UsePassword => self.use_password(),
+            // Only a dialog panel (otto-authorize) draws Cancel.
+            Action::Cancel => {}
         }
     }
 
@@ -1026,6 +1028,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::connect()?;
     AppRunner::new(Greeter::new(client)).run()?;
     Ok(())
+}
+
+/// What greetd puts in PAM's environment before `pam_open_session`, for
+/// `pam_systemd` to register the session with.
+///
+/// Every session offered comes from `wayland-sessions`, so each is a Wayland
+/// session, and logind should know: without `XDG_SESSION_TYPE` greetd leaves
+/// it a `tty` session, and logind then keeps any older login of the same
+/// user (a text console on another VT) as the user's *display* session.
+/// polkitd sends requests from programs outside a logind session — every app
+/// Otto launches runs in a systemd user scope — to that display session, so
+/// they would never reach Otto's polkit agent.
+fn session_env() -> Vec<String> {
+    vec!["XDG_SESSION_TYPE=wayland".to_string()]
 }
 
 #[cfg(test)]

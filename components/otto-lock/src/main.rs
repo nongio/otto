@@ -7,20 +7,21 @@
 //!
 //! Nothing here can unlock a session it did not lock, and nothing here can
 //! reveal one: the lock lives in the compositor, so a locker that crashes
-//! leaves the screen blank rather than the desktop. See `specs/lock-screen.md`.
+//! leaves the screen blank rather than the desktop. The compositor starts this
+//! program (it is the only client allowed to lock), usually after it has
+//! already blanked the screen, and starts it again if it dies; the new one
+//! takes over the standing lock. See `specs/lock-screen.md`.
 //!
 //! ```sh
-//! OTTO_LOCKER_COMMAND=target/release/otto-lock   # test an uninstalled build
+//! OTTO_LOCKER_COMMAND=target/release/otto-lock   # test an uninstalled build (dev builds of otto only)
 //! ```
 
-mod pam;
-
+use otto_auth_ui::pam::{Attempt, Event, Message, Outcome, Service};
 use otto_auth_ui::{
     reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
 };
 use otto_kit::surfaces::{SessionLock, SessionLockSurface};
 use otto_kit::{App, AppContext, AppRunner};
-use pam::{Attempt, Event, Message, Outcome};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
 use wayland_client::protocol::wl_keyboard;
@@ -338,7 +339,7 @@ impl Locker {
         };
 
         tracing::info!(user = %user.name, "Authenticating");
-        self.attempt = Some(Attempt::start(&user.name));
+        self.attempt = Some(Attempt::start(&Service::LOCK, &user.name));
         self.session.question_pending = false;
         self.session.prompt = otto_kit::t_owned!("lock-prompt-password");
     }
@@ -540,9 +541,10 @@ impl Locker {
         match action {
             Action::UsePassword => self.session.use_password(),
             Action::Power(power) => self.power(power),
-            // A lock screen shows no session picker, so nothing can ask for
-            // this — but the panel's vocabulary is shared with the greeter.
-            Action::CycleSession => {}
+            // A lock screen shows no session picker and no Cancel, so nothing
+            // can ask for these — but the panel's vocabulary is shared with
+            // the greeter and otto-authorize.
+            Action::CycleSession | Action::Cancel => {}
         }
     }
 

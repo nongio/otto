@@ -15,7 +15,7 @@ arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
 depends=("libdrm" "systemd-libs" "mesa" "libxkbcommon" "wayland" "libinput" "dbus" "seatd" "pipewire" "freetype2" "fontconfig" "pixman" "noto-fonts" "inter-font" "gstreamer" "gst-plugins-base-libs")
-optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock and otto-greeter" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files" "vulkan-icd-loader: the Vulkan renderer" "vulkan-intel: the Vulkan renderer on Intel GPUs" "vulkan-radeon: the Vulkan renderer on AMD GPUs")
+optdepends=("xdg-desktop-portal: Desktop integration" "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize" "polkit: the password panel for pkexec and protected settings" "greetd: login manager otto --login hosts a greeter for" "gst-plugin-pipewire: otto-rdp video capture" "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)" "gst-plugins-base: Peek video playback (the playbin element)" "gst-plugins-good: Peek playback of MP4 and Matroska" "gst-libav: Peek playback of H.264 and AAC" "localsearch: file search and the Recent listing in otto-files" "vulkan-icd-loader: the Vulkan renderer" "vulkan-intel: the Vulkan renderer on Intel GPUs" "vulkan-radeon: the Vulkan renderer on AMD GPUs")
 source=("https://github.com/nongio/otto/releases/download/$_tag/otto-$_ver-x86_64.tar.gz")
 sha256sums=("SKIP")
 # Files pacman must never clobber: a modified config becomes .pacnew on
@@ -33,6 +33,11 @@ package() {
     install -Dm755 target/release/otto-bar "$pkgdir/usr/bin/otto-bar"
     install -Dm755 target/release/otto-islands "$pkgdir/usr/bin/otto-islands"
     install -Dm755 target/release/otto-lock "$pkgdir/usr/bin/otto-lock"
+    install -Dm755 target/release/otto-authorize "$pkgdir/usr/bin/otto-authorize"
+    # The polkit action for protected settings; older tarballs predate it.
+    if [ -f resources/polkit/org.otto.settings.policy ]; then
+        install -Dm644 resources/polkit/org.otto.settings.policy "$pkgdir/usr/share/polkit-1/actions/org.otto.settings.policy"
+    fi
     install -Dm755 target/release/otto-greeter "$pkgdir/usr/bin/otto-greeter"
     install -Dm755 target/release/otto-rdp "$pkgdir/usr/bin/otto-rdp"
     install -Dm755 target/release/otto-settings "$pkgdir/usr/bin/otto-settings"

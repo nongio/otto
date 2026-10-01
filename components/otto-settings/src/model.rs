@@ -201,6 +201,9 @@ impl Control {
                 }
             }
             (Control::Select(_), Value::Text(text)) => Control::Select(text.clone()),
+            // An integer offered as a pop-up (the auto-lock interval): the
+            // menu holds its choices as text, so the value is held that way.
+            (Control::Select(_), Value::Int(number)) => Control::Select(number.to_string()),
             // A list setting drawn as a dropdown is a one-of-many choice that
             // happens to be written as a list: the language, whose setting is
             // a fallback chain but whose picker offers one language. The first

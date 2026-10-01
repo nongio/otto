@@ -139,6 +139,17 @@ const PASSWORD_BUTTON_GAP: f32 = 18.0;
 fn password_button_label() -> &'static str {
     otto_kit::t!("auth-enter-password")
 }
+/// Room a dialog's reason takes under the name: two lines of the status
+/// face, which is as long as a sentence Otto composes gets.
+const DIALOG_REASON_H: f32 = 40.0;
+/// The row a dialog adds at the foot of the card for Cancel.
+const DIALOG_CANCEL_ROW: f32 = 52.0;
+/// What a dialog dims the rest of the screen with. Enough to say "this is
+/// asking you something", not so much that what was on screen is lost.
+const DIALOG_SCRIM: Color = Color::from_argb(110, 0, 0, 0);
+fn cancel_button_label() -> &'static str {
+    otto_kit::t!("authorize-cancel")
+}
 const SCREEN_MARGIN: f32 = 40.0;
 /// How far the card sits above the vertical centre. A panel centred exactly
 /// looks low, because the eye reads the clock above it as part of the group.
@@ -221,6 +232,8 @@ pub enum Action {
     Power(PowerAction),
     /// Stop waiting for a finger and ask for a password instead.
     UsePassword,
+    /// Give up without answering. Only a dialog panel offers it.
+    Cancel,
 }
 
 /// The panel's scene.
@@ -247,6 +260,15 @@ pub struct Panel {
     clock: Layer,
     session: Layer,
     power: Vec<(PowerAction, Layer)>,
+    /// Why a dialog is asking, under the name. Empty on a full-screen panel.
+    reason: Layer,
+    /// A dialog's way out, at the foot of the card.
+    cancel: Layer,
+    /// Set by [`Panel::new_dialog`]: the panel is a card over a dimmed
+    /// screen, with a reason and Cancel, rather than a login screen with a
+    /// wallpaper, a clock and power buttons.
+    dialog: bool,
+    cancel_hitbox: Option<Rect>,
 
     /// Cached decode of the wallpaper and the current avatar, so a state change
     /// never re-reads them from disk.
@@ -320,6 +342,8 @@ impl Panel {
         let busy = new_layer("auth-busy");
         let clock = new_layer("auth-clock");
         let session = new_layer("auth-session");
+        let reason = new_layer("auth-reason");
+        let cancel = new_layer("auth-cancel");
 
         let _ = root.add_sublayer(&wallpaper);
         let _ = root.add_sublayer(&card);
@@ -331,6 +355,8 @@ impl Panel {
         let _ = card.add_sublayer(&field);
         let _ = card.add_sublayer(&status);
         let _ = card.add_sublayer(&busy);
+        let _ = card.add_sublayer(&reason);
+        let _ = card.add_sublayer(&cancel);
         // Under the card, not on it — see [`PASSWORD_BUTTON_H`].
         let _ = root.add_sublayer(&use_password);
         let _ = field.add_sublayer(&caret);
@@ -369,6 +395,10 @@ impl Panel {
             clock,
             session,
             power,
+            reason,
+            cancel,
+            dialog: false,
+            cancel_hitbox: None,
             wallpaper_image: None,
             avatar_image: None,
             touch_id: None,
@@ -384,6 +414,29 @@ impl Panel {
         };
         panel.style();
         panel
+    }
+
+    /// Build the panel as a dialog: the card alone, centred over a dimmed
+    /// screen, with a reason under the name ([`Panel::set_reason`]) and a
+    /// Cancel button ([`Action::Cancel`]). No wallpaper, clock, session picker
+    /// or power buttons — whatever was on screen stays there, dimmed, so it
+    /// is clear the desktop is asking and not the login screen.
+    pub fn new_dialog(appearance: Appearance, engine: Arc<Engine>, parent: Option<&Layer>) -> Self {
+        let mut panel = Self::new(appearance, engine, parent);
+        panel.dialog = true;
+        panel.style_dialog();
+        panel
+    }
+
+    /// Why a dialog is asking, in Otto's words. Drawn under the name, wrapped
+    /// to two lines.
+    pub fn set_reason(&mut self, reason: &str) {
+        self.reason.set_draw_content(draw_status(
+            reason.to_string(),
+            self.font(14.0, FontStyle::normal()),
+            Color::from_argb(235, 255, 255, 255),
+            false,
+        ));
     }
 
     /// The layer everything hangs off, for a client that needs to reparent or
@@ -486,6 +539,10 @@ impl Panel {
 
         // Quieter than the field it leads to: this is the way out of the
         // fingerprint, not the thing being asked for.
+        // Frosted like the card: it sits on whatever is behind the panel, and
+        // a flat tint alone reads as a hole in it.
+        self.use_password.set_blend_mode(BlendMode::BackgroundBlur);
+        self.use_password.set_blur_include_content(true);
         self.use_password.set_background_color(
             PaintColor::Solid {
                 color: lay_color(Color::from_argb(36, 255, 255, 255)),
@@ -509,6 +566,40 @@ impl Panel {
         }
     }
 
+    /// What a dialog changes about the fixed appearance. The card has no
+    /// wallpaper of its own to frost, only a scrim, so it is nearly opaque to
+    /// keep text readable over whatever is behind it.
+    fn style_dialog(&mut self) {
+        self.card.set_background_color(
+            PaintColor::Solid {
+                color: lay_color(Color::from_argb(235, 28, 28, 36)),
+            },
+            None,
+        );
+        self.clock.set_opacity(0.0_f32, None);
+        self.session.set_opacity(0.0_f32, None);
+        for (_, layer) in &self.power {
+            layer.set_opacity(0.0_f32, None);
+        }
+        self.cancel.set_background_color(
+            PaintColor::Solid {
+                color: lay_color(Color::from_argb(46, 255, 255, 255)),
+            },
+            None,
+        );
+        self.cancel
+            .set_border_corner_radius(BorderRadius::new_single(PASSWORD_BUTTON_H / 2.0), None);
+    }
+
+    /// The card's height: a dialog's is taller by its reason and Cancel row.
+    fn card_height(&self) -> f32 {
+        if self.dialog {
+            PANEL_H + DIALOG_REASON_H + DIALOG_CANCEL_ROW
+        } else {
+            PANEL_H
+        }
+    }
+
     /// Place everything for a surface of `width × height` logical points.
     pub fn set_size(&mut self, width: f32, height: f32) {
         if (width, height) == self.size {
@@ -520,15 +611,27 @@ impl Panel {
         self.root.set_size(LayerSize::points(width, height), None);
         self.wallpaper
             .set_size(LayerSize::points(width, height), None);
-        self.wallpaper.set_draw_content(draw_wallpaper(
-            self.wallpaper_image.clone(),
-            self.appearance.background,
-            width,
-            height,
-        ));
+        if self.dialog {
+            self.wallpaper.set_draw_content(draw_scrim(width, height));
+        } else {
+            self.wallpaper.set_draw_content(draw_wallpaper(
+                self.wallpaper_image.clone(),
+                self.appearance.background,
+                width,
+                height,
+            ));
+        }
 
+        // Everything from the prompt down moves by the reason's room, so the
+        // card reads name, reason, question, answer.
+        let shift = if self.dialog { DIALOG_REASON_H } else { 0.0 };
+        let card_h = self.card_height();
         let card_x = (width - PANEL_W) / 2.0;
-        let card_y = (height - PANEL_H) / 2.0 - PANEL_RISE;
+        let card_y = if self.dialog {
+            (height - card_h) / 2.0
+        } else {
+            (height - PANEL_H) / 2.0 - PANEL_RISE
+        };
         self.card.set_position(
             LayerPoint {
                 x: card_x,
@@ -536,8 +639,7 @@ impl Panel {
             },
             None,
         );
-        self.card
-            .set_size(LayerSize::points(PANEL_W, PANEL_H), None);
+        self.card.set_size(LayerSize::points(PANEL_W, card_h), None);
 
         // Inside the card, positions are card-relative.
         let center = PANEL_W / 2.0;
@@ -555,14 +657,24 @@ impl Panel {
             .set_position(LayerPoint { x: 0.0, y: 142.0 }, None);
         self.name.set_size(LayerSize::points(PANEL_W, 30.0), None);
 
-        self.prompt
-            .set_position(LayerPoint { x: 0.0, y: 180.0 }, None);
+        self.reason
+            .set_position(LayerPoint { x: 0.0, y: 176.0 }, None);
+        self.reason
+            .set_size(LayerSize::points(PANEL_W, DIALOG_REASON_H), None);
+
+        self.prompt.set_position(
+            LayerPoint {
+                x: 0.0,
+                y: 180.0 + shift,
+            },
+            None,
+        );
         self.prompt.set_size(LayerSize::points(PANEL_W, 18.0), None);
 
         self.field.set_position(
             LayerPoint {
                 x: center - FIELD_W / 2.0,
-                y: 208.0,
+                y: 208.0 + shift,
             },
             None,
         );
@@ -582,13 +694,18 @@ impl Panel {
         self.fingerprint.set_position(
             LayerPoint {
                 x: center - TOUCH_ID_W / 2.0,
-                y: 208.0 + (FIELD_H - TOUCH_ID_H) / 2.0,
+                y: 208.0 + shift + (FIELD_H - TOUCH_ID_H) / 2.0,
             },
             None,
         );
 
-        self.status
-            .set_position(LayerPoint { x: 0.0, y: 266.0 }, None);
+        self.status.set_position(
+            LayerPoint {
+                x: 0.0,
+                y: 266.0 + shift,
+            },
+            None,
+        );
         // Two lines' worth. A failure reason carries an OS error appended to
         // it, and in a language whose fixed part is longer than English's the
         // whole thing does not fit across the card — which mattered because
@@ -602,7 +719,7 @@ impl Panel {
         let font = self.font(13.0, FontStyle::normal());
         let password_w = font.measure_str(password_button_label(), None).0 + 36.0;
         let password_x = (width - password_w) / 2.0;
-        let password_y = card_y + PANEL_H + PASSWORD_BUTTON_GAP;
+        let password_y = card_y + card_h + PASSWORD_BUTTON_GAP;
         self.use_password.set_position(
             LayerPoint {
                 x: password_x,
@@ -614,7 +731,7 @@ impl Panel {
             .set_size(LayerSize::points(password_w, PASSWORD_BUTTON_H), None);
         self.use_password.set_draw_content(draw_centered_text(
             password_button_label().to_string(),
-            font,
+            font.clone(),
             Color::from_argb(230, 255, 255, 255),
             PASSWORD_BUTTON_H / 2.0 + 4.5,
         ));
@@ -625,9 +742,45 @@ impl Panel {
             PASSWORD_BUTTON_H,
         ));
 
-        self.busy
-            .set_position(LayerPoint { x: 0.0, y: 214.0 }, None);
+        self.busy.set_position(
+            LayerPoint {
+                x: 0.0,
+                y: 214.0 + shift,
+            },
+            None,
+        );
         self.busy.set_size(LayerSize::points(PANEL_W, 60.0), None);
+
+        if self.dialog {
+            // Card-relative for the layer, surface-relative for the hitbox.
+            let cancel_w = font.measure_str(cancel_button_label(), None).0 + 48.0;
+            let cancel_x = center - cancel_w / 2.0;
+            let cancel_y = PANEL_H + shift + (DIALOG_CANCEL_ROW - PASSWORD_BUTTON_H) / 2.0 - 8.0;
+            self.cancel.set_position(
+                LayerPoint {
+                    x: cancel_x,
+                    y: cancel_y,
+                },
+                None,
+            );
+            self.cancel
+                .set_size(LayerSize::points(cancel_w, PASSWORD_BUTTON_H), None);
+            self.cancel.set_draw_content(draw_centered_text(
+                cancel_button_label().to_string(),
+                font,
+                Color::from_argb(235, 255, 255, 255),
+                PASSWORD_BUTTON_H / 2.0 + 4.5,
+            ));
+            self.cancel_hitbox = Some(Rect::from_xywh(
+                card_x + cancel_x,
+                card_y + cancel_y,
+                cancel_w,
+                PASSWORD_BUTTON_H,
+            ));
+            // A dialog has no clock or chrome along the bottom.
+            self.power_hitboxes.clear();
+            return;
+        }
 
         self.clock.set_position(
             LayerPoint {
@@ -754,7 +907,7 @@ impl Panel {
             }
         }
 
-        match view.session {
+        match view.session.filter(|_| !self.dialog) {
             Some(session) => {
                 let font = self.font(13.0, FontStyle::normal());
                 let label = format!("{session}  ⌄");
@@ -776,8 +929,9 @@ impl Panel {
             }
         }
 
+        let power = view.power && !self.dialog;
         for (_, layer) in &self.power {
-            layer.set_opacity(if view.power { 1.0_f32 } else { 0.0_f32 }, Some(fade()));
+            layer.set_opacity(if power { 1.0_f32 } else { 0.0_f32 }, Some(fade()));
         }
 
         // A busy panel is past the conversation: there is nothing left to
@@ -1002,6 +1156,13 @@ impl Panel {
     /// Which control, if any, is under a pointer at surface coordinates.
     pub fn action_at(&self, x: f32, y: f32) -> Option<Action> {
         let point = Point::new(x, y);
+        if self.dialog
+            && self
+                .cancel_hitbox
+                .is_some_and(|rect| skia_safe::Contains::contains(&rect, point))
+        {
+            return Some(Action::Cancel);
+        }
         // Only while it is on show: for most of the panel's life the button is
         // a transparent rectangle in the middle of the card.
         if self.password_offered
@@ -1081,6 +1242,14 @@ fn draw_wallpaper(
                 canvas.draw_rect(Rect::from_wh(width, height), &paint);
             }
         }
+        Rect::from_wh(width, height)
+    }
+}
+
+/// A dialog's backdrop: the screen behind it, dimmed.
+fn draw_scrim(width: f32, height: f32) -> impl Fn(&Canvas, f32, f32) -> Rect + Send + Sync {
+    move |canvas, _w, _h| {
+        canvas.clear(DIALOG_SCRIM);
         Rect::from_wh(width, height)
     }
 }
@@ -1499,6 +1668,49 @@ mod tests {
         let mut panel = Panel::new(Appearance::default(), engine, None);
         panel.set_size(1440.0, 960.0);
         panel
+    }
+
+    /// A dialog offers Cancel where it is drawn, and none of the login
+    /// screen's chrome — asked for or not.
+    #[test]
+    fn a_dialog_offers_cancel_and_no_chrome() {
+        let engine = Engine::create(1440.0, 960.0);
+        let mut panel = Panel::new_dialog(Appearance::default(), engine, None);
+        panel.set_size(1440.0, 960.0);
+        panel.set_reason("Change the program that locks your screen?");
+        panel.update(&View {
+            user: None,
+            prompt: "Password",
+            field: Field::Secret(0),
+            status: None,
+            session: Some("Otto"),
+            busy: None,
+            power: true,
+            offer_password: false,
+        });
+
+        let cancel = panel.cancel_hitbox.expect("a dialog has Cancel");
+        assert_eq!(
+            panel.action_at(cancel.center_x(), cancel.center_y()),
+            Some(Action::Cancel)
+        );
+        assert_eq!(
+            panel.action_at(1440.0 - SCREEN_MARGIN - 20.0, 960.0 - SCREEN_MARGIN - 20.0),
+            None,
+            "no power buttons on a dialog"
+        );
+        assert_eq!(
+            panel.action_at(SCREEN_MARGIN + 10.0, 960.0 - SCREEN_MARGIN - 20.0),
+            None,
+            "no session picker on a dialog"
+        );
+    }
+
+    /// A full-screen panel has no Cancel to press.
+    #[test]
+    fn a_login_panel_has_no_cancel() {
+        let panel = panel();
+        assert!(panel.cancel_hitbox.is_none());
     }
 
     #[test]

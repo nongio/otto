@@ -255,10 +255,40 @@ settings-lock-after = Blokuj po
 settings-lock-screen = Ekran blokady
 settings-lock-screen-detail = Zacznie obowiązywać przy następnym zablokowaniu ekranu
 settings-lock-screen-arguments = Parametry ekranu blokady
+settings-lock-on-suspend = Blokuj, gdy komputer usypia
 settings-group-login = Logowanie
 settings-greeter = Ekran logowania
 settings-greeter-detail = Zacznie obowiązywać po następnym zalogowaniu
 settings-greeter-arguments = Parametry ekranu logowania
+settings-lock-never = Nigdy
+# Under each Lock & Login row: the compositor asks for the password before it applies a change.
+settings-asks-for-password = Zmiana wymaga podania hasła
+settings-login-background-failed = Nie udało się zmienić tła ekranu logowania
+settings-login-background-not-image = To nie jest obraz PNG, JPEG ani WebP
+settings-login-background-too-large = Większy niż 20 MB
+settings-images-filter = Obrazy
+# The auto-lock interval pop-up.
+settings-interval-minutes =
+    { $count ->
+        [one] { $count } minuta
+        [few] { $count } minuty
+        [many] { $count } minut
+       *[other] { $count } minuty
+    }
+settings-interval-hours =
+    { $count ->
+        [one] { $count } godzina
+        [few] { $count } godziny
+        [many] { $count } godzin
+       *[other] { $count } godziny
+    }
+settings-interval-seconds =
+    { $count ->
+        [one] { $count } sekunda
+        [few] { $count } sekundy
+        [many] { $count } sekund
+       *[other] { $count } sekundy
+    }
 
 
 ## Settings — Search
@@ -1081,6 +1111,8 @@ schema-lock-locker-args-label = Parametry ekranu blokady
 schema-lock-locker-args-description = Parametry przekazywane programowi blokującemu.
 schema-lock-auto-lock-timeout-label = Blokuj po
 schema-lock-auto-lock-timeout-description = Sekundy bezczynności przed zablokowaniem. 0 oznacza brak blokady.
+schema-lock-on-suspend-label = Blokuj, gdy komputer usypia
+schema-lock-on-suspend-description = Blokuj ekran przed uśpieniem komputera, aby wybudził się na ekranie blokady.
 
 # --- login ---
 schema-login-greeter-command-label = Polecenie ekranu logowania
@@ -1860,3 +1892,23 @@ files-photos-info-many =
        *[other] { $count } elementu
     }
 files-photos-one-selected = 1 zaznaczony · Spacja – podgląd · ↵ – otwórz
+
+
+## otto-authorize — the panel that asks for the password before a sensitive setting changes.
+## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
+
+authorize-cancel = Anuluj
+authorize-reason-locker-command = Zmienić program blokujący ekran na „{ $value }”?
+authorize-reason-locker-args = Zmienić opcje programu blokującego ekran na „{ $value }”?
+authorize-reason-locker-args-clear = Usunąć opcje programu blokującego ekran?
+authorize-reason-auto-lock = Zmienić, jak długo ekran czeka, zanim sam się zablokuje?
+authorize-reason-auto-lock-off = Wyłączyć samoczynne blokowanie ekranu?
+authorize-reason-lock-on-suspend = Blokować ekran za każdym razem, gdy komputer przechodzi w stan uśpienia?
+authorize-reason-lock-on-suspend-off = Wyłączyć blokowanie ekranu, gdy komputer przechodzi w stan uśpienia?
+authorize-reason-greeter-command = Zmienić program ekranu logowania na „{ $value }”?
+authorize-reason-greeter-args = Zmienić opcje programu ekranu logowania na „{ $value }”?
+authorize-reason-greeter-args-clear = Usunąć opcje programu ekranu logowania?
+authorize-reason-generic = Zmienić ustawienie „{ $setting }”?
+authorize-error-failed = Uwierzytelnianie nie powiodło się
+polkit-reason = { $program } prosi: { $message }
+polkit-unknown-program = Nieznany program

@@ -36,6 +36,27 @@ impl Apply {
 }
 
 /// One row of the schema.
+/// The settings that decide what runs in front of the password, or whether
+/// the session locks at all. Changing one over the bus first asks polkit
+/// (`org.otto.settings.lock`), which shows the auth panel; see
+/// `src/settings/polkit.rs`.
+pub const PROTECTED: &[&str] = &[
+    "lock.locker_command",
+    "lock.locker_args",
+    "lock.auto_lock_timeout",
+    "lock.on_suspend",
+    "login.greeter_command",
+    "login.greeter_args",
+    "power_management.manage_lid_switch",
+    "power_management.on_lid_close",
+    "power_management.on_power_button",
+];
+
+/// Whether changing `id` asks for the password.
+pub fn is_protected(id: &str) -> bool {
+    PROTECTED.contains(&id)
+}
+
 pub struct SettingSpec {
     /// Dotted path, matching the configuration structure.
     pub id: &'static str,
@@ -860,6 +881,13 @@ pub static SETTINGS: &[SettingSpec] = &[
         0.0,
         86400.0,
         60.0,
+    ),
+    spec(
+        "lock.on_suspend",
+        Bool,
+        "Lock when the computer sleeps",
+        "Lock the screen before the computer suspends, so it wakes to the lock screen.",
+        Live,
     ),
     spec(
         "login.greeter_command",

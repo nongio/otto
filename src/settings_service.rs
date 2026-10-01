@@ -146,6 +146,11 @@ impl SettingsInterface {
         let value = SettingValue::from_variant(&value).ok_or_else(|| {
             SettingsFault::InvalidType(format!("`{id}` was given a value of an unusable type"))
         })?;
+        // Setting a protected value to what it already is changes nothing,
+        // so there is nothing to confirm.
+        if settings::schema::is_protected(id) && settings::value_of(id).as_ref() != Some(&value) {
+            confirm(id, Some(&value_text(&value))).await?;
+        }
 
         let (response_tx, response_rx) = oneshot::channel();
         self.compositor_tx
@@ -166,6 +171,9 @@ impl SettingsInterface {
 
     /// Remove one setting from the writable configuration file.
     async fn reset(&self, id: &str) -> Result<String, SettingsFault> {
+        if settings::schema::is_protected(id) {
+            confirm(id, None).await?;
+        }
         let (response_tx, response_rx) = oneshot::channel();
         self.compositor_tx
             .send(CompositorCommand::ResetSetting {
@@ -466,4 +474,30 @@ pub async fn register_settings_interface(
     info!("Settings D-Bus interface registered at org.otto.Settings");
 
     Ok(())
+}
+
+/// Ask polkit, and through it the user, before a protected setting changes
+/// (`src/settings/polkit.rs`).
+async fn confirm(id: &str, value: Option<&str>) -> Result<(), SettingsFault> {
+    let Some(label) = settings::label_of(id) else {
+        return Err(SettingsFault::UnknownSetting(id.to_string()));
+    };
+    settings::polkit::authorize(id, &label, value)
+        .await
+        .map_err(|refusal| {
+            SettingsFault::ZBus(zbus::Error::FDO(Box::new(zbus::fdo::Error::AccessDenied(
+                format!("`{id}`: {refusal}"),
+            ))))
+        })
+}
+
+/// A value as the auth panel shows it.
+fn value_text(value: &SettingValue) -> String {
+    match value {
+        SettingValue::Bool(b) => b.to_string(),
+        SettingValue::Int(n) => n.to_string(),
+        SettingValue::Double(n) => n.to_string(),
+        SettingValue::Str(s) => s.clone(),
+        SettingValue::StrList(items) => items.join(" "),
+    }
 }
