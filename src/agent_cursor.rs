@@ -86,6 +86,9 @@ pub struct AgentSeat<B: Backend + 'static> {
     /// The Wayland connections Otto made for the agent (see
     /// `Otto::connect_agent_client`): they go with the seat.
     pub connections: Vec<smithay::reexports::wayland_server::Client>,
+    /// The sockets Otto accepts the agent's clients on, for as long as the
+    /// seat lasts.
+    pub listeners: Vec<RegistrationToken>,
 }
 
 impl<B: Backend + 'static> AgentSeat<B> {

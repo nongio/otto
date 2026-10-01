@@ -297,10 +297,17 @@ the agent, with Otto enforcing at its edge. Phase 5 comes in three parts.
   takes it as `WAYLAND_SOCKET`. Each connection serves one client; an agent
   asks again for the next.
 - Virtual pointers and keyboards on a seat an agent asked for are accepted on
-  that agent's connections and on no other. On an agent's connection, they
-  are accepted on its own seat only: not the user's, not another agent's. A
-  refused pointer drives nothing; a refused keyboard is a protocol error
-  (`unauthorized`).
+  that agent's connections and on no other: a refused pointer drives
+  nothing, a refused keyboard is a protocol error (`unauthorized`). On an
+  agent's connection, virtual input lands on its own seat whichever seat it
+  names, so stock tools that take the first seat (the user's) drive the
+  agent's. A keyboard needs the client to have bound the agent's seat; every
+  client sees every seat, so stock tools do. Hiding the other seats from an
+  agent's connection needs a client filter on smithay's `wl_seat` global.
+- `ServeAgentSocket(h)` takes a listening socket instead, and Otto accepts
+  every client on it as the agent's until the seat goes: the launcher of 5b
+  makes it the sandbox's `WAYLAND_DISPLAY`. `CaptureWorkspace("")` captures
+  the caller's own workspace.
 - An agent's connection is kept off every global a sandboxed client is kept
   off (screen capture, the clipboard, layer shell, foreign-toplevel control,
   input method, gamma, shortcut inhibition, security contexts, Otto's
@@ -312,24 +319,33 @@ the agent, with Otto enforcing at its edge. Phase 5 comes in three parts.
   is in use. The user's seat stays open to the user's own programs (the RDP
   bridge, the emoji picker) until 5c.
 
-#### 5b — `otto-agent run` (planned)
+#### 5b — `otto-sandbox run` (implemented, `feat/agent-lockdown`)
 
-A launcher that starts an agent inside a sandbox (bubblewrap) whose only ways
-out are the ones Otto controls:
+`otto-sandbox run [--name N] [--dir D] [--bind P] [--ro-bind P] [--env V]
+[--no-net] -- <command>` asks for a seat and an own workspace, then starts
+the command under bubblewrap, whose only ways out are the ones Otto
+controls:
 
-- Wayland only through a security context, so the agent is a sandboxed
-  client; and through its seat's connections from 5a.
-- The session bus only through a filtering proxy (`xdg-dbus-proxy`) that
-  lets through the agent methods on `org.otto.Compositor`, the portals and
-  notifications.
-- No X server, no `/dev/uinput` and no `ydotoold` socket. Files limited to
-  the project directory and a scratch directory.
-- The agent's program is named by the sandbox's app id, which it cannot
-  change, rather than by its executable.
+- `WAYLAND_DISPLAY` is a socket Otto serves for the agent
+  (`ServeAgentSocket`): every client inside is the agent's (5a).
+- No session bus, no X server, no `/dev/uinput`, and a private `/tmp` and
+  `/run`, so no `ydotoold` socket either. The environment is cleared but for
+  the basics and what `--env` names.
+- Home holds only the project directory (writable) and what `--bind` and
+  `--ro-bind` add; the rest of the system is read-only.
+- `otto-sandbox ctl launch <argv>`, `ctl capture` and `ctl workspace`, from
+  inside, ask the launcher over a socket of its own to start an app on the
+  agent's workspace, capture that workspace into the sandbox, or describe
+  it. The launcher makes those calls as the seat's holder.
+- When the command exits the seat is released, closing every connection of
+  the agent's; the workspace stays, for the user.
 
-From inside, the agent acts only on its own workspace, sees only its own
-workspace (`CaptureWorkspace`) or what the user shares through a portal, and
-asks the user for anything else.
+From inside, the agent acts only on its own workspace and sees only what it
+captures of it. Not yet: portals (a filtering bus proxy, so the agent can ask
+the user for a screen share or a file), naming the program by something the
+agent cannot change (the seat consent is asked of `otto-sandbox`, with the
+agent's name in the prompt), and `otto-agents` starting its ACP agents this
+way.
 
 #### 5c — the user's other programs (planned)
 

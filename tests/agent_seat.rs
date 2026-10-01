@@ -16,6 +16,9 @@ mod agent_seat_tests {
     use wayland_protocols::ext::session_lock::v1::client::{
         ext_session_lock_manager_v1, ext_session_lock_v1,
     };
+    use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
+        zwp_virtual_keyboard_manager_v1, zwp_virtual_keyboard_v1,
+    };
     use wayland_protocols_wlr::virtual_pointer::v1::client::{
         zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
     };
@@ -30,6 +33,7 @@ mod agent_seat_tests {
         /// `wl_seat.name` of each seat, by the same index.
         seat_names: Vec<Option<String>>,
         pointer_manager: Option<zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1>,
+        keyboard_manager: Option<zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1>,
         lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     }
 
@@ -61,6 +65,9 @@ mod agent_seat_tests {
                 "zwlr_virtual_pointer_manager_v1" => {
                     state.pointer_manager = Some(registry.bind(name, version.min(2), qh, ()))
                 }
+                "zwp_virtual_keyboard_manager_v1" => {
+                    state.keyboard_manager = Some(registry.bind(name, 1, qh, ()))
+                }
                 "ext_session_lock_manager_v1" => {
                     state.lock_manager = Some(registry.bind(name, 1, qh, ()))
                 }
@@ -85,6 +92,8 @@ mod agent_seat_tests {
     }
     delegate_noop!(DriverState: zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1);
     delegate_noop!(DriverState: zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1);
+    delegate_noop!(DriverState: zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1);
+    delegate_noop!(DriverState: zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1);
     delegate_noop!(DriverState: ext_session_lock_manager_v1::ExtSessionLockManagerV1);
     delegate_noop!(DriverState: ignore ext_session_lock_v1::ExtSessionLockV1);
 
@@ -157,6 +166,16 @@ mod agent_seat_tests {
                 .as_ref()
                 .expect("zwlr_virtual_pointer_manager_v1 missing");
             manager.create_virtual_pointer(Some(&self.state.seats[index]), &self.qh, ())
+        }
+
+        /// A virtual keyboard on the `index`th advertised seat.
+        fn keyboard_on(&self, index: usize) -> zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 {
+            let manager = self
+                .state
+                .keyboard_manager
+                .as_ref()
+                .expect("zwp_virtual_keyboard_manager_v1 missing");
+            manager.create_virtual_keyboard(&self.state.seats[index], &self.qh, ())
         }
 
         fn settle(&mut self, handle: &HeadlessHandle) {
@@ -566,8 +585,8 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// An agent's connection drives its own seat and no other: not the
-    /// user's, and not another agent's.
+    /// An agent's connection drives its own seat and no other: a pointer
+    /// it creates on the user's seat, or another agent's, drives its own.
     #[test]
     #[serial]
     fn an_agents_connection_drives_no_other_seat() {
@@ -591,6 +610,78 @@ mod agent_seat_tests {
 
         assert_eq!(user_pointer(&handle), before);
         assert_eq!(pointer_of(&handle, "agent-2"), Some((0.0, 0.0)));
+        let (x, y) = pointer_of(&handle, "agent-1").expect("agent-1");
+        assert_eq!(
+            (x.round(), y.round()),
+            (250.0, 250.0),
+            "its own pointer did not move"
+        );
+
+        drop(driver);
+        handle.stop();
+    }
+
+    /// A keyboard on an agent's seat is refused to any other connection;
+    /// one an agent's connection makes on the user's seat types on its own.
+    #[test]
+    #[serial]
+    fn virtual_keyboards_follow_the_same_rule() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+
+        let mut stranger = Driver::connect(&handle);
+        let _keyboard = stranger.keyboard_on(stranger.seat_index("agent-1").unwrap());
+        stranger.conn.flush().expect("flush");
+        handle.settle(200);
+        assert!(
+            stranger.queue.roundtrip(&mut stranger.state).is_err(),
+            "a stranger was given a keyboard on the agent's seat"
+        );
+
+        let mut agent = Driver::connect_as_agent(&handle, ":1.10");
+        let user_seat = agent
+            .state
+            .seat_names
+            .iter()
+            .position(|name| name.as_deref().is_some_and(|n| !n.starts_with("agent-")))
+            .expect("the user's seat");
+        let _keyboard = agent.keyboard_on(user_seat);
+        agent.settle(&handle);
+        assert!(agent.queue.roundtrip(&mut agent.state).is_ok());
+
+        drop(stranger);
+        drop(agent);
+        handle.stop();
+    }
+
+    /// Clients connecting on a socket the agent's launcher serves are the
+    /// agent's; the socket stops accepting when the seat goes.
+    #[test]
+    #[serial]
+    fn a_served_socket_connects_the_agents_clients() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        handle
+            .query(move |state| state.serve_agent_socket(":1.10", listener))
+            .expect("serve");
+
+        let mut driver =
+            Driver::from_stream(std::os::unix::net::UnixStream::connect(&path).expect("connect"));
+        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        move_to(&handle, &pointer, 200, 150);
+        driver.settle(&handle);
+        assert_eq!(pointer_of(&handle, "agent-1"), Some((200.0, 150.0)));
+
+        release_seats(&handle, ":1.10");
+        handle.settle(200);
+        assert!(driver.queue.roundtrip(&mut driver.state).is_err());
+        assert!(
+            std::os::unix::net::UnixStream::connect(&path).is_err(),
+            "the socket outlived the seat"
+        );
 
         drop(driver);
         handle.stop();
@@ -997,7 +1088,7 @@ mod agent_seat_tests {
     /// shown; the PNG is the size of its output.
     #[test]
     #[serial]
-    fn an_agent_captures_its_own_workspace_by_id_or_name() {
+    fn an_agent_captures_its_own_workspace_by_id_name_or_none() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
         request_workspace(&handle, ":1.10").expect("workspace");
@@ -1018,7 +1109,8 @@ mod agent_seat_tests {
                 (mode.w as u32, mode.h as u32),
             )
         });
-        for selector in [id.to_string(), name] {
+        // By id, by name, or naming none for its own.
+        for selector in [id.to_string(), name, String::new()] {
             let path =
                 capture(&handle, ":1.10", &selector).unwrap_or_else(|e| panic!("{selector}: {e}"));
             let png = std::fs::read(&path).expect("the capture was written");
@@ -1046,6 +1138,10 @@ mod agent_seat_tests {
         assert!(capture(&handle, ":1.99", &users).is_err(), "no seat");
         request_seat(&handle, "Claude", ":1.10").expect("seat");
         assert!(capture(&handle, ":1.10", &users).is_err(), "no grant");
+        assert!(
+            capture(&handle, ":1.10", "").is_err(),
+            "none, without a grant"
+        );
         request_workspace(&handle, ":1.10").expect("workspace");
         assert!(capture(&handle, ":1.10", &users).is_err(), "the user's");
         request_seat(&handle, "Codex", ":1.11").expect("seat");

@@ -16,7 +16,10 @@ use smithay::{
 };
 use tracing::info;
 
-use smithay::reexports::wayland_server::backend::DisconnectReason;
+use smithay::reexports::{
+    calloop::{generic::Generic, Interest, Mode, PostAction},
+    wayland_server::backend::DisconnectReason,
+};
 
 use super::{add_configured_keyboard, Backend, ClientState, Otto};
 use crate::{
@@ -227,6 +230,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             idle_timer: None,
             grant: None,
             connections: Vec::new(),
+            listeners: Vec::new(),
         });
     }
 
@@ -259,6 +263,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if let Some(global) = agent.seat.global() {
             self.display_handle.remove_global::<Self>(global);
         }
+        for token in agent.listeners {
+            self.handle.remove(token);
+        }
         for client in &agent.connections {
             self.display_handle
                 .backend_handle()
@@ -274,26 +281,94 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// The client may create virtual input on the agent's seat and no other,
     /// and is kept off the globals a sandboxed client is kept off (see
     /// [`crate::sandbox`]). It is disconnected when the seat goes. Every
-    /// other connection is refused the agent's seat, so this is the only way
-    /// to drive it.
+    /// other connection is refused the agent's seat, so this, and
+    /// [`Self::serve_agent_socket`], are the only ways to drive it.
     pub fn connect_agent_client(
         &mut self,
         owner: &str,
     ) -> Result<std::os::unix::net::UnixStream, AgentSeatError> {
-        let seat_name = self
-            .agent_seats
+        let seat_name = self.seat_of_owner(owner)?;
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair()
+            .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
+        self.insert_agent_client(&seat_name, ours)?;
+        Ok(theirs)
+    }
+
+    /// Accept Wayland clients for `owner`'s agent on `listener`, each one as
+    /// [`Self::connect_agent_client`] connects one, until the seat goes.
+    ///
+    /// The agent's launcher hands Otto a socket it listens on, the way a
+    /// sandbox engine hands one to `wp_security_context_v1`, and makes it the
+    /// sandbox's `WAYLAND_DISPLAY`: every client inside is the agent's.
+    pub fn serve_agent_socket(
+        &mut self,
+        owner: &str,
+        listener: std::os::unix::net::UnixListener,
+    ) -> Result<(), AgentSeatError> {
+        let seat_name = self.seat_of_owner(owner)?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
+        // Not listening: accepting fails at once rather than waiting.
+        match listener.accept() {
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok((stream, _)) => {
+                self.insert_agent_client(&seat_name, stream)?;
+            }
+            Err(err) => return Err(AgentSeatError::Connect(err.to_string())),
+        }
+        let seat = seat_name.clone();
+        let token = self
+            .handle
+            .insert_source(
+                Generic::new(listener, Interest::READ, Mode::Level),
+                move |_, listener, state| {
+                    loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => {
+                                if let Err(err) = state.insert_agent_client(&seat, stream) {
+                                    tracing::warn!(seat, %err, "cannot connect an agent client");
+                                }
+                            }
+                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                            Err(err) => {
+                                tracing::warn!(seat, %err, "the agent's socket failed");
+                                return Ok(PostAction::Remove);
+                            }
+                        }
+                    }
+                    Ok(PostAction::Continue)
+                },
+            )
+            .map_err(|err| AgentSeatError::Connect(err.error.to_string()))?;
+        if let Some(agent) = self.agent_seat_mut(&seat_name) {
+            agent.listeners.push(token);
+        }
+        info!(seat = seat_name, owner, "Agent socket served");
+        Ok(())
+    }
+
+    /// The seat `owner` holds.
+    fn seat_of_owner(&self, owner: &str) -> Result<String, AgentSeatError> {
+        self.agent_seats
             .iter()
             .find(|agent| agent.owner.as_deref() == Some(owner))
             .map(AgentSeat::name)
-            .ok_or(AgentSeatError::NoSeat)?;
-        let (ours, theirs) = std::os::unix::net::UnixStream::pair()
-            .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
+            .ok_or(AgentSeatError::NoSeat)
+    }
+
+    /// Insert `stream` as a client of the agent seat `seat_name`.
+    fn insert_agent_client(
+        &mut self,
+        seat_name: &str,
+        stream: std::os::unix::net::UnixStream,
+    ) -> Result<(), AgentSeatError> {
         let client = self
             .display_handle
             .insert_client(
-                ours,
+                stream,
                 std::sync::Arc::new(ClientState {
-                    agent_seat: Some(seat_name.clone()),
+                    agent_seat: Some(seat_name.to_string()),
                     ..ClientState::default()
                 }),
             )
@@ -309,8 +384,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 .retain(|client| backend.get_client_data(client.id()).is_ok());
             agent.connections.push(client);
         }
-        info!(seat = seat_name, owner, "Agent connection made");
-        Ok(theirs)
+        info!(seat = seat_name, "Agent connection made");
+        Ok(())
     }
 
     /// Give `owner`'s agent a workspace of its own: a new one on the primary

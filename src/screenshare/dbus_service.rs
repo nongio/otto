@@ -1049,7 +1049,7 @@ impl CompositorInterface {
     /// Capture a workspace to a PNG, whether it is on screen or not: its
     /// wallpaper and windows, at its output's resolution. `workspace` is
     /// its id as `org.otto.Shell1.GetWorkspaces` lists it, or its name (any
-    /// case). Returns the path of the PNG, under
+    /// case), or empty for the caller's own. Returns the path of the PNG, under
     /// `$XDG_RUNTIME_DIR/otto/captures`.
     ///
     /// Refused unless it is the calling agent's own workspace, and while the
@@ -1097,6 +1097,31 @@ impl CompositorInterface {
         rx.await
             .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
             .map(zbus::zvariant::OwnedFd::from)
+            .map_err(zbus::fdo::Error::AccessDenied)
+    }
+
+    /// Accept Wayland clients for the calling agent on `listener`, a Unix
+    /// socket the caller is listening on, until its seat goes. Each client
+    /// is connected as `ConnectAgent` connects one. An agent's launcher
+    /// makes this socket the `WAYLAND_DISPLAY` of the sandbox it starts the
+    /// agent in, so every client there is the agent's.
+    async fn serve_agent_socket(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        listener: zbus::zvariant::OwnedFd,
+    ) -> zbus::fdo::Result<()> {
+        let owner = sender_of(&header)?;
+        let listener = std::os::unix::net::UnixListener::from(std::os::fd::OwnedFd::from(listener));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ServeAgentSocket {
+                owner,
+                listener,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
             .map_err(zbus::fdo::Error::AccessDenied)
     }
 

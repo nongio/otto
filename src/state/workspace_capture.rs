@@ -26,7 +26,7 @@ struct Target {
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Capture the workspace `selector` names — its id as `GetWorkspaces`
-    /// lists it, or its name — to a PNG under
+    /// lists it, or its name, or nothing for the caller's own — to a PNG under
     /// `$XDG_RUNTIME_DIR/otto/captures`, and return the file's path.
     ///
     /// Only for `owner`'s agent, and only of the workspace it is granted;
@@ -35,7 +35,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if self.is_session_locked() {
             return Err("the session is locked".into());
         }
-        let target = self.find_workspace(selector)?;
+        let target = if selector.trim().is_empty() {
+            self.own_workspace(owner)?
+        } else {
+            self.find_workspace(selector)?
+        };
         let granted = self
             .agent_seats
             .iter()
@@ -128,6 +132,32 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// The workspace `selector` names: an id from `GetWorkspaces`, or a name
     /// (any case). A name more than one output has is refused rather than
     /// guessed.
+    /// The workspace `owner`'s agent is granted, for a capture that names
+    /// none.
+    fn own_workspace(&self, owner: &str) -> Result<Target, String> {
+        let reach = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.owner.as_deref() == Some(owner))
+            .map(|agent| agent.reach(&self.workspaces));
+        let Some(Reach::Workspace { output, workspace }) = reach else {
+            return Err("the caller has no workspace of its own".into());
+        };
+        self.workspaces
+            .output_workspaces
+            .get(&output)
+            .and_then(|ows| {
+                ows.workspace_views
+                    .iter()
+                    .find(|view| view.index == workspace)
+            })
+            .map(|view| Target {
+                output: output.clone(),
+                view: view.clone(),
+            })
+            .ok_or_else(|| "the caller's workspace is gone".into())
+    }
+
     fn find_workspace(&self, selector: &str) -> Result<Target, String> {
         let selector = selector.trim();
         let id: Option<u64> = selector.parse().ok();
@@ -147,10 +177,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         match found.len() {
             0 => Err(format!("no workspace {selector:?}")),
             1 => Ok(found.remove(0)),
-            _ => Err(format!(
-                "{selector:?} names a workspace on {} outputs; use its id",
-                found.len()
-            )),
+            count => Err(format!("{selector:?} names {count} workspaces; use its id")),
         }
     }
 }

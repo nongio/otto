@@ -473,11 +473,17 @@ where
 /// [`agent_seat_name`], for a pointer `client` may create there (see
 /// [`crate::sandbox::may_drive_seat`]). One it may not is tied to no seat,
 /// and drives nothing.
+///
+/// An agent's connection drives its own seat whichever it names: stock
+/// tools take the first seat they see, which is the user's.
 fn permitted_seat<BackendData: crate::state::Backend + 'static>(
     state: &Otto<BackendData>,
     client: &Client,
     seat: Option<&WlSeat>,
 ) -> Option<String> {
+    if let Some(own) = crate::state::ClientState::agent_seat_of(client) {
+        return Some(own.to_string());
+    }
     let agent = agent_seat_name(state, seat);
     let user_seat = state.seat.name();
     let seat_name = agent.as_deref().unwrap_or(user_seat);

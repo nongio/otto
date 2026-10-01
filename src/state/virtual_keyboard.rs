@@ -5,6 +5,10 @@
 //! seat the client may not drive (see [`crate::sandbox::may_drive_seat`]) is
 //! refused with the protocol's `unauthorized` error, and every other request
 //! goes to smithay unchanged.
+//!
+//! An agent's connection types on its own seat whichever it names, as long
+//! as it has bound that seat: stock tools take the first seat they see,
+//! which is the user's.
 
 use smithay::{
     input::Seat,
@@ -67,6 +71,11 @@ impl<B: Backend + 'static> Dispatch2<ZwpVirtualKeyboardManagerV1, Otto<B>>
         else {
             return;
         };
+        // An agent's connection: its own seat, as the client bound it.
+        let seat = crate::state::ClientState::agent_seat_of(client)
+            .and_then(|own| state.agent_seat(own))
+            .and_then(|agent| agent.seat.client_seats(client).into_iter().next())
+            .unwrap_or(seat);
         let seat_name = Seat::<Otto<B>>::from_resource(&seat)
             .map(|seat| seat.name().to_string())
             .unwrap_or_default();
