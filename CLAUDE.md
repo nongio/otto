@@ -42,7 +42,6 @@ The workspace includes standalone components built with `-p`:
 ```sh
 cargo build -p otto-kit
 cargo build -p topbar
-cargo build -p apps-manager
 cargo build -p xdg-desktop-portal-otto
 ```
 
@@ -51,7 +50,7 @@ To test a component together with the compositor:
 # First, run Otto in one terminal
 cargo run -- --winit &
 # Then, in another terminal, run the component
-WAYLAND_DISPLAY=wayland-1 cargo run -p apps-manager
+WAYLAND_DISPLAY=wayland-1 cargo run -p otto-bar
 ```
 
 **Tests:** unit tests live in the lib target — run with `cargo test --lib` (e.g. `cargo test --lib backdrop` for the backdrop rebuild-gating regression tests). End-to-end tests live in `tests/` and drive a real compositor with real Wayland clients behind the `headless` feature — run with `cargo test --features headless --test <name>` (`headless_basic`, `workspace_selector`, `screenshare`). Minimum supported Rust version is 1.87.0 (1.96.0 to build the whole workspace, which `otto-rdp` pins through GStreamer). CI pins 1.97.0.
@@ -102,7 +101,6 @@ The state module also contains protocol handler implementations (`*_handler.rs` 
 - `components/otto-kit/` — UI toolkit for building Otto apps (menu bars, context menus, popups)
 - `components/otto-search/` — File search: the query language, SPARQL over LocalSearch, name scoring (no toolkit deps)
 - `components/otto-bar/` — Top menu bar component
-- `components/apps-manager/` — **WIP**: a command-line probe for the foreign-toplevel protocol, not a launcher
 - `components/xdg-desktop-portal-otto/` — Portal backend bridging xdg-desktop-portal to compositor
 
 ### Screenshare System

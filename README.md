@@ -309,7 +309,6 @@ Otto is the compositor plus a set of components, each under `components/` and bu
 | `otto-media-kit` | Video playback: the embeddable player and its `otto-media-worker` |
 | `otto-kit` | UI toolkit the Otto clients are built on |
 | `xdg-desktop-portal-otto` | XDG Desktop Portal backend: screen sharing, file picker, screenshots, settings, permission dialogs |
-| `apps-manager` | Debug tool for `ext_foreign_toplevel_list_v1` |
 
 To exercise a component against a running compositor:
 
