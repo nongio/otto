@@ -5,188 +5,215 @@
 
 ## Summary
 
-Which clients may watch the user, act as the user, or control the desktop,
-and how an AI agent gets a narrow, visible, revocable share of that. Otto
-does not build sandboxes. It keeps the powerful interfaces for its own
-components, gives every agent a scoped view of the standard Wayland
-protocols, and makes sure only the person at the keyboard can grant
-anything.
+Which clients get the interfaces that watch the user, act as the user or
+control the desktop, and how an AI agent gets a narrow, visible, revocable
+share of them. Four rules: a sandboxed app gets none; Otto's own components
+get them all; the user's other programs get them by default, or only by
+allowlist under `[privacy] strict`; an agent gets the standard protocols on
+a connection of its own, scoped to one seat and one workspace.
+
+Otto does not contain programs. A program running unsandboxed as the user
+can do everything the user can, and no compositor rule changes that. What
+Otto guarantees is that grants come from the person at the keyboard, that
+every grant in use is visible, and that an agent given less than the user
+still has a standard way to work.
 
 ## Goals
 
-- No client but Otto's own components, and the programs the user listed,
-  can capture the screen, inject input on the user's seat, read the
-  clipboard without focus, or control other apps' windows.
+- No client but Otto's components, and under `strict` the executables the
+  user listed, can capture the screen, inject input on the user's seat,
+  read the clipboard without focus or control other apps' windows.
 - An agent sees and acts on the desktop through standard Wayland protocols
-  only, scoped to what the user granted it: stock tools work unchanged
-  inside that scope.
+  on its own connection, scoped to its seat and workspace: stock tools work
+  unchanged inside that scope.
 - An agent never moves the user's cursor, takes their keyboard focus,
-  raises a window or switches their workspace without asking each time.
-- Every grant is asked for in a dialog Otto draws, answered by real input
-  from the person at the keyboard.
-- Every grant in use is shown on screen by Otto, and the user can end it at
-  any moment.
+  raises a window on them or switches their workspace.
+- Every lasting grant is asked for in a dialog Otto draws, and only Otto's
+  own programs can put a question in it.
+- A grant in use is shown on screen by Otto, and the user can end it at any
+  moment, including with one key no program can fake.
 
 ## Non-Goals
 
-- Containing a program that runs unsandboxed as the user. It can already
-  run every tool the user can, read their files and talk to their sockets;
-  no compositor rule changes that. Containment is a sandbox's job (Flatpak,
-  an agent's own sandbox, a separate user), and sandboxed clients are
-  covered by this model through security-context.
+- Containing a program that runs unsandboxed as the user. Containment is a
+  sandbox's job (Flatpak, an agent's own sandbox, a separate user); a
+  sandbox's clients are covered here through security contexts, and so is a
+  sandboxed agent's, through the agent's own listener.
 - Building or shipping a sandbox for agents.
-- Mediating accessibility (AT-SPI). It is a session-wide bus outside the
+- Mediating accessibility (AT-SPI), a session-wide bus outside the
   compositor.
-- A new protocol or D-Bus API for agents to see or drive the desktop.
+- A new protocol or D-Bus API for agents to see or drive the desktop beyond
+  asking for a seat, a workspace and a connection.
 
 ## Behavior
 
 ### Kinds of client
 
-Otto tells four kinds of Wayland client apart:
-
-| Kind | How it connects |
+| Kind | How Otto knows |
 |---|---|
-| Otto component | A socket Otto handed it when starting it, or an executable on the trusted list (below) |
-| User program | Otto's public socket (`WAYLAND_DISPLAY`) |
-| Sandboxed app | A `wp_security_context_v1` listener (Flatpak and other sandbox engines) |
-| Agent | A connection Otto made for an agent holding a seat (below) |
+| Otto component | A socket Otto handed it when starting it (the locker, the polkit agent), or an executable with one of Otto's own names installed where only root can change it, or built beside the running Otto in the user's own directory |
+| User program | Otto's public socket (`WAYLAND_DISPLAY`); named by the executable of the process on the other end, pinned by a pidfd so a pid cannot be reused under it |
+| Sandboxed app | A `wp_security_context_v1` listener a sandbox engine made (Flatpak does) |
+| Agent | A connection Otto made for an agent holding a seat (`ConnectAgent`), or a `wp_security_context_v1` listener the agent made on such a connection |
 
-The trusted list is Otto's own programs installed where only root can
-change them, and the executables the user lists in `[privacy]
-trusted_programs`. A program is named by the executable of the process on
-the other end of its socket, when it connects.
+### The privileged interfaces
 
-### Privileged interfaces
+| Interface | Component | User program (default) | User program (`strict`) | Sandboxed | Agent |
+|---|---|---|---|---|---|
+| Screen capture (wlr-screencopy) | yes | yes | allowlist | — | — |
+| Virtual pointer and keyboard | user's seat | user's seat | allowlist | — | its own seat only |
+| Clipboard without focus (data-control, ext-data-control) | yes | yes | allowlist | — | — |
+| Window control (wlr-foreign-toplevel) | all windows | all windows | allowlist | — | its workspace's windows |
+| Window list (ext-foreign-toplevel-list) | yes | yes | yes | — | — |
+| Input method, layer shell, shortcut inhibition, gamma, Otto's protocols | yes | yes | yes | — | — |
+| Security contexts | yes | yes | yes | — | yes (its own clients) |
+| Session lock | Otto's locker only | — | — | — | — |
 
-| Interface | Component | User program | Sandboxed | Agent |
-|---|---|---|---|---|
-| Screen capture (wlr-screencopy, ext-image-copy-capture) | all | — | — | its scope |
-| Virtual pointer / keyboard | user's seat | — | — | its own seat |
-| Data control (clipboard without focus) | yes | — | — | — |
-| Window control (wlr-foreign-toplevel) | all windows | — | — | its scope |
-| Window list (ext-foreign-toplevel-list) | all windows | all windows | — | its scope |
-| Workspaces (ext-workspace) | all | — | — | its scope |
-| Input method | yes | yes | — | — |
-| Layer shell, shortcut inhibition, gamma | yes | yes | — | — |
-| Session lock | Otto's locker only | — | — | — |
-| Otto's private protocols and `org.otto.Shell1` | yes | — | — | — |
+"—" and "allowlist" mean the global is not in the client's registry.
+`[privacy] strict` keeps the user's programs off the first four rows;
+`[privacy] allow` names executables, by full path, that keep them. Both are
+read when Otto starts.
 
-"—" means the interface is not offered: it does not appear in the
-client's registry, and a D-Bus call is refused. A user program that needs
-one is added to the trusted list. Everything else a user program needs
-from the desktop goes through the portals (screen sharing, screenshots,
-remote desktop), which ask the user.
+### Otto's bus interfaces
+
+| Interface | Who may call |
+|---|---|
+| `org.otto.ScreenCast` | the portal backend and the RDP bridge |
+| `org.otto.Dialog1` (islands' dialog) | the compositor, the portal backend, otto-agents, Files, islands |
+| `org.otto.Compositor.FocusApp` | Otto's interface components |
+| `org.otto.Compositor` agent methods | anyone; a seat is asked for, below |
+| `org.otto.Shell1`, `org.freedesktop.a11y.KeyboardMonitor` | anyone by default; components and the allowlist under `strict` |
+| `org.otto.Settings` protected settings (the locker, the greeter, locking) | anyone, after polkit asks the user |
+
+A caller is named like a Wayland client, by the executable behind its bus
+connection. The compositor acts on a consent answer only when it came from
+islands.
 
 ### Agent sessions
 
-1. A program asks Otto for an agent seat over D-Bus, giving the agent's
-   name. The first time a program asks, the user is asked in Otto's dialog;
-   the answer is remembered for that program and listed in Settings ›
-   Privacy, where it can be switched off or forgotten.
-2. With a seat, the agent asks for a scope: a new workspace of its own, or
-   one of the user's existing workspaces. An existing workspace is asked
-   for in Otto's dialog, naming it. A new one is not: it holds nothing of
-   the user's.
-3. The agent asks Otto for Wayland connections. Every client on such a
-   connection is the agent's: Otto offers it the standard protocols, scoped
-   (below), and nothing else privileged.
-4. The scope is shown while it lasts: its workspace is framed in the
-   agent's colour, with the agent's name and a Stop chip, and the agent's
-   cursor is drawn in the same colour.
+1. A program asks for a seat over D-Bus, naming its agent. The first time a
+   program asks, the user is asked in Otto's dialog; the answer is kept for
+   that program (xdg-permission-store, listed in Settings › Privacy with a
+   switch and Forget). A program the user stopped (below) is refused until
+   they log in anew.
+2. With a seat, the agent asks for a workspace of its own: a new one, named
+   after the agent, that the user is not switched to. One workspace per
+   seat.
+3. The agent asks for a connection (`ConnectAgent`). Everything on it is
+   the agent's: it sees the agent's seat and no other, and every other
+   client sees the user's seat and not the agent's. A `wp_security_context_v1`
+   listener made on it connects more of the agent's clients, with the
+   protocol sandboxes speak; they go with the seat.
+4. While the seat lasts, its workspace is framed in the agent's colour with
+   the agent's name and a Stop chip, and the agent's cursor is drawn in that
+   colour wherever its workspace shows.
 5. Stop, the agent releasing its seat, or the agent leaving the bus ends the
-   session: its connections are closed and its cursor goes. Its workspace
-   and windows stay, for the user.
+   session: the seat and its connections go, the cursor goes, the workspace
+   and its windows stay for the user. Stop also suspends the program's
+   consent for the rest of the login session. The secure attention key
+   (Ctrl+Alt+Shift+Esc, delivered by logind) stops every agent at once.
 
 On an agent's connection:
 
 | Protocol | What the agent gets |
 |---|---|
-| ext-foreign-toplevel-list | The windows on its workspaces, with their titles. No others. |
-| wlr-foreign-toplevel | The same windows. Activating one gives the agent's keyboard focus to it, on the agent's seat; the user's focus and the stacking order do not change. Closing works; maximize, minimize and fullscreen are ignored. |
-| ext-workspace | Its workspaces. Activating one makes it where the agent's input lands; the user's view does not change. |
-| ext-image-copy-capture | Capture sources for its workspaces' outputs and its windows only. Capturing an output gives what its workspace shows, whether or not the user is looking at it. |
-| Virtual pointer / keyboard | Input on its own seat, whichever seat it names. Input reaches only windows on its workspaces. |
-| xdg-activation | A token from an agent's connection places the *new* window it starts on the agent's workspace. It never moves an existing window. |
+| `wl_seat` | Its own seat alone |
+| Virtual pointer and keyboard | Input on its own seat whichever seat it names; it reaches only windows on its workspace |
+| xdg-shell | Its windows open on its workspace and take its keyboard, never the user's |
+| wlr-foreign-toplevel | The windows on its workspace, with titles. Activating gives the agent's keyboard to one; closing closes one; maximize, minimize and fullscreen are ignored |
+| xdg-activation | A window a program launched for the agent opens on the agent's workspace; an existing window never moves |
+| `CaptureWorkspace` (D-Bus) | A PNG of its workspace, whether or not the user is looking at it |
 
-An agent acts on what the user sees only by asking each time: activating a
-window or workspace outside its scope, or bringing one of its own in front
-of the user, raises Otto's dialog. Nothing in its scope lets it change the
-user's view.
-
-Agent tools written for other desktops reach the same session through the
-RemoteDesktop and ScreenCast portals: the portal dialog offers the same
-scopes, and input arrives through libei on the agent's seat.
+Nothing an agent holds changes what the user sees: it never brings a window
+or a workspace in front of the user, and there is no dialog to ask for that.
+The user goes to the agent's workspace when they want to watch.
 
 ### Consent
 
-- Otto's dialogs are drawn by Otto, above every client surface. No client
-  can draw over them, read them, or answer them.
-- They accept real input only: from input devices, not from virtual
-  pointers, virtual keyboards or libei.
-- A dialog names the program asking and the program that started it, and
-  says exactly what is being asked for.
+- Dialogs are drawn by islands, one of Otto's components, and only Otto's
+  own programs can put words in them (above).
+- A grant given within 600 ms of a dialog appearing is ignored: a click or
+  an Enter already on its way does not answer it.
 - Answers that last are kept in xdg-permission-store and listed in Settings
-  › Privacy. Grants on the user's existing workspaces last for the session
-  only.
-- While the session is locked, nothing is granted and no agent input or
-  capture happens.
+  › Privacy. A stop lasts the login session.
+- While the session is locked, no agent input or capture happens.
 
 ## Constraints & Edge Cases
 
 - **Input below the compositor.** A process that can write to `/dev/uinput`
-  creates input devices Otto cannot tell from hardware, so it can answer
-  Otto's dialogs. The model holds only on a host where the user's processes
-  cannot: no world-writable injector daemon (ydotoold), and the user not in
-  a group or ACL that grants uinput. Otto warns at startup when the user can
-  write to it.
+  makes input devices Otto cannot tell from hardware, and can answer Otto's
+  dialogs. The model holds on a host where the user's processes cannot: no
+  world-writable injector daemon (ydotoold), and the user not in a group or
+  ACL that grants uinput. The secure attention key is handled by the kernel
+  and logind, below any of that.
 - **Identity.** A program is named by its executable, which an unsandboxed
-  process can borrow (an interpreter is one program for every script). The
-  trusted list relies on root owning the executables it names; an entry the
-  user can write to is trusted at the user's word.
-- **Breaking changes.** Tools that relied on the privileged interfaces (grim,
-  wl-paste's watch mode, clipboard managers, wlrctl, waybar's taskbar) stop
-  working until they are added to the trusted list.
-- **XWayland.** X clients can see and drive each other inside the X server;
-  Otto treats the X server as one of its own components. X clients cannot
-  reach Wayland windows.
-- **Multi-seat in toolkits.** An app must listen to more than one seat to
-  receive an agent's input. GTK and Qt do; some do not, and an agent cannot
-  drive them.
+  process can borrow (an interpreter is one program for every script it
+  runs). The allowlist and the component names rely on root owning the
+  executables; an entry in the user's own directory is trusted at the
+  user's word.
+- **`strict` breaks tools.** grim, wl-paste in watch mode, clipboard
+  managers, wlrctl and taskbars outside Otto stop working until listed in
+  `allow`.
+- **XWayland.** X clients see and drive each other inside the X server; Otto
+  treats the X server as one of its own. X clients cannot reach Wayland
+  windows.
+- **Windows moved by the user.** A window the user moves onto an agent's
+  workspace comes into its scope and is not announced to the agent's window
+  list until it reconnects; one moved out is not withdrawn. The agent's
+  input and capture follow the workspace at once.
+- **Toolkits and seats.** An app must listen to the seat it is offered. On
+  an agent's connection that is the agent's seat alone, so every toolkit
+  binds the right one; a toolkit that only ever uses the first seat is fine.
 - **Accessibility.** AT-SPI exposes every app's widget tree to every client
-  on the session bus. Out of this model's reach; it should be noted to users
-  who rely on agents.
+  on the session bus, outside this model.
 
 ## Rationale
 
-- **Guarantees, not containment.** A desktop cannot stop an unsandboxed
-  program from doing what its user can. It can guarantee that grants come
-  from the person at the keyboard, that they are visible, and that agents
-  given less authority still have a way to work. That is the whole model.
-- **A trusted list, not prompts, for the privileged interfaces.** Asking per
-  program looks finer but is not: an answer for `grim` is an answer for
-  every process that runs `grim`. A short list the user writes, of programs
-  root owns, says what it means. KWin takes the same approach with its
-  `X-KDE-Wayland-Interfaces` desktop-file key.
-- **Standard protocols for agents.** Agent tools already speak them, or the
-  RemoteDesktop portal with libei; scoping them per connection lets stock
-  tools work inside the grant without a new API to learn or maintain.
-- **The agent's own seat.** It is what lets an agent work beside the user
-  without taking their cursor or focus, and no other desktop offers it.
-- **Real input for consent.** If injected input could answer a dialog, an
-  agent could grant itself anything.
-- **Session-only grants on the user's workspaces.** An agent's own
-  workspace holds nothing of the user's; the user's do, and reach into them
-  should be asked for afresh.
+- **Guarantees, not containment.** Containing a same-user program is
+  impossible from the compositor; promising it would be false. Consent from
+  the keyboard, visibility and a scoped standard path for agents are what a
+  compositor can hold, and they are what agents lack on every other desktop.
+- **Default open, with a strict switch, instead of per-program questions.**
+  Asking per program looks finer but is not: an answer for `grim` is an
+  answer for everything that runs `grim`. KWin dropped its desktop-file
+  allowlist as pseudo-security in 2026; sway and Hyprland added user-written
+  allowlists. Otto keeps the defaults every desktop has and offers one
+  switch and one list for users who want less.
+- **Components by socket or by root-owned name.** A name alone is anybody's;
+  a socket Otto handed out, or a file only root can change, is not. Building
+  beside Otto in the user's own directory is trusted exactly as far as Otto
+  itself is: whoever can write there can replace Otto.
+- **Standard protocols on the agent's connection.** Agent tools already
+  speak them, and scoping them per connection lets stock tools work inside
+  the grant without a new API. The agent's connection is the scope, so a
+  sandbox around the agent, which hands every client inside the same
+  socket, scopes them all.
+- **One seat per agent, one workspace per seat.** A seat is what lets an
+  agent work beside the user without taking their cursor or focus. One
+  workspace keeps "where the agent's input lands" a question with one
+  answer.
+- **Stop is final for the session.** A stopped agent that could ask again
+  at once would train the user to click Allow. The secure attention key is
+  the one Stop no program can race or fake.
+- **No dialog to come to the front.** It would add a per-action question
+  the user learns to click through. The user already has every way to go
+  and look.
 
 ## Open Questions
 
-- Should the trusted list also be readable from a key in a program's
-  desktop file, as KWin does, so packages can declare it?
-- Should Otto warn, refuse to start agent sessions, or only document it when
-  the user can write to `/dev/uinput`? Closing it removes the Steam
-  controller and KDE Connect remote input.
-- Does any agent need the user's whole desktop (every workspace) as a scope,
-  and if so, how is that shown?
-- Which window titles may an agent see in a workspace it is granted that
-  also holds the user's windows: all of them, or only windows it started?
+- `ext-image-copy-capture-v1` with a workspace source (wayland-protocols
+  !463), so agents capture through the standard protocol rather than
+  `CaptureWorkspace`; needs the window list (`ext-foreign-toplevel-list`)
+  filtered per client in smithay.
+- A persistent topbar indicator listing live agent sessions with Stop, for
+  an agent whose workspace is not on screen.
+- Islands' dialog above every other overlay while it is up, and ignoring
+  input that did not come from a device, which needs provenance on input
+  events.
+- The RemoteDesktop and ScreenCast portals, with libei, as a second door to
+  the same agent sessions for tools written for other desktops.
+- Should Otto warn, or show in Settings › Privacy, when the user can write
+  to `/dev/uinput`? Refusing agent sessions would stop no attacker and break
+  Steam and KDE Connect.
+- Should a stop be lifted from Settings › Privacy before the user logs in
+  again?

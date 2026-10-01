@@ -283,10 +283,16 @@ thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
 
 ### Phase 5 — enforcement
 
-> Superseded by security-model.md, which replaces 5b and 5c below: no
-> sandbox launcher, a trusted list instead of per-program questions for
-> the privileged interfaces, and agents scoped through the standard
-> protocols on their own connections. 5a stands.
+> Superseded by security-model.md. What stands of this phase: an agent's
+> own connection (5a) is its scope, and it now also sees its own seat alone,
+> opens its windows on its workspace and lists that workspace's windows; a
+> security context made on it connects more of the agent's clients. The
+> sandbox launcher (5b) and the per-program questions (5c) are gone: the
+> privileged interfaces go to Otto's components, to the user's programs by
+> default, and under `[privacy] strict` to an allowlist. The static `agent`
+> seat is gone. Stop ends the seat and suspends the program's consent for
+> the login session. Phase 4's current- and every-workspace grants are not
+> planned: one workspace per seat.
 
 Until this phase, grants hold only for clients that play along: any client
 can still create virtual input on the user's seat, or capture the whole
@@ -453,9 +459,9 @@ the user can impersonate one that is allowed.
 - **Grants survive a reconnect within the session.** Agents crash and
   restart; asking again every time would train the user to click Allow
   without reading. A new Otto session starts with none, so nothing is
-  granted that the user did not allow since they logged in. Until Phase 5,
-  an agent is recognised by its name alone, which a hostile client can
-  borrow — one more reason grants are not a boundary before then.
+  granted that the user did not allow since they logged in. The seat is
+  granted to a program, not a name (security-model.md), and a stop by the
+  user ends the grant for the login session.
 - **D-Bus for seats and grants.** Otto already serves D-Bus
   (`org.otto.Compositor`, `org.otto.ScreenCast`), agents are processes that
   can reach it without a Wayland connection, and the caller's bus name gives
@@ -465,13 +471,13 @@ the user can impersonate one that is allowed.
 - **A longer idle on the agent's own workspace.** Watching an agent work
   there is the point of going there; a cursor that keeps vanishing between
   steps makes it hard to follow.
-- **The sandbox is the boundary, the prompts are not.** A compositor can
+- **The sandbox is the boundary, the prompts are not** *(superseded by security-model.md)*. A compositor can
   tell a sandboxed client from its security context, and an agent's own
   connection by the socket it handed out; it cannot tell one unsandboxed
   program of the user's from another that pretends to be it. So the real
   boundary is 5b, and 5c only stops agents that do not play along from
   acting unnoticed.
-- **Enforcement last, but planned.** Grants are useful to cooperative agents
+- **Enforcement last, but planned** *(done; see security-model.md)*. Grants are useful to cooperative agents
   from Phase 3. They become a security boundary only when virtual input and
   capture are restricted, which is recorded here so no earlier phase is
   mistaken for one.
