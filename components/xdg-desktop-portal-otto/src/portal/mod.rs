@@ -25,7 +25,8 @@ pub use interface::{
     fallback_mapping_id, validate_cursor_mode, validate_persist_mode, ScreenCastPortal,
 };
 pub use restore::{
-    decode_restore_data, encode_restore_data, resolve_restored, session_program, RestoredSource,
+    decode_restore_data, encode_restore_data, program_display_name, resolve_restored,
+    session_program, RestoredSource,
 };
 pub use screenshot::ScreenshotPortal;
 pub use settings::{spawn_change_relay, SettingsPortal};
