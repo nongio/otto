@@ -169,6 +169,17 @@ mod agent_seat_tests {
             manager.create_virtual_pointer(Some(&self.state.seats[index]), &self.qh, ())
         }
 
+        /// A virtual pointer on no seat in particular: the compositor's
+        /// default for this connection.
+        fn default_pointer(&self) -> zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1 {
+            let manager = self
+                .state
+                .pointer_manager
+                .as_ref()
+                .expect("zwlr_virtual_pointer_manager_v1 missing");
+            manager.create_virtual_pointer(None, &self.qh, ())
+        }
+
         /// A virtual keyboard on the `index`th advertised seat.
         fn keyboard_on(&self, index: usize) -> zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 {
             let manager = self
@@ -263,19 +274,32 @@ mod agent_seat_tests {
         })
     }
 
-    /// The agent seat comes second, so clients that take the first seat keep
-    /// the user's.
+    /// An agent's seat is advertised on the agent's own connections alone:
+    /// every other client sees the user's seat only, and an agent's
+    /// connection sees its own only, so tools that take the first seat land
+    /// on the right one either way.
     #[test]
     #[serial]
-    fn the_agent_seat_is_advertised_after_the_users() {
+    fn an_agents_seat_is_seen_only_on_its_connection() {
         let handle = start();
-        let driver = Driver::connect(&handle);
+        let other = Driver::connect(&handle);
         assert_eq!(
-            driver.state.seats.len(),
-            2,
-            "the user's seat and the agent's"
+            other.state.seats.len(),
+            1,
+            "another client saw the agent's seat"
         );
-        drop(driver);
+        assert!(other.seat_index(AGENT).is_none());
+
+        let agent = Driver::connect_as_agent(&handle, ":1.10");
+        assert_eq!(
+            agent.state.seats.len(),
+            1,
+            "the agent saw a seat not its own"
+        );
+        assert_eq!(agent.seat_index(AGENT), Some(0));
+
+        drop(other);
+        drop(agent);
         handle.stop();
     }
 
@@ -470,16 +494,13 @@ mod agent_seat_tests {
         assert_eq!(second.0, "agent-2");
         assert_ne!(first.1, second.1, "two agents share a colour");
 
-        let driver = Driver::connect(&handle);
-        assert_eq!(
-            driver.state.seats.len(),
-            3,
-            "the user's seat and two agents'"
-        );
-        assert!(driver.seat_index("agent-1").is_some());
-        assert!(driver.seat_index("agent-2").is_some());
+        let claude = Driver::connect_as_agent(&handle, ":1.10");
+        let helper = Driver::connect_as_agent(&handle, ":1.11");
+        assert_eq!(claude.state.seat_names, vec![Some("agent-1".to_string())]);
+        assert_eq!(helper.state.seat_names, vec![Some("agent-2".to_string())]);
 
-        drop(driver);
+        drop(claude);
+        drop(helper);
         handle.stop();
     }
 
@@ -519,29 +540,22 @@ mod agent_seat_tests {
     }
 
     /// A seat an agent asked for is driven through the agent's own
-    /// connection only: a pointer any other client creates on it drives
-    /// nothing.
+    /// connections only: no other client is even offered it.
     #[test]
     #[serial]
     fn only_the_agents_connection_drives_its_seat() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
-        let mut stranger = Driver::connect(&handle);
-        let before = user_pointer(&handle);
-
-        let pointer = stranger.pointer_on(stranger.seat_index("agent-1").unwrap());
-        move_to(&handle, &pointer, 200, 150);
-        stranger.settle(&handle);
-
-        assert_eq!(pointer_of(&handle, "agent-1"), Some((0.0, 0.0)));
-        assert_eq!(user_pointer(&handle), before);
-
+        let stranger = Driver::connect(&handle);
+        assert!(stranger.seat_index("agent-1").is_none());
+        assert_eq!(stranger.state.seats.len(), 1);
         drop(stranger);
         handle.stop();
     }
 
-    /// An agent's connection drives its own seat and no other: a pointer
-    /// it creates on the user's seat, or another agent's, drives its own.
+    /// An agent's connection drives its own seat and no other: it is not
+    /// offered the user's seat or another agent's, and a pointer it creates
+    /// without naming a seat drives its own.
     #[test]
     #[serial]
     fn an_agents_connection_drives_no_other_seat() {
@@ -550,17 +564,10 @@ mod agent_seat_tests {
         request_seat(&handle, "Helper", ":1.11").expect("seat");
         let mut driver = Driver::connect_as_agent(&handle, ":1.10");
         let before = user_pointer(&handle);
+        assert_eq!(driver.state.seat_names, vec![Some("agent-1".to_string())]);
 
-        let user_seat = driver
-            .state
-            .seat_names
-            .iter()
-            .position(|name| name.as_deref().is_some_and(|n| !n.starts_with("agent-")))
-            .expect("the user's seat");
-        let on_user = driver.pointer_on(user_seat);
-        move_to(&handle, &on_user, 300, 300);
-        let on_other = driver.pointer_on(driver.seat_index("agent-2").unwrap());
-        move_to(&handle, &on_other, 250, 250);
+        let pointer = driver.default_pointer();
+        move_to(&handle, &pointer, 250, 250);
         driver.settle(&handle);
 
         assert_eq!(user_pointer(&handle), before);
@@ -576,35 +583,16 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// A keyboard on an agent's seat is refused to any other connection;
-    /// one an agent's connection makes on the user's seat types on its own.
+    /// An agent's connection types on its own seat, the only one it sees.
     #[test]
     #[serial]
-    fn virtual_keyboards_follow_the_same_rule() {
+    fn an_agent_types_on_its_own_seat() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
-
-        let mut stranger = Driver::connect(&handle);
-        let _keyboard = stranger.keyboard_on(stranger.seat_index("agent-1").unwrap());
-        stranger.conn.flush().expect("flush");
-        handle.settle(200);
-        assert!(
-            stranger.queue.roundtrip(&mut stranger.state).is_err(),
-            "a stranger was given a keyboard on the agent's seat"
-        );
-
         let mut agent = Driver::connect_as_agent(&handle, ":1.10");
-        let user_seat = agent
-            .state
-            .seat_names
-            .iter()
-            .position(|name| name.as_deref().is_some_and(|n| !n.starts_with("agent-")))
-            .expect("the user's seat");
-        let _keyboard = agent.keyboard_on(user_seat);
+        let _keyboard = agent.keyboard_on(agent.seat_index("agent-1").unwrap());
         agent.settle(&handle);
         assert!(agent.queue.roundtrip(&mut agent.state).is_ok());
-
-        drop(stranger);
         drop(agent);
         handle.stop();
     }

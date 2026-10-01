@@ -57,15 +57,17 @@ laye-rs.workspace = true
 
 [dependencies.smithay-drm-extras]
 # fork: upstream master + dmabuf-scanout + xwm focus + the Vulkan device layer
+# + a client filter on seat globals
 git = "https://github.com/nongio/smithay"
-branch = "feat/vulkan-device"
+branch = "feat/seat-filter"
 # local development: path = "../smithay-latest/smithay-drm-extras"
 optional = true
 
 [dependencies.smithay]
 # fork: upstream master + dmabuf-scanout + xwm focus + the Vulkan device layer
+# + a client filter on seat globals
 git = "https://github.com/nongio/smithay"
-branch = "feat/vulkan-device"
+branch = "feat/seat-filter"
 # local development: path = "../smithay-latest"
 default-features = false
 features = [

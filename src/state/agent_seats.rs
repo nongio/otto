@@ -204,7 +204,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         agent_name: Option<String>,
         owner: Option<String>,
     ) {
-        let mut seat = self.seat_state.new_wl_seat(&self.display_handle, seat_name);
+        // Advertised only on the agent's own connections: every other client
+        // keeps seeing the user's seat alone, and toolkits that take every
+        // seat they see never bind this one.
+        let own = seat_name.to_string();
+        let mut seat = self.seat_state.new_wl_seat_with_filter(
+            &self.display_handle,
+            seat_name,
+            move |client| ClientState::agent_seat_of(client) == Some(own.as_str()),
+        );
         let pointer = seat.add_pointer();
         add_configured_keyboard(&mut seat);
         self.agent_seats.push(AgentSeat {

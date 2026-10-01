@@ -1028,7 +1028,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // init input
         let seat_name = backend_data.seat_name();
-        let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
+        // An agent's connection sees its own seat alone (`agent_seats`).
+        let mut seat = seat_state.new_wl_seat_with_filter(&dh, seat_name.clone(), |client| {
+            ClientState::agent_seat_of(client).is_none()
+        });
 
         let cursor_status = Arc::new(Mutex::new(CursorImageStatus::default_named()));
         let (cursor_theme, cursor_size) = Config::with(|c| (c.cursor_theme.clone(), c.cursor_size));
