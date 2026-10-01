@@ -118,7 +118,7 @@ pub async fn remember(connection: &zbus::Connection, app_id: &str, source: &Rest
     if !can_remember(app_id) {
         return;
     }
-    let data = match encode_restore_data(source) {
+    let data = match encode_restore_data(source, None) {
         Ok(data) => data,
         Err(err) => {
             warn!(?err, "cannot encode a share to remember");
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn a_payload_nested_in_variants_still_decodes() {
         let source = RestoredSource::Monitor("eDP-1".into());
-        let data = encode_restore_data(&source).unwrap();
+        let data = encode_restore_data(&source, None).unwrap();
         let nested = OwnedValue::try_from(Value::Value(Box::new(Value::from(data)))).unwrap();
         assert_eq!(
             unwrapped(&nested).as_ref().and_then(decode_restore_data),

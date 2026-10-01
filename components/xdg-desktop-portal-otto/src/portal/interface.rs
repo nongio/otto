@@ -21,9 +21,9 @@ use crate::portal::remembered;
 const REMEMBER_GROUP: &str = "otto.remember";
 use crate::portal::{
     build_streams_value_from_descriptors, decode_restore_data, encode_restore_data,
-    make_output_mapping_id, resolve_restored, PortalState, Request, RestoredSource, SelectedWindow,
-    Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED, SOURCE_TYPE_MONITOR,
-    SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
+    make_output_mapping_id, resolve_restored, session_program, PortalState, Request,
+    RestoredSource, SelectedWindow, Session, SessionState, StreamDescriptor, CURSOR_MODE_EMBEDDED,
+    SOURCE_TYPE_MONITOR, SOURCE_TYPE_WINDOW, SUPPORTED_CURSOR_MODES,
 };
 use zbus::zvariant::Str;
 
@@ -575,6 +575,7 @@ impl ScreenCastPortal {
         parent_window: &str,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         info!(session = %session_handle, ?app_id, parent_window, ?options, "Start called");
 
@@ -790,7 +791,13 @@ impl ScreenCastPortal {
                     }
                     SourceSelection::Window(window) => RestoredSource::Window(window.id.clone()),
                 };
-                match encode_restore_data(&restorable) {
+                // A sandboxed app is named by its app id already.
+                let program = if app_id.is_empty() {
+                    session_program(connection, session_handle.as_str()).await
+                } else {
+                    None
+                };
+                match encode_restore_data(&restorable, program.as_deref()) {
                     Ok(value) => {
                         results.insert("restore_data".to_string(), value);
                     }

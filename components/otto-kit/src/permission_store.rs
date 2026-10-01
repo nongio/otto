@@ -62,6 +62,10 @@ pub struct Entry {
     /// The vendor of the restore payload, when there is one: `otto`, or the
     /// desktop whose portal wrote it (`KDE`, `GNOME`).
     pub vendor: Option<String>,
+    /// The program an Otto restore payload was made for, by its executable's
+    /// file name: written for unsandboxed apps, which the empty app id does
+    /// not tell apart.
+    pub program: Option<String>,
 }
 
 /// What an Otto ScreenCast restore payload says was shared.
@@ -120,6 +124,7 @@ impl Store {
                 table: table.to_string(),
                 vendor: restore_vendor(&data),
                 restored: decode_restored(&data),
+                program: restore_program(&data),
                 id,
                 apps,
             });
@@ -180,16 +185,30 @@ fn restore_vendor(data: &Value<'_>) -> Option<String> {
     }
 }
 
-/// What an Otto restore payload says was shared: the `source-type` bit (1 a
-/// screen, 2 a window) and the `id` beside it.
-pub fn decode_restored(data: &Value<'_>) -> Option<Restored> {
+/// The `(suv)` payload's own fields, when Otto's portal wrote it.
+fn otto_restore_dict<'a>(data: &'a Value<'a>) -> Option<&'a zbus::zvariant::Dict<'a, 'a>> {
     if restore_vendor(data)?.as_str() != "otto" {
         return None;
     }
-    let fields = restore_fields(data)?;
-    let Value::Dict(dict) = unwrap_variants(&fields[2]) else {
-        return None;
-    };
+    match unwrap_variants(&restore_fields(data)?[2]) {
+        Value::Dict(dict) => Some(dict),
+        _ => None,
+    }
+}
+
+/// The program an Otto restore payload names, for an unsandboxed app.
+pub fn restore_program(data: &Value<'_>) -> Option<String> {
+    let dict = otto_restore_dict(data)?;
+    match unwrap_variants(&dict.get::<_, Value<'_>>(&"program").ok()??) {
+        Value::Str(program) if !program.is_empty() => Some(program.to_string()),
+        _ => None,
+    }
+}
+
+/// What an Otto restore payload says was shared: the `source-type` bit (1 a
+/// screen, 2 a window) and the `id` beside it.
+pub fn decode_restored(data: &Value<'_>) -> Option<Restored> {
+    let dict = otto_restore_dict(data)?;
     let source_type = match unwrap_variants(&dict.get::<_, Value<'_>>(&"source-type").ok()??) {
         Value::U32(value) => *value,
         _ => return None,
@@ -238,6 +257,25 @@ mod tests {
         assert_eq!(
             decode_restored(&wrapped),
             Some(Restored::Monitor("HDMI-A-1".into()))
+        );
+    }
+
+    #[test]
+    fn an_unsandboxed_apps_payload_names_its_program() {
+        assert_eq!(restore_program(&payload("otto", 1, "eDP-1")), None);
+        let mut data: HashMap<&str, Value<'_>> = HashMap::new();
+        data.insert("source-type", Value::U32(1));
+        data.insert("id", Value::Str(Str::from_static("eDP-1")));
+        data.insert("program", Value::Str(Str::from_static("obs")));
+        let named = Value::from((
+            Str::from_static("otto"),
+            1u32,
+            Value::Value(Box::new(Value::from(data))),
+        ));
+        assert_eq!(restore_program(&named).as_deref(), Some("obs"));
+        assert_eq!(
+            decode_restored(&named),
+            Some(Restored::Monitor("eDP-1".into()))
         );
     }
 
