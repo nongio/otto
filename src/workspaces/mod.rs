@@ -3327,6 +3327,15 @@ impl Workspaces {
         })
     }
 
+    /// Whether `window_element` is on the workspace its output shows.
+    pub fn is_on_current_workspace(&self, window_element: &WindowElement) -> bool {
+        self.output_workspaces.values().any(|ows| {
+            ows.spaces
+                .get(ows.current_workspace)
+                .is_some_and(|space| space.elements().any(|e| e.id() == window_element.id()))
+        })
+    }
+
     pub fn map_window(
         &mut self,
         window_element: &WindowElement,
