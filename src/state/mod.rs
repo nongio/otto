@@ -360,6 +360,7 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// but the global has to be alive for a client to be able to say so.
     pub xdg_dialog_state: XdgDialogState,
     pub foreign_toplevel_list_state: ForeignToplevelListState,
+    pub image_capture: image_capture::ImageCaptureStates,
     pub wlr_foreign_toplevel_state: wlr_foreign_toplevel::WlrForeignToplevelManagerState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
@@ -572,6 +573,7 @@ pub mod foreign_toplevel_list_handler;
 pub mod foreign_toplevel_shared;
 pub mod fractional_scale_handler;
 pub mod gamma_control;
+pub mod image_capture;
 pub mod input_method_handler;
 pub mod screencopy;
 pub mod seat_handler;
@@ -1008,8 +1010,29 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
         let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
         // Every window's title and app id.
-        let foreign_toplevel_list_state =
-            ForeignToplevelListState::new_with_filter::<Self>(&dh, unconfined);
+        // The window list is for everyone outside a sandbox; an agent's
+        // connection is told of its own windows alone.
+        let mut foreign_toplevel_list_state =
+            ForeignToplevelListState::new_with_filter::<Self>(&dh, |client: &Client| {
+                !crate::sandbox::is_sandboxed_client(client)
+            });
+        foreign_toplevel_list_state.set_toplevel_filter(|client, handle| {
+            match ClientState::agent_seat_of(client) {
+                None => true,
+                Some(seat) => {
+                    handle
+                        .user_data()
+                        .get::<foreign_toplevel_shared::ToplevelOwner>()
+                        .and_then(|owner| owner.seat())
+                        .as_deref()
+                        == Some(seat)
+                }
+            }
+        });
+        // Capture through ext-image-copy-capture: for the clients that get
+        // the privileged interfaces, and agents' connections, scoped to
+        // their workspace (`image_capture`).
+        let image_capture = image_capture::ImageCaptureStates::new::<Self>(&dh);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
         let gamma_control_manager = gamma_control::GammaControlManagerState::new();
@@ -1174,6 +1197,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             xdg_foreign_state,
             xdg_dialog_state,
             foreign_toplevel_list_state,
+            image_capture,
             wlr_foreign_toplevel_state,
             cursor_shape_manager_state,
             virtual_keyboard_manager_state,

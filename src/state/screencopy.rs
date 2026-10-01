@@ -77,9 +77,47 @@ pub enum CaptureBuffer {
     Dmabuf(Dmabuf),
 }
 
+/// The client object a pending capture answers to: a wlr-screencopy frame,
+/// or an ext-image-copy-capture one (`crate::state::image_capture`).
+pub enum CaptureFrame {
+    Wlr(ZwlrScreencopyFrameV1),
+    Ext(smithay::wayland::image_copy_capture::Frame),
+}
+
+impl CaptureFrame {
+    /// Whether this is the wlr frame `resource`.
+    pub fn is_wlr(&self, resource: &ZwlrScreencopyFrameV1) -> bool {
+        matches!(self, Self::Wlr(frame) if frame == resource)
+    }
+
+    /// Tell the client the capture is done, or that it failed.
+    pub fn finish(self, success: bool) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        match (self, success) {
+            (Self::Wlr(frame), true) => {
+                frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+                frame.ready(
+                    (now.as_secs() >> 32) as u32,
+                    now.as_secs() as u32,
+                    now.subsec_nanos(),
+                );
+            }
+            (Self::Wlr(frame), false) => frame.failed(),
+            (Self::Ext(frame), true) => {
+                frame.success(smithay::utils::Transform::Normal, None, now);
+            }
+            (Self::Ext(frame), false) => {
+                frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown);
+            }
+        }
+    }
+}
+
 /// A pending screencopy frame waiting to be filled during the render loop.
 pub struct PendingScreencopy {
-    pub frame: ZwlrScreencopyFrameV1,
+    pub frame: CaptureFrame,
     pub buffer: CaptureBuffer,
     pub output: Output,
     pub region: Option<Rectangle<i32, smithay::utils::Logical>>,
@@ -268,7 +306,7 @@ where
                 };
 
                 state.pending_screencopy_frames.push(PendingScreencopy {
-                    frame: resource.clone(),
+                    frame: CaptureFrame::Wlr(resource.clone()),
                     buffer: capture_buffer,
                     output: data.output.clone(),
                     region: data.region,
@@ -297,7 +335,7 @@ where
         // render loop doesn't keep doing GPU readback for a dead resource.
         state
             .pending_screencopy_frames
-            .retain(|p| p.frame != *resource);
+            .retain(|p| !p.frame.is_wlr(resource));
     }
 }
 
@@ -333,19 +371,7 @@ pub fn complete_screencopy_for_output<A: RendererApi>(
             }
         };
 
-        if success {
-            p.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            p.frame.ready(
-                (now.as_secs() >> 32) as u32,
-                now.as_secs() as u32,
-                now.subsec_nanos(),
-            );
-        } else {
-            p.frame.failed();
-        }
+        p.frame.finish(success);
     }
 }
 
@@ -391,19 +417,7 @@ pub fn complete_screencopy_for_output_skia(
             }
         };
 
-        if success {
-            p.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            p.frame.ready(
-                (now.as_secs() >> 32) as u32,
-                now.as_secs() as u32,
-                now.subsec_nanos(),
-            );
-        } else {
-            p.frame.failed();
-        }
+        p.frame.finish(success);
     }
 }
 

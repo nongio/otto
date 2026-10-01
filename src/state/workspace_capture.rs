@@ -19,9 +19,9 @@ use layers::{drawing::render_node_tree, skia};
 use super::{agent_seats::Reach, Backend, Otto};
 
 /// A workspace picked for capture: where it is and what it is called.
-struct Target {
-    output: String,
-    view: std::sync::Arc<crate::workspaces::workspace::WorkspaceView>,
+pub(crate) struct Target {
+    pub output: String,
+    pub view: std::sync::Arc<crate::workspaces::workspace::WorkspaceView>,
 }
 
 impl<BackendData: Backend + 'static> Otto<BackendData> {
@@ -59,45 +59,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let mode = output.current_mode().ok_or("the output has no mode")?;
         let (width, height) = (mode.size.w, mode.size.h);
 
-        let info = skia::ImageInfo::new(
-            (width, height),
-            skia::ColorType::RGBA8888,
-            skia::AlphaType::Premul,
-            None,
-        );
+        let roots = [target.view.wallpaper_group.id, target.view.windows_layer.id];
+        let mut surface = self.render_layers(&roots, width, height)?;
         let mut context = self.backend_data.renderer_context();
-        // Client windows are textures on the renderer's context; without one
-        // (the headless backend) only what Skia can draw on the CPU shows.
-        let mut surface = match context.as_mut() {
-            Some(context) => skia::gpu::surfaces::render_target(
-                context,
-                skia::gpu::Budgeted::No,
-                &info,
-                None,
-                skia::gpu::SurfaceOrigin::TopLeft,
-                None,
-                false,
-                false,
-            ),
-            None => skia::surfaces::raster(&info, None, None),
-        }
-        .ok_or("could not make a surface to draw into")?;
-
-        let canvas = surface.canvas();
-        canvas.clear(skia::Color::BLACK);
-        let scene = self.layers_engine.scene();
-        scene.with_arena(|arena| {
-            scene.with_renderable_arena(|renderables| {
-                // Each root lands at the canvas origin: its own position on
-                // the strip is not applied.
-                for root in [target.view.wallpaper_group.id, target.view.windows_layer.id] {
-                    render_node_tree(root, arena, renderables, canvas, 1.0, None, None, None);
-                }
-            });
-        });
-        if let Some(context) = context.as_mut() {
-            context.flush_and_submit();
-        }
 
         let image = surface.image_snapshot();
         let png = image
@@ -132,6 +96,62 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// The workspace `selector` names: an id from `GetWorkspaces`, or a name
     /// (any case). A name more than one output has is refused rather than
     /// guessed.
+    /// Draw the layer trees `roots` off screen, each at the canvas origin,
+    /// at `width` by `height` pixels, with the renderer's GPU context when
+    /// there is one. Client windows are textures on that context; without
+    /// one (the headless backend) only what Skia can draw on the CPU shows.
+    pub(crate) fn render_layers(
+        &mut self,
+        roots: &[layers::prelude::NodeRef],
+        width: i32,
+        height: i32,
+    ) -> Result<skia::Surface, String> {
+        let info = skia::ImageInfo::new(
+            (width, height),
+            skia::ColorType::RGBA8888,
+            skia::AlphaType::Premul,
+            None,
+        );
+        let mut context = self.backend_data.renderer_context();
+        let mut surface = match context.as_mut() {
+            Some(context) => skia::gpu::surfaces::render_target(
+                context,
+                skia::gpu::Budgeted::No,
+                &info,
+                None,
+                skia::gpu::SurfaceOrigin::TopLeft,
+                None,
+                false,
+                false,
+            ),
+            None => skia::surfaces::raster(&info, None, None),
+        }
+        .ok_or("could not make a surface to draw into")?;
+
+        let canvas = surface.canvas();
+        canvas.clear(skia::Color::BLACK);
+        let scene = self.layers_engine.scene();
+        scene.with_arena(|arena| {
+            scene.with_renderable_arena(|renderables| {
+                for root in roots {
+                    render_node_tree(*root, arena, renderables, canvas, 1.0, None, None, None);
+                }
+            });
+        });
+        if let Some(context) = context.as_mut() {
+            context.flush_and_submit();
+        }
+        Ok(surface)
+    }
+
+    /// The workspace the agent seat `seat_name` is granted.
+    pub(crate) fn workspace_of_seat(&self, seat_name: &str) -> Result<Target, String> {
+        let reach = self
+            .agent_seat(seat_name)
+            .map(|agent| agent.reach(&self.workspaces));
+        self.granted_target(reach)
+    }
+
     /// The workspace `owner`'s agent is granted, for a capture that names
     /// none.
     fn own_workspace(&self, owner: &str) -> Result<Target, String> {
@@ -140,6 +160,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .iter()
             .find(|agent| agent.owner.as_deref() == Some(owner))
             .map(|agent| agent.reach(&self.workspaces));
+        self.granted_target(reach)
+    }
+
+    fn granted_target(&self, reach: Option<Reach>) -> Result<Target, String> {
         let Some(Reach::Workspace { output, workspace }) = reach else {
             return Err("the caller has no workspace of its own".into());
         };

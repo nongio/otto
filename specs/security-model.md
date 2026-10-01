@@ -61,10 +61,11 @@ still has a standard way to work.
 | Interface | Component | User program (default) | User program (`strict`) | Sandboxed | Agent |
 |---|---|---|---|---|---|
 | Screen capture (wlr-screencopy) | yes | yes | allowlist | — | — |
+| Screen capture (ext-image-copy-capture, output and toplevel sources) | yes | yes | allowlist | — | its workspace and its windows |
 | Virtual pointer and keyboard | user's seat | user's seat | allowlist | — | its own seat only |
 | Clipboard without focus (data-control, ext-data-control) | yes | yes | allowlist | — | — |
 | Window control (wlr-foreign-toplevel) | all windows | all windows | allowlist | — | its workspace's windows |
-| Window list (ext-foreign-toplevel-list) | yes | yes | yes | — | — |
+| Window list (ext-foreign-toplevel-list) | yes | yes | yes | — | its own windows |
 | Input method, layer shell, shortcut inhibition, gamma, Otto's protocols | yes | yes | yes | — | — |
 | Security contexts | yes | yes | yes | — | yes (its own clients) |
 | Session lock | Otto's locker only | — | — | — | — |
@@ -122,7 +123,9 @@ On an agent's connection:
 | xdg-shell | Its windows open on its workspace and take its keyboard, never the user's |
 | wlr-foreign-toplevel | The windows on its workspace, with titles. Activating gives the agent's keyboard to one; closing closes one; maximize, minimize and fullscreen are ignored |
 | xdg-activation | A window a program launched for the agent opens on the agent's workspace; an existing window never moves |
-| `CaptureWorkspace` (D-Bus) | A PNG of its workspace, whether or not the user is looking at it |
+| ext-foreign-toplevel-list | Its own windows, with titles |
+| ext-image-copy-capture | An output source shows its workspace, whether or not the user is looking at it, and never the bars, the dialogs or the user's cursor; a toplevel source works for its own windows alone |
+| `CaptureWorkspace` (D-Bus) | The same workspace as a PNG, for agents that only speak D-Bus |
 
 Nothing an agent holds changes what the user sees: it never brings a window
 or a workspace in front of the user, and there is no dialog to ask for that.
@@ -159,8 +162,14 @@ The user goes to the agent's workspace when they want to watch.
   windows.
 - **Windows moved by the user.** A window the user moves onto an agent's
   workspace comes into its scope and is not announced to the agent's window
-  list until it reconnects; one moved out is not withdrawn. The agent's
-  input and capture follow the workspace at once.
+  lists until it reconnects; one moved out is not withdrawn. The agent's
+  input and the workspace capture follow the workspace at once.
+- **Capture buffers.** Capture through ext-image-copy-capture takes wl_shm
+  buffers; an output capture by the user's programs also takes a dmabuf on
+  the udev backend. An agent's "output" shows its workspace, which the
+  protocol does not foresee (wayland-protocols !463 proposes a workspace
+  source); a capture of an output also deviates for an agent in that the
+  output is its workspace's.
 - **Toolkits and seats.** An app must listen to the seat it is offered. On
   an agent's connection that is the agent's seat alone, so every toolkit
   binds the right one; a toolkit that only ever uses the first seat is fine.
@@ -201,10 +210,9 @@ The user goes to the agent's workspace when they want to watch.
 
 ## Open Questions
 
-- `ext-image-copy-capture-v1` with a workspace source (wayland-protocols
-  !463), so agents capture through the standard protocol rather than
-  `CaptureWorkspace`; needs the window list (`ext-foreign-toplevel-list`)
-  filtered per client in smithay.
+- A workspace capture source (wayland-protocols !463) in place of the
+  deviation that an agent's output is its workspace, once the protocol
+  lands.
 - A persistent topbar indicator listing live agent sessions with Stop, for
   an agent whose workspace is not on screen.
 - Islands' dialog above every other overlay while it is up, and ignoring

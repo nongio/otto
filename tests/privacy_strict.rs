@@ -22,6 +22,9 @@ mod privacy_strict_tests {
         "zwlr_data_control_manager_v1",
         "ext_data_control_manager_v1",
         "zwlr_foreign_toplevel_manager_v1",
+        "ext_image_copy_capture_manager_v1",
+        "ext_output_image_capture_source_manager_v1",
+        "ext_foreign_toplevel_image_capture_source_manager_v1",
     ];
 
     #[derive(Default)]

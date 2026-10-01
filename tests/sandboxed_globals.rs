@@ -38,6 +38,9 @@ mod sandboxed_globals_tests {
         "ext_data_control_manager_v1",
         "zwlr_foreign_toplevel_manager_v1",
         "wp_security_context_manager_v1",
+        "ext_image_copy_capture_manager_v1",
+        "ext_output_image_capture_source_manager_v1",
+        "ext_foreign_toplevel_image_capture_source_manager_v1",
     ];
 
     /// Not for sandboxed clients: an input method is sent every key,
@@ -171,7 +174,11 @@ mod sandboxed_globals_tests {
             "zwlr_virtual_pointer_manager_v1",
             "zwp_virtual_keyboard_manager_v1",
             "zwlr_foreign_toplevel_manager_v1",
+            "ext_foreign_toplevel_list_v1",
             "wp_security_context_manager_v1",
+            "ext_image_copy_capture_manager_v1",
+            "ext_output_image_capture_source_manager_v1",
+            "ext_foreign_toplevel_image_capture_source_manager_v1",
         ];
         for interface in HIDDEN_FROM_SANDBOXED.iter().chain([&INPUT_METHOD]) {
             if AGENTS_OWN.contains(interface) {

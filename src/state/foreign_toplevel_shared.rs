@@ -6,6 +6,18 @@
 use smithay::output::Output;
 use smithay::wayland::foreign_toplevel_list::ForeignToplevelHandle as ExtHandle;
 
+/// On an ext handle's user data: the agent seat whose workspace the window
+/// opened on, if any. An agent's connection is told only of the toplevels
+/// owned by its own seat (`crate::state::image_capture`).
+#[derive(Debug, Default)]
+pub struct ToplevelOwner(pub std::sync::Mutex<Option<String>>);
+
+impl ToplevelOwner {
+    pub fn seat(&self) -> Option<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
 use super::wlr_foreign_toplevel::WlrForeignToplevelHandle;
 
 /// Combined handle that manages both protocol handles

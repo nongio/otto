@@ -212,9 +212,20 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let app_id = window_element.xdg_app_id();
         let title = window_element.xdg_title();
 
-        let ext_handle = self
-            .foreign_toplevel_list_state
-            .new_toplevel::<Self>(&app_id, &title);
+        // Told to every client, or, for an agent's window, to that agent's
+        // connections alone.
+        let ext_handle = self.foreign_toplevel_list_state.new_toplevel_unannounced(
+            &title,
+            &app_id,
+            rand_identifier(),
+        );
+        ext_handle.user_data().insert_if_missing(|| {
+            crate::state::foreign_toplevel_shared::ToplevelOwner(std::sync::Mutex::new(
+                agent_seat.clone(),
+            ))
+        });
+        self.foreign_toplevel_list_state
+            .announce_toplevel::<Self>(&ext_handle);
         // An agent's connection is told of its own windows alone.
         let for_agent = agent_seat.clone();
         let wlr_handle = self.wlr_foreign_toplevel_state.new_toplevel::<Self>(
@@ -2521,6 +2532,15 @@ pub(crate) fn restored_rect_or_default(
     } else {
         current
     }
+}
+
+/// A toplevel identifier as `ext-foreign-toplevel-list` wants one: up to
+/// 32 printable ASCII characters, unique for the session.
+fn rand_identifier() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!("otto-{:08x}-{n:08x}", std::process::id())
 }
 
 #[cfg(test)]
