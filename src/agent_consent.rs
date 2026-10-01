@@ -8,7 +8,8 @@
 //! asking. Settings › Privacy lists the table, switches a program off, and
 //! forgets its answer; a program switched off loses the seats it holds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use zbus::zvariant::OwnedValue;
 
@@ -19,6 +20,60 @@ const STORE_INTERFACE: &str = "org.freedesktop.impl.portal.PermissionStore";
 /// The table the answers are kept in, and its one entry.
 pub const TABLE: &str = "otto-agents";
 pub const ID: &str = "seat";
+
+/// The program behind each bus connection that holds a seat, by unique name.
+static PROGRAMS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+/// Programs the user stopped this session: no seat until they log in again.
+static SUSPENDED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Keep which program the connection `owner` runs, while it holds a seat.
+pub fn remember_program(owner: &str, program: &str) {
+    PROGRAMS
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(owner.to_string(), program.to_string());
+}
+
+/// The connection `owner` has let its seats go.
+pub fn forget_program(owner: &str) {
+    if let Some(programs) = PROGRAMS.lock().unwrap().as_mut() {
+        programs.remove(owner);
+    }
+}
+
+/// The program behind `owner`, while it holds a seat.
+pub fn program_for_owner(owner: &str) -> Option<String> {
+    PROGRAMS.lock().unwrap().as_ref()?.get(owner).cloned()
+}
+
+/// Every connection holding a seat, with its program.
+pub fn programs() -> HashMap<String, String> {
+    PROGRAMS.lock().unwrap().clone().unwrap_or_default()
+}
+
+/// The user stopped `owner`'s agent: its program gets no seat again until
+/// the user logs in anew. A stop is the user's word against the program,
+/// not against one connection of it. Returns the program.
+pub fn suspend_owner(owner: &str) -> Option<String> {
+    let program = program_for_owner(owner)?;
+    SUSPENDED
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashSet::new)
+        .insert(program.clone());
+    Some(program)
+}
+
+/// Whether the user stopped `program` this session.
+pub fn is_suspended(program: &str) -> bool {
+    SUSPENDED
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|suspended| suspended.contains(program))
+}
 
 /// What the user said, or that nobody could ask them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,5 +214,26 @@ pub async fn ask(connection: &zbus::Connection, program: &str, agent_name: &str)
             tracing::warn!(%err, program, "cannot read the answer about an agent seat");
             Answer::Unanswered
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stop_suspends_the_program_behind_the_connection() {
+        remember_program(":1.77", "/usr/bin/some-agent");
+        assert!(!is_suspended("/usr/bin/some-agent"));
+        assert_eq!(
+            suspend_owner(":1.77").as_deref(),
+            Some("/usr/bin/some-agent")
+        );
+        assert!(is_suspended("/usr/bin/some-agent"));
+        forget_program(":1.77");
+        assert_eq!(program_for_owner(":1.77"), None);
+        // Another connection of the same program is still stopped.
+        assert!(is_suspended("/usr/bin/some-agent"));
+        assert_eq!(suspend_owner(":1.78"), None, "no seat, nothing to stop");
     }
 }

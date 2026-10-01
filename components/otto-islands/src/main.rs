@@ -159,6 +159,9 @@ struct Visualiser {
 }
 
 /// A presented Access-style dialog panel (one subsurface, drawn as a whole).
+/// How long after a dialog appears before a grant counts.
+const DIALOG_ARMING: std::time::Duration = std::time::Duration::from_millis(600);
+
 struct DialogPanel {
     id: DialogId,
     surface: SubsurfaceSurface,
@@ -167,6 +170,10 @@ struct DialogPanel {
     picks: dialog::Picks,
     /// The page shown, when the dialog asks several questions a page each.
     page: usize,
+    /// When the panel appeared. A grant within [`DIALOG_ARMING`] of it is
+    /// ignored: a click or an Enter already on its way when the dialog came
+    /// up must not answer it (`specs/security-model.md`).
+    shown_at: std::time::Instant,
     /// Panel top-left in layer coordinates (for hit testing).
     origin: (f32, f32),
     /// Size of the shape on screen — the panel, or the circle it shrank
@@ -1264,6 +1271,7 @@ impl IslandApp {
             id: view.id,
             surface,
             presence: Presence::new(view.modal, std::time::Instant::now()),
+            shown_at: std::time::Instant::now(),
             view,
             picks,
             page: 0,
@@ -1680,6 +1688,14 @@ impl IslandApp {
         let Some(panel) = self.dialog.as_ref() else {
             return;
         };
+        let grants = response == dialog::RESPONSE_GRANTED || response == dialog::RESPONSE_OPEN;
+        if grants && panel.shown_at.elapsed() < DIALOG_ARMING {
+            tracing::info!(
+                id = panel.id,
+                "dialog answered before it was armed; ignored"
+            );
+            return;
+        }
         // Only a confirmation carries selections; deny and open return none.
         let results: Vec<(String, String)> = if response == dialog::RESPONSE_GRANTED {
             panel.picks.results(&panel.view.choices)

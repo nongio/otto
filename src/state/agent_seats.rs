@@ -538,30 +538,54 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         true
     }
 
-    /// End every grant on the workspace `view` of `output`: the user said
-    /// stop. The workspace stays, with its windows.
+    /// The user said stop to every agent there is (the secure attention key):
+    /// as [`Self::revoke_workspace_grants`], for every seat.
+    pub fn stop_all_agents(&mut self) {
+        let seats: Vec<(String, Option<String>)> = self
+            .agent_seats
+            .iter()
+            .map(|agent| (agent.name(), agent.owner.clone()))
+            .collect();
+        for (seat_name, owner) in seats {
+            let program = owner
+                .as_deref()
+                .and_then(crate::agent_consent::suspend_owner);
+            info!(seat = seat_name, ?program, "Agent stopped by the user");
+            self.remove_agent_seat(&seat_name);
+        }
+        for past in self.agent_history.values_mut() {
+            past.grant = None;
+        }
+        self.backend_data.request_redraw();
+    }
+
+    /// The user said stop to every agent on the workspace `view` of `output`:
+    /// each one's seat goes, with its connections and cursor, and its program
+    /// gets no seat again until the user logs in anew. The workspace stays,
+    /// with its windows.
     pub fn revoke_workspace_grants(&mut self, output: &str, view: usize) {
         let grant = Grant::OwnWorkspace {
             output: output.to_string(),
             workspace: view,
         };
-        let seats: Vec<String> = self
+        let seats: Vec<(String, Option<String>)> = self
             .agent_seats
             .iter()
             .filter(|agent| agent.grant.as_ref() == Some(&grant))
-            .map(AgentSeat::name)
+            .map(|agent| (agent.name(), agent.owner.clone()))
             .collect();
-        for seat_name in seats {
+        for (seat_name, owner) in seats {
+            let program = owner
+                .as_deref()
+                .and_then(crate::agent_consent::suspend_owner);
             info!(
                 seat = seat_name,
                 output,
                 workspace = view,
-                "Agent grant revoked by the user"
+                ?program,
+                "Agent stopped by the user"
             );
-            self.release_focus_of(&seat_name);
-            if let Some(agent) = self.agent_seat_mut(&seat_name) {
-                agent.grant = None;
-            }
+            self.remove_agent_seat(&seat_name);
         }
         for past in self.agent_history.values_mut() {
             if past.grant.as_ref() == Some(&grant) {

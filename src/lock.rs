@@ -380,12 +380,28 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                         debug!("holding logind's sleep delay inhibitor");
                         state.sleep_inhibitor = Some(fd);
                     }
+                    LogindEvent::SecureAttentionKey => {
+                        info!("secure attention key: stopping every agent");
+                        state.stop_all_agents();
+                    }
                 }
             })
             .is_err()
         {
             warn!("could not listen to logind; `loginctl lock-session` will not lock");
             return;
+        }
+
+        let sak_tx = tx.clone();
+        if let Err(err) = std::thread::Builder::new()
+            .name("logind-sak".into())
+            .spawn(move || {
+                if let Err(err) = listen_for_secure_attention_key(&sak_tx) {
+                    debug!(%err, "not listening for the secure attention key");
+                }
+            })
+        {
+            warn!(%err, "could not start the secure attention key listener");
         }
 
         let lock_tx = tx.clone();
@@ -1294,6 +1310,10 @@ enum LogindEvent {
     /// A fresh `delay` inhibitor on `sleep`, to hold until the next suspend
     /// has been locked for.
     SleepInhibitor(std::os::fd::OwnedFd),
+    /// The secure attention key (Ctrl+Alt+Shift+Esc): the one input no
+    /// program can fake, since the kernel and logind handle it before any
+    /// compositor sees it.
+    SecureAttentionKey,
 }
 
 /// Whether a suspend locks the session first.
@@ -1376,6 +1396,23 @@ fn listen_for_logind_lock(
         zbus::blocking::Proxy::new(&bus, LOGIND, session, "org.freedesktop.login1.Session")?;
     for _ in session.receive_signal("Lock")? {
         if tx.send(LogindEvent::Lock).is_err() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Forward every `SecureAttentionKey` logind emits to `tx` (logind 256 and
+/// later; older ones have no such signal, and the listener ends). Blocks
+/// for as long as the system bus is there.
+fn listen_for_secure_attention_key(
+    tx: &smithay::reexports::calloop::channel::Sender<LogindEvent>,
+) -> zbus::Result<()> {
+    let bus = zbus::blocking::Connection::system()?;
+    let manager = logind_manager(&bus)?;
+    info!("Listening for logind's SecureAttentionKey");
+    for _ in manager.receive_signal("SecureAttentionKey")? {
+        if tx.send(LogindEvent::SecureAttentionKey).is_err() {
             break;
         }
     }

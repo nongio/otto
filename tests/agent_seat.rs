@@ -1177,11 +1177,12 @@ mod agent_seat_tests {
     /// Stop on the chip ends the grant: the agent reaches nothing after.
     #[test]
     #[serial]
-    fn stop_on_the_chip_ends_the_grant() {
+    fn stop_on_the_chip_ends_the_seat() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
         request_workspace(&handle, ":1.10").expect("workspace");
         handle.settle(200);
+        let workspaces = workspace_names(&handle).len();
 
         let stopped = handle.query(|state| {
             let output = state.workspaces.outputs().next().cloned().unwrap();
@@ -1209,7 +1210,13 @@ mod agent_seat_tests {
             (missed, hit)
         });
         assert_eq!(stopped, (false, true));
-        assert!(handle.query(|state| state.agent_seat("agent-1").unwrap().grant.is_none()));
+        // The seat is gone; the workspace stays for the user.
+        assert!(handle.query(|state| state.agent_seat("agent-1").is_none()));
+        assert_eq!(
+            workspace_names(&handle).len(),
+            workspaces,
+            "the workspace went with the agent"
+        );
         handle.stop();
     }
 
