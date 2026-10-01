@@ -68,7 +68,9 @@ enum Stage {
 pub struct Dialog {
     surface: Option<LayerShellSurface>,
     panel: Option<Panel>,
-    reason: String,
+    /// What polkit says the request is for, and the program that asked.
+    message: String,
+    requester: String,
     conversation: Conversation,
     verdict: Option<Verdict>,
 
@@ -101,11 +103,17 @@ pub struct Dialog {
 }
 
 impl Dialog {
-    pub fn new(reason: String, user: Option<User>, conversation: Conversation) -> Self {
+    pub fn new(
+        message: String,
+        requester: String,
+        user: Option<User>,
+        conversation: Conversation,
+    ) -> Self {
         Self {
             surface: None,
             panel: None,
-            reason,
+            message,
+            requester,
             conversation,
             verdict: None,
             stage: Stage::Authenticating,
@@ -156,7 +164,7 @@ impl Dialog {
             engine,
             surface.base_surface().layer_node(),
         );
-        panel.set_reason(&self.reason);
+        panel.set_reason(&self.message, &self.requester);
         self.panel = Some(panel);
         self.surface = Some(surface);
         self.deadline = Instant::now() + TIMEOUT;
@@ -594,6 +602,7 @@ mod tests {
     fn dialog() -> Dialog {
         Dialog::new(
             "Test".into(),
+            "otto-test".into(),
             User::current(),
             Conversation::Polkit {
                 cookie: "test".into(),

@@ -1887,6 +1887,5 @@ files-photos-one-selected = 1 вибрано · Пробіл — перегля�
 
 authorize-cancel = Скасувати
 authorize-error-failed = Не вдалося пройти автентифікацію
-polkit-reason = { $program } просить: { $message }
 authorize-path-in = { $name } (у { $dir })
 polkit-unknown-program = Невідома програма

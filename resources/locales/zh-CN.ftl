@@ -1799,6 +1799,5 @@ files-photos-one-selected = 已选择 1 项 · 空格预览 · ↵ 打开
 
 authorize-cancel = 取消
 authorize-error-failed = 认证失败
-polkit-reason = { $program } 请求：{ $message }
 authorize-path-in = { $name }（位于 { $dir }）
 polkit-unknown-program = 未知程序

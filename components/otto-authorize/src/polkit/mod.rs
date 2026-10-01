@@ -134,7 +134,8 @@ impl Prompt for Dialog {
 
 /// What a prompt is made from.
 struct Question {
-    reason: String,
+    message: String,
+    requester: String,
     user: String,
     cookie: String,
 }
@@ -159,7 +160,8 @@ struct Agent<P> {
 /// The running agent's prompt: the dialog, answered through polkit's helper.
 fn dialog_for(question: Question) -> Dialog {
     Dialog::new(
-        question.reason,
+        question.message,
+        question.requester,
         Some(User::lookup(&question.user)),
         Conversation::Polkit {
             cookie: question.cookie,
@@ -247,9 +249,9 @@ impl<P: Prompt> Agent<P> {
             );
         }
 
-        let reason = reason_line(&caller, &begin.message);
         let mut prompt = (self.make_prompt)(Question {
-            reason,
+            message: message_line(&begin.message),
+            requester: caller.clone(),
             user: user.clone(),
             cookie: begin.cookie.clone(),
         });
@@ -474,22 +476,16 @@ fn home_as_tilde(dir: &str) -> String {
     }
 }
 
-/// The dialog's reason line: who asked, then what polkit says it is for.
-/// The program comes first so a long message can never push it off the
-/// card's two lines.
-fn reason_line(program: &str, message: &str) -> String {
+/// What polkit says the request is for, on one line and no longer than the
+/// dialog shows. The program that asked has a line of its own under it.
+fn message_line(message: &str) -> String {
     let message = visible(message);
-    let message = if message.chars().count() > MAX_MESSAGE_CHARS {
+    if message.chars().count() > MAX_MESSAGE_CHARS {
         let cut: String = message.chars().take(MAX_MESSAGE_CHARS - 1).collect();
         format!("{}…", cut.trim_end())
     } else {
         message
-    };
-    otto_kit::t_owned!(
-        "polkit-reason",
-        program = program.to_string(),
-        message = message
-    )
+    }
 }
 
 /// `text` on one line, with control and invisible formatting characters
@@ -542,12 +538,11 @@ mod tests {
     }
 
     #[test]
-    fn a_long_message_cannot_hide_the_program() {
-        let reason = reason_line("otto-settings (in /usr/bin)", &"x".repeat(400));
-        assert!(reason.contains("otto-settings (in /usr/bin)"));
-        let position = reason.find("otto-settings").unwrap();
-        assert!(position < reason.find("xxx").unwrap());
-        assert!(reason.chars().count() < 200);
+    fn a_long_message_is_cut() {
+        let message = message_line(&"x".repeat(400));
+        assert_eq!(message.chars().count(), MAX_MESSAGE_CHARS);
+        assert!(message.ends_with('…'));
+        assert_eq!(message_line("Short."), "Short.");
     }
 
     #[test]

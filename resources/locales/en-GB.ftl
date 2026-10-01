@@ -1869,7 +1869,6 @@ authorize-error-failed = Authentication failed
 ## otto-authorize --polkit-agent — the same panel, when a program asks polkit for something that needs a password.
 ## { $program } is the program that asked, as “name (in /folder)”; { $message } is polkit's own description of what it wants to do.
 
-polkit-reason = { $program } asks: { $message }
 authorize-path-in = { $name } (in { $dir })
 # In place of { $program } when the program that asked cannot be found.
 polkit-unknown-program = An unknown program

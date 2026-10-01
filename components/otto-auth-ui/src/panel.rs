@@ -139,11 +139,11 @@ const PASSWORD_BUTTON_GAP: f32 = 18.0;
 fn password_button_label() -> &'static str {
     otto_kit::t!("auth-enter-password")
 }
-/// Room a dialog's reason takes under the name: up to three lines of the
-/// status face, enough for a program's path and polkit's message.
+/// Room a dialog's reason takes under the name: up to two lines of the
+/// message, then one naming who asked.
 const DIALOG_REASON_H: f32 = 52.0;
-/// The most lines a dialog's reason wraps to; the last is cut with "…".
-const DIALOG_REASON_LINES: usize = 3;
+/// The most lines a dialog's message wraps to; the last is cut with "…".
+const DIALOG_MESSAGE_LINES: usize = 2;
 /// The row a dialog adds at the foot of the card for Cancel.
 const DIALOG_CANCEL_ROW: f32 = 52.0;
 /// What a dialog dims the rest of the screen with. Enough to say "this is
@@ -430,25 +430,30 @@ impl Panel {
         panel
     }
 
-    /// Why a dialog is asking, in Otto's words. Drawn under the name, wrapped
-    /// to two lines.
-    pub fn set_reason(&mut self, reason: &str) {
-        let text = reason.to_string();
+    /// Why a dialog is asking: the `message`, wrapped to two lines, and under
+    /// it the `requester`, the program that asked, on a line of its own that
+    /// a long message cannot push off the card.
+    pub fn set_reason(&mut self, message: &str, requester: &str) {
+        let (message, requester) = (message.to_string(), requester.to_string());
         let font = self.font(14.0, FontStyle::normal());
-        let color = Color::from_argb(235, 255, 255, 255);
+        let small = self.font(12.0, FontStyle::normal());
         self.reason
             .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
-                let mut paint = Paint::new(Color4f::from(color), None);
+                let mut paint =
+                    Paint::new(Color4f::from(Color::from_argb(235, 255, 255, 255)), None);
                 paint.set_anti_alias(true);
-                let lines = wrap_reason(&text, &font, &paint, w - 24.0, DIALOG_REASON_LINES);
-                for (index, line) in lines.iter().enumerate() {
+                let max_width = w - 24.0;
+                let lines = wrap_reason(&message, &font, &paint, max_width, DIALOG_MESSAGE_LINES);
+                let mut baseline = 14.0;
+                for line in &lines {
                     let width = font.measure_str(line, Some(&paint)).0;
-                    canvas.draw_str(
-                        line,
-                        ((w - width) / 2.0, 14.0 + index as f32 * STATUS_LINE_H),
-                        &font,
-                        &paint,
-                    );
+                    canvas.draw_str(line, ((w - width) / 2.0, baseline), &font, &paint);
+                    baseline += STATUS_LINE_H;
+                }
+                paint.set_color4f(Color4f::from(Color::from_argb(150, 255, 255, 255)), None);
+                if let Some(line) = wrap_reason(&requester, &small, &paint, max_width, 1).first() {
+                    let width = small.measure_str(line, Some(&paint)).0;
+                    canvas.draw_str(line, ((w - width) / 2.0, baseline + 2.0), &small, &paint);
                 }
                 Rect::from_wh(w, h)
             });
@@ -1745,7 +1750,10 @@ mod tests {
         let engine = Engine::create(1440.0, 960.0);
         let mut panel = Panel::new_dialog(Appearance::default(), engine, None);
         panel.set_size(1440.0, 960.0);
-        panel.set_reason("Change the program that locks your screen?");
+        panel.set_reason(
+            "Confirm this change with your password.",
+            "otto (in /usr/bin)",
+        );
         panel.update(&View {
             user: None,
             prompt: "Password",

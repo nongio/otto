@@ -1892,6 +1892,5 @@ files-photos-one-selected = 1 выбран · Пробел — просмотр 
 
 authorize-cancel = Отмена
 authorize-error-failed = Не удалось пройти проверку подлинности
-polkit-reason = { $program } запрашивает: { $message }
 authorize-path-in = { $name } (в { $dir })
 polkit-unknown-program = Неизвестная программа

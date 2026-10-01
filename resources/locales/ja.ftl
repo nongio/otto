@@ -1795,6 +1795,5 @@ files-photos-one-selected = 1 項目を選択 · Space でプレビュー · ↵
 
 authorize-cancel = キャンセル
 authorize-error-failed = 認証に失敗しました
-polkit-reason = { $program } からの要求：{ $message }
 authorize-path-in = { $name }（{ $dir } 内）
 polkit-unknown-program = 不明なプログラム

@@ -1899,6 +1899,5 @@ files-photos-one-selected = 1 zaznaczony · Spacja – podgląd · ↵ – otwó
 
 authorize-cancel = Anuluj
 authorize-error-failed = Uwierzytelnianie nie powiodło się
-polkit-reason = { $program } prosi: { $message }
 authorize-path-in = { $name } (w { $dir })
 polkit-unknown-program = Nieznany program

@@ -1829,6 +1829,5 @@ files-photos-one-selected = 1 sélectionné · Espace pour l’aperçu · ↵ po
 
 authorize-cancel = Annuler
 authorize-error-failed = Échec de l’authentification
-polkit-reason = { $program } demande : { $message }
 authorize-path-in = { $name } (dans { $dir })
 polkit-unknown-program = Un programme inconnu
