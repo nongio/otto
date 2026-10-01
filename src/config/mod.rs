@@ -36,6 +36,8 @@ pub struct Config {
     #[serde(default)]
     pub accessibility: AccessibilityConfig,
     #[serde(default)]
+    pub agent_cursor: AgentCursorConfig,
+    #[serde(default)]
     pub audio: AudioConfig,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
@@ -157,6 +159,7 @@ impl Default for Config {
             layer_shell: LayerShellConfig::default(),
             power_management: PowerManagementConfig::default(),
             accessibility: AccessibilityConfig::default(),
+            agent_cursor: AgentCursorConfig::default(),
             audio: AudioConfig::default(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
@@ -1586,6 +1589,35 @@ pub struct AccessibilityConfig {
 impl Default for AccessibilityConfig {
     fn default() -> Self {
         Self { enabled: true }
+    }
+}
+
+/// A second seat for automation, whose pointer is drawn in its own colour —
+/// see `src/agent_cursor.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentCursorConfig {
+    /// Advertise the `agent` seat. Virtual pointers and keyboards created on
+    /// it move their own cursor and focus, not the user's. Read at startup.
+    pub enabled: bool,
+    /// The agent cursor's colour, as `#RRGGBB`.
+    pub color: String,
+    /// How long the agent cursor stays on screen after the agent's last
+    /// input, in milliseconds; `0` never hides it.
+    pub hide_after_ms: u64,
+    /// The width of the frame drawn around a workspace an agent may act on,
+    /// in logical pixels. The frame itself cannot be turned off.
+    pub border_width: u32,
+}
+
+impl Default for AgentCursorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            color: "#FF9500".to_string(),
+            hide_after_ms: 5000,
+            border_width: 3,
+        }
     }
 }
 

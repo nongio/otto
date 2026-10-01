@@ -60,10 +60,23 @@ impl<BackendData: Backend> XdgActivationHandler for Otto<BackendData> {
 
     fn request_activation(
         &mut self,
-        _token: XdgActivationToken,
+        token: XdgActivationToken,
         token_data: XdgActivationTokenData,
         surface: WlSurface,
     ) {
+        // A token Otto made for an agent's launch: the window — likely a new
+        // one from an application that was already running — goes to the
+        // agent's workspace instead of coming forward.
+        if let Some(seat_name) = self.agent_seat_for_token(token.as_str()) {
+            if let Some(window) = self
+                .workspaces
+                .get_window_for_surface(&surface.id())
+                .cloned()
+            {
+                self.place_on_agent_workspace(&seat_name, &window);
+            }
+            return;
+        }
         if token_data.timestamp.elapsed().as_secs() < 10 {
             self.activate_window(&surface.id());
         }

@@ -1141,6 +1141,14 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
         // is how a browser window ends up with its top-left corner in the middle
         // of the screen, hanging off the right and bottom edges. So keep
         // re-placing the window until two consecutive commits agree on a size.
+        // A window sent off the shown workspace before it was sized (an
+        // agent's launch, put on the agent's workspace) keeps the place it
+        // was given: everything below maps into the shown workspace.
+        if !self.workspaces.is_on_current_workspace(window) {
+            self.pending_initial_placement.remove(&id);
+            return;
+        }
+
         let Some(last_seen) = self.pending_initial_placement.get_mut(&id) else {
             return;
         };

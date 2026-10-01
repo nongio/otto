@@ -177,6 +177,8 @@ pub struct SurfaceData {
     /// element — otherwise the hardware cursor plane keeps scanning out the
     /// stale cursor image at its last position on this output.
     pub(super) cursor_was_in_output: bool,
+    /// The same, for the agent seat's cursor (`crate::agent_cursor`).
+    pub(super) agent_cursor_was_in_output: bool,
     /// Pre-computed scene-graph damage state for the upcoming draw phase.
     ///
     /// Frame pipelining splits each render cycle into two phases:

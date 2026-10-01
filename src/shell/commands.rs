@@ -993,6 +993,7 @@ fn container_id(node: NodeId) -> u64 {
     hash_id("con", &node.to_string())
 }
 
-fn workspace_id(output: &str, index: usize) -> u64 {
+/// The id `GetWorkspaces` gives the workspace at `index` on `output`.
+pub(crate) fn workspace_id(output: &str, index: usize) -> u64 {
     hash_id("workspace", &format!("{output}:{index}"))
 }
