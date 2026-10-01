@@ -127,12 +127,36 @@ pub async fn ask(connection: &zbus::Connection, program: &str, agent_name: &str)
             ),
         )
         .await;
-    match reply.and_then(|reply| reply.body().deserialize::<(u32, Vec<(String, String)>)>()) {
+    // The answer counts only from Otto's own islands: anyone can own the bus
+    // name once islands is gone, and answer every question with yes.
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(err) => {
+            tracing::warn!(%err, program, "cannot ask about an agent seat");
+            return Answer::Unanswered;
+        }
+    };
+    let answered_by = match reply.header().sender().map(|s| s.to_string()) {
+        Some(sender) => otto_kit::trust::bus_peer(connection, &sender).await,
+        None => None,
+    };
+    if !answered_by
+        .as_ref()
+        .is_some_and(|peer| otto_kit::trust::is_component(&peer.exe, &["otto-islands"]))
+    {
+        tracing::warn!(
+            ?answered_by,
+            program,
+            "the answer did not come from Otto's islands"
+        );
+        return Answer::Unanswered;
+    }
+    match reply.body().deserialize::<(u32, Vec<(String, String)>)>() {
         Ok((0, _)) => Answer::Allowed,
         Ok((1, _)) => Answer::Denied,
         Ok(_) => Answer::Unanswered,
         Err(err) => {
-            tracing::warn!(%err, program, "cannot ask about an agent seat");
+            tracing::warn!(%err, program, "cannot read the answer about an agent seat");
             Answer::Unanswered
         }
     }

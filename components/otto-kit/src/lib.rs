@@ -42,6 +42,7 @@ pub mod surfaces;
 pub mod theme;
 pub mod tile_decoration;
 pub mod trash;
+pub mod trust;
 pub mod typography;
 pub mod utils;
 

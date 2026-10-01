@@ -364,6 +364,26 @@ impl DialogService {
     }
 }
 
+/// The programs whose questions Otto's dialog shows: the compositor, the
+/// portal backend, the agent service, Files, and islands itself. Nobody else
+/// gets to put words in Otto's own chrome. See `specs/security-model.md`.
+const DIALOG_CLIENTS: &[&str] = &[
+    "otto",
+    "xdg-desktop-portal-otto",
+    "otto-agents",
+    "otto-files",
+    "otto-islands",
+];
+
+async fn require_dialog_caller(
+    connection: &zbus::Connection,
+    header: &zbus::message::Header<'_>,
+) -> zbus::fdo::Result<()> {
+    otto_kit::trust::require_component(connection, header, DIALOG_CLIENTS, "Dialog1")
+        .await
+        .map(|_| ())
+}
+
 #[interface(name = "org.otto.Dialog1")]
 impl DialogService {
     /// Present a dialog and block until the user answers or the request is
@@ -379,6 +399,8 @@ impl DialogService {
     #[allow(clippy::too_many_arguments)]
     async fn present_access(
         &self,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         app_id: &str,
         title: &str,
         subtitle: &str,
@@ -388,23 +410,25 @@ impl DialogService {
         deny_label: &str,
         modal: bool,
         choices: Vec<WireChoice>,
-    ) -> (u32, Vec<(String, String)>) {
-        self.present(
-            DialogKind::Access,
-            app_id,
-            "",
-            title,
-            subtitle,
-            body,
-            icon,
-            grant_label,
-            deny_label,
-            "",
-            modal,
-            choice_groups(choices),
-            QuestionStyle::default(),
-        )
-        .await
+    ) -> zbus::fdo::Result<(u32, Vec<(String, String)>)> {
+        require_dialog_caller(connection, &header).await?;
+        Ok(self
+            .present(
+                DialogKind::Access,
+                app_id,
+                "",
+                title,
+                subtitle,
+                body,
+                icon,
+                grant_label,
+                deny_label,
+                "",
+                modal,
+                choice_groups(choices),
+                QuestionStyle::default(),
+            )
+            .await)
     }
 
     /// Present a question: the `PresentAccess` dialog, plus an optional open
@@ -421,6 +445,8 @@ impl DialogService {
     #[allow(clippy::too_many_arguments)]
     async fn present_question(
         &self,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         app_id: &str,
         title: &str,
         subtitle: &str,
@@ -431,23 +457,25 @@ impl DialogService {
         open_label: &str,
         modal: bool,
         choices: Vec<WireChoice>,
-    ) -> (u32, Vec<(String, String)>) {
-        self.present(
-            DialogKind::Question,
-            app_id,
-            "",
-            title,
-            subtitle,
-            body,
-            icon,
-            grant_label,
-            deny_label,
-            open_label,
-            modal,
-            choice_groups(choices),
-            QuestionStyle::default(),
-        )
-        .await
+    ) -> zbus::fdo::Result<(u32, Vec<(String, String)>)> {
+        require_dialog_caller(connection, &header).await?;
+        Ok(self
+            .present(
+                DialogKind::Question,
+                app_id,
+                "",
+                title,
+                subtitle,
+                body,
+                icon,
+                grant_label,
+                deny_label,
+                open_label,
+                modal,
+                choice_groups(choices),
+                QuestionStyle::default(),
+            )
+            .await)
     }
 
     /// Present questions: the `PresentQuestion` dialog, with multi-select
@@ -479,6 +507,8 @@ impl DialogService {
     #[allow(clippy::too_many_arguments)]
     async fn present_questions(
         &self,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
         app_id: &str,
         cookie: &str,
         title: &str,
@@ -491,32 +521,41 @@ impl DialogService {
         labels: HashMap<String, String>,
         modal: bool,
         questions: Vec<WireQuestion>,
-    ) -> (u32, Vec<(String, String)>) {
+    ) -> zbus::fdo::Result<(u32, Vec<(String, String)>)> {
+        require_dialog_caller(connection, &header).await?;
         let groups = question_groups(questions);
         let style = question_style(groups.len(), &labels);
-        self.present(
-            DialogKind::Questions,
-            app_id,
-            cookie,
-            title,
-            subtitle,
-            body,
-            icon,
-            grant_label,
-            deny_label,
-            open_label,
-            modal,
-            groups,
-            style,
-        )
-        .await
+        Ok(self
+            .present(
+                DialogKind::Questions,
+                app_id,
+                cookie,
+                title,
+                subtitle,
+                body,
+                icon,
+                grant_label,
+                deny_label,
+                open_label,
+                modal,
+                groups,
+                style,
+            )
+            .await)
     }
 
     /// Takes down the dialog `cookie` names, if it is still up, answering it
     /// as ended. For a caller whose question has been settled somewhere else —
     /// answered in another window, or cancelled — so the panel does not sit
     /// there collecting an answer nobody waits for.
-    async fn withdraw(&self, app_id: &str, cookie: &str) -> bool {
+    async fn withdraw(
+        &self,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        app_id: &str,
+        cookie: &str,
+    ) -> zbus::fdo::Result<bool> {
+        require_dialog_caller(connection, &header).await?;
         let withdrawn = {
             let mut state = self.state.lock().unwrap();
             state.withdraw_dialog(app_id, cookie)
@@ -525,7 +564,7 @@ impl DialogService {
             AppContext::request_wakeup();
             tracing::info!(app_id, cookie, "dialog withdrawn");
         }
-        withdrawn
+        Ok(withdrawn)
     }
 }
 

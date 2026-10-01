@@ -197,6 +197,15 @@ async fn teardown_session(
     unregister::<SessionInterface>(connection, session_path).await;
 }
 
+/// The programs that may drive `org.otto.ScreenCast`: the portal backend,
+/// which asks the user, and the RDP bridge, whose output is its own. Any
+/// other client goes through the portal. See `specs/security-model.md`.
+const SCREENCAST_CLIENTS: &[&str] = &["xdg-desktop-portal-otto", "otto-rdp"];
+
+/// Otto's own interface components, which may focus apps on the user's
+/// behalf.
+const UI_COMPONENTS: &[&str] = &["otto-islands", "otto-bar", "otto-launcher", "otto-settings"];
+
 #[interface(name = "org.otto.ScreenCast")]
 impl ScreenCastInterface {
     /// Creates a new screencast session.
@@ -208,6 +217,13 @@ impl ScreenCastInterface {
         #[zbus(header)] header: zbus::message::Header<'_>,
         properties: HashMap<&str, Value<'_>>,
     ) -> zbus::fdo::Result<OwnedObjectPath> {
+        otto_kit::trust::require_component(
+            &self.connection,
+            &header,
+            SCREENCAST_CLIENTS,
+            "ScreenCast",
+        )
+        .await?;
         let owner = sender_of(&header)?;
         let cursor_mode = properties
             .get("cursor-mode")
@@ -287,7 +303,17 @@ impl ScreenCastInterface {
     }
 
     /// Lists available output connectors.
-    async fn list_outputs(&self) -> zbus::fdo::Result<Vec<String>> {
+    async fn list_outputs(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<Vec<String>> {
+        otto_kit::trust::require_component(
+            &self.connection,
+            &header,
+            SCREENCAST_CLIENTS,
+            "ScreenCast",
+        )
+        .await?;
         debug!("Listing outputs (D-Bus handler)");
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -314,7 +340,17 @@ impl ScreenCastInterface {
     ///
     /// The identifier is the window's `ext-foreign-toplevel-list-v1` handle
     /// identifier; pass it back as the `window-id` property of `RecordWindow`.
-    async fn list_windows(&self) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+    async fn list_windows(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        otto_kit::trust::require_component(
+            &self.connection,
+            &header,
+            SCREENCAST_CLIENTS,
+            "ScreenCast",
+        )
+        .await?;
         debug!("Listing windows (D-Bus handler)");
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -924,7 +960,13 @@ impl CompositorInterface {
     ///
     /// Sends a focus command to the compositor for the given app_id.
     /// Returns true if the command was dispatched (not whether a window was found).
-    async fn focus_app(&self, app_id: &str) -> zbus::fdo::Result<bool> {
+    async fn focus_app(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &Connection,
+        app_id: &str,
+    ) -> zbus::fdo::Result<bool> {
+        otto_kit::trust::require_component(connection, &header, UI_COMPONENTS, "FocusApp").await?;
         info!(app_id, "focus_app requested via D-Bus");
         self.compositor_tx
             .send(CompositorCommand::FocusApp {
