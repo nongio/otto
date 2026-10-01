@@ -14,9 +14,9 @@
 //!   its own component — so the panel keeps the keyboard as otto-authorize's
 //!   does — and starts it again if it dies (`src/polkit_agent.rs`).
 //! * It registers for the compositor's logind session and answers only
-//!   polkitd ([`dbus`]).
+//!   polkitd, through polkit's own agent library ([`listener`]).
 //! * It never answers for anyone. The password goes to polkit's own helper,
-//!   which runs PAM and tells polkitd the result ([`helper`]); all this
+//!   which runs PAM and tells polkitd the result ([`session`]); all this
 //!   process can do on its own is cancel.
 //! * One request at a time: another arriving while the dialog is up is
 //!   cancelled. Escape, Cancel, a minute without an answer and three wrong
@@ -24,8 +24,8 @@
 //!   is held off for a while ([`Throttle`]), so nothing can put the panel up
 //!   again and again until someone types into it.
 
-mod dbus;
-pub mod helper;
+mod listener;
+pub mod session;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -38,7 +38,7 @@ use smithay_client_toolkit::seat::pointer::PointerEvent;
 use wayland_client::protocol::wl_keyboard;
 
 use crate::dialog::{Conversation, Dialog, Verdict};
-use dbus::{AgentError, Begin, Identity, Request};
+use listener::{AgentError, Begin, Identity, Request};
 
 /// The argument that selects this mode.
 pub const AGENT_FLAG: &str = "--polkit-agent";
@@ -48,8 +48,7 @@ const MAX_MESSAGE_CHARS: usize = 120;
 const MAX_PROGRAM_CHARS: usize = 48;
 
 /// How often requests nobody confirmed may come back, per program and for
-/// the whole session — the same rule the compositor applies to
-/// otto-authorize (`src/authorize.rs`, `Throttle`).
+/// the whole session.
 #[derive(Debug, Default)]
 pub struct Throttle {
     unconfirmed: VecDeque<Instant>,
@@ -366,7 +365,7 @@ impl App for Agent<Dialog> {
 /// Run the agent until the compositor goes away or polkit turns it down.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, requests) = std::sync::mpsc::channel();
-    dbus::spawn(tx);
+    listener::spawn(tx);
     let agent = Agent::new(requests, dialog_for);
     AppRunner::new(agent).run()?;
     // The runner owns the agent, so its status travels through a static. A

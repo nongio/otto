@@ -49,7 +49,7 @@ const MARK_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
 const FRAME_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Who checks the answers: polkit's helper, which runs PAM for the user and
-/// reports to polkitd under `cookie` ([`crate::polkit::helper`]).
+/// reports to polkitd under `cookie` ([`crate::polkit::session`]).
 #[derive(Debug, Clone)]
 pub enum Conversation {
     Polkit { cookie: String },
@@ -275,7 +275,7 @@ impl Dialog {
         let Conversation::Polkit { cookie } = &self.conversation;
         let (user, cookie) = (user.name.clone(), cookie.clone());
         self.attempt = Some(Attempt::with_conversation(move |events, answers| {
-            crate::polkit::helper::converse(&user, &cookie, events, answers)
+            crate::polkit::session::converse(&user, &cookie, events, answers)
         }));
         self.question_pending = false;
     }

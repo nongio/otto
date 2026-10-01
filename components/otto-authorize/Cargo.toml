@@ -14,11 +14,10 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 libc = "0.2"
-# The polkit agent (`--polkit-agent`): its object on the system bus, on a
-# runtime of its own thread. Both already come in through otto-kit.
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-tokio = { version = "1", features = ["rt", "sync", "macros"] }
-futures-util = "0.3"
+# polkit's own agent library (libpolkit-agent-1): registration, polkitd's
+# requests and the helper conversation.
+polkit-agent-rs = "0.3"
+tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
