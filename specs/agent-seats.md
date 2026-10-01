@@ -1,7 +1,7 @@
 # Agent Seats
 
 **Status:** draft  
-**Related specs:** pointer-input-focus.md, rdp-bridge.md, screenshare.md, workspaces-multi-output.md, lock-screen.md
+**Related specs:** security-model.md, pointer-input-focus.md, rdp-bridge.md, screenshare.md, workspaces-multi-output.md, lock-screen.md
 
 ## Summary
 
@@ -282,6 +282,11 @@ thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
   every agent, its grants, and a Stop for each.
 
 ### Phase 5 — enforcement
+
+> Superseded by security-model.md, which replaces 5b and 5c below: no
+> sandbox launcher, a trusted list instead of per-program questions for
+> the privileged interfaces, and agents scoped through the standard
+> protocols on their own connections. 5a stands.
 
 Until this phase, grants hold only for clients that play along: any client
 can still create virtual input on the user's seat, or capture the whole
