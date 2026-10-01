@@ -1860,15 +1860,15 @@ a11y-preview-shortened = Preview, shortened
 
 
 ## otto-authorize — the panel that asks for the password before a sensitive setting changes.
-## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = Cancel
 # Under the password field when the password or fingerprint was not accepted.
 authorize-error-failed = Authentication failed
 
 ## otto-authorize --polkit-agent — the same panel, when a program asks polkit for something that needs a password.
-## { $program } is the program that asked, as “name (in /folder)”; { $message } is polkit's own description of what it wants to do.
+## Under polkit's own message, a line names the program that asked.
 
+# The program that asked: its name and the folder it runs from.
 authorize-path-in = { $name } (in { $dir })
-# In place of { $program } when the program that asked cannot be found.
+# In place of the program's name when the program that asked cannot be found.
 polkit-unknown-program = An unknown program
