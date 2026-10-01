@@ -139,9 +139,11 @@ const PASSWORD_BUTTON_GAP: f32 = 18.0;
 fn password_button_label() -> &'static str {
     otto_kit::t!("auth-enter-password")
 }
-/// Room a dialog's reason takes under the name: two lines of the status
-/// face, which is as long as a sentence Otto composes gets.
-const DIALOG_REASON_H: f32 = 40.0;
+/// Room a dialog's reason takes under the name: up to three lines of the
+/// status face, enough for a program's path and polkit's message.
+const DIALOG_REASON_H: f32 = 52.0;
+/// The most lines a dialog's reason wraps to; the last is cut with "…".
+const DIALOG_REASON_LINES: usize = 3;
 /// The row a dialog adds at the foot of the card for Cancel.
 const DIALOG_CANCEL_ROW: f32 = 52.0;
 /// What a dialog dims the rest of the screen with. Enough to say "this is
@@ -431,12 +433,25 @@ impl Panel {
     /// Why a dialog is asking, in Otto's words. Drawn under the name, wrapped
     /// to two lines.
     pub fn set_reason(&mut self, reason: &str) {
-        self.reason.set_draw_content(draw_status(
-            reason.to_string(),
-            self.font(14.0, FontStyle::normal()),
-            Color::from_argb(235, 255, 255, 255),
-            false,
-        ));
+        let text = reason.to_string();
+        let font = self.font(14.0, FontStyle::normal());
+        let color = Color::from_argb(235, 255, 255, 255);
+        self.reason
+            .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
+                let mut paint = Paint::new(Color4f::from(color), None);
+                paint.set_anti_alias(true);
+                let lines = wrap_reason(&text, &font, &paint, w - 24.0, DIALOG_REASON_LINES);
+                for (index, line) in lines.iter().enumerate() {
+                    let width = font.measure_str(line, Some(&paint)).0;
+                    canvas.draw_str(
+                        line,
+                        ((w - width) / 2.0, 14.0 + index as f32 * STATUS_LINE_H),
+                        &font,
+                        &paint,
+                    );
+                }
+                Rect::from_wh(w, h)
+            });
     }
 
     /// The layer everything hangs off, for a client that needs to reparent or
@@ -1476,6 +1491,59 @@ fn wrap_status(text: &str, font: &Font, paint: &Paint, max_width: f32) -> Vec<St
     lines
 }
 
+/// Break a dialog's reason to at most `max_lines` lines that fit `max_width`.
+///
+/// Unlike [`wrap_status`], nothing overhangs: the reason names programs by
+/// their path, and a path wider than the card is broken between characters.
+/// Whatever is left after the last line is cut with "…".
+fn wrap_reason(
+    text: &str,
+    font: &Font,
+    paint: &Paint,
+    max_width: f32,
+    max_lines: usize,
+) -> Vec<String> {
+    let fits = |line: &str| font.measure_str(line, Some(paint)).0 <= max_width;
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if fits(&candidate) {
+            current = candidate;
+            continue;
+        }
+        if !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+        }
+        // A word wider than a line on its own: as much as fits, then the rest.
+        for c in word.chars() {
+            let mut grown = current.clone();
+            grown.push(c);
+            if !current.is_empty() && !fits(&grown) {
+                lines.push(std::mem::take(&mut current));
+                grown = c.to_string();
+            }
+            current = grown;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > max_lines {
+        let mut last = lines[max_lines - 1].clone();
+        lines.truncate(max_lines - 1);
+        while !last.is_empty() && !fits(&format!("{last}…")) {
+            last.pop();
+        }
+        lines.push(format!("{}…", last.trim_end()));
+    }
+    lines
+}
+
 /// A fingerprint mark: three nested arcs, shortening outwards so it reads as a
 /// fingertip rather than as concentric circles.
 fn draw_fingerprint(canvas: &Canvas, center: Point, color: Color) {
@@ -2185,11 +2253,36 @@ mod tests {
 
 #[cfg(test)]
 mod status_wrap_tests {
-    use super::{wrap_status, STATUS_H, STATUS_LINE_H};
+    use super::{wrap_reason, wrap_status, STATUS_H, STATUS_LINE_H};
     use skia_safe::{Font, Paint};
 
     fn font() -> Font {
         super::get_font_with_fallback("Inter", skia_safe::FontStyle::normal(), 13.0)
+    }
+
+    /// A dialog's reason never runs off the card, even with a path in it.
+    #[test]
+    fn a_path_wider_than_the_card_is_broken_not_overhung() {
+        let paint = Paint::default();
+        let text = "otto-release (in /home/someone/dev/a-very-long-folder-name-for-a-build/release) asks: Confirm this change with your password.";
+        let lines = wrap_reason(text, &font(), &paint, 340.0, 3);
+        assert!(lines.len() <= 3);
+        for line in &lines {
+            assert!(
+                font().measure_str(line, Some(&paint)).0 <= 340.0,
+                "{line:?} overhangs"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reason_longer_than_three_lines_ends_in_an_ellipsis() {
+        let paint = Paint::default();
+        let text = "word ".repeat(200);
+        let lines = wrap_reason(&text, &font(), &paint, 340.0, 3);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].ends_with('…'));
+        assert!(font().measure_str(&lines[2], Some(&paint)).0 <= 340.0);
     }
 
     /// A message that fits stays on one line, unchanged.

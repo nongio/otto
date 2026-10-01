@@ -56,10 +56,12 @@ pub struct Throttle {
 }
 
 impl Throttle {
-    const GAP: Duration = Duration::from_secs(3);
-    const LIMIT: usize = 3;
-    const GLOBAL_LIMIT: usize = 12;
-    const WINDOW: Duration = Duration::from_secs(10 * 60);
+    // Loose enough that a person retrying after a mistake never meets it;
+    // tight enough that a program cannot keep the panel up.
+    const GAP: Duration = Duration::from_secs(1);
+    const LIMIT: usize = 10;
+    const GLOBAL_LIMIT: usize = 30;
+    const WINDOW: Duration = Duration::from_secs(60);
 
     fn prune(times: &mut VecDeque<Instant>, now: Instant) {
         while times
@@ -80,13 +82,12 @@ impl Throttle {
         if self.unconfirmed.len() >= Self::GLOBAL_LIMIT {
             return false;
         }
-        let Some(times) = self.by_caller.get(caller) else {
-            return true;
-        };
-        times.len() < Self::LIMIT
-            && !times
-                .back()
-                .is_some_and(|at| now.saturating_duration_since(*at) < Self::GAP)
+        self.by_caller.get(caller).is_none_or(|times| {
+            times.len() < Self::LIMIT
+                && !times
+                    .back()
+                    .is_some_and(|at| now.saturating_duration_since(*at) < Self::GAP)
+        })
     }
 
     pub fn note_unconfirmed(&mut self, caller: &str, now: Instant) {
@@ -449,7 +450,7 @@ fn requesting_program(details: &HashMap<String, String>) -> String {
 fn describe_path(path: &str) -> Option<String> {
     let path = std::path::Path::new(path);
     let name = visible(&path.file_name()?.to_string_lossy());
-    let dir = visible(&path.parent()?.to_string_lossy());
+    let dir = visible(&home_as_tilde(&path.parent()?.to_string_lossy()));
     if name.is_empty() {
         return None;
     }
@@ -458,6 +459,19 @@ fn describe_path(path: &str) -> Option<String> {
         name = keep_tail(&name, MAX_PROGRAM_CHARS),
         dir = keep_tail(&dir, MAX_PROGRAM_CHARS)
     ))
+}
+
+/// `dir` with the user's home folder written as `~`, which is how people
+/// read it and keeps the reason line short.
+fn home_as_tilde(dir: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && home != "/" => match dir.strip_prefix(home.as_str()) {
+            Some("") => "~".to_string(),
+            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+            _ => dir.to_string(),
+        },
+        _ => dir.to_string(),
+    }
 }
 
 /// The dialog's reason line: who asked, then what polkit says it is for.
@@ -546,10 +560,17 @@ mod tests {
     fn dismissals_are_throttled_per_program() {
         let mut throttle = Throttle::default();
         let start = Instant::now();
-        assert!(throttle.allows("a", start));
+        // A person retrying after a mistake is held off for a second at most.
         throttle.note_unconfirmed("a", start);
+        assert!(!throttle.allows("a", start));
+        assert!(throttle.allows("a", start + Throttle::GAP));
+        for _ in 1..Throttle::LIMIT {
+            throttle.note_unconfirmed("a", start);
+        }
         assert!(!throttle.allows("a", start + Duration::from_secs(1)));
         assert!(throttle.allows("b", start + Duration::from_secs(1)));
+        // A minute later the program may ask again.
+        assert!(throttle.allows("a", start + Throttle::WINDOW));
         throttle.note_confirmed("a");
         assert!(throttle.allows("a", start + Duration::from_secs(1)));
     }
