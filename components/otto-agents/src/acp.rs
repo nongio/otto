@@ -553,6 +553,13 @@ impl Replay {
                 let Some(text) = text(chunk.content) else {
                     return;
                 };
+                // The note on a message from the phone is the agent's, not
+                // what the person wrote.
+                let text = without_remote_note(&text);
+                if text.is_empty() {
+                    return;
+                }
+                let text = text.to_string();
                 // Chunks of one message arrive in pieces; a chunk that follows
                 // nothing the agent said carries on the same prompt.
                 match self.turns.last_mut() {
@@ -814,7 +821,7 @@ async fn drive(
         tokio::select! {
             command = commands.recv() => match command {
                 None => return Ok(()),
-                Some(SessionCommand::Prompt { turn_id, text, attachments }) => {
+                Some(SessionCommand::Prompt { turn_id, text, attachments, remote }) => {
                     if pending.is_some() {
                         let _ = events.send(SessionEvent::TurnEnded {
                             turn_id,
@@ -829,8 +836,12 @@ async fn drive(
                     // of attachments alone has no text block: models refuse
                     // an empty one.
                     let text = (!text.trim().is_empty()).then(|| ContentBlock::Text(TextContent::new(text)));
-                    let prompt = text
+                    // Written away from the desktop: said first, so the agent
+                    // answers someone on their phone rather than at the desk.
+                    let remote = remote.map(|via| ContentBlock::Text(TextContent::new(remote_note(&via))));
+                    let prompt = remote
                         .into_iter()
+                        .chain(text)
                         .chain(attachments.into_iter().map(|attachment| {
                             ContentBlock::ResourceLink(ResourceLink::new(attachment.name, attachment.uri))
                         }))
@@ -981,6 +992,27 @@ fn forward_tool_pictures(
     }
 }
 
+/// How the note on a message written away from the desktop starts, so the
+/// history can leave it out again.
+const REMOTE_NOTE: &str = "[Otto: written on the person's phone";
+
+/// The note that goes ahead of a message written away from the desktop, in
+/// the chat app `via`. The agent's instructions say what to make of it.
+fn remote_note(via: &str) -> String {
+    let via: String = via.chars().filter(|c| !matches!(c, '[' | ']')).collect();
+    format!(
+        "{REMOTE_NOTE}, in {via}, through Otto's chat bridge. \
+         They are away from the computer and read the reply there.]"
+    )
+}
+
+/// `text` without the note [`remote_note`] put ahead of it.
+fn without_remote_note(text: &str) -> &str {
+    text.strip_prefix(REMOTE_NOTE)
+        .and_then(|rest| rest.find(']').map(|end| rest[end + 1..].trim_start()))
+        .unwrap_or(text)
+}
+
 fn text(content: ContentBlock) -> Option<String> {
     match content {
         ContentBlock::Text(text) => Some(text.text),
@@ -1105,6 +1137,32 @@ mod replay_tests {
 
         assert_eq!(replay.turns.len(), 1, "no agent reply divided them");
         assert_eq!(replay.turns[0].prompt, "a question in two parts");
+    }
+
+    #[test]
+    fn the_note_on_a_message_from_the_phone_is_left_out_of_the_history() {
+        let note = remote_note("Telegram");
+        assert!(note.contains("Telegram"), "{note}");
+
+        // As its own block, the way it is sent…
+        let mut replay = Replay::default();
+        replay.take(asked(&note));
+        replay.take(asked("find my tax pdf"));
+        replay.take(answered("found it"));
+        assert_eq!(replay.turns.len(), 1);
+        assert_eq!(replay.turns[0].prompt, "find my tax pdf");
+
+        // …or run together with the message.
+        let mut replay = Replay::default();
+        replay.take(asked(&format!("{note}\n\nfind my tax pdf")));
+        assert_eq!(replay.turns[0].prompt, "find my tax pdf");
+
+        // A name cannot close the note early.
+        assert_eq!(without_remote_note(&remote_note("Tele]gram")), "");
+        assert_eq!(
+            without_remote_note("[Otto] not a note"),
+            "[Otto] not a note"
+        );
     }
 
     #[test]

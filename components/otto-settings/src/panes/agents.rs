@@ -52,6 +52,15 @@ const DEFAULT_ID: &str = "agents.default";
 /// The unit Apply restarts.
 const SERVICE: &str = "otto-agents.service";
 
+/// The unit that runs the chat bridge, which the Chat bridge switch enables
+/// and disables. Off until turned on here.
+const BRIDGE_SERVICE: &str = "otto-agents-bridge.service";
+
+/// The Chat bridge switch.
+const BRIDGE_ID: &str = "agents.bridge";
+/// The Chat bridge's command field.
+const BRIDGE_COMMAND_ID: &str = "agents.bridge.command";
+
 /// One agent's settings as the pane edits them. Empty strings stand for an
 /// unset key, which is how the file says "the agent's own default".
 #[derive(Clone, Debug, PartialEq)]
@@ -143,6 +152,8 @@ struct Config {
     agents: Vec<Agent>,
     /// An agent id, empty when unset — the service then takes the first.
     default_agent: String,
+    /// `[bridge]`: `command` followed by `args`, empty when there is none.
+    bridge: Vec<String>,
 }
 
 /// What was read, and from where.
@@ -229,6 +240,19 @@ fn merge(files: &[(PathBuf, DocumentMut)]) -> (Config, Option<PathBuf>) {
         if let Some(default) = doc.get("default_agent").and_then(Item::as_str) {
             config.default_agent = default.to_string();
         }
+        if let Some(bridge) = doc.get("bridge").and_then(Item::as_table) {
+            let command = bridge.get("command").and_then(Item::as_str);
+            let args = bridge.get("args").and_then(Item::as_array);
+            config.bridge = command
+                .map(str::to_string)
+                .into_iter()
+                .chain(
+                    args.into_iter()
+                        .flatten()
+                        .filter_map(|arg| arg.as_str().map(str::to_string)),
+                )
+                .collect();
+        }
     }
     (config, source)
 }
@@ -250,6 +274,26 @@ fn render(
 
     if draft.default_agent != saved.default_agent {
         set_or_remove(doc.as_table_mut(), "default_agent", &draft.default_agent);
+    }
+    if draft.bridge != saved.bridge {
+        match draft.bridge.split_first() {
+            // No command, no bridge: the table goes, `env` and all, since
+            // the service refuses a bridge without a command.
+            None => {
+                doc.remove("bridge");
+            }
+            Some((command, args)) => {
+                if !doc.contains_key("bridge") {
+                    doc.insert("bridge", Item::Table(Table::new()));
+                }
+                let table = doc
+                    .get_mut("bridge")
+                    .and_then(Item::as_table_mut)
+                    .ok_or("`bridge` is not a table")?;
+                set_or_remove(table, "command", command);
+                harness::set_list(table, "args", args);
+            }
+        }
     }
 
     if draft.agents != saved.agents {
@@ -438,13 +482,18 @@ fn reload_service() {
                 }
                 Err(err) => eprintln!("agents: could not run otto-agents: {err}"),
             }
-            match std::process::Command::new("systemctl")
-                .args(["--user", "try-restart", SERVICE])
-                .status()
-            {
-                Ok(status) if status.success() => {}
-                Ok(status) => eprintln!("agents: restarting {SERVICE} failed: {status}"),
-                Err(err) => eprintln!("agents: could not run systemctl: {err}"),
+            // The bridge reads `[bridge]` when it starts too; one that is not
+            // running is left that way. One unit at a time, so a bridge unit
+            // that is not installed does not keep the service from restarting.
+            for unit in [SERVICE, BRIDGE_SERVICE] {
+                match std::process::Command::new("systemctl")
+                    .args(["--user", "try-restart", unit])
+                    .status()
+                {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => eprintln!("agents: restarting {unit} failed: {status}"),
+                    Err(err) => eprintln!("agents: could not run systemctl: {err}"),
+                }
             }
         });
     if let Err(err) = spawned {
@@ -502,25 +551,77 @@ fn service() -> Service {
     Service::ALL[SERVICE_STATE.load(Ordering::Relaxed) as usize]
 }
 
-/// Ask systemd, and wake the window if the answer changed. Returns the
-/// answer, so the watcher can stop asking a system that has no systemd.
-fn refresh_service() -> Service {
-    let found = match std::process::Command::new("systemctl")
-        .args(["--user", "show", "-p", "LoadState,ActiveState", SERVICE])
+/// The bridge unit's state as last seen, an index into [`Service::ALL`].
+static BRIDGE_STATE: AtomicU8 = AtomicU8::new(0);
+/// Whether the bridge unit is enabled, which is what its switch shows: on
+/// means it starts at every login, not only that it runs now.
+static BRIDGE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+fn bridge() -> Service {
+    Service::ALL[BRIDGE_STATE.load(Ordering::Relaxed) as usize]
+}
+
+fn bridge_enabled() -> bool {
+    BRIDGE_ENABLED.load(Ordering::Relaxed)
+}
+
+/// What `systemctl show` says about `unit`, or the state to show when there
+/// is nobody to ask.
+fn show(unit: &str) -> Result<String, Service> {
+    match std::process::Command::new("systemctl")
+        .args([
+            "--user",
+            "show",
+            "-p",
+            "LoadState,ActiveState,UnitFileState",
+            unit,
+        ])
         .output()
     {
         Ok(output) if output.status.success() => {
-            Service::parse(&String::from_utf8_lossy(&output.stdout))
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
         // There, but with no user manager to answer.
-        Ok(_) => Service::Unmanaged,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Service::Unmanaged,
-        Err(_) => Service::Missing,
-    };
+        Ok(_) => Err(Service::Unmanaged),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(Service::Unmanaged),
+        Err(_) => Err(Service::Missing),
+    }
+}
+
+/// Whether `systemctl show` output says the unit starts at login.
+fn unit_enabled(show: &str) -> bool {
+    show.lines()
+        .find_map(|line| line.strip_prefix("UnitFileState="))
+        .is_some_and(|state| state.starts_with("enabled"))
+}
+
+/// Mark the pane for a repaint and wake the window.
+fn changed() {
+    SERVICE_DIRTY.store(true, Ordering::Relaxed);
+    otto_kit::AppContext::request_wakeup();
+}
+
+fn store(slot: &AtomicU8, found: Service) {
     let index = Service::ALL.iter().position(|s| *s == found).unwrap_or(0) as u8;
-    if SERVICE_STATE.swap(index, Ordering::Relaxed) != index {
-        SERVICE_DIRTY.store(true, Ordering::Relaxed);
-        otto_kit::AppContext::request_wakeup();
+    if slot.swap(index, Ordering::Relaxed) != index {
+        changed();
+    }
+}
+
+/// Ask systemd about the service and the bridge, and wake the window if an
+/// answer changed. Returns the service's, so the watcher can stop asking a
+/// system that has no systemd.
+fn refresh_service() -> Service {
+    let found = show(SERVICE).map_or_else(|state| state, |text| Service::parse(&text));
+    store(&SERVICE_STATE, found);
+    let bridge = show(BRIDGE_SERVICE);
+    let enabled = bridge.as_deref().is_ok_and(unit_enabled);
+    store(
+        &BRIDGE_STATE,
+        bridge.map_or_else(|state| state, |text| Service::parse(&text)),
+    );
+    if BRIDGE_ENABLED.swap(enabled, Ordering::Relaxed) != enabled {
+        changed();
     }
     found
 }
@@ -558,21 +659,51 @@ pub fn take_service_dirty() -> bool {
 /// Start or restart the service, then look again at once rather than on the
 /// next poll.
 fn run_service(verb: &'static str) {
+    systemctl(vec![verb, SERVICE]);
+}
+
+/// Run `systemctl --user` with `args` on a thread of its own, then look again
+/// at once rather than on the next poll.
+fn systemctl(args: Vec<&'static str>) {
+    let command = args.join(" ");
     let spawned = std::thread::Builder::new()
         .name("agents-service-run".into())
         .spawn(move || {
             match std::process::Command::new("systemctl")
-                .args(["--user", verb, SERVICE])
+                .arg("--user")
+                .args(&args)
                 .status()
             {
                 Ok(status) if status.success() => {}
-                Ok(status) => eprintln!("agents: systemctl {verb} {SERVICE} failed: {status}"),
+                Ok(status) => eprintln!("agents: systemctl {} failed: {status}", args.join(" ")),
                 Err(err) => eprintln!("agents: could not run systemctl: {err}"),
             }
             let _ = refresh_service();
         });
     if let Err(err) = spawned {
-        eprintln!("agents: could not {verb} {SERVICE}: {err}");
+        eprintln!("agents: could not run systemctl {command}: {err}");
+    }
+}
+
+/// The Chat bridge switch: enable the bridge unit and start it, or stop it
+/// and keep it from starting at login. A bridge with no command saved has
+/// nothing to run, so it stays off; its row says why.
+pub fn switch(id: &str, on: bool) {
+    if id != BRIDGE_ID {
+        return;
+    }
+    if on && state().read().unwrap().saved.bridge.is_empty() {
+        changed();
+        return;
+    }
+    // Shown at once; the poll that follows the command corrects it if
+    // systemd refused.
+    BRIDGE_ENABLED.store(on, Ordering::Relaxed);
+    changed();
+    if on {
+        systemctl(vec!["enable", "--now", BRIDGE_SERVICE]);
+    } else {
+        systemctl(vec!["disable", "--now", BRIDGE_SERVICE]);
     }
 }
 
@@ -654,7 +785,7 @@ fn parse_id(id: &str) -> Option<(usize, Field)> {
 /// Whether a row identifier belongs to this pane, whose rows `main.rs` routes
 /// here rather than onto the bus.
 pub fn owns(id: &str) -> bool {
-    id == DEFAULT_ID || parse_id(id).is_some()
+    id == DEFAULT_ID || id == BRIDGE_ID || id == BRIDGE_COMMAND_ID || parse_id(id).is_some()
 }
 
 /// The instructions Otto ships, listed straight after Default.
@@ -814,6 +945,12 @@ pub fn choose(id: &str, label: &str) {
 
 /// Hold a committed edit from one of this pane's text fields.
 pub fn commit_text(id: &str, text: &str) {
+    // Held for Apply like every other field. Emptied, it takes the bridge
+    // out of the file.
+    if id == BRIDGE_COMMAND_ID {
+        state().write().unwrap().draft.bridge = harness::split(text.trim());
+        return;
+    }
     let Some((index, field)) = parse_id(id) else {
         return;
     };
@@ -1033,6 +1170,38 @@ fn service_row() -> Row {
     Row::new(label, control).detail(detail)
 }
 
+/// The Chat bridge group: a switch for the bridge unit, saying how it is
+/// doing, and the command it runs, held for Apply like the agents' fields.
+fn bridge_group(state: &State) -> crate::model::Group {
+    let saved = !state.saved.bridge.is_empty();
+    let detail = match (bridge(), bridge_enabled()) {
+        (Service::Missing, _) => otto_kit::t!("settings-agents-bridge-missing"),
+        (Service::Unmanaged, _) => otto_kit::t!("settings-agents-service-unmanaged"),
+        (Service::Running, _) => otto_kit::t!("settings-agents-service-running"),
+        (Service::Failed, _) => otto_kit::t!("settings-agents-bridge-failed"),
+        _ if !saved => otto_kit::t!("settings-agents-bridge-unset"),
+        (_, true) => otto_kit::t!("settings-agents-service-checking"),
+        _ => otto_kit::t!("settings-agents-bridge-off"),
+    };
+    group(
+        otto_kit::t!("settings-agents-bridge-group"),
+        vec![
+            row(
+                otto_kit::t!("settings-agents-bridge"),
+                Control::Toggle(bridge_enabled()),
+                BRIDGE_ID,
+            )
+            .detail(detail),
+            row(
+                otto_kit::t!("settings-agents-bridge-command"),
+                Control::Text(harness::join(&state.draft.bridge)),
+                BRIDGE_COMMAND_ID,
+            )
+            .detail(otto_kit::t!("settings-agents-bridge-command-detail")),
+        ],
+    )
+}
+
 fn config_file() -> &'static str {
     otto_kit::t!("settings-agents-file")
 }
@@ -1230,12 +1399,15 @@ pub fn build() -> Pane {
             name,
             icon: "agent",
             intro,
-            groups: vec![untitled(
-                [service_row(), none, changes_row, file_row]
-                    .into_iter()
-                    .chain(add_row)
-                    .collect(),
-            )],
+            groups: vec![
+                untitled(
+                    [service_row(), none, changes_row, file_row]
+                        .into_iter()
+                        .chain(add_row)
+                        .collect(),
+                ),
+                bridge_group(&state),
+            ],
         };
     }
 
@@ -1257,6 +1429,8 @@ pub fn build() -> Pane {
         changes_row,
         file_row,
     ])];
+    // With the service, before the agents: it is how the phone reaches them.
+    groups.push(bridge_group(&state));
     groups.extend(draft.agents.iter().enumerate().map(|(index, agent)| {
         let mut rows = vec![
             if state.renaming == Some(index) {
@@ -1502,6 +1676,50 @@ color = "teal"
         assert_eq!(show("loaded", "inactive"), Service::Stopped);
         assert_eq!(show("loaded", "failed"), Service::Failed);
         assert_eq!(show("not-found", "inactive"), Service::Missing);
+        assert!(unit_enabled("LoadState=loaded\nUnitFileState=enabled\n"));
+        assert!(!unit_enabled("LoadState=loaded\nUnitFileState=disabled\n"));
+        assert!(!unit_enabled("LoadState=not-found\nUnitFileState=\n"));
+    }
+
+    #[test]
+    fn the_bridge_is_read_written_and_taken_out() {
+        let file = format!("{USER}\n# How chat apps reach the agents.\n[bridge]\ncommand = \"cc-connect\"\nargs = [\"--config\"]\n");
+        let saved = parsed(&file);
+        assert_eq!(saved.bridge, ["cc-connect", "--config"]);
+
+        // A new command keeps the comment above the table.
+        let mut draft = saved.clone();
+        draft.bridge = harness::split("/opt/bridge --verbose");
+        let text = render(&file, None, &saved, &draft, "/home/u").unwrap();
+        assert!(
+            text.contains("# How chat apps reach the agents.\n[bridge]"),
+            "{text}"
+        );
+        assert_eq!(parsed(&text).bridge, ["/opt/bridge", "--verbose"]);
+
+        // No arguments, no `args`.
+        draft.bridge = vec!["bridge".into()];
+        let text = render(&file, None, &saved, &draft, "/home/u").unwrap();
+        assert!(!text.contains("args = [\"gateway\"]"), "{text}");
+        assert_eq!(parsed(&text).bridge, ["bridge"]);
+
+        // An emptied command takes the table out.
+        draft.bridge.clear();
+        let text = render(&file, None, &saved, &draft, "/home/u").unwrap();
+        assert!(!text.contains("[bridge]"), "{text}");
+        assert!(parsed(&text).bridge.is_empty());
+
+        // And one set where there was none adds it.
+        let saved = parsed(USER);
+        let mut draft = saved.clone();
+        draft.bridge = vec!["bridge".into()];
+        let text = render(USER, None, &saved, &draft, "/home/u").unwrap();
+        assert_eq!(parsed(&text).bridge, ["bridge"]);
+        assert_eq!(
+            parsed(&text).agents,
+            saved.agents,
+            "the agents are left alone"
+        );
     }
 
     #[test]
@@ -1510,6 +1728,8 @@ color = "teal"
             assert_eq!(parse_id(row_id(3, field)), Some((3, field)));
         }
         assert!(owns(DEFAULT_ID));
+        assert!(owns(BRIDGE_ID));
+        assert!(owns(BRIDGE_COMMAND_ID));
         assert!(!owns("agent.x.model"));
         assert!(!owns("theme_scheme"));
     }

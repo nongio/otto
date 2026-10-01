@@ -127,6 +127,8 @@ enum Update {
     Colours(HashMap<String, String>),
     /// The agent of the followed session, by provider id.
     Provider(String),
+    /// The URI of the followed session, once it is open or created.
+    Session(String),
     /// The sessions the service has, most recently changed first.
     Sessions(Vec<SessionSummary>),
     /// The service could not be reached.
@@ -558,6 +560,8 @@ struct Run {
     /// The agent's modes, once the service says; `None` for an agent
     /// without any, or before its session opened.
     modes: Option<Modes>,
+    /// The session's URI, once the service has opened or created it.
+    session: Option<String>,
 }
 
 /// The modes an agent can run in — its own permission and sandboxing presets,
@@ -1042,6 +1046,7 @@ impl Ask {
             terminal: None,
             loading: false,
             modes: None,
+            session: None,
         });
         let _ = self.commands.send(Command::Resume {
             session: session.to_string(),
@@ -1075,7 +1080,10 @@ impl Ask {
             .iter()
             .enumerate()
             .filter(|(_, session)| {
-                query.is_empty() || session.title.to_lowercase().contains(&query)
+                query.is_empty()
+                    || session.title.to_lowercase().contains(&query)
+                    || session_remote(session)
+                        .is_some_and(|via| via.to_lowercase().contains(&query))
             })
             .map(|(index, session)| Item {
                 title: if session.title.is_empty() {
@@ -1092,6 +1100,7 @@ impl Ask {
                 activity: Some(session_activity(session)),
                 checked: None,
                 search_terms: Vec::new(),
+                pill: session_remote(session),
                 origin: Origin { source, index },
             })
             .collect()
@@ -1127,6 +1136,11 @@ impl Ask {
         match update {
             Update::Agents(agents) => self.agents = agents,
             Update::Colours(colours) => self.colours = colours,
+            Update::Session(session) => {
+                if let Some(run) = self.run.as_mut() {
+                    run.session = Some(session);
+                }
+            }
             Update::Provider(provider) => {
                 if let Some(run) = self.run.as_mut() {
                     run.provider = Some(provider);
@@ -1218,6 +1232,7 @@ impl Ask {
                 activity: None,
                 checked: None,
                 search_terms: Vec::new(),
+                pill: None,
                 origin: Origin { source, index },
             })
             .collect()
@@ -1315,6 +1330,7 @@ impl Ask {
                 activity: None,
                 checked: None,
                 search_terms: Vec::new(),
+                pill: None,
                 origin: Origin { source, index },
             })
             .collect()
@@ -1388,6 +1404,7 @@ impl Ask {
                     activity: None,
                     checked: request.row_checked(row, current),
                     search_terms: Vec::new(),
+                    pill: None,
                     origin: Origin { source, index },
                 }
             })
@@ -1576,6 +1593,7 @@ impl Ask {
                     terminal: None,
                     loading: false,
                     modes: None,
+                    session: None,
                 });
                 chosen.map(|agent| agent.provider.clone())
             }
@@ -1602,6 +1620,12 @@ impl Ask {
                 .as_str(),
         };
         self.colours.get(provider).map(String::as_str)
+    }
+
+    /// The URI of the session being followed, once the service has opened or
+    /// created it.
+    pub fn session(&self) -> Option<&str> {
+        self.run.as_ref()?.session.as_deref()
     }
 
     /// Whether a request has been made, and the launcher is showing the log.
@@ -1836,6 +1860,18 @@ fn file_label(file: &Path) -> String {
 /// are called.
 /// The dot beside a session in the list. A failed session has stopped, so it
 /// reads as idle; the subtitle says why.
+/// The chat app the session was last written to from, away from the desktop,
+/// as the service keeps it in the session's `_meta` under `otto.remote`.
+fn session_remote(session: &SessionSummary) -> Option<String> {
+    let via = session
+        .meta
+        .as_ref()?
+        .get("otto")?
+        .get("remote")?
+        .as_str()?;
+    (!via.trim().is_empty()).then(|| via.to_owned())
+}
+
 fn session_activity(session: &SessionSummary) -> Activity {
     let status = SessionStatus::from_bits(session.status);
     if status.contains(SessionStatus::InputNeeded) {
@@ -2478,6 +2514,7 @@ async fn follow(
     let (subscribed, session_events) = client.subscribe(session.clone()).await?;
     let chat_uri = match subscribed.snapshot.map(|snapshot| snapshot.state) {
         Some(SnapshotState::Session(state)) => {
+            reporter.send(Update::Session(session.clone()));
             reporter.send(Update::Provider(state.provider.clone()));
             reporter.send(Update::Terminal(Terminal::from_meta(state.meta.as_ref())));
             reporter.send(Update::Loading(loading_from_meta(state.meta.as_ref())));

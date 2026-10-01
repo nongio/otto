@@ -7,7 +7,7 @@ use otto_agents::agent::{Backend, EchoBackend};
 use otto_agents::dialog::Islands;
 use otto_agents::server::Listen;
 use otto_agents::store::Store;
-use otto_agents::{Server, cli, client, config};
+use otto_agents::{Server, cli, client, config, facade};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -85,6 +85,35 @@ enum Command {
         #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
         url: String,
     },
+    /// Speak ACP on stdin and stdout, as one agent whose sessions are the
+    /// desktop's. For tools that drive ACP agents, such as chat bridges: they
+    /// start `otto-agents acp` in place of an agent command.
+    Acp {
+        /// The agent new sessions run, by its id in `agents.toml` or the name
+        /// it is shown under. Defaults to the service's first agent.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Who answers the agent's permission requests: the ACP client as
+        /// well as the desktop (first answer wins), or the desktop only, for
+        /// clients that answer by a fixed policy rather than asking anyone.
+        #[arg(long, value_enum, default_value = "client")]
+        permissions: facade::Permissions,
+        /// The chat app messages are relayed from, such as `Telegram`: each
+        /// one tells the agent it was written away from the desktop, on the
+        /// person's phone. Under cc-connect, its platform is the default.
+        #[arg(long, value_name = "APP")]
+        remote: Option<String>,
+        /// The server: `unix:///path` (the default, in the runtime directory) or `ws://`.
+        #[arg(long, env = "OTTO_AGENTS_URL", default_value_t = client::default_url())]
+        url: String,
+    },
+    /// Run the chat bridge `[bridge]` in `agents.toml` names, in place of this
+    /// process. The `otto-agents-bridge` unit runs this; Settings turns it on.
+    Bridge {
+        /// Agent configuration file. Defaults to Otto's config files.
+        #[arg(long, env = "OTTO_AGENTS_CONFIG")]
+        config: Option<PathBuf>,
+    },
     /// Put the desktop's skills and its agent where each harness looks for them.
     #[command(alias = "skills")]
     Plugins {
@@ -161,6 +190,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        // Standard output is `otto-agents acp`'s protocol stream.
+        .with_writer(std::io::stderr)
         .init();
     match command {
         Command::Serve(args) => serve(args).await,
@@ -178,6 +209,16 @@ async fn main() -> anyhow::Result<()> {
             follow,
             url,
         } => cli::show_session(&url, session.as_deref(), follow).await,
+        Command::Acp {
+            agent,
+            permissions,
+            remote,
+            url,
+        } => {
+            let remote = remote.or_else(facade::remote_from_env);
+            facade::serve(&url, agent.as_deref(), permissions, remote).await
+        }
+        Command::Bridge { config } => cli::run_bridge(config.as_deref()),
         Command::Plugins {
             command: PluginsCommand::Install { dir, home, only },
         } => cli::install_plugins(dir.as_deref(), home.as_deref(), only.as_deref()),

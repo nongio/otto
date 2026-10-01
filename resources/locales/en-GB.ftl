@@ -350,6 +350,16 @@ settings-agents-service-missing = Not installed
 settings-agents-service-unmanaged = Can't tell: this system has no systemctl
 settings-agents-start = Start
 settings-agents-restart = Restart
+# The group that turns on a chat bridge: a program such as cc-connect
+# that lets chat apps on a phone talk to the agents.
+settings-agents-bridge-group = Chat bridge
+settings-agents-bridge = Bridge
+settings-agents-bridge-off = Off. Chat apps can't reach your agents.
+settings-agents-bridge-unset = Set a command below and apply it, then turn this on.
+settings-agents-bridge-failed = Stopped after an error. journalctl --user -u otto-agents-bridge says why.
+settings-agents-bridge-missing = Not installed
+settings-agents-bridge-command = Command
+settings-agents-bridge-command-detail = What runs the bridge, such as a gateway set up to start otto-agents acp as its agent.
 # The row that opens agents.toml. Its path is shown under it.
 settings-agents-file = Configuration file
 settings-agents-none = No agents set up

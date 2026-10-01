@@ -2870,24 +2870,25 @@ mod tests {
         // toggle is what this test aims at — so pick the tallest pane that
         // overflows its viewport AND has one, rather than assuming the two
         // coincide (they stopped coinciding once a row was removed).
-        let settings = (0..model::panes().len())
+        // The toggle must also lie below the fold: the last one in a pane
+        // can sit near its top, as the chat bridge's does in Agents.
+        let below_the_fold = |s: &Settings| {
+            s.row_rects(s.width - SIDEBAR_W)
+                .into_iter()
+                .filter(|(row, _)| matches!(row.control, Control::Toggle(_)))
+                .map(|(_, rect)| rect)
+                .rfind(|rect| rect.bottom > s.viewport().height())
+        };
+        let (settings, rect) = (0..model::panes().len())
             .map(|i| Settings::new(i, false))
             .filter(|s| s.pane_content_height() > s.viewport().height())
-            .filter(|s| {
-                s.row_rects(s.width - SIDEBAR_W)
-                    .iter()
-                    .any(|(row, _)| matches!(row.control, Control::Toggle(_)))
-            })
-            .max_by(|a, b| a.pane_content_height().total_cmp(&b.pane_content_height()))
-            .expect("a scrolling pane with a toggle in it");
+            .filter_map(|s| below_the_fold(&s).map(|rect| (s, rect)))
+            .max_by(|(a, _), (b, _)| a.pane_content_height().total_cmp(&b.pane_content_height()))
+            .expect("a scrolling pane with a toggle below the fold");
         let viewport = settings.viewport();
-        let offset = settings.pane_content_height() - viewport.height();
-
-        let (_, rect) = settings
-            .row_rects(settings.width - SIDEBAR_W)
-            .into_iter()
-            .rfind(|(row, _)| matches!(row.control, Control::Toggle(_)))
-            .expect("a toggle somewhere in the pane");
+        // Scrolled just far enough to bring the toggle into view.
+        let offset = (rect.bottom - viewport.height())
+            .min(settings.pane_content_height() - viewport.height());
 
         let x = viewport.left + rect.right - 14.0 - widgets::TOGGLE_W / 2.0;
         let y = viewport.top + rect.center_y() - offset;

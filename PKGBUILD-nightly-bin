@@ -111,6 +111,7 @@ package() {
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
     install -Dm644 components/otto-agents/otto-agents.service "$pkgdir/usr/lib/systemd/user/otto-agents.service"
+    install -Dm644 components/otto-agents/otto-agents-bridge.service "$pkgdir/usr/lib/systemd/user/otto-agents-bridge.service"
 
     # Agent skills. One plugin directory — `.claude-plugin/plugin.json`, a
     # `skills/` tree and an `agents/` file — that an agent running on this

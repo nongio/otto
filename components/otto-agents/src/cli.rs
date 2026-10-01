@@ -258,7 +258,10 @@ fn entry_from_meta(meta: Option<&serde_json::Map<String, serde_json::Value>>) ->
 
 /// The provider id `agent` names — its id, or the name it is shown under,
 /// either way ignoring case. `None` leaves the service its default agent.
-async fn resolve_agent(client: &Client, agent: Option<&str>) -> anyhow::Result<Option<String>> {
+pub(crate) async fn resolve_agent(
+    client: &Client,
+    agent: Option<&str>,
+) -> anyhow::Result<Option<String>> {
     let Some(agent) = agent else {
         return Ok(None);
     };
@@ -523,7 +526,7 @@ fn no_plugins() -> String {
 }
 
 /// `path` with the home directory written as `~`.
-async fn connect(url: &str) -> anyhow::Result<Client> {
+pub(crate) async fn connect(url: &str) -> anyhow::Result<Client> {
     let transport = crate::client::connect(url)
         .await
         .with_context(|| format!("could not connect to {url}; is `otto-agents serve` running?"))?;
@@ -539,7 +542,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 }
 
 /// The host's sessions, most recently modified first.
-async fn fetch_sessions(client: &Client) -> anyhow::Result<Vec<SessionSummary>> {
+pub(crate) async fn fetch_sessions(client: &Client) -> anyhow::Result<Vec<SessionSummary>> {
     let result: ListSessionsResult = client
         .request("listSessions", json!({ "channel": ROOT_RESOURCE_URI }))
         .await?;
@@ -697,6 +700,30 @@ fn folder(session: &SessionSummary, home: Option<&Path>) -> String {
 /// reading any code: is the service reachable, does the configuration parse,
 /// is each agent's command on the service's `PATH`, and is there a renderer
 /// to put a dialog on the screen.
+/// `otto-agents bridge`: becomes the chat bridge `agents.toml` configures.
+///
+/// It execs rather than spawns, so the `otto-agents-bridge` unit supervises
+/// the bridge itself: its logs, its exit status and its restarts are the
+/// bridge's own.
+pub fn run_bridge(config_path: Option<&Path>) -> anyhow::Result<()> {
+    let config = crate::config::load(config_path)?;
+    let Some(bridge) = config.bridge else {
+        bail!(
+            "no chat bridge is configured: set `[bridge] command` in agents.toml, \
+             or a command under Chat bridge in Settings › Agents"
+        );
+    };
+    tracing::info!(command = %bridge.command, "starting the chat bridge");
+    let err = std::process::Command::new(&bridge.command)
+        .args(crate::config::expand_args(&bridge.args))
+        .envs(crate::config::expand_env(&bridge.env))
+        .exec();
+    bail!(
+        "could not start the chat bridge `{}`: {err}",
+        bridge.command
+    )
+}
+
 pub async fn doctor(url: &str, config_path: Option<&Path>) -> anyhow::Result<()> {
     let mut sound = true;
     let mut check = |ok: bool, label: &str, detail: String| {

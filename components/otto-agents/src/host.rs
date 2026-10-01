@@ -2102,10 +2102,15 @@ impl HostState {
                 }
             }
         }
+        let remote = remote_origin(&action.message);
+        if let Some(via) = &remote {
+            self.mark_remote(session_uri, via);
+        }
         let prompt = SessionCommand::Prompt {
             turn_id: action.turn_id.clone(),
             text: action.message.text.clone(),
             attachments: attached,
+            remote,
         };
         self.apply(&chat_uri, StateAction::ChatTurnStarted(action), origin);
         self.mark_written(session_uri);
@@ -2300,6 +2305,21 @@ impl HostState {
                 .collect::<Vec<_>>(),
         });
         let meta = with_otto_meta(session.state.meta.clone(), "modes", Some(modes));
+        if meta == session.state.meta {
+            return;
+        }
+        let changed = StateAction::SessionMetaChanged(SessionMetaChangedAction { meta });
+        self.apply(session_uri, changed, None);
+        self.mark_unsaved(session_uri);
+    }
+
+    /// Says in the session's `_meta`, as `otto.remote`, which chat app it was
+    /// last written to from, so lists can tell it from the desktop's own.
+    fn mark_remote(&mut self, session_uri: &str, via: &str) {
+        let Some(session) = self.sessions.get(session_uri) else {
+            return;
+        };
+        let meta = with_otto_meta(session.state.meta.clone(), "remote", Some(json!(via)));
         if meta == session.state.meta {
             return;
         }
@@ -3140,6 +3160,21 @@ fn error_info(error_type: &str, message: String) -> ErrorInfo {
         stack: None,
         meta: None,
     }
+}
+
+/// The chat app a message was written in away from the desktop, as a chat
+/// bridge marks it in the message's `_meta`: `otto.remote.via`.
+fn remote_origin(message: &Message) -> Option<String> {
+    let via = message
+        .meta
+        .as_ref()?
+        .get("otto")?
+        .get("remote")?
+        .get("via")?;
+    via.as_str()
+        .map(str::trim)
+        .filter(|via| !via.is_empty())
+        .map(str::to_string)
 }
 
 /// What a message points the agent at. Only resources referenced by URI are
