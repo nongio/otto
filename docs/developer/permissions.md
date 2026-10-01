@@ -69,10 +69,11 @@ Otto is the session's polkit authentication agent:
   marked `OttoComponent::Authorize` and restarts it if it dies
   (`src/polkit_agent.rs`; `polkit_agent = false` turns it off). It registers
   for the compositor's logind session.
-- polkitd calls `BeginAuthentication`; the agent shows the shared auth panel
-  (`otto-auth-ui`) and hands the password to polkit's own helper
-  (`polkit-agent-helper-1`), which runs PAM and reports to polkitd. The agent
-  never decides the answer itself.
+- polkit's own agent library (`libpolkit-agent-1`, through the
+  `polkit-agent-rs` bindings) registers the agent, takes polkitd's requests
+  and runs polkit's helper, which runs PAM and reports to polkitd. Otto adds
+  only the shared auth panel (`otto-auth-ui`) on top; the agent never decides
+  the answer itself.
 - While the panel is up it holds the keyboard: an overlay mapped later
   neither takes the keys nor draws over it, and popup and input-method grabs
   are released (`src/input/keyboard.rs`, `src/shell/mod.rs`,

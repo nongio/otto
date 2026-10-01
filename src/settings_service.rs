@@ -149,7 +149,7 @@ impl SettingsInterface {
         // Setting a protected value to what it already is changes nothing,
         // so there is nothing to confirm.
         if settings::schema::is_protected(id) && settings::value_of(id).as_ref() != Some(&value) {
-            confirm(id, Some(&value_text(&value))).await?;
+            confirm(id).await?;
         }
 
         let (response_tx, response_rx) = oneshot::channel();
@@ -172,7 +172,7 @@ impl SettingsInterface {
     /// Remove one setting from the writable configuration file.
     async fn reset(&self, id: &str) -> Result<String, SettingsFault> {
         if settings::schema::is_protected(id) {
-            confirm(id, None).await?;
+            confirm(id).await?;
         }
         let (response_tx, response_rx) = oneshot::channel();
         self.compositor_tx
@@ -478,26 +478,10 @@ pub async fn register_settings_interface(
 
 /// Ask polkit, and through it the user, before a protected setting changes
 /// (`src/settings/polkit.rs`).
-async fn confirm(id: &str, value: Option<&str>) -> Result<(), SettingsFault> {
-    let Some(label) = settings::label_of(id) else {
-        return Err(SettingsFault::UnknownSetting(id.to_string()));
-    };
-    settings::polkit::authorize(id, &label, value)
-        .await
-        .map_err(|refusal| {
-            SettingsFault::ZBus(zbus::Error::FDO(Box::new(zbus::fdo::Error::AccessDenied(
-                format!("`{id}`: {refusal}"),
-            ))))
-        })
-}
-
-/// A value as the auth panel shows it.
-fn value_text(value: &SettingValue) -> String {
-    match value {
-        SettingValue::Bool(b) => b.to_string(),
-        SettingValue::Int(n) => n.to_string(),
-        SettingValue::Double(n) => n.to_string(),
-        SettingValue::Str(s) => s.clone(),
-        SettingValue::StrList(items) => items.join(" "),
-    }
+async fn confirm(id: &str) -> Result<(), SettingsFault> {
+    settings::polkit::authorize(id).await.map_err(|refusal| {
+        SettingsFault::ZBus(zbus::Error::FDO(Box::new(zbus::fdo::Error::AccessDenied(
+            format!("`{id}`: {refusal}"),
+        ))))
+    })
 }

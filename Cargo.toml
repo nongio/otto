@@ -386,6 +386,7 @@ pipewire-libs = "*"
 freetype = "*"
 fontconfig = "*"
 pixman = "*"
+polkit-libs = "*"
 google-noto-sans-fonts = "*"
 rsms-inter-fonts = "*"
 wireplumber = "*"
@@ -409,11 +410,11 @@ depends = [
     "wireplumber",
     "gstreamer",
     "gst-plugins-base-libs",
+    "polkit",
 ]
 optdepends = [
     "xdg-desktop-portal: Desktop integration",
     "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize",
-    "polkit: the password panel for pkexec and protected settings",
     "greetd: login manager otto --login hosts a greeter for",
     "gst-plugin-pipewire: otto-rdp video capture",
     "gst-plugins-bad: otto-rdp hardware H.264 (VA-API)",

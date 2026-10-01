@@ -6,8 +6,11 @@
 //! polkit to authorize `org.otto.settings.lock` for Otto's own process. The
 //! action is `auth_self`: polkitd asks the session's authentication agent,
 //! which is Otto's own (`otto-authorize --polkit-agent`), and the agent shows
-//! the auth panel naming the change from the details passed here. A script on
-//! the bus can make the request; it cannot type the password.
+//! the auth panel with the action's message. A script on the bus can make the
+//! request; it cannot type the password.
+//!
+//! No details go with the request: polkit accepts them only from root or the
+//! action's owner, and refuses the whole check otherwise.
 //!
 //! This proves someone at the session agreed. It does not stop a program
 //! running as the user from editing `config.toml` directly.
@@ -19,13 +22,6 @@ use zbus::zvariant::Value;
 /// The polkit action every protected setting asks for. Declared in
 /// `resources/polkit/org.otto.settings.policy`.
 pub const ACTION: &str = "org.otto.settings.lock";
-
-/// Detail naming the setting, for the agent's reason line.
-pub const DETAIL_SETTING: &str = "otto.setting";
-/// Detail carrying the value asked for, as text; absent for a reset.
-pub const DETAIL_VALUE: &str = "otto.value";
-/// Detail with the setting's label, for a reason line that names it.
-pub const DETAIL_LABEL: &str = "otto.label";
 
 /// `CheckAuthorization`'s `AllowUserInteraction` flag.
 const ALLOW_USER_INTERACTION: u32 = 1;
@@ -51,9 +47,9 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// Ask polkit to authorize changing `setting` to `value` (`None` for a
-/// reset). Waits for as long as the user takes to answer the panel.
-pub async fn authorize(setting: &str, label: &str, value: Option<&str>) -> Result<(), Refusal> {
+/// Ask polkit to authorize changing `setting`. Waits for as long as the user
+/// takes to answer the panel.
+pub async fn authorize(setting: &str) -> Result<(), Refusal> {
     let connection = zbus::Connection::system()
         .await
         .map_err(|err| Refusal::Unavailable(err.to_string()))?;
@@ -63,12 +59,7 @@ pub async fn authorize(setting: &str, label: &str, value: Option<&str>) -> Resul
     subject_fields.insert("start-time", Value::from(start_time().unwrap_or(0)));
     let subject = ("unix-process", subject_fields);
 
-    let mut details: HashMap<&str, &str> = HashMap::new();
-    details.insert(DETAIL_SETTING, setting);
-    details.insert(DETAIL_LABEL, label);
-    if let Some(value) = value {
-        details.insert(DETAIL_VALUE, value);
-    }
+    let details: HashMap<&str, &str> = HashMap::new();
 
     let reply = connection
         .call_method(

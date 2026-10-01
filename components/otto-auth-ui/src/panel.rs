@@ -139,9 +139,11 @@ const PASSWORD_BUTTON_GAP: f32 = 18.0;
 fn password_button_label() -> &'static str {
     otto_kit::t!("auth-enter-password")
 }
-/// Room a dialog's reason takes under the name: two lines of the status
-/// face, which is as long as a sentence Otto composes gets.
-const DIALOG_REASON_H: f32 = 40.0;
+/// Room a dialog's reason takes under the name: up to two lines of the
+/// message, then one naming who asked.
+const DIALOG_REASON_H: f32 = 52.0;
+/// The most lines a dialog's message wraps to; the last is cut with "…".
+const DIALOG_MESSAGE_LINES: usize = 2;
 /// The row a dialog adds at the foot of the card for Cancel.
 const DIALOG_CANCEL_ROW: f32 = 52.0;
 /// What a dialog dims the rest of the screen with. Enough to say "this is
@@ -428,15 +430,33 @@ impl Panel {
         panel
     }
 
-    /// Why a dialog is asking, in Otto's words. Drawn under the name, wrapped
-    /// to two lines.
-    pub fn set_reason(&mut self, reason: &str) {
-        self.reason.set_draw_content(draw_status(
-            reason.to_string(),
-            self.font(14.0, FontStyle::normal()),
-            Color::from_argb(235, 255, 255, 255),
-            false,
-        ));
+    /// Why a dialog is asking: the `message`, wrapped to two lines, and under
+    /// it the `requester`, the program that asked, on a line of its own that
+    /// a long message cannot push off the card.
+    pub fn set_reason(&mut self, message: &str, requester: &str) {
+        let (message, requester) = (message.to_string(), requester.to_string());
+        let font = self.font(14.0, FontStyle::normal());
+        let small = self.font(12.0, FontStyle::normal());
+        self.reason
+            .set_draw_content(move |canvas: &Canvas, w: f32, h: f32| {
+                let mut paint =
+                    Paint::new(Color4f::from(Color::from_argb(235, 255, 255, 255)), None);
+                paint.set_anti_alias(true);
+                let max_width = w - 24.0;
+                let lines = wrap_reason(&message, &font, &paint, max_width, DIALOG_MESSAGE_LINES);
+                let mut baseline = 14.0;
+                for line in &lines {
+                    let width = font.measure_str(line, Some(&paint)).0;
+                    canvas.draw_str(line, ((w - width) / 2.0, baseline), &font, &paint);
+                    baseline += STATUS_LINE_H;
+                }
+                paint.set_color4f(Color4f::from(Color::from_argb(150, 255, 255, 255)), None);
+                if let Some(line) = wrap_reason(&requester, &small, &paint, max_width, 1).first() {
+                    let width = small.measure_str(line, Some(&paint)).0;
+                    canvas.draw_str(line, ((w - width) / 2.0, baseline + 2.0), &small, &paint);
+                }
+                Rect::from_wh(w, h)
+            });
     }
 
     /// The layer everything hangs off, for a client that needs to reparent or
@@ -1476,6 +1496,59 @@ fn wrap_status(text: &str, font: &Font, paint: &Paint, max_width: f32) -> Vec<St
     lines
 }
 
+/// Break a dialog's reason to at most `max_lines` lines that fit `max_width`.
+///
+/// Unlike [`wrap_status`], nothing overhangs: the reason names programs by
+/// their path, and a path wider than the card is broken between characters.
+/// Whatever is left after the last line is cut with "…".
+fn wrap_reason(
+    text: &str,
+    font: &Font,
+    paint: &Paint,
+    max_width: f32,
+    max_lines: usize,
+) -> Vec<String> {
+    let fits = |line: &str| font.measure_str(line, Some(paint)).0 <= max_width;
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if fits(&candidate) {
+            current = candidate;
+            continue;
+        }
+        if !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+        }
+        // A word wider than a line on its own: as much as fits, then the rest.
+        for c in word.chars() {
+            let mut grown = current.clone();
+            grown.push(c);
+            if !current.is_empty() && !fits(&grown) {
+                lines.push(std::mem::take(&mut current));
+                grown = c.to_string();
+            }
+            current = grown;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > max_lines {
+        let mut last = lines[max_lines - 1].clone();
+        lines.truncate(max_lines - 1);
+        while !last.is_empty() && !fits(&format!("{last}…")) {
+            last.pop();
+        }
+        lines.push(format!("{}…", last.trim_end()));
+    }
+    lines
+}
+
 /// A fingerprint mark: three nested arcs, shortening outwards so it reads as a
 /// fingertip rather than as concentric circles.
 fn draw_fingerprint(canvas: &Canvas, center: Point, color: Color) {
@@ -1677,7 +1750,10 @@ mod tests {
         let engine = Engine::create(1440.0, 960.0);
         let mut panel = Panel::new_dialog(Appearance::default(), engine, None);
         panel.set_size(1440.0, 960.0);
-        panel.set_reason("Change the program that locks your screen?");
+        panel.set_reason(
+            "Confirm this change with your password.",
+            "otto (in /usr/bin)",
+        );
         panel.update(&View {
             user: None,
             prompt: "Password",
@@ -2185,11 +2261,36 @@ mod tests {
 
 #[cfg(test)]
 mod status_wrap_tests {
-    use super::{wrap_status, STATUS_H, STATUS_LINE_H};
+    use super::{wrap_reason, wrap_status, STATUS_H, STATUS_LINE_H};
     use skia_safe::{Font, Paint};
 
     fn font() -> Font {
         super::get_font_with_fallback("Inter", skia_safe::FontStyle::normal(), 13.0)
+    }
+
+    /// A dialog's reason never runs off the card, even with a path in it.
+    #[test]
+    fn a_path_wider_than_the_card_is_broken_not_overhung() {
+        let paint = Paint::default();
+        let text = "otto-release (in /home/someone/dev/a-very-long-folder-name-for-a-build/release) asks: Confirm this change with your password.";
+        let lines = wrap_reason(text, &font(), &paint, 340.0, 3);
+        assert!(lines.len() <= 3);
+        for line in &lines {
+            assert!(
+                font().measure_str(line, Some(&paint)).0 <= 340.0,
+                "{line:?} overhangs"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reason_longer_than_three_lines_ends_in_an_ellipsis() {
+        let paint = Paint::default();
+        let text = "word ".repeat(200);
+        let lines = wrap_reason(&text, &font(), &paint, 340.0, 3);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].ends_with('…'));
+        assert!(font().measure_str(&lines[2], Some(&paint)).0 <= 340.0);
     }
 
     /// A message that fits stays on one line, unchanged.
