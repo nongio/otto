@@ -103,7 +103,18 @@ mod agent_seat_tests {
                 std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR"),
                 handle.socket_name
             );
-            let stream = std::os::unix::net::UnixStream::connect(path).expect("connect");
+            Self::from_stream(std::os::unix::net::UnixStream::connect(path).expect("connect"))
+        }
+
+        /// A client connected the way Otto connects the locker it starts —
+        /// the only kind offered `ext_session_lock_manager_v1`.
+        fn connect_as_locker(handle: &HeadlessHandle) -> Self {
+            Self::from_stream(
+                handle.query(|state| state.connect_locker_client().expect("connect the locker").1),
+            )
+        }
+
+        fn from_stream(stream: std::os::unix::net::UnixStream) -> Self {
             let conn = Connection::from_socket(stream).expect("wayland connection");
             let mut queue = conn.new_event_queue();
             let qh = queue.handle();
@@ -385,13 +396,14 @@ mod agent_seat_tests {
         driver.settle(&handle);
         assert_eq!(agent_keyboard_focus(&handle).as_deref(), Some("Target"));
 
-        let lock = driver
+        let mut locker = Driver::connect_as_locker(&handle);
+        let lock = locker
             .state
             .lock_manager
             .as_ref()
             .expect("ext_session_lock_manager_v1 missing")
-            .lock(&driver.qh, ());
-        driver.settle(&handle);
+            .lock(&locker.qh, ());
+        locker.settle(&handle);
         assert!(handle.query(|state| state.is_session_locked()));
         assert_eq!(
             agent_keyboard_focus(&handle),
@@ -987,14 +999,14 @@ mod agent_seat_tests {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
         request_workspace(&handle, ":1.10").expect("workspace");
-        let mut driver = Driver::connect(&handle);
-        let lock = driver
+        let mut locker = Driver::connect_as_locker(&handle);
+        let lock = locker
             .state
             .lock_manager
             .as_ref()
             .expect("ext_session_lock_manager_v1 missing")
-            .lock(&driver.qh, ());
-        driver.settle(&handle);
+            .lock(&locker.qh, ());
+        locker.settle(&handle);
         assert!(handle.query(|state| state.is_session_locked()));
         assert!(capture(&handle, ":1.10", "Claude").is_err());
         drop(lock);
