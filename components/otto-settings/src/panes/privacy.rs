@@ -40,6 +40,8 @@ use otto_kit::permission_store::{self as store, Entry, Restored, Store};
 const GRANT_ROW: &str = "privacy.grant:";
 /// The prefix of a notification switch's identifier; the rest is the app id.
 const SENDER_ROW: &str = "privacy.notifications:";
+/// The prefix of an agent switch's identifier; the rest is the app id.
+const AGENT_ROW: &str = "privacy.agents:";
 const SEP: char = '\u{1f}';
 
 /// What a row grants.
@@ -142,6 +144,8 @@ enum Snapshot {
         shares: Vec<Grant>,
         screenshots: Vec<AppRow>,
         senders: Vec<Sender>,
+        /// Programs that asked for an agent seat, and whether they may.
+        agents: Vec<Sender>,
     },
 }
 
@@ -206,9 +210,20 @@ fn screenshot_rows(entries: &[Entry]) -> Vec<AppRow> {
 /// whose entry says anything but `no` may notify: the portal treats a
 /// missing answer as yes.
 fn senders(entries: &[Entry]) -> Vec<Sender> {
+    switches(entries, store::NOTIFICATIONS, store::NOTIFICATION_ID)
+}
+
+/// The programs in the `otto-agents` table, by app id. One is only ever
+/// recorded with an answer, so anything but `no` is `yes`.
+fn agents(entries: &[Entry]) -> Vec<Sender> {
+    switches(entries, store::AGENTS, store::AGENT_ID)
+}
+
+/// The apps of a yes/no table's one entry, each with its switch.
+fn switches(entries: &[Entry], table: &str, id: &str) -> Vec<Sender> {
     let mut senders: Vec<Sender> = entries
         .iter()
-        .filter(|entry| entry.table == store::NOTIFICATIONS && entry.id == store::NOTIFICATION_ID)
+        .filter(|entry| entry.table == table && entry.id == id)
         .flat_map(|entry| &entry.apps)
         .map(|(app, permissions)| Sender {
             app: app.clone(),
@@ -229,6 +244,7 @@ fn reload() {
             store::REMOTE_DESKTOP,
             store::SCREENSHOT,
             store::NOTIFICATIONS,
+            store::AGENTS,
         ] {
             entries.extend(store.entries(table)?);
         }
@@ -241,6 +257,7 @@ fn reload() {
                 .collect(),
             screenshots: screenshot_rows(&entries),
             senders: senders(&entries),
+            agents: agents(&entries),
         },
         Err(why) => {
             eprintln!("privacy: cannot read the permission store: {why}");
@@ -311,6 +328,10 @@ pub fn remove(id: &str) {
         forget_sender(app.to_string());
         return;
     }
+    if let Some(app) = id.strip_prefix(AGENT_ROW) {
+        forget_agent(app.to_string());
+        return;
+    }
     if let Some(target) = slot_target(id) {
         let Some(row) = find_row(&target) else {
             return;
@@ -362,6 +383,23 @@ fn forget_sender(app: String) {
             store.forget(store::NOTIFICATIONS, store::NOTIFICATION_ID, &app, others)
         }) {
             eprintln!("privacy: could not forget notifications for {app:?}: {why}");
+        }
+        reload();
+    });
+}
+
+/// Forget a program's answer about agent seats: the seats it holds go, and
+/// the user is asked again the next time it wants one.
+fn forget_agent(app: String) {
+    let others = match &*SNAPSHOT.read().unwrap() {
+        Snapshot::Ready { agents, .. } => agents.iter().any(|agent| agent.app != app),
+        _ => return,
+    };
+    in_background("privacy-forget", move || {
+        if let Err(why) = Store::connect()
+            .and_then(|store| store.forget(store::AGENTS, store::AGENT_ID, &app, others))
+        {
+            eprintln!("privacy: could not forget the agent answer for {app:?}: {why}");
         }
         reload();
     });
@@ -638,29 +676,38 @@ fn screen_rows() -> Vec<Row> {
 /// on a thread of its own; the read that follows puts the switch back if
 /// the write did not take.
 pub fn apply(id: &str, value: &settings_client::Value) -> bool {
-    let Some(app) = id.strip_prefix(SENDER_ROW) else {
+    let (app, table, entry) = if let Some(app) = id.strip_prefix(SENDER_ROW) {
+        (app, store::NOTIFICATIONS, store::NOTIFICATION_ID)
+    } else if let Some(app) = id.strip_prefix(AGENT_ROW) {
+        // Switched off, the program's agents lose their seats: the
+        // compositor follows the table.
+        (app, store::AGENTS, store::AGENT_ID)
+    } else {
         return false;
     };
     let settings_client::Value::Bool(allowed) = *value else {
         return true;
     };
-    if let Snapshot::Ready { senders, .. } = &mut *SNAPSHOT.write().unwrap() {
-        if let Some(sender) = senders.iter_mut().find(|s| s.app == app) {
+    if let Snapshot::Ready {
+        senders, agents, ..
+    } = &mut *SNAPSHOT.write().unwrap()
+    {
+        let shown = if table == store::AGENTS {
+            agents
+        } else {
+            senders
+        };
+        if let Some(sender) = shown.iter_mut().find(|s| s.app == app) {
             sender.allowed = allowed;
         }
     }
     let app = app.to_string();
-    in_background("privacy-notifications", move || {
+    in_background("privacy-switch", move || {
         let answer = if allowed { "yes" } else { "no" };
-        if let Err(why) = Store::connect().and_then(|store| {
-            store.set(
-                store::NOTIFICATIONS,
-                store::NOTIFICATION_ID,
-                &app,
-                &[answer],
-            )
-        }) {
-            eprintln!("privacy: could not turn notifications {answer} for {app:?}: {why}");
+        if let Err(why) =
+            Store::connect().and_then(|store| store.set(table, entry, &app, &[answer]))
+        {
+            eprintln!("privacy: could not set {table} to {answer} for {app:?}: {why}");
         }
         reload();
     });
@@ -689,6 +736,26 @@ fn notification_rows() -> Vec<Row> {
     }
 }
 
+/// One switch per program that asked for an agent seat. Empty, and the
+/// group left out, until one has.
+fn agent_rows() -> Vec<Row> {
+    match &*SNAPSHOT.read().unwrap() {
+        Snapshot::Ready { agents, .. } => agents
+            .iter()
+            .map(|agent| {
+                let mut row =
+                    Row::new(intern(app_name(&agent.app)), Control::Toggle(agent.allowed))
+                        .detail(otto_kit::t!("privacy-agent-detail"));
+                row.id = Some(intern(format!("{AGENT_ROW}{}", agent.app)));
+                // Forget drops the answer: the program is asked again.
+                row.removable(true)
+                    .remove_label(otto_kit::t!("privacy-forget"))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub fn build() -> Pane {
     let mut groups = vec![group(otto_kit::t!("privacy-group-screen"), screen_rows())];
 
@@ -698,6 +765,10 @@ pub fn build() -> Pane {
             otto_kit::t!("privacy-group-notifications"),
             notifications,
         ));
+    }
+    let agents = agent_rows();
+    if !agents.is_empty() {
+        groups.push(group(otto_kit::t!("privacy-group-agents"), agents));
     }
     Pane {
         name: otto_kit::t!("settings-pane-privacy"),

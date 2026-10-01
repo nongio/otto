@@ -14,6 +14,8 @@
 //! - `notifications` / `notification`: `yes` or `no` per app, written by the
 //!   portal's Notification interface the first time an app notifies, and
 //!   checked by it before it passes one on.
+//! - `otto-agents` / `seat`: `yes` or `no` per program, Otto's own table of
+//!   the programs allowed an agent seat.
 //!
 //! Unsandboxed apps all share the empty app id: the frontend cannot tell
 //! them apart.
@@ -37,6 +39,11 @@ pub const NOTIFICATIONS: &str = "notifications";
 pub const SCREENSHOT_ID: &str = "screenshot";
 /// The one resource id the `notifications` table uses.
 pub const NOTIFICATION_ID: &str = "notification";
+/// Otto's table of programs allowed an agent seat (`yes` or `no` per app),
+/// written by the compositor when the user answers its prompt.
+pub const AGENTS: &str = "otto-agents";
+/// The one resource id the `otto-agents` table uses.
+pub const AGENT_ID: &str = "seat";
 
 /// What a yes/no table says about an app: `Some(true)` for `yes`,
 /// `Some(false)` for `no`, `None` for no answer.

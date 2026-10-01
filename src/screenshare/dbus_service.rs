@@ -792,13 +792,81 @@ pub struct CompositorInterface {
     compositor_tx: Sender<CompositorCommand>,
     /// Bus names holding agent seats whose departure is being watched for.
     watched_agents: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// The program behind each bus name holding an agent seat, so that
+    /// switching a program off in Settings takes its seats away.
+    agent_programs: AgentPrograms,
+    /// Programs the user is being asked about: a second request while the
+    /// dialog is up is refused rather than asked again.
+    asking: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
+/// Bus name → program, for every connection holding an agent seat.
+type AgentPrograms = Arc<std::sync::Mutex<HashMap<String, String>>>;
+
 impl CompositorInterface {
-    fn new(compositor_tx: Sender<CompositorCommand>) -> Self {
+    fn new(compositor_tx: Sender<CompositorCommand>, agent_programs: AgentPrograms) -> Self {
         Self {
             compositor_tx,
             watched_agents: Arc::default(),
+            agent_programs,
+            asking: Arc::default(),
+        }
+    }
+
+    /// Whether the program on `owner` may have an agent seat: its kept
+    /// answer, or the user's, asked now and kept.
+    async fn consent(
+        &self,
+        connection: &Connection,
+        owner: &str,
+        agent_name: &str,
+    ) -> zbus::fdo::Result<String> {
+        use crate::agent_consent::{self, Answer};
+
+        let program = agent_consent::program_of(connection, owner)
+            .await
+            .ok_or_else(|| {
+                zbus::fdo::Error::AccessDenied("cannot tell which program is asking".into())
+            })?;
+        let kept = agent_consent::answers(connection)
+            .await
+            .and_then(|answers| answers.get(&program).copied());
+        match kept {
+            Some(true) => return Ok(program),
+            Some(false) => {
+                return Err(zbus::fdo::Error::AccessDenied(format!(
+                    "{program} is not allowed agent seats"
+                )))
+            }
+            None => {}
+        }
+        if !self.asking.lock().unwrap().insert(program.clone()) {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "the user is already being asked".into(),
+            ));
+        }
+        info!(
+            program,
+            agent = agent_name,
+            "Asking the user about an agent seat"
+        );
+        let answer = agent_consent::ask(connection, &program, agent_name).await;
+        self.asking.lock().unwrap().remove(&program);
+        info!(program, ?answer, "Answer about an agent seat");
+        match answer {
+            Answer::Allowed => {
+                agent_consent::record(connection, &program, true).await;
+                Ok(program)
+            }
+            Answer::Denied => {
+                agent_consent::record(connection, &program, false).await;
+                Err(zbus::fdo::Error::AccessDenied(
+                    "the user did not allow it".into(),
+                ))
+            }
+            Answer::Unanswered => Err(zbus::fdo::Error::AccessDenied(
+                "the user could not be asked".into(),
+            )),
         }
     }
 
@@ -814,6 +882,7 @@ impl CompositorInterface {
             .await?;
         let compositor_tx = self.compositor_tx.clone();
         let watched = self.watched_agents.clone();
+        let programs = self.agent_programs.clone();
         // Subscribed before this check, so a name that goes in between is
         // still seen: either here, or as a change.
         let gone_already = !dbus
@@ -831,6 +900,7 @@ impl CompositorInterface {
             }
             info!(owner, "Agent left the bus; removing its seats");
             watched.lock().unwrap().remove(&owner);
+            programs.lock().unwrap().remove(&owner);
             let _ = compositor_tx.send(CompositorCommand::ReleaseAgentSeats {
                 owner,
                 response_tx: None,
@@ -878,6 +948,7 @@ impl CompositorInterface {
         name: &str,
     ) -> zbus::fdo::Result<(String, String)> {
         let owner = sender_of(&header)?;
+        let program = self.consent(connection, &owner, name).await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.compositor_tx
             .send(CompositorCommand::RequestAgentSeat {
@@ -890,6 +961,10 @@ impl CompositorInterface {
             .await
             .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
             .map_err(zbus::fdo::Error::AccessDenied)?;
+        self.agent_programs
+            .lock()
+            .unwrap()
+            .insert(owner.clone(), program);
         if let Err(err) = self.watch_agent(connection, owner.clone()).await {
             warn!(owner, "Cannot watch the agent's bus name: {err}");
         }
@@ -1042,6 +1117,59 @@ fn sender_of(header: &zbus::message::Header<'_>) -> zbus::fdo::Result<String> {
         .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))
 }
 
+/// Take the seats away from every program no longer allowed them, whenever
+/// the answers change: switched off or forgotten in Settings › Privacy.
+async fn revoke_on_change(
+    connection: Connection,
+    compositor_tx: Sender<CompositorCommand>,
+    agent_programs: AgentPrograms,
+) {
+    use zbus::export::futures_util::StreamExt;
+
+    let rule = match zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.impl.portal.PermissionStore")
+        .and_then(|rule| rule.member("Changed"))
+        .and_then(|rule| rule.arg(0, crate::agent_consent::TABLE))
+    {
+        Ok(rule) => rule.build(),
+        Err(err) => {
+            warn!(%err, "cannot follow the agents' answers");
+            return;
+        }
+    };
+    let mut changes = match zbus::MessageStream::for_match_rule(rule, &connection, None).await {
+        Ok(changes) => changes,
+        Err(err) => {
+            warn!(%err, "cannot follow the agents' answers");
+            return;
+        }
+    };
+    while changes.next().await.is_some() {
+        let Some(answers) = crate::agent_consent::answers(&connection).await else {
+            continue;
+        };
+        let revoked: Vec<String> = agent_programs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, program)| answers.get(*program) != Some(&true))
+            .map(|(owner, _)| owner.clone())
+            .collect();
+        for owner in revoked {
+            info!(
+                owner,
+                "The agent's program is no longer allowed; removing its seats"
+            );
+            agent_programs.lock().unwrap().remove(&owner);
+            let _ = compositor_tx.send(CompositorCommand::ReleaseAgentSeats {
+                owner,
+                response_tx: None,
+            });
+        }
+    }
+}
+
 /// Starts the D-Bus service on the session bus.
 ///
 /// `a11y` is present only for a session that owns the screen and has
@@ -1064,7 +1192,13 @@ pub async fn run_dbus_service(
     connection.request_name("org.otto.ScreenCast").await?;
 
     // Register the compositor interface (health + app management)
-    let compositor = CompositorInterface::new(compositor_tx);
+    let agent_programs = AgentPrograms::default();
+    tokio::spawn(revoke_on_change(
+        connection.clone(),
+        compositor_tx.clone(),
+        agent_programs.clone(),
+    ));
+    let compositor = CompositorInterface::new(compositor_tx, agent_programs);
     connection
         .object_server()
         .at("/org/otto/Compositor", compositor)

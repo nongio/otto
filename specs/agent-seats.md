@@ -138,7 +138,7 @@ kinds:
 
 | Grant | How it starts | Consent |
 |---|---|---|
-| **Own workspace** | The agent asks for a new workspace; Otto creates it, named after the agent, and grants it | None: the workspace is new and holds nothing of the user's |
+| **Own workspace** | The agent asks for a new workspace; Otto creates it, named after the agent, and grants it | None for the workspace itself, which is new and holds nothing of the user's; the program had to be allowed a seat first (see Seat consent) |
 | **Current workspace** | The agent asks for the workspace the user is on | The user allows it in a prompt |
 | **Every workspace** | The agent asks for all of them | The user allows it in a prompt that says so plainly |
 
@@ -157,10 +157,25 @@ Rules for every grant:
   Otto session (logout, restart) ends every grant. An agent-owned workspace that
   ends its grant stays, with its windows, until the user closes it: it now
   belongs to the user.
-- Denying a prompt, or leaving it unanswered for 30 s, refuses the grant.
-  The agent is told either way.
+- Denying a prompt refuses the grant; the prompt waits for as long as the
+  user takes. The agent is told either way.
 - The same agent asking again for the same workspace while a prompt is open
   does not open a second prompt.
+
+### Seat consent
+
+- A program is asked about once: the first time it requests a seat, Otto
+  shows a prompt naming the program (by its desktop entry, or its Flatpak
+  app id, read from the process, never from what it says) and the agent's
+  name, with **Allow** and **Don't Allow**. It waits for as long as the user
+  takes; a second request from the same program while it is up is refused.
+- The answer is kept in xdg-permission-store's `otto-agents` table, so the
+  program is let through or refused without asking from then on.
+- Settings › Privacy › Agents lists each program with a switch and Forget.
+  Switching a program off, or forgetting it, removes the seats it holds at
+  once; forgotten, it is asked again next time.
+- When no prompt can be shown (otto-islands is not running) the request is
+  refused and nothing is kept.
 
 ### The agent border
 

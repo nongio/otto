@@ -11,6 +11,7 @@
 )]
 
 pub mod a11y;
+pub mod agent_consent;
 pub mod agent_cursor;
 pub mod audio;
 pub mod background_effect;

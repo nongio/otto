@@ -1882,6 +1882,10 @@ privacy-decision-ask = Ask
 privacy-decision-deny = Don't Allow
 privacy-forget = Forget
 privacy-group-notifications = Notifications
+# A group of switches, one per app that asked for an agent cursor and a workspace of its own.
+privacy-group-agents = Agents
+# Under each app in the Agents group.
+privacy-agent-detail = Can have its own cursor and workspace
 privacy-group-screen = Screen sharing
 privacy-notifications-none = No app has asked to send notifications yet
 privacy-reading = Reading…
@@ -1903,3 +1907,11 @@ settings-pane-privacy = Privacy
 
 # A checkbox in the screen-sharing picker. { $app } is the app asking.
 screencast-picker-remember = Remember for { $app }
+
+## The prompt Otto shows the first time an app asks for an agent: a cursor and a workspace of its own.
+## { $app } is the app asking; { $agent } is the name it gives its agent.
+
+agent-prompt-title = Let { $app } use an agent cursor?
+agent-prompt-body = It asks for a cursor of its own, named “{ $agent }”, and a new workspace where it can open apps, click and type. It can't reach your other workspaces.
+agent-prompt-allow = Allow
+agent-prompt-deny = Don't Allow

@@ -163,7 +163,7 @@ pub fn new_frame_layer(engine: &layers::engine::Engine, key: &str) -> Layer {
 
 /// How far the agent mark on a selector preview reaches outside it: clear
 /// of the accent border, which is drawn inside the preview.
-pub const PREVIEW_MARK_OUTSET: f32 = 7.0;
+pub const PREVIEW_MARK_OUTSET: f32 = 9.0;
 
 /// The agent mark on a workspace's selector preview: a dashed ring in the
 /// agent's colour just outside the preview, and a badge on the top-left
@@ -179,14 +179,14 @@ pub fn draw_preview_mark(
         let mut ring = skia::Paint::new(tint, None);
         ring.set_anti_alias(true);
         ring.set_style(skia::PaintStyle::Stroke);
-        ring.set_stroke_width(3.0);
-        ring.set_path_effect(skia::PathEffect::dash(&[10.0, 6.0], 0.0));
-        let inset = bounds.with_inset((1.5, 1.5));
+        ring.set_stroke_width(5.0);
+        ring.set_path_effect(skia::PathEffect::dash(&[14.0, 8.0], 0.0));
+        let inset = bounds.with_inset((2.5, 2.5));
         let radius = otto_kit::corners::radius(20.0) + PREVIEW_MARK_OUTSET;
         canvas.draw_rrect(skia::RRect::new_rect_xy(inset, radius, radius), &ring);
 
         // The badge: a white disc rimmed in the colour, with the arrow in it.
-        let badge = 15.0;
+        let badge = 21.0;
         let centre = (badge + 1.0, badge + 1.0);
         let mut disc = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
         disc.set_anti_alias(true);
@@ -194,11 +194,11 @@ pub fn draw_preview_mark(
         let mut rim = skia::Paint::new(tint, None);
         rim.set_anti_alias(true);
         rim.set_style(skia::PaintStyle::Stroke);
-        rim.set_stroke_width(2.5);
-        canvas.draw_circle(centre, badge - 1.25, &rim);
+        rim.set_stroke_width(3.0);
+        canvas.draw_circle(centre, badge - 1.5, &rim);
 
         let mut arrow = skia::PathBuilder::new();
-        let (ox, oy, u) = (centre.0 - 5.0, centre.1 - 9.0, 1.05);
+        let (ox, oy, u) = (centre.0 - 7.5, centre.1 - 13.5, 1.5);
         let points = [
             (0.0, 0.0),
             (0.0, 16.0),

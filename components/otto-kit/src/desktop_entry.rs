@@ -93,8 +93,22 @@ pub fn display_name_for_app(app_id: &str) -> String {
         return info.name;
     }
 
-    // Fallback: strip reverse-domain prefix, capitalize
-    let short = app_id.rsplit('.').next().unwrap_or(app_id);
+    fallback_name(app_id)
+}
+
+/// A name for an app no desktop entry names: a reverse-DNS id's last part,
+/// or the id as it is when it is not one (`python3.14` is not `14`),
+/// capitalized.
+fn fallback_name(app_id: &str) -> String {
+    let reverse_dns = app_id.contains('.')
+        && app_id
+            .split('.')
+            .all(|part| part.starts_with(|c: char| c.is_ascii_alphabetic()));
+    let short = if reverse_dns {
+        app_id.rsplit('.').next().unwrap_or(app_id)
+    } else {
+        app_id
+    };
     let mut chars = short.chars();
     match chars.next() {
         Some(c) => c.to_uppercase().to_string() + chars.as_str(),
@@ -113,15 +127,7 @@ fn load_app_info(app_id: &str) -> Option<AppInfo> {
     let name = entry
         .name(&locales)
         .map(|n| n.to_string())
-        .unwrap_or_else(|| {
-            // Fallback to app_id's last segment, capitalized
-            let short = app_id.rsplit('.').next().unwrap_or(app_id);
-            let mut chars = short.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                None => app_id.to_string(),
-            }
-        });
+        .unwrap_or_else(|| fallback_name(app_id));
 
     let icon_name = entry.icon().map(|s| s.to_string());
     let exec = entry.exec().map(|s| s.to_string());
@@ -299,5 +305,6 @@ mod tests {
         assert_eq!(display_name_for_app(""), "Otto");
         assert_eq!(display_name_for_app("com.example.myapp"), "Myapp");
         assert_eq!(display_name_for_app("ghostty"), "Ghostty");
+        assert_eq!(display_name_for_app("python3.14"), "Python3.14");
     }
 }

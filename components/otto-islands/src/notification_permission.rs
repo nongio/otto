@@ -49,12 +49,10 @@ pub async fn identify(
     let Some(pid) = sender_pid(connection, header).await else {
         return hinted.map_or(Sender::Unknown, Sender::App);
     };
-    if let Some(app) = flatpak_app(pid) {
+    if let Some(app) = otto_kit::process_app::flatpak_app(pid) {
         return Sender::App(app);
     }
-    let program = std::fs::read_link(format!("/proc/{pid}/exe"))
-        .ok()
-        .and_then(|exe| exe.file_name()?.to_str().map(str::to_string));
+    let program = otto_kit::process_app::program(pid);
     if program
         .as_deref()
         .is_some_and(|program| program.starts_with("xdg-desktop-portal"))
@@ -85,27 +83,6 @@ async fn sender_pid(
         .get_connection_unix_process_id(sender.into())
         .await
         .ok()
-}
-
-/// The app id of a Flatpak app's process, from the sandbox's own record of
-/// it, which the app cannot change.
-fn flatpak_app(pid: u32) -> Option<String> {
-    let info = std::fs::read_to_string(format!("/proc/{pid}/root/.flatpak-info")).ok()?;
-    flatpak_info_app(&info)
-}
-
-fn flatpak_info_app(info: &str) -> Option<String> {
-    let mut in_application = false;
-    for line in info.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_application = line == "[Application]";
-        } else if in_application {
-            if let Some(name) = line.strip_prefix("name=") {
-                return Some(name.to_string()).filter(|name| !name.is_empty());
-            }
-        }
-    }
-    None
 }
 
 /// Whether `app` may notify. An app the table has never seen is recorded as
@@ -165,17 +142,4 @@ pub async fn allows(connection: &zbus::Connection, app: &str) -> bool {
 pub fn dropped_id() -> u32 {
     static NEXT: AtomicU32 = AtomicU32::new(0x8000_0000);
     NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_flatpak_is_named_by_its_sandbox() {
-        let info =
-            "[Application]\nname=com.google.Chrome\nruntime=runtime/x\n\n[Instance]\nname=other\n";
-        assert_eq!(flatpak_info_app(info).as_deref(), Some("com.google.Chrome"));
-        assert_eq!(flatpak_info_app("[Instance]\nname=x\n"), None);
-    }
 }

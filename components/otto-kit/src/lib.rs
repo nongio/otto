@@ -34,6 +34,7 @@ pub mod mime_apps;
 pub mod permission_store;
 mod portal_runtime;
 pub mod preview;
+pub mod process_app;
 pub mod protocols;
 pub mod rendering;
 pub mod sound;
