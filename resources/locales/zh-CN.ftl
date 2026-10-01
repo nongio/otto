@@ -1801,3 +1801,31 @@ authorize-cancel = 取消
 authorize-error-failed = 认证失败
 authorize-path-in = { $name }（位于 { $dir }）
 polkit-unknown-program = 未知程序
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = 适用于所有沙盒外的应用
+privacy-app-unsandboxed = 沙盒外的应用
+privacy-decision-allow = 允许
+privacy-decision-ask = 询问
+privacy-decision-deny = 不允许
+privacy-forget = 忘记
+privacy-group-notifications = 通知
+privacy-group-screen = 屏幕共享
+privacy-notifications-none = 还没有应用请求发送通知
+privacy-reading = 正在读取…
+privacy-remembered-by = 由 { $desktop } 记住
+privacy-remote-desktop = 控制鼠标和键盘并查看屏幕
+privacy-reset = 重置
+privacy-screencast = 录制你的屏幕
+privacy-screencast-monitor = 录制屏幕 { $screen }
+privacy-screencast-window = 录制一个窗口
+privacy-screen-none = 没有应用被记住可以共享你的屏幕
+privacy-screenshot = 截屏
+privacy-screenshot-allowed = 无需询问即可截屏
+privacy-screenshot-denied = 不允许截屏
+privacy-store-unavailable = 无法读取应用获得的许可
+privacy-store-unavailable-detail = 权限存储（xdg-desktop-portal 中的 xdg-permission-store）不可用
+settings-pane-privacy = 隐私
+
+screencast-picker-remember = 为 { $app } 记住

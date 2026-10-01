@@ -1889,3 +1889,31 @@ authorize-cancel = Скасувати
 authorize-error-failed = Не вдалося пройти автентифікацію
 authorize-path-in = { $name } (у { $dir })
 polkit-unknown-program = Невідома програма
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = стосується всіх програм поза пісочницею
+privacy-app-unsandboxed = Програми поза пісочницею
+privacy-decision-allow = Дозволяти
+privacy-decision-ask = Питати
+privacy-decision-deny = Не дозволяти
+privacy-forget = Забути
+privacy-group-notifications = Сповіщення
+privacy-group-screen = Доступ до екрана
+privacy-notifications-none = Жодна програма ще не просила надсилати сповіщення
+privacy-reading = Читання…
+privacy-remembered-by = запам’ятано в { $desktop }
+privacy-remote-desktop = Керує мишею й клавіатурою та бачить екран
+privacy-reset = Скинути
+privacy-screencast = Записує екран
+privacy-screencast-monitor = Записує екран { $screen }
+privacy-screencast-window = Записує вікно
+privacy-screen-none = Жодній програмі не запам’ятано дозвіл на доступ до екрана
+privacy-screenshot = Робить знімки екрана
+privacy-screenshot-allowed = Робить знімки екрана без запиту
+privacy-screenshot-denied = Не може робити знімки екрана
+privacy-store-unavailable = Не вдається прочитати, що дозволено програмам
+privacy-store-unavailable-detail = Сховище дозволів (xdg-permission-store з xdg-desktop-portal) недоступне
+settings-pane-privacy = Конфіденційність
+
+screencast-picker-remember = Запам’ятати для { $app }

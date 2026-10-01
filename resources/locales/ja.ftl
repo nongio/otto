@@ -1797,3 +1797,31 @@ authorize-cancel = キャンセル
 authorize-error-failed = 認証に失敗しました
 authorize-path-in = { $name }（{ $dir } 内）
 polkit-unknown-program = 不明なプログラム
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = サンドボックス外のすべてのアプリに適用
+privacy-app-unsandboxed = サンドボックス外のアプリ
+privacy-decision-allow = 許可
+privacy-decision-ask = 確認する
+privacy-decision-deny = 許可しない
+privacy-forget = 削除
+privacy-group-notifications = 通知
+privacy-group-screen = 画面共有
+privacy-notifications-none = 通知の送信を求めたアプリはまだありません
+privacy-reading = 読み込み中…
+privacy-remembered-by = { $desktop } が記憶
+privacy-remote-desktop = マウスとキーボードを操作し、画面を見る
+privacy-reset = リセット
+privacy-screencast = 画面を録画
+privacy-screencast-monitor = 画面 { $screen } を録画
+privacy-screencast-window = ウインドウを録画
+privacy-screen-none = 画面共有を許可したと記憶されているアプリはありません
+privacy-screenshot = スクリーンショットを撮る
+privacy-screenshot-allowed = 確認なしでスクリーンショットを撮る
+privacy-screenshot-denied = スクリーンショットは許可されていません
+privacy-store-unavailable = アプリへの許可を読み込めません
+privacy-store-unavailable-detail = 権限ストア（xdg-desktop-portal の xdg-permission-store）を利用できません
+settings-pane-privacy = プライバシー
+
+screencast-picker-remember = { $app } 用に記憶する

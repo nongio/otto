@@ -1901,3 +1901,31 @@ authorize-cancel = Anuluj
 authorize-error-failed = Uwierzytelnianie nie powiodło się
 authorize-path-in = { $name } (w { $dir })
 polkit-unknown-program = Nieznany program
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = dotyczy wszystkich aplikacji poza piaskownicą
+privacy-app-unsandboxed = Aplikacje poza piaskownicą
+privacy-decision-allow = Zezwalaj
+privacy-decision-ask = Pytaj
+privacy-decision-deny = Nie zezwalaj
+privacy-forget = Zapomnij
+privacy-group-notifications = Powiadomienia
+privacy-group-screen = Udostępnianie ekranu
+privacy-notifications-none = Żadna aplikacja nie prosiła jeszcze o wysyłanie powiadomień
+privacy-reading = Odczytywanie…
+privacy-remembered-by = zapamiętane przez { $desktop }
+privacy-remote-desktop = Steruje myszą i klawiaturą i widzi ekran
+privacy-reset = Resetuj
+privacy-screencast = Nagrywa ekran
+privacy-screencast-monitor = Nagrywa ekran { $screen }
+privacy-screencast-window = Nagrywa okno
+privacy-screen-none = Żadna aplikacja nie ma zapamiętanej zgody na udostępnianie ekranu
+privacy-screenshot = Robi zrzuty ekranu
+privacy-screenshot-allowed = Robi zrzuty ekranu bez pytania
+privacy-screenshot-denied = Nie może robić zrzutów ekranu
+privacy-store-unavailable = Nie można odczytać, na co pozwolono aplikacjom
+privacy-store-unavailable-detail = Magazyn uprawnień (xdg-permission-store, część xdg-desktop-portal) jest niedostępny
+settings-pane-privacy = Prywatność
+
+screencast-picker-remember = Zapamiętaj dla { $app }

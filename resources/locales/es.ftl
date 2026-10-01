@@ -1820,3 +1820,31 @@ authorize-cancel = Cancelar
 authorize-error-failed = La autenticación ha fallado
 authorize-path-in = { $name } (en { $dir })
 polkit-unknown-program = Un programa desconocido
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = se aplica a todas las apps fuera de un entorno aislado
+privacy-app-unsandboxed = Apps fuera de un entorno aislado
+privacy-decision-allow = Permitir
+privacy-decision-ask = Preguntar
+privacy-decision-deny = No permitir
+privacy-forget = Olvidar
+privacy-group-notifications = Notificaciones
+privacy-group-screen = Compartir pantalla
+privacy-notifications-none = Ninguna app ha pedido enviar notificaciones todavía
+privacy-reading = Leyendo…
+privacy-remembered-by = recordado por { $desktop }
+privacy-remote-desktop = Controla el ratón y el teclado y ve tu pantalla
+privacy-reset = Restablecer
+privacy-screencast = Graba tu pantalla
+privacy-screencast-monitor = Graba la pantalla { $screen }
+privacy-screencast-window = Graba una ventana
+privacy-screen-none = Ninguna app tiene permiso guardado para compartir tu pantalla
+privacy-screenshot = Hace capturas de pantalla
+privacy-screenshot-allowed = Hace capturas de pantalla sin preguntar
+privacy-screenshot-denied = No puede hacer capturas de pantalla
+privacy-store-unavailable = No se puede leer qué se permitió a las apps
+privacy-store-unavailable-detail = El almacén de permisos (xdg-permission-store, parte de xdg-desktop-portal) no está disponible
+settings-pane-privacy = Privacidad
+
+screencast-picker-remember = Recordar para { $app }

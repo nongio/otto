@@ -69,6 +69,10 @@ pub struct Row {
     /// A pop-up row that can be taken out of its list: a "−" button sits at
     /// its trailing edge, and the pop-up moves in to make room for it.
     pub removable: bool,
+    /// What a removable row's button says, where it is a word rather than a
+    /// "−": the Privacy pane's rows forget an answer or reset one, which a
+    /// minus sign does not tell apart. `None` keeps the "−".
+    pub remove_label: Option<Cow<'static, str>>,
 }
 
 impl Row {
@@ -81,12 +85,20 @@ impl Row {
             id: None,
             inactive: false,
             removable: false,
+            remove_label: None,
         }
     }
 
     /// Give the row a "−" button that removes it. See [`Row::removable`].
     pub(crate) fn removable(mut self, removable: bool) -> Self {
         self.removable = removable;
+        self
+    }
+
+    /// Name a removable row's button with a word instead of a "−". See
+    /// [`Row::remove_label`].
+    pub(crate) fn remove_label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+        self.remove_label = Some(label.into());
         self
     }
 
@@ -338,6 +350,7 @@ pub fn panes() -> Vec<Pane> {
         panes::sound::build(),
         panes::power::build(),
         panes::lock_and_login::build(),
+        panes::privacy::build(),
         panes::search::build(),
         panes::agents::build(),
     ]
@@ -345,7 +358,11 @@ pub fn panes() -> Vec<Pane> {
 
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
-pub const SEARCH_PANE: usize = 9;
+pub const SEARCH_PANE: usize = 10;
+
+/// Where the Privacy pane sits in [`panes`]: it reads the permission store
+/// only while it is on screen.
+pub const PRIVACY_PANE: usize = 9;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {
@@ -914,10 +931,15 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, SEARCH_PANE};
+    use super::{panes, PRIVACY_PANE, SEARCH_PANE};
 
     #[test]
     fn the_search_pane_sits_where_main_looks_for_it() {
         assert_eq!(panes()[SEARCH_PANE].icon, "search");
+    }
+
+    #[test]
+    fn the_privacy_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[PRIVACY_PANE].icon, "hand");
     }
 }

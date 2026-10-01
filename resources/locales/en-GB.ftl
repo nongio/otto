@@ -1872,3 +1872,34 @@ authorize-error-failed = Authentication failed
 authorize-path-in = { $name } (in { $dir })
 # In place of the program's name when the program that asked cannot be found.
 polkit-unknown-program = An unknown program
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = applies to every app outside a sandbox
+privacy-app-unsandboxed = Apps outside a sandbox
+privacy-decision-allow = Allow
+privacy-decision-ask = Ask
+privacy-decision-deny = Don't Allow
+privacy-forget = Forget
+privacy-group-notifications = Notifications
+privacy-group-screen = Screen sharing
+privacy-notifications-none = No app has asked to send notifications yet
+privacy-reading = Reading…
+privacy-remembered-by = remembered by { $desktop }
+privacy-remote-desktop = Controls your mouse and keyboard and sees your screen
+privacy-reset = Reset
+privacy-screencast = Records your screen
+privacy-screencast-monitor = Records the screen { $screen }
+privacy-screencast-window = Records a window
+privacy-screen-none = No app is remembered as allowed to share your screen
+privacy-screenshot = Takes screenshots
+privacy-screenshot-allowed = Takes screenshots without asking
+privacy-screenshot-denied = Not allowed to take screenshots
+privacy-store-unavailable = Can't read what apps were allowed
+privacy-store-unavailable-detail = The permission store (xdg-permission-store, part of xdg-desktop-portal) isn't available
+settings-pane-privacy = Privacy
+
+## The screen-sharing picker.
+
+# A checkbox in the screen-sharing picker. { $app } is the app asking.
+screencast-picker-remember = Remember for { $app }

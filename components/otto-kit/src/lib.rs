@@ -31,6 +31,7 @@ pub mod lottie;
 pub use otto_search::matching;
 pub mod maximize_button;
 pub mod mime_apps;
+pub mod permission_store;
 mod portal_runtime;
 pub mod preview;
 pub mod protocols;
