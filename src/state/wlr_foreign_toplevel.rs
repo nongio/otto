@@ -35,6 +35,9 @@ impl WlrForeignToplevelManagerState {
         }
     }
 
+    /// Announce a new toplevel to every manager whose client `visible_to`
+    /// accepts: an agent's connection is told of the windows within its
+    /// scope alone (`crate::state::agent_seats`).
     #[allow(private_bounds)]
     pub fn new_toplevel<D>(
         &mut self,
@@ -43,6 +46,7 @@ impl WlrForeignToplevelManagerState {
         title: &str,
         window_id: ObjectId,
         output: Option<&Output>,
+        visible_to: &dyn Fn(&Client) -> bool,
     ) -> WlrForeignToplevelHandle
     where
         D: Dispatch<ZwlrForeignToplevelHandleV1, Arc<Mutex<WlrToplevelData>>> + 'static,
@@ -57,7 +61,7 @@ impl WlrForeignToplevelManagerState {
 
         // Send toplevel to all manager instances
         for manager in &self.instances {
-            if let Some(client) = manager.client() {
+            if let Some(client) = manager.client().filter(|client| visible_to(client)) {
                 let handle = client
                     .create_resource::<ZwlrForeignToplevelHandleV1, _, D>(
                         dh,
@@ -210,15 +214,17 @@ impl WlrForeignToplevelHandle {
 impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto<BackendData>>
     for Otto<BackendData>
 {
-    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    /// For the clients that get the privileged interfaces, and agents'
+    /// connections, which see their own scope (see `src/sandbox.rs`).
     fn can_view(client: Client, _global_data: &()) -> bool {
         crate::sandbox::is_privileged_client(&client)
+            || crate::state::ClientState::agent_seat_of(&client).is_some()
     }
 
     fn bind(
         state: &mut Otto<BackendData>,
         _handle: &DisplayHandle,
-        _client: &Client,
+        client: &Client,
         resource: New<ZwlrForeignToplevelManagerV1>,
         _global_data: &(),
         data_init: &mut DataInit<'_, Otto<BackendData>>,
@@ -228,9 +234,19 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
             .wlr_foreign_toplevel_state
             .register_manager(manager.clone());
 
+        // An agent's connection is told of the windows within its scope.
+        let scope = crate::state::ClientState::agent_seat_of(client)
+            .map(|seat| state.agent_scope_window_ids(seat));
+
         // Send all existing toplevels to this new manager
         for handles in state.foreign_toplevels.values() {
             if let Some(wlr_handle) = &handles.wlr {
+                let in_scope = scope
+                    .as_ref()
+                    .is_none_or(|scope| scope.contains(&wlr_handle.data.lock().unwrap().window_id));
+                if !in_scope {
+                    continue;
+                }
                 // Create a new handle resource for this manager
                 if let Some(client) = manager.client() {
                     let handle = client
@@ -305,7 +321,7 @@ impl<BackendData: Backend>
 {
     fn request(
         state: &mut Otto<BackendData>,
-        _client: &Client,
+        client: &Client,
         _resource: &ZwlrForeignToplevelHandleV1,
         request: zwlr_foreign_toplevel_handle_v1::Request,
         data: &Arc<Mutex<WlrToplevelData>>,
@@ -313,6 +329,25 @@ impl<BackendData: Backend>
         _data_init: &mut DataInit<'_, Otto<BackendData>>,
     ) {
         let window_id = data.lock().unwrap().window_id.clone();
+
+        // An agent's connection: activating gives the agent's keyboard to a
+        // window within its scope, closing closes one, and the rest is
+        // ignored — nothing an agent holds changes what the user sees.
+        if let Some(seat) = crate::state::ClientState::agent_seat_of(client) {
+            let seat = seat.to_string();
+            match request {
+                zwlr_foreign_toplevel_handle_v1::Request::Activate { .. } => {
+                    state.focus_on_agent_seat(&seat, &window_id);
+                }
+                zwlr_foreign_toplevel_handle_v1::Request::Close
+                    if state.agent_scope_window_ids(&seat).contains(&window_id) =>
+                {
+                    close_window(state, &window_id);
+                }
+                _ => {}
+            }
+            return;
+        }
 
         match request {
             zwlr_foreign_toplevel_handle_v1::Request::SetMaximized => {
@@ -342,19 +377,7 @@ impl<BackendData: Backend>
             zwlr_foreign_toplevel_handle_v1::Request::Activate { seat: _seat } => {
                 state.activate_window(&window_id);
             }
-            zwlr_foreign_toplevel_handle_v1::Request::Close => {
-                if let Some(window) = state.workspaces.get_window_for_surface(&window_id) {
-                    match window.underlying_surface() {
-                        smithay::desktop::WindowSurface::Wayland(toplevel) => {
-                            toplevel.send_close();
-                        }
-                        #[cfg(feature = "xwayland")]
-                        smithay::desktop::WindowSurface::X11(surface) => {
-                            let _ = surface.close();
-                        }
-                    }
-                }
-            }
+            zwlr_foreign_toplevel_handle_v1::Request::Close => close_window(state, &window_id),
             zwlr_foreign_toplevel_handle_v1::Request::SetRectangle { .. } => {
                 // Hint for minimize animation target; not required by protocol
             }
@@ -376,6 +399,21 @@ impl<BackendData: Backend>
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Ask the window `window_id` to close.
+fn close_window<BackendData: Backend>(state: &Otto<BackendData>, window_id: &ObjectId) {
+    if let Some(window) = state.workspaces.get_window_for_surface(window_id) {
+        match window.underlying_surface() {
+            smithay::desktop::WindowSurface::Wayland(toplevel) => {
+                toplevel.send_close();
+            }
+            #[cfg(feature = "xwayland")]
+            smithay::desktop::WindowSurface::X11(surface) => {
+                let _ = surface.close();
+            }
         }
     }
 }

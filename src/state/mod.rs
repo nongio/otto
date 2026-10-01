@@ -999,7 +999,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             PointerGesturesState::new::<Self>(&dh);
         }
         TabletManagerState::new::<Self>(&dh);
-        SecurityContextState::new::<Self, _>(&dh, unconfined);
+        // Sandbox engines make security contexts, and so do agents' own
+        // connections, whose contexts connect more of the agent's clients;
+        // a client through a context never makes another.
+        SecurityContextState::new::<Self, _>(&dh, |client: &Client| {
+            !crate::sandbox::is_sandboxed_client(client)
+        });
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
         let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
         // Every window's title and app id.

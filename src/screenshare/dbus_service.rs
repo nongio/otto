@@ -1118,12 +1118,15 @@ impl CompositorInterface {
     /// A Wayland connection for the calling agent, as the client end of a
     /// socket: hand it to a Wayland client as `WAYLAND_SOCKET`.
     ///
-    /// Virtual pointers and keyboards on the agent's seat are accepted on
-    /// such a connection and on no other; on it, they are accepted on that
-    /// seat only. It is not offered screen capture, the clipboard or the
-    /// other interfaces kept from sandboxed apps. Every connection asked for
-    /// is closed when the seat goes. Each one serves a single client: ask
-    /// again for the next.
+    /// It is the agent's: it sees the agent's seat and no other, its
+    /// virtual pointers and keyboards drive that seat, its windows open on
+    /// the agent's workspace with the agent's keyboard, and it lists and
+    /// controls that workspace's windows alone. It is not offered screen
+    /// capture, the clipboard or the other interfaces kept from sandboxed
+    /// apps. A `wp_security_context_v1` listener made on it connects more
+    /// clients of the agent's, which is how a sandbox around the agent gets
+    /// every client inside onto the seat. Every connection closes when the
+    /// seat goes.
     async fn connect_agent(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
@@ -1139,31 +1142,6 @@ impl CompositorInterface {
         rx.await
             .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
             .map(zbus::zvariant::OwnedFd::from)
-            .map_err(zbus::fdo::Error::AccessDenied)
-    }
-
-    /// Accept Wayland clients for the calling agent on `listener`, a Unix
-    /// socket the caller is listening on, until its seat goes. Each client
-    /// is connected as `ConnectAgent` connects one. An agent's launcher
-    /// makes this socket the `WAYLAND_DISPLAY` of the sandbox it starts the
-    /// agent in, so every client there is the agent's.
-    async fn serve_agent_socket(
-        &self,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-        listener: zbus::zvariant::OwnedFd,
-    ) -> zbus::fdo::Result<()> {
-        let owner = sender_of(&header)?;
-        let listener = std::os::unix::net::UnixListener::from(std::os::fd::OwnedFd::from(listener));
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.compositor_tx
-            .send(CompositorCommand::ServeAgentSocket {
-                owner,
-                listener,
-                response_tx: tx,
-            })
-            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
-        rx.await
-            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
             .map_err(zbus::fdo::Error::AccessDenied)
     }
 

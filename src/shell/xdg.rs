@@ -215,12 +215,20 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         let ext_handle = self
             .foreign_toplevel_list_state
             .new_toplevel::<Self>(&app_id, &title);
+        // An agent's connection is told of its own windows alone.
+        let for_agent = agent_seat.clone();
         let wlr_handle = self.wlr_foreign_toplevel_state.new_toplevel::<Self>(
             &self.display_handle,
             &app_id,
             &title,
             surface_id.clone(),
             target_output.as_ref(),
+            &|client: &smithay::reexports::wayland_server::Client| {
+                match crate::state::ClientState::agent_seat_of(client) {
+                    None => true,
+                    Some(seat) => for_agent.as_deref() == Some(seat),
+                }
+            },
         );
 
         let handles = crate::state::foreign_toplevel_shared::ForeignToplevelHandles::new(

@@ -14,10 +14,7 @@ use smithay::{
 };
 use tracing::info;
 
-use smithay::reexports::{
-    calloop::{generic::Generic, Interest, Mode, PostAction},
-    wayland_server::backend::DisconnectReason,
-};
+use smithay::reexports::wayland_server::backend::DisconnectReason;
 
 use super::{add_configured_keyboard, Backend, ClientState, Otto};
 use crate::{
@@ -275,8 +272,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// The client may create virtual input on the agent's seat and no other,
     /// and is kept off the globals a sandboxed client is kept off (see
     /// [`crate::sandbox`]). It is disconnected when the seat goes. Every
-    /// other connection is refused the agent's seat, so this, and
-    /// [`Self::serve_agent_socket`], are the only ways to drive it.
+    /// other connection is refused the agent's seat, so this is the only way
+    /// to drive it: a `wp_security_context_v1` listener made on such a
+    /// connection connects more of the agent's clients
+    /// (`crate::state::security_context_handler`).
     pub fn connect_agent_client(
         &mut self,
         owner: &str,
@@ -286,60 +285,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
         self.insert_agent_client(&seat_name, ours)?;
         Ok(theirs)
-    }
-
-    /// Accept Wayland clients for `owner`'s agent on `listener`, each one as
-    /// [`Self::connect_agent_client`] connects one, until the seat goes.
-    ///
-    /// The agent's launcher hands Otto a socket it listens on, the way a
-    /// sandbox engine hands one to `wp_security_context_v1`, and makes it the
-    /// sandbox's `WAYLAND_DISPLAY`: every client inside is the agent's.
-    pub fn serve_agent_socket(
-        &mut self,
-        owner: &str,
-        listener: std::os::unix::net::UnixListener,
-    ) -> Result<(), AgentSeatError> {
-        let seat_name = self.seat_of_owner(owner)?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
-        // Not listening: accepting fails at once rather than waiting.
-        match listener.accept() {
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-            Ok((stream, _)) => {
-                self.insert_agent_client(&seat_name, stream)?;
-            }
-            Err(err) => return Err(AgentSeatError::Connect(err.to_string())),
-        }
-        let seat = seat_name.clone();
-        let token = self
-            .handle
-            .insert_source(
-                Generic::new(listener, Interest::READ, Mode::Level),
-                move |_, listener, state| {
-                    loop {
-                        match listener.accept() {
-                            Ok((stream, _)) => {
-                                if let Err(err) = state.insert_agent_client(&seat, stream) {
-                                    tracing::warn!(seat, %err, "cannot connect an agent client");
-                                }
-                            }
-                            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
-                            Err(err) => {
-                                tracing::warn!(seat, %err, "the agent's socket failed");
-                                return Ok(PostAction::Remove);
-                            }
-                        }
-                    }
-                    Ok(PostAction::Continue)
-                },
-            )
-            .map_err(|err| AgentSeatError::Connect(err.error.to_string()))?;
-        if let Some(agent) = self.agent_seat_mut(&seat_name) {
-            agent.listeners.push(token);
-        }
-        info!(seat = seat_name, owner, "Agent socket served");
-        Ok(())
     }
 
     /// The seat `owner` holds.
@@ -352,7 +297,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
 
     /// Insert `stream` as a client of the agent seat `seat_name`.
-    fn insert_agent_client(
+    pub(crate) fn insert_agent_client(
         &mut self,
         seat_name: &str,
         stream: std::os::unix::net::UnixStream,
@@ -675,10 +620,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ) -> Option<String> {
         use smithay::reexports::wayland_server::Resource;
 
+        let client = surface.client()?;
+        // A client on the agent's own connection.
+        if let Some(seat) = ClientState::agent_seat_of(&client) {
+            return Some(seat.to_string());
+        }
         if self.agent_launch_tokens.is_empty() {
             return None;
         }
-        let client = surface.client()?;
         let pid = client.get_credentials(&self.display_handle).ok()?.pid;
         // What the process was started with: a toolkit unsetting the token
         // after reading it does not change this.
@@ -752,6 +701,49 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 SERIAL_COUNTER.next_serial(),
             );
         }
+        true
+    }
+
+    /// The windows within the agent seat `seat_name`'s scope: those on its
+    /// workspace.
+    #[allow(clippy::mutable_key_type)]
+    pub fn agent_scope_window_ids(
+        &self,
+        seat_name: &str,
+    ) -> std::collections::HashSet<smithay::reexports::wayland_server::backend::ObjectId> {
+        let Some(agent) = self.agent_seat(seat_name) else {
+            return Default::default();
+        };
+        let Reach::Workspace { output, workspace } = agent.reach(&self.workspaces) else {
+            return Default::default();
+        };
+        self.workspaces
+            .space_of_view(&output, workspace)
+            .map(|space| space.elements().map(|window| window.id()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Give the agent seat `seat_name`'s keyboard to `window`, if the window
+    /// is within the agent's scope. The user's focus and the stacking order
+    /// do not change. Returns whether it was.
+    pub fn focus_on_agent_seat(
+        &mut self,
+        seat_name: &str,
+        window_id: &smithay::reexports::wayland_server::backend::ObjectId,
+    ) -> bool {
+        if !self.agent_scope_window_ids(seat_name).contains(window_id) {
+            return false;
+        }
+        let Some(window) = self.workspaces.get_window_for_surface(window_id).cloned() else {
+            return false;
+        };
+        let Some(seat) = self.agent_seat(seat_name).map(|agent| agent.seat.clone()) else {
+            return false;
+        };
+        if let Some(keyboard) = seat.get_keyboard() {
+            keyboard.set_focus(self, Some(window.into()), SERIAL_COUNTER.next_serial());
+        }
+        self.note_agent_activity(seat_name);
         true
     }
 

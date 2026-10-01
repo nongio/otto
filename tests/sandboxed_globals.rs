@@ -151,11 +151,12 @@ mod sandboxed_globals_tests {
     }
 
     /// An agent's own connection (`ConnectAgent`) is kept off the same
-    /// globals as a sandboxed client, except the virtual input it drives its
-    /// seat with.
+    /// globals as a sandboxed client, except what it acts within its scope
+    /// through: virtual input for its seat, the window list and control of
+    /// its workspace, and security contexts for more clients of its own.
     #[test]
     #[serial]
-    fn an_agents_connection_sees_only_virtual_input() {
+    fn an_agents_connection_sees_only_its_own_scope() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         handle
             .query(|state| state.request_agent_seat("Claude", ":1.10"))
@@ -166,12 +167,14 @@ mod sandboxed_globals_tests {
                 .expect("connect the agent")
         });
         let agent = Client::from_stream(stream);
-        const VIRTUAL_INPUT: &[&str] = &[
+        const AGENTS_OWN: &[&str] = &[
             "zwlr_virtual_pointer_manager_v1",
             "zwp_virtual_keyboard_manager_v1",
+            "zwlr_foreign_toplevel_manager_v1",
+            "wp_security_context_manager_v1",
         ];
         for interface in HIDDEN_FROM_SANDBOXED.iter().chain([&INPUT_METHOD]) {
-            if VIRTUAL_INPUT.contains(interface) {
+            if AGENTS_OWN.contains(interface) {
                 assert!(agent.has(interface), "an agent was not offered {interface}");
             } else {
                 assert!(!agent.has(interface), "an agent was offered {interface}");

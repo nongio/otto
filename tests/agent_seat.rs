@@ -16,8 +16,14 @@ mod agent_seat_tests {
     use wayland_protocols::ext::session_lock::v1::client::{
         ext_session_lock_manager_v1, ext_session_lock_v1,
     };
+    use wayland_protocols::wp::security_context::v1::client::{
+        wp_security_context_manager_v1, wp_security_context_v1,
+    };
     use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
         zwp_virtual_keyboard_manager_v1, zwp_virtual_keyboard_v1,
+    };
+    use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+        zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
     };
     use wayland_protocols_wlr::virtual_pointer::v1::client::{
         zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
@@ -35,6 +41,13 @@ mod agent_seat_tests {
         seat_names: Vec<Option<String>>,
         pointer_manager: Option<zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1>,
         keyboard_manager: Option<zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1>,
+        security_contexts: Option<wp_security_context_manager_v1::WpSecurityContextManagerV1>,
+        toplevels: Option<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1>,
+        /// The windows the compositor told this client of, with their titles.
+        windows: Vec<(
+            zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+            String,
+        )>,
         lock_manager: Option<ext_session_lock_manager_v1::ExtSessionLockManagerV1>,
     }
 
@@ -69,6 +82,12 @@ mod agent_seat_tests {
                 "zwp_virtual_keyboard_manager_v1" => {
                     state.keyboard_manager = Some(registry.bind(name, 1, qh, ()))
                 }
+                "wp_security_context_manager_v1" => {
+                    state.security_contexts = Some(registry.bind(name, 1, qh, ()))
+                }
+                "zwlr_foreign_toplevel_manager_v1" => {
+                    state.toplevels = Some(registry.bind(name, version.min(3), qh, ()))
+                }
                 "ext_session_lock_manager_v1" => {
                     state.lock_manager = Some(registry.bind(name, 1, qh, ()))
                 }
@@ -96,6 +115,50 @@ mod agent_seat_tests {
     delegate_noop!(DriverState: zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1);
     delegate_noop!(DriverState: zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1);
     delegate_noop!(DriverState: ext_session_lock_manager_v1::ExtSessionLockManagerV1);
+    delegate_noop!(DriverState: ignore wp_security_context_manager_v1::WpSecurityContextManagerV1);
+    delegate_noop!(DriverState: ignore wp_security_context_v1::WpSecurityContextV1);
+
+    impl Dispatch<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, ()> for DriverState {
+        fn event(
+            state: &mut Self,
+            _: &zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
+            event: zwlr_foreign_toplevel_manager_v1::Event,
+            _: &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
+                state.windows.push((toplevel, String::new()));
+            }
+        }
+
+        wayland_client::event_created_child!(DriverState, zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, [
+            zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ()),
+        ]);
+    }
+
+    impl Dispatch<zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ()> for DriverState {
+        fn event(
+            state: &mut Self,
+            handle: &zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+            event: zwlr_foreign_toplevel_handle_v1::Event,
+            _: &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            match event {
+                zwlr_foreign_toplevel_handle_v1::Event::Title { title } => {
+                    if let Some(entry) = state.windows.iter_mut().find(|(h, _)| h == handle) {
+                        entry.1 = title;
+                    }
+                }
+                zwlr_foreign_toplevel_handle_v1::Event::Closed => {
+                    state.windows.retain(|(h, _)| h != handle);
+                }
+                _ => {}
+            }
+        }
+    }
     delegate_noop!(DriverState: ignore ext_session_lock_v1::ExtSessionLockV1);
 
     /// An automation client, like `wlrctl` or an agent's MCP driver.
@@ -133,6 +196,24 @@ mod agent_seat_tests {
             Self::from_stream(
                 handle.query(|state| state.connect_locker_client().expect("connect the locker").1),
             )
+        }
+
+        /// `from_stream`, or `None` when the compositor closes the connection
+        /// before the registry arrives.
+        fn from_stream_checked(stream: std::os::unix::net::UnixStream) -> Option<Self> {
+            let conn = Connection::from_socket(stream).ok()?;
+            let mut queue = conn.new_event_queue();
+            let qh = queue.handle();
+            conn.display().get_registry(&qh, ());
+            let mut state = DriverState::default();
+            queue.roundtrip(&mut state).ok()?;
+            queue.roundtrip(&mut state).ok()?;
+            Some(Self {
+                conn,
+                queue,
+                qh,
+                state,
+            })
         }
 
         fn from_stream(stream: std::os::unix::net::UnixStream) -> Self {
@@ -188,6 +269,28 @@ mod agent_seat_tests {
                 .as_ref()
                 .expect("zwp_virtual_keyboard_manager_v1 missing");
             manager.create_virtual_keyboard(&self.state.seats[index], &self.qh, ())
+        }
+
+        /// The titles of the windows this client was told of.
+        fn window_titles(&self) -> Vec<String> {
+            let mut titles: Vec<String> =
+                self.state.windows.iter().map(|(_, t)| t.clone()).collect();
+            titles.sort();
+            titles
+        }
+
+        /// The handle of the window titled `title`.
+        fn window(
+            &self,
+            title: &str,
+        ) -> &zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1 {
+            &self
+                .state
+                .windows
+                .iter()
+                .find(|(_, t)| t == title)
+                .expect("window listed")
+                .0
         }
 
         fn settle(&mut self, handle: &HeadlessHandle) {
@@ -597,36 +700,171 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// Clients connecting on a socket the agent's launcher serves are the
-    /// agent's; the socket stops accepting when the seat goes.
+    /// A security context made on an agent's connection connects more of
+    /// the agent's clients: a client through it sees the agent's seat alone
+    /// and drives it. That is how a sandbox around an agent gets every
+    /// client inside onto the seat, with the protocol sandboxes speak.
     #[test]
     #[serial]
-    fn a_served_socket_connects_the_agents_clients() {
+    fn a_client_through_an_agents_security_context_is_the_agents() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let mut agent = Driver::connect_as_agent(&handle, ":1.10");
+        let manager = agent
+            .state
+            .security_contexts
+            .clone()
+            .expect("an agent's connection makes security contexts");
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("agent.sock");
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
-        handle
-            .query(move |state| state.serve_agent_socket(":1.10", listener))
-            .expect("serve");
+        let (close_read, _close_write) = std::io::pipe().unwrap();
+        let context = manager.create_listener(
+            std::os::fd::AsFd::as_fd(&listener),
+            std::os::fd::AsFd::as_fd(&close_read),
+            &agent.qh,
+            (),
+        );
+        context.set_sandbox_engine("org.otto.test".into());
+        context.commit();
+        agent.settle(&handle);
+        // Otto holds the only listening end from here on.
+        drop(listener);
 
-        let mut driver =
+        let mut inside =
             Driver::from_stream(std::os::unix::net::UnixStream::connect(&path).expect("connect"));
-        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        assert_eq!(inside.state.seat_names, vec![Some("agent-1".to_string())]);
+        let pointer = inside.pointer_on(0);
         move_to(&handle, &pointer, 200, 150);
-        driver.settle(&handle);
+        inside.settle(&handle);
         assert_eq!(pointer_of(&handle, "agent-1"), Some((200.0, 150.0)));
 
         release_seats(&handle, ":1.10");
         handle.settle(200);
-        assert!(driver.queue.roundtrip(&mut driver.state).is_err());
+        assert!(inside.queue.roundtrip(&mut inside.state).is_err());
         assert!(
-            std::os::unix::net::UnixStream::connect(&path).is_err(),
-            "the socket outlived the seat"
+            std::os::unix::net::UnixStream::connect(&path).is_err()
+                || Driver::from_stream_checked(
+                    std::os::unix::net::UnixStream::connect(&path).unwrap()
+                )
+                .is_none(),
+            "the listener outlived the seat"
         );
 
-        drop(driver);
+        drop(inside);
+        drop(agent);
+        handle.stop();
+    }
+
+    /// A window from an agent's connection opens on the agent's workspace,
+    /// with the agent's keyboard; the user's focus and workspace stay.
+    #[test]
+    #[serial]
+    fn an_agents_window_opens_on_its_workspace_with_its_focus() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        let _ = user.roundtrip();
+        assert!(user.state.keyboard_focused);
+
+        let stream = handle.query(|state| {
+            state
+                .connect_agent_client(":1.10")
+                .expect("connect the agent")
+        });
+        let mut mine = TestClient::from_stream(stream).expect("agent client");
+        map_window(&handle, &mut mine, "Mine");
+        let _ = user.roundtrip();
+
+        let on_agent_workspace = handle.query(|state| {
+            let id = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "Mine")
+                .map(|w| w.id())
+                .expect("Mine mapped");
+            state.agent_scope_window_ids("agent-1").contains(&id)
+        });
+        assert!(
+            on_agent_workspace,
+            "the agent's window opened on the user's workspace"
+        );
+        assert_eq!(
+            keyboard_focus_of(&handle, "agent-1").as_deref(),
+            Some("Mine")
+        );
+        assert!(
+            user.state.keyboard_focused,
+            "the user's window lost the user's keyboard"
+        );
+        assert_eq!(handle.current_workspace_index(), 0);
+
+        drop(mine);
+        drop(user);
+        handle.stop();
+    }
+
+    /// An agent's connection is told of the windows on its workspace alone,
+    /// and activating one gives it the agent's keyboard, not the user's.
+    #[test]
+    #[serial]
+    fn an_agent_lists_and_focuses_only_its_own_windows() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        let connect = || {
+            handle.query(|state| {
+                state
+                    .connect_agent_client(":1.10")
+                    .expect("connect the agent")
+            })
+        };
+        let mut first = TestClient::from_stream(connect()).expect("agent client");
+        map_window(&handle, &mut first, "Mine");
+        let mut second = TestClient::from_stream(connect()).expect("agent client");
+        map_window(&handle, &mut second, "Mine too");
+        assert_eq!(
+            keyboard_focus_of(&handle, "agent-1").as_deref(),
+            Some("Mine too")
+        );
+
+        let mut agent = Driver::from_stream(connect());
+        agent.settle(&handle);
+        assert_eq!(
+            agent.window_titles(),
+            vec!["Mine".to_string(), "Mine too".to_string()]
+        );
+        let everyone = Driver::connect(&handle);
+        assert_eq!(
+            everyone.window_titles(),
+            vec![
+                "Mine".to_string(),
+                "Mine too".to_string(),
+                "User".to_string()
+            ]
+        );
+
+        agent.window("Mine").activate(&agent.state.seats[0]);
+        agent.settle(&handle);
+        let _ = user.roundtrip();
+        assert_eq!(
+            keyboard_focus_of(&handle, "agent-1").as_deref(),
+            Some("Mine")
+        );
+        assert!(
+            user.state.keyboard_focused,
+            "the agent took the user's keyboard"
+        );
+
+        drop(agent);
+        drop(everyone);
+        drop(first);
+        drop(second);
+        drop(user);
         handle.stop();
     }
 

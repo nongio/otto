@@ -241,12 +241,6 @@ pub enum CompositorCommand {
         owner: String,
         response_tx: tokio::sync::oneshot::Sender<Result<std::os::fd::OwnedFd, String>>,
     },
-    /// An agent hands Otto a socket to accept its clients on.
-    ServeAgentSocket {
-        owner: String,
-        listener: std::os::unix::net::UnixListener,
-        response_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
-    },
     /// An agent gives its seats back, or its bus name went away.
     ReleaseAgentSeats {
         owner: String,
@@ -817,16 +811,6 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             let result = state
                 .connect_agent_client(&owner)
                 .map(std::os::fd::OwnedFd::from)
-                .map_err(|err| err.to_string());
-            let _ = response_tx.send(result);
-        }
-        CompositorCommand::ServeAgentSocket {
-            owner,
-            listener,
-            response_tx,
-        } => {
-            let result = state
-                .serve_agent_socket(&owner, listener)
                 .map_err(|err| err.to_string());
             let _ = response_tx.send(result);
         }
