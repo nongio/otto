@@ -232,7 +232,7 @@ where
 {
     fn request(
         state: &mut Otto<BackendData>,
-        _client: &Client,
+        client: &Client,
         resource: &ZwlrScreencopyFrameV1,
         request: zwlr_screencopy_frame_v1::Request,
         data: &ScreencopyFrameData,
@@ -266,7 +266,7 @@ where
                     Err(_) => CaptureBuffer::Shm(buffer),
                 };
 
-                state.pending_screencopy_frames.push(PendingScreencopy {
+                let pending = PendingScreencopy {
                     frame: resource.clone(),
                     buffer: capture_buffer,
                     output: data.output.clone(),
@@ -275,7 +275,27 @@ where
                     height: data.height,
                     stride: data.stride,
                     overlay_cursor: data.overlay_cursor,
-                });
+                };
+                // A program the user has not answered for waits for the
+                // answer; one they refused gets nothing.
+                use crate::program_access::{Access, Capability};
+                match crate::program_access::access(client, Capability::ScreenCapture) {
+                    Access::Allowed => {}
+                    Access::Denied => {
+                        tracing::debug!("screencopy refused: the program may not capture");
+                        resource.failed();
+                        return;
+                    }
+                    Access::Ask(exe) => {
+                        state
+                            .program_access
+                            .awaiting_frames
+                            .push((exe.clone(), pending));
+                        state.ask_program_access(Capability::ScreenCapture, exe);
+                        return;
+                    }
+                }
+                state.pending_screencopy_frames.push(pending);
                 // Wake the render loop — the compositor may be idle with no pending
                 // damage, so `should_draw` would normally be false and screencopy
                 // would never be fulfilled without this kick.
@@ -297,6 +317,10 @@ where
         state
             .pending_screencopy_frames
             .retain(|p| p.frame != *resource);
+        state
+            .program_access
+            .awaiting_frames
+            .retain(|(_, p)| p.frame != *resource);
     }
 }
 

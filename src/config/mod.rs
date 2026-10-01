@@ -38,6 +38,8 @@ pub struct Config {
     #[serde(default)]
     pub agent_cursor: AgentCursorConfig,
     #[serde(default)]
+    pub privacy: PrivacyConfig,
+    #[serde(default)]
     pub audio: AudioConfig,
     pub font_family: String,
     pub keyboard_repeat_delay: i32,
@@ -160,6 +162,7 @@ impl Default for Config {
             power_management: PowerManagementConfig::default(),
             accessibility: AccessibilityConfig::default(),
             agent_cursor: AgentCursorConfig::default(),
+            privacy: PrivacyConfig::default(),
             audio: AudioConfig::default(),
             font_family: "Inter".to_string(),
             keyboard_repeat_delay: 300,
@@ -1619,6 +1622,17 @@ impl Default for AgentCursorConfig {
             border_width: 3,
         }
     }
+}
+
+/// Which of the user's programs may capture the screen, inject input or read
+/// the clipboard without being asked (`specs/agent-seats.md`, Phase 5c).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrivacyConfig {
+    /// Programs, by the full path of their executable, trusted as Otto's own
+    /// components are: for scripted setups whose tools must not wait on a
+    /// question. Read at startup.
+    pub trusted_programs: Vec<String>,
 }
 
 /// The desk: the files of the desktop folder drawn behind the windows.

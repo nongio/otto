@@ -312,6 +312,14 @@ hide_after_ms = 5000
 # workspace; only its width can change. (default: 3)
 border_width = 3
 
+[privacy]
+# Programs that may capture the screen, move the pointer and type as you, or
+# read the clipboard, without being asked first. Any other program outside a
+# sandbox is asked about once, and the answer is kept in Settings › Privacy.
+# Otto's own programs are always trusted. Give each one by the full path of
+# its executable. Read at startup. (default: [])
+trusted_programs = []
+
 # Audio / Sound feedback
 [audio]
 # Enable sound effects for UI events like volume changes (default: true)

@@ -477,7 +477,7 @@ where
 /// An agent's connection drives its own seat whichever it names: stock
 /// tools take the first seat they see, which is the user's.
 fn permitted_seat<BackendData: crate::state::Backend + 'static>(
-    state: &Otto<BackendData>,
+    state: &mut Otto<BackendData>,
     client: &Client,
     seat: Option<&WlSeat>,
 ) -> Option<String> {
@@ -490,14 +490,40 @@ fn permitted_seat<BackendData: crate::state::Backend + 'static>(
     let owned = state
         .agent_seat(seat_name)
         .is_some_and(|agent| agent.owner.is_some());
-    if crate::sandbox::may_drive_seat(client, seat_name, user_seat, owned) {
-        agent
-    } else {
+    let seat_name = seat_name.to_string();
+    let on_user_seat = seat_name == user_seat;
+    if !crate::sandbox::may_drive_seat(client, &seat_name, user_seat, owned) {
         tracing::warn!(
             seat = seat_name,
             "virtual pointer refused: this connection may not drive that seat"
         );
-        Some(String::new())
+        return Some(String::new());
+    }
+    if on_user_seat && !user_input_allowed(state, client) {
+        return Some(String::new());
+    }
+    agent
+}
+
+/// Whether `client` may inject input on the user's seat
+/// ([`crate::program_access`]). A program nobody has answered for is
+/// refused, and the user asked: it may try again once they allow it.
+pub fn user_input_allowed<BackendData: crate::state::Backend + 'static>(
+    state: &mut Otto<BackendData>,
+    client: &Client,
+) -> bool {
+    use crate::program_access::{Access, Capability};
+    match crate::program_access::access(client, Capability::Input) {
+        Access::Allowed => true,
+        Access::Denied => {
+            tracing::warn!("virtual input refused: the program may not control the user's seat");
+            false
+        }
+        Access::Ask(exe) => {
+            tracing::warn!("virtual input refused until the user answers");
+            state.ask_program_access(Capability::Input, exe);
+            false
+        }
     }
 }
 
