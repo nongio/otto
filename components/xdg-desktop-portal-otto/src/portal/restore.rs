@@ -46,7 +46,15 @@ impl RestoredSource {
 }
 
 /// Build the `(suv)` value to return from `Start`.
-pub fn encode_restore_data(source: &RestoredSource) -> Result<OwnedValue, zbus::zvariant::Error> {
+///
+/// `program` names the program that asked, for an unsandboxed app: the
+/// frontend gives all of those the same empty app id, so without it
+/// Settings › Privacy could not say whose share this is. It only labels the
+/// entry; restoring still takes the token the frontend handed that app.
+pub fn encode_restore_data(
+    source: &RestoredSource,
+    program: Option<&str>,
+) -> Result<OwnedValue, zbus::zvariant::Error> {
     let (source_type, id) = match source {
         RestoredSource::Monitor(connector) => (SOURCE_TYPE_MONITOR, connector.clone()),
         RestoredSource::Window(id) => (SOURCE_TYPE_WINDOW, id.clone()),
@@ -55,6 +63,9 @@ pub fn encode_restore_data(source: &RestoredSource) -> Result<OwnedValue, zbus::
     let mut data: HashMap<&str, Value<'_>> = HashMap::new();
     data.insert("source-type", Value::U32(source_type));
     data.insert("id", Value::Str(Str::from(id)));
+    if let Some(program) = program.filter(|program| !program.is_empty()) {
+        data.insert("program", Value::Str(Str::from(program.to_string())));
+    }
 
     // The third field is a *variant*, not the dict itself — the tuple has to
     // marshal as `(suv)` or the frontend rejects it.
@@ -64,6 +75,37 @@ pub fn encode_restore_data(source: &RestoredSource) -> Result<OwnedValue, zbus::
         Value::Value(Box::new(Value::from(data))),
     ));
     OwnedValue::try_from(tuple)
+}
+
+/// The bus name of the app a portal session belongs to. The frontend builds
+/// session handles as `/org/freedesktop/portal/desktop/session/SENDER/TOKEN`,
+/// with the sender's unique name stripped of its `:` and its dots made `_`.
+fn session_sender(session_handle: &str) -> Option<String> {
+    let rest = session_handle.strip_prefix("/org/freedesktop/portal/desktop/session/")?;
+    let (sender, token) = rest.split_once('/')?;
+    if sender.is_empty() || token.is_empty() || token.contains('/') {
+        return None;
+    }
+    Some(format!(":{}", sender.replace('_', ".")))
+}
+
+/// The program behind a portal session, by the file name of its executable:
+/// asked of the bus while the app is still connected, so `Start` is the time
+/// to ask. `None` when the app has left or its process cannot be read.
+pub async fn session_program(
+    connection: &zbus::Connection,
+    session_handle: &str,
+) -> Option<String> {
+    let sender = session_sender(session_handle)?;
+    let sender = zbus::names::BusName::try_from(sender).ok()?;
+    let pid = zbus::fdo::DBusProxy::new(connection)
+        .await
+        .ok()?
+        .get_connection_unix_process_id(sender)
+        .await
+        .ok()?;
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    exe.file_name()?.to_str().map(str::to_string)
 }
 
 /// Peel any number of variant wrappers off a value.
@@ -167,21 +209,42 @@ mod tests {
     #[test]
     fn round_trips_a_window() {
         let source = RestoredSource::Window("toplevel-1".to_string());
-        let encoded = encode_restore_data(&source).unwrap();
+        let encoded = encode_restore_data(&source, None).unwrap();
         assert_eq!(decode_restore_data(&encoded), Some(source));
     }
 
     #[test]
     fn marshals_as_the_signature_the_spec_asks_for() {
         let encoded =
-            encode_restore_data(&RestoredSource::Window("toplevel-1".to_string())).unwrap();
+            encode_restore_data(&RestoredSource::Window("toplevel-1".to_string()), None).unwrap();
         assert_eq!(encoded.value_signature().to_string(), "(suv)");
+    }
+
+    #[test]
+    fn a_session_handle_names_the_app_that_opened_it() {
+        assert_eq!(
+            session_sender("/org/freedesktop/portal/desktop/session/1_4578/obs1").as_deref(),
+            Some(":1.4578")
+        );
+        assert_eq!(
+            session_sender("/org/freedesktop/portal/desktop/session/1_4578"),
+            None
+        );
+        assert_eq!(session_sender("/org/otto/session/1_4578/obs1"), None);
+    }
+
+    #[test]
+    fn the_program_rides_along_and_restoring_ignores_it() {
+        let source = RestoredSource::Monitor("eDP-1".to_string());
+        let encoded = encode_restore_data(&source, Some("obs")).unwrap();
+        assert_eq!(encoded.value_signature().to_string(), "(suv)");
+        assert_eq!(decode_restore_data(&encoded), Some(source));
     }
 
     #[test]
     fn round_trips_a_monitor() {
         let source = RestoredSource::Monitor("eDP-1".to_string());
-        let encoded = encode_restore_data(&source).unwrap();
+        let encoded = encode_restore_data(&source, None).unwrap();
         assert_eq!(decode_restore_data(&encoded), Some(source));
     }
 

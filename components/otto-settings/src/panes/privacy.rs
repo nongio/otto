@@ -63,6 +63,9 @@ struct Grant {
     restored: Option<Restored>,
     /// Who remembered it, when that was another desktop's portal.
     foreign_vendor: Option<String>,
+    /// The program it was remembered for, when the app is unsandboxed and
+    /// Otto's portal could tell which program asked.
+    program: Option<String>,
 }
 
 /// An answer on a Select row.
@@ -174,6 +177,7 @@ fn screen_grants(entries: &[Entry]) -> Vec<Grant> {
                     .vendor
                     .clone()
                     .filter(|vendor| !vendor.eq_ignore_ascii_case("otto")),
+                program: entry.program.clone().filter(|_| app.is_empty()),
             });
         }
     }
@@ -498,6 +502,18 @@ fn app_name(app: &str) -> String {
         .unwrap_or_else(|| app.to_string())
 }
 
+/// What a grant's app is called. An unsandboxed app's share is a restore
+/// token only the program that asked holds, so when that program is known it
+/// is named rather than every unsandboxed app.
+fn grant_name(grant: &Grant) -> String {
+    match &grant.program {
+        Some(program) => otto_kit::desktop_entry::lookup_app_by_binary(program)
+            .map(|info| info.name)
+            .unwrap_or_else(|| program.clone()),
+        None => app_name(&grant.app),
+    }
+}
+
 /// The line under a grant's name: what it lets the app do.
 fn grant_detail(grant: &Grant) -> String {
     let what = match (grant.kind, &grant.restored, grant.allowed) {
@@ -590,13 +606,13 @@ fn screen_rows() -> Vec<Row> {
         .iter()
         .map(|grant| {
             let mut detail = grant_detail(grant);
-            if grant.app.is_empty() {
+            if grant.app.is_empty() && grant.program.is_none() {
                 detail = format!(
                     "{detail} · {}",
                     otto_kit::t!("privacy-applies-to-unsandboxed")
                 );
             }
-            let mut row = Row::new(intern(app_name(&grant.app)), Control::Value(String::new()))
+            let mut row = Row::new(intern(grant_name(grant)), Control::Value(String::new()))
                 .detail(detail)
                 .removable(true)
                 .remove_label(otto_kit::t!("privacy-forget"));
@@ -703,6 +719,7 @@ mod tests {
                 .collect(),
             restored: None,
             vendor: None,
+            program: None,
         }
     }
 
@@ -753,6 +770,22 @@ mod tests {
         // Otto's own payload is not "remembered by" anyone else.
         assert_eq!(grants[0].foreign_vendor, None);
         assert_eq!(grants[1].foreign_vendor.as_deref(), Some("KDE"));
+    }
+
+    #[test]
+    fn an_unsandboxed_share_is_named_for_its_program() {
+        let mut obs = entry(store::SCREENCAST, "token-1", &[("", "yes")]);
+        obs.program = Some("obs".into());
+        let mut flatpak = entry(
+            store::SCREENCAST,
+            "token-2",
+            &[("com.google.Chrome", "yes")],
+        );
+        flatpak.program = Some("chrome".into());
+        let grants = screen_grants(&[obs, flatpak]);
+        assert_eq!(grants[0].program.as_deref(), Some("obs"));
+        // A sandboxed app is named by its app id, whatever the payload says.
+        assert_eq!(grants[1].program, None);
     }
 
     #[test]
