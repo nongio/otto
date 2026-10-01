@@ -1823,19 +1823,8 @@ files-photos-one-selected = 1 selezionato · Spazio per l’anteprima · ↵ per
 ## The reason line is composed by Otto from the setting and the value asked for; { $value } is the program or options, quoted.
 
 authorize-cancel = Annulla
-authorize-reason-locker-command = Cambiare il programma che blocca lo schermo in «{ $value }»?
-authorize-reason-locker-args = Cambiare le opzioni del programma che blocca lo schermo in «{ $value }»?
-authorize-reason-locker-args-clear = Rimuovere le opzioni del programma che blocca lo schermo?
-authorize-reason-auto-lock = Cambiare quanto attende lo schermo prima di bloccarsi da solo?
-authorize-reason-auto-lock-off = Impedire che lo schermo si blocchi da solo?
-authorize-reason-lock-on-suspend = Bloccare lo schermo ogni volta che il computer va in sospensione?
-authorize-reason-lock-on-suspend-off = Impedire che lo schermo si blocchi quando il computer va in sospensione?
-authorize-reason-greeter-command = Cambiare il programma della schermata di accesso in «{ $value }»?
-authorize-reason-greeter-args = Cambiare le opzioni del programma della schermata di accesso in «{ $value }»?
-authorize-reason-greeter-args-clear = Rimuovere le opzioni del programma della schermata di accesso?
-authorize-reason-generic = Cambiare l’impostazione «{ $setting }»?
 authorize-error-failed = Autenticazione non riuscita
-polkit-reason = { $program } chiede: { $message }
+authorize-path-in = { $name } (in { $dir })
 polkit-unknown-program = Un programma sconosciuto
 
 ## Settings › Privacy: what apps were allowed, read from xdg-permission-store.

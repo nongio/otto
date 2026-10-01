@@ -49,7 +49,7 @@ const MARK_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
 const FRAME_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Who checks the answers: polkit's helper, which runs PAM for the user and
-/// reports to polkitd under `cookie` ([`crate::polkit::helper`]).
+/// reports to polkitd under `cookie` ([`crate::polkit::session`]).
 #[derive(Debug, Clone)]
 pub enum Conversation {
     Polkit { cookie: String },
@@ -68,7 +68,9 @@ enum Stage {
 pub struct Dialog {
     surface: Option<LayerShellSurface>,
     panel: Option<Panel>,
-    reason: String,
+    /// What polkit says the request is for, and the program that asked.
+    message: String,
+    requester: String,
     conversation: Conversation,
     verdict: Option<Verdict>,
 
@@ -101,11 +103,17 @@ pub struct Dialog {
 }
 
 impl Dialog {
-    pub fn new(reason: String, user: Option<User>, conversation: Conversation) -> Self {
+    pub fn new(
+        message: String,
+        requester: String,
+        user: Option<User>,
+        conversation: Conversation,
+    ) -> Self {
         Self {
             surface: None,
             panel: None,
-            reason,
+            message,
+            requester,
             conversation,
             verdict: None,
             stage: Stage::Authenticating,
@@ -156,10 +164,13 @@ impl Dialog {
             engine,
             surface.base_surface().layer_node(),
         );
-        panel.set_reason(&self.reason);
+        panel.set_reason(&self.message, &self.requester);
         self.panel = Some(panel);
         self.surface = Some(surface);
         self.deadline = Instant::now() + TIMEOUT;
+        // Opened from `on_update`, after the run loop's flush for this pass:
+        // sent now, or the surface waits for whatever wakes the loop next.
+        AppContext::flush();
 
         self.authenticate();
         Ok(())
@@ -275,7 +286,7 @@ impl Dialog {
         let Conversation::Polkit { cookie } = &self.conversation;
         let (user, cookie) = (user.name.clone(), cookie.clone());
         self.attempt = Some(Attempt::with_conversation(move |events, answers| {
-            crate::polkit::helper::converse(&user, &cookie, events, answers)
+            crate::polkit::session::converse(&user, &cookie, events, answers)
         }));
         self.question_pending = false;
     }
@@ -591,6 +602,7 @@ mod tests {
     fn dialog() -> Dialog {
         Dialog::new(
             "Test".into(),
+            "otto-test".into(),
             User::current(),
             Conversation::Polkit {
                 cookie: "test".into(),

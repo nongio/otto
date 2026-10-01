@@ -14,9 +14,9 @@
 //!   its own component — so the panel keeps the keyboard as otto-authorize's
 //!   does — and starts it again if it dies (`src/polkit_agent.rs`).
 //! * It registers for the compositor's logind session and answers only
-//!   polkitd ([`dbus`]).
+//!   polkitd, through polkit's own agent library ([`listener`]).
 //! * It never answers for anyone. The password goes to polkit's own helper,
-//!   which runs PAM and tells polkitd the result ([`helper`]); all this
+//!   which runs PAM and tells polkitd the result ([`session`]); all this
 //!   process can do on its own is cancel.
 //! * One request at a time: another arriving while the dialog is up is
 //!   cancelled. Escape, Cancel, a minute without an answer and three wrong
@@ -24,8 +24,8 @@
 //!   is held off for a while ([`Throttle`]), so nothing can put the panel up
 //!   again and again until someone types into it.
 
-mod dbus;
-pub mod helper;
+mod listener;
+pub mod session;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -38,7 +38,7 @@ use smithay_client_toolkit::seat::pointer::PointerEvent;
 use wayland_client::protocol::wl_keyboard;
 
 use crate::dialog::{Conversation, Dialog, Verdict};
-use dbus::{AgentError, Begin, Identity, Request};
+use listener::{AgentError, Begin, Identity, Request};
 
 /// The argument that selects this mode.
 pub const AGENT_FLAG: &str = "--polkit-agent";
@@ -48,8 +48,7 @@ const MAX_MESSAGE_CHARS: usize = 120;
 const MAX_PROGRAM_CHARS: usize = 48;
 
 /// How often requests nobody confirmed may come back, per program and for
-/// the whole session — the same rule the compositor applies to
-/// otto-authorize (`src/authorize.rs`, `Throttle`).
+/// the whole session.
 #[derive(Debug, Default)]
 pub struct Throttle {
     unconfirmed: VecDeque<Instant>,
@@ -57,10 +56,12 @@ pub struct Throttle {
 }
 
 impl Throttle {
-    const GAP: Duration = Duration::from_secs(3);
-    const LIMIT: usize = 3;
-    const GLOBAL_LIMIT: usize = 12;
-    const WINDOW: Duration = Duration::from_secs(10 * 60);
+    // Loose enough that a person retrying after a mistake never meets it;
+    // tight enough that a program cannot keep the panel up.
+    const GAP: Duration = Duration::from_secs(1);
+    const LIMIT: usize = 10;
+    const GLOBAL_LIMIT: usize = 30;
+    const WINDOW: Duration = Duration::from_secs(60);
 
     fn prune(times: &mut VecDeque<Instant>, now: Instant) {
         while times
@@ -81,13 +82,12 @@ impl Throttle {
         if self.unconfirmed.len() >= Self::GLOBAL_LIMIT {
             return false;
         }
-        let Some(times) = self.by_caller.get(caller) else {
-            return true;
-        };
-        times.len() < Self::LIMIT
-            && !times
-                .back()
-                .is_some_and(|at| now.saturating_duration_since(*at) < Self::GAP)
+        self.by_caller.get(caller).is_none_or(|times| {
+            times.len() < Self::LIMIT
+                && !times
+                    .back()
+                    .is_some_and(|at| now.saturating_duration_since(*at) < Self::GAP)
+        })
     }
 
     pub fn note_unconfirmed(&mut self, caller: &str, now: Instant) {
@@ -134,7 +134,8 @@ impl Prompt for Dialog {
 
 /// What a prompt is made from.
 struct Question {
-    reason: String,
+    message: String,
+    requester: String,
     user: String,
     cookie: String,
 }
@@ -159,7 +160,8 @@ struct Agent<P> {
 /// The running agent's prompt: the dialog, answered through polkit's helper.
 fn dialog_for(question: Question) -> Dialog {
     Dialog::new(
-        question.reason,
+        question.message,
+        question.requester,
         Some(User::lookup(&question.user)),
         Conversation::Polkit {
             cookie: question.cookie,
@@ -247,13 +249,9 @@ impl<P: Prompt> Agent<P> {
             );
         }
 
-        let reason = if begin.action == SETTINGS_ACTION {
-            settings_reason(&begin.details)
-        } else {
-            reason_line(&caller, &begin.message)
-        };
         let mut prompt = (self.make_prompt)(Question {
-            reason,
+            message: message_line(&begin.message),
+            requester: caller.clone(),
             user: user.clone(),
             cookie: begin.cookie.clone(),
         });
@@ -366,7 +364,7 @@ impl App for Agent<Dialog> {
 /// Run the agent until the compositor goes away or polkit turns it down.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, requests) = std::sync::mpsc::channel();
-    dbus::spawn(tx);
+    listener::spawn(tx);
     let agent = Agent::new(requests, dialog_for);
     AppRunner::new(agent).run()?;
     // The runner owns the agent, so its status travels through a static. A
@@ -454,7 +452,7 @@ fn requesting_program(details: &HashMap<String, String>) -> String {
 fn describe_path(path: &str) -> Option<String> {
     let path = std::path::Path::new(path);
     let name = visible(&path.file_name()?.to_string_lossy());
-    let dir = visible(&path.parent()?.to_string_lossy());
+    let dir = visible(&home_as_tilde(&path.parent()?.to_string_lossy()));
     if name.is_empty() {
         return None;
     }
@@ -465,66 +463,29 @@ fn describe_path(path: &str) -> Option<String> {
     ))
 }
 
-/// The action Otto's settings service asks for before a protected setting
-/// changes (`src/settings/polkit.rs` in the compositor).
-const SETTINGS_ACTION: &str = "org.otto.settings.lock";
-
-/// The reason line for a protected setting: the change itself, from the
-/// details the compositor passed (`otto.setting`, `otto.value`, `otto.label`).
-fn settings_reason(details: &HashMap<String, String>) -> String {
-    let setting = details
-        .get("otto.setting")
-        .map(String::as_str)
-        .unwrap_or("");
-    let label = visible(
-        details
-            .get("otto.label")
-            .map(String::as_str)
-            .unwrap_or(setting),
-    );
-    let Some(value) = details.get("otto.value").map(|v| visible(v)) else {
-        return otto_kit::t_owned!("authorize-reason-generic", setting = label);
-    };
-    let empty = value.trim().is_empty();
-    match setting {
-        "lock.locker_command" => {
-            otto_kit::t_owned!("authorize-reason-locker-command", value = value)
-        }
-        "lock.locker_args" if empty => otto_kit::t_owned!("authorize-reason-locker-args-clear"),
-        "lock.locker_args" => otto_kit::t_owned!("authorize-reason-locker-args", value = value),
-        "lock.auto_lock_timeout" if value == "0" => {
-            otto_kit::t_owned!("authorize-reason-auto-lock-off")
-        }
-        "lock.auto_lock_timeout" => otto_kit::t_owned!("authorize-reason-auto-lock"),
-        "lock.on_suspend" if value == "false" => {
-            otto_kit::t_owned!("authorize-reason-lock-on-suspend-off")
-        }
-        "lock.on_suspend" => otto_kit::t_owned!("authorize-reason-lock-on-suspend"),
-        "login.greeter_command" => {
-            otto_kit::t_owned!("authorize-reason-greeter-command", value = value)
-        }
-        "login.greeter_args" if empty => otto_kit::t_owned!("authorize-reason-greeter-args-clear"),
-        "login.greeter_args" => otto_kit::t_owned!("authorize-reason-greeter-args", value = value),
-        _ => otto_kit::t_owned!("authorize-reason-generic", setting = label),
+/// `dir` with the user's home folder written as `~`, which is how people
+/// read it and keeps the reason line short.
+fn home_as_tilde(dir: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && home != "/" => match dir.strip_prefix(home.as_str()) {
+            Some("") => "~".to_string(),
+            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+            _ => dir.to_string(),
+        },
+        _ => dir.to_string(),
     }
 }
 
-/// The dialog's reason line: who asked, then what polkit says it is for.
-/// The program comes first so a long message can never push it off the
-/// card's two lines.
-fn reason_line(program: &str, message: &str) -> String {
+/// What polkit says the request is for, on one line and no longer than the
+/// dialog shows. The program that asked has a line of its own under it.
+fn message_line(message: &str) -> String {
     let message = visible(message);
-    let message = if message.chars().count() > MAX_MESSAGE_CHARS {
+    if message.chars().count() > MAX_MESSAGE_CHARS {
         let cut: String = message.chars().take(MAX_MESSAGE_CHARS - 1).collect();
         format!("{}…", cut.trim_end())
     } else {
         message
-    };
-    otto_kit::t_owned!(
-        "polkit-reason",
-        program = program.to_string(),
-        message = message
-    )
+    }
 }
 
 /// `text` on one line, with control and invisible formatting characters
@@ -577,12 +538,11 @@ mod tests {
     }
 
     #[test]
-    fn a_long_message_cannot_hide_the_program() {
-        let reason = reason_line("otto-settings (in /usr/bin)", &"x".repeat(400));
-        assert!(reason.contains("otto-settings (in /usr/bin)"));
-        let position = reason.find("otto-settings").unwrap();
-        assert!(position < reason.find("xxx").unwrap());
-        assert!(reason.chars().count() < 200);
+    fn a_long_message_is_cut() {
+        let message = message_line(&"x".repeat(400));
+        assert_eq!(message.chars().count(), MAX_MESSAGE_CHARS);
+        assert!(message.ends_with('…'));
+        assert_eq!(message_line("Short."), "Short.");
     }
 
     #[test]
@@ -595,10 +555,17 @@ mod tests {
     fn dismissals_are_throttled_per_program() {
         let mut throttle = Throttle::default();
         let start = Instant::now();
-        assert!(throttle.allows("a", start));
+        // A person retrying after a mistake is held off for a second at most.
         throttle.note_unconfirmed("a", start);
+        assert!(!throttle.allows("a", start));
+        assert!(throttle.allows("a", start + Throttle::GAP));
+        for _ in 1..Throttle::LIMIT {
+            throttle.note_unconfirmed("a", start);
+        }
         assert!(!throttle.allows("a", start + Duration::from_secs(1)));
         assert!(throttle.allows("b", start + Duration::from_secs(1)));
+        // A minute later the program may ask again.
+        assert!(throttle.allows("a", start + Throttle::WINDOW));
         throttle.note_confirmed("a");
         assert!(throttle.allows("a", start + Duration::from_secs(1)));
     }
