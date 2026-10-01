@@ -6,12 +6,13 @@
 
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
+use smithay::reexports::wayland_server::Resource;
 use smithay::wayland::session_lock::{
     LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker,
 };
 use tracing::warn;
 
-use crate::state::{Backend, Otto};
+use crate::state::{Backend, ClientState, Otto};
 
 impl<BackendData: Backend> SessionLockHandler for Otto<BackendData> {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
@@ -19,6 +20,17 @@ impl<BackendData: Backend> SessionLockHandler for Otto<BackendData> {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        // The global is only offered to the locker Otto started, so nothing
+        // else should get here; checked again because whatever holds the lock
+        // collects the password. Dropping the confirmation sends `finished`.
+        let from_locker = confirmation
+            .ext_session_lock()
+            .client()
+            .is_some_and(|client| ClientState::is_otto_locker(&client));
+        if !from_locker {
+            warn!("session lock requested by a client Otto did not start as its locker; refusing");
+            return;
+        }
         // `begin_lock` refuses a second lock by dropping the confirmation,
         // which sends `finished`.
         self.begin_lock(confirmation);

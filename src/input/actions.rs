@@ -287,17 +287,15 @@ impl<BackendData: Backend> Otto<BackendData> {
                 self.launch_program(cmd, args);
             }
 
-            // Locking is launching the locker: it binds
-            // `ext_session_lock_manager_v1` and asks for the lock itself, so
-            // an idle daemon or a suspend hook running the same command takes
-            // exactly the same path. See `src/lock.rs`.
+            // The blank goes up at once and the locker is started into it;
+            // the locker asks for the lock itself. An idle daemon or a suspend
+            // hook goes through logind (`loginctl lock-session`), which ends
+            // up in the same place. See `src/lock.rs`.
             KeyAction::LockSession => {
                 if self.is_session_locked() {
                     return;
                 }
-                let (cmd, args) = crate::lock::locker_command();
-                info!(locker = %cmd, "Locking session");
-                self.launch_program(cmd, args);
+                self.lock_session();
             }
 
             KeyAction::PowerButton => {

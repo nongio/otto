@@ -112,17 +112,9 @@ to asking.
 
 ### When no dialog is reachable
 
-If neither dialog backend can be reached, Otto shares one monitor without
-asking. Which one comes from a file:
-
-```sh
-echo "HDMI-A-1" > ~/.config/otto/screencast-output
-```
-
-It is read fresh on every share request, so you can change it between sessions
-without restarting anything. Use a name from `otto --probe`, or a virtual output
-name like `virtual-1`. If the name does not match any available output, Otto
-logs a warning and falls back to the first one.
+If neither dialog backend can be reached (otto-islands is not running, for
+instance), the share is refused. Otto never shares a screen or a window without
+asking.
 
 ### Cursor
 

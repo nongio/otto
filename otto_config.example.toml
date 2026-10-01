@@ -100,8 +100,14 @@ args = []
 # Any ext-session-lock-v1 locker works here.
 #
 # [lock]
+# The locker program: "otto-lock" (Otto's own, found where Otto is installed),
+# or the full path of another one, with no spaces — its options go in
+# locker_args. A bare name is looked up in $PATH once, when Otto starts.
 # locker_command = "otto-lock"
 # locker_args = []
+# Lock before the computer suspends (power menu, power button, lid,
+# `systemctl suspend`), so it wakes to the lock screen. On by default.
+# on_suspend = true
 # Lock the session after this many seconds with no keyboard, pointer, touch or
 # tablet input. 0 (the default) never locks on its own. Clients that take an
 # idle inhibitor (idle-inhibit-unstable-v1 — video players, presentations) hold

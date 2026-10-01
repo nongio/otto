@@ -267,6 +267,12 @@ pub struct Workspaces {
     /// arrangement rather than auto-placed after outputs (e.g. virtual ones)
     /// that kept running meanwhile.
     suspended_outputs: HashMap<String, SuspendedOutput>,
+    /// Set while the session is locked (from the moment the blank is raised
+    /// until the unlock): an output added meanwhile gets its blank up at
+    /// creation, before its first frame, so a monitor plugged in while
+    /// locked never shows the desktop. See
+    /// `src/lock.rs`.
+    pub blank_new_outputs: bool,
     display_handle: DisplayHandle,
 
     pub windows_map: HashMap<ObjectId, WindowElement>,
@@ -753,6 +759,7 @@ impl Workspaces {
             outputs: Vec::new(),
             primary_output: None,
             suspended_outputs: HashMap::new(),
+            blank_new_outputs: false,
             model: Arc::new(RwLock::new(model)),
             windows_map: HashMap::new(),
             focus_history: Vec::new(),
@@ -4667,7 +4674,11 @@ impl Workspaces {
         // Pointer events on, so a click while locked cannot reach the session
         // underneath even before the locker has mapped a surface.
         lock_plane.set_pointer_events(true);
-        lock_plane.set_hidden(true);
+        // Hidden unless the session is locked right now: then this output was
+        // plugged in under the lock, and its blank is up before anything of
+        // the session can be drawn on it.
+        lock_plane.set_position(layers::types::Point { x: 0.0, y: 0.0 }, None);
+        lock_plane.set_hidden(!self.blank_new_outputs);
 
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all

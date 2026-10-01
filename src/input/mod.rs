@@ -11,6 +11,7 @@ pub mod actions;
 pub mod keyboard;
 pub mod keyboard_layout;
 pub mod pointer;
+pub mod popup_grab;
 
 #[cfg(feature = "udev")]
 pub mod gestures;

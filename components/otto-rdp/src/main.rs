@@ -59,9 +59,11 @@ fn usage() -> ! {
          --connector  Serve a PHYSICAL output via screenshare instead of a\n\
                       virtual one, e.g. eDP-1 (mutually exclusive with\n\
                       --node; also the default --output)\n\
-         --port       RDP listen port on 0.0.0.0 (default: 3389)\n\
+         --port       RDP listen port on 127.0.0.1 (default: 3389)\n\
          --listen     Full RDP listen address, overrides --port\n\
-                      (default: 0.0.0.0:3389)\n\
+                      (default: 127.0.0.1:3389). There is no\n\
+                      authentication: anyone who can reach it gets\n\
+                      the desktop\n\
          --desktop    Serve this desktop size (WxH) instead of the client's\n\
                       reported box. For clients that render 1:1 in physical\n\
                       pixels but report their box in points (mobile apps):\n\
@@ -152,8 +154,9 @@ fn parse_args() -> Args {
         // through the physical-output screencast path. Can't do both.
         usage();
     }
+    // Only this machine unless asked: the bridge has no authentication.
     let listen =
-        listen_override.unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], port)));
+        listen_override.unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], port)));
     Args {
         list,
         node,
@@ -449,6 +452,14 @@ async fn main() -> anyhow::Result<()> {
             "bitmap / RemoteFX"
         }
     );
+
+    if !args.listen.ip().is_loopback() {
+        tracing::warn!(
+            "listening on {}: RDP has no authentication here, anyone who can reach \
+             this address can see and control the desktop",
+            args.listen
+        );
+    }
 
     let builder = RdpServer::builder().with_addr(args.listen);
     let builder = if args.tls {

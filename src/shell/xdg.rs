@@ -4,8 +4,8 @@ use layers::prelude::{taffy, Interpolate, Layer, Transition};
 use smithay::{
     desktop::{
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, Window, WindowSurface,
-        WindowSurfaceType,
+        PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Window,
+        WindowSurface, WindowSurfaceType,
     },
     input::{pointer::Focus, Seat},
     output::Output,
@@ -120,7 +120,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
         // If the target output's current workspace is in fullscreen mode,
         // decide where to map the new window. Fullscreen is per-output.
-        if let Some(ref output) = target_output {
+        if let Some(output) = target_output.as_ref() {
             let name = output.name();
             let (current_index, current_fullscreen) = self
                 .workspaces
@@ -1325,6 +1325,23 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
 
     fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
         let seat: Seat<Otto<BackendData>> = Seat::from_resource(&seat).unwrap();
+
+        // A popup grab takes the keyboard from whatever has it, and smithay's
+        // grab ignores later focus changes: only a client the user just
+        // pressed on may take one, never with the session locked (see
+        // `src/input/popup_grab.rs`).
+        let client = surface.wl_surface().client();
+        if let Some(refusal) = self.popup_grab_refusal(&seat, client.as_ref(), serial) {
+            tracing::warn!(
+                popup = ?surface.wl_surface().id(),
+                ?serial,
+                ?refusal,
+                "xdg grab: refused, popup dismissed"
+            );
+            surface.send_popup_done();
+            return;
+        }
+
         // The popup's window has to hold the keyboard before its grab is set.
         self.apply_pending_raise();
         let kind = PopupKind::Xdg(surface);
@@ -1381,16 +1398,42 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                 tracing::warn!("xdg grab: grab_popup failed for {:?}: {:?}", popup_id, err);
             }
 
-            if let Ok(grab) = ret {
+            if let Ok(mut grab) = ret {
+                // A pointer grab another client holds (an interactive move,
+                // say) is left alone: the popup is dismissed instead.
+                if let Some(pointer) = seat.get_pointer() {
+                    let foreign = pointer.is_grabbed()
+                        && !(pointer.has_grab(serial)
+                            || pointer
+                                .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
+                        && pointer
+                            .grab_start_data()
+                            .and_then(|data| data.focus)
+                            .and_then(|(focus, _)| focus.wl_surface().and_then(|s| s.client()))
+                            .is_some_and(|holder| Some(&holder) != client.as_ref());
+                    if foreign {
+                        tracing::warn!(
+                            "xdg grab: another client holds the pointer grab, popup {:?} dismissed",
+                            popup_id
+                        );
+                        grab.ungrab(PopupUngrabStrategy::All);
+                        return;
+                    }
+                }
                 if let Some(keyboard) = seat.get_keyboard() {
                     if keyboard.is_grabbed()
                         && !(keyboard.has_grab(serial)
                             || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
                     {
-                        // The keyboard is grabbed by a previous popup session with a different
-                        // serial.  This is typically a stale grab left behind after an
-                        // input-method popup or another popup was dismissed without proper
-                        // cleanup.  Unset it so the new popup can proceed.
+                        // What is left in the keyboard's grab slot here is
+                        // nobody's live grab: smithay's per-seat popup state
+                        // refused `grab_popup` while another client's popups
+                        // held a grab, so this is a popup grab that has ended
+                        // but not been taken out yet (a click away dismisses
+                        // the popups before the keyboard hears of it), or an
+                        // input method's. The user's latest press went to
+                        // this popup's client (checked above), so the keys
+                        // are this client's either way.
                         keyboard.unset_grab(self);
                     }
                     keyboard.set_focus(self, grab.current_grab(), serial);
@@ -1402,7 +1445,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
                             || pointer
                                 .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
                     {
-                        // Same as above: stale pointer grab from a previous popup session.
+                        // This client's own leftover grab (checked above).
                         pointer.unset_grab(
                             self,
                             serial,

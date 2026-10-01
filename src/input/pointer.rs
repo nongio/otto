@@ -95,6 +95,13 @@ impl<BackendData: Backend> Otto<BackendData> {
         let button = evt.button_code();
 
         let state = wl_pointer::ButtonState::from(evt.state());
+        // A press no client ends up receiving (Otto's own, or a view's) still
+        // ends the last client's claim to a popup grab; delivery overwrites
+        // this with the client that got it. See `crate::input::popup_grab`.
+        if wl_pointer::ButtonState::Pressed == state {
+            let seat = self.seat.clone();
+            self.note_seat_press(&seat, serial, None);
+        }
 
         if !self.workspaces.get_show_all() && wl_pointer::ButtonState::Pressed == state {
             self.focus_window_under_cursor(serial, RaiseTiming::for_button(button));

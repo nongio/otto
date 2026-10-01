@@ -67,6 +67,15 @@ impl<BackendData: Backend> GlobalDispatch<OttoDockManagerV1, (), Otto<BackendDat
     ) {
         data_init.init(resource, ());
     }
+
+    /// `get_dock_item` takes any app id, so a client offered this could set
+    /// the badge and progress of another app's dock icon. The unsandboxed
+    /// apps that use it are
+    /// the user's own; a sandboxed one would need its item tied to its
+    /// security context's app id first.
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
 }
 
 impl<BackendData: Backend> Dispatch<OttoDockManagerV1, (), Otto<BackendData>> for OttoDockState {
