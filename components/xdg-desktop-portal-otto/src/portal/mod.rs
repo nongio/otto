@@ -10,6 +10,7 @@
 mod access;
 mod file_chooser;
 mod interface;
+mod remembered;
 mod request;
 mod restore;
 mod screenshot;

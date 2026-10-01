@@ -236,24 +236,69 @@ pub fn row_select_rect(row: &Row, rect: Rect) -> Option<Rect> {
     ))
 }
 
-/// The trailing edge of a row's pop-up or value: the row's own, or short of
-/// the "−" button on a removable row.
+/// The trailing edge of a row's pop-up, value or switch: the row's own, or
+/// short of the remove button on a removable row.
 fn select_right(row: &Row, right: f32) -> f32 {
     if row.removable {
-        right - widgets::LINE_BUTTON - SHORTCUT_GAP
+        right - remove_width(row) - SHORTCUT_GAP
     } else {
         right
     }
 }
 
-/// A removable row's "−" button.
-fn row_remove_rect(right: f32, cy: f32) -> Rect {
-    Rect::from_xywh(
-        right - widgets::LINE_BUTTON,
-        cy - widgets::LINE_BUTTON / 2.0,
-        widgets::LINE_BUTTON,
-        widgets::LINE_BUTTON,
-    )
+/// A named remove button's padding either side of its word.
+const REMOVE_TEXT_PAD: f32 = 10.0;
+/// A named remove button's height: the whole press target, since the button
+/// draws nothing but its word.
+const REMOVE_TEXT_H: f32 = 40.0;
+
+/// How wide a removable row's button is: the "−" square, or its word and the
+/// padding around it.
+fn remove_width(row: &Row) -> f32 {
+    match &row.remove_label {
+        Some(label) => {
+            widgets::CONTROL_TEXT
+                .font()
+                .measure_str(label.as_ref(), None)
+                .0
+                + 2.0 * REMOVE_TEXT_PAD
+        }
+        None => widgets::LINE_BUTTON,
+    }
+}
+
+/// A removable row's button — the "−", or the word that replaces it — given
+/// the row's trailing edge and the control band's vertical centre.
+fn row_remove_rect(row: &Row, right: f32, cy: f32) -> Rect {
+    let width = remove_width(row);
+    let height = if row.remove_label.is_some() {
+        REMOVE_TEXT_H
+    } else {
+        widgets::LINE_BUTTON
+    };
+    Rect::from_xywh(right - width, cy - height / 2.0, width, height)
+}
+
+/// A removable row's button in the same space as `rect`, the row's own rect.
+///
+/// `None` for a row that is not removable. Shared by hit-testing, the focus
+/// ring and the accessibility tree, so the button is reachable exactly where
+/// it is drawn.
+pub fn row_remove_button_rect(row: &Row, rect: Rect) -> Option<Rect> {
+    row.removable.then(|| {
+        row_remove_rect(
+            row,
+            rect.right - 14.0,
+            Settings::control_band(row, rect).center_y(),
+        )
+    })
+}
+
+/// A named remove button's identity for the keyboard and for assistive
+/// technologies: a stop of its own beside the row's control, since forgetting
+/// an answer is a different thing to do from changing it.
+pub fn remove_focus_id(row: &str) -> FocusId {
+    FocusId::new(format!("remove-{row}"))
 }
 
 /// One push button's identity for the keyboard and for assistive
@@ -591,7 +636,7 @@ pub enum Pressed {
     Record(usize),
     /// The button that adds a shortcut line.
     Add,
-    /// A removable row's "−" button, by the row's handle.
+    /// A removable row's remove button ("−" or its word), by the row's handle.
     RemoveRow(&'static str),
 }
 
@@ -1196,7 +1241,7 @@ impl Settings {
         match &row.control {
             Control::Toggle(on) => {
                 let toggle = Rect::from_xywh(
-                    right - widgets::TOGGLE_W,
+                    select_right(row, right) - widgets::TOGGLE_W,
                     cy - widgets::TOGGLE_H / 2.0,
                     widgets::TOGGLE_W,
                     widgets::TOGGLE_H,
@@ -1484,7 +1529,7 @@ impl Settings {
         })
     }
 
-    /// The handle of the removable row whose "−" button a click lands on.
+    /// The handle of the removable row whose remove button a click lands on.
     pub fn row_remove_hit(&self, x: f32, y: f32, scroll_offset: f32) -> Option<&'static str> {
         let viewport = self.viewport();
         if !viewport.contains(Point::new(x, y)) {
@@ -1496,10 +1541,7 @@ impl Settings {
             .row_rects(content_width)
             .into_iter()
             .find(|(_, rect)| rect.contains(local))?;
-        if !row.removable {
-            return None;
-        }
-        row_remove_rect(rect.right - 14.0, Self::control_band(row, rect).center_y())
+        row_remove_button_rect(row, rect)?
             .contains(local)
             .then(|| row.handle())
     }
@@ -1845,6 +1887,17 @@ impl Settings {
                         );
                     }
                 }
+                // A named remove button is a stop of its own, so it gets its
+                // own ring, as a row's push buttons do.
+                if row.remove_label.is_some() && focused == Some(remove_focus_id(row.handle())) {
+                    if let Some(bounds) = row_remove_button_rect(row, *rect) {
+                        otto_kit::focus::draw_focus_ring(
+                            canvas,
+                            bounds.with_inset((0.0, 6.0)),
+                            7.0,
+                        );
+                    }
+                }
                 self.render_row(canvas, row, x0, x1, rect.top, rect.height());
                 if i + 1 < group.rows.len() {
                     widgets::separator(canvas, x0 + 14.0, x1, rect.bottom, &self.theme);
@@ -2053,6 +2106,35 @@ impl Settings {
     /// starts giving way instead. Enough for a word and an ellipsis.
     const LABEL_MIN: f32 = 96.0;
 
+    /// A removable row's button at the trailing edge: the "−", or — where the
+    /// row names what removing it does — that word, borderless in the accent.
+    ///
+    /// Pressed, the word dims rather than gaining a ground: a button that is
+    /// only text has nothing else to change without growing a frame it did
+    /// not have at rest.
+    fn render_remove(&self, canvas: &Canvas, row: &Row, right: f32, cy: f32) {
+        let rect = row_remove_rect(row, right, cy);
+        let pressed = self.pressed == Some(Pressed::RemoveRow(row.handle()));
+        match &row.remove_label {
+            Some(label) => {
+                let color = if pressed {
+                    self.theme.accent.with_a(0x80)
+                } else {
+                    self.theme.accent
+                };
+                widgets::text_centered_y(
+                    canvas,
+                    label,
+                    rect.left + REMOVE_TEXT_PAD,
+                    cy,
+                    widgets::CONTROL_TEXT,
+                    color,
+                );
+            }
+            None => widgets::line_button(canvas, rect, false, pressed, &self.theme),
+        }
+    }
+
     /// Where a row's trailing control begins, given the row's trailing edge
     /// and vertical centre.
     ///
@@ -2063,7 +2145,7 @@ impl Settings {
     /// for them.
     fn control_left(row: &Row, label_x: f32, right: f32, cy: f32) -> f32 {
         match &row.control {
-            Control::Toggle(_) => right - widgets::TOGGLE_W,
+            Control::Toggle(_) => select_right(row, right) - widgets::TOGGLE_W,
             Control::Slider { readout, .. } => {
                 let readout_w = widgets::CONTROL_TEXT.font().measure_str(readout, None).0;
                 right - readout_w - 12.0 - widgets::SLIDER_W
@@ -2178,7 +2260,18 @@ impl Settings {
                     .id
                     .and_then(|id| self.toggle_flips.get(id).copied())
                     .unwrap_or_else(|| toggle::knob_fraction_for(*on));
-                widgets::toggle(canvas, right - widgets::TOGGLE_W, cy, fraction, &self.theme)
+                widgets::toggle(
+                    canvas,
+                    select_right(row, right) - widgets::TOGGLE_W,
+                    cy,
+                    fraction,
+                    &self.theme,
+                );
+                // A removable switch (an app's notifications) keeps its remove
+                // button at the trailing edge, as a removable pop-up does.
+                if row.removable {
+                    self.render_remove(canvas, row, right, cy);
+                }
             }
             Control::Slider {
                 value,
@@ -2211,13 +2304,7 @@ impl Settings {
                     &self.theme,
                 );
                 if row.removable {
-                    widgets::line_button(
-                        canvas,
-                        row_remove_rect(right, cy),
-                        false,
-                        self.pressed == Some(Pressed::RemoveRow(row.handle())),
-                        &self.theme,
-                    );
+                    self.render_remove(canvas, row, right, cy);
                 }
             }
             Control::Color(argb) => {
@@ -2286,15 +2373,10 @@ impl Settings {
             ),
             Control::Value(value) => {
                 // A removable value (a folder the Search pane indexes) keeps
-                // its "−" at the trailing edge, as a removable pop-up does.
+                // its remove button at the trailing edge, as a removable
+                // pop-up does.
                 if row.removable {
-                    widgets::line_button(
-                        canvas,
-                        row_remove_rect(right, cy),
-                        false,
-                        self.pressed == Some(Pressed::RemoveRow(row.handle())),
-                        &self.theme,
-                    );
+                    self.render_remove(canvas, row, right, cy);
                 }
                 let right = select_right(row, right);
                 // Shortcut rows read as key combinations; everything else is
@@ -2892,5 +2974,84 @@ mod tests {
         let x = viewport.left + rect.right - 14.0 - widgets::TOGGLE_W / 2.0;
         let y = viewport.top + rect.center_y() - offset;
         assert!(settings.hit(x, y, offset).is_some());
+    }
+
+    /// A pane showing only `rows`, and each row's rect in window coordinates,
+    /// unscrolled — what the hit tests take.
+    fn settings_with_rows(rows: Vec<Row>) -> (Settings, Vec<Rect>) {
+        let mut settings = Settings::new(0, false);
+        let selected = settings.selected;
+        settings.panes[selected].groups = vec![model::Group { title: None, rows }];
+        let viewport = settings.viewport();
+        let rects = settings
+            .row_rects(settings.width - SIDEBAR_W)
+            .into_iter()
+            .map(|(_, rect)| rect.with_offset((viewport.left, viewport.top)))
+            .collect();
+        (settings, rects)
+    }
+
+    fn removable(id: &'static str, control: Control, word: Option<&'static str>) -> Row {
+        let mut row = Row::new(id, control).removable(true);
+        if let Some(word) = word {
+            row = row.remove_label(word);
+        }
+        row.id = Some(id);
+        row
+    }
+
+    #[test]
+    fn a_named_remove_button_is_hit_across_its_word_and_the_control_moves_over_for_it() {
+        let word = "Forget";
+        let word_w = widgets::CONTROL_TEXT.font().measure_str(word, None).0;
+        let (settings, rects) = settings_with_rows(vec![
+            removable("named.select", Control::Select("ask".into()), Some(word)),
+            removable("named.toggle", Control::Toggle(true), Some(word)),
+            removable("named.value", Control::Value("x".into()), Some(word)),
+            removable("plain.select", Control::Select("ask".into()), None),
+        ]);
+        let right = rects[0].right - 14.0;
+
+        for rect in &rects[..3] {
+            let cy = rect.center_y();
+            // Its far end, a word's width in from the row's trailing edge,
+            // is still the button: the whole padded word is the target.
+            let far = right - word_w - REMOVE_TEXT_PAD + 1.0;
+            assert!(settings.row_remove_hit(far, cy, 0.0).is_some());
+            assert!(settings.row_remove_hit(right - 1.0, cy, 0.0).is_some());
+            // Taller than the "−" was.
+            assert!(settings
+                .row_remove_hit(right - 4.0, cy + widgets::LINE_BUTTON / 2.0 + 4.0, 0.0)
+                .is_some());
+        }
+
+        // The pop-up ends a gap short of the word, and a click on it opens
+        // the menu rather than removing the row.
+        let select_right = right - word_w - 2.0 * REMOVE_TEXT_PAD - SHORTCUT_GAP;
+        let cy = rects[0].center_y();
+        assert!(settings.select_hit(select_right - 4.0, cy, 0.0).is_some());
+        assert!(settings.select_hit(select_right + 2.0, cy, 0.0).is_none());
+        assert_eq!(settings.row_remove_hit(select_right - 4.0, cy, 0.0), None);
+
+        // The switch moves over by the same measure.
+        let cy = rects[1].center_y();
+        assert!(settings.hit(select_right - 4.0, cy, 0.0).is_some());
+        assert!(settings
+            .hit(select_right - widgets::TOGGLE_W - 4.0, cy, 0.0)
+            .is_none());
+
+        // A row without a word keeps its "−" and its old room.
+        let cy = rects[3].center_y();
+        let plain_right = right - widgets::LINE_BUTTON - SHORTCUT_GAP;
+        assert!(settings.select_hit(plain_right - 4.0, cy, 0.0).is_some());
+        assert!(settings
+            .row_remove_hit(far_of_line(right), cy, 0.0)
+            .is_none());
+        assert!(settings.row_remove_hit(right - 4.0, cy, 0.0).is_some());
+    }
+
+    /// Just outside a "−" button's leading edge.
+    fn far_of_line(right: f32) -> f32 {
+        right - widgets::LINE_BUTTON - 2.0
     }
 }

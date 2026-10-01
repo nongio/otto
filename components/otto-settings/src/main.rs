@@ -369,6 +369,9 @@ fn select_ids() -> Vec<&'static str> {
     // The Agents pane's pop-ups, for every agent it can hold: one added at
     // runtime has to find its menus already made.
     ids.extend(agents::slot_ids());
+    // The Privacy pane's Ask / Allow / Don't Allow pop-ups, one per row it
+    // can hold.
+    ids.extend_from_slice(panes::privacy::slot_ids());
     ids
 }
 
@@ -480,6 +483,18 @@ impl ScrollContent for PaneContent<'_> {
     }
 }
 
+/// The serial of the last pointer press or key press, for a button that
+/// claims the clipboard: the compositor only lets an input event do that.
+static INPUT_SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn note_input_serial(serial: u32) {
+    INPUT_SERIAL.store(serial, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn input_serial() -> u32 {
+    INPUT_SERIAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The serial of a press, which the compositor requires to open a popup.
 fn event_serial(kind: &PointerEventKind) -> u32 {
     match kind {
@@ -544,7 +559,9 @@ fn open_menu(
         displays::menu_choices(select.id).or_else(|| agents::menu_choices(select.id));
     let slot = keyboard::slot_index(select.id);
     let choices: Vec<discovery::Choice> =
-        if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
+        if let Some(choices) = panes::privacy::menu_choices(select.id) {
+            choices
+        } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
         } else if let Some(values) = display_slot {
             values
@@ -582,7 +599,8 @@ fn open_menu(
                 }
             }
         };
-    if choices.is_empty() {
+    let labels: Vec<String> = choices.iter().map(|c| c.label.clone()).collect();
+    if labels.is_empty() {
         return;
     }
 
@@ -594,7 +612,6 @@ fn open_menu(
     let chosen_window = window.clone();
     // The menu shows `label`s but applies `value`s — they differ only for
     // the synthetic "Automatic" entry a discovered dropdown may add.
-    let labels: Vec<String> = choices.iter().map(|c| c.label.clone()).collect();
     let values: Vec<String> = choices.into_iter().map(|c| c.value).collect();
 
     let dismissed_open = open_dropdown.clone();
@@ -615,7 +632,7 @@ fn open_menu(
         selected,
         move |index| {
             if let Some(value) = values.get(index) {
-                if panes::keyboard_layouts::choose(id, value) {
+                if panes::privacy::choose(id, value) || panes::keyboard_layouts::choose(id, value) {
                 } else if displays::menu_choices(id).is_some() {
                     displays::choose(id, value);
                 } else if agents::owns(id) {
@@ -715,6 +732,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
         view::Pressed::RemoveRow(id) => {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
+            panes::privacy::remove(id);
         }
         // A second press on the listening line's button stops it.
         view::Pressed::Record(index) => keyboard::set_recording(
@@ -758,6 +776,11 @@ fn stop_recording() -> bool {
 /// is updated there when the answer comes and a redraw is requested, exactly
 /// as for a `Changed` signal.
 fn apply(id: &str, value: settings_client::Value) {
+    // The Privacy pane's notification switches write the permission store,
+    // not a setting.
+    if panes::privacy::apply(id, &value) {
+        return;
+    }
     if settings_client::is_sensitive(id) {
         let owned = id.to_string();
         let spawned = std::thread::Builder::new()
@@ -853,6 +876,9 @@ struct Stop {
     bounds: Rect,
     /// The push button this stop is, for a row that carries several.
     button: Option<&'static str>,
+    /// Whether this stop is the row's named remove button rather than its
+    /// control.
+    remove: bool,
 }
 
 /// The row the keyboard is on, and which of its stops.
@@ -863,6 +889,8 @@ struct Focused {
     control: model::Control,
     /// The push button the keyboard is on, for a row with several.
     button: Option<&'static str>,
+    /// The row's handle, when the keyboard is on its named remove button.
+    remove: Option<&'static str>,
     /// The pop-up field's rect, for a row that has one: where its menu is
     /// anchored, in window coordinates.
     select_rect: Option<Rect>,
@@ -879,25 +907,42 @@ struct Focused {
 /// and describing it to a screen reader all walk this list, so a stop cannot
 /// exist for one of them and not the others.
 fn row_stops(row: &model::Row, rect: Rect) -> Vec<Stop> {
-    if !row.focusable() {
-        return Vec::new();
-    }
-    match &row.control {
-        model::Control::Button(labels) => labels
-            .iter()
-            .zip(view::row_button_rects(row, rect))
-            .map(|(button, bounds)| Stop {
-                focus: view::button_focus_id(row.handle(), button),
+    let mut stops = if !row.focusable() {
+        Vec::new()
+    } else {
+        match &row.control {
+            model::Control::Button(labels) => labels
+                .iter()
+                .zip(view::row_button_rects(row, rect))
+                .map(|(button, bounds)| Stop {
+                    focus: view::button_focus_id(row.handle(), button),
+                    bounds,
+                    button: Some(button),
+                    remove: false,
+                })
+                .collect(),
+            _ => vec![Stop {
+                focus: view::pane_focus_id(row.handle()),
+                bounds: rect,
+                button: None,
+                remove: false,
+            }],
+        }
+    };
+    // A named remove button — Forget, Reset — is something to do of its own,
+    // after the control it sits beside, and reachable even on a row whose
+    // value is only read.
+    if row.remove_label.is_some() {
+        if let Some(bounds) = view::row_remove_button_rect(row, rect) {
+            stops.push(Stop {
+                focus: view::remove_focus_id(row.handle()),
                 bounds,
-                button: Some(button),
-            })
-            .collect(),
-        _ => vec![Stop {
-            focus: view::pane_focus_id(row.handle()),
-            bounds: rect,
-            button: None,
-        }],
+                button: None,
+                remove: true,
+            });
+        }
     }
+    stops
 }
 
 fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
@@ -995,6 +1040,23 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
         // button for a list this does not describe yet; announcing either as
         // one thing would be a lie about what it is.
         model::Control::Shortcut { .. } | model::Control::AddShortcut => {}
+    }
+
+    // A named remove button is its own node, as it is its own stop, named
+    // "<row>: <word>" the way a row's push buttons are, so "Forget" is heard
+    // as forgetting this app rather than as a loose word.
+    if let (Some(word), Some(rect)) = (&row.remove_label, view::row_remove_button_rect(row, bounds))
+    {
+        tree.control(
+            view::remove_focus_id(row.handle()),
+            rect,
+            Role::Button,
+            true,
+            |node| {
+                node.set_label(format!("{label}: {word}"));
+                node.add_action(Action::Click);
+            },
+        );
     }
 }
 
@@ -1328,6 +1390,7 @@ impl SettingsApp {
                     label: row.label,
                     control: row.control.clone(),
                     button: stop.button,
+                    remove: stop.remove.then(|| row.handle()),
                     select_rect: view::row_select_rect(row, rect),
                 })
             })
@@ -1341,6 +1404,16 @@ impl SettingsApp {
         let Some(focused) = self.focused_row() else {
             return false;
         };
+
+        // The remove button acts as a click on it does, and only on
+        // activation: arrows on it have nothing to move.
+        if let Some(handle) = focused.remove {
+            if step != 0.0 {
+                return false;
+            }
+            activate(view::Pressed::RemoveRow(handle), &self.editing);
+            return true;
+        }
 
         match focused.control {
             model::Control::Toggle(on) if step == 0.0 => match focused.id {
@@ -1733,6 +1806,7 @@ impl App for SettingsApp {
 
                 match &event.kind {
                     PointerEventKind::Press { serial, .. } => {
+                        note_input_serial(*serial);
                         if !in_pane(&size_hit, x, y) {
                             continue;
                         }
@@ -2010,10 +2084,7 @@ impl App for SettingsApp {
                     }
                     PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. } => {
                         let (win_w, win_h) = *size_hit.lock().unwrap();
-                        match resize::edge_at(Rect::from_wh(win_w, win_h), x, y) {
-                            Some(edge) => AppContext::set_cursor_shape(edge.cursor()),
-                            None => AppContext::set_cursor_shape(CursorShape::Default),
-                        }
+                        let edge = resize::edge_at(Rect::from_wh(win_w, win_h), x, y);
 
                         // Hovering the scrollbar keeps it up and widens it;
                         // dragging it moves the content.
@@ -2034,6 +2105,16 @@ impl App for SettingsApp {
                                 &hovered_preview,
                             );
                             let offset = pane_offset(&pane);
+                            // An edge shows which way it moves; a row's remove
+                            // button (Forget, Remove, "−") shows the hand, as a
+                            // link does; anywhere else the ordinary pointer.
+                            AppContext::set_cursor_shape(match edge {
+                                Some(edge) => edge.cursor(),
+                                None if settings.row_remove_hit(x, y, offset).is_some() => {
+                                    CursorShape::Pointer
+                                }
+                                None => CursorShape::Default,
+                            });
                             let over = settings.preview_hit(x, y, offset).map(|preview| preview.id);
                             let mut current = hovered_preview.lock().unwrap();
                             if *current != over {
@@ -2196,6 +2277,8 @@ impl App for SettingsApp {
 
         // The Search pane polls the file index only while it is on screen.
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
+        // The Privacy pane reads the permission store when it comes on screen.
+        panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
 
         if settings_client::take_dirty()
             | agents::take_service_dirty()
@@ -2278,6 +2361,7 @@ impl App for SettingsApp {
         if state != wl_keyboard::KeyState::Pressed {
             return;
         }
+        note_input_serial(serial);
 
         // A pop-up is up: the keyboard is on the menu's own surface, and the
         // menu owns every key until it closes. Without this the arrows would
@@ -2808,5 +2892,41 @@ mod focus_tests {
     fn a_static_value_is_not_a_stop() {
         let row = Row::new("No display detected", Control::Value(String::new()));
         assert!(row_stops(&row, rect()).is_empty());
+    }
+
+    /// Forget is something to do of its own: a stop after the control it sits
+    /// beside, and the only stop on a row whose value is just read — a remote
+    /// desktop grant, an input method.
+    #[test]
+    fn a_named_remove_button_is_a_stop_after_the_control() {
+        let mut row = Row::new("Firefox", Control::Toggle(true))
+            .removable(true)
+            .remove_label("Forget");
+        row.id = Some("sender.firefox");
+        let stops = row_stops(&row, rect());
+        assert_eq!(
+            stops.iter().map(|stop| stop.focus).collect::<Vec<_>>(),
+            vec![
+                view::pane_focus_id("sender.firefox"),
+                view::remove_focus_id("sender.firefox")
+            ]
+        );
+        assert!(stops[1].remove);
+        assert_eq!(
+            Some(stops[1].bounds),
+            view::row_remove_button_rect(&row, rect())
+        );
+
+        let mut grant = Row::new("Remote", Control::Value(String::new()))
+            .removable(true)
+            .remove_label("Forget");
+        grant.id = Some("grant.remote");
+        let stops = row_stops(&grant, rect());
+        assert_eq!(stops.len(), 1);
+        assert!(stops[0].remove);
+
+        // The "−" stays pointer-only, as it was.
+        let plain = Row::new("Folder", Control::Value(String::new())).removable(true);
+        assert!(row_stops(&plain, rect()).is_empty());
     }
 }

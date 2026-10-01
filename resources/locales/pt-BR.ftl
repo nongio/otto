@@ -1841,3 +1841,31 @@ authorize-reason-generic = Mudar a configuração “{ $setting }”?
 authorize-error-failed = Falha na autenticação
 polkit-reason = { $program } pede: { $message }
 polkit-unknown-program = Um programa desconhecido
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = vale para todos os apps fora de uma sandbox
+privacy-app-unsandboxed = Apps fora de uma sandbox
+privacy-decision-allow = Permitir
+privacy-decision-ask = Perguntar
+privacy-decision-deny = Não permitir
+privacy-forget = Esquecer
+privacy-group-notifications = Notificações
+privacy-group-screen = Compartilhamento de tela
+privacy-notifications-none = Nenhum app pediu para enviar notificações ainda
+privacy-reading = Lendo…
+privacy-remembered-by = lembrado pelo { $desktop }
+privacy-remote-desktop = Controla o mouse e o teclado e vê sua tela
+privacy-reset = Redefinir
+privacy-screencast = Grava sua tela
+privacy-screencast-monitor = Grava a tela { $screen }
+privacy-screencast-window = Grava uma janela
+privacy-screen-none = Nenhum app está lembrado como autorizado a compartilhar sua tela
+privacy-screenshot = Faz capturas de tela
+privacy-screenshot-allowed = Faz capturas de tela sem perguntar
+privacy-screenshot-denied = Não pode fazer capturas de tela
+privacy-store-unavailable = Não foi possível ler o que foi permitido aos apps
+privacy-store-unavailable-detail = O armazenamento de permissões (xdg-permission-store, parte do xdg-desktop-portal) não está disponível
+settings-pane-privacy = Privacidade
+
+screencast-picker-remember = Lembrar para { $app }

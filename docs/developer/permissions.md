@@ -86,6 +86,26 @@ polkitd asks Otto's agent, which words the panel from the `otto.setting`,
 `otto.value` and `otto.label` details. The schema marks these settings with
 `confirm = "password"`, so Settings knows a `Set` may wait for the user.
 
+## Settings › Privacy
+
+The Privacy pane (`components/otto-settings/src/panes/privacy.rs`) reads and
+writes xdg-permission-store through `otto_kit::permission_store`, and follows
+its `Changed` signal while shown:
+
+- `screencast` and `remote-desktop`: remembered shares, one entry per restore
+  token, listed with Forget (deletes the entry).
+- `screenshot` / `screenshot`: `yes`, `no` or no answer per app.
+- `notifications` / `notification`: `yes` or `no` per app, as the portal's
+  Notification interface writes and honours them.
+
+The portal (`components/xdg-desktop-portal-otto/src/portal/remembered.rs`)
+writes a `screencast` entry of the frontend's own shape (`otto-…` id, the app
+holding `yes`, the `(suv)` restore payload) when "Remember for <app>" is
+ticked, and on a request without restore data reuses any entry the app holds.
+The checkbox is the Access dialog's choice with no options, group
+`otto.remember`, whose label is the app's name; otto-islands words it. Apps
+with the empty app id are never remembered.
+
 ## Screen capture
 
 - A screencast session answers only the connection that created it, and

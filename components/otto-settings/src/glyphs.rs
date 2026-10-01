@@ -34,6 +34,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "lock" => lock(canvas, &paint),
         "search" => search(canvas, &paint),
         "agent" => agent(canvas, &paint),
+        "hand" => hand(canvas, &paint),
         _ => {
             canvas.draw_circle(Point::new(0.0, 0.0), 2.5, &paint);
         }
@@ -163,4 +164,22 @@ fn agent(canvas: &Canvas, paint: &Paint) {
     spark.quad_to(Point::new(-1.0, -1.0), Point::new(0.0, -7.0));
     spark.close();
     canvas.draw_path(&spark.detach(), paint);
+}
+
+/// A raised open hand, palm out: four fingers, a thumb and the palm.
+fn hand(canvas: &Canvas, paint: &Paint) {
+    // Fingers, tallest in the middle.
+    for (x, top) in [(-3.6_f32, -3.5_f32), (-1.2, -6.0), (1.2, -6.5), (3.6, -4.5)] {
+        canvas.draw_line(Point::new(x, top), Point::new(x, 1.0), paint);
+    }
+    // Palm: the fingers' base rounding down into the wrist.
+    let mut palm = PathBuilder::new();
+    palm.move_to(Point::new(-3.6, 0.5));
+    palm.line_to(Point::new(-3.6, 3.0));
+    palm.quad_to(Point::new(-3.2, 7.0), Point::new(0.5, 7.0));
+    palm.quad_to(Point::new(3.6, 7.0), Point::new(3.6, 3.5));
+    palm.line_to(Point::new(3.6, 0.5));
+    canvas.draw_path(&palm.detach(), paint);
+    // Thumb, out to the left.
+    canvas.draw_line(Point::new(-3.6, 3.5), Point::new(-6.2, 0.8), paint);
 }

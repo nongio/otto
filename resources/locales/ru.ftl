@@ -1905,3 +1905,31 @@ authorize-reason-generic = Изменить параметр «{ $setting }»?
 authorize-error-failed = Не удалось пройти проверку подлинности
 polkit-reason = { $program } запрашивает: { $message }
 polkit-unknown-program = Неизвестная программа
+
+## Settings › Privacy: what apps were allowed, read from xdg-permission-store.
+
+privacy-applies-to-unsandboxed = относится ко всем приложениям вне песочницы
+privacy-app-unsandboxed = Приложения вне песочницы
+privacy-decision-allow = Разрешать
+privacy-decision-ask = Спрашивать
+privacy-decision-deny = Не разрешать
+privacy-forget = Забыть
+privacy-group-notifications = Уведомления
+privacy-group-screen = Доступ к экрану
+privacy-notifications-none = Ни одно приложение ещё не просило отправлять уведомления
+privacy-reading = Чтение…
+privacy-remembered-by = запомнено в { $desktop }
+privacy-remote-desktop = Управляет мышью и клавиатурой и видит экран
+privacy-reset = Сбросить
+privacy-screencast = Записывает экран
+privacy-screencast-monitor = Записывает экран { $screen }
+privacy-screencast-window = Записывает окно
+privacy-screen-none = Ни одному приложению не запомнено разрешение на доступ к экрану
+privacy-screenshot = Делает снимки экрана
+privacy-screenshot-allowed = Делает снимки экрана без запроса
+privacy-screenshot-denied = Не может делать снимки экрана
+privacy-store-unavailable = Не удаётся прочитать, что разрешено приложениям
+privacy-store-unavailable-detail = Хранилище разрешений (xdg-permission-store из xdg-desktop-portal) недоступно
+settings-pane-privacy = Конфиденциальность
+
+screencast-picker-remember = Запомнить для { $app }

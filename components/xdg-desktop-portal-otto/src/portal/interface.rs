@@ -14,6 +14,11 @@ use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue};
 
 use crate::otto_client::screencast::WindowSource;
 use crate::otto_client::OttoClient;
+use crate::portal::remembered;
+
+/// The picker's checkbox group, as otto-islands knows it: the label is the
+/// app's name and islands words the rest.
+const REMEMBER_GROUP: &str = "otto.remember";
 use crate::portal::{
     build_streams_value_from_descriptors, decode_restore_data, encode_restore_data,
     make_output_mapping_id, resolve_restored, PortalState, Request, RestoredSource, SelectedWindow,
@@ -72,6 +77,16 @@ pub enum SourceSelection {
     Window(WindowSource),
 }
 
+impl SourceSelection {
+    /// The source as it is remembered: its identity only.
+    pub fn restorable(&self) -> RestoredSource {
+        match self {
+            SourceSelection::Monitor(connector) => RestoredSource::Monitor(connector.clone()),
+            SourceSelection::Window(window) => RestoredSource::Window(window.id.clone()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ScreenCastPortal {
     state: Arc<Mutex<PortalState>>,
@@ -93,12 +108,16 @@ impl ScreenCastPortal {
     /// which bit was set. Returns `Ok(None)` if the user dismissed the dialog,
     /// and `Err` only when no dialog renderer answered (see the caller's
     /// fallback).
+    ///
+    /// For an app a share can be remembered for, the picker carries a
+    /// "Remember for <app>" checkbox (islands words it; the group's label is
+    /// the app's name), and the answer says whether it was ticked.
     async fn pick_source(
         &self,
         app_id: &str,
         outputs: &[String],
         windows: &[WindowSource],
-    ) -> zbus::Result<Option<SourceSelection>> {
+    ) -> zbus::Result<Option<(SourceSelection, bool)>> {
         // Option ids are prefixed so one flat list can carry both kinds.
         let mut options: Vec<(String, String, String)> = Vec::new();
 
@@ -132,6 +151,17 @@ impl ScreenCastPortal {
             return Ok(None);
         };
 
+        // The Access portal's checkbox: a choice with no options, answered
+        // `true` or `false`. Off unless the user ticks it.
+        let remember = remembered::can_remember(app_id).then(|| {
+            (
+                REMEMBER_GROUP.to_string(),
+                display_app_name(app_id),
+                Vec::new(),
+                "false".to_string(),
+            )
+        });
+
         let title = "Share your screen";
         let subtitle = format!("{} wants to share your screen", display_app_name(app_id));
         let body = "The selected source will be visible to the application.";
@@ -149,12 +179,14 @@ impl ScreenCastPortal {
                     "Share",
                     "Cancel",
                     true,
-                    vec![(
+                    std::iter::once((
                         "source".to_string(),
                         "Choose what to share".to_string(),
                         options.clone(),
                         default_id.clone(),
-                    )],
+                    ))
+                    .chain(remember.clone())
+                    .collect(),
                 )
                 .await
         }
@@ -185,12 +217,17 @@ impl ScreenCastPortal {
                         "Share",
                         "Cancel",
                         true,
-                        vec![(
+                        std::iter::once((
                             "source".to_string(),
                             "Choose what to share".to_string(),
                             plain,
                             default_id,
-                        )],
+                        ))
+                        .chain(
+                            remember
+                                .map(|(id, label, _, default)| (id, label, Vec::new(), default)),
+                        )
+                        .collect(),
                     )
                     .await?
             }
@@ -200,12 +237,15 @@ impl ScreenCastPortal {
             return Ok(None);
         }
 
+        let remembered = results
+            .iter()
+            .any(|(group, answer)| group == REMEMBER_GROUP && answer == "true");
         let Some((_, choice)) = results.into_iter().find(|(group, _)| group == "source") else {
             warn!("Picker returned no selection for the source group");
             return Ok(None);
         };
 
-        Ok(match choice.split_once(':') {
+        let selection = match choice.split_once(':') {
             Some(("monitor", connector)) => Some(SourceSelection::Monitor(connector.to_string())),
             Some(("window", id)) => windows
                 .iter()
@@ -216,7 +256,8 @@ impl ScreenCastPortal {
                 warn!(%choice, "Picker returned an unrecognised option id");
                 None
             }
-        })
+        };
+        Ok(selection.map(|selection| (selection, remembered)))
     }
 
     /// Record the source this session will capture, however it was chosen.
@@ -360,6 +401,7 @@ impl ScreenCastPortal {
         app_id: String,
         options: HashMap<String, OwnedValue>,
         #[zbus(object_server)] object_server: &ObjectServer,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         info!(session = %session_handle, ?app_id, ?options, "SelectSources called");
 
@@ -445,17 +487,22 @@ impl ScreenCastPortal {
             // between the preview in its own picker and the real capture)
             // carries the source the user already approved. Restoring it is
             // what keeps the picker from opening a second time.
-            let restored = options
-                .get("restore_data")
-                .and_then(decode_restore_data)
-                .and_then(|source| {
-                    resolve_restored(
-                        source,
-                        requested_types,
-                        &available_outputs,
-                        &available_windows,
-                    )
-                });
+            // An app that brings no restore data of its own gets the source
+            // remembered for it in the permission store, if there is one and
+            // it is still there (see `remembered`).
+            let from_app = options.get("restore_data").and_then(decode_restore_data);
+            let candidates: Vec<RestoredSource> = match from_app {
+                Some(source) => vec![source],
+                None => remembered::sources(connection, &app_id).await,
+            };
+            let restored = candidates.into_iter().find_map(|source| {
+                resolve_restored(
+                    source,
+                    requested_types,
+                    &available_outputs,
+                    &available_windows,
+                )
+            });
 
             if let Some(selection) = restored {
                 info!(
@@ -473,11 +520,11 @@ impl ScreenCastPortal {
                 return Ok((0, results));
             }
 
-            let selection = match self
+            let (selection, remember) = match self
                 .pick_source(&app_id, &available_outputs, &available_windows)
                 .await
             {
-                Ok(Some(selection)) => selection,
+                Ok(Some(answer)) => answer,
                 // User dismissed the picker.
                 Ok(None) => {
                     info!(session = %session_handle, "User cancelled source selection");
@@ -493,6 +540,9 @@ impl ScreenCastPortal {
 
             self.store_selection(&session_handle, &selection, cursor_mode, persist_mode)
                 .await?;
+            if remember {
+                remembered::remember(connection, &app_id, &selection.restorable()).await;
+            }
 
             info!(
                 session = %session_handle,
