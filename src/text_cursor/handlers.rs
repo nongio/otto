@@ -104,6 +104,13 @@ impl<BackendData: Backend> GlobalDispatch<OttoTextCursorManagerV1, (), Otto<Back
     ) {
         data_init.init(resource, ());
     }
+
+    /// Where another app's caret is, as it moves, is not a sandboxed app's
+    /// to watch. The watchers are
+    /// Otto's own components, which are never sandboxed.
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
 }
 
 impl<BackendData: Backend> Dispatch<OttoTextCursorManagerV1, (), Otto<BackendData>>

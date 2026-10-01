@@ -71,6 +71,11 @@ pub struct GammaControlState {
 impl<BackendData: Backend> GlobalDispatch<ZwlrGammaControlManagerV1, (), Otto<BackendData>>
     for GammaControlManagerState
 {
+    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
+
     fn bind(
         _state: &mut Otto<BackendData>,
         _handle: &DisplayHandle,

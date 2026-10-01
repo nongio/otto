@@ -552,6 +552,25 @@ impl HeadlessHandle {
         });
     }
 
+    /// Press (`pressed`) or release the key with evdev code `code` through
+    /// the same path a real keyboard's key takes: shortcuts, the lock
+    /// screen, modal layers, grabs.
+    pub fn key(&self, code: u32, pressed: bool) {
+        self.with_state(move |state| {
+            let key_state = if pressed {
+                smithay::backend::input::KeyState::Pressed
+            } else {
+                smithay::backend::input::KeyState::Released
+            };
+            // xkb keycodes are evdev codes plus 8.
+            let _ = state.keycode_to_action(
+                (code + 8).into(),
+                key_state,
+                smithay::backend::input::InputTime::from_millis(0),
+            );
+        });
+    }
+
     /// Press the left button at the current pointer position.
     pub fn pointer_press(&self) {
         self.with_state(|state| {

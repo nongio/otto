@@ -57,50 +57,11 @@ pub fn validate_persist_mode(mode: u32) -> Result<u32, fdo::Error> {
     }
 }
 
-/// Reads the user's preferred screencast output from
-/// `$XDG_CONFIG_HOME/otto/screencast-output` (one connector name, e.g.
-/// `virtual-1`). Read per SelectSources call so it can be changed between
-/// sessions without restarting the portal. Stopgap until a proper source
-/// picker exists.
-fn preferred_output_override() -> Option<String> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
-        })?;
-    let content = std::fs::read_to_string(base.join("otto/screencast-output")).ok()?;
-    let name = content.trim().to_string();
-    (!name.is_empty()).then_some(name)
-}
-
 /// Best-effort human-readable name for a requesting app, for the dialog copy.
 fn display_app_name(app_id: &str) -> String {
     match app_id.rsplit('.').next() {
         Some(name) if !name.is_empty() => name.to_string(),
         _ => "An application".to_string(),
-    }
-}
-
-/// Picks the output to capture when no picker dialog is reachable: the
-/// `screencast-output` override if it names a present output, else the first.
-fn fallback_output(available: &[String]) -> Option<String> {
-    if available.is_empty() {
-        return None;
-    }
-    match preferred_output_override() {
-        Some(preferred) if available.contains(&preferred) => {
-            info!(output = %preferred, "Using screencast-output override");
-            Some(preferred)
-        }
-        Some(preferred) => {
-            warn!(
-                output = %preferred,
-                ?available,
-                "screencast-output override not among available outputs; using first"
-            );
-            available.first().cloned()
-        }
-        None => available.first().cloned(),
     }
 }
 
@@ -522,15 +483,11 @@ impl ScreenCastPortal {
                     info!(session = %session_handle, "User cancelled source selection");
                     return Ok((1, HashMap::new()));
                 }
-                // No dialog renderer on the bus. Monitor capture keeps its
-                // pre-picker behaviour so an islands-less session still works;
-                // a window is never picked on the user's behalf.
+                // No dialog renderer on the bus: nobody can say yes, so the
+                // answer is no. Nothing is shared on the user's behalf.
                 Err(err) => {
-                    warn!(session = %session_handle, ?err, "Source picker unavailable");
-                    let Some(fallback) = fallback_output(&available_outputs) else {
-                        return Ok((2, HashMap::new()));
-                    };
-                    SourceSelection::Monitor(fallback)
+                    warn!(session = %session_handle, ?err, "Source picker unavailable; denying");
+                    return Ok((2, HashMap::new()));
                 }
             };
 

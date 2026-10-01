@@ -1064,12 +1064,11 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             }
 
             // Lock first, so the blank is what the session comes back to. Same
-            // path as the power button's `lock`: launching the locker is what
-            // locks — it asks for the lock itself. See `src/lock.rs`.
+            // path as the power button's `lock`; the suspend below waits for
+            // the blank on logind's delay inhibitor. See `src/lock.rs`.
             if matches!(lid_action, LidCloseAction::Lock) && !self.is_session_locked() {
-                let (cmd, args) = crate::lock::locker_command();
-                tracing::info!(locker = %cmd, "Lid closed - locking session");
-                self.launch_program(cmd, args);
+                tracing::info!("Lid closed - locking session");
+                self.lock_session();
             }
 
             // Otto owns the suspend decision — logind's lid handling is

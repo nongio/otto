@@ -208,6 +208,9 @@ impl<B: Backend> PointerTarget<Otto<B>> for PointerFocusTarget<B> {
         }
     }
     fn button(&self, seat: &Seat<Otto<B>>, data: &mut Otto<B>, event: &ButtonEvent) {
+        if event.state == smithay::backend::input::ButtonState::Pressed {
+            data.note_seat_press(seat, event.serial, self.wl_surface().as_deref());
+        }
         match self {
             PointerFocusTarget::WlSurface(w) => PointerTarget::button(w, seat, data, event),
             #[cfg(feature = "xwayland")]
@@ -495,6 +498,9 @@ impl<B: Backend> KeyboardTarget<Otto<B>> for KeyboardFocusTarget<B> {
         serial: Serial,
         time: InputTime,
     ) {
+        if state == KeyState::Pressed {
+            data.note_seat_press(seat, serial, self.wl_surface().as_deref());
+        }
         match self {
             KeyboardFocusTarget::Window(w) => match w.underlying_surface() {
                 WindowSurface::Wayland(w) => {
@@ -566,6 +572,7 @@ impl<B: Backend> TouchTarget<Otto<B>> for PointerFocusTarget<B> {
         data: &mut Otto<B>,
         event: &smithay::input::touch::DownEvent,
     ) {
+        data.note_seat_press(seat, event.serial, self.wl_surface().as_deref());
         match self {
             PointerFocusTarget::WlSurface(w) => TouchTarget::down(w, seat, data, event),
             #[cfg(feature = "xwayland")]
@@ -700,6 +707,7 @@ impl<B: Backend> TabletToolTarget<Otto<B>> for PointerFocusTarget<B> {
         tool_descriptor: &TabletToolDescriptor,
         event: &tablet::tool::DownEvent,
     ) {
+        data.note_seat_press(seat, event.serial, self.wl_surface().as_deref());
         match self {
             PointerFocusTarget::WlSurface(w) => {
                 TabletToolTarget::down(w, seat, data, tool_descriptor, event)
@@ -776,6 +784,9 @@ impl<B: Backend> TabletToolTarget<Otto<B>> for PointerFocusTarget<B> {
         tool_descriptor: &TabletToolDescriptor,
         event: &tablet::tool::ButtonEvent,
     ) {
+        if event.state == smithay::backend::input::ButtonState::Pressed {
+            data.note_seat_press(seat, event.serial, self.wl_surface().as_deref());
+        }
         match self {
             PointerFocusTarget::WlSurface(w) => {
                 TabletToolTarget::button(w, seat, data, tool_descriptor, event)

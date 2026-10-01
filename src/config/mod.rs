@@ -241,7 +241,7 @@ impl Config {
         let _guard = CONFIG_WRITE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let (config, errors) = Self::load_layered_reporting();
+        let (config, errors) = Self::load_layered_reporting(None);
         if let Some(error) = errors.into_iter().next() {
             return Err(error);
         }
@@ -250,8 +250,42 @@ impl Config {
         Ok((previous, next))
     }
 
+    /// Every layer merged as [`Config::reload`] would, but with the dotted key
+    /// `without` left out of the writable file — what a `Reset` of it would
+    /// leave in force — and nothing installed or written.
+    ///
+    /// A layer that fails to parse is an error, as it is for a reload.
+    pub fn load_without(without: &str) -> Result<Config, String> {
+        let (config, errors) = Self::load_layered_reporting(Some(without));
+        match errors.into_iter().next() {
+            Some(error) => Err(error),
+            None => Ok(config),
+        }
+    }
+
+    /// Install `next` as the live configuration, but only while the live one
+    /// is still `expected`: a snapshot prepared earlier (and shown to the
+    /// user) must not undo whatever changed since. Returns the previous
+    /// snapshot and the new one, or `None` if the configuration moved on.
+    pub fn install_if_current(
+        expected: &Arc<Config>,
+        next: Config,
+    ) -> Option<(Arc<Config>, Arc<Config>)> {
+        let _guard = CONFIG_WRITE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = Self::current();
+        if !Arc::ptr_eq(&previous, expected) {
+            return None;
+        }
+        let mut next = next;
+        next.rebuild_shortcut_bindings();
+        let next = Self::store(next);
+        Some((previous, next))
+    }
+
     fn init() -> Self {
-        let (config, errors) = Self::load_layered_reporting();
+        let (config, errors) = Self::load_layered_reporting(None);
         for error in &errors {
             warn!("{error}");
         }
@@ -266,7 +300,10 @@ impl Config {
 
     /// Merge every configuration layer, lowest priority first, reporting the
     /// layers that could not be parsed instead of quietly dropping them.
-    fn load_layered_reporting() -> (Self, Vec<String>) {
+    ///
+    /// `without` is a dotted key read as absent from the writable file; see
+    /// [`Config::load_without`].
+    fn load_layered_reporting(without: Option<&str>) -> (Self, Vec<String>) {
         let mut errors: Vec<String> = Vec::new();
         let mut merged =
             toml::Value::try_from(Self::default()).expect("default config is always valid toml");
@@ -278,6 +315,7 @@ impl Config {
 
         let layers = config_layers();
         let found_any_config = !layers.is_empty();
+        let writable = without.map(|_| writable_config_path());
 
         for layer in layers {
             let content = match std::fs::read_to_string(&layer) {
@@ -290,7 +328,12 @@ impl Config {
                 }
             };
             match content.parse::<toml::Value>() {
-                Ok(value) => {
+                Ok(mut value) => {
+                    if let (Some(key), Some(writable)) = (without, writable.as_ref()) {
+                        if &layer == writable {
+                            remove_dotted(&mut value, key);
+                        }
+                    }
                     merge_value(&mut merged, value);
                     tracing::info!("Loaded config layer from {}", layer.display());
                 }
@@ -332,6 +375,21 @@ impl Config {
         descriptor: &DisplayDescriptor<'_>,
     ) -> Option<DisplayProfile> {
         self.displays.resolve(name, descriptor)
+    }
+}
+
+/// Take the dotted key `path` out of a TOML document, if it is there.
+fn remove_dotted(doc: &mut toml::Value, path: &str) {
+    let (parent, leaf) = path.rsplit_once('.').unwrap_or(("", path));
+    let mut value = doc;
+    for segment in parent.split('.').filter(|s| !s.is_empty()) {
+        let Some(next) = value.get_mut(segment) else {
+            return;
+        };
+        value = next;
+    }
+    if let Some(table) = value.as_table_mut() {
+        table.remove(leaf);
     }
 }
 
@@ -965,7 +1023,7 @@ pub struct LoginConfig {
 impl Default for LoginConfig {
     fn default() -> Self {
         Self {
-            greeter_command: "otto-greeter".to_string(),
+            greeter_command: DEFAULT_GREETER.to_string(),
             greeter_args: Vec::new(),
         }
     }
@@ -1583,14 +1641,26 @@ pub struct LockConfig {
     /// A client holding an `idle-inhibit-unstable-v1` inhibitor — a video
     /// player, a presentation — holds the lock off while it plays.
     pub auto_lock_timeout: u64,
+    /// Lock the session before the computer suspends, however the suspend
+    /// was asked for (the power menu, the power button, `systemctl suspend`,
+    /// the lid), so it wakes to the lock screen. On by default; turning it
+    /// off asks for the password. `power_management.on_lid_close = "lock"`
+    /// locks on a suspend either way.
+    pub on_suspend: bool,
 }
+
+/// The default locker, Otto's own `otto-lock`.
+pub const DEFAULT_LOCKER: &str = "otto-lock";
+/// The default greeter, Otto's own `otto-greeter`.
+pub const DEFAULT_GREETER: &str = "otto-greeter";
 
 impl Default for LockConfig {
     fn default() -> Self {
         Self {
-            locker_command: "otto-lock".to_string(),
+            locker_command: DEFAULT_LOCKER.to_string(),
             locker_args: Vec::new(),
             auto_lock_timeout: 0,
+            on_suspend: true,
         }
     }
 }

@@ -112,6 +112,11 @@ where
     Otto<BackendData>: Dispatch<ZwlrScreencopyManagerV1, ()>,
     Otto<BackendData>: Dispatch<ZwlrScreencopyFrameV1, ScreencopyFrameData>,
 {
+    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
+
     fn bind(
         _state: &mut Otto<BackendData>,
         _display: &DisplayHandle,

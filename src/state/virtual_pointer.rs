@@ -103,6 +103,11 @@ where
     Otto<BackendData>: Dispatch<ZwlrVirtualPointerManagerV1, ()>,
     Otto<BackendData>: Dispatch<ZwlrVirtualPointerV1, VirtualPointerUserData>,
 {
+    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
+
     fn bind(
         _state: &mut Otto<BackendData>,
         _display: &DisplayHandle,

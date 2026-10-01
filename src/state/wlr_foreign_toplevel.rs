@@ -210,6 +210,11 @@ impl WlrForeignToplevelHandle {
 impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto<BackendData>>
     for Otto<BackendData>
 {
+    /// Never offered to sandboxed clients (see `src/sandbox.rs`).
+    fn can_view(client: Client, _global_data: &()) -> bool {
+        !crate::sandbox::is_sandboxed_client(&client)
+    }
+
     fn bind(
         state: &mut Otto<BackendData>,
         _handle: &DisplayHandle,

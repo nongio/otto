@@ -82,8 +82,8 @@ otto-rdp [--output <name>] [--node <id> | --connector <name>] [options]
 | `--node <id>` | Skip discovery and use this PipeWire node id directly. Rarely needed; `--output` finds it. |
 | `--connector <name>` | Capture a physical output instead, e.g. `eDP-1`. Mutually exclusive with `--node`; also becomes the default `--output`. |
 | `--output <name>` | Wayland output to aim input at. Defaults to `virtual-1`, or the `--connector` value. |
-| `--port <n>` | Listen port on `0.0.0.0`. Default `3389`. |
-| `--listen <addr:port>` | Full listen address; overrides `--port`. Default `0.0.0.0:3389`. |
+| `--port <n>` | Listen port on `127.0.0.1`. Default `3389`. |
+| `--listen <addr:port>` | Full listen address; overrides `--port`. Default `127.0.0.1:3389`: only this machine. Pass `0.0.0.0:3389` to accept other devices. |
 | `--desktop <WxH>` | Serve this desktop size instead of the client's reported box |
 | `--no-tls` | Use the plain-RDP security layer instead of TLS, which is on by default |
 | `--bitmap` | Force the legacy raw-bitmap path instead of hardware H.264 |
@@ -177,11 +177,12 @@ no consumer does not block suspend. See
 The bridge has **no authentication of its own** — anyone who can reach the port
 gets your desktop. TLS encrypts the transport; it does not gate access.
 
-Do not expose port 3389 to an untrusted network. Bind it to localhost and tunnel
-over SSH instead:
+By default it listens on `127.0.0.1` only, and it warns when you pass an
+address other devices can reach. Do not expose port 3389 to an untrusted
+network: keep the default and tunnel over SSH instead:
 
 ```sh
-otto-rdp --output virtual-1 --listen 127.0.0.1:3389
+otto-rdp --output virtual-1
 # from the client machine:
 ssh -L 3389:localhost:3389 you@your-host
 ```

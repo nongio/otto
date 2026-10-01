@@ -45,7 +45,7 @@ use smithay::{
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason, ObjectId},
             protocol::{wl_data_device_manager::DndAction, wl_surface::WlSurface},
-            Display, DisplayHandle, Resource,
+            Client, Display, DisplayHandle, Resource,
         },
     },
     utils::{self, Clock, Monotonic, SERIAL_COUNTER},
@@ -114,10 +114,66 @@ pub struct CalloopData<BackendData: Backend + 'static> {
     pub display_handle: DisplayHandle,
 }
 
+/// An Otto component the compositor started itself, on a socketpair.
+///
+/// Records which clients are Otto's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OttoComponent {
+    /// The screen locker Otto started — the only client offered
+    /// `ext_session_lock_manager_v1`. See [`crate::lock`].
+    Locker,
+}
+
+impl ClientState {
+    /// Whether `client` is the screen locker the compositor started itself.
+    pub fn is_otto_locker(client: &Client) -> bool {
+        Self::component_of(client) == Some(OttoComponent::Locker)
+    }
+
+    /// Which of Otto's own components `client` is, if any.
+    pub fn component_of(client: &Client) -> Option<OttoComponent> {
+        client
+            .get_data::<ClientState>()
+            .and_then(|state| state.component)
+    }
+}
+
+/// Global data offering a smithay global only to clients outside a sandbox.
+///
+/// For the smithay globals that take no filter of their own: the state is
+/// created as usual, its global removed, and the global created again with
+/// this wrapped around the same data, so binding and requests still go
+/// through smithay.
+pub struct UnsandboxedOnly<T>(pub T);
+
+impl<I, D, T> smithay::wayland::GlobalDispatch2<I, D> for UnsandboxedOnly<T>
+where
+    I: Resource,
+    T: smithay::wayland::GlobalDispatch2<I, D>,
+{
+    fn bind(
+        &self,
+        state: &mut D,
+        handle: &DisplayHandle,
+        client: &Client,
+        resource: smithay::reexports::wayland_server::New<I>,
+        data_init: &mut smithay::reexports::wayland_server::DataInit<'_, D>,
+    ) {
+        self.0.bind(state, handle, client, resource, data_init);
+    }
+
+    fn can_view(&self, client: &Client) -> bool {
+        !crate::sandbox::is_sandboxed_client(client) && self.0.can_view(client)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
     pub security_context: Option<SecurityContext>,
+    /// Set when the compositor spawned this client itself and handed it its
+    /// end of a socketpair, so nothing else could have connected in its place.
+    pub component: Option<OttoComponent>,
 }
 impl ClientData for ClientState {
     /// Notification that a client was initialized
@@ -187,12 +243,27 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub lock_surfaces: crate::lock::LockSurfaces,
     /// Keyboard focus at the moment the lock began, restored on unlock.
     pub lock_previous_focus: Option<crate::focus::KeyboardFocusTarget<BackendData>>,
-    /// Set once the locker has mapped a surface. Losing every surface after
-    /// that means the locker died, which is what a respawn keys off.
-    pub lock_locker_seen: bool,
+    /// The connection of the locker Otto last started. While the session is
+    /// locked and this is gone — the locker crashed, was killed, or never got
+    /// as far as a surface — a new one is started into the standing lock.
+    pub lock_locker_client: Option<smithay::reexports::wayland_server::Client>,
     /// When the locker was last (re)launched, so a locker that crashes on
     /// startup cannot be respawned in a tight loop.
     pub lock_last_spawn: Option<std::time::Instant>,
+    /// Whether this lock has already logged that no locker can be found, so
+    /// the watchdog's retries stay quiet until the next lock.
+    pub lock_locker_missing_reported: bool,
+    /// The timer that looks after a lock while it stands: respawning a dead
+    /// locker, giving up on outputs that never present, releasing the sleep
+    /// inhibitor. `None` while unlocked — see `Otto::arm_lock_watchdog`.
+    pub lock_watchdog: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// logind's `delay` inhibitor for sleep, held so a suspend waits for the
+    /// blank to reach the screen. Dropping it lets the suspend go ahead — see
+    /// `crate::lock` and `Otto::release_sleep_inhibitor`.
+    pub sleep_inhibitor: Option<std::os::fd::OwnedFd>,
+    /// When logind announced a suspend (`PrepareForSleep(true)`) that is being
+    /// held for the lock; `None` otherwise.
+    pub sleep_pending_since: Option<std::time::Instant>,
     /// When the blank finishes going back up after an unlock. The session is
     /// unlocked for every other purpose from the moment the request arrives,
     /// but the shade is still on screen until this passes and the frame has to
@@ -324,6 +395,10 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub seat: Seat<Otto<BackendData>>,
     pub clock: Clock<Monotonic>,
     pub pointer: PointerHandle<Otto<BackendData>>,
+    /// The latest press on each seat and the client it went to, by seat
+    /// name: what a popup grab's serial is checked against (see
+    /// `crate::input::popup_grab`).
+    pub seat_last_press: HashMap<String, crate::input::popup_grab::LastPress>,
     /// Cached pointer location (logical) to avoid deadlock when accessing during button events
     pub last_pointer_location: (f64, f64),
     /// When and where the last press on a server-side titlebar landed, for
@@ -552,7 +627,11 @@ impl<BackendData: Backend> KeyboardShortcutsInhibitHandler for Otto<BackendData>
     }
 
     fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
-        // Just grant the wish for everyone
+        // Granted to every client that can ask: sandboxed clients are not
+        // offered the global, and the user's own programs that ask (a remote
+        // desktop viewer, a VM) need their shortcuts to reach the remote side.
+        // Locking and VT switching fire through an inhibitor regardless — see
+        // `survives_shortcut_inhibition` in `input::keyboard`.
         inhibitor.activate();
     }
 }
@@ -817,17 +896,32 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // init globals
         let compositor_state = CompositorState::new::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
-        let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
+        // What a sandboxed client may not see: a lock screen of its own (it
+        // could fake the real one), clipboard snooping, synthetic input,
+        // screen capture, other apps' windows and the display's gamma. See
+        // `src/sandbox.rs`; the hand-rolled globals check the same helper in
+        // their `can_view`.
+        let unsandboxed = |client: &Client| !crate::sandbox::is_sandboxed_client(client);
+        // Layer shell too: an overlay surface with exclusive keyboard looks
+        // and behaves like the lock screen, and keeps every key.
+        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(&dh, unsandboxed);
+        // Only the locker Otto started may lock the session — not a
+        // sandboxed app, and not any other program of the user's either,
+        // since whatever holds the lock collects the password. See
+        // `Otto::spawn_locker`.
         let session_lock_manager_state =
-            smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&dh, |_| true);
+            smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(
+                &dh,
+                ClientState::is_otto_locker,
+            );
         let idle_inhibit_manager_state =
             smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
-            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
+            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), unsandboxed);
         let ext_data_control_state =
-            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), |_| true);
+            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), unsandboxed);
         let mut seat_state = SeatState::new();
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
@@ -841,9 +935,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
         TextInputManagerState::new::<Self>(&dh);
-        InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
+        // An input method is sent every key, passwords included: not for
+        // sandboxed clients. Nor is the virtual keyboard.
+        InputMethodManagerState::new::<Self, _>(&dh, unsandboxed);
         let virtual_keyboard_manager_state =
-            VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+            VirtualKeyboardManagerState::new::<Self, _>(&dh, unsandboxed);
         let screencopy_manager_state = screencopy::ScreencopyManagerState::new::<BackendData>(&dh);
         let virtual_pointer_manager_state =
             virtual_pointer::VirtualPointerManagerState::new::<BackendData>(&dh);
@@ -856,14 +952,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             PointerGesturesState::new::<Self>(&dh);
         }
         TabletManagerState::new::<Self>(&dh);
-        SecurityContextState::new::<Self, _>(&dh, |client| {
-            client
-                .get_data::<ClientState>()
-                .is_none_or(|client_state| client_state.security_context.is_none())
-        });
+        SecurityContextState::new::<Self, _>(&dh, unsandboxed);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
         let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
-        let foreign_toplevel_list_state = ForeignToplevelListState::new::<Self>(&dh);
+        // Every window's title and app id.
+        let foreign_toplevel_list_state =
+            ForeignToplevelListState::new_with_filter::<Self>(&dh, unsandboxed);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
         let gamma_control_manager = gamma_control::GammaControlManagerState::new();
@@ -919,7 +1013,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         seat.add_keyboard(xkb_config, repeat_delay, repeat_rate)
             .expect("Failed to initialize the keyboard");
 
+        // Every client that asks is granted the inhibitor (see
+        // `new_inhibitor`), and an inhibited keyboard delivers the
+        // compositor's shortcuts to the client — a sandboxed app has no
+        // business holding the whole keyboard, so it is not offered the
+        // global at all. smithay's constructor takes no filter; its global is
+        // swapped for one that carries it.
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
+        dh.remove_global::<Self>(keyboard_shortcuts_inhibit_state.global());
+        dh.create_global::<Self, smithay::reexports::wayland_protocols::wp::keyboard_shortcuts_inhibit::zv1::server::zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, _>(
+            1,
+            UnsandboxedOnly(smithay::wayland::GlobalData),
+        );
         let cursor_shape_manager_state = CursorShapeManagerState::new::<Self>(&dh);
 
         #[cfg(feature = "xwayland")]
@@ -970,6 +1075,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // `None` unless `lock.auto_lock_timeout` is set.
         let auto_lock_timer = Self::start_auto_lock_timer(&handle);
+        // `loginctl lock-session` locks, and a suspend waits for the lock
+        // (see `crate::lock`). A greeter has no session to lock, and a
+        // nested compositor shares its host's.
+        if backend_data.backend_name() == "udev" && !crate::login::is_login_mode() {
+            Self::watch_logind(&handle);
+        }
 
         // Get backend name before moving backend_data
         #[cfg(feature = "metrics")]
@@ -1000,8 +1111,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             lock_state: crate::lock::LockState::Unlocked,
             lock_surfaces: Default::default(),
             lock_previous_focus: None,
-            lock_locker_seen: false,
+            lock_locker_client: None,
             lock_last_spawn: None,
+            lock_locker_missing_reported: false,
+            lock_watchdog: None,
+            sleep_inhibitor: None,
+            sleep_pending_since: None,
             lock_shade_until: None,
             lock_last_activity: std::time::Instant::now(),
             last_press: None,
@@ -1048,6 +1163,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat_name,
             seat,
             pointer,
+            seat_last_press: HashMap::new(),
             last_pointer_location: (0.0, 0.0),
             last_titlebar_press: None,
             cursor_physical_position: (0.0, 0.0),

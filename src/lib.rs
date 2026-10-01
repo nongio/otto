@@ -35,6 +35,7 @@ pub mod render_elements;
 pub mod render_metrics;
 pub mod render_phase_stats;
 pub mod renderer;
+pub mod sandbox;
 pub mod screenshare;
 pub mod settings;
 pub mod settings_service;
