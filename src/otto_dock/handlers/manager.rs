@@ -74,7 +74,7 @@ impl<BackendData: Backend> GlobalDispatch<OttoDockManagerV1, (), Otto<BackendDat
     /// the user's own; a sandboxed one would need its item tied to its
     /// security context's app id first.
     fn can_view(client: Client, _global_data: &()) -> bool {
-        !crate::sandbox::is_sandboxed_client(&client)
+        !crate::sandbox::is_confined_client(&client)
     }
 }
 

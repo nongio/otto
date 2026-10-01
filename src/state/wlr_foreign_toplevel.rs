@@ -212,7 +212,7 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
 {
     /// Never offered to sandboxed clients (see `src/sandbox.rs`).
     fn can_view(client: Client, _global_data: &()) -> bool {
-        !crate::sandbox::is_sandboxed_client(&client)
+        !crate::sandbox::is_confined_client(&client)
     }
 
     fn bind(

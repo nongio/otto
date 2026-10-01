@@ -83,6 +83,9 @@ pub struct AgentSeat<B: Backend + 'static> {
     pub idle_timer: Option<RegistrationToken>,
     /// Where the agent may act, if it was granted anywhere.
     pub grant: Option<crate::state::agent_seats::Grant>,
+    /// The Wayland connections Otto made for the agent (see
+    /// `Otto::connect_agent_client`): they go with the seat.
+    pub connections: Vec<smithay::reexports::wayland_server::Client>,
 }
 
 impl<B: Backend + 'static> AgentSeat<B> {

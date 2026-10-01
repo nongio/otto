@@ -6,7 +6,9 @@
 //! apps' windows or change the display's gamma. The user's own clients keep
 //! seeing all of them.
 //!
-//! Session lock goes further: only the locker Otto started is offered it.
+//! An agent's own connection is kept off them too, but for the virtual input
+//! it drives its seat with. Session lock goes further: only the locker Otto
+//! started is offered it.
 
 #[cfg(feature = "headless")]
 mod sandboxed_globals_tests {
@@ -145,6 +147,39 @@ mod sandboxed_globals_tests {
 
         drop(sandboxed);
         drop(host);
+        handle.stop();
+    }
+
+    /// An agent's own connection (`ConnectAgent`) is kept off the same
+    /// globals as a sandboxed client, except the virtual input it drives its
+    /// seat with.
+    #[test]
+    #[serial]
+    fn an_agents_connection_sees_only_virtual_input() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        handle
+            .query(|state| state.request_agent_seat("Claude", ":1.10"))
+            .expect("seat");
+        let stream = handle.query(|state| {
+            state
+                .connect_agent_client(":1.10")
+                .expect("connect the agent")
+        });
+        let agent = Client::from_stream(stream);
+        const VIRTUAL_INPUT: &[&str] = &[
+            "zwlr_virtual_pointer_manager_v1",
+            "zwp_virtual_keyboard_manager_v1",
+        ];
+        for interface in HIDDEN_FROM_SANDBOXED.iter().chain([&INPUT_METHOD]) {
+            if VIRTUAL_INPUT.contains(interface) {
+                assert!(agent.has(interface), "an agent was not offered {interface}");
+            } else {
+                assert!(!agent.has(interface), "an agent was offered {interface}");
+            }
+        }
+        assert!(agent.has("wl_seat"));
+
+        drop(agent);
         handle.stop();
     }
 

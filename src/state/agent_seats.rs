@@ -16,7 +16,9 @@ use smithay::{
 };
 use tracing::info;
 
-use super::{add_configured_keyboard, Backend, Otto};
+use smithay::reexports::wayland_server::backend::DisconnectReason;
+
+use super::{add_configured_keyboard, Backend, ClientState, Otto};
 use crate::{
     agent_cursor::{to_hex, AgentCursor, AgentSeat, AGENT_SEAT_NAME, PALETTE},
     config::Config,
@@ -77,6 +79,8 @@ pub enum AgentSeatError {
     NoWorkspace,
     /// The program could not be started.
     Launch(String),
+    /// No Wayland connection could be made for the agent.
+    Connect(String),
 }
 
 impl std::fmt::Display for AgentSeatError {
@@ -88,6 +92,7 @@ impl std::fmt::Display for AgentSeatError {
             Self::NoOutput => write!(f, "no output to put a workspace on"),
             Self::NoWorkspace => write!(f, "ask for a workspace of your own first"),
             Self::Launch(err) => write!(f, "could not start the program: {err}"),
+            Self::Connect(err) => write!(f, "could not connect: {err}"),
         }
     }
 }
@@ -221,6 +226,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             owner,
             idle_timer: None,
             grant: None,
+            connections: Vec::new(),
         });
     }
 
@@ -253,8 +259,58 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         if let Some(global) = agent.seat.global() {
             self.display_handle.remove_global::<Self>(global);
         }
+        for client in &agent.connections {
+            self.display_handle
+                .backend_handle()
+                .kill_client(client.id(), DisconnectReason::ConnectionClosed);
+        }
         info!(seat = seat_name, "Agent seat removed");
         self.backend_data.request_redraw();
+    }
+
+    /// Connect a Wayland client for `owner`'s agent, returning its end of the
+    /// socket.
+    ///
+    /// The client may create virtual input on the agent's seat and no other,
+    /// and is kept off the globals a sandboxed client is kept off (see
+    /// [`crate::sandbox`]). It is disconnected when the seat goes. Every
+    /// other connection is refused the agent's seat, so this is the only way
+    /// to drive it.
+    pub fn connect_agent_client(
+        &mut self,
+        owner: &str,
+    ) -> Result<std::os::unix::net::UnixStream, AgentSeatError> {
+        let seat_name = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.owner.as_deref() == Some(owner))
+            .map(AgentSeat::name)
+            .ok_or(AgentSeatError::NoSeat)?;
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair()
+            .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
+        let client = self
+            .display_handle
+            .insert_client(
+                ours,
+                std::sync::Arc::new(ClientState {
+                    agent_seat: Some(seat_name.clone()),
+                    ..ClientState::default()
+                }),
+            )
+            .map_err(|err| AgentSeatError::Connect(err.to_string()))?;
+        let backend = self.display_handle.backend_handle();
+        if let Some(agent) = self
+            .agent_seats
+            .iter_mut()
+            .find(|agent| agent.name() == seat_name)
+        {
+            agent
+                .connections
+                .retain(|client| backend.get_client_data(client.id()).is_ok());
+            agent.connections.push(client);
+        }
+        info!(seat = seat_name, owner, "Agent connection made");
+        Ok(theirs)
     }
 
     /// Give `owner`'s agent a workspace of its own: a new one on the primary

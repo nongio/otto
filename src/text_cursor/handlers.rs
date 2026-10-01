@@ -109,7 +109,7 @@ impl<BackendData: Backend> GlobalDispatch<OttoTextCursorManagerV1, (), Otto<Back
     /// to watch. The watchers are
     /// Otto's own components, which are never sandboxed.
     fn can_view(client: Client, _global_data: &()) -> bool {
-        !crate::sandbox::is_sandboxed_client(&client)
+        !crate::sandbox::is_confined_client(&client)
     }
 }
 

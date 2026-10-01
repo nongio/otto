@@ -139,6 +139,13 @@ impl ClientState {
             .get_data::<ClientState>()
             .and_then(|state| state.component)
     }
+
+    /// The agent seat `client` was connected for, if it was.
+    pub fn agent_seat_of(client: &Client) -> Option<&str> {
+        client
+            .get_data::<ClientState>()
+            .and_then(|state| state.agent_seat.as_deref())
+    }
 }
 
 /// Global data offering a smithay global only to clients outside a sandbox.
@@ -166,7 +173,7 @@ where
     }
 
     fn can_view(&self, client: &Client) -> bool {
-        !crate::sandbox::is_sandboxed_client(client) && self.0.can_view(client)
+        !crate::sandbox::is_confined_client(client) && self.0.can_view(client)
     }
 }
 
@@ -177,6 +184,10 @@ pub struct ClientState {
     /// Set when the compositor spawned this client itself and handed it its
     /// end of a socketpair, so nothing else could have connected in its place.
     pub component: Option<OttoComponent>,
+    /// The agent seat this client was connected for (see
+    /// [`Otto::connect_agent_client`]): it may drive that seat and nothing
+    /// else, and is kept off the globals a sandboxed client is kept off.
+    pub agent_seat: Option<String>,
 }
 impl ClientData for ClientState {
     /// Notification that a client was initialized
@@ -565,6 +576,7 @@ pub mod security_context_handler;
 pub mod selection_handler;
 pub mod session_lock_handler;
 pub mod trash_drop;
+pub mod virtual_keyboard;
 pub mod virtual_pointer;
 pub mod window_throttle;
 pub mod wlr_foreign_toplevel;
@@ -920,10 +932,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         // screen capture, other apps' windows and the display's gamma. See
         // `src/sandbox.rs`; the hand-rolled globals check the same helper in
         // their `can_view`.
-        let unsandboxed = |client: &Client| !crate::sandbox::is_sandboxed_client(client);
+        let unconfined = |client: &Client| !crate::sandbox::is_confined_client(client);
         // Layer shell too: an overlay surface with exclusive keyboard looks
         // and behaves like the lock screen, and keeps every key.
-        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(&dh, unsandboxed);
+        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(&dh, unconfined);
         // Only the locker Otto started may lock the session — not a
         // sandboxed app, and not any other program of the user's either,
         // since whatever holds the lock collects the password. See
@@ -938,9 +950,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
-            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), unsandboxed);
+            DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), unconfined);
         let ext_data_control_state =
-            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), unsandboxed);
+            ExtDataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), unconfined);
         let mut seat_state = SeatState::new();
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
@@ -956,9 +968,16 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         TextInputManagerState::new::<Self>(&dh);
         // An input method is sent every key, passwords included: not for
         // sandboxed clients. Nor is the virtual keyboard.
-        InputMethodManagerState::new::<Self, _>(&dh, unsandboxed);
+        InputMethodManagerState::new::<Self, _>(&dh, unconfined);
+        // smithay types into whichever seat a client names: its global is
+        // swapped for one that checks the client may drive that seat.
         let virtual_keyboard_manager_state =
-            VirtualKeyboardManagerState::new::<Self, _>(&dh, unsandboxed);
+            VirtualKeyboardManagerState::new::<Self, _>(&dh, |_| false);
+        dh.remove_global::<Self>(virtual_keyboard_manager_state.global());
+        dh.create_global::<Self, smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1, _>(
+            1,
+            virtual_keyboard::SeatCheckedKeyboards,
+        );
         let screencopy_manager_state = screencopy::ScreencopyManagerState::new::<BackendData>(&dh);
         let virtual_pointer_manager_state =
             virtual_pointer::VirtualPointerManagerState::new::<BackendData>(&dh);
@@ -971,12 +990,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             PointerGesturesState::new::<Self>(&dh);
         }
         TabletManagerState::new::<Self>(&dh);
-        SecurityContextState::new::<Self, _>(&dh, unsandboxed);
+        SecurityContextState::new::<Self, _>(&dh, unconfined);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
         let xdg_dialog_state = XdgDialogState::new::<Self>(&dh);
         // Every window's title and app id.
         let foreign_toplevel_list_state =
-            ForeignToplevelListState::new_with_filter::<Self>(&dh, unsandboxed);
+            ForeignToplevelListState::new_with_filter::<Self>(&dh, unconfined);
         let wlr_foreign_toplevel_state =
             wlr_foreign_toplevel::WlrForeignToplevelManagerState::new::<Self>(&dh);
         let gamma_control_manager = gamma_control::GammaControlManagerState::new();

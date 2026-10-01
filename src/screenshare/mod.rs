@@ -236,6 +236,11 @@ pub enum CompositorCommand {
         workspace: String,
         response_tx: tokio::sync::oneshot::Sender<Result<String, String>>,
     },
+    /// An agent asks for a Wayland connection that drives its seat.
+    ConnectAgent {
+        owner: String,
+        response_tx: tokio::sync::oneshot::Sender<Result<std::os::fd::OwnedFd, String>>,
+    },
     /// An agent gives its seats back, or its bus name went away.
     ReleaseAgentSeats {
         owner: String,
@@ -800,6 +805,13 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
             let result = state
                 .capture_workspace(&owner, &workspace)
                 .map(|path| path.display().to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::ConnectAgent { owner, response_tx } => {
+            let result = state
+                .connect_agent_client(&owner)
+                .map(std::os::fd::OwnedFd::from)
+                .map_err(|err| err.to_string());
             let _ = response_tx.send(result);
         }
         CompositorCommand::ReleaseAgentSeats { owner, response_tx } => {

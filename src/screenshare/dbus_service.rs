@@ -1073,6 +1073,33 @@ impl CompositorInterface {
             .map_err(zbus::fdo::Error::Failed)
     }
 
+    /// A Wayland connection for the calling agent, as the client end of a
+    /// socket: hand it to a Wayland client as `WAYLAND_SOCKET`.
+    ///
+    /// Virtual pointers and keyboards on the agent's seat are accepted on
+    /// such a connection and on no other; on it, they are accepted on that
+    /// seat only. It is not offered screen capture, the clipboard or the
+    /// other interfaces kept from sandboxed apps. Every connection asked for
+    /// is closed when the seat goes. Each one serves a single client: ask
+    /// again for the next.
+    async fn connect_agent(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        let owner = sender_of(&header)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ConnectAgent {
+                owner,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        rx.await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map(zbus::zvariant::OwnedFd::from)
+            .map_err(zbus::fdo::Error::AccessDenied)
+    }
+
     /// Give back every seat the caller holds. Returns whether it held any.
     async fn release_agent_seat(
         &self,

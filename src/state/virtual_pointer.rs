@@ -135,7 +135,7 @@ where
 {
     fn request(
         state: &mut Otto<BackendData>,
-        _client: &Client,
+        client: &Client,
         _resource: &ZwlrVirtualPointerManagerV1,
         request: zwlr_virtual_pointer_manager_v1::Request,
         _data: &(),
@@ -147,7 +147,7 @@ where
                 data_init.init(
                     id,
                     VirtualPointerUserData {
-                        agent: agent_seat_name(state, seat.as_ref()),
+                        agent: permitted_seat(state, client, seat.as_ref()),
                         ..Default::default()
                     },
                 );
@@ -164,7 +164,7 @@ where
                     id,
                     VirtualPointerUserData {
                         output,
-                        agent: agent_seat_name(state, seat.as_ref()),
+                        agent: permitted_seat(state, client, seat.as_ref()),
                         ..Default::default()
                     },
                 );
@@ -470,8 +470,31 @@ where
     }
 }
 
-/// Whether the seat a virtual pointer was created on is the agent seat. A
-/// pointer created without a seat belongs to the user's.
+/// [`agent_seat_name`], for a pointer `client` may create there (see
+/// [`crate::sandbox::may_drive_seat`]). One it may not is tied to no seat,
+/// and drives nothing.
+fn permitted_seat<BackendData: crate::state::Backend + 'static>(
+    state: &Otto<BackendData>,
+    client: &Client,
+    seat: Option<&WlSeat>,
+) -> Option<String> {
+    let agent = agent_seat_name(state, seat);
+    let user_seat = state.seat.name();
+    let seat_name = agent.as_deref().unwrap_or(user_seat);
+    let owned = state
+        .agent_seat(seat_name)
+        .is_some_and(|agent| agent.owner.is_some());
+    if crate::sandbox::may_drive_seat(client, seat_name, user_seat, owned) {
+        agent
+    } else {
+        tracing::warn!(
+            seat = seat_name,
+            "virtual pointer refused: this connection may not drive that seat"
+        );
+        Some(String::new())
+    }
+}
+
 /// Which agent seat a pointer created on `seat` drives: `None` for the user's
 /// (asked for by name, or by giving no seat), otherwise the seat's name.
 ///

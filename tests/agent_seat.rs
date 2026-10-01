@@ -106,6 +106,17 @@ mod agent_seat_tests {
             Self::from_stream(std::os::unix::net::UnixStream::connect(path).expect("connect"))
         }
 
+        /// The Wayland connection Otto hands the agent on `owner` over
+        /// D-Bus (`ConnectAgent`): the only one that may drive its seat.
+        fn connect_as_agent(handle: &HeadlessHandle, owner: &str) -> Self {
+            let owner = owner.to_string();
+            Self::from_stream(handle.query(move |state| {
+                state
+                    .connect_agent_client(&owner)
+                    .expect("connect the agent")
+            }))
+        }
+
         /// A client connected the way Otto connects the locker it starts —
         /// the only kind offered `ext_session_lock_manager_v1`.
         fn connect_as_locker(handle: &HeadlessHandle) -> Self {
@@ -505,7 +516,7 @@ mod agent_seat_tests {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
         request_seat(&handle, "Helper", ":1.11").expect("seat");
-        let mut driver = Driver::connect(&handle);
+        let mut driver = Driver::connect_as_agent(&handle, ":1.11");
         let before = user_pointer(&handle);
 
         let pointer = driver.pointer_on(driver.seat_index("agent-2").unwrap());
@@ -533,6 +544,58 @@ mod agent_seat_tests {
         handle.stop();
     }
 
+    /// A seat an agent asked for is driven through the agent's own
+    /// connection only: a pointer any other client creates on it drives
+    /// nothing.
+    #[test]
+    #[serial]
+    fn only_the_agents_connection_drives_its_seat() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let mut stranger = Driver::connect(&handle);
+        let before = user_pointer(&handle);
+
+        let pointer = stranger.pointer_on(stranger.seat_index("agent-1").unwrap());
+        move_to(&handle, &pointer, 200, 150);
+        stranger.settle(&handle);
+
+        assert_eq!(pointer_of(&handle, "agent-1"), Some((0.0, 0.0)));
+        assert_eq!(user_pointer(&handle), before);
+
+        drop(stranger);
+        handle.stop();
+    }
+
+    /// An agent's connection drives its own seat and no other: not the
+    /// user's, and not another agent's.
+    #[test]
+    #[serial]
+    fn an_agents_connection_drives_no_other_seat() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_seat(&handle, "Helper", ":1.11").expect("seat");
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
+        let before = user_pointer(&handle);
+
+        let user_seat = driver
+            .state
+            .seat_names
+            .iter()
+            .position(|name| name.as_deref().is_some_and(|n| !n.starts_with("agent-")))
+            .expect("the user's seat");
+        let on_user = driver.pointer_on(user_seat);
+        move_to(&handle, &on_user, 300, 300);
+        let on_other = driver.pointer_on(driver.seat_index("agent-2").unwrap());
+        move_to(&handle, &on_other, 250, 250);
+        driver.settle(&handle);
+
+        assert_eq!(user_pointer(&handle), before);
+        assert_eq!(pointer_of(&handle, "agent-2"), Some((0.0, 0.0)));
+
+        drop(driver);
+        handle.stop();
+    }
+
     /// Releasing removes the seat; the same agent coming back in the same
     /// session gets the same seat name and colour.
     #[test]
@@ -542,17 +605,18 @@ mod agent_seat_tests {
         let seat = request_seat(&handle, "Claude", ":1.10").expect("seat");
         request_seat(&handle, "Helper", ":1.11").expect("seat");
 
-        let mut driver = Driver::connect(&handle);
-        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
+        let _pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        driver.settle(&handle);
         release_seats(&handle, ":1.10");
         handle.settle(200);
         assert!(handle.query(|state| state.agent_seat("agent-1").is_none()));
 
-        // A pointer left on the removed seat drives nothing, not the user's.
-        let before = user_pointer(&handle);
-        move_to(&handle, &pointer, 300, 300);
-        driver.settle(&handle);
-        assert_eq!(user_pointer(&handle), before);
+        // The agent's connection goes with its seat.
+        assert!(
+            driver.queue.roundtrip(&mut driver.state).is_err(),
+            "the agent's connection outlived its seat"
+        );
         drop(driver);
 
         let fresh = Driver::connect(&handle);
@@ -691,7 +755,7 @@ mod agent_seat_tests {
         };
         let before = user_focus();
 
-        let mut driver = Driver::connect(&handle);
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
         let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
         move_to(&handle, &pointer, x, y);
         driver.settle(&handle);
@@ -731,7 +795,7 @@ mod agent_seat_tests {
         map_window(&handle, &mut user, "User");
         let (ux, uy, _, _) = handle.window_logical_geometry("User").expect("User");
 
-        let mut driver = Driver::connect(&handle);
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
         let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
         move_to(&handle, &pointer, ux + 20, uy + 20);
         driver.settle(&handle);

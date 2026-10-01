@@ -285,16 +285,68 @@ thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
 
 Until this phase, grants hold only for clients that play along: any client
 can still create virtual input on the user's seat, or capture the whole
-screen.
+screen. A program running unsandboxed as the user can always get around the
+compositor (it can rewrite the user's shell startup, ptrace their apps, or
+inject input below Otto through uinput), so the boundary is a sandbox around
+the agent, with Otto enforcing at its edge. Phase 5 comes in three parts.
 
-- Virtual pointers and keyboards may be created only by clients Otto has
-  authorized (the RDP bridge, agents holding a seat), and only on the seat
-  they were authorized for. Other requests are refused.
-- An agent's screen captures are limited to its granted workspaces. Capturing
-  anything else, or the whole output, is refused.
+#### 5a — an agent's own connection (implemented, `feat/agent-lockdown`)
+
+- `ConnectAgent() → h` on `org.otto.Compositor` hands the caller, which must
+  hold a seat, the client end of a new Wayland connection. A Wayland client
+  takes it as `WAYLAND_SOCKET`. Each connection serves one client; an agent
+  asks again for the next.
+- Virtual pointers and keyboards on a seat an agent asked for are accepted on
+  that agent's connections and on no other. On an agent's connection, they
+  are accepted on its own seat only: not the user's, not another agent's. A
+  refused pointer drives nothing; a refused keyboard is a protocol error
+  (`unauthorized`).
+- An agent's connection is kept off every global a sandboxed client is kept
+  off (screen capture, the clipboard, layer shell, foreign-toplevel control,
+  input method, gamma, shortcut inhibition, security contexts, Otto's
+  private protocols), except the virtual input it drives its seat with.
+- An agent's connections close when its seat goes: on release, on Stop, or
+  when it leaves the bus.
 - The static `enabled = true` seat of Phase 1 remains an unrestricted,
   explicit opt-in for stock tools, with an "every workspace" border while it
-  is in use.
+  is in use. The user's seat stays open to the user's own programs (the RDP
+  bridge, the emoji picker) until 5c.
+
+#### 5b — `otto-agent run` (planned)
+
+A launcher that starts an agent inside a sandbox (bubblewrap) whose only ways
+out are the ones Otto controls:
+
+- Wayland only through a security context, so the agent is a sandboxed
+  client; and through its seat's connections from 5a.
+- The session bus only through a filtering proxy (`xdg-dbus-proxy`) that
+  lets through the agent methods on `org.otto.Compositor`, the portals and
+  notifications.
+- No X server, no `/dev/uinput` and no `ydotoold` socket. Files limited to
+  the project directory and a scratch directory.
+- The agent's program is named by the sandbox's app id, which it cannot
+  change, rather than by its executable.
+
+From inside, the agent acts only on its own workspace, sees only its own
+workspace (`CaptureWorkspace`) or what the user shares through a portal, and
+asks the user for anything else.
+
+#### 5c — the user's other programs (planned)
+
+For agents that run without the launcher: screen capture, virtual input on
+the user's seat, data control (the clipboard), input method and
+foreign-toplevel control are offered to Otto's own components, the RDP
+bridge and agents' connections without asking. Any other unsandboxed program
+is asked once through the islands dialog, named as `otto_kit::process_app`
+names it, and the answer is kept in xdg-permission-store and listed in
+Settings › Privacy. The global stays advertised and the first frame or
+device waits for the answer, since a global's visibility cannot wait for the
+user. A configuration switch lets scripted setups allow their tools up
+front.
+
+This keeps an agent that does not know the rules from capturing the screen
+or typing as the user unnoticed. It is not a boundary: a program running as
+the user can impersonate one that is allowed.
 
 ### Phase 6 — Otto's own UI
 
@@ -392,6 +444,12 @@ screen.
 - **A longer idle on the agent's own workspace.** Watching an agent work
   there is the point of going there; a cursor that keeps vanishing between
   steps makes it hard to follow.
+- **The sandbox is the boundary, the prompts are not.** A compositor can
+  tell a sandboxed client from its security context, and an agent's own
+  connection by the socket it handed out; it cannot tell one unsandboxed
+  program of the user's from another that pretends to be it. So the real
+  boundary is 5b, and 5c only stops agents that do not play along from
+  acting unnoticed.
 - **Enforcement last, but planned.** Grants are useful to cooperative agents
   from Phase 3. They become a security boundary only when virtual input and
   capture are restricted, which is recorded here so no earlier phase is
