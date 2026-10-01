@@ -6,6 +6,7 @@ mod dialog;
 mod dock_overlays;
 mod mpris;
 mod music;
+mod notification_permission;
 mod notifications;
 mod renderer;
 mod shell_windows;
