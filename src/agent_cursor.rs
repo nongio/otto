@@ -1,19 +1,14 @@
-//! A second seat for automation, with a cursor of its own colour.
+//! An agent's seat: a pointer, a keyboard and a cursor of its own colour.
 //!
 //! Agents drive Otto through `zwlr_virtual_pointer_v1` and
-//! `zwp_virtual_keyboard_v1`. Bound to the user's seat, every synthesized move
-//! drags the user's cursor along and every synthesized click takes their
-//! keyboard focus. With `[agent_cursor] enabled = true` Otto advertises a
-//! second `wl_seat` (named [`AGENT_SEAT_NAME`]); a virtual device created on
-//! that seat drives its own pointer and keyboard instead, and its pointer is
-//! drawn as the default arrow tinted in the configured colour, beside the
-//! user's.
+//! `zwp_virtual_keyboard_v1`. On the user's seat every synthesized move would
+//! drag the user's cursor along and every click take their keyboard focus, so
+//! each agent that asks gets a `wl_seat` of its own (`agent-<n>`), shown to
+//! its own connections before the user's (`crate::state::agent_seats`,
+//! `specs/agent-seats.md`). Its pointer is drawn as the default arrow tinted
+//! in the agent's colour, with its name beside it.
 //!
-//! The seat is advertised after the user's, so clients that take the first
-//! `wl_seat` (toolkits picking their default seat, `otto-rdp`) keep the user's,
-//! and tools that take the last one (`wlrctl`) land on the agent's.
-//!
-//! What the agent seat does not do, on purpose:
+//! What an agent's seat does not do, on purpose:
 //! - raise windows or activate them — the user's window stays focused;
 //! - hover or click Otto's own lay-rs chrome (dock, exposé): the scene engine
 //!   has a single pointer, and it belongs to the user;

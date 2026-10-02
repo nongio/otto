@@ -1,499 +1,253 @@
 # Agent Seats
 
 **Status:** draft  
-**Related specs:** security-model.md, pointer-input-focus.md, rdp-bridge.md, screenshare.md, workspaces-multi-output.md, lock-screen.md
+**Related specs:** security-model.md, pointer-input-focus.md, workspaces-multi-output.md, lock-screen.md, screenshare.md
 
 ## Summary
 
-Agents drive Otto the way people do, with a pointer and a keyboard. An agent
-seat gives each agent a pointer, keyboard focus and cursor of its own, so it
-can work beside the user without moving their cursor or taking their focus.
-A workspace grant says where an agent may act: a workspace of its own, the
-user's current workspace, or every workspace, with the user's consent. A
-workspace under an agent's control is framed in the agent's colour, so the
-user always knows which parts of the desktop an agent can touch.
+An agent works on the desktop the way a person does, with a pointer and a
+keyboard, on a seat of its own. It is given one workspace, a new one of its
+own or one the user lends it, and acts there beside the user without moving
+their cursor or taking their focus. The workspace is framed in the agent's
+colour for as long as the agent holds it, the user can stop the agent at any
+moment, and when the agent leaves, the workspace and its windows are the
+user's.
 
 ## Goals
 
-- Input synthesized on an agent seat never moves the user's cursor, raises or
-  activates a window, or changes the user's keyboard focus.
-- An agent's cursor is always visibly different from the user's, and
-  different from every other agent's.
-- Existing input injectors that drive the user (the RDP bridge) keep doing so,
-  unchanged, while agent seats exist.
-- Stock automation tools work without modification for the single-agent case.
-- Several agents can act at once, each on its own seat.
-- An agent can be given a workspace of its own and work there while the user
-  works on another.
-- An agent acts on the user's workspaces only after the user allows it, and
-  the user can end that at any moment.
-- Every workspace an agent controls is marked on screen, unmistakably, for as
-  long as the agent controls it.
-- In the end, an agent cannot reach outside its grant — not with input, and
-  not by capturing the screen.
+- An agent's input never moves the user's cursor, raises or activates a
+  window, changes the user's keyboard focus or switches their workspace.
+- An agent reaches only the windows of the one workspace it was given.
+- Stock tools (wlrctl, wtype, ext-image-copy-capture clients) work on an
+  agent's connection unchanged.
+- Several agents can work at once, each on its own seat, in its own colour.
+- The user can see, at any time, which workspace an agent can act on, and
+  end it from there.
+- The user can work in an agent's windows while it works, and keeps them
+  when it leaves.
 
 ## Non-Goals
 
-- Agents operating Otto's own chrome before the last phase. Exposé comes
-  only with an "every workspace" grant, the dock after that; the app
-  switcher and topbar are not planned.
-- XWayland applications. X11 clients see a single seat.
+- Agents using Otto's own interface: the dock, exposé, the app switcher,
+  the top bar.
+- XWayland apps, which know a single seat.
 - Arbitrating between an agent and the user typing into the same window.
-- Deciding which agents are trustworthy. Otto asks the user and enforces the
-  answer; it does not judge agents itself.
+- Judging which agents to trust. Otto asks the user and enforces the
+  answer.
+- A pause for all agents, and a top bar indicator; see Open Questions.
 
 ## Behavior
 
-### Phase 1 — one agent seat (implemented, `feat/agent-cursor`)
+### Asking
 
-- With `[agent_cursor] enabled = true`, Otto advertises a second `wl_seat`
-  named `agent`, after the user's seat. It has a pointer and a keyboard.
-  The setting is read at startup.
-- A virtual pointer or virtual keyboard created on the agent seat drives that
-  seat only. One created on the user's seat, or with no seat, drives the
-  user's, exactly as before.
-- Agent pointer motion is clamped to the outputs, like real input, and sends
-  enter/leave/motion to the client surface under it. Otto's own UI is not hit
-  and does not react to it.
-- An agent button press gives the agent seat's keyboard to the window (or
-  popup) under the pointer. The window is not raised, and which window looks
-  active is unchanged.
-- Cursor shapes a client asks for on the agent seat are ignored; the user's
-  cursor shape is never changed by them.
-- The agent cursor is the theme's default arrow, recoloured with
-  `[agent_cursor] color` (`#RRGGBB`, default `#FF9500`): dark pixels take the
-  colour, light ones stay light. It is drawn under the user's cursor, never on
-  the hardware cursor plane, and only after the agent's first motion. It is
-  part of what the screen shows, so screenshots of the output include it.
-- The RDP bridge and Otto's test client take the first advertised seat. Tools
-  that take the last (`wlrctl`) land on the agent seat.
-- Keyboard focus, clipboard and primary selection are per seat: what the agent
-  copies is on the agent seat's clipboard, not the user's.
-- The agent acts on every workspace — Phase 1 is, in effect, an "every
-  workspace" grant with no prompt, no border and no enforcement.
+Agents ask on the session bus, `org.otto.Compositor`. A seat belongs to the
+bus connection that asked for it: when that connection leaves the bus, its
+seats end.
 
-### Phase 1 follow-ups (implemented, except the own-workspace time)
-
-**Idle hiding.** The agent cursor gets out of the way when the agent stops:
-
-- `[agent_cursor] hide_after_ms` (default `5000`; `0` never hides) is how long
-  the cursor stays after the agent's last activity.
-- On an agent's own workspace (Phase 3) the agent counts as active for as
-  long as it holds the workspace: its border stays at full strength until
-  the agent releases it, and its cursor uses the longer
-  `[agent_cursor] own_workspace_hide_after_ms` (default `30000`). The
-  workspace is the agent's, so there is nothing of the user's for the cursor
-  to get in the way of.
-- Activity is any agent input: pointer motion, button, scroll, or a key from
-  a virtual keyboard on the agent seat. Typing keeps the cursor visible, so
-  the user can see which window the agent is typing into.
-- When the time runs out the cursor fades out over a short animation
-  (~200 ms) and is no longer drawn. Nothing else changes: the agent's pointer
-  position, pointer focus and keyboard focus stay as they were.
-- The next activity shows it again at the agent pointer's current position,
-  at full opacity immediately, with no fade-in: a cursor that appears late
-  hides the start of what the agent does.
-- While an agent button is held (a drag or a text selection in progress),
-  the cursor is never hidden, however long the gap between events.
-- Hiding and showing cost a redraw only on the outputs the cursor is on;
-  a hidden cursor adds no work to a frame.
-- The lock screen hides every agent cursor at once, whatever the timer says.
-
-**Lock screen.** While the session is locked or locking, no agent motion,
-click, scroll or key reaches any surface, the lock surface included. Locking
-takes the agent seat's pointer and keyboard focus away; unlocking does not
-give them back — the agent clicks again.
-
-### Phase 2 — a seat per agent (implemented, except grants)
-
-- Agents ask Otto for seats and grants over D-Bus, on
-  `org.otto.Compositor`. A seat is tied to the caller's bus name: when that
-  name leaves the bus, the seat is removed.
-- `RequestAgentSeat(name: s) -> (seat: s, color: s)` gives the caller a
-  seat; `ReleaseAgentSeat() -> b` gives back every seat it holds. A name is
-  1 to 32 visible characters. A name another connection holds a seat under
-  is refused (`AccessDenied`); asking again from the holder returns the
-  seat it has.
-- A virtual pointer or keyboard created on a seat that has since been
-  removed drives nothing — never the user's seat.
-- Agents ask Otto for a seat, and Otto creates one for them, named
-  `agent-<n>`, with its own colour from a fixed palette of clearly distinct
-  hues (none close to the user's cursor or the accent colour). The request
-  carries the agent's display name and returns the seat name and the colour.
-- A seat lives as long as the agent's session: it is removed when the agent
-  releases it or its requesting connection goes away. Removing a seat ends
-  any grab it holds and clears the keyboard focus it gave. Its grants are
-  kept for the rest of the Otto session, in case the agent comes back (see
-  Workspace grants).
-- Each agent seat hides its cursor on its own idle timer.
-- Next to each agent cursor, a small label shows the agent's name, so the user
-  can tell agents apart at a glance.
-- `enabled = true` keeps its Phase 1 meaning: one static seat named `agent`,
-  for stock tools.
-
-### Workspace grants
-
-A grant is the set of workspaces an agent seat may act on. There are three
-kinds:
-
-| Grant | How it starts | Consent |
+| Method | What it does | Asks the user |
 |---|---|---|
-| **Own workspace** | The agent asks for a new workspace; Otto creates it, named after the agent, and grants it | None for the workspace itself, which is new and holds nothing of the user's; the program had to be allowed a seat first (see Seat consent) |
-| **Current workspace** | The agent asks for the workspace the user is on | The user allows it in a prompt |
-| **Every workspace** | The agent asks for all of them | The user allows it in a prompt that says so plainly |
+| `RequestAgentSeat(name: s) -> (seat: s, color: s)` | A seat for an agent called `name` | The first time the program asks (security-model.md) |
+| `ReleaseAgentSeat() -> b` | Ends every seat the caller holds | No |
+| `RequestOwnWorkspace() -> (output: s, x: i, y: i, width: i, height: i, scale: d)` | A new workspace for the seat, or the one it already has | No |
+| `ListWorkspaces() -> a(ssb)` | Every workspace, with its output and whether it is shown | No |
+| `RequestWorkspace(name: s) -> (output: s, x: i, y: i, width: i, height: i, scale: d)` | One of the user's workspaces, by name, or the one the user is looking at for `""` | Every time |
+| `ReleaseOwnWorkspace() -> b` | Ends the seat's workspace, whichever kind | No |
+| `ConnectAgent() -> h` | A new Wayland connection that is the agent's; one client each | No |
+| `LaunchOnOwnWorkspace(argv: as) -> u` | Starts a program whose window opens on the agent's workspace; returns its pid | No |
+| `CaptureWorkspace(workspace: s) -> s` | A PNG of the agent's workspace, for agents that only speak D-Bus | No |
 
-Rules for every grant:
+- Every method but the first needs a seat. Launching and capturing also
+  need a workspace.
+- A name is 1 to 32 characters with no control characters. A name another
+  connection holds a seat under is refused; asking again from the holder
+  returns the seat it has.
+- The returned rectangle is the space the agent's absolute pointer
+  coordinates address, in logical pixels, with the output's scale.
+- A refusal says why: the program is not allowed, was stopped, is already
+  being asked, the user said no, or no dialog could be shown.
 
-- Agent pointer input is hit-tested only against windows on granted
-  workspaces. A click or motion that would land on anything else reaches no
-  surface.
-- The agent keyboard is only ever given to a window on a granted workspace.
-  If that window moves to a workspace outside the grant, the agent loses its
-  keyboard focus.
-- A grant ends when the user revokes it, the agent releases it, or the
-  workspace is removed. An agent that disconnects and connects again under
-  the same name in the same Otto session gets its seat, colour and grants
-  back without a new prompt; they are held for it until then. Ending the
-  Otto session (logout, restart) ends every grant. An agent-owned workspace that
-  ends its grant stays, with its windows, until the user closes it: it now
-  belongs to the user.
-- Denying a prompt refuses the grant; the prompt waits for as long as the
-  user takes. The agent is told either way.
-- The same agent asking again for the same workspace while a prompt is open
-  does not open a second prompt.
+### The seat
 
-### Seat consent
+- A seat is named `agent-<n>` and has a colour from a palette of distinct
+  hues, none close to the user's cursor. The same agent name gets the same
+  seat name and colour back within an Otto session.
+- It has a pointer and a keyboard. Its cursor is the theme's arrow in the
+  agent's colour, with the agent's name in a label beside it, drawn under
+  the user's cursor and never on the hardware cursor plane.
+- The cursor appears with the agent's first motion and only where the
+  agent's workspace is the one an output shows. Exposé and the workspace
+  selector do not show it.
+- After `[agent_cursor] hide_after_ms` (default 5000; 0 never) without
+  agent input the cursor fades out over about 200 ms; the next input shows
+  it at once at the agent's pointer. It stays while an agent button is held.
+- Cursor shapes asked for on an agent's seat are ignored.
 
-- A program is asked about once: the first time it requests a seat, Otto
-  shows a prompt naming the program (by its desktop entry, or its Flatpak
-  app id, read from the process, never from what it says) and the agent's
-  name, with **Allow** and **Don't Allow**. It waits for as long as the user
-  takes; a second request from the same program while it is up is refused.
-- The answer is kept in xdg-permission-store's `otto-agents` table, so the
-  program is let through or refused without asking from then on.
-- Settings › Privacy › Agents lists each program with a switch and Forget.
-  Switching a program off, or forgetting it, removes the seats it holds at
-  once; forgotten, it is asked again next time.
-- When no prompt can be shown (otto-islands is not running) the request is
-  refused and nothing is kept.
+### The workspace
 
-### The agent border
+Each seat has at most one workspace; asking for another replaces it.
 
-Every workspace under a grant is framed in the agent's colour — the visible
-sign that an agent can act there.
+- **Its own.** Added after the last workspace on the primary output and
+  named after the agent. The user is not switched to it. The name is not
+  saved: it does not come back after a restart.
+- **Lent by the user.** Otto asks the user in its dialog each time, naming
+  the agent, the workspace and the program. While it is lent, the user's
+  programs see the agent's seat as well, so the agent can click and type in
+  their windows.
+- A seat without a workspace reaches nothing: its pointer moves and its
+  cursor is drawn, and that is all.
+- Windows on an agent's workspace keep drawing at full rate while the
+  workspace is not shown.
+- Otto never brings an agent's workspace on screen; the user goes there
+  when they want to watch.
 
-- The border runs along the edges of each output that shows the workspace,
-  following the screen's rounded corners when Otto draws them. It is a solid
-  line (`[agent_cursor] border_width`, default 3 logical px) with a soft glow
-  fading inward over about 12 px.
-- It belongs to the workspace, not the output: during a workspace swipe or
-  switch it moves with the workspace's content, so swiping from the user's
-  workspace to the agent's shows the frame sliding in.
-- It is drawn above every window, layer-shell panel and fullscreen surface,
-  and below the user's cursor and agent cursors. A client cannot cover it.
-  **As built:** it is drawn above the workspace's windows, in the windows
-  plane; the top bar, the dock, top and overlay layer-shell surfaces, and a
-  window promoted to its own plane are drawn above it.
-- It takes no input and takes no space: the pointer passes through it, and no
-  window moves or resizes because of it.
-- A small chip at the top centre of the framed output shows the agent's name,
-  in its colour, and a **Stop** control. Stop revokes the grant at once. The
-  chip responds to the user's pointer only.
-- While a window is fullscreen on an output, that output shows no chip; the
-  border stays. The chip comes back when the window leaves fullscreen.
-- While the agent is active the border is at full strength; after the idle
-  time it dims (to about 40 %) but never disappears — it signals the grant,
-  not activity. On an agent's own workspace it does not dim at all until the
-  agent releases the workspace.
-- It fades in over about 150 ms when a grant starts and fades out when it
-  ends.
-- Several agents on one workspace: the border takes the colour of the agent
-  that acted most recently, and the chip lists every agent with its colour.
-- An "every workspace" grant frames every workspace on every output.
-- Exposé previews and the workspace selector frame the thumbnails of granted
-  workspaces in the agent's colour too. The mark must not be mistaken for the
-  accent border of the current workspace: it is a solid ring along the
-  preview's edge, in the same place whether or not the workspace is
-  selected, with a badge on the top-left corner holding the agent's cursor
-  arrow. Exposé showing a granted workspace keeps its frame, without the
-  chip (the workspace strip runs along the top); Stop is not offered in
-  exposé.
-- The lock screen hides every border; they come back on unlock if the grants
-  still hold.
-- The border is part of what the user's screen shows, so the user's own
-  screenshots and recordings include it. Captures an agent takes of its own
-  workspace do not, so the agent sees its applications as they are.
-- It cannot be switched off while a grant is active: its width can be
-  configured, not its presence.
+### Acting
 
-### Phase 3 — agent-owned workspaces
+- The agent's pointer is hit-tested against the windows of its workspace,
+  whether or not the workspace is shown. It never reaches anything else:
+  not other workspaces, not the bars, the dock or Otto's dialogs.
+- A press gives the agent's keyboard to the window under it, without
+  raising it or making it look active. The user's keyboard stays where it
+  was.
+- The agent's keyboard is only ever given to a window on its workspace.
+  Keys sent while its focus is elsewhere reach nothing.
+- While the session is locked or locking, no agent motion, press, scroll or
+  key reaches anything, the lock surface included. Locking takes the
+  agent's focus away and unlocking does not give it back.
+- The agent's clipboard and primary selection are its seat's, not the
+  user's.
 
-Implemented: the grant, the workspace, hit-testing and keyboard rules while
-hidden, full-rate frames, the cursor drawn only where the workspace is
-shown, the border with its chip and Stop, the mark on exposé and selector
-thumbnails, and launching onto the workspace (`LaunchOnOwnWorkspace(argv)
--> pid`), and capture of a hidden workspace.
+### The agent's connection
 
-- An agent can ask for a workspace of its own, which starts an own-workspace
-  grant and draws its border. Over D-Bus: `RequestOwnWorkspace() ->
-  (output, x, y, width, height, scale)` — the output it is on, and the
-  logical rectangle the agent's absolute coordinates address;
-  `ReleaseOwnWorkspace() -> b` ends the grant. The workspace is added after
-  the last one on the primary output. Its name is not persisted: a restart
-  does not bring the agent's name back onto that position.
-- An agent seat with no grant reaches no surface; its pointer moves and its
-  cursor is drawn, and nothing more. Only the static seat reaches every
-  workspace without one.
-- The agent's coordinates address that workspace's space: hit-testing
-  resolves against its windows whether or not it is shown on an output. The
-  agent is told the workspace's logical size and scale.
-- Windows on a workspace with a grant keep receiving frame callbacks at full
-  rate while it is hidden, so their applications keep painting.
-- The agent can capture its workspace's current image while it is hidden,
-  at the workspace's output scale. Over D-Bus: `CaptureWorkspace(workspace)
-  -> path`, where `workspace` is the id `org.otto.Shell1.GetWorkspaces`
-  lists or the workspace's name (any case; a name on several outputs is
-  refused). The PNG is the wallpaper and the windows at the output's
-  resolution, without the agent border and the output's bars and dock.
-  Only the agent holding the workspace's grant may capture it (the caller
-  is known by its bus name), and never while the session is locked. A window
-  promoted to its own plane on the shown workspace may be missing.
-- The agent cursor is drawn only where its workspace is visible: on an output
-  showing it, in exposé previews of it, and during switches that bring it on
-  screen.
-- Applications the agent launches through Otto open on the agent's
-  workspace, including new windows of applications that are already running,
-  and never take the user's focus.
-- An agent's workspace never brings itself on screen: the user goes there
-  (by scrolling, the workspace selector or exposé) when they want to watch.
-- When the user switches to the agent's workspace, the agent keeps working;
-  the user's input and the agent's go to their own seats.
+Everything on a connection from `ConnectAgent` is the agent's, and so is
+every client that connects through a security-context listener made on it.
+On such a connection:
 
-### Phase 4 — current and every-workspace grants
+| Protocol | What the agent gets |
+|---|---|
+| `wl_seat` | Its own seat first, then the user's; no other agent's |
+| Virtual pointer and keyboard | Input on its own seat, whichever seat it names |
+| xdg-shell | Its windows open on its workspace and take its keyboard, not the user's; a window maximized as it opens stays there |
+| xdg-activation | A window it presents gets the agent's keyboard and nothing more; nothing comes forward for the user |
+| wlr-foreign-toplevel | The windows on its workspace, with titles. Activate gives the agent's keyboard to one, close closes one; the rest is ignored |
+| ext-foreign-toplevel-list | The windows it opened, with titles |
+| ext-image-copy-capture | An output source shows its workspace, shown or not, without the frame, the bars or anyone's cursor. A window source works for its own windows on its workspace |
 
-- An agent can ask for the user's current workspace or for every workspace;
-  Otto prompts, as in the grants table.
-- The prompt names the agent in its colour, says what it is asking for, and
-  offers **Allow** and **Deny**. It is Otto's own UI: no client can draw it,
-  answer it, or cover it, and an agent seat's input never reaches it.
-- A shortcut pauses every agent at once: while paused, no agent input reaches
-  any surface, and each border shows a paused state. The same shortcut
-  resumes them.
-- The topbar shows an indicator whenever any grant is active; opening it lists
-  every agent, its grants, and a Stop for each.
+A program started with `LaunchOnOwnWorkspace` is the user's program, not an
+agent client; only where its window opens follows the agent.
 
-### Phase 5 — enforcement
+### Capturing
 
-> Superseded by security-model.md. What stands of this phase: an agent's
-> own connection (5a) is its scope, and it now also sees its own seat alone,
-> opens its windows on its workspace and lists that workspace's windows; a
-> security context made on it connects more of the agent's clients. The
-> sandbox launcher (5b) and the per-program questions (5c) are gone: the
-> privileged interfaces go to Otto's components, to the user's programs by
-> default, and under `[privacy] strict` to an allowlist. The static `agent`
-> seat is gone. Stop ends the seat and suspends the program's consent for
-> the login session. Phase 4's current- and every-workspace grants are not
-> planned: one workspace per seat.
+- `CaptureWorkspace` takes the workspace's id, its name (any case) or `""`
+  for the caller's own, and must name the caller's workspace.
+- The PNG is the wallpaper and the windows at the output's resolution,
+  without the frame, the bars and the dock, written to a directory only the
+  user can read.
+- It is refused while the session is locked.
 
-Until this phase, grants hold only for clients that play along: any client
-can still create virtual input on the user's seat, or capture the whole
-screen. A program running unsandboxed as the user can always get around the
-compositor (it can rewrite the user's shell startup, ptrace their apps, or
-inject input below Otto through uinput), so the boundary is a sandbox around
-the agent, with Otto enforcing at its edge. Phase 5 comes in three parts.
+### The frame
 
-#### 5a — an agent's own connection (implemented, `feat/agent-lockdown`)
+Every workspace an agent holds is framed in its colour.
 
-- `ConnectAgent() → h` on `org.otto.Compositor` hands the caller, which must
-  hold a seat, the client end of a new Wayland connection. A Wayland client
-  takes it as `WAYLAND_SOCKET`. Each connection serves one client; an agent
-  asks again for the next.
-- Virtual pointers and keyboards on a seat an agent asked for are accepted on
-  that agent's connections and on no other: a refused pointer drives
-  nothing, a refused keyboard is a protocol error (`unauthorized`). On an
-  agent's connection, virtual input lands on its own seat whichever seat it
-  names, so stock tools that take the first seat (the user's) drive the
-  agent's. A keyboard needs the client to have bound the agent's seat; every
-  client sees every seat, so stock tools do. Hiding the other seats from an
-  agent's connection needs a client filter on smithay's `wl_seat` global.
-- `ServeAgentSocket(h)` takes a listening socket instead, and Otto accepts
-  every client on it as the agent's until the seat goes: the launcher of 5b
-  makes it the sandbox's `WAYLAND_DISPLAY`. `CaptureWorkspace("")` captures
-  the caller's own workspace.
-- An agent's connection is kept off every global a sandboxed client is kept
-  off (screen capture, the clipboard, layer shell, foreign-toplevel control,
-  input method, gamma, shortcut inhibition, security contexts, Otto's
-  private protocols), except the virtual input it drives its seat with.
-- An agent's connections see the agent's seat first and the user's after
-  it, through a global made for that session. When the seat goes (on
-  release, on Stop, or when the agent leaves the bus) its listeners close
-  and its connections stay for the user: they are no longer the agent's,
-  stay confined, keep the user's seat until the last of them closes, and a
-  virtual pointer they made drives nothing.
-- The static `enabled = true` seat of Phase 1 remains an unrestricted,
-  explicit opt-in for stock tools, with an "every workspace" border while it
-  is in use. The user's seat stays open to the user's own programs (the RDP
-  bridge, the emoji picker) until 5c.
+- A line `[agent_cursor] border_width` logical pixels wide (default 3)
+  along the edges of the output showing the workspace, following the
+  screen's rounded corners, with a glow fading inward over about 12 px.
+- It belongs to the workspace: it slides in and out with it during a swipe
+  or switch.
+- It is drawn above the workspace's windows and below the top bar, the dock
+  and overlays. It takes no input and no space.
+- A chip at the top centre shows the agent's name in its colour and a
+  **Stop** control. Only the user's real pointer can press Stop.
+- While a window on the workspace is fullscreen, the chip is hidden and the
+  line stays.
+- It fades in over about 150 ms when the agent gets the workspace and goes
+  at once when it ends.
+- Exposé keeps the frame on the workspace, without the chip; Stop is not
+  offered there.
+- Thumbnails in exposé and the workspace selector show a solid ring in the
+  agent's colour along the edge, the same whether or not the workspace is
+  selected, with a badge holding the agent's arrow on the top-left corner.
+- The user's own screenshots and recordings include the frame; the agent's
+  captures of its workspace do not.
+- Its width can be changed; it cannot be turned off.
 
-#### 5b — `otto-sandbox run` (implemented, `feat/agent-lockdown`)
+### Ending
 
-`otto-sandbox run [--name N] [--dir D] [--bind P] [--ro-bind P] [--env V]
-[--no-net] -- <command>` asks for a seat and an own workspace, then starts
-the command under bubblewrap, whose only ways out are the ones Otto
-controls:
+A seat ends when the agent releases it, when its bus connection goes, when
+the user presses Stop, when the user turns the program off or forgets it in
+Settings › Privacy, or with the secure attention key. When it ends:
 
-- `WAYLAND_DISPLAY` is a socket Otto serves for the agent
-  (`ServeAgentSocket`): every client inside is the agent's (5a).
-- No session bus, no X server, no `/dev/uinput`, and a private `/tmp` and
-  `/run`, so no `ydotoold` socket either. The environment is cleared but for
-  the basics and what `--env` names.
-- Home holds only the project directory (writable) and what `--bind` and
-  `--ro-bind` add; the rest of the system is read-only.
-- `otto-sandbox ctl launch <argv>`, `ctl capture` and `ctl workspace`, from
-  inside, ask the launcher over a socket of its own to start an app on the
-  agent's workspace, capture that workspace into the sandbox, or describe
-  it. The launcher makes those calls as the seat's holder.
-- When the command exits the seat is released, closing every connection of
-  the agent's; the workspace stays, for the user.
-
-From inside, the agent acts only on its own workspace and sees only what it
-captures of it. Not yet: portals (a filtering bus proxy, so the agent can ask
-the user for a screen share or a file), naming the program by something the
-agent cannot change (the seat consent is asked of `otto-sandbox`, with the
-agent's name in the prompt), and `otto-agents` starting its ACP agents this
-way.
-
-#### 5c — the user's other programs (planned)
-
-For agents that run without the launcher: screen capture, virtual input on
-the user's seat, data control (the clipboard), input method and
-foreign-toplevel control are offered to Otto's own components, the RDP
-bridge and agents' connections without asking. Any other unsandboxed program
-is asked once through the islands dialog, named as `otto_kit::process_app`
-names it, and the answer is kept in xdg-permission-store and listed in
-Settings › Privacy. The global stays advertised and the first frame or
-device waits for the answer, since a global's visibility cannot wait for the
-user. A configuration switch lets scripted setups allow their tools up
-front.
-
-This keeps an agent that does not know the rules from capturing the screen
-or typing as the user unnoticed. It is not a boundary: a program running as
-the user can impersonate one that is allowed.
-
-### Phase 6 — Otto's own UI
-
-- An agent holding an "every workspace" grant can use exposé: open it, pick a
-  window, and leave it. Exposé shows every workspace, so nothing less than a
-  grant on all of them allows it.
-- Last of all, the dock: an agent can use it to launch and switch to
-  applications. Not needed until everything before it is in place.
-- Using either needs a pointer of the agent's own in Otto's scene; until
-  then, the user's pointer is the only one Otto's UI answers to.
-
-### Phase 7 — polish
-
-- Agent cursors appear in screen shares and recordings (configurable).
-- Agent cursors follow the cursor theme and size, and animated cursors.
-- White-arrow themes are tinted so the body, not the rim, takes the colour.
+- Its cursor, its frame and its access go.
+- Its workspace stays, with its windows, unframed. A workspace Otto made
+  for the agent loses the agent's name; a lent one was the user's all
+  along.
+- The agent's windows stay too, for the user. They go on working on the
+  user's seat, but what the agent's clients had bound reaches nothing any
+  more: no window lists, no window control, no capture, no input.
+- The same agent asking again later starts over: it asks for a workspace
+  anew, and after a Stop its program is refused until the user's next
+  session.
 
 ## Constraints & Edge Cases
 
-- Toolkits pick a default seat. GTK and Qt handle several; Firefox, Chromium
-  and Electron are untested and may only listen to one seat. Phase 2 must be
-  checked against each before the default setup relies on it.
-- Stock `wlrctl` has no seat selection: with more than one agent seat, agents
-  need a driver that chooses a seat by its `wl_seat.name`.
-- Text input and input methods are tied to the focused surface of a seat. An
-  agent typing into a window the user is also typing into sends two
-  keystroke streams; nothing arbitrates, beyond the pause shortcut.
-- A hidden workspace has no output. Scale, geometry and capture for it are
-  taken from the output it was last shown on, or the primary output for a new
-  one.
-- Otto places a new window on the workspace the user is looking at. Putting an
-  agent's windows on its own workspace needs the launch to carry the
-  workspace (an activation token), because single-instance applications open
-  new windows from an existing process.
-- A client can draw its own coloured frame and imitate the border. The chip,
-  which only Otto draws and which sits above every surface, is the
-  authoritative sign; the topbar indicator is the second. During fullscreen
-  neither is shown, so the border alone marks the grant, and the pause
-  shortcut is the way to stop agents without leaving fullscreen.
-- The lock screen stops all agent input (see Phase 1 follow-ups). A button
-  an agent holds when the session locks is released to no one: the
-  application may see the press without the release.
-- Drag and drop from an agent seat is not supported until it is designed; a
-  drag started there must not interfere with the user's.
-- The KMS path has one hardware cursor plane per output, and it belongs to the
-  user. Agent cursors and borders are always composited, so they cost a
-  composite when they change.
-- Workspaces are independent per output. An own-workspace grant is for one
-  workspace on one output; "every workspace" covers all of them on all
-  outputs.
+- **Toolkits and seats.** On an agent's connection the agent's seat comes
+  first, so toolkits that only use the first seat take the agent's input,
+  and the user's seat is what keeps the window working once the agent has
+  gone. On a lent workspace, the user's programs already running hear of
+  the agent's seat only when the loan starts: Qt and plain libwayland apps
+  (foot) take it, so the agent can type in them; GTK 3 and 4 apps ignore a
+  seat that appears after they started, so the agent sees them but cannot
+  type in them. Chromium did not take the agent's clicks on a lent
+  workspace when tried.
+- **A hidden workspace has no output.** Its scale and size are those of the
+  output it was last shown on, or the primary output for a new one.
+- **Single-instance apps.** A new window from a program that is already
+  running opens where the program puts it; only a launch through Otto
+  carries the agent's workspace with it.
+- **Two agents on one workspace.** The frame and chip show the agent that
+  got the workspace last.
+- **A client can imitate the frame.** The chip, drawn by Otto, is the sign
+  to trust. Over a fullscreen window there is no chip, so the secure
+  attention key is the way to stop agents without leaving fullscreen.
+- **A button held at lock.** It is released to no one: the app may see the
+  press without the release.
+- **Drag and drop** from an agent's seat is not supported.
+- **Composited cursors.** Agent cursors and frames are composited, never on
+  the hardware cursor plane, so a change costs a redraw.
 
 ## Rationale
 
-- **A seat, not just a coloured cursor.** Drawing a second cursor while
-  agents still drive the user's pointer would only recolour the user's
-  cursor. The agent needs its own pointer position and focus, and a seat is
-  the Wayland object that carries them.
-- **Seats per agent, grants per workspace.** A seat is who is acting; a grant
-  is where they may act. Two agents on one workspace would fight over a
-  shared seat, and an agent moving between workspaces would have to switch.
-- **Own workspace first.** It needs no consent and cannot disturb the user's
-  work, so it is the safest way to let an agent work in parallel.
-- **A border, not only a cursor.** A cursor shows where an agent is; the
-  border shows where it may act, including while it is idle and its cursor is
-  hidden. Knowing that is what makes a grant something the user can reason
-  about.
-- **Border on the workspace, not the output.** The grant is to a workspace;
-  a frame that stayed on the output during a switch would mark the wrong
-  content.
-- **No chip over fullscreen windows.** A video, game or presentation would
-  have its own controls covered. The border is thin and at the edges, so it
-  stays; the chip returns as soon as the window leaves fullscreen.
-- **The border cannot be turned off during a grant.** An indicator the user
-  can disable is one they can forget they disabled.
-- **Advertised after the user's seat.** Clients that take the first seat keep
-  talking to the user; tools that take the last land on the agent. That makes
-  stock tools work with no changes in the one-agent case.
-- **No raise or activation from agent clicks.** Otherwise the user's windows
+- **A seat, not a coloured cursor.** The agent needs its own pointer
+  position and focus; a seat is the Wayland object that carries them.
+- **One workspace per seat.** "Where can the agent's input land" stays a
+  question with one answer, and the frame shows it.
+- **Its own workspace first.** It needs no question and cannot disturb the
+  user's work. Lending one of the user's is asked every time, because what
+  is on it changes.
+- **A frame, not only a cursor.** The cursor shows where an agent is; the
+  frame shows where it may act, idle or not.
+- **The frame on the workspace, not the output.** The grant is to a
+  workspace; a frame that stayed on the output during a switch would mark
+  the wrong content.
+- **No chip over fullscreen.** It would cover a video's or a game's own
+  controls; the line stays at the edges.
+- **No raise or activation from agent input.** Otherwise the user's windows
   would jump around while they work.
 - **Agent workspaces stay where they are.** Switching the user's view is a
-  disruption; the user already has every way to get there, and the border
-  and topbar indicator tell them it exists.
-- **Grants survive a reconnect within the session.** Agents crash and
-  restart; asking again every time would train the user to click Allow
-  without reading. A new Otto session starts with none, so nothing is
-  granted that the user did not allow since they logged in. The seat is
-  granted to a program, not a name (security-model.md), and a stop by the
-  user ends the grant for the login session.
-- **D-Bus for seats and grants.** Otto already serves D-Bus
-  (`org.otto.Compositor`, `org.otto.ScreenCast`), agents are processes that
-  can reach it without a Wayland connection, and the caller's bus name gives
-  a lifetime to tie the seat to.
-- **Exposé needs the whole desktop.** It shows and switches between every
-  workspace; granting it for less would reveal the rest.
-- **A longer idle on the agent's own workspace.** Watching an agent work
-  there is the point of going there; a cursor that keeps vanishing between
-  steps makes it hard to follow.
-- **The sandbox is the boundary, the prompts are not** *(superseded by security-model.md)*. A compositor can
-  tell a sandboxed client from its security context, and an agent's own
-  connection by the socket it handed out; it cannot tell one unsandboxed
-  program of the user's from another that pretends to be it. So the real
-  boundary is 5b, and 5c only stops agents that do not play along from
-  acting unnoticed.
-- **Enforcement last, but planned** *(done; see security-model.md)*. Grants are useful to cooperative agents
-  from Phase 3. They become a security boundary only when virtual input and
-  capture are restricted, which is recorded here so no earlier phase is
-  mistaken for one.
-- **Opt-in.** A second seat is visible to every client, and seat handling
-  varies between applications.
-- **Rendering verified on hardware.** Phase 1's agent cursor was checked in a
-  real `--tty-udev` session: the tint is correct and screenshots include it.
+  disruption; they have every way to get there.
+- **Nothing kept for a reconnect.** A grant held for an agent that left
+  would outlive the frame that shows it. Asking again is one call.
+- **The workspace and windows go to the user.** Ending an agent should not
+  throw work away, and should not leave its reach behind.
+- **D-Bus for asking.** Agents can reach it without a Wayland connection,
+  and the bus connection gives the seat a lifetime.
 
 ## Open Questions
 
-- Should anything stop an agent's application from raising itself or taking
-  focus on its own (xdg-activation), which would disturb the user?
-- Should the user be able to take over an agent seat's pointer, beyond
-  pausing?
+- A shortcut that pauses every agent, and a top bar indicator listing live
+  agents with Stop.
+- Dimming the frame while its agent is idle, and fading it out when it
+  ends.
+- The chip listing every agent when several share a workspace.
+- Should the user be able to take over an agent's pointer?
+- Agent cursors in screen shares and recordings, following the cursor theme
+  and size.

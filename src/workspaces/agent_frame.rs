@@ -1,6 +1,6 @@
 //! The agent border: a frame in an agent's colour around a workspace it may
 //! act on, with a chip naming the agent and offering Stop
-//! (`specs/agent-seats.md`, The agent border).
+//! (`specs/agent-seats.md`, The frame).
 //!
 //! Each output has one container, the last child of its `windows_plane`, so
 //! it scrolls with the workspaces and draws above their windows. In it, one

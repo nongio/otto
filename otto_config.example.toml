@@ -296,8 +296,9 @@ enabled = true
 
 # Agent cursor
 [agent_cursor]
-# Agents that ask Otto for a seat (`specs/agent-seats.md`) get a cursor of
-# their own, drawn beside yours in a colour of its own.
+# Agents that ask Otto for a seat (`specs/agent-seats.md`, and Privacy in the
+# user docs) get a cursor of their own, drawn beside yours in a colour of
+# its own.
 # How long the agent cursor stays after the agent's last input, in
 # milliseconds, before it fades out; 0 never hides it. (default: 5000)
 hide_after_ms = 5000

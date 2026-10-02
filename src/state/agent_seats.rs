@@ -29,7 +29,7 @@ pub struct PastAgent {
     pub color: [u8; 3],
 }
 
-/// Where an agent may act (`specs/security-model.md`, Agent sessions).
+/// Where an agent may act (`specs/agent-seats.md`, The workspace).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Grant {
     /// One workspace, by output and view id: one Otto made for the agent,
@@ -647,7 +647,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// Show an agent's seat to the user's programs while it holds a workspace
     /// the user lent it, and only then: a client cannot be told of the seat's
     /// own global later, so it gets one more for the loan
-    /// (`specs/security-model.md`, Agent sessions).
+    /// (`specs/agent-seats.md`, The workspace).
     fn sync_lent_seat_globals(&mut self) {
         for index in 0..self.agent_seats.len() {
             let agent = &self.agent_seats[index];
