@@ -183,6 +183,11 @@ impl Browser {
         self.places.iter().position(|p| &p.path == here)
     }
 
+    /// Each Miller pane's width, by depth, as the geometry helpers take it.
+    pub(super) fn miller_widths(&self) -> view::MillerWidths {
+        view::MillerWidths::new(self.columns.iter().map(|column| column.width))
+    }
+
     /// The entry under a point, if any — the same hit test the left-click
     /// handler uses for the current view mode. `None` means empty space: the
     /// background, a gap between rows, or (in List view) the header.
@@ -222,7 +227,7 @@ impl Browser {
                     &self.columns,
                     &counts,
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 ) {
                     Some((depth, Some(index))) => Some((depth, index)),
                     _ => None,
@@ -253,7 +258,7 @@ impl Browser {
                 depth,
                 height,
                 self.pan.offset(),
-                self.miller_w,
+                &self.miller_widths(),
                 count,
                 index,
                 scroll,

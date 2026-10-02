@@ -101,7 +101,7 @@ impl Browser {
                 height,
                 self.pan.offset(),
                 self.columns.len(),
-                self.miller_w,
+                &self.miller_widths(),
             )
             .is_some(),
             ViewMode::Grid | ViewMode::Photos => false,
@@ -134,8 +134,12 @@ impl Browser {
             return None;
         }
         let (width, height) = (self.size.0, self.content_h());
-        let panel =
-            view::preview_pane_rect(self.columns.len(), height, self.pan.offset(), self.miller_w);
+        let panel = view::preview_pane_rect(
+            self.columns.len(),
+            height,
+            self.pan.offset(),
+            &self.miller_widths(),
+        );
         let lines = preview_info(
             &self.selected_entry()?,
             self.decoded_preview(),
@@ -202,7 +206,7 @@ impl Browser {
             self.columns.len(),
             self.size.0,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         );
         if self.pan.scroll_to(target) {
             self.dirty = true;
@@ -254,7 +258,7 @@ impl Browser {
                     depth,
                     self.content_h(),
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 );
                 let band = view::pane_viewport(
                     self.size.0,
@@ -262,7 +266,7 @@ impl Browser {
                     view::ViewMode::Columns,
                     depth,
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 );
                 view::RowStrip::miller(full, entries.len(), scroll).visible(band)
             }
@@ -372,7 +376,7 @@ impl Browser {
             self.columns.len(),
             self.content_h(),
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         );
         let stage = view::preview_stage_rect(
             pane,

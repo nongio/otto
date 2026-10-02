@@ -141,7 +141,7 @@ impl Browser {
                         view::miller_rename_rect(
                             height,
                             self.pan.offset(),
-                            self.miller_w,
+                            &self.miller_widths(),
                             depth,
                             count,
                             scroll,
@@ -558,10 +558,7 @@ impl Browser {
             AppContext::set_cursor_shape(CursorShape::ColResize);
             return After::Next;
         }
-        if let Some((depth, start_x, start_w)) = self.miller_resize {
-            let dx = (x - start_x) / (depth + 1) as f32;
-            self.miller_w = (start_w + dx).clamp(view::MILLER_MIN_W, view::MILLER_MAX_W);
-            self.dirty = true;
+        if self.miller_divider_drag(x) {
             AppContext::set_cursor_shape(CursorShape::ColResize);
             return After::Next;
         }
@@ -705,6 +702,47 @@ impl Browser {
             None => {}
         }
         After::Next
+    }
+
+    /// A press on the divider at the right edge of Miller pane `depth`.
+    ///
+    /// A second press on the same divider within the double-click window
+    /// fits the pane to its longest name; otherwise the press starts a drag.
+    pub(super) fn miller_divider_press(&mut self, depth: usize, x: f32) {
+        let now = std::time::Instant::now();
+        let double_click = self.last_miller_click.is_some_and(|(last, at)| {
+            last == depth && now.duration_since(at) < DOUBLE_CLICK_WINDOW
+        });
+        if double_click {
+            let entries = self.visible(depth);
+            let longest = view::widest_name(entries.iter().map(|e| e.name.as_str()));
+            let has_dirs = entries.iter().any(|e| e.is_dir);
+            let width = view::fit_miller_width(longest, has_dirs);
+            if let Some(column) = self.columns.get_mut(depth) {
+                column.width = width;
+            }
+            self.last_miller_click = None;
+            self.dirty = true;
+        } else if let Some(column) = self.columns.get(depth) {
+            self.miller_resize = Some((depth, x, column.width));
+            self.last_miller_click = Some((depth, now));
+        }
+    }
+
+    /// Follow a Miller divider drag to pointer `x`. Returns whether a drag
+    /// is in progress, in which case it owns the pointer.
+    ///
+    /// Only the pane left of the divider changes width, so the divider stays
+    /// under the pointer and the panes after it shift along unchanged.
+    pub(super) fn miller_divider_drag(&mut self, x: f32) -> bool {
+        let Some((depth, start_x, start_w)) = self.miller_resize else {
+            return false;
+        };
+        if let Some(column) = self.columns.get_mut(depth) {
+            column.width = (start_w + x - start_x).clamp(view::MILLER_MIN_W, view::MILLER_MAX_W);
+            self.dirty = true;
+        }
+        true
     }
 
     /// The pointer left the window.
@@ -934,43 +972,21 @@ impl Browser {
                     }
                 }
             }
-        } else if self.mode == ViewMode::Columns
-            && view::miller_boundary_at(
-                x,
-                y,
-                width,
-                height,
-                self.pan.offset(),
-                self.columns.len(),
-                self.miller_w,
-            )
-            .is_some()
+        } else if let Some(depth) = (self.mode == ViewMode::Columns)
+            .then(|| {
+                view::miller_boundary_at(
+                    x,
+                    y,
+                    width,
+                    height,
+                    self.pan.offset(),
+                    self.columns.len(),
+                    &self.miller_widths(),
+                )
+            })
+            .flatten()
         {
-            let depth = view::miller_boundary_at(
-                x,
-                y,
-                width,
-                height,
-                self.pan.offset(),
-                self.columns.len(),
-                self.miller_w,
-            )
-            .unwrap();
-            let now = std::time::Instant::now();
-            let double_click = self.last_miller_click.is_some_and(|(last, at)| {
-                last == depth && now.duration_since(at) < DOUBLE_CLICK_WINDOW
-            });
-            if double_click {
-                let entries = self.visible(depth);
-                let longest = view::widest_name(entries.iter().map(|e| e.name.as_str()));
-                let has_dirs = entries.iter().any(|e| e.is_dir);
-                self.miller_w = view::fit_miller_width(longest, has_dirs);
-                self.last_miller_click = None;
-                self.dirty = true;
-            } else {
-                self.miller_resize = Some((depth, x, self.miller_w));
-                self.last_miller_click = Some((depth, now));
-            }
+            self.miller_divider_press(depth, x);
         } else {
             let counts = self.counts();
             let hit = view::miller_at(
@@ -981,7 +997,7 @@ impl Browser {
                 &self.columns,
                 &counts,
                 self.pan.offset(),
-                self.miller_w,
+                &self.miller_widths(),
             );
             if let Some((depth, Some(index))) = hit {
                 if ctrl {

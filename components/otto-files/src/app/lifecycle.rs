@@ -158,7 +158,7 @@ impl App for FilesApp {
                     depth,
                     browser.content_h(),
                     browser.pan.offset(),
-                    browser.miller_w,
+                    &browser.miller_widths(),
                 );
                 let strip = view::RowStrip::miller(pane, count, scroll);
                 (
@@ -251,7 +251,7 @@ impl App for FilesApp {
                 browser.columns.len(),
                 browser.content_h(),
                 browser.pan.offset(),
-                browser.miller_w,
+                &browser.miller_widths(),
             );
             tree.preview(PREVIEW_PANE, pane, &name, decoded);
         }
@@ -749,7 +749,7 @@ impl FilesApp {
                         view::miller_rename_rect(
                             height,
                             browser.pan.offset(),
-                            browser.miller_w,
+                            &browser.miller_widths(),
                             depth,
                             count,
                             scroll,

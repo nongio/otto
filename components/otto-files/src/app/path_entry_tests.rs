@@ -296,7 +296,7 @@ fn a_typed_file_is_scrolled_into_view() {
         browser.mode,
         depth,
         browser.pan.offset(),
-        browser.miller_w,
+        &browser.miller_widths(),
     );
     assert!(
         top >= offset && top + item_h <= offset + viewport.height(),

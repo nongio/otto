@@ -507,7 +507,7 @@ impl Row {
 }
 
 fn build_rows(pane: &PaneData<'_>, range: (usize, usize), f: &Frame, depth: usize) -> Vec<Row> {
-    let width = f.miller_w;
+    let width = f.miller.width(depth);
     let font = styles::BODY_MEDIUM.font();
     let active = depth == f.active;
 
@@ -678,7 +678,7 @@ mod tests {
             active: 0,
             pan: 0.0,
             pan_bar: None,
-            miller_w: view::MILLER_W,
+            miller: view::MillerWidths::default(),
             sort: crate::model::SortKey::Name,
             ascending: true,
             list_columns: view::ListColumnWidths::default(),
