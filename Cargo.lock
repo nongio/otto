@@ -5500,7 +5500,13 @@ dependencies = [
 name = "otto-msg"
 version = "1.5.0"
 dependencies = [
+ "libc",
  "serde_json",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "xkbcommon 0.6.0",
  "zbus 4.4.0",
 ]
 

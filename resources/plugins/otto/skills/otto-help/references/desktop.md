@@ -135,6 +135,10 @@ Login.
 `otto-msg` drives the compositor. The command words and the JSON are i3's, so
 an i3 or sway script ports with a rename.
 
+It acts as the person: `focus` and `workspace` move *their* focus and *their*
+view. To click and type in apps yourself, beside them, read
+[work-beside.md](work-beside.md) and use `otto-msg agent` instead.
+
 ### Look first
 
 ```sh

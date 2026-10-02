@@ -156,3 +156,23 @@ keystroke is slower and can fail. Bind the action instead, in
 `[keyboard_shortcuts]`; see
 [keyboard-shortcuts.md](keyboard-shortcuts.md). Keep `otto-msg` for scripts,
 for a status bar, and for the terminal.
+
+## Letting an agent work beside you
+
+Everything above acts as you: it moves your focus and switches your
+workspace. `otto-msg agent` is for a script or an AI agent that should work
+*beside* you instead, with a cursor and keyboard of its own, on a workspace
+of its own, framed in its colour:
+
+```sh
+otto-msg agent start "Claude"            # Otto asks you the first time
+otto-msg agent launch gedit --standalone # opens on the agent's workspace
+otto-msg agent capture                   # a screenshot of that workspace
+otto-msg agent click 1532 763            # in the screenshot's pixels
+otto-msg agent type "Hello"
+otto-msg agent stop                      # the workspace is yours again
+```
+
+`otto-msg agent --help` lists every command. Go to the agent's workspace to
+watch, click and type there yourself, or press Stop on its frame. See
+[Privacy](privacy.md) for what an agent can and can't do.

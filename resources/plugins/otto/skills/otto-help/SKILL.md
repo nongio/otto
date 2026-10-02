@@ -13,8 +13,9 @@ not read the others.
 | The request is about | Read |
 |---|---|
 | Changing a setting: appearance, wallpaper, displays, dock, keyboard, shortcuts, trackpad, tiling, sound, power, lock screen, login screen, autostart, virtual outputs — or where a setting lives | [references/configure.md](references/configure.md) |
-| Doing something on the desktop now: opening Files, the emoji picker, Settings, a folder or a file; telling the person something; asking the island a question; looking at or moving windows, workspaces and monitors | [references/desktop.md](references/desktop.md) |
+| Doing something on the desktop now: opening Files, the emoji picker, Settings, a folder or a file; telling the person something; asking the island a question; looking at or moving windows, workspaces and monitors for the person | [references/desktop.md](references/desktop.md) |
 | Finding a file: by name, kind, date, size, place or what it says inside ("the invoice from March", "photos from last week", "the PDF that mentions the lease"), then showing it in Files | [references/find.md](references/find.md) |
+| Using apps yourself, the way a person does: opening a program and clicking, typing and looking at it ("fill in this form", "try my app and tell me what breaks", "write this in gedit", "show me how to do it"), beside the person rather than in their place | [references/work-beside.md](references/work-beside.md) |
 | Sorting the desktop out: tidying what is open into workspaces, making and naming workspaces for them, "sort this out", "make me a music room" | [references/sort-desktop.md](references/sort-desktop.md) |
 | A new command for Otto Files' command palette (`Ctrl+P`, right-click menu), or one that does not show up | [references/files.md](references/files.md) |
 

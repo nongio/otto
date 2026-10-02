@@ -7,6 +7,8 @@
 //! The wire contract is `docs/developer/shell-dbus-api.md`; the user-facing
 //! guide is `docs/user/scripting.md`.
 
+mod agent;
+
 use std::process::ExitCode;
 
 use serde_json::Value;
@@ -31,6 +33,9 @@ Options:
   -q, --quiet         print nothing; the exit status is the answer
   -v, --version       print the version and exit
   -h, --help          print this and exit
+
+This acts as the user. To work beside them as an agent, with a cursor and
+keyboard of your own, see `otto-msg agent --help`.
 
 Examples:
   otto-msg focus right
@@ -143,7 +148,11 @@ fn parse_args(args: Vec<String>) -> Result<Options, String> {
 }
 
 fn main() -> ExitCode {
-    let options = match parse_args(std::env::args().skip(1).collect()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("agent") {
+        return agent::main(args[1..].to_vec());
+    }
+    let options = match parse_args(args) {
         Ok(options) => options,
         Err(message) => {
             eprintln!("otto-msg: {message}");
