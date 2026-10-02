@@ -166,19 +166,20 @@ impl App for FilesApp {
                     strip.visible(pane),
                 )
             }
-            ViewMode::Grid if browser.desk_pile().is_some() => {
-                // The desk's pile: the cells up to it, and the fan's items
-                // while it is open. Closed, the pile is one node.
+            ViewMode::Grid if browser.desk_overflow().is_some() => {
+                // The desk's overflow tile: the cells up to it, and the
+                // panel's items while it is open. Closed, the tile is one
+                // node.
                 let cells =
                     view::content_viewport(browser.size.0, browser.content_h(), ViewMode::Grid);
-                let pile = browser.desk_pile().expect("checked by the guard");
-                let end = match pile.fan {
-                    Some(_) => browser.desk_pile_shown().unwrap_or_default().end,
-                    None => pile.pile.first + 1,
+                let overflow = browser.desk_overflow().expect("checked by the guard");
+                let end = match overflow.panel {
+                    Some(_) => browser.desk_overflow_shown().unwrap_or_default().end,
+                    None => overflow.tile.first + 1,
                 };
                 (
                     Box::new(move |index| {
-                        pile.entry_rect(cells, index).unwrap_or_else(|| {
+                        overflow.entry_rect(cells, index).unwrap_or_else(|| {
                             view::grid_cell_rect_in(cells, view::GridSections::FLAT, index, 0.0)
                         })
                     }),
@@ -221,10 +222,10 @@ impl App for FilesApp {
         // The keyboard's row is described wherever it is: it is what the focus
         // names, and a focus pointing at an undescribed node reads as nothing.
         let off_screen_cursor = cursor.filter(|c| *c < count && !shown.contains(c));
-        let closed_pile = browser
-            .desk_pile()
-            .filter(|pile| pile.fan.is_none())
-            .map(|pile| pile.pile);
+        let closed_tile = browser
+            .desk_overflow()
+            .filter(|overflow| overflow.panel.is_none())
+            .map(|overflow| overflow.tile);
 
         tree.region(
             FILES_LIST,
@@ -238,13 +239,13 @@ impl App for FilesApp {
                     tree.control(row_focus(index), bounds, Role::ListItem, true, |node| {
                         node.set_size_of_set(count);
                         node.set_position_in_set(index + 1);
-                        if let Some(pile) = closed_pile.filter(|pile| pile.first == index) {
+                        if let Some(tile) = closed_tile.filter(|tile| tile.first == index) {
                             node.set_label(otto_kit::t_owned!(
-                                "files-desk-pile",
-                                count = pile.count as i64
+                                "files-desk-overflow",
+                                count = tile.count as i64
                             ));
                             node.set_selected(
-                                pile.range()
+                                tile.range()
                                     .filter_map(|i| entries.get(i))
                                     .any(|e| selection.contains(&e.selection_key())),
                             );
@@ -327,8 +328,8 @@ impl App for FilesApp {
         });
         let Some(index) = target else { return };
 
-        if browser.closed_pile_at(index).is_some() {
-            browser.open_desk_fan();
+        if browser.closed_tile_at(index).is_some() {
+            browser.open_overflow_panel();
         } else {
             browser.press_entry(depth, index);
         }
@@ -362,6 +363,7 @@ impl App for FilesApp {
         // surface has no activated state — and it is read here.
         if view::is_desk() {
             self.follow_desk_focus();
+            self.follow_overflow_focus();
             self.follow_desk_edit();
         } else if let Some(window) = self.window.as_ref() {
             let area = {
@@ -398,6 +400,9 @@ impl App for FilesApp {
             browser.tick_palette_scroll();
             // The Open With chooser's list, likewise: its own window.
             browser.tick_open_with_scroll();
+            // And the desk's overflow panel, on its own surface: its scroll,
+            // and its exit, which ends by taking the surface down.
+            browser.tick_overflow_panel();
             let elapsed = browser.caret_elapsed();
             let blinking = browser.tick_caret(elapsed);
             let animating = blinking
@@ -510,6 +515,9 @@ impl App for FilesApp {
                 None => self.render(),
             }
         }
+        if view::is_desk() {
+            self.sync_overflow_surface(repaint);
+        }
 
         self.sync_info_window();
         self.sync_open_with_window();
@@ -527,6 +535,7 @@ impl App for FilesApp {
         for column in &mut browser.columns {
             column.scroll.stop();
         }
+        browser.stop_overflow_scroll();
         drop(browser);
         self.render();
     }
@@ -592,6 +601,8 @@ impl App for FilesApp {
         let browser = self.state.lock().unwrap();
         let animating = browser.scroll_animating()
             || browser.peek_animating()
+            // The desk's overflow panel growing, shrinking or gliding.
+            || browser.overflow_animating()
             // An animated preview has a frame due on its own clock, with
             // nothing else on screen moving to ask for one.
             || browser.peek_frames_running()
@@ -783,7 +794,13 @@ impl FilesApp {
             let mut search_caret = None;
             let mut save_caret = None;
 
-            if let Some(session) = browser.rename.as_ref() {
+            // A rename in the desk's overflow panel is drawn on the panel's
+            // own surface; see `overflow_surface`.
+            if let Some(session) = browser
+                .rename
+                .as_ref()
+                .filter(|session| !browser.in_overflow_panel(session.index))
+            {
                 let (depth, index) = (session.depth, session.index);
                 let (width, height) = (browser.size.0, browser.content_h());
                 let count = browser.visible(depth).len();
@@ -805,7 +822,7 @@ impl FilesApp {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => match browser.desk_pile_entry_rect(index) {
+                    ViewMode::Grid => match browser.desk_overflow_entry_rect(index) {
                         Some(cell) => view::grid_rename_rect_over(cell),
                         None => view::grid_rename_rect(
                             width,
@@ -923,6 +940,9 @@ impl FilesApp {
         let group_menu = Rc::new(otto_kit::components::dropdown::DropdownMenu::new());
         self.group_menu = Some(Rc::clone(&group_menu));
         self.install_pointer(&window, self.context_menu.clone().unwrap(), group_menu);
+        if view::is_desk() {
+            self.install_overflow_pointer(&window, self.context_menu.clone().unwrap());
+        }
         self.install_frame_loop(&window);
         AppContext::register_window(window.clone());
         self.window = Some(window);
@@ -1036,8 +1056,11 @@ impl FilesApp {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        let focused =
-            window.surface_id().is_some() && AppContext::keyboard_focus() == window.surface_id();
+        // The overflow panel's overlay holding it counts: the keys still
+        // land on the desk's icons.
+        let focused = (window.surface_id().is_some()
+            && AppContext::keyboard_focus() == window.surface_id())
+            || self.overflow_has_keyboard();
         let mut browser = self.state.lock().unwrap();
         if browser.focused != focused {
             browser.focused = focused;

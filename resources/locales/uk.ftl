@@ -539,10 +539,10 @@ files-open-with-not-remembered = Відкрито, але вибір не збе
 files-new-folder = Нова папка
 files-desk-open-in-files = Відкрити у Файлах
 files-desk-edit-done = Готово
-# The desk's pile: the caption under it, and what a screen reader says for
-# it. $count is how many items it holds.
-files-desk-pile-caption = Ще
-files-desk-pile =
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Ще
+files-desk-overflow =
     { $count ->
         [one] Ще { $count } об’єкт
         [few] Ще { $count } об’єкти

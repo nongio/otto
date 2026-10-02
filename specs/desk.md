@@ -3,8 +3,8 @@
 **Status:** partly implemented — `otto-files --desk` shows one surface on the
 output the compositor picks, grid arrangement only, with the `[desk]` config
 read at startup and followed live, the single-instance lock, edit mode
-for the panel's size and position, and `overflow = "stack"` with its pile
-and fan. Not yet: a surface per output, free
+for the panel's size and position, and `overflow = "stack"` with its
+overflow tile and overflow panel. Not yet: a surface per output, free
 placement and its state file, Arrange and Clean Up in the menu, watching for
 a missing folder to appear, and Peek above the windows (it is still a
 subsurface of the desk, so windows cover it).
@@ -148,7 +148,7 @@ browser's own.
 - A slot that no longer fits (the panel shrank, or the output changed size)
   reflows its icon to the first free slot, without forgetting the saved one.
   Under `overflow = "stack"`, an icon with no free slot left goes into the
-  pile, which takes the last free slot in grid order.
+  overflow tile, which takes the last free slot in grid order.
 - **Clean Up** in the background menu snaps free-placed icons back into sort
   order. **Arrange ▸ Grid / Free** switches arrangement from the menu and
   writes it back to the config. Switching to grid keeps the free positions
@@ -163,39 +163,61 @@ column, times every row whose cells end inside the padded panel.
 - **`scroll`** (default): the grid runs on past the bottom of the panel and
   scrolls, like the browser's icon view.
 - **`stack`**: the grid never scrolls. It fills in sort order, and once
-  there are more items than cells, the last cell in fill order becomes a
-  **pile** holding that cell's own item and every item after it. With room
-  for 12 cells and 20 items, cells 1 to 11 show items 1 to 11 and the pile
-  holds items 12 to 20.
-  - The pile draws its first three items' icons on top of each other, the
+  there are more items than cells, the last cell in fill order becomes the
+  **overflow tile**, holding that cell's own item and every item after it.
+  With room for 12 cells and 20 items, cells 1 to 11 show items 1 to 11 and
+  the tile holds items 12 to 20. The config value stays `stack`.
+  - The tile draws its first three items' icons on top of each other, the
     first on top, each one below it a few points up and to the right and
     turned a few degrees, alternating sides. A pill in the accent colour
     over the icon's top trailing corner shows how many items it holds
-    (999+ past that). Its caption is *More items*. It lights like a
-    selected icon while any of its items is selected.
-  - A press on the pile, or Return or Space with the keyboard on it, opens
-    the **fan**: the pile's items as a small grid of the desk's own cells,
-    at most six across, on a dark see-through ground with rounded corners,
-    above the pile when there is room, below it otherwise, and centred on it
-    as far as the panel allows. A fan taller than the panel scrolls with the
-    wheel. Inside it the items behave like any icon on the desk: a click
-    selects, a double click opens, Ctrl and Shift extend, F2 renames, Space
-    peeks, a drag carries them out, and the right-click menu is the item's.
-    A press on its ground between items clears the selection.
-  - Escape, a press outside the fan (or on the pile again), switching
-    `overflow` back to `scroll`, changing `icon_size`, entering edit mode, or
-    the pile going away closes it. The desk keeps the fan open while another
-    window has the keyboard.
-  - The pile is not an item of its own. A right click on it is the desk's
+    (999+ past that), the number centred on its own ink. Its caption is
+    *More items*. It lights like a selected icon while the panel is open
+    and while any of its items is selected. The tile stays in its cell
+    while the panel is open.
+  - A press on the tile, or Return or Space with the keyboard on it, opens
+    the **overflow panel**: the tile's items as a small grid of the desk's
+    own cells, at most six across and two rows tall (captions included),
+    scrolling for more with the same momentum and elastic ends as every
+    other list. It is a surface of its own above the windows, not part of
+    the desk's surface: a transparent layer-shell overlay on the top layer,
+    the same size as the desk's surface and at the same place, carrying the
+    panel as a card. The compositor blurs and tints what is behind the card,
+    rounds it and casts its shadow; its ground is dark so the desk's white
+    captions read on it. It sits above the tile when there is room, below
+    it otherwise, and centred on it, kept inside the desk's surface.
+  - The panel grows out of the tile's icon and fades in (about 240 ms), and
+    shrinks back into it and fades out when it closes (about 190 ms). The
+    animation runs in the desk's process a frame at a time: each frame the
+    card is moved and sized and painted again, and a paint waits for the
+    compositor to have shown the last one. A panel closed part way in goes
+    back from where it got to.
+  - Inside it the items behave like any icon on the desk: a click selects,
+    a double click opens, Ctrl and Shift extend, F2 renames, Space peeks,
+    and the right-click menu is the item's (hung off the overlay, so it is
+    above the panel too). A press on its ground between items clears the
+    selection. A drag carries them out: the panel goes back into its tile
+    as the drag starts, and its surface stops taking the pointer at once,
+    so the drop lands on the desk or the window under it.
+  - Escape, a press anywhere outside the panel (the overlay takes it, so it
+    goes no further — not to the window under it either), the keyboard
+    going to another application's window, switching `overflow` back to
+    `scroll`, changing `icon_size`, entering edit mode, or the tile going
+    away closes it. A rename under way in the panel is committed as it
+    closes.
+  - Clicking the panel gives its overlay the keyboard, on demand; a key
+    typed with the desk focused reaches the panel all the same.
+  - The tile is not an item of its own. A right click on it is the desk's
     background menu, and a drop on it lands on the desk, as a drop on empty
     space does; only a folder icon takes a drop into itself. The rubber
-    band stops before the pile. Select All still selects the pile's items.
-  - The keyboard walks the cells up to the pile and stops on it; with the
-    fan open, the arrows walk the fan's items instead (Up and Down by one of
-    its rows), and Escape puts the keyboard back on the pile.
-  - A screen reader reads the closed pile as one list item, labelled with
-    how many items it holds ("12 more items"); activating it opens the fan,
-    whose items are then read like any other icon.
+    band stops before the tile. Select All still selects the tile's items.
+  - The keyboard walks the cells up to the tile and stops on it; with the
+    panel open, the arrows walk the panel's items instead (Up and Down by
+    one of its rows), scrolling it to keep the item in view, and Escape
+    puts the keyboard back on the tile.
+  - A screen reader reads the closed tile as one list item, labelled with
+    how many items it holds ("12 more items"); activating it opens the
+    panel, whose items are then read like any other icon.
 
 ### Configuration
 
@@ -257,11 +279,21 @@ overflow = "scroll"     # scroll | stack
 
 ## Rationale
 
-- **A pile rather than hiding what does not fit.** A desk that stacks is a
-  surface that never moves under the pointer, and a file must never seem to
-  vanish: the pile says how many more there are and opens in place, so
-  every file stays one click from where it was. The fan reuses the desk's
-  own cells, so a piled file is still the same icon with the same gestures.
+- **An overflow tile rather than hiding what does not fit.** A desk that
+  stacks is a surface that never moves under the pointer, and a file must
+  never seem to vanish: the tile says how many more there are and opens
+  next to itself, so every file stays one click from where it was. The
+  panel reuses the desk's own cells, so a file in it is still the same icon
+  with the same gestures.
+- **The panel on an overlay above the windows.** Drawn into the desk's own
+  surface it was covered by every window and clipped to the desk. An
+  `xdg_popup` of the desk does not work either: the compositor hit-tests a
+  bottom-layer surface's popups only through the desk's input region and
+  only after every window, and a grabbed popup keeps the pointer grab,
+  which refuses the drag that carries an item out. An overlay the size of
+  the desk's surface shares its coordinates, so every hit test and rect
+  stays in the desk's space, and the card on it gets the compositor's blur
+  the way the palette's and Peek's cards do.
 
 - **A shell over the browser's view layer, not a new app.** The value is that
   a file on the desk behaves exactly like a file in the browser. Two copies

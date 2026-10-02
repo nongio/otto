@@ -441,12 +441,14 @@ it back. **Reset** makes it fill the screen again.
 
 When there are more files than fit, *When icons don't fit* in the same group
 decides what happens. **Scroll** (the default) lets the grid run on and scroll.
-**Stack in a pile** keeps the grid still: the last cell becomes a pile of
-everything that didn't fit, with a badge saying how many. Click the pile, or
-press Return or Space with it selected, and it opens into a small grid of its
-own where the files work like any other icon on the desk: select them, open
-them, rename them, drag them out. Escape or a click anywhere else closes it.
-Dropping files on the pile puts them on the desk, like dropping them anywhere
+**Show in overlay** keeps the grid still: the extra icons go into
+the overflow tile in the last cell, with a badge saying how many. Click the
+tile, or press Return or Space with it selected, to open the overflow panel:
+it grows out of the tile above your windows and shows the files two rows at a
+time, scrolling for the rest. There they work like any other icon on the desk:
+select them, open them, rename them, drag them out to the desk or another app.
+Escape, a click anywhere else, or switching to another window closes it.
+Dropping files on the tile puts them on the desk, like dropping them anywhere
 else on it.
 
 All of this is kept in `~/.config/otto/files.toml`, and the desk picks up

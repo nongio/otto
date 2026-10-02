@@ -234,8 +234,8 @@ impl Browser {
         let area = view::content_viewport(self.size.0, self.content_h(), self.mode);
         let scroll = self.columns[depth].scroll.offset();
         let range = match self.mode {
-            view::ViewMode::Grid if self.desk_pile().is_some() => {
-                self.desk_pile_shown().unwrap_or_default()
+            view::ViewMode::Grid if self.desk_overflow().is_some() => {
+                self.desk_overflow_shown().unwrap_or_default()
             }
             view::ViewMode::Grid => view::grid_visible_range_in(
                 area,

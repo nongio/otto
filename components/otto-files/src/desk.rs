@@ -31,7 +31,8 @@
 //! with [`with_geometry`].
 //!
 //! What happens to icons the panel has no room for is [`Overflow`]: the grid
-//! scrolls, or the last cell becomes a [`Pile`] that opens into a [`Fan`].
+//! scrolls, or the last cell becomes an [`OverflowTile`] that opens an
+//! [`OverflowPanel`].
 
 // Rust guideline compliant 2026-02-21
 
@@ -71,8 +72,9 @@ pub enum Arrange {
 pub enum Overflow {
     /// The grid runs on past the panel's bottom edge and scrolls.
     Scroll,
-    /// The grid stops at the panel's edge, and its last cell piles up
-    /// everything that did not fit. See [`pile`].
+    /// The grid stops at the panel's edge, and its last cell becomes the
+    /// overflow tile, holding everything that did not fit. See
+    /// [`overflow_tile`].
     Stack,
 }
 
@@ -447,58 +449,64 @@ pub fn panel_rect(
 }
 
 // ---------------------------------------------------------------------------
-// Stacking: the pile in the last cell, and the fan it opens into
+// Stacking: the overflow tile in the last cell, and the overflow panel it
+// opens
 // ---------------------------------------------------------------------------
 
 /// The run of items the last cell holds when [`Overflow::Stack`] has more
 /// items than cells: entries `first` to `first + count - 1`, in the grid's
 /// order. The cell itself is cell `first`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Pile {
-    /// The pile's first item, which is on top, and the cell the pile sits in.
+pub struct OverflowTile {
+    /// The tile's first item, which is on top, and the cell the tile sits in.
     pub first: usize,
     /// How many items it holds; never fewer than two.
     pub count: usize,
 }
 
-impl Pile {
-    /// Whether entry `index` is in the pile.
+impl OverflowTile {
+    /// Whether entry `index` is in the tile.
     pub fn contains(&self, index: usize) -> bool {
         index >= self.first && index < self.first + self.count
     }
 
-    /// The pile's entries, as a range of indices.
+    /// The tile's entries, as a range of indices.
     pub fn range(&self) -> std::ops::Range<usize> {
         self.first..self.first + self.count
     }
 }
 
-/// The pile `count` items make in a grid of `capacity` cells, if they make
-/// one: the grid fills in order, and once there are more items than cells,
-/// the last cell takes its own item and every one after it.
+/// The overflow tile `count` items make in a grid of `capacity` cells, if
+/// they make one: the grid fills in order, and once there are more items
+/// than cells, the last cell takes its own item and every one after it.
 ///
-/// No cells at all is no pile, since there is nowhere to put one.
-pub fn pile(count: usize, capacity: usize) -> Option<Pile> {
-    (capacity > 0 && count > capacity).then(|| Pile {
+/// No cells at all is no tile, since there is nowhere to put one.
+pub fn overflow_tile(count: usize, capacity: usize) -> Option<OverflowTile> {
+    (capacity > 0 && count > capacity).then(|| OverflowTile {
         first: capacity - 1,
         count: count - capacity + 1,
     })
 }
 
-/// Room between the fan's edge and its cells, in points.
-pub const FAN_PAD: f32 = 12.0;
+/// Room between the overflow panel's edge and its cells, in points.
+pub const PANEL_PAD: f32 = 12.0;
 
-/// Room between the fan and the pile it opens from, in points.
-pub const FAN_GAP: f32 = 8.0;
+/// Room between the overflow panel and the tile it opens from, in points.
+pub const PANEL_GAP: f32 = 8.0;
 
-/// The most columns the fan lays out, so a big pile opens as a block rather
-/// than a strip across the whole screen.
-pub const FAN_MAX_COLUMNS: usize = 6;
+/// The most columns the overflow panel lays out, so a big tile opens as a
+/// block rather than a strip across the whole screen.
+pub const PANEL_MAX_COLUMNS: usize = 6;
 
-/// The fan: the pile's items laid out as a small grid near it.
+/// The most rows the overflow panel shows at once. Two whole rows, captions
+/// included; more items scroll.
+pub const PANEL_ROWS: usize = 2;
+
+/// The overflow panel: the tile's items laid out as a small grid near it,
+/// on a surface of its own above the windows.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Fan {
-    /// Where the fan sits, in the same space as the pile's cell.
+pub struct OverflowPanel {
+    /// Where the panel sits, in the same space as the tile's cell.
     pub rect: Rect,
     /// How many cells across.
     pub columns: usize,
@@ -509,28 +517,30 @@ pub struct Fan {
     pub cell: (f32, f32),
 }
 
-impl Fan {
-    /// The fan for `items` cells of `cell` points, opening from the pile at
-    /// `pile` and kept inside `bounds`.
+impl OverflowPanel {
+    /// The panel for `items` cells of `cell` points, opening from the tile
+    /// at `tile` and kept inside `bounds`.
     ///
-    /// It prefers the space above the pile, since the pile is the grid's last
-    /// cell, then below it, and past that takes the tallest it can inside
-    /// `bounds` and scrolls. Across, it is centred on the pile as far as
-    /// `bounds` allows.
-    pub fn new(bounds: Rect, pile: Rect, items: usize, cell: (f32, f32)) -> Self {
-        let room = ((bounds.width() - FAN_PAD * 2.0) / cell.0).floor().max(1.0) as usize;
-        let columns = items.clamp(1, FAN_MAX_COLUMNS).min(room);
+    /// It shows at most [`PANEL_ROWS`] rows and scrolls the rest. It prefers
+    /// the space above the tile, since the tile is the grid's last cell, then
+    /// below it, and past that sits as low as `bounds` allows, over the tile.
+    /// Across, it is centred on the tile as far as `bounds` allows.
+    pub fn new(bounds: Rect, tile: Rect, items: usize, cell: (f32, f32)) -> Self {
+        let room = ((bounds.width() - PANEL_PAD * 2.0) / cell.0)
+            .floor()
+            .max(1.0) as usize;
+        let columns = items.clamp(1, PANEL_MAX_COLUMNS).min(room);
         let rows = items.div_ceil(columns).max(1);
-        let width = (columns as f32 * cell.0 + FAN_PAD * 2.0).min(bounds.width());
-        let content_h = rows as f32 * cell.1 + FAN_PAD * 2.0;
-        let height = content_h.min(bounds.height());
-        let left = (pile.center_x() - width / 2.0)
+        let width = (columns as f32 * cell.0 + PANEL_PAD * 2.0).min(bounds.width());
+        let content_h = rows as f32 * cell.1 + PANEL_PAD * 2.0;
+        let height = (rows.min(PANEL_ROWS) as f32 * cell.1 + PANEL_PAD * 2.0).min(bounds.height());
+        let left = (tile.center_x() - width / 2.0)
             .min(bounds.right - width)
             .max(bounds.left);
-        let top = if pile.top - FAN_GAP - height >= bounds.top {
-            pile.top - FAN_GAP - height
-        } else if pile.bottom + FAN_GAP + height <= bounds.bottom {
-            pile.bottom + FAN_GAP
+        let top = if tile.top - PANEL_GAP - height >= bounds.top {
+            tile.top - PANEL_GAP - height
+        } else if tile.bottom + PANEL_GAP + height <= bounds.bottom {
+            tile.bottom + PANEL_GAP
         } else {
             (bounds.bottom - height).max(bounds.top)
         };
@@ -542,30 +552,30 @@ impl Fan {
         }
     }
 
-    /// How far the fan can scroll: zero when every row fits.
+    /// How far the panel can scroll: zero when every row fits.
     pub fn max_scroll(&self) -> f32 {
         (self.content_h - self.rect.height()).max(0.0)
     }
 
-    /// The cell for the pile's `k`th item, scrolled by `scroll`.
+    /// The cell for the tile's `k`th item, scrolled by `scroll`.
     pub fn cell_rect(&self, k: usize, scroll: f32) -> Rect {
         let (column, row) = (k % self.columns, k / self.columns);
         Rect::from_xywh(
-            self.rect.left + FAN_PAD + column as f32 * self.cell.0,
-            self.rect.top + FAN_PAD + row as f32 * self.cell.1 - scroll,
+            self.rect.left + PANEL_PAD + column as f32 * self.cell.0,
+            self.rect.top + PANEL_PAD + row as f32 * self.cell.1 - scroll,
             self.cell.0,
             self.cell.1,
         )
     }
 
     /// Which of `items` is under (`x`, `y`), scrolled by `scroll`. `None`
-    /// outside the fan, and on its padding or an empty cell.
+    /// outside the panel, and on its padding or an empty cell.
     pub fn index_at(&self, x: f32, y: f32, items: usize, scroll: f32) -> Option<usize> {
         if !self.rect.contains(skia_safe::Point::new(x, y)) {
             return None;
         }
-        let dx = x - self.rect.left - FAN_PAD;
-        let dy = y - self.rect.top - FAN_PAD + scroll;
+        let dx = x - self.rect.left - PANEL_PAD;
+        let dy = y - self.rect.top - PANEL_PAD + scroll;
         if dx < 0.0 || dy < 0.0 {
             return None;
         }
@@ -577,23 +587,27 @@ impl Fan {
         (k < items).then_some(k)
     }
 
-    /// The items whose cells show in the fan, scrolled by `scroll`.
+    /// The items whose cells show in the panel, scrolled by `scroll`. A
+    /// scroll past either end, while the content is pulled elastically, is
+    /// fine: the range only ever narrows.
     pub fn visible(&self, items: usize, scroll: f32) -> std::ops::Range<usize> {
-        let first_row = ((scroll - FAN_PAD) / self.cell.1).floor().max(0.0) as usize;
-        let last_row = ((scroll + self.rect.height() - FAN_PAD) / self.cell.1).ceil() as usize;
+        let first_row = ((scroll - PANEL_PAD) / self.cell.1).floor().max(0.0) as usize;
+        let last_row = ((scroll + self.rect.height() - PANEL_PAD) / self.cell.1)
+            .ceil()
+            .max(0.0) as usize;
         (first_row * self.columns).min(items)..(last_row * self.columns).min(items)
     }
 
     /// The scroll that shows item `k` whole, starting from `scroll`: as
     /// little movement as that takes.
     pub fn reveal(&self, k: usize, scroll: f32) -> f32 {
-        let top = FAN_PAD + (k / self.columns) as f32 * self.cell.1;
+        let top = PANEL_PAD + (k / self.columns) as f32 * self.cell.1;
         let bottom = top + self.cell.1;
         let view = self.rect.height();
-        let scroll = if top - FAN_PAD < scroll {
-            top - FAN_PAD
-        } else if bottom + FAN_PAD > scroll + view {
-            bottom + FAN_PAD - view
+        let scroll = if top - PANEL_PAD < scroll {
+            top - PANEL_PAD
+        } else if bottom + PANEL_PAD > scroll + view {
+            bottom + PANEL_PAD - view
         } else {
             scroll
         };
@@ -1215,111 +1229,131 @@ mod tests {
         assert_eq!(config.sort, SortKey::Kind);
     }
 
-    /// Everything fits: no pile, whatever the capacity.
+    /// Everything fits: no tile, whatever the capacity.
     #[test]
-    fn items_that_fit_make_no_pile() {
-        assert_eq!(pile(0, 12), None);
-        assert_eq!(pile(11, 12), None);
-        assert_eq!(pile(12, 12), None);
+    fn items_that_fit_make_no_tile() {
+        assert_eq!(overflow_tile(0, 12), None);
+        assert_eq!(overflow_tile(11, 12), None);
+        assert_eq!(overflow_tile(12, 12), None);
     }
 
     /// One too many: the last cell holds its own item and the one after it.
     #[test]
     fn the_last_cell_takes_its_item_and_every_one_after() {
-        let pile = pile(13, 12).unwrap();
+        let tile = overflow_tile(13, 12).unwrap();
         assert_eq!(
-            pile,
-            Pile {
+            tile,
+            OverflowTile {
                 first: 11,
                 count: 2
             }
         );
-        assert!(!pile.contains(10));
-        assert!(pile.contains(11));
-        assert!(pile.contains(12));
-        assert!(!pile.contains(13));
-        assert_eq!(pile.range(), 11..13);
+        assert!(!tile.contains(10));
+        assert!(tile.contains(11));
+        assert!(tile.contains(12));
+        assert!(!tile.contains(13));
+        assert_eq!(tile.range(), 11..13);
 
-        let big = super::pile(500, 12).unwrap();
+        let big = overflow_tile(500, 12).unwrap();
         assert_eq!(big.first, 11);
         assert_eq!(big.first + big.count, 500);
     }
 
     #[test]
-    fn a_single_cell_is_all_pile_and_no_cells_is_none() {
-        assert_eq!(pile(5, 1), Some(Pile { first: 0, count: 5 }));
-        assert_eq!(pile(5, 0), None);
+    fn a_single_cell_is_all_tile_and_no_cells_is_none() {
+        assert_eq!(
+            overflow_tile(5, 1),
+            Some(OverflowTile { first: 0, count: 5 })
+        );
+        assert_eq!(overflow_tile(5, 0), None);
     }
 
     const CELL: (f32, f32) = (100.0, 120.0);
 
-    /// The pile sits at the bottom-right of the panel, so the fan opens
-    /// above it, inside the panel.
+    /// The tile sits at the bottom-right of the panel, so the overflow panel
+    /// opens above it, inside the bounds.
     #[test]
-    fn the_fan_opens_above_the_pile_and_inside_the_bounds() {
+    fn the_panel_opens_above_the_tile_and_inside_the_bounds() {
         let bounds = Rect::from_wh(1000.0, 800.0);
-        let pile_cell = Rect::from_xywh(900.0, 680.0, CELL.0, CELL.1);
-        let fan = Fan::new(bounds, pile_cell, 8, CELL);
-        assert_eq!(fan.columns, FAN_MAX_COLUMNS);
-        assert!(fan.rect.bottom <= pile_cell.top - FAN_GAP + 0.5);
-        assert!(fan.rect.right <= bounds.right);
-        assert!(fan.rect.left >= bounds.left);
-        assert_eq!(fan.max_scroll(), 0.0);
+        let tile = Rect::from_xywh(900.0, 680.0, CELL.0, CELL.1);
+        let panel = OverflowPanel::new(bounds, tile, 8, CELL);
+        assert_eq!(panel.columns, PANEL_MAX_COLUMNS);
+        assert!(panel.rect.bottom <= tile.top - PANEL_GAP + 0.5);
+        assert!(panel.rect.right <= bounds.right);
+        assert!(panel.rect.left >= bounds.left);
+        assert_eq!(panel.max_scroll(), 0.0);
+    }
+
+    /// A tile in the top row has no room above it: the panel opens below.
+    #[test]
+    fn a_tile_in_the_top_row_opens_below() {
+        let bounds = Rect::from_wh(1000.0, 800.0);
+        let tile = Rect::from_xywh(900.0, 20.0, CELL.0, CELL.1);
+        let panel = OverflowPanel::new(bounds, tile, 8, CELL);
+        assert!(panel.rect.top >= tile.bottom + PANEL_GAP - 0.5);
     }
 
     #[test]
-    fn a_small_pile_opens_one_row_as_wide_as_it_is() {
+    fn a_small_tile_opens_one_row_as_wide_as_it_is() {
         let bounds = Rect::from_wh(1000.0, 800.0);
-        let pile_cell = Rect::from_xywh(450.0, 680.0, CELL.0, CELL.1);
-        let fan = Fan::new(bounds, pile_cell, 3, CELL);
-        assert_eq!(fan.columns, 3);
-        assert_eq!(fan.rect.width(), 3.0 * CELL.0 + FAN_PAD * 2.0);
-        assert_eq!(fan.rect.height(), CELL.1 + FAN_PAD * 2.0);
-        // Centred on the pile.
-        assert_eq!(fan.rect.center_x(), pile_cell.center_x());
+        let tile = Rect::from_xywh(450.0, 680.0, CELL.0, CELL.1);
+        let panel = OverflowPanel::new(bounds, tile, 3, CELL);
+        assert_eq!(panel.columns, 3);
+        assert_eq!(panel.rect.width(), 3.0 * CELL.0 + PANEL_PAD * 2.0);
+        assert_eq!(panel.rect.height(), CELL.1 + PANEL_PAD * 2.0);
+        // Centred on the tile.
+        assert_eq!(panel.rect.center_x(), tile.center_x());
     }
 
     /// Items map to cells and back, gaps and padding are nothing.
     #[test]
-    fn a_fan_cell_is_found_where_it_is_drawn() {
+    fn a_panel_cell_is_found_where_it_is_drawn() {
         let bounds = Rect::from_wh(1000.0, 800.0);
-        let pile_cell = Rect::from_xywh(900.0, 680.0, CELL.0, CELL.1);
-        let fan = Fan::new(bounds, pile_cell, 8, CELL);
+        let tile = Rect::from_xywh(900.0, 680.0, CELL.0, CELL.1);
+        let panel = OverflowPanel::new(bounds, tile, 8, CELL);
         for k in 0..8 {
-            let cell = fan.cell_rect(k, 0.0);
+            let cell = panel.cell_rect(k, 0.0);
             assert_eq!(
-                fan.index_at(cell.center_x(), cell.center_y(), 8, 0.0),
+                panel.index_at(cell.center_x(), cell.center_y(), 8, 0.0),
                 Some(k)
             );
         }
         // The empty cells after the last item, and the padding.
-        let empty = fan.cell_rect(9, 0.0);
+        let empty = panel.cell_rect(9, 0.0);
         assert_eq!(
-            fan.index_at(empty.center_x(), empty.center_y(), 8, 0.0),
+            panel.index_at(empty.center_x(), empty.center_y(), 8, 0.0),
             None
         );
         assert_eq!(
-            fan.index_at(fan.rect.left + 2.0, fan.rect.top + 2.0, 8, 0.0),
+            panel.index_at(panel.rect.left + 2.0, panel.rect.top + 2.0, 8, 0.0),
             None
         );
-        assert_eq!(fan.index_at(0.0, 0.0, 8, 0.0), None);
+        assert_eq!(panel.index_at(0.0, 0.0, 8, 0.0), None);
     }
 
-    /// More rows than fit scroll, and revealing an item brings its row in.
+    /// Two whole rows show, captions and all; the rest scroll, and revealing
+    /// an item brings its row in.
     #[test]
-    fn a_tall_fan_scrolls_to_what_it_reveals() {
-        let bounds = Rect::from_wh(700.0, 400.0);
-        let pile_cell = Rect::from_xywh(600.0, 280.0, CELL.0, CELL.1);
-        let fan = Fan::new(bounds, pile_cell, 60, CELL);
-        assert!(fan.rect.height() <= bounds.height());
-        assert!(fan.max_scroll() > 0.0);
-        assert_eq!(fan.visible(60, 0.0).start, 0);
-        let last = fan.reveal(59, 0.0);
-        assert_eq!(last, fan.max_scroll());
-        assert!(fan.visible(60, last).contains(&59));
-        let cell = fan.cell_rect(59, last);
-        assert!(cell.bottom <= fan.rect.bottom && cell.top >= fan.rect.top);
-        assert_eq!(fan.reveal(0, last), 0.0);
+    fn the_panel_shows_two_rows_and_scrolls_the_rest() {
+        let bounds = Rect::from_wh(1000.0, 800.0);
+        let tile = Rect::from_xywh(900.0, 680.0, CELL.0, CELL.1);
+        let panel = OverflowPanel::new(bounds, tile, 60, CELL);
+        assert_eq!(
+            panel.rect.height(),
+            PANEL_ROWS as f32 * CELL.1 + PANEL_PAD * 2.0
+        );
+        assert!(panel.max_scroll() > 0.0);
+        assert_eq!(panel.visible(60, 0.0).start, 0);
+        // The second row's cell, caption included, is inside the panel.
+        assert!(panel.cell_rect(panel.columns, 0.0).bottom <= panel.rect.bottom);
+        let last = panel.reveal(59, 0.0);
+        assert_eq!(last, panel.max_scroll());
+        assert!(panel.visible(60, last).contains(&59));
+        let cell = panel.cell_rect(59, last);
+        assert!(cell.bottom <= panel.rect.bottom && cell.top >= panel.rect.top);
+        assert_eq!(panel.reveal(0, last), 0.0);
+        // Pulled past the top, nothing before the first item is asked for.
+        assert_eq!(panel.visible(60, -40.0).start, 0);
     }
 
     #[test]

@@ -12,7 +12,7 @@ impl Browser {
         let depth = self.active.min(self.columns.len().saturating_sub(1));
         if let Some(cell) = self.columns[depth]
             .cursor
-            .and_then(|index| self.desk_pile_entry_rect(index))
+            .and_then(|index| self.desk_overflow_entry_rect(index))
         {
             return view::entry_icon_rect(cell, ViewMode::Grid);
         }

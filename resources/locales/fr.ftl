@@ -531,10 +531,10 @@ files-open-with-not-remembered = Ouvert, mais le choix n’a pas été enregistr
 files-new-folder = Nouveau dossier
 files-desk-open-in-files = Ouvrir dans Fichiers
 files-desk-edit-done = Terminé
-# The desk's pile: the caption under it, and what a screen reader says for
-# it. $count is how many items it holds.
-files-desk-pile-caption = Autres éléments
-files-desk-pile =
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Autres éléments
+files-desk-overflow =
     { $count ->
         [one] 1 autre élément
        *[other] { $count } autres éléments

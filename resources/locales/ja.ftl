@@ -522,10 +522,10 @@ files-open-with-not-remembered = 開きましたが、選択を保存できま�
 files-new-folder = 新規フォルダ
 files-desk-open-in-files = ファイルで開く
 files-desk-edit-done = 完了
-# The desk's pile: the caption under it, and what a screen reader says for
-# it. $count is how many items it holds.
-files-desk-pile-caption = その他
-files-desk-pile =
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = その他
+files-desk-overflow =
     { $count ->
        *[other] ほか { $count } 項目
     }

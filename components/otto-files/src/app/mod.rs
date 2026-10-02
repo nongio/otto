@@ -37,7 +37,7 @@ use view::ViewMode;
 mod construct;
 mod cursor;
 mod desk_edit;
-mod desk_pile;
+mod desk_overflow;
 mod drag_drop;
 mod file_ops;
 mod folder_views;
@@ -54,6 +54,7 @@ mod navigation;
 mod ocr;
 mod open_with;
 mod opening;
+mod overflow_surface;
 mod palette_session;
 mod panel_text;
 mod peek_session;
@@ -441,9 +442,12 @@ struct Browser {
     /// The `[desk]` config the desk is showing, so a change to the file can
     /// be told from a write that changed nothing. `None` outside the desk.
     desk_config: Option<crate::desk::DeskConfig>,
-    /// The desk's pile, opened into its fan, with how far the fan is
-    /// scrolled. `None` while it is closed. See [`desk_pile`].
-    desk_fan: Option<f32>,
+    /// The desk's overflow panel while it is open: its scroll and when it
+    /// opened. `None` while it is closed. See [`desk_overflow`].
+    overflow_panel: Option<desk_overflow::OverflowSession>,
+    /// The overflow panel on its way back into its tile: drawn, but no
+    /// longer answering for the pointer or the keyboard.
+    overflow_panel_closing: Option<desk_overflow::OverflowSession>,
     /// This window is showing the Recent listing rather than a directory:
     /// what was written most recently across the user's folders, newest first,
     /// under a heading per day.
@@ -1178,6 +1182,13 @@ struct FilesApp {
     /// A watch on the folder `files.toml` lives in, so the desk follows an
     /// edit to its config. `None` outside the desk.
     desk_config_watch: Option<crate::watch::DirWatch>,
+    /// The desk's overflow panel on screen, while it is. Shared with the
+    /// pointer callback, registered once, for the reason
+    /// [`Self::info_window`] is.
+    overflow_surface: Rc<RefCell<Option<overflow_surface::OverflowSurface>>>,
+    /// Whether the keyboard has been in this process since the overflow
+    /// panel opened. See [`FilesApp::follow_overflow_focus`].
+    overflow_focus_seen: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1506,6 +1517,8 @@ fn run_app(
         desk_surface_editing: false,
         desk_input_region: None,
         desk_config_watch: None,
+        overflow_surface: Rc::new(RefCell::new(None)),
+        overflow_focus_seen: false,
     };
 
     AppRunner::new(app).run()
@@ -1553,9 +1566,9 @@ mod palette_tests;
 #[cfg(test)]
 mod dnd_tests;
 
-/// The desk's pile and its fan, under `overflow = "stack"`.
+/// The desk's overflow tile and its panel, under `overflow = "stack"`.
 #[cfg(test)]
-mod desk_pile_tests;
+mod desk_overflow_tests;
 
 #[cfg(test)]
 mod watch_tests;

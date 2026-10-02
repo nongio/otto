@@ -523,10 +523,10 @@ files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
 files-desk-open-in-files = 在文件中打开
 files-desk-edit-done = 完成
-# The desk's pile: the caption under it, and what a screen reader says for
-# it. $count is how many items it holds.
-files-desk-pile-caption = 更多项目
-files-desk-pile =
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = 更多项目
+files-desk-overflow =
     { $count ->
        *[other] 另外 { $count } 项
     }

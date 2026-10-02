@@ -51,7 +51,7 @@ impl Browser {
         if !self.desk || self.desk_editing.is_some() {
             return;
         }
-        self.close_desk_fan();
+        self.close_overflow_panel();
         let panel = view::desk_panel_rect(self.size.0, self.size.1);
         view::set_desk_edit(Some(DeskEdit {
             panel,
@@ -202,10 +202,10 @@ impl Browser {
         if next.icon_size != current.icon_size {
             view::set_grid_icon(next.icon_size);
         }
-        // The pile's cell moves with the grid; a fan left open would hang
+        // The tile's cell moves with the grid; a panel left open would hang
         // over the wrong one.
         if next.overflow != current.overflow || next.icon_size != current.icon_size {
-            self.close_desk_fan();
+            self.close_overflow_panel();
         }
         view::set_desk_layout(view::DeskLayout::from_config(&next));
         self.desk_config = Some(next);

@@ -196,7 +196,7 @@ impl Browser {
         match self.mode {
             ViewMode::Grid => {
                 let depth = self.columns.len() - 1;
-                if let Some(hit) = self.desk_pile_entry_at(x, y) {
+                if let Some(hit) = self.desk_overflow_entry_at(x, y) {
                     return hit.map(|index| (depth, index));
                 }
                 let count = self.visible_len(depth);
@@ -246,7 +246,7 @@ impl Browser {
         let scroll = self.columns[depth].scroll.offset();
 
         match self.mode {
-            ViewMode::Grid => self.desk_pile_entry_rect(index).unwrap_or_else(|| {
+            ViewMode::Grid => self.desk_overflow_entry_rect(index).unwrap_or_else(|| {
                 view::grid_cell_rect_in(
                     view::content_viewport(width, height, ViewMode::Grid),
                     &self.recent_sections,

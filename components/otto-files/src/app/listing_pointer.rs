@@ -72,7 +72,7 @@ impl Browser {
         // order; the first that answers for it keeps it.
         let layers: [Layer; 11] = [
             Self::desk_edit_pointer,
-            Self::desk_pile_pointer,
+            Self::desk_overflow_pointer,
             Self::rename_pointer,
             Self::peek_pointer,
             Self::preview_video_press,
@@ -151,7 +151,7 @@ impl Browser {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => match self.desk_pile_entry_rect(index) {
+                    ViewMode::Grid => match self.desk_overflow_entry_rect(index) {
                         Some(cell) => view::grid_rename_rect_over(cell),
                         None => view::grid_rename_rect(
                             width,

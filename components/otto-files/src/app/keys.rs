@@ -515,9 +515,10 @@ impl FilesApp {
                     // In the picker, Return means "this one" — descend into a
                     // directory or accept a file. Renaming is file management,
                     // which the picker does not do. On the desk's closed
-                    // pile it opens the fan: the pile is not a file to rename.
-                    if browser.cursor_on_closed_pile() {
-                        browser.open_desk_fan();
+                    // overflow tile it opens the panel: the tile is not a
+                    // file to rename.
+                    if browser.cursor_on_closed_tile() {
+                        browser.open_overflow_panel();
                     } else if browser.picker.is_some() {
                         browser.open_selection();
                     } else {
@@ -595,7 +596,7 @@ impl FilesApp {
                 Keysym::z if ctrl && browser.picker.is_none() => browser.undo_last(),
                 // Space toggles: the second press dismisses what the first
                 // opened, which is the gesture people already have.
-                Keysym::space if browser.cursor_on_closed_pile() => browser.open_desk_fan(),
+                Keysym::space if browser.cursor_on_closed_tile() => browser.open_overflow_panel(),
                 Keysym::space => {
                     if !browser.close_peek() {
                         self.start_peek(&mut browser);
@@ -622,12 +623,12 @@ impl FilesApp {
                         browser.clear_search();
                     } else if browser.close_peek() {
                         // The preview took it.
-                    } else if browser.close_desk_fan() {
-                        // The desk's fan took it; the keyboard goes back to
-                        // the pile.
-                        if let Some(pile) = browser.desk_pile() {
+                    } else if browser.close_overflow_panel() {
+                        // The desk's overflow panel took it; the keyboard
+                        // goes back to the tile.
+                        if let Some(overflow) = browser.desk_overflow() {
                             let depth = browser.columns.len() - 1;
-                            browser.columns[depth].cursor = Some(pile.pile.first);
+                            browser.columns[depth].cursor = Some(overflow.tile.first);
                         }
                     } else if menu_open {
                         if let Some(session) = browser.picker.as_mut() {

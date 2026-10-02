@@ -1202,72 +1202,78 @@ pub fn grid_capacity(area: Rect) -> usize {
     rows * columns
 }
 
-// --- The desk's pile --------------------------------------------------------
+// --- The desk's overflow tile and overflow panel ----------------------------
 
-/// The desk's pile as a frame draws it: which entries it holds and, while
-/// it is open, the fan they are laid out in with the fan's scroll. See
-/// [`crate::desk::pile`] and `specs/desk.md`.
+/// The desk's overflow as a frame draws it: which entries the tile holds
+/// and, while it is open, the overflow panel they are laid out in with the
+/// panel's scroll. See [`crate::desk::overflow_tile`] and `specs/desk.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DeskPile {
-    pub pile: crate::desk::Pile,
-    pub fan: Option<(crate::desk::Fan, f32)>,
+pub struct DeskOverflow {
+    pub tile: crate::desk::OverflowTile,
+    pub panel: Option<(crate::desk::OverflowPanel, f32)>,
 }
 
-impl DeskPile {
-    /// The pile over `count` entries in the grid at `area`, if they make one.
-    /// `fan_scroll` opens its fan, scrolled that far.
-    pub fn new(area: Rect, count: usize, fan_scroll: Option<f32>) -> Option<Self> {
-        let pile = crate::desk::pile(count, grid_capacity(area))?;
-        let fan = fan_scroll.map(|scroll| {
-            let fan = crate::desk::Fan::new(
-                area,
-                grid_cell_rect(area, pile.first, 0.0),
-                pile.count,
+/// How far the overflow panel keeps from the edges of the desk's surface, in
+/// points.
+const PANEL_MARGIN: f32 = 12.0;
+
+impl DeskOverflow {
+    /// The overflow over `count` entries in the grid at `area`, if they make
+    /// a tile. `panel_scroll` opens its panel, scrolled that far, somewhere
+    /// inside `surface`: the panel is a surface of its own, so it is not
+    /// held inside the grid.
+    pub fn new(area: Rect, surface: Rect, count: usize, panel_scroll: Option<f32>) -> Option<Self> {
+        let tile = crate::desk::overflow_tile(count, grid_capacity(area))?;
+        let panel = panel_scroll.map(|scroll| {
+            let panel = crate::desk::OverflowPanel::new(
+                surface.with_inset((PANEL_MARGIN, PANEL_MARGIN)),
+                grid_cell_rect(area, tile.first, 0.0),
+                tile.count,
                 (cell_w(), cell_h()),
             );
-            (fan, scroll.clamp(0.0, fan.max_scroll()))
+            (panel, scroll)
         });
-        Some(Self { pile, fan })
+        Some(Self { tile, panel })
     }
 
-    /// Where entry `index` is drawn and hit, when the pile holds it: its cell
-    /// in the fan while the fan is open, the pile's own cell while it is not.
-    /// `None` for an entry in the grid.
+    /// Where entry `index` is drawn and hit, when the tile holds it: its cell
+    /// in the panel while the panel is open, the tile's own cell while it is
+    /// not. `None` for an entry in the grid.
     pub fn entry_rect(&self, area: Rect, index: usize) -> Option<Rect> {
-        if !self.pile.contains(index) {
+        if !self.tile.contains(index) {
             return None;
         }
-        Some(match self.fan {
-            Some((fan, scroll)) => fan.cell_rect(index - self.pile.first, scroll),
-            None => grid_cell_rect(area, self.pile.first, 0.0),
+        Some(match self.panel {
+            Some((panel, scroll)) => panel.cell_rect(index - self.tile.first, scroll),
+            None => grid_cell_rect(area, self.tile.first, 0.0),
         })
     }
 
-    /// The pile's own cell in the grid at `area`.
+    /// The tile's own cell in the grid at `area`.
     pub fn cell(&self, area: Rect) -> Rect {
-        grid_cell_rect(area, self.pile.first, 0.0)
+        grid_cell_rect(area, self.tile.first, 0.0)
     }
 }
 
-/// How many of a pile's icons are drawn on top of one another. Enough to
-/// read as a pile; more only adds edges.
-pub const PILE_LAYERS: usize = 3;
+/// How many of the tile's icons are drawn on top of one another. Enough to
+/// read as a stack; more only adds edges.
+pub const OVERFLOW_TILE_LAYERS: usize = 3;
 /// How far each icon under the top one sits up and to the right, in points.
-const PILE_OFFSET: f32 = 5.0;
+const TILE_OFFSET: f32 = 5.0;
 /// How far each icon under the top one is turned, in degrees, alternating
-/// sides so the pile looks put down by hand.
-const PILE_TILT: f32 = 3.0;
+/// sides so the stack looks put down by hand.
+const TILE_TILT: f32 = 3.0;
 /// The count badge's height, and its narrowest width.
-const PILE_BADGE_H: f32 = 20.0;
+const TILE_BADGE_H: f32 = 20.0;
 
-/// The desk's pile in `cell`: its first few items' icons on top of one
+/// The overflow tile in `cell`: its first few items' icons on top of one
 /// another, the first on top, a badge with how many it holds, and its
 /// caption.
-fn draw_desk_pile(
+fn draw_overflow_tile(
     canvas: &Canvas,
     f: &Frame,
     entries: &[&Entry],
-    pile: crate::desk::Pile,
+    tile: crate::desk::OverflowTile,
     cell: Rect,
     selected: bool,
 ) {
@@ -1284,23 +1290,23 @@ fn draw_desk_pile(
         );
     }
     let box_rect = Rect::from_xywh(cell.center_x() - icon / 2.0, icon_top, icon, icon);
-    let layers = pile.count.min(PILE_LAYERS);
+    let layers = tile.count.min(OVERFLOW_TILE_LAYERS);
     for depth in (0..layers).rev() {
-        let Some(entry) = entries.get(pile.first + depth) else {
+        let Some(entry) = entries.get(tile.first + depth) else {
             continue;
         };
         let step = depth as f32;
         let tilt = match depth {
             0 => 0.0,
-            odd if odd % 2 == 1 => PILE_TILT,
-            _ => -PILE_TILT,
+            odd if odd % 2 == 1 => TILE_TILT,
+            _ => -TILE_TILT,
         };
         canvas.save();
         canvas.translate((box_rect.center_x(), box_rect.center_y()));
         canvas.rotate(tilt, None);
         canvas.translate((
-            PILE_OFFSET * step - box_rect.width() / 2.0,
-            -PILE_OFFSET * step - box_rect.height() / 2.0,
+            TILE_OFFSET * step - box_rect.width() / 2.0,
+            -TILE_OFFSET * step - box_rect.height() / 2.0,
         ));
         draw_grid_icon(
             canvas,
@@ -1310,11 +1316,11 @@ fn draw_desk_pile(
         );
         canvas.restore();
     }
-    draw_pile_badge(canvas, f.theme, box_rect, pile.count);
+    draw_tile_badge(canvas, f.theme, box_rect, tile.count);
     draw_grid_caption(
         canvas,
         f.theme,
-        otto_kit::t!("files-desk-pile-caption"),
+        otto_kit::t!("files-desk-overflow-caption"),
         cell,
         selected,
         false,
@@ -1322,22 +1328,36 @@ fn draw_desk_pile(
     );
 }
 
-/// The pile's count, in a pill of the accent colour over the icon's top
-/// trailing corner.
-fn draw_pile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
-    let text = if count > 999 {
+/// The badge's text for `count` items: the number, capped at 999+.
+fn tile_badge_text(count: usize) -> String {
+    if count > 999 {
         "999+".to_string()
     } else {
         count.to_string()
-    };
-    let style = styles::FOOTNOTE_EMPHASIZED;
-    let text_w = style.font().measure_str(&text, None).0;
-    let width = (text_w + 12.0).max(PILE_BADGE_H);
+    }
+}
+
+/// Where the badge's text goes so its ink is centred on (`cx`, `cy`): the
+/// left end of its baseline. Centred on the glyphs' own bounds rather than
+/// the line box, since digits have no descender and a line box centres them
+/// visibly high.
+fn tile_badge_origin(font: &skia_safe::Font, text: &str, cx: f32, cy: f32) -> Point {
+    let (_, ink) = font.measure_str(text, None);
+    Point::new(cx - ink.center_x(), cy - ink.center_y())
+}
+
+/// The tile's count, in a pill of the accent colour over the icon's top
+/// trailing corner.
+fn draw_tile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
+    let text = tile_badge_text(count);
+    let font = styles::FOOTNOTE_EMPHASIZED.font();
+    let text_w = font.measure_str(&text, None).0;
+    let width = (text_w + 12.0).max(TILE_BADGE_H);
     let badge = Rect::from_xywh(
         icon.right - width + 6.0,
         icon.top - 6.0,
         width,
-        PILE_BADGE_H,
+        TILE_BADGE_H,
     );
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
@@ -1350,38 +1370,42 @@ fn draw_pile_badge(canvas: &Canvas, theme: &Theme, icon: Rect, count: usize) {
         None,
     ));
     paint.set_color(theme.accent);
-    let radius = PILE_BADGE_H / 2.0;
+    let radius = TILE_BADGE_H / 2.0;
     canvas.draw_rrect(RRect::new_rect_xy(badge, radius, radius), &paint);
-    Label::new(text.as_str())
-        .with_style(style)
-        .with_color(Color::WHITE)
-        .centered_on(badge.center_x(), badge.center_y())
-        .render(canvas);
+    let mut ink = Paint::default();
+    ink.set_anti_alias(true);
+    ink.set_color(Color::WHITE);
+    let origin = tile_badge_origin(&font, &text, badge.center_x(), badge.center_y());
+    canvas.draw_str(&text, origin, &font, &ink);
 }
 
-/// The ground under an open fan: dark and see-through, so the desk's white
-/// captions read on it the way they do on the wallpaper, in either theme.
-const FAN_GROUND: Color = Color::from_argb(150, 24, 24, 28);
-/// The fan's corner radius.
-const FAN_RADIUS: f32 = 14.0;
+/// The overflow panel's ground: dark, so the desk's white captions read on
+/// it the way they do on the wallpaper, in either theme. Translucent over
+/// the compositor's blur; nearly solid when frosting is off.
+pub fn overflow_panel_ground() -> Color {
+    otto_kit::frosting::popup_material(Color::from_argb(150, 24, 24, 28))
+}
 
-/// The open fan: its ground, and the pile's items in their cells.
-fn draw_desk_fan(canvas: &Canvas, f: &Frame, pane: &PaneData, pile: &DeskPile) {
-    let Some((fan, scroll)) = pile.fan else {
+/// The overflow panel's corner radius, in points.
+pub const OVERFLOW_PANEL_RADIUS: f32 = 14.0;
+
+/// The open overflow panel: its ground, and the tile's items in their cells,
+/// scrolled by `scroll`, whose viewport is the panel's rect. Drawn in the
+/// desk's coordinates, onto the panel's own surface.
+pub fn draw_overflow_panel(canvas: &Canvas, f: &Frame, scroll: &ScrollState) {
+    let Some(overflow) = f.desk_overflow else {
         return;
     };
-    let rrect = RRect::new_rect_xy(fan.rect, FAN_RADIUS, FAN_RADIUS);
+    let Some((panel, offset)) = overflow.panel else {
+        return;
+    };
+    let Some(pane) = f.panes.last() else {
+        return;
+    };
+    let rrect = RRect::new_rect_xy(panel.rect, OVERFLOW_PANEL_RADIUS, OVERFLOW_PANEL_RADIUS);
     let mut ground = Paint::default();
     ground.set_anti_alias(true);
-    ground.set_image_filter(skia_safe::image_filters::drop_shadow(
-        (0.0, 6.0),
-        (12.0, 12.0),
-        Color::from_argb(80, 0, 0, 0),
-        None,
-        None,
-        None,
-    ));
-    ground.set_color(FAN_GROUND);
+    ground.set_color(overflow_panel_ground());
     canvas.draw_rrect(rrect, &ground);
     let mut edge = Paint::default();
     edge.set_anti_alias(true);
@@ -1392,23 +1416,29 @@ fn draw_desk_fan(canvas: &Canvas, f: &Frame, pane: &PaneData, pile: &DeskPile) {
 
     canvas.save();
     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-    let first = pile.pile.first;
-    for k in fan.visible(pile.pile.count, scroll) {
-        let index = first + k;
-        let Some(entry) = pane.entries.get(index).copied() else {
-            continue;
-        };
-        draw_grid_cell_with(
-            canvas,
-            f.theme,
-            entry,
-            fan.cell_rect(k, scroll),
-            pane.is_selected(index),
-            f.renaming == Some((f.panes.len() - 1, index)),
-            f.thumbnail(entry),
-            None,
-        );
-    }
+    let first = overflow.tile.first;
+    let origin = (panel.rect.left, panel.rect.top);
+    let depth = f.panes.len() - 1;
+    ScrollRenderer::draw(canvas, scroll, f.theme, |canvas, _band| {
+        for k in panel.visible(overflow.tile.count, offset) {
+            let index = first + k;
+            let Some(entry) = pane.entries.get(index).copied() else {
+                continue;
+            };
+            // Content space: the panel's top-left corner, unscrolled.
+            let cell = panel.cell_rect(k, 0.0).with_offset((-origin.0, -origin.1));
+            draw_grid_cell_with(
+                canvas,
+                f.theme,
+                entry,
+                cell,
+                pane.is_selected(index),
+                f.renaming == Some((depth, index)),
+                f.thumbnail(entry),
+                None,
+            );
+        }
+    });
     canvas.restore();
 }
 
@@ -2700,8 +2730,8 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
             let grid = content_viewport(f.width, f.height, ViewMode::Grid);
             let rect = match f.mode {
                 ViewMode::Grid => f
-                    .desk_pile
-                    .and_then(|pile| pile.entry_rect(grid, index))
+                    .desk_overflow
+                    .and_then(|overflow| overflow.entry_rect(grid, index))
                     .unwrap_or_else(|| {
                         grid_cell_rect_in(grid, f.grid_sections, index, pane.scroll)
                     }),
@@ -3985,8 +4015,9 @@ impl PaneData<'_> {
 
 /// Everything the view needs for one frame. Rebuilt each frame; owns nothing.
 pub struct Frame<'a> {
-    /// The desk's pile, when it stacks and has more icons than cells.
-    pub desk_pile: Option<DeskPile>,
+    /// The desk's overflow tile, and its panel while open, when it stacks
+    /// and has more icons than cells.
+    pub desk_overflow: Option<DeskOverflow>,
     pub width: f32,
     pub height: f32,
     pub theme: &'a Theme,
@@ -5787,12 +5818,12 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
         draw_centered(canvas, area, empty_message(f), theme.text_tertiary);
     } else {
         // Only the rows of cells the viewport is asking for are drawn. On a
-        // desk that stacks, the grid stops at the pile.
+        // desk that stacks, the grid stops at the overflow tile.
         let band = pane.band(area);
         let sections = f.grid_sections;
         let in_grid = f
-            .desk_pile
-            .map_or(pane.entries.len(), |pile| pile.pile.first);
+            .desk_overflow
+            .map_or(pane.entries.len(), |overflow| overflow.tile.first);
         for index in grid_visible_range_in(area, sections, in_grid, pane.scroll, band) {
             let cell = grid_cell_rect_in(area, sections, index, pane.scroll);
             let entry = pane.entries[index];
@@ -5808,16 +5839,17 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
             );
         }
         draw_grid_headers(canvas, theme, area, sections, pane.scroll, band);
-        if let Some(pile) = f.desk_pile.as_ref() {
-            // While the fan is open its items are lit there, not on the pile.
-            let selected =
-                pile.fan.is_none() && pile.pile.range().any(|index| pane.is_selected(index));
-            draw_desk_pile(
+        if let Some(overflow) = f.desk_overflow.as_ref() {
+            // The open panel's tile stays lit: it is where the panel came
+            // from and where it goes back to.
+            let selected = overflow.panel.is_some()
+                || overflow.tile.range().any(|index| pane.is_selected(index));
+            draw_overflow_tile(
                 canvas,
                 f,
                 &pane.entries,
-                pile.pile,
-                pile.cell(area),
+                overflow.tile,
+                overflow.cell(area),
                 selected,
             );
         }
@@ -5828,9 +5860,6 @@ fn draw_grid(canvas: &Canvas, f: &Frame) {
     }
 
     canvas.restore();
-    if let Some(pile) = f.desk_pile.as_ref() {
-        draw_desk_fan(canvas, f, pane, pile);
-    }
     pane.draw_scrollbar(canvas, theme);
 }
 
@@ -8275,10 +8304,10 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         return;
     };
 
-    let in_pile = f.desk_pile.and_then(|pile| {
-        pile.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
+    let in_overflow = f.desk_overflow.and_then(|overflow| {
+        overflow.entry_rect(content_viewport(f.width, f.height, ViewMode::Grid), index)
     });
-    let rect = in_pile.unwrap_or_else(|| {
+    let rect = in_overflow.unwrap_or_else(|| {
         cursor_entry_rect_in(
             f.width,
             f.height,
@@ -10096,7 +10125,7 @@ mod geometry_tests {
         height: f32,
     ) -> Frame<'a> {
         Frame {
-            desk_pile: None,
+            desk_overflow: None,
             search: None,
             index_available: true,
             search_focused: false,
@@ -10156,19 +10185,20 @@ mod geometry_tests {
         }
     }
 
-    /// The grid drawn with a desk pile over `count` entries into a
-    /// transparent surface 1100 by 700 points, with its fan open or not.
-    fn draw_piled_grid(count: usize, fan: bool) -> (skia_safe::Surface, DeskPile, Rect) {
+    /// The grid drawn with a desk overflow tile over `count` entries into a
+    /// transparent surface 1100 by 700 points.
+    fn draw_stacked_grid(count: usize) -> (skia_safe::Surface, DeskOverflow, Rect) {
         let owned = entries(count);
         let theme = Theme::light();
         let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
-        let pile = DeskPile::new(area, count, fan.then_some(0.0)).expect("a pile");
+        let overflow =
+            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), count, None).expect("a tile");
         let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
-        frame.desk_pile = Some(pile);
+        frame.desk_overflow = Some(overflow);
         let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
         surface.canvas().clear(Color::TRANSPARENT);
         draw_grid(surface.canvas(), &frame);
-        (surface, pile, area)
+        (surface, overflow, area)
     }
 
     fn pixel(surface: &mut skia_safe::Surface, x: f32, y: f32) -> Color {
@@ -10190,39 +10220,100 @@ mod geometry_tests {
         Color::from_argb(bytes[3], bytes[0], bytes[1], bytes[2])
     }
 
-    /// The pile carries its count on an accent badge over its icon, and the
+    /// The tile carries its count on an accent badge over its icon, and the
     /// grid draws nothing past it.
     #[test]
-    fn the_pile_shows_its_count_and_the_grid_stops_there() {
+    fn the_tile_shows_its_count_and_the_grid_stops_there() {
         let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
-        // Six in the pile: one digit, so the badge is a round dot.
-        let (mut surface, pile, area) = draw_piled_grid(capacity + 5, false);
-        assert_eq!(pile.pile.count, 6);
-        let cell = pile.cell(area);
+        // Six in the tile: one digit, so the badge is a round dot.
+        let (mut surface, overflow, area) = draw_stacked_grid(capacity + 5);
+        assert_eq!(overflow.tile.count, 6);
+        let cell = overflow.cell(area);
         let icon = grid_icon();
         let right = cell.center_x() + icon / 2.0;
         let top = cell.top + 8.0;
         // The top of the dot, clear of the digit in its middle.
         let badge = pixel(
             &mut surface,
-            right + 6.0 - PILE_BADGE_H / 2.0,
+            right + 6.0 - TILE_BADGE_H / 2.0,
             top - 6.0 + 3.0,
         );
         assert_eq!(badge, Theme::light().accent, "{badge:?}");
-        // The pile ends the last row that fits whole.
-        assert_eq!((pile.pile.first + 1) % grid_columns(area), 0);
-        let below = grid_cell_rect(area, pile.pile.first + 1, 0.0);
+        // The tile ends the last row that fits whole.
+        assert_eq!((overflow.tile.first + 1) % grid_columns(area), 0);
+        let below = grid_cell_rect(area, overflow.tile.first + 1, 0.0);
         assert!(below.bottom > area.bottom + 0.5);
     }
 
-    /// Open, the fan lays its dark ground over the grid near the pile.
+    /// The badge's digits are centred on their own ink, one digit or two,
+    /// not on the line box or from their left edge.
     #[test]
-    fn the_open_fan_is_drawn_over_the_grid() {
+    fn the_badge_count_is_centred_on_its_ink() {
+        let font = styles::FOOTNOTE_EMPHASIZED.font();
+        for count in [6, 42, 1234] {
+            let text = tile_badge_text(count);
+            let origin = tile_badge_origin(&font, &text, 100.0, 50.0);
+            let (_, ink) = font.measure_str(&text, None);
+            let placed = ink.with_offset((origin.x, origin.y));
+            assert!(
+                (placed.center_x() - 100.0).abs() < 0.01,
+                "{text}: {placed:?}"
+            );
+            assert!(
+                (placed.center_y() - 50.0).abs() < 0.01,
+                "{text}: {placed:?}"
+            );
+        }
+    }
+
+    /// The open overflow panel is no longer drawn into the desk's own
+    /// surface: the grid under where it opens stays the grid.
+    #[test]
+    fn the_desk_draws_no_overflow_panel_of_its_own() {
         let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
-        let (mut surface, pile, _) = draw_piled_grid(capacity + 20, true);
-        let (fan, _) = pile.fan.expect("open");
-        // In the fan's padding, where only its ground is.
-        let ground = pixel(&mut surface, fan.rect.left + 4.0, fan.rect.center_y());
+        let owned = entries(capacity + 20);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let surface_rect = Rect::from_wh(1100.0, 700.0);
+        let open = DeskOverflow::new(area, surface_rect, owned.len(), Some(0.0)).unwrap();
+        let closed = DeskOverflow::new(area, surface_rect, owned.len(), None).unwrap();
+        let draw = |overflow: DeskOverflow| {
+            let mut frame =
+                test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+            frame.desk_overflow = Some(overflow);
+            let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+            surface.canvas().clear(Color::TRANSPARENT);
+            draw_grid(surface.canvas(), &frame);
+            surface
+        };
+        let (panel, _) = open.panel.unwrap();
+        let (x, y) = (panel.rect.left + 4.0, panel.rect.center_y());
+        assert_eq!(pixel(&mut draw(open), x, y), pixel(&mut draw(closed), x, y));
+    }
+
+    /// Drawn on its own surface, the panel lays its dark ground and shows
+    /// two whole rows.
+    #[test]
+    fn the_overflow_panel_draws_its_ground() {
+        let capacity = grid_capacity(content_viewport(1100.0, 700.0, ViewMode::Grid));
+        let owned = entries(capacity + 20);
+        let theme = Theme::light();
+        let area = content_viewport(1100.0, 700.0, ViewMode::Grid);
+        let overflow =
+            DeskOverflow::new(area, Rect::from_wh(1100.0, 700.0), owned.len(), Some(0.0)).unwrap();
+        let (panel, _) = overflow.panel.unwrap();
+        assert_eq!(
+            panel.rect.height(),
+            2.0 * cell_h() + crate::desk::PANEL_PAD * 2.0
+        );
+        let mut frame = test_frame(&theme, ViewMode::Grid, vec![pane(&owned, None, 0.0)], 700.0);
+        frame.desk_overflow = Some(overflow);
+        let mut scroll = ScrollState::new(panel.rect);
+        scroll.set_content_length(panel.content_h);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((1100, 700)).unwrap();
+        surface.canvas().clear(Color::TRANSPARENT);
+        draw_overflow_panel(surface.canvas(), &frame, &scroll);
+        let ground = pixel(&mut surface, panel.rect.left + 4.0, panel.rect.center_y());
         assert!(ground.a() >= 140, "{ground:?}");
         assert!(
             ground.r() < 60 && ground.g() < 60 && ground.b() < 60,

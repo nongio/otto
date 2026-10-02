@@ -112,8 +112,9 @@ settings-desk-layout-fill = Fills the screen. Edit shows handles on the desk to 
 settings-desk-layout-placed = Placed by hand. Reset makes it fill the screen again
 settings-desk-overflow = When icons don’t fit
 settings-desk-overflow-scroll = Scroll
-settings-desk-overflow-stack = Stack in a pile
-settings-desk-overflow-detail = Scroll moves the grid. Stack gathers the extra icons into the last cell.
+# A tile in the last cell that opens the rest in a panel above the windows.
+settings-desk-overflow-stack = Show in overlay
+settings-desk-overflow-detail = Scroll moves the grid. Show in overlay keeps the rest in the last cell and opens them above the windows
 
 settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
@@ -532,10 +533,10 @@ files-new-folder = New Folder
 # The desk's background menu: shows the desk's own folder in a Files window.
 files-desk-open-in-files = Open in Files
 files-desk-edit-done = Done
-# The desk's pile: the caption under it, and what a screen reader says for
-# it. $count is how many items it holds.
-files-desk-pile-caption = More items
-files-desk-pile =
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = More items
+files-desk-overflow =
     { $count ->
         [one] 1 more item
        *[other] { $count } more items

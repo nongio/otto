@@ -206,9 +206,9 @@ impl Browser {
     /// Descend into the selection: in Miller view the child column already
     /// exists, so this only moves the keyboard into it.
     pub(super) fn open_selection(&mut self) {
-        // Opening the desk's closed pile is opening its fan.
-        if self.cursor_on_closed_pile() {
-            self.open_desk_fan();
+        // Opening the desk's closed overflow tile is opening its panel.
+        if self.cursor_on_closed_tile() {
+            self.open_overflow_panel();
             return;
         }
         let depth = self.active;

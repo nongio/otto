@@ -8,7 +8,8 @@
 //! file as it changes.
 //!
 //! *When icons don't fit* writes `overflow`: the grid scrolls, or its last
-//! cell stacks the rest into a pile.
+//! cell becomes the overflow tile, which opens the rest in the overflow
+//! panel.
 //!
 //! The size and position are set on the desk, not here: *Edit…* asks the
 //! running desk for its edit mode over `org.otto.Desk1`, where the panel is
