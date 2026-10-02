@@ -94,8 +94,10 @@ settings-group-desktop = Desktop
 settings-background-colour = Background colour
 settings-background-image = Background image
 settings-background-image-detail = Chosen through the desktop portal's file picker
-settings-desktop-widget = Desktop widget
+settings-desktop-widget = Background widget
 settings-desktop-widget-needs-ewwii = Needs ewwii, which isn't installed
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Drawn by ewwii. Add your own widgets in { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Cannot be shown
 settings-show-desk = Show files on the desktop
@@ -110,6 +112,7 @@ settings-desk-layout-edit = Edit…
 settings-desk-layout-reset = Reset
 settings-desk-layout-fill = Fills the screen. Edit shows handles on the desk to drag it into place
 settings-desk-layout-placed = Placed by hand. Reset makes it fill the screen again
+settings-desk-icon-size = Icon size
 settings-desk-overflow = When icons don’t fit
 settings-desk-overflow-scroll = Scroll
 # A tile in the last cell that opens the rest in a panel above the windows.
@@ -487,8 +490,8 @@ settings-choice-power-shutdown = Shut down
 settings-choice-widget-none = None
 settings-choice-widget-calendar = Calendar
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1077,7 +1080,7 @@ schema-desk-enabled-label = Show files on the desktop
 schema-desk-enabled-description = The files in your Desktop folder, behind the windows.
 schema-canvas-width-label = Side canvas width
 schema-canvas-width-description = Width of the side canvas, in logical points. Everything in it is drawn at this width.
-schema-desktop-widget-label = Desktop widget
+schema-desktop-widget-label = Background widget
 schema-desktop-widget-description = A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii.
 schema-topbar-show-clock-label = Show date and time
 schema-topbar-show-clock-description = The clock at the right end of the top bar.

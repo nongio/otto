@@ -93,8 +93,10 @@ settings-group-desktop = Рабочий стол
 settings-background-colour = Цвет фона
 settings-background-image = Изображение фона
 settings-background-image-detail = Выбирается через диалог выбора файлов портала рабочего стола
-settings-desktop-widget = Виджет рабочего стола
+settings-desktop-widget = Фоновый виджет
 settings-desktop-widget-needs-ewwii = Нужен ewwii, а он не установлен
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Рисуется ewwii. Добавляй свои виджеты в { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Невозможно показать
 settings-show-desk = Показывать файлы на рабочем столе
@@ -109,10 +111,11 @@ settings-desk-layout-edit = Изменить…
 settings-desk-layout-reset = Сбросить
 settings-desk-layout-fill = На весь экран. «Изменить» показывает маркеры, чтобы перетащить его на место
 settings-desk-layout-placed = Размещён вручную. «Сбросить» снова растянет его на весь экран
+settings-desk-icon-size = Размер значков
 settings-desk-overflow = Когда значки не помещаются
 settings-desk-overflow-scroll = Прокручивать
-settings-desk-overflow-stack = Складывать в стопку
-settings-desk-overflow-detail = Прокрутка сдвигает сетку. Стопка собирает лишние значки в последней ячейке.
+settings-desk-overflow-stack = Показывать поверх
+settings-desk-overflow-detail = Прокрутка сдвигает сетку. «Показывать поверх» оставляет лишние значки в последней ячейке и открывает их над окнами
 
 settings-group-pointer-and-icons = Указатель и значки
 settings-cursor-theme = Тема курсора
@@ -491,8 +494,8 @@ settings-choice-power-shutdown = Выключить
 settings-choice-widget-none = Нет
 settings-choice-widget-calendar = Календарь
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -1032,7 +1035,7 @@ schema-desk-enabled-label = Показывать файлы на рабочем 
 schema-desk-enabled-description = Файлы из папки «Рабочий стол», за окнами.
 schema-canvas-width-label = Ширина бокового холста
 schema-canvas-width-description = Ширина бокового холста в логических точках. Всё, что на нём есть, рисуется такой ширины.
-schema-desktop-widget-label = Виджет рабочего стола
+schema-desktop-widget-label = Фоновый виджет
 schema-desktop-widget-description = Страница во весь экран поверх обоев, за окнами. Нужен ewwii.
 schema-topbar-show-clock-label = Показывать дату и время
 schema-topbar-show-clock-description = Часы у правого края верхней панели.

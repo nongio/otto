@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws the "Stay Focused" backdrop: a grid of small crosses.
+"""Draws the Cross pad backdrop: a grid of small crosses.
 
 Writes focus/grid.png and focus/grid@2x.png, transparent except for the crosses,
 and prints the SCSS variables that place the note on it.
@@ -13,7 +13,7 @@ import zlib
 WIDTH, HEIGHT = (int(v) for v in sys.argv[1:3]) if len(sys.argv) > 2 else (1440, 960)
 CELL = 28  # distance between crosses
 ARM = 3  # half-length of a cross arm
-MARGIN = 60  # keep crosses this far from the edges
+MARGIN = 24  # keep crosses this far from the edges
 
 COLS = (WIDTH - 2 * MARGIN) // CELL
 ROWS = (HEIGHT - 2 * MARGIN) // CELL
@@ -30,9 +30,11 @@ CLEAR = [
     (WIDTH / 2 - 150, HEIGHT / 2 - 36, WIDTH / 2 + 150, HEIGHT / 2 + 36),
     # the note
     (NOTE_RIGHT - 330, NOTE_BOTTOM - 105, NOTE_RIGHT, NOTE_BOTTOM),
+    # the date, reading up the left edge from 170px down (see .focus-date)
+    (0, 160, 36, 480),
 ]
 INK = (244, 239, 232)
-CROSS_ALPHA = 0.55
+CROSS_ALPHA = 0.4
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "focus")
 

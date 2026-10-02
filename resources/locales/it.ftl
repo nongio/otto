@@ -94,8 +94,10 @@ settings-group-desktop = Scrivania
 settings-background-colour = Colore di sfondo
 settings-background-image = Immagine di sfondo
 settings-background-image-detail = Scelta tramite il selettore file del portale del desktop
-settings-desktop-widget = Widget della scrivania
+settings-desktop-widget = Widget dello sfondo
 settings-desktop-widget-needs-ewwii = Serve ewwii, che non è installato
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Disegnato da ewwii. Aggiungi i tuoi widget in { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Impossibile da mostrare
 settings-show-desk = Mostra i file sulla scrivania
@@ -110,10 +112,11 @@ settings-desk-layout-edit = Modifica…
 settings-desk-layout-reset = Ripristina
 settings-desk-layout-fill = Occupa tutto lo schermo. Modifica mostra le maniglie sulla scrivania per sistemarla
 settings-desk-layout-placed = Sistemata a mano. Ripristina la riporta a tutto schermo
+settings-desk-icon-size = Dimensione delle icone
 settings-desk-overflow = Quando le icone non entrano
 settings-desk-overflow-scroll = Scorri
-settings-desk-overflow-stack = Impila
-settings-desk-overflow-detail = Scorri sposta la griglia. Impila raccoglie le icone in più nell’ultima casella.
+settings-desk-overflow-stack = Mostra in sovrapposizione
+settings-desk-overflow-detail = Scorri sposta la griglia. Mostra in sovrapposizione tiene il resto nell’ultima casella e lo apre sopra le finestre
 
 settings-group-pointer-and-icons = Puntatore e icone
 settings-cursor-theme = Tema del cursore
@@ -485,8 +488,8 @@ settings-choice-power-shutdown = Arresta il sistema
 settings-choice-widget-none = Nessuno
 settings-choice-widget-calendar = Calendario
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1005,7 +1008,7 @@ schema-desk-enabled-label = Mostra i file sulla scrivania
 schema-desk-enabled-description = I file della cartella Scrivania, dietro le finestre.
 schema-canvas-width-label = Larghezza della tela laterale
 schema-canvas-width-description = Larghezza della tela laterale, in punti logici. Tutto ciò che contiene viene disegnato a questa larghezza.
-schema-desktop-widget-label = Widget della scrivania
+schema-desktop-widget-label = Widget dello sfondo
 schema-desktop-widget-description = Una pagina a tutto schermo sopra lo sfondo, dietro le finestre. Serve ewwii.
 schema-topbar-show-clock-label = Mostra data e ora
 schema-topbar-show-clock-description = L’orologio all’estremità destra della barra superiore.

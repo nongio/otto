@@ -94,8 +94,10 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
-settings-desktop-widget = デスクトップウィジェット
+settings-desktop-widget = 背景ウィジェット
 settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = ewwii で描画されます。独自のウィジェットは { $folder } に追加します
 settings-background-image-unavailable = 表示できません
 settings-show-desk = デスクトップにファイルを表示
 settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
@@ -109,10 +111,11 @@ settings-desk-layout-edit = 編集…
 settings-desk-layout-reset = リセット
 settings-desk-layout-fill = 画面全体に表示。「編集」でデスクにハンドルが表示され、ドラッグで配置できます
 settings-desk-layout-placed = 手動で配置済み。「リセット」で画面全体に戻ります
+settings-desk-icon-size = アイコンのサイズ
 settings-desk-overflow = アイコンが収まらないとき
 settings-desk-overflow-scroll = スクロール
-settings-desk-overflow-stack = 重ねる
-settings-desk-overflow-detail = スクロールはグリッドを動かします。重ねるは収まらないアイコンを最後のマスにまとめます。
+settings-desk-overflow-stack = オーバーレイで表示
+settings-desk-overflow-detail = スクロールはグリッドを動かします。オーバーレイで表示は残りを最後のマスに置き、ウィンドウの上で開きます
 
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
@@ -478,8 +481,8 @@ settings-choice-power-shutdown = システム終了
 settings-choice-widget-none = なし
 settings-choice-widget-calendar = カレンダー
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 
@@ -962,7 +965,7 @@ schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
 schema-canvas-width-label = サイドキャンバスの幅
 schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
-schema-desktop-widget-label = デスクトップウィジェット
+schema-desktop-widget-label = 背景ウィジェット
 schema-desktop-widget-description = 壁紙の上、ウインドウの背後に描く全画面のページ。ewwii が必要です。
 schema-topbar-show-clock-label = 日付と時刻を表示
 schema-topbar-show-clock-description = 上部バーの右端の時計。

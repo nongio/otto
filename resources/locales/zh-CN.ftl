@@ -93,8 +93,10 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
-settings-desktop-widget = 桌面小组件
+settings-desktop-widget = 背景小组件
 settings-desktop-widget-needs-ewwii = 需要 ewwii，但尚未安装
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = 由 ewwii 绘制。你可以在 { $folder } 中添加自己的小组件
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = 无法显示
 settings-show-desk = 在桌面上显示文件
@@ -109,10 +111,11 @@ settings-desk-layout-edit = 编辑…
 settings-desk-layout-reset = 重置
 settings-desk-layout-fill = 占满屏幕。“编辑”会在桌面上显示手柄，可拖动调整
 settings-desk-layout-placed = 已手动放置。“重置”可恢复为占满屏幕
+settings-desk-icon-size = 图标大小
 settings-desk-overflow = 图标放不下时
 settings-desk-overflow-scroll = 滚动
-settings-desk-overflow-stack = 堆叠
-settings-desk-overflow-detail = 滚动会移动网格。堆叠会把多出的图标收进最后一格。
+settings-desk-overflow-stack = 以浮层显示
+settings-desk-overflow-detail = 滚动会移动网格。“以浮层显示”会把多出的图标留在最后一格，并在窗口上方打开
 
 settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
@@ -479,8 +482,8 @@ settings-choice-power-shutdown = 关机
 settings-choice-widget-none = 无
 settings-choice-widget-calendar = 日历
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自动
 
@@ -965,7 +968,7 @@ schema-desk-enabled-label = 在桌面上显示文件
 schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
 schema-canvas-width-label = 侧边画布宽度
 schema-canvas-width-description = 侧边画布的宽度，以逻辑点为单位。其中的所有内容都按此宽度绘制。
-schema-desktop-widget-label = 桌面小组件
+schema-desktop-widget-label = 背景小组件
 schema-desktop-widget-description = 绘制在壁纸之上、窗口后面的全屏页面。需要 ewwii。
 schema-topbar-show-clock-label = 显示日期和时间
 schema-topbar-show-clock-description = 顶部栏右端的时钟。

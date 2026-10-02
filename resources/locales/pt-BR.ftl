@@ -94,8 +94,10 @@ settings-group-desktop = Área de trabalho
 settings-background-colour = Cor do plano de fundo
 settings-background-image = Imagem do plano de fundo
 settings-background-image-detail = Escolhida através do seletor de arquivos do portal da área de trabalho
-settings-desktop-widget = Widget da área de trabalho
+settings-desktop-widget = Widget do plano de fundo
 settings-desktop-widget-needs-ewwii = Precisa do ewwii, que não está instalado
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Desenhado pelo ewwii. Adicione seus próprios widgets em { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Não é possível exibir
 settings-show-desk = Mostrar arquivos na área de trabalho
@@ -110,10 +112,11 @@ settings-desk-layout-edit = Editar…
 settings-desk-layout-reset = Redefinir
 settings-desk-layout-fill = Ocupa a tela toda. Editar mostra alças na mesa para posicioná-la
 settings-desk-layout-placed = Posicionada à mão. Redefinir faz ela ocupar a tela toda de novo
+settings-desk-icon-size = Tamanho dos ícones
 settings-desk-overflow = Quando os ícones não cabem
 settings-desk-overflow-scroll = Rolar
-settings-desk-overflow-stack = Empilhar
-settings-desk-overflow-detail = Rolar move a grade. Empilhar junta os ícones que sobram na última casa.
+settings-desk-overflow-stack = Mostrar em sobreposição
+settings-desk-overflow-detail = Rolar move a grade. Mostrar em sobreposição mantém o resto na última casa e abre acima das janelas
 
 settings-group-pointer-and-icons = Ponteiro e ícones
 settings-cursor-theme = Tema do cursor
@@ -485,8 +488,8 @@ settings-choice-power-shutdown = Desligar
 settings-choice-widget-none = Nenhum
 settings-choice-widget-calendar = Calendário
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automático
 
@@ -1000,7 +1003,7 @@ schema-desk-enabled-label = Mostrar arquivos na área de trabalho
 schema-desk-enabled-description = Os arquivos da pasta Área de trabalho, atrás das janelas.
 schema-canvas-width-label = Largura da tela lateral
 schema-canvas-width-description = Largura da tela lateral, em pontos lógicos. Tudo nela é desenhado com essa largura.
-schema-desktop-widget-label = Widget da área de trabalho
+schema-desktop-widget-label = Widget do plano de fundo
 schema-desktop-widget-description = Uma página em tela cheia sobre o plano de fundo, atrás das janelas. Precisa do ewwii.
 schema-topbar-show-clock-label = Mostrar data e hora
 schema-topbar-show-clock-description = O relógio na ponta direita da barra superior.

@@ -94,8 +94,10 @@ settings-group-desktop = Schreibtisch
 settings-background-colour = Hintergrundfarbe
 settings-background-image = Hintergrundbild
 settings-background-image-detail = Über die Dateiauswahl des Desktop-Portals gewählt
-settings-desktop-widget = Schreibtisch-Widget
+settings-desktop-widget = Hintergrund-Widget
 settings-desktop-widget-needs-ewwii = Braucht ewwii, das nicht installiert ist
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Gezeichnet von ewwii. Eigene Widgets in { $folder } ablegen
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Kann nicht angezeigt werden
 settings-show-desk = Dateien auf dem Schreibtisch anzeigen
@@ -110,10 +112,11 @@ settings-desk-layout-edit = Bearbeiten …
 settings-desk-layout-reset = Zurücksetzen
 settings-desk-layout-fill = Füllt den Bildschirm. „Bearbeiten“ zeigt Griffe auf dem Schreibtisch, um ihn zurechtzuziehen
 settings-desk-layout-placed = Von Hand platziert. „Zurücksetzen“ lässt ihn wieder den Bildschirm füllen
+settings-desk-icon-size = Symbolgröße
 settings-desk-overflow = Wenn Symbole nicht passen
 settings-desk-overflow-scroll = Scrollen
-settings-desk-overflow-stack = Stapeln
-settings-desk-overflow-detail = Scrollen verschiebt das Raster. Stapeln sammelt die übrigen Symbole im letzten Feld.
+settings-desk-overflow-stack = Im Overlay zeigen
+settings-desk-overflow-detail = Scrollen verschiebt das Raster. „Im Overlay zeigen“ lässt die übrigen Symbole im letzten Feld und öffnet sie über den Fenstern
 
 settings-group-pointer-and-icons = Zeiger & Symbole
 settings-cursor-theme = Zeigerdesign
@@ -484,8 +487,8 @@ settings-choice-power-shutdown = Herunterfahren
 settings-choice-widget-none = Keins
 settings-choice-widget-calendar = Kalender
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -987,7 +990,7 @@ schema-desk-enabled-label = Dateien auf dem Schreibtisch anzeigen
 schema-desk-enabled-description = Die Dateien im Ordner „Schreibtisch“, hinter den Fenstern.
 schema-canvas-width-label = Breite der Seitenleinwand
 schema-canvas-width-description = Breite der Seitenleinwand in logischen Punkten. Alles darin wird in dieser Breite gezeichnet.
-schema-desktop-widget-label = Schreibtisch-Widget
+schema-desktop-widget-label = Hintergrund-Widget
 schema-desktop-widget-description = Eine bildschirmfüllende Seite über dem Hintergrundbild, hinter den Fenstern. Braucht ewwii.
 schema-topbar-show-clock-label = Datum und Uhrzeit anzeigen
 schema-topbar-show-clock-description = Die Uhr am rechten Ende der oberen Leiste.

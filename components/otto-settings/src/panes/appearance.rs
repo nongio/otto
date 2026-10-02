@@ -156,18 +156,43 @@ pub fn build() -> Pane {
 
 /// The desktop widget pop-up. ewwii draws the widgets and is not a
 /// dependency of Otto's, so without it the row says so and cannot be opened.
+/// With it, the row names ewwii and the folder that takes a theme of one's
+/// own.
 fn desktop_widget_row() -> Row {
     let row = Row::new(
         otto_kit::t!("settings-desktop-widget"),
         Control::Select("none".into()),
     );
     if ewwii_installed() {
-        row.id(DESKTOP_WIDGET_ID)
+        row.detail(otto_kit::t!(
+            "settings-desktop-widget-detail",
+            folder = user_theme_dir()
+        ))
+        .id(DESKTOP_WIDGET_ID)
     } else {
         row.detail(otto_kit::t!("settings-desktop-widget-needs-ewwii"))
             .id(DESKTOP_WIDGET_ID)
             .inactive(true)
     }
+}
+
+/// Where Otto looks for the user's own widget theme, with the home folder
+/// written as `~`.
+fn user_theme_dir() -> String {
+    static DIR: OnceLock<String> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let config = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|dir| !dir.is_empty())
+            .unwrap_or_else(|| format!("{home}/.config"));
+        let dir = format!("{config}/otto/widgets/ewwii");
+        match dir.strip_prefix(&home) {
+            Some(rest) if !home.is_empty() => format!("~{rest}"),
+            _ => dir,
+        }
+    })
+    .clone()
 }
 
 /// Whether `ewwii` is an executable on `PATH`. Looked up once: the pane is

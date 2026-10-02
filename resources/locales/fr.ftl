@@ -94,8 +94,10 @@ settings-group-desktop = Bureau
 settings-background-colour = Couleur d’arrière-plan
 settings-background-image = Image d’arrière-plan
 settings-background-image-detail = Choisie via le sélecteur de fichiers du portail de bureau
-settings-desktop-widget = Widget du bureau
+settings-desktop-widget = Widget d’arrière-plan
 settings-desktop-widget-needs-ewwii = Nécessite ewwii, qui n’est pas installé
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Dessiné par ewwii. Ajoute tes propres widgets dans { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Impossible à afficher
 settings-show-desk = Afficher les fichiers sur le bureau
@@ -110,10 +112,11 @@ settings-desk-layout-edit = Modifier…
 settings-desk-layout-reset = Réinitialiser
 settings-desk-layout-fill = Occupe tout l’écran. Modifier affiche des poignées sur le bureau pour le placer
 settings-desk-layout-placed = Placé à la main. Réinitialiser lui fait de nouveau occuper tout l’écran
+settings-desk-icon-size = Taille des icônes
 settings-desk-overflow = Quand les icônes ne tiennent pas
 settings-desk-overflow-scroll = Faire défiler
-settings-desk-overflow-stack = Empiler
-settings-desk-overflow-detail = Faire défiler déplace la grille. Empiler rassemble les icônes en trop dans la dernière case.
+settings-desk-overflow-stack = Afficher en surimpression
+settings-desk-overflow-detail = Faire défiler déplace la grille. Afficher en surimpression garde le reste dans la dernière case et l’ouvre au-dessus des fenêtres
 
 settings-group-pointer-and-icons = Pointeur et icônes
 settings-cursor-theme = Thème du curseur
@@ -485,8 +488,8 @@ settings-choice-power-shutdown = Éteindre
 settings-choice-widget-none = Aucun
 settings-choice-widget-calendar = Calendrier
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -1010,7 +1013,7 @@ schema-desk-enabled-label = Afficher les fichiers sur le bureau
 schema-desk-enabled-description = Les fichiers du dossier Bureau, derrière les fenêtres.
 schema-canvas-width-label = Largeur du canevas latéral
 schema-canvas-width-description = Largeur du canevas latéral, en points logiques. Tout ce qu’il contient est dessiné à cette largeur.
-schema-desktop-widget-label = Widget du bureau
+schema-desktop-widget-label = Widget d’arrière-plan
 schema-desktop-widget-description = Une page plein écran dessinée sur le fond d’écran, derrière les fenêtres. Nécessite ewwii.
 schema-topbar-show-clock-label = Afficher la date et l’heure
 schema-topbar-show-clock-description = L’horloge à l’extrémité droite de la barre supérieure.

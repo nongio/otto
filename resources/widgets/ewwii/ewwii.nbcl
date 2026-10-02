@@ -208,7 +208,7 @@ component LinesPage () {
     }
 }
 
-Window "dont_be_busy" {
+Window "grid_pad" {
     monitor = 0
     stacking = "bg"
     exclusive = false
@@ -246,7 +246,7 @@ component FocusPage () {
     }
 }
 
-Window "stay_focused" {
+Window "cross_pad" {
     monitor = 0
     stacking = "bg"
     exclusive = false

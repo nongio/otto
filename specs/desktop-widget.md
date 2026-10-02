@@ -14,7 +14,7 @@ takes.
 ## Goals
 
 - One setting, `desktop.widget`, picks the widget: `none` (the default),
-  `calendar`, `stay_focused` or `dont_be_busy`.
+  `calendar`, `cross_pad` or `grid_pad`.
 - The chosen widget appears at login and follows a change of the setting
   live, without logging out.
 - ewwii is optional. Otto installs and runs without it; where it is missing,
@@ -45,11 +45,13 @@ takes.
 - **Calendar** — the current month: its name, today's number, the weeks
   listed with today in bold, and a header with the number of days and
   weekends, the first and last weekday, the ISO week and the year.
-- **Stay Focused** — a grid of small crosses, the title in the middle, the
-  date reading up the left edge and a short note in the bottom-right corner.
-- **Don't be busy** — a drafting grid with rulers and a diagonal, the title
-  in the middle row, the date up the left half column and a note in the end of
-  the bottom row.
+- **Cross pad** — a grid of small crosses filling the usable area, the title
+  "Stay Focused." in the middle, the date reading up the left edge and a short
+  note in the bottom-right corner.
+- **Grid pad** — a drafting grid with rulers and a diagonal, its rows filling
+  the usable area's height and its side columns the rest of the width, the
+  title "Don't be busy." in the middle row, the date up the left side column
+  and a note in the end of the bottom row.
 - The pages' text is English; the month and weekday names follow the
   session's locale.
 
@@ -95,8 +97,10 @@ logged and the widget is not shown; whatever was on screen stays.
   use the same socket.
 - The daemon is terminated with the compositor.
 - A value other than `none` that is not one of the shipped widgets opens the
-  window of that name, so a customised theme can add its own. Settings only
-  offers the shipped ones.
+  window of that name, so a customised theme can add its own. The settings
+  service offers, after the shipped ones, every other `Window "name"` of the
+  theme in use (in file order), labelled with the name, underscores and
+  dashes as spaces and the first letter capitalised, and accepts them.
 
 ### The windows
 
@@ -114,11 +118,11 @@ logged and the widget is not shown; whatever was on screen stays.
   shorthand in logical points, top first and clockwise
   (`0px 0px 108px 0px`). The file is replaced in one step, and only written
   when the value changes or the theme was prepared again.
-- It is measured from the window's edges, not the output's: a layer-shell
-  surface whose exclusive zone is 0, as ewwii's are, is already moved clear of
-  the panels' exclusive zones, while keeping the output's size. Until the
-  window is mapped (found by the daemon's process id), the output stands in
-  for it.
+- It is measured from the edges of the window as Otto draws it: anchored and
+  sized against the whole output, whatever the panels' exclusive zones (the
+  layer map's own arrangement, which moves the window below the top bar, is
+  not where it is drawn). Until the window is mapped (found by the daemon's
+  process id), the output stands in for it.
 - The value is brought up to date whenever a layer-shell surface maps,
   changes or goes away, and once the dock has settled after a change of edge,
   size or autohide.
@@ -132,8 +136,8 @@ logged and the widget is not shown; whatever was on screen stays.
 
 ### Settings
 
-- Settings ▸ Appearance ▸ Desktop has a *Desktop widget* pop-up listing None,
-  Calendar, Stay Focused and Don't be busy. The setting applies live.
+- Settings ▸ Appearance ▸ Desktop has a *Background widget* pop-up listing None,
+  Calendar, Cross pad and Grid pad. The setting applies live.
 - Where ewwii is not on `PATH`, the pop-up is dimmed, cannot be opened, and
   the row says ewwii is needed.
 

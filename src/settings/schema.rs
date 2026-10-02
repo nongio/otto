@@ -106,6 +106,16 @@ impl SettingSpec {
         out
     }
 
+    /// The values the setting takes in this session: `choices`, plus the
+    /// widgets a customised desktop widget theme adds.
+    pub fn choices_now(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.choices.iter().map(|c| c.to_string()).collect();
+        if self.id == "desktop.widget" {
+            out.extend(crate::desktop_widget::extra_widgets());
+        }
+        out
+    }
+
     /// The configuration section the setting lives in — everything before the
     /// last dot, empty for a top-level key.
     pub fn section(&self) -> &'static str {
@@ -130,11 +140,12 @@ impl SettingSpec {
 
         if self.ty == SettingType::Enum {
             let text = value.as_str().unwrap_or_default();
-            if !self.choices.contains(&text) {
+            let choices = self.choices_now();
+            if !choices.iter().any(|choice| choice == text) {
                 return Err(Invalid::Range(format!(
                     "`{}` must be one of {}, got `{text}`",
                     self.id,
-                    self.choices.join(", ")
+                    choices.join(", ")
                 )));
             }
             if self.unavailable_now().contains(&text) {
@@ -447,7 +458,7 @@ pub static SETTINGS: &[SettingSpec] = &[
     ),
     labelled_choice(
         "desktop.widget",
-        "Desktop widget",
+        "Background widget",
         "A full-screen page drawn over the wallpaper, behind the windows. \
          Needs ewwii.",
         Live,
@@ -455,8 +466,8 @@ pub static SETTINGS: &[SettingSpec] = &[
         &[
             "settings-choice-widget-none",
             "settings-choice-widget-calendar",
-            "settings-choice-widget-stay-focused",
-            "settings-choice-widget-dont-be-busy",
+            "settings-choice-widget-cross-pad",
+            "settings-choice-widget-grid-pad",
         ],
     ),
     spec(

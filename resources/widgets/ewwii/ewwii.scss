@@ -85,8 +85,8 @@ window {
 }
 
 
-// Don't be busy. Positions come from generators/lines-grid.py: the title
-// fills the middle row, the date runs up the left half column, the note fills
+// Grid pad. Positions come from generators/lines-grid.py: the title
+// fills the middle row, the date runs up the left side column, the note fills
 // the end of the bottom row one minor step in from its left edge.
 .lines-grid {
   background-image: url("#{$theme-dir}/lines/grid@2x.png");
@@ -108,7 +108,7 @@ window {
   font-size: 11px;
   letter-spacing: 1px;
   // A fixed length, reading upwards and ending one minor step below the
-  // frame, then turned about its centre into the left half column.
+  // frame, then turned about its centre into the left side column.
   min-width: $lines-date-length;
   margin-top: $lines-date-top;
   transform: translate($lines-date-shift-x, $lines-date-shift-y) rotate(-90deg);
@@ -123,7 +123,7 @@ window {
   font-size: 13px;
 }
 
-// Stay Focused. The crosses and the note's margins come from
+// Cross pad. The crosses and the note's margins come from
 // generators/focus-grid.py; the crosses stop short of the title and the note.
 .focus-grid {
   background-image: url("#{$theme-dir}/focus/grid@2x.png");
@@ -139,7 +139,7 @@ window {
 }
 
 // Reads upwards from 170px down the left edge, ending at the top: a fixed
-// length turned about its centre, as for the Don't be busy date.
+// length turned about its centre, as for the Grid pad date.
 .focus-date {
   color: rgba($ink, 0.8);
   font-size: 12px;

@@ -50,14 +50,54 @@ use tracing::{info, warn};
 use crate::config::default_apps::{xdg_config_home, xdg_data_dirs};
 use crate::config::Config;
 use crate::desk::{failures_after_crash, pidfd, restart_delay};
+use crate::shell::layer::drawn_geometry;
 use crate::state::{Backend, Otto};
 
 /// The values `desktop.widget` takes: no widget, then the shipped themes'
 /// windows, named as in `ewwii.nbcl`.
-pub const WIDGET_CHOICES: &[&str] = &["none", "calendar", "stay_focused", "dont_be_busy"];
+pub const WIDGET_CHOICES: &[&str] = &["none", "calendar", "cross_pad", "grid_pad"];
 
 /// The value that shows no widget.
 const NO_WIDGET: &str = "none";
+
+/// The widgets the theme in use adds to the shipped ones: the names of its
+/// `Window` blocks that `WIDGET_CHOICES` does not list, in file order. Empty
+/// without a theme.
+pub fn extra_widgets() -> Vec<String> {
+    let Some(text) = theme_source().and_then(|dir| fs::read_to_string(dir.join("ewwii.nbcl")).ok())
+    else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for name in window_names(&text) {
+        if !WIDGET_CHOICES.contains(&name.as_str()) && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The names of the `Window "name" { ... }` blocks in an ewwii configuration.
+fn window_names(nbcl: &str) -> Vec<String> {
+    nbcl.lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("Window")?;
+            let (name, _) = rest.trim_start().strip_prefix('"')?.split_once('"')?;
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// How a widget the theme adds is shown in a menu: its window name with
+/// spaces for underscores and dashes, and a capital first letter.
+pub fn widget_label(name: &str) -> String {
+    let spaced = name.replace(['_', '-'], " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => spaced,
+    }
+}
 
 /// The program that draws the widgets, looked up on `PATH`.
 const PROGRAM: &str = "ewwii";
@@ -435,8 +475,7 @@ impl<B: Backend + 'static> Otto<B> {
         let geometry = self.workspaces.output_geometry(output)?;
         let usable = self.usable_zone(output);
         let window = self
-            .desktop_widget_window(output)
-            .map(|rect| Rectangle::new(rect.loc + geometry.loc, rect.size))
+            .desktop_widget_window(output, geometry)
             .unwrap_or(geometry);
         Some((
             (usable.size.w, usable.size.h),
@@ -444,9 +483,15 @@ impl<B: Backend + 'static> Otto<B> {
         ))
     }
 
-    /// Where the daemon's layer-shell window sits on `output`, relative to
-    /// the output, if it is mapped there.
-    fn desktop_widget_window(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
+    /// Where Otto draws the daemon's layer-shell window on `output`, in
+    /// global coordinates, if it is mapped there. This is the drawn geometry,
+    /// against the whole output: the layer map's own arrangement puts the
+    /// window below the top bar, where it is not drawn.
+    fn desktop_widget_window(
+        &self,
+        output: &Output,
+        output_geometry: Rectangle<i32, Logical>,
+    ) -> Option<Rectangle<i32, Logical>> {
         let pid = i32::try_from(self.desktop_widget.running.as_ref()?.child.id()).ok()?;
         let map = layer_map_for_output(output);
         let layer = map.layers().find(|layer| {
@@ -456,7 +501,7 @@ impl<B: Backend + 'static> Otto<B> {
                 .and_then(|client| client.get_credentials(&self.display_handle).ok())
                 .is_some_and(|credentials| credentials.pid == pid)
         })?;
-        map.layer_geometry(layer)
+        Some(drawn_geometry(layer.wl_surface(), output_geometry))
     }
 
     /// Bring the widget up to date with the primary output's usable area:
@@ -750,6 +795,36 @@ mod tests {
         );
     }
 
+    /// A theme's widgets are its `Window` blocks, whatever the spacing, and
+    /// nothing else that mentions a window.
+    #[test]
+    fn window_names_are_the_window_blocks() {
+        let nbcl = "Poll \"clock\" { cmd = \"date\" }\n\
+                    Window \"calendar\" {\n  # Window \"commented\"\n}\n\
+                    \x20\x20Window   \"my_clock\" {}\n\
+                    component Window () {}\n";
+        assert_eq!(window_names(nbcl), ["calendar", "my_clock"]);
+    }
+
+    /// The shipped theme lists only the shipped widgets.
+    #[test]
+    fn the_shipped_theme_adds_no_widgets() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/widgets/ewwii");
+        let text = fs::read_to_string(source.join("ewwii.nbcl")).expect("theme");
+        let names = window_names(&text);
+        assert!(names
+            .iter()
+            .all(|name| WIDGET_CHOICES.contains(&name.as_str())));
+        assert_eq!(names.len(), WIDGET_CHOICES.len() - 1);
+    }
+
+    #[test]
+    fn a_widget_label_reads_as_words() {
+        assert_eq!(widget_label("my_clock"), "My clock");
+        assert_eq!(widget_label("big-poster"), "Big poster");
+        assert_eq!(widget_label("ébauche"), "Ébauche");
+    }
+
     /// The shipped theme prepares into a stylesheet that defines every
     /// variable it uses, with the hand-tuned positions for a 1440 by 960
     /// screen.
@@ -764,11 +839,11 @@ mod tests {
         let stylesheet = fs::read_to_string(dest.join(STYLESHEET)).expect("stylesheet");
         assert!(stylesheet.starts_with(&format!("$theme-dir: \"{}\";", file_url(&dest))));
         for line in [
-            "$lines-note-left: 941px;",
-            "$lines-note-top: 712px;",
-            "$lines-date-shift-x: -45px;",
-            "$focus-note-right: 90px;",
-            "$focus-note-bottom: 88px;",
+            "$lines-note-left: 742px;",
+            "$lines-note-top: 792px;",
+            "$lines-date-shift-x: -39px;",
+            "$focus-note-right: 62px;",
+            "$focus-note-bottom: 60px;",
         ] {
             assert!(stylesheet.contains(line), "missing `{line}`");
         }

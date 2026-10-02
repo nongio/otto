@@ -75,19 +75,12 @@ they keep working:
 mkdir -p ~/.config/otto/widgets/ewwii && cp -r /tmp/otto-widget-draft/. ~/.config/otto/widgets/ewwii/
 ```
 
-**`desktop.widget` only takes `none`, `calendar`, `stay_focused` and
-`dont_be_busy` from the settings service**; `Set` with another name fails
-with `must be one of`. Otto does run any window name written in the config
-file, so:
-
-1. Put `widget = "poster"` under `[desktop]` in the file `ConfigPath` names
-   (see [../configure/config-file.md](../configure/config-file.md)); read it
-   first and change only that key.
-2. It shows from the next login. Say so plainly.
-
-Choosing a widget in Settings later writes over that name. If they want it
-now, without logging out, run it by hand on the test copy (`daemon`, then
-`open poster`); it goes when they log out.
+**`desktop.widget` takes the shipped names and every other `Window` in the
+theme in use**: once the copy in `~/.config/otto/widgets/ewwii` has
+`Window "poster"`, `Set` with `s "poster"` shows it at once, and Settings
+lists it as "Poster" (underscores and dashes become spaces) the next time it
+opens. Before the copy is installed, `Set` with that name fails with
+`must be one of`.
 
 ## The ewwii field guide
 

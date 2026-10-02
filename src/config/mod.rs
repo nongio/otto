@@ -1654,7 +1654,7 @@ impl Default for CanvasConfig {
 #[serde(default)]
 pub struct DesktopConfig {
     /// The desktop widget: `"none"` or one of the themes Otto draws with
-    /// ewwii, `"calendar"`, `"stay_focused"` or `"dont_be_busy"`. The
+    /// ewwii, `"calendar"`, `"cross_pad"` or `"grid_pad"`. The
     /// compositor runs ewwii for it and follows changes live (see
     /// `src/desktop_widget.rs`).
     pub widget: String,

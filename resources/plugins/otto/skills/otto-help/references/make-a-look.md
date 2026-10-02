@@ -82,7 +82,7 @@ Choose the wallpaper first; everything else answers it.
    (`scroll` or `stack`), and `anchor`/`size`/`position` to keep the icons
    off the part of the wallpaper that matters. It follows the file live.
 9. **Widget**, only when the image implies one (a calendar, a grid, a line of
-   type): the three built in are `calendar`, `stay_focused`, `dont_be_busy`,
+   type): the three built in are `calendar`, `cross_pad`, `grid_pad`,
    and they need ewwii (`command -v ewwii` prints a path). A custom one is
    [look/widgets.md](look/widgets.md).
 

@@ -93,8 +93,10 @@ settings-group-desktop = Pulpit
 settings-background-colour = Kolor tła
 settings-background-image = Obraz tła
 settings-background-image-detail = Wybierany w oknie wyboru plików portalu pulpitu
-settings-desktop-widget = Widżet pulpitu
+settings-desktop-widget = Widżet tła
 settings-desktop-widget-needs-ewwii = Wymaga ewwii, który nie jest zainstalowany
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Rysowane przez ewwii. Własne widżety dodasz w { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Nie można wyświetlić
 settings-show-desk = Pokazuj pliki na pulpicie
@@ -109,10 +111,11 @@ settings-desk-layout-edit = Edytuj…
 settings-desk-layout-reset = Resetuj
 settings-desk-layout-fill = Wypełnia ekran. Edytuj pokazuje uchwyty na pulpicie do przeciągania
 settings-desk-layout-placed = Ustawiony ręcznie. Resetuj przywraca wypełnienie ekranu
+settings-desk-icon-size = Rozmiar ikon
 settings-desk-overflow = Gdy ikony się nie mieszczą
 settings-desk-overflow-scroll = Przewijaj
-settings-desk-overflow-stack = Układaj w stos
-settings-desk-overflow-detail = Przewijaj przesuwa siatkę. Układaj w stos zbiera nadmiarowe ikony w ostatnim polu.
+settings-desk-overflow-stack = Pokaż w nakładce
+settings-desk-overflow-detail = Przewijaj przesuwa siatkę. Pokaż w nakładce zostawia resztę w ostatnim polu i otwiera ją nad oknami
 
 settings-group-pointer-and-icons = Wskaźnik i ikony
 settings-cursor-theme = Motyw kursora
@@ -491,8 +494,8 @@ settings-choice-power-shutdown = Wyłącz komputer
 settings-choice-widget-none = Brak
 settings-choice-widget-calendar = Kalendarz
 # The next two name pages whose text is in English, so they stay as written.
-settings-choice-widget-stay-focused = Stay Focused
-settings-choice-widget-dont-be-busy = Don't be busy
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Automatycznie
 
@@ -1039,7 +1042,7 @@ schema-desk-enabled-label = Pokazuj pliki na pulpicie
 schema-desk-enabled-description = Pliki z folderu Pulpit, za oknami.
 schema-canvas-width-label = Szerokość bocznego płótna
 schema-canvas-width-description = Szerokość bocznego płótna w punktach logicznych. Wszystko, co się na nim znajduje, jest rysowane w tej szerokości.
-schema-desktop-widget-label = Widżet pulpitu
+schema-desktop-widget-label = Widżet tła
 schema-desktop-widget-description = Strona na cały ekran, rysowana na tapecie, za oknami. Wymaga ewwii.
 schema-topbar-show-clock-label = Pokazuj datę i godzinę
 schema-topbar-show-clock-description = Zegar na prawym końcu górnego paska.

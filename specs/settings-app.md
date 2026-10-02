@@ -386,22 +386,27 @@ are:
   and the icon theme; and the top bar's clock.
 
   The Desk group holds *Show files on the desktop* (`desk.enabled`), then
-  three rows that are not `org.otto.Settings` settings but the desk's own, in
+  four rows that are not `org.otto.Settings` settings but the desk's own, in
   the `[desk]` section of `~/.config/otto/files.toml`: *Folder*, whose
   **Choose…** opens the portal's folder picker and writes `folder`; *When
-  icons don't fit*, a pop-up offering Scroll and Stack in a pile that writes
+  icons don't fit*, a pop-up offering Scroll and Show in overlay that writes
   `overflow = "scroll"` or `"stack"` (an unset or unknown value shows as
-  Scroll, the desk's default); and *Size and position*, whose **Edit…** asks
+  Scroll, the desk's default); *Icon size*, a slider from 32 to 160 px in
+  steps of 4 that writes `icon_size` (64 when unset), once per step while it
+  is dragged; and *Size and position*, whose **Edit…** asks
   the running desk for its edit mode over `org.otto.Desk1` and whose
   **Reset** writes `anchor = "fill"`. All are edited in place with
   everything else in the file kept, and the desk follows the file live. *Size and position* is inactive while the desk
   is off ([desk.md](./desk.md)).
 
-  The desktop widget is a pop-up (`desktop.widget`, live) offering None,
-  Calendar, Stay Focused and Don't be busy, pages ewwii draws behind the
+  The background widget is a pop-up (`desktop.widget`, live) offering None,
+  Calendar, Cross pad and Grid pad, pages ewwii draws behind the
   windows. ewwii is optional: where it is not on `PATH` the pop-up is dimmed
-  and cannot be opened, and the row's detail says ewwii is needed
-  ([desktop-widget.md](./desktop-widget.md)).
+  and cannot be opened, and the row's detail says ewwii is needed. Where it
+  is, the detail says ewwii draws the widgets and names the folder that takes
+  widgets of one's own, `$XDG_CONFIG_HOME/otto/widgets/ewwii` with the home
+  folder as `~`. The pop-up lists the widgets that theme adds after the
+  shipped ones ([desktop-widget.md](./desktop-widget.md)).
 
   The font family is a pop-up that lists every family fontconfig knows of, so
   like the language it caps its height, scrolls and is walked by typing.

@@ -39,7 +39,7 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 # Show the files of the Desktop folder on the desktop
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv desk.enabled b true
 
-# A full-screen widget over the wallpaper: "none", "calendar", "stay_focused", "dont_be_busy"
+# A full-screen widget over the wallpaper: "none", "calendar", "cross_pad", "grid_pad"
 busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv desktop.widget s "calendar"
 
 # Interface font, and language — both need a restart
@@ -62,7 +62,7 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 | `background_image` | string | live | `""` (empty) | free text | `s "/home/you/Pictures/wallpaper.jpg"` | Path to the desktop background image. Empty for none. |
 | `background_color` | string | live | `#1a1a2e` | free text | `s "#101014"` | Desktop background colour, as a hex string. |
 | `desk.enabled` | bool | live | `false` | `true`, `false` | `b true` | The files in your Desktop folder, behind the windows. |
-| `desktop.widget` | enum | live | `none` | `none`, `calendar`, `stay_focused`, `dont_be_busy` | `s "calendar"` | A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii. |
+| `desktop.widget` | enum | live | `none` | `none`, `calendar`, `cross_pad`, `grid_pad`, plus the theme's own windows | `s "calendar"` | A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii. |
 | `font_family` | string | restart | `Inter` | free text | `s "Cantarell"` | Font family used by Otto's own interface. |
 | `cursor_theme` | string | live | `Notwaita-Black` | free text | `s "Adwaita"` | Name of the XCursor theme. |
 | `cursor_size` | int | live | `24` | 16 – 96, step 8 | `i 32` | Cursor size in logical pixels. |

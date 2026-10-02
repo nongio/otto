@@ -8,14 +8,14 @@ from installing it to a complete working configuration you can copy.
 
 ## Otto's widgets
 
-Settings ▸ Appearance ▸ Desktop ▸ **Desktop widget** puts a full-screen page
+Settings ▸ Appearance ▸ Desktop ▸ **Background widget** puts a full-screen page
 over the wallpaper, behind the desk and the windows:
 
 | Widget | What it shows |
 |--------|---------------|
 | Calendar | The month in large type, today's date, and every day of the month by week, today in bold |
-| Stay Focused | A grid of small crosses with a title, the date up the left edge and a short note |
-| Don't be busy | A drafting grid with rulers and a diagonal, a title, the date and a short note |
+| Cross pad | A grid of small crosses with a title, the date up the left edge and a short note |
+| Grid pad | A drafting grid with rulers and a diagonal, a title, the date and a short note |
 
 The change applies at once, and the widget comes back when you log in.
 Choose **None** to take it away.
@@ -37,7 +37,7 @@ The setting is `widget` under `[desktop]` in the config file:
 
 ```toml
 [desktop]
-widget = "calendar"   # or "stay_focused", "dont_be_busy", "none"
+widget = "calendar"   # or "cross_pad", "grid_pad", "none"
 ```
 
 ### Changing them
@@ -53,9 +53,9 @@ folder to `~/.cache/otto/widgets/ewwii`, runs every script in its
 less the top bar, the dock and any other panel, in logical pixels), and puts
 what they print, SCSS variables, ahead of `ewwii.scss`, along with
 `$theme-dir`, the copy's absolute `file://` URL. That's how the grids fit
-your screen: GTK only loads a background image from an absolute URL. A window
-you add to your copy can be shown by writing its name as `widget` in the
-config file.
+your screen: GTK only loads a background image from an absolute URL. Every window
+you add to your copy is listed in the Settings menu after Otto's own, named
+after the window: `Window "my_clock"` shows as "My clock".
 
 The widgets keep clear of the top bar and the dock. Otto writes the space they
 take, measured from the widget window's edges, to a `reserved-area` file in
