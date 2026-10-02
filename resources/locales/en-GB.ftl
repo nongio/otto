@@ -1915,3 +1915,9 @@ agent-prompt-title = Let { $app } use an agent cursor?
 agent-prompt-body = It asks for a cursor of its own, named “{ $agent }”, and a new workspace where it can open apps, click and type. It can't reach your other workspaces.
 agent-prompt-allow = Allow
 agent-prompt-deny = Don't Allow
+
+## Asked each time an agent wants to work on one of the user's own workspaces.
+## { $agent } is the agent's name; { $workspace } is the workspace's; { $app } runs the agent.
+
+agent-workspace-prompt-title = Let { $agent } work on { $workspace }?
+agent-workspace-prompt-body = { $app } asks for its agent's cursor to join yours on this workspace. It can see the windows there, click and type in them. Your cursor and keyboard stay yours, and Stop on the frame ends it.

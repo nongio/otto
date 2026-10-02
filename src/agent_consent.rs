@@ -163,6 +163,34 @@ pub async fn ask(connection: &zbus::Connection, program: &str, agent_name: &str)
         app = app,
         agent = agent_name.to_string()
     );
+    present(connection, program, &title, &body).await
+}
+
+/// Ask the user whether the agent `agent_name`, run by `program`, may work
+/// on their workspace `workspace_name`. Asked each time; nothing is kept.
+pub async fn ask_workspace(
+    connection: &zbus::Connection,
+    program: &str,
+    agent_name: &str,
+    workspace_name: &str,
+) -> Answer {
+    let app = otto_kit::desktop_entry::display_name_for_app(program);
+    let title = otto_kit::t_owned!(
+        "agent-workspace-prompt-title",
+        agent = agent_name.to_string(),
+        workspace = workspace_name.to_string()
+    );
+    let body = otto_kit::t_owned!(
+        "agent-workspace-prompt-body",
+        app = app,
+        agent = agent_name.to_string()
+    );
+    present(connection, program, &title, &body).await
+}
+
+/// Put a question about `program` in islands' dialog and read the answer,
+/// trusting it only from islands.
+async fn present(connection: &zbus::Connection, program: &str, title: &str, body: &str) -> Answer {
     let reply = connection
         .call_method(
             Some("org.otto.Island"),
@@ -171,9 +199,9 @@ pub async fn ask(connection: &zbus::Connection, program: &str, agent_name: &str)
             "PresentAccess",
             &(
                 program,
-                title.as_str(),
+                title,
                 "",
-                body.as_str(),
+                body,
                 "input-mouse",
                 otto_kit::t!("agent-prompt-allow"),
                 otto_kit::t!("agent-prompt-deny"),

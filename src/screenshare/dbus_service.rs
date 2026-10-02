@@ -1041,6 +1041,127 @@ impl CompositorInterface {
         ))
     }
 
+    /// The workspaces there are, for the calling agent to ask for one:
+    /// `(output, name, shown)`, in order on each output. Needs a seat.
+    async fn list_workspaces(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<Vec<(String, String, bool)>> {
+        let owner = sender_of(&header)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::ListAgentWorkspaces {
+                owner,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        let entries = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::AccessDenied)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| (entry.output, entry.name, entry.shown))
+            .collect())
+    }
+
+    /// Ask to work on one of the user's workspaces: by name, or `""` for
+    /// the one they are looking at. The user is asked every time; if they
+    /// allow it, the caller's seat acts there in place of anywhere it acted
+    /// before, its cursor drawn beside theirs. The user is not moved and
+    /// keeps their focus.
+    ///
+    /// Returns the output it is on and that output's logical geometry and
+    /// scale, as `RequestOwnWorkspace` does.
+    async fn request_workspace(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &Connection,
+        name: &str,
+    ) -> zbus::fdo::Result<(String, i32, i32, i32, i32, f64)> {
+        use crate::agent_consent::{self, Answer};
+
+        let owner = sender_of(&header)?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::FindAgentWorkspace {
+                owner: owner.clone(),
+                name: name.to_string(),
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        let request = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::AccessDenied)?;
+
+        let program = agent_consent::program_of(connection, &owner)
+            .await
+            .ok_or_else(|| {
+                zbus::fdo::Error::AccessDenied("cannot tell which program is asking".into())
+            })?;
+        if agent_consent::is_suspended(&program) {
+            return Err(zbus::fdo::Error::AccessDenied(format!(
+                "the user stopped {program}; it may ask again after they log in anew"
+            )));
+        }
+        if !self.asking.lock().unwrap().insert(program.clone()) {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "the user is already being asked".into(),
+            ));
+        }
+        info!(
+            program,
+            agent = request.agent_name,
+            workspace = request.workspace_name,
+            "Asking the user about lending a workspace"
+        );
+        let answer = agent_consent::ask_workspace(
+            connection,
+            &program,
+            &request.agent_name,
+            &request.workspace_name,
+        )
+        .await;
+        self.asking.lock().unwrap().remove(&program);
+        info!(program, ?answer, "Answer about lending a workspace");
+        match answer {
+            Answer::Allowed => {}
+            Answer::Denied => {
+                return Err(zbus::fdo::Error::AccessDenied(
+                    "the user did not allow it".into(),
+                ))
+            }
+            Answer::Unanswered => {
+                return Err(zbus::fdo::Error::AccessDenied(
+                    "the user could not be asked".into(),
+                ))
+            }
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.compositor_tx
+            .send(CompositorCommand::GrantAgentWorkspace {
+                owner,
+                output: request.output,
+                workspace: request.workspace,
+                response_tx: tx,
+            })
+            .map_err(|e| zbus::fdo::Error::Failed(format!("channel send failed: {e}")))?;
+        let workspace = rx
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(format!("no answer: {e}")))?
+            .map_err(zbus::fdo::Error::AccessDenied)?;
+        Ok((
+            workspace.output,
+            workspace.x,
+            workspace.y,
+            workspace.width,
+            workspace.height,
+            workspace.scale,
+        ))
+    }
+
     /// Start a program for the calling agent: `argv[0]` with the rest as
     /// its arguments, in Otto's session environment. Its windows open on
     /// the agent's own workspace, and take the agent's keyboard, not the

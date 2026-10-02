@@ -874,6 +874,59 @@ mod agent_seat_tests {
         handle.stop();
     }
 
+    /// The user can lend an agent the workspace they are on: the agent's
+    /// scope is that workspace, with the user's windows on it, the user
+    /// stays where they are, and the loan is not kept for the agent's
+    /// return.
+    #[test]
+    #[serial]
+    fn an_agent_works_on_a_workspace_the_user_lends_it() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        let _ = user.roundtrip();
+        assert!(user.state.keyboard_focused);
+
+        // Without a seat there is nothing to lend to.
+        assert!(lend_workspace(&handle, ":1.10", "").is_err());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        assert!(lend_workspace(&handle, ":1.10", "no such workspace").is_err());
+        lend_workspace(&handle, ":1.10", "").expect("the user's workspace");
+        handle.settle(200);
+
+        let user_window_in_scope = handle.query(|state| {
+            let id = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "User")
+                .map(|w| w.id())
+                .expect("User mapped");
+            state.agent_scope_window_ids("agent-1").contains(&id)
+        });
+        assert!(user_window_in_scope, "the lent workspace is not in scope");
+        assert_eq!(handle.current_workspace_index(), 0, "the user was moved");
+        let _ = user.roundtrip();
+        assert!(user.state.keyboard_focused, "the user lost their keyboard");
+        assert!(
+            agent_frame(&handle, ":1.10").is_some(),
+            "the lent workspace is not framed"
+        );
+
+        // Gone and back: a lent workspace is asked for again.
+        release_seats(&handle, ":1.10");
+        handle.settle(200);
+        request_seat(&handle, "Claude", ":1.20").expect("seat back");
+        let regained = handle.query(|state| {
+            state
+                .agent_seat("agent-1")
+                .and_then(|agent| agent.grant.clone())
+        });
+        assert_eq!(regained, None, "the loan outlived the agent");
+
+        drop(user);
+        handle.stop();
+    }
+
     /// An agent's connection is told of the windows on its workspace alone,
     /// and activating one gives it the agent's keyboard, not the user's.
     #[test]
@@ -985,6 +1038,35 @@ mod agent_seat_tests {
             rx.try_recv()
                 .expect("answered at once")
                 .map(|workspace| workspace.output)
+        })
+    }
+
+    /// Find the workspace `name` for `owner`'s agent and grant it, as if the
+    /// user said yes in the dialog.
+    fn lend_workspace(handle: &HeadlessHandle, owner: &str, name: &str) -> Result<(), String> {
+        let (owner, name) = (owner.to_string(), name.to_string());
+        handle.query(move |state| {
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            otto::screenshare::handle_screenshare_command(
+                state,
+                otto::screenshare::CompositorCommand::FindAgentWorkspace {
+                    owner: owner.clone(),
+                    name,
+                    response_tx: tx,
+                },
+            );
+            let found = rx.try_recv().expect("answered at once")?;
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            otto::screenshare::handle_screenshare_command(
+                state,
+                otto::screenshare::CompositorCommand::GrantAgentWorkspace {
+                    owner,
+                    output: found.output,
+                    workspace: found.workspace,
+                    response_tx: tx,
+                },
+            );
+            rx.try_recv().expect("answered at once").map(|_| ())
         })
     }
 
@@ -1183,8 +1265,9 @@ mod agent_seat_tests {
                 .agent_seats
                 .iter()
                 .find(|agent| agent.owner.as_deref() == Some(owner.as_str()))?;
-            let otto::state::agent_seats::Grant::OwnWorkspace { output, workspace } =
-                agent.grant.clone()?;
+            let otto::state::agent_seats::Grant::Workspace {
+                output, workspace, ..
+            } = agent.grant.clone()?;
             state
                 .workspaces
                 .agent_frame_look(&output, workspace)

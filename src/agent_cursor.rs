@@ -101,14 +101,12 @@ impl<B: Backend + 'static> AgentSeat<B> {
     ) -> crate::state::agent_seats::Reach {
         use crate::state::agent_seats::{Grant, Reach};
         match &self.grant {
-            Some(Grant::OwnWorkspace { output, workspace })
-                if workspaces.space_of_view(output, *workspace).is_some() =>
-            {
-                Reach::Workspace {
-                    output: output.clone(),
-                    workspace: *workspace,
-                }
-            }
+            Some(Grant::Workspace {
+                output, workspace, ..
+            }) if workspaces.space_of_view(output, *workspace).is_some() => Reach::Workspace {
+                output: output.clone(),
+                workspace: *workspace,
+            },
             _ => Reach::Nowhere,
         }
     }

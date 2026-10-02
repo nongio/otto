@@ -32,11 +32,45 @@ pub struct PastAgent {
     pub grant: Option<Grant>,
 }
 
-/// Where an agent may act (`specs/agent-seats.md`, Workspace grants).
+/// Where an agent may act (`specs/security-model.md`, Agent sessions).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Grant {
-    /// A workspace Otto made for the agent, by output and view id.
-    OwnWorkspace { output: String, workspace: usize },
+    /// One workspace, by output and view id: one Otto made for the agent,
+    /// or, `shared`, one of the user's they let it work on.
+    Workspace {
+        output: String,
+        workspace: usize,
+        shared: bool,
+    },
+}
+
+impl Grant {
+    /// The workspace granted, as output and view id.
+    pub fn workspace(&self) -> (&str, usize) {
+        match self {
+            Self::Workspace {
+                output, workspace, ..
+            } => (output, *workspace),
+        }
+    }
+}
+
+/// A workspace as an agent is told of it: where it is, its name, and
+/// whether its output shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceEntry {
+    pub output: String,
+    pub name: String,
+    pub shown: bool,
+}
+
+/// A workspace an agent asked for, found and waiting for the user's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceRequest {
+    pub output: String,
+    pub workspace: usize,
+    pub workspace_name: String,
+    pub agent_name: String,
 }
 
 /// Where an agent's input can land now.
@@ -73,6 +107,8 @@ pub enum AgentSeatError {
     NoOutput,
     /// The caller has no workspace of its own to launch onto.
     NoWorkspace,
+    /// No workspace goes by the name asked for.
+    NoSuchWorkspace,
     /// The program could not be started.
     Launch(String),
     /// No Wayland connection could be made for the agent.
@@ -87,6 +123,7 @@ impl std::fmt::Display for AgentSeatError {
             Self::NoSeat => write!(f, "ask for a seat first"),
             Self::NoOutput => write!(f, "no output to put a workspace on"),
             Self::NoWorkspace => write!(f, "ask for a workspace of your own first"),
+            Self::NoSuchWorkspace => write!(f, "no workspace goes by that name"),
             Self::Launch(err) => write!(f, "could not start the program: {err}"),
             Self::Connect(err) => write!(f, "could not connect: {err}"),
         }
@@ -240,13 +277,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         };
         self.release_focus_of(seat_name);
         let agent = self.agent_seats.remove(index);
-        // The grant waits for the agent to come back.
+        // The grant waits for the agent to come back; a workspace the user
+        // lent it is asked for again.
         if let Some(past) = agent
             .agent_name
             .as_ref()
             .and_then(|name| self.agent_history.get_mut(name))
         {
-            past.grant = agent.grant.clone();
+            past.grant = agent
+                .grant
+                .clone()
+                .filter(|grant| !matches!(grant, Grant::Workspace { shared: true, .. }));
         }
         if let Some(token) = agent.idle_timer {
             self.handle.remove(token);
@@ -362,15 +403,118 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             "Agent workspace created"
         );
         if let Some(agent) = self.agent_seat_mut(&seat_name) {
-            agent.grant = Some(Grant::OwnWorkspace {
+            agent.grant = Some(Grant::Workspace {
                 output: output.clone(),
                 workspace: view.index,
+                shared: false,
             });
         }
         // Its pointer starts on its workspace, not wherever it was.
         self.release_focus_of(&seat_name);
         self.backend_data.request_redraw();
         self.describe_workspace(&output)
+    }
+
+    /// The workspaces there are, for `owner`'s agent to pick one from.
+    pub fn agent_workspace_list(&self, owner: &str) -> Result<Vec<WorkspaceEntry>, AgentSeatError> {
+        if !self
+            .agent_seats
+            .iter()
+            .any(|agent| agent.owner.as_deref() == Some(owner))
+        {
+            return Err(AgentSeatError::NoSeat);
+        }
+        let mut entries = Vec::new();
+        for output in self.workspaces.outputs() {
+            let name = output.name();
+            let Some(ows) = self.workspaces.output_workspaces.get(&name) else {
+                continue;
+            };
+            for (position, view) in ows.workspace_views.iter().enumerate() {
+                entries.push(WorkspaceEntry {
+                    output: name.clone(),
+                    name: view.display_name(),
+                    shown: position == ows.current_workspace,
+                });
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Find the workspace `owner`'s agent asks for: by name, or, `""`, the
+    /// one the user is looking at. Nothing is granted until the user says.
+    pub fn find_agent_workspace(
+        &self,
+        owner: &str,
+        name: &str,
+    ) -> Result<WorkspaceRequest, AgentSeatError> {
+        let agent = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.owner.as_deref() == Some(owner))
+            .ok_or(AgentSeatError::NoSeat)?;
+        let found = if name.is_empty() {
+            self.workspaces
+                .focused_output()
+                .or_else(|| self.workspaces.primary_output())
+                .and_then(|output| {
+                    let output = output.name();
+                    let ows = self.workspaces.output_workspaces.get(&output)?;
+                    let view = ows.workspace_views.get(ows.current_workspace)?;
+                    Some((output, view.index, view.display_name()))
+                })
+        } else {
+            self.workspaces.outputs().find_map(|output| {
+                let output = output.name();
+                let ows = self.workspaces.output_workspaces.get(&output)?;
+                let view = ows
+                    .workspace_views
+                    .iter()
+                    .find(|view| view.display_name() == name)?;
+                Some((output, view.index, view.display_name()))
+            })
+        };
+        let (output, workspace, workspace_name) = found.ok_or(AgentSeatError::NoSuchWorkspace)?;
+        Ok(WorkspaceRequest {
+            output,
+            workspace,
+            workspace_name,
+            agent_name: agent.agent_name.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Let `owner`'s agent work on the workspace `workspace` of `output`,
+    /// once the user said it may: its seat acts there in place of anywhere
+    /// it acted before. The user is not moved, and keeps their focus.
+    pub fn grant_agent_workspace(
+        &mut self,
+        owner: &str,
+        output: &str,
+        workspace: usize,
+    ) -> Result<OwnWorkspace, AgentSeatError> {
+        let seat_name = self
+            .agent_seats
+            .iter()
+            .find(|agent| agent.owner.as_deref() == Some(owner))
+            .map(AgentSeat::name)
+            .ok_or(AgentSeatError::NoSeat)?;
+        if self.workspaces.space_of_view(output, workspace).is_none() {
+            return Err(AgentSeatError::NoSuchWorkspace);
+        }
+        self.release_focus_of(&seat_name);
+        if let Some(agent) = self.agent_seat_mut(&seat_name) {
+            agent.grant = Some(Grant::Workspace {
+                output: output.to_string(),
+                workspace,
+                shared: true,
+            });
+        }
+        info!(
+            seat = seat_name,
+            output, workspace, "Agent given a workspace of the user's"
+        );
+        self.backend_data.request_redraw();
+        self.describe_workspace(output)
     }
 
     /// End `owner`'s own-workspace grant. The workspace stays, with its
@@ -474,14 +618,15 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         let held = self.agent_history.iter().filter_map(|(name, past)| {
             Some((past.grant.as_ref()?, past.color, Some(name.clone())))
         });
-        for (Grant::OwnWorkspace { output, workspace }, color, name) in live.chain(held) {
-            let Some(space) = self.workspaces.space_of_view(output, *workspace) else {
+        for (grant, color, name) in live.chain(held) {
+            let (output, workspace) = grant.workspace();
+            let Some(space) = self.workspaces.space_of_view(output, workspace) else {
                 continue;
             };
             let fullscreen = space.elements().any(|window| window.is_fullscreen());
             wanted.push((
-                output.clone(),
-                *workspace,
+                output.to_string(),
+                workspace,
                 AgentFrameLook {
                     color,
                     names: name.into_iter().collect(),
@@ -564,14 +709,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     /// gets no seat again until the user logs in anew. The workspace stays,
     /// with its windows.
     pub fn revoke_workspace_grants(&mut self, output: &str, view: usize) {
-        let grant = Grant::OwnWorkspace {
-            output: output.to_string(),
-            workspace: view,
-        };
+        let on_it = |grant: Option<&Grant>| grant.is_some_and(|g| g.workspace() == (output, view));
         let seats: Vec<(String, Option<String>)> = self
             .agent_seats
             .iter()
-            .filter(|agent| agent.grant.as_ref() == Some(&grant))
+            .filter(|agent| on_it(agent.grant.as_ref()))
             .map(|agent| (agent.name(), agent.owner.clone()))
             .collect();
         for (seat_name, owner) in seats {
@@ -588,7 +730,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             self.remove_agent_seat(&seat_name);
         }
         for past in self.agent_history.values_mut() {
-            if past.grant.as_ref() == Some(&grant) {
+            if on_it(past.grant.as_ref()) {
                 past.grant = None;
             }
         }
@@ -877,8 +1019,9 @@ pub fn agent_workspace_window_ids<B: Backend + 'static>(
                 .values()
                 .filter_map(|past| past.grant.as_ref()),
         )
-        .filter_map(|Grant::OwnWorkspace { output, workspace }| {
-            workspaces.space_of_view(output, *workspace)
+        .filter_map(|grant| {
+            let (output, workspace) = grant.workspace();
+            workspaces.space_of_view(output, workspace)
         })
         .flat_map(|space| space.elements().map(|window| window.id()))
         .collect()

@@ -218,6 +218,30 @@ pub enum CompositorCommand {
         response_tx:
             tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::OwnWorkspace, String>>,
     },
+    /// An agent asks which workspaces there are.
+    ListAgentWorkspaces {
+        owner: String,
+        response_tx: tokio::sync::oneshot::Sender<
+            Result<Vec<crate::state::agent_seats::WorkspaceEntry>, String>,
+        >,
+    },
+    /// An agent names a workspace of the user's it wants to work on; it is
+    /// found, for the user to be asked about.
+    FindAgentWorkspace {
+        owner: String,
+        name: String,
+        response_tx: tokio::sync::oneshot::Sender<
+            Result<crate::state::agent_seats::WorkspaceRequest, String>,
+        >,
+    },
+    /// The user let an agent work on one of their workspaces.
+    GrantAgentWorkspace {
+        owner: String,
+        output: String,
+        workspace: usize,
+        response_tx:
+            tokio::sync::oneshot::Sender<Result<crate::state::agent_seats::OwnWorkspace, String>>,
+    },
     /// An agent starts a program whose windows open on its own workspace.
     LaunchOnOwnWorkspace {
         owner: String,
@@ -781,6 +805,33 @@ pub fn handle_screenshare_command<B: crate::state::Backend + 'static>(
         CompositorCommand::RequestOwnWorkspace { owner, response_tx } => {
             let result = state
                 .request_own_workspace(&owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::ListAgentWorkspaces { owner, response_tx } => {
+            let result = state
+                .agent_workspace_list(&owner)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::FindAgentWorkspace {
+            owner,
+            name,
+            response_tx,
+        } => {
+            let result = state
+                .find_agent_workspace(&owner, &name)
+                .map_err(|err| err.to_string());
+            let _ = response_tx.send(result);
+        }
+        CompositorCommand::GrantAgentWorkspace {
+            owner,
+            output,
+            workspace,
+            response_tx,
+        } => {
+            let result = state
+                .grant_agent_workspace(&owner, &output, workspace)
                 .map_err(|err| err.to_string());
             let _ = response_tx.send(result);
         }

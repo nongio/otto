@@ -97,9 +97,13 @@ islands.
    that program (xdg-permission-store, listed in Settings › Privacy with a
    switch and Forget). A program the user stopped (below) is refused until
    they log in anew.
-2. With a seat, the agent asks for a workspace of its own: a new one, named
-   after the agent, that the user is not switched to. One workspace per
-   seat.
+2. With a seat, the agent asks for a workspace: a new one of its own,
+   named after the agent, that the user is not switched to; or one of the
+   user's, by name or the one they are looking at (`ListWorkspaces`,
+   `RequestWorkspace`), which the user is asked about each time in Otto's
+   dialog. On one of the user's, the agent's cursor is drawn beside theirs
+   and it reaches the windows there; the user's cursor and focus stay
+   theirs. One workspace per seat; asking for another moves the seat.
 3. The agent asks for a connection (`ConnectAgent`). Everything on it is
    the agent's: it sees the agent's seat and no other, and every other
    client sees the user's seat and not the agent's. A `wp_security_context_v1`
@@ -110,7 +114,8 @@ islands.
    colour wherever its workspace shows.
 5. Stop, the agent releasing its seat, or the agent leaving the bus ends the
    session: the seat and its connections go, the cursor goes, the workspace
-   and its windows stay for the user. Stop also suspends the program's
+   and its windows stay for the user. A workspace of the agent's own waits
+   for it to come back under the same name; one the user lent it does not. Stop also suspends the program's
    consent for the rest of the login session. The secure attention key
    (Ctrl+Alt+Shift+Esc, delivered by logind) stops every agent at once.
 
@@ -138,7 +143,8 @@ The user goes to the agent's workspace when they want to watch.
 - A grant given within 600 ms of a dialog appearing is ignored: a click or
   an Enter already on its way does not answer it.
 - Answers that last are kept in xdg-permission-store and listed in Settings
-  › Privacy. A stop lasts the login session.
+  › Privacy. Lending a workspace is asked each time and not kept. A stop
+  lasts the login session.
 - While the session is locked, no agent input or capture happens.
 
 ## Constraints & Edge Cases
