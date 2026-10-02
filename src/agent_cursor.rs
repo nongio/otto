@@ -86,6 +86,10 @@ pub struct AgentSeat<B: Backend + 'static> {
     /// The sockets Otto accepts the agent's clients on, for as long as the
     /// seat lasts.
     pub listeners: Vec<RegistrationToken>,
+    /// While the user lends the agent a workspace of theirs: the global
+    /// that shows the seat to the user's programs, so the agent can click
+    /// and type in their windows there.
+    pub lent_global: Option<smithay::reexports::wayland_server::backend::GlobalId>,
 }
 
 impl<B: Backend + 'static> AgentSeat<B> {

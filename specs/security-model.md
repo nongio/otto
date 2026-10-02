@@ -102,11 +102,13 @@ islands.
    user's, by name or the one they are looking at (`ListWorkspaces`,
    `RequestWorkspace`), which the user is asked about each time in Otto's
    dialog. On one of the user's, the agent's cursor is drawn beside theirs
-   and it reaches the windows there; the user's cursor and focus stay
-   theirs. One workspace per seat; asking for another moves the seat.
+   and it reaches the windows there: for the length of the loan the user's
+   programs see the agent's seat too, so it can click and type in their
+   windows; the user's cursor and focus stay theirs. One workspace per seat; asking for another moves the seat.
 3. The agent asks for a connection (`ConnectAgent`). Everything on it is
    the agent's: it sees the agent's seat and no other, and every other
-   client sees the user's seat and not the agent's. A `wp_security_context_v1`
+   client sees the user's seat and not the agent's, but for a workspace the
+   user lent it (step 2). A `wp_security_context_v1`
    listener made on it connects more of the agent's clients, with the
    protocol sandboxes speak; they go with the seat.
 4. While the seat lasts, its workspace is framed in the agent's colour with

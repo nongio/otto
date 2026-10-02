@@ -259,6 +259,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             grant: None,
             connections: Vec::new(),
             listeners: Vec::new(),
+            lent_global: None,
         });
     }
 
@@ -293,6 +294,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             self.handle.remove(token);
         }
         if let Some(global) = agent.seat.global() {
+            self.display_handle.remove_global::<Self>(global);
+        }
+        if let Some(global) = agent.lent_global {
             self.display_handle.remove_global::<Self>(global);
         }
         for token in agent.listeners {
@@ -600,11 +604,46 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         window.is_some_and(|window| space.elements().any(|candidate| *candidate == window))
     }
 
+    /// Show an agent's seat to the user's programs while it holds a workspace
+    /// the user lent it, and only then: a client cannot be told of the seat's
+    /// own global later, so it gets one more for the loan
+    /// (`specs/security-model.md`, Agent sessions).
+    fn sync_lent_seat_globals(&mut self) {
+        for index in 0..self.agent_seats.len() {
+            let agent = &self.agent_seats[index];
+            let lent = matches!(agent.grant, Some(Grant::Workspace { shared: true, .. }));
+            match (lent, agent.lent_global.is_some()) {
+                (true, false) => {
+                    let global =
+                        agent
+                            .seat
+                            .create_global_with_filter(&self.display_handle, |client| {
+                                ClientState::agent_seat_of(client).is_none()
+                                    && !crate::sandbox::is_sandboxed_client(client)
+                            });
+                    info!(
+                        seat = agent.name(),
+                        "Agent seat shown to the user's programs"
+                    );
+                    self.agent_seats[index].lent_global = Some(global);
+                }
+                (false, true) => {
+                    if let Some(global) = self.agent_seats[index].lent_global.take() {
+                        self.display_handle.remove_global::<Self>(global);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Bring the agent borders in line with the grants: one frame per
     /// granted workspace, in the colour of its agent, with a chip unless a
     /// window is fullscreen there. Cheap when nothing changed.
     pub fn sync_agent_frames(&mut self) {
         use crate::workspaces::agent_frame::AgentFrameLook;
+
+        self.sync_lent_seat_globals();
 
         let mut wanted: Vec<(String, usize, AgentFrameLook)> = Vec::new();
         let live = self.agent_seats.iter().filter_map(|agent| {

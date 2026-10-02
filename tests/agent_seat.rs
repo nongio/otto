@@ -905,6 +905,48 @@ mod agent_seat_tests {
         handle.stop();
     }
 
+    /// While the user lends an agent a workspace, the user's programs see
+    /// the agent's seat too, so it can click and type in their windows
+    /// there: one already connected is told of it and stays connected, and
+    /// the seat is gone from them once the loan ends.
+    #[test]
+    #[serial]
+    fn a_lent_workspace_shows_the_agents_seat_to_the_users_programs() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        let mut program = Driver::connect(&handle);
+        program.settle(&handle);
+        assert_eq!(program.seat_index("agent-1"), None, "seen before the loan");
+
+        lend_workspace(&handle, ":1.10", "").expect("lend");
+        handle.settle(200);
+        // Told of the seat, then of its name once bound.
+        program.settle(&handle);
+        program.settle(&handle);
+        assert!(
+            program.seat_index("agent-1").is_some(),
+            "the user's program does not see the agent's seat"
+        );
+        assert!(
+            program.queue.roundtrip(&mut program.state).is_ok(),
+            "the user's program was disconnected"
+        );
+
+        assert!(handle.query(|state| state.release_own_workspace(":1.10")));
+        handle.settle(200);
+        let fresh = Driver::connect(&handle);
+        assert_eq!(
+            fresh.seat_index("agent-1"),
+            None,
+            "the agent's seat outlived the loan"
+        );
+        assert!(program.queue.roundtrip(&mut program.state).is_ok());
+
+        drop(fresh);
+        drop(program);
+        handle.stop();
+    }
+
     /// A window from an agent's connection that asks to be maximized
     /// before it first commits, as gedit restoring its last state does,
     /// is maximized on the agent's workspace, not the user's.
