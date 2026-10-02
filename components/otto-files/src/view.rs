@@ -551,13 +551,40 @@ const SEARCH_CHIP_GAP: f32 = 6.0;
 const SEARCH_CHIP_FOLDER_W: f32 = 112.0;
 const SEARCH_CHIP_EVERYWHERE_W: f32 = 112.0;
 
-/// One Miller pane's default width. Every pane shares one width — a column
-/// whose width changes as you descend is disorienting, and this is what makes
-/// the view scannable — but that shared width is user-resizable.
+/// The width a Miller pane opens at. Each pane's divider resizes that pane
+/// alone; see [`MillerWidths`].
 pub const MILLER_W: f32 = 260.0;
 /// Miller panes cannot be dragged narrower than this.
 pub const MILLER_MIN_W: f32 = 140.0;
+/// Miller panes cannot be dragged or fitted wider than this.
 pub const MILLER_MAX_W: f32 = 520.0;
+
+/// The width of each pane in the Miller stack, by depth.
+///
+/// Every pane keeps its own width: dragging one divider resizes the pane to
+/// its left and shifts the ones after it without resizing them. A depth past
+/// the end of the list is at [`MILLER_W`], which is also what
+/// [`MillerWidths::default`] gives every pane.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MillerWidths(Vec<f32>);
+
+impl MillerWidths {
+    /// The widths of the panes from depth 0 on.
+    pub fn new(widths: impl IntoIterator<Item = f32>) -> Self {
+        Self(widths.into_iter().collect())
+    }
+
+    /// Pane `depth`'s width.
+    pub fn width(&self, depth: usize) -> f32 {
+        self.0.get(depth).copied().unwrap_or(MILLER_W)
+    }
+
+    /// How far pane `depth`'s left edge sits from the start of the stack:
+    /// the widths of every pane before it.
+    pub fn left(&self, depth: usize) -> f32 {
+        (0..depth).map(|d| self.width(d)).sum()
+    }
+}
 
 /// How close the pointer must be to a column boundary to grab it.
 const COLUMN_GRAB: f32 = 4.0;
@@ -2059,14 +2086,14 @@ pub fn list_rename_rect(
 pub fn miller_rename_rect(
     height: f32,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
     depth: usize,
     count: usize,
     scroll: f32,
     index: usize,
     is_dir: bool,
 ) -> Rect {
-    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    let pane = miller_pane_rect(depth, height, pan, miller);
     let row = RowStrip::miller(pane, count, scroll).rect(index);
     let name_x = row.left + 14.0 + ICON_SIZE + 8.0;
     let trailing = if is_dir { 24.0 } else { 8.0 };
@@ -2181,16 +2208,15 @@ pub fn row_at(x: f32, y: f32, width: f32, height: f32, count: usize, scroll: f32
 
 /// The untruncated pane rect, for laying rows out — drawing clips it, but a row
 /// must not shift because its pane is half off-screen.
-pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = sidebar_w() + depth as f32 * miller_w - pan;
-    Rect::from_ltrb(left, header_h(), left + miller_w, height)
+pub fn miller_pane_rect(depth: usize, height: f32, pan: f32, miller: &MillerWidths) -> Rect {
+    let left = sidebar_w() + miller.left(depth) - pan;
+    Rect::from_ltrb(left, header_h(), left + miller.width(depth), height)
 }
 
-/// The preview pane's untruncated rect — a trailing member of the stack, one
-/// `miller_w`-wide slot past the last real column, but its own [`PREVIEW_W`]
-/// wide rather than sharing the columns' width.
-pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller_w: f32) -> Rect {
-    let left = sidebar_w() + columns_len as f32 * miller_w - pan;
+/// The preview pane's untruncated rect — a trailing member of the stack, just
+/// past the last real column, and its own [`PREVIEW_W`] wide.
+pub fn preview_pane_rect(columns_len: usize, height: f32, pan: f32, miller: &MillerWidths) -> Rect {
+    let left = sidebar_w() + miller.left(columns_len) - pan;
     Rect::from_ltrb(left, header_h(), left + PREVIEW_W, height)
 }
 
@@ -2224,7 +2250,7 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
         DropHighlight::Pane { depth } => {
             let viewport = content_viewport(f.width, f.height, f.mode);
             let pane = match f.mode {
-                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, f.miller_w),
+                ViewMode::Columns => miller_pane_rect(depth, f.height, f.pan, &f.miller),
                 // One pane fills the content area in the flat views.
                 _ => viewport,
             };
@@ -2252,7 +2278,7 @@ pub fn drop_highlight_rect(f: &Frame, target: DropHighlight) -> Option<Rect> {
                     RowStrip::list(f.width, pane.entries.len(), pane.scroll).rect(index)
                 }
                 ViewMode::Columns => {
-                    let full = miller_pane_rect(depth, f.height, f.pan, f.miller_w);
+                    let full = miller_pane_rect(depth, f.height, f.pan, &f.miller);
                     RowStrip::miller(full, pane.entries.len(), pane.scroll).rect(index)
                 }
             };
@@ -2332,12 +2358,12 @@ pub fn miller_row_rect(
     depth: usize,
     height: f32,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
     count: usize,
     index: usize,
     scroll: f32,
 ) -> Rect {
-    let pane = miller_pane_rect(depth, height, pan, miller_w);
+    let pane = miller_pane_rect(depth, height, pan, miller);
     RowStrip::miller(pane, count, scroll).rect(index)
 }
 
@@ -2589,13 +2615,13 @@ pub fn miller_at(
     columns: &[Column],
     counts: &[usize],
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Option<(usize, Option<usize>)> {
     if !content_viewport(width, height, ViewMode::Columns).contains(Point::new(x, y)) {
         return None;
     }
     for depth in 0..columns.len() {
-        let pane = miller_pane_rect(depth, height, pan, miller_w);
+        let pane = miller_pane_rect(depth, height, pan, miller);
         if x < pane.left || x >= pane.right {
             continue;
         }
@@ -2620,29 +2646,26 @@ fn pan_for(left: f32, pane_w: f32, width: f32, current: f32) -> f32 {
 }
 
 /// How far the Miller stack must be panned to keep pane `depth` in view.
-pub fn miller_pan_for(depth: usize, width: f32, current: f32, miller_w: f32) -> f32 {
-    pan_for(depth as f32 * miller_w, miller_w, width, current)
+pub fn miller_pan_for(depth: usize, width: f32, current: f32, miller: &MillerWidths) -> f32 {
+    pan_for(miller.left(depth), miller.width(depth), width, current)
 }
 
 /// How far the stack must be panned to bring the preview pane — sitting
 /// right after the last of `columns_len` real columns — fully into view.
 /// The same gesture [`miller_pan_for`] performs for a freshly opened column.
-pub fn preview_pan_for(columns_len: usize, width: f32, current: f32, miller_w: f32) -> f32 {
-    pan_for(columns_len as f32 * miller_w, PREVIEW_W, width, current)
+pub fn preview_pan_for(columns_len: usize, width: f32, current: f32, miller: &MillerWidths) -> f32 {
+    pan_for(miller.left(columns_len), PREVIEW_W, width, current)
 }
 
 /// Total width the whole stack wants: every real column, plus the preview
 /// pane's own width when one is showing.
-pub fn miller_content_width(depth: usize, miller_w: f32, preview_w: f32) -> f32 {
-    depth as f32 * miller_w + preview_w
+pub fn miller_content_width(depth: usize, miller: &MillerWidths, preview_w: f32) -> f32 {
+    miller.left(depth) + preview_w
 }
 
-/// Is the pointer on the draggable edge between two Miller panes? All panes
-/// share one width, so any divider found resizes them all — dragging one
-/// divider is dragging the width. Returns the depth of the pane whose right
-/// edge was grabbed: since that edge sits `(depth + 1) * miller_w` from the
-/// sidebar, the caller needs it to turn pointer travel back into a width
-/// delta that tracks the mouse exactly, however deep the divider is.
+/// Is the pointer on the draggable edge between two Miller panes? Returns the
+/// depth of the pane whose right edge was grabbed, the one pane a drag of
+/// that divider resizes.
 pub fn miller_boundary_at(
     x: f32,
     y: f32,
@@ -2650,14 +2673,14 @@ pub fn miller_boundary_at(
     height: f32,
     pan: f32,
     pane_count: usize,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Option<usize> {
     if !(header_h()..=height).contains(&y) || x < sidebar_w() {
         return None;
     }
     let viewport_right = width;
     (0..pane_count).find(|&depth| {
-        let pane = miller_pane_rect(depth, height, pan, miller_w);
+        let pane = miller_pane_rect(depth, height, pan, miller);
         pane.right >= sidebar_w()
             && pane.right <= viewport_right
             && (x - pane.right).abs() <= COLUMN_GRAB
@@ -2697,12 +2720,12 @@ pub fn pane_viewport(
     mode: ViewMode,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     match mode {
         ViewMode::List | ViewMode::Grid | ViewMode::Photos => content_viewport(width, height, mode),
         ViewMode::Columns => {
-            let mut pane = miller_pane_rect(depth, height, pan, miller_w);
+            let mut pane = miller_pane_rect(depth, height, pan, miller);
             // Clipped to what is actually on screen: a pane panned half out of
             // the window must not put its scrollbar under the sidebar.
             if !pane.intersect(content_viewport(width, height, mode)) {
@@ -3545,8 +3568,8 @@ pub struct Frame<'a> {
     /// along the bottom of the stack. `None` outside Miller view, and in
     /// tests with no live view to read.
     pub pan_bar: Option<&'a ScrollState>,
-    /// The Miller view's draggable pane width, shared by every pane.
-    pub miller_w: f32,
+    /// Each Miller pane's draggable width.
+    pub miller: MillerWidths,
     pub sort: SortKey,
     pub ascending: bool,
     /// The list view's draggable Size/Kind/Modified column widths.
@@ -3580,10 +3603,10 @@ pub struct Frame<'a> {
     /// The preview pane — a trailing member of the Miller stack, panned into
     /// and out of view the same as any real column — when one is showing.
     /// `None` outside Miller view or with no single file selected; drawn at
-    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller_w`] sizes
-    /// every other pane rather than being carried on `Frame` itself.
+    /// [`PREVIEW_W`] on its own surface in the stack, the same way [`miller`]
+    /// sizes every other pane rather than being carried on `Frame` itself.
     ///
-    /// [`miller_w`]: Frame::miller_w
+    /// [`miller`]: Frame::miller
     pub preview: Option<PreviewData<'a>>,
     /// The picker's action row, when this is a picker window. `None` in the
     /// browser.
@@ -7769,7 +7792,7 @@ pub fn draw_open_pulse(canvas: &Canvas, f: &Frame) {
         pane,
         depth,
         f.pan,
-        f.miller_w,
+        &f.miller,
     );
     if rect.is_empty() {
         return;
@@ -7846,7 +7869,7 @@ pub fn peek_anchor(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     peek_anchor_in(
         width,
@@ -7857,7 +7880,7 @@ pub fn peek_anchor(
         pane,
         depth,
         pan,
-        miller_w,
+        miller,
     )
 }
 
@@ -7871,7 +7894,7 @@ pub fn peek_anchor_in(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     let Some(index) = pane.cursor else {
         return Rect::new_empty();
@@ -7880,9 +7903,7 @@ pub fn peek_anchor_in(
         return Rect::new_empty();
     }
 
-    let rect = cursor_entry_rect_in(
-        width, height, mode, grid, photos, pane, depth, pan, miller_w,
-    );
+    let rect = cursor_entry_rect_in(width, height, mode, grid, photos, pane, depth, pan, miller);
     if rect.is_empty() {
         return rect;
     }
@@ -7907,7 +7928,7 @@ pub fn cursor_entry_rect(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     cursor_entry_rect_in(
         width,
@@ -7918,7 +7939,7 @@ pub fn cursor_entry_rect(
         pane,
         depth,
         pan,
-        miller_w,
+        miller,
     )
 }
 
@@ -7932,7 +7953,7 @@ pub fn cursor_entry_rect_in(
     pane: &PaneData,
     depth: usize,
     pan: f32,
-    miller_w: f32,
+    miller: &MillerWidths,
 ) -> Rect {
     let Some(index) = pane.cursor else {
         return Rect::new_empty();
@@ -7948,7 +7969,7 @@ pub fn cursor_entry_rect_in(
         ViewMode::Grid => grid_cell_rect_in(viewport, grid, index, pane.scroll),
         ViewMode::Photos => photos.tile_rect(viewport, index, pane.scroll),
         ViewMode::Columns => RowStrip::miller(
-            miller_pane_rect(depth, height, pan, miller_w),
+            miller_pane_rect(depth, height, pan, miller),
             count,
             pane.scroll,
         )
@@ -8731,7 +8752,7 @@ mod geometry_tests {
             &pane(&owned, Some(1), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert_eq!(anchor, photos.tile_rect(area, 1, 0.0));
         assert!(!anchor.is_empty());
@@ -9388,7 +9409,7 @@ mod geometry_tests {
             &pane(&owned, None, 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -9403,7 +9424,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(!anchor.is_empty());
         // Inside the window, and below the header — a real place on screen.
@@ -9429,7 +9450,7 @@ mod geometry_tests {
                 &pane(&owned, Some(0), 0.0),
                 0,
                 0.0,
-                MILLER_W,
+                &MillerWidths::default(),
             );
             assert!(!anchor.is_empty(), "{mode:?}: {anchor:?}");
             assert!(
@@ -9454,7 +9475,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 5_000.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }
@@ -9469,7 +9490,7 @@ mod geometry_tests {
             &pane(&owned, Some(9), 0.0),
             0,
             0.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty());
     }
@@ -9616,7 +9637,7 @@ mod geometry_tests {
             active: 0,
             pan: 0.0,
             pan_bar: None,
-            miller_w: MILLER_W,
+            miller: MillerWidths::default(),
             sort: SortKey::Name,
             ascending: true,
             list_columns: ListColumnWidths::default(),
@@ -9670,7 +9691,7 @@ mod geometry_tests {
             &pane(&owned, Some(0), 0.0),
             0,
             5_000.0,
-            MILLER_W,
+            &MillerWidths::default(),
         );
         assert!(anchor.is_empty(), "expected an empty rect, got {anchor:?}");
     }

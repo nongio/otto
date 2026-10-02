@@ -232,6 +232,9 @@ pub struct Column {
     /// viewport and content height are re-set every frame by the view, since
     /// both change with the window size and the listing.
     pub scroll: ScrollView,
+    /// This pane's width in the Miller view, set by dragging its divider.
+    /// Opens at [`crate::view::MILLER_W`].
+    pub width: f32,
     /// Bumped whenever [`Self::snapshot`] is replaced, so a cached order can
     /// tell whether it was computed from the listing that is there now.
     pub epoch: u64,
@@ -268,6 +271,7 @@ impl Column {
             cursor: None,
             anchor: None,
             scroll: ScrollView::new(Rect::new_empty()),
+            width: crate::view::MILLER_W,
             epoch: 0,
             sorted: std::cell::RefCell::new(SortCache::default()),
             watch,
@@ -313,6 +317,7 @@ impl Column {
             cursor: None,
             anchor: None,
             scroll: ScrollView::new(Rect::new_empty()),
+            width: crate::view::MILLER_W,
             epoch,
             sorted: std::cell::RefCell::new(SortCache::default()),
             refreshed: false,

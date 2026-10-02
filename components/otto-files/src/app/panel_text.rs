@@ -57,7 +57,7 @@ impl Browser {
                     self.columns.len(),
                     self.content_h(),
                     self.pan.offset(),
-                    self.miller_w,
+                    &self.miller_widths(),
                 );
                 let info = preview_info(
                     &entry,

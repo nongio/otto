@@ -287,10 +287,9 @@ struct Browser {
     /// A column divider currently being dragged: which one, the pointer x it
     /// started at, and the width it started with.
     column_resize: Option<(view::ColumnBoundary, f32, f32)>,
-    /// The Miller view's shared, draggable pane width.
-    miller_w: f32,
-    /// A Miller pane divider being dragged: its depth, the pointer x it
-    /// started at, and the width it started with.
+    /// A Miller pane divider being dragged: the depth of the pane it
+    /// resizes, the pointer x it started at, and the width that pane started
+    /// with. Each pane's width lives on its [`Column`].
     miller_resize: Option<(usize, f32, f32)>,
     /// The last Miller divider clicked and when, so a second click shortly
     /// after reads as a double-click rather than a fresh drag.

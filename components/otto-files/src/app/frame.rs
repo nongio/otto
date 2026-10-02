@@ -280,7 +280,7 @@ impl Browser {
             active: self.active,
             pan: self.pan.offset(),
             pan_bar: (self.mode == ViewMode::Columns).then_some(&self.pan.state),
-            miller_w: self.miller_w,
+            miller: self.miller_widths(),
             sort: self.sort,
             ascending: self.ascending,
             list_columns: self.list_columns,

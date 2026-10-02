@@ -299,6 +299,19 @@ is the narrower of the two. A press resolves the window border first, so the
 cursor must too — otherwise it promises a column resize while the click
 underneath it resizes the window.
 
+### Column widths
+
+**Each column keeps its own width.** Dragging the divider on a column's right
+edge resizes that column alone: the divider stays under the pointer, and the
+columns to its right shift along without changing width. Double-clicking a
+divider fits only that column to its longest name. Either way the width is
+clamped to a fixed minimum and maximum.
+
+A column opens at the default width. The width belongs to the column, so it
+goes when the column closes: a folder opened later at the same depth starts at
+the default again rather than inheriting a closed column's width. Widths are
+not persisted between windows.
+
 ### Column surfaces
 
 Painting every column into the window's one buffer makes a scroll in a single

@@ -313,9 +313,9 @@ impl PaneSurfaces {
             // Placed once, in the stack's own coordinates: the pan moves the
             // stack, never a column.
             let rect = Rect::from_xywh(
-                depth as f32 * f.miller_w,
+                f.miller.left(depth),
                 0.0,
-                f.miller_w,
+                f.miller.width(depth),
                 viewport.height(),
             );
             if depth >= self.columns.len() {
@@ -884,7 +884,7 @@ impl PaneSurfaces {
         (shown_from, shown_to): (f32, f32),
     ) -> bool {
         let rect = Rect::from_xywh(
-            f.panes.len() as f32 * f.miller_w,
+            f.miller.left(f.panes.len()),
             0.0,
             view::PREVIEW_W,
             viewport.height(),
@@ -998,7 +998,7 @@ impl PaneSurfaces {
         };
 
         // Unpanned, then moved from the window's coordinates into the stack's.
-        let full = view::preview_pane_rect(f.panes.len(), f.height, 0.0, f.miller_w);
+        let full = view::preview_pane_rect(f.panes.len(), f.height, 0.0, &f.miller);
         let stage = view::preview_stage_rect(full, info_lines);
         let rect = view::preview_video_box(stage, Some(aspect))
             .with_offset((-viewport.left, -viewport.top));

@@ -123,7 +123,7 @@ impl Browser {
             self.mode,
             depth,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         );
         if viewport.is_empty() {
             return;

@@ -31,7 +31,7 @@ impl Browser {
             &pane,
             depth,
             self.pan.offset(),
-            self.miller_w,
+            &self.miller_widths(),
         )
     }
 

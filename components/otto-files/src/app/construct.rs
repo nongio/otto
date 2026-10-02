@@ -15,7 +15,6 @@ impl Browser {
             show_hidden: false,
             list_columns: view::ListColumnWidths::default(),
             column_resize: None,
-            miller_w: view::MILLER_W,
             miller_resize: None,
             last_miller_click: None,
             last_row_click: None,
