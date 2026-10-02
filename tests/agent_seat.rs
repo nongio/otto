@@ -828,6 +828,134 @@ mod agent_seat_tests {
         handle.stop();
     }
 
+    /// Real gedit on an agent's connection, as `ConnectAgent` hands it out:
+    /// its window must open on the agent's workspace. Needs gedit; run with
+    /// `--ignored`.
+    #[test]
+    #[serial]
+    #[ignore]
+    fn gedit_on_an_agents_connection_opens_on_its_workspace() {
+        use std::os::fd::IntoRawFd;
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let stream = handle.query(|state| {
+            state
+                .connect_agent_client(":1.10")
+                .expect("connect the agent")
+        });
+        let fd = stream.into_raw_fd();
+        // Inherited by gedit, as WAYLAND_SOCKET expects.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, 0) };
+        let mut child = std::process::Command::new("gedit")
+            .arg("--standalone")
+            .env("WAYLAND_SOCKET", fd.to_string())
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DISPLAY")
+            .spawn()
+            .expect("gedit");
+        for _ in 0..40 {
+            handle.wait(Duration::from_millis(100));
+            let mapped = handle.query(|state| {
+                state
+                    .workspaces
+                    .spaces_elements()
+                    .any(|w| w.xdg_app_id() == "org.gnome.gedit")
+            });
+            if mapped {
+                break;
+            }
+        }
+        handle.wait(Duration::from_millis(1500));
+        let report = handle.query(|state| {
+            let mut lines = Vec::new();
+            for (name, ows) in state.workspaces.output_workspaces.iter() {
+                for (i, space) in ows.spaces.iter().enumerate() {
+                    for w in space.elements() {
+                        lines.push(format!(
+                            "{name} space#{i} view={} current={} title={:?} max={}",
+                            ows.workspace_views[i].index,
+                            ows.current_workspace,
+                            w.xdg_title(),
+                            w.is_maximized()
+                        ));
+                    }
+                }
+            }
+            let scope = state.agent_scope_window_ids("agent-1").len();
+            (lines, scope)
+        });
+        let placed_once = handle.query(|state| {
+            state
+                .workspaces
+                .output_workspaces
+                .values()
+                .flat_map(|ows| ows.spaces.iter())
+                .flat_map(|space| space.elements())
+                .filter(|w| w.xdg_app_id() == "org.gnome.gedit")
+                .count()
+                == 1
+        });
+        eprintln!("windows: {:#?}\nagent scope: {}", report.0, report.1);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(report.1 > 0, "gedit is not on the agent's workspace");
+        assert!(placed_once, "gedit is on the user's workspace too");
+        assert_eq!(handle.current_workspace_index(), 0, "the user was moved");
+        handle.stop();
+    }
+
+    /// A window from an agent's connection that asks to be maximized
+    /// before it first commits, as gedit restoring its last state does,
+    /// is maximized on the agent's workspace, not the user's.
+    #[test]
+    #[serial]
+    fn an_agents_maximized_window_opens_on_its_workspace() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let stream = handle.query(|state| {
+            state
+                .connect_agent_client(":1.10")
+                .expect("connect the agent")
+        });
+        let mut mine = TestClient::from_stream(stream).expect("agent client");
+        let _window = mine.create_maximized_toplevel("Mine", 640, 480);
+        handle.wait(Duration::from_millis(500));
+        let _ = mine.roundtrip();
+        handle.settle(200);
+
+        let (in_scope, maximized, spaces) = handle.query(|state| {
+            let window = state
+                .workspaces
+                .spaces_elements()
+                .find(|w| w.xdg_title() == "Mine")
+                .cloned()
+                .expect("Mine mapped");
+            let spaces = state
+                .workspaces
+                .output_workspaces
+                .values()
+                .flat_map(|ows| ows.spaces.iter())
+                .filter(|space| space.elements().any(|w| w.id() == window.id()))
+                .count();
+            (
+                state
+                    .agent_scope_window_ids("agent-1")
+                    .contains(&window.id()),
+                window.is_maximized(),
+                spaces,
+            )
+        });
+        assert!(maximized, "the window was not maximized");
+        assert!(in_scope, "the maximized window left the agent's workspace");
+        assert_eq!(spaces, 1, "the window is on the user's workspace too");
+        assert_eq!(handle.current_workspace_index(), 0, "the user was moved");
+
+        drop(mine);
+        handle.stop();
+    }
+
     /// A window from an agent's connection presenting itself with an
     /// activation token, as GTK does when it opens, right after the user
     /// pressed something: it gets the agent's keyboard, and the user's

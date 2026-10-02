@@ -1266,13 +1266,26 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             );
             self.layers_engine.start_animation(animation, 0.0);
 
-            self.workspaces.map_window_on_output(
-                &output,
-                &window,
-                new_geometry.loc,
-                true,
-                Some(transition),
-            );
+            // A window on a workspace that is not shown (an agent's window,
+            // maximized as it opens) is maximized where it is: mapping it on
+            // the output would pull it onto the workspace the user looks at.
+            let stays_hidden = !self.workspaces.is_on_current_workspace(&window)
+                && self.workspaces.output_for_window(&window).as_ref() == Some(&output);
+            if !stays_hidden
+                || !self.workspaces.relocate_window(
+                    &window,
+                    new_geometry.loc,
+                    Some(transition.clone()),
+                )
+            {
+                self.workspaces.map_window_on_output(
+                    &output,
+                    &window,
+                    new_geometry.loc,
+                    true,
+                    Some(transition),
+                );
+            }
 
             self.reposition_popups_for_window(&window);
         }
