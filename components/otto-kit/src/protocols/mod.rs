@@ -18,6 +18,15 @@ mod otto_dock_protocol {
     wayland_scanner::generate_client_code!("../../protocols/otto-dock-v1.xml");
 }
 
+mod otto_canvas_protocol {
+    use wayland_client;
+
+    pub use wayland_client::protocol::{__interfaces::*, wl_surface};
+
+    wayland_scanner::generate_interfaces!("../../protocols/otto-canvas-v1.xml");
+    wayland_scanner::generate_client_code!("../../protocols/otto-canvas-v1.xml");
+}
+
 mod otto_text_cursor_protocol {
     use wayland_client;
 
@@ -32,5 +41,6 @@ pub use sc_layer_protocol::{
     otto_timing_function_v1,
 };
 
+pub use otto_canvas_protocol::{otto_canvas_item_v1, otto_canvas_manager_v1};
 pub use otto_dock_protocol::{otto_dock_item_v1, otto_dock_manager_v1};
 pub use otto_text_cursor_protocol::{otto_text_cursor_manager_v1, otto_text_cursor_v1};

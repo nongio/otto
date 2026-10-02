@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="otto_canvas_v1">
+  <copyright>
+    Copyright © 2026 Otto Contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="place surfaces in the side canvas">
+    The side canvas is a column that slides in over the desktop from the
+    right edge of an output. The compositor owns the column: where it sits,
+    when it is shown and how it moves. Clients place surfaces in it as items.
+
+    Items are stacked top to bottom by their order (set_order, version 3),
+    and in the order they were created where that is the same, each at the
+    full width of the column. The compositor chooses the width and tells
+    the client through configure; the client chooses the height through the
+    size of the buffer it attaches.
+
+    The canvas is shown and hidden by the user. A client may also ask for it
+    to be shown (show, version 3), without taking the keyboard. Clients are
+    told when the canvas shows and hides so they can pause work nobody can
+    see.
+
+    The compositor also opens the canvas when a drag and drop operation
+    rests at the right edge of an output, so an item can take the drop, and
+    tells every manager when a drag starts and ends (version 4), so a client
+    can put an item in the column that is ready for it.
+
+    The column has a fixed height, and items share it (version 5): each
+    tells the compositor how tall its content is, and the compositor tells
+    each how tall it may be, so every item keeps a share of the column and
+    scrolls what does not fit.
+  </description>
+
+  <interface name="otto_canvas_manager_v1" version="5">
+    <description summary="creates canvas items">
+      The manager global lets a client put surfaces in the side canvas.
+    </description>
+
+    <enum name="error">
+      <entry name="role" value="0" summary="the surface already has a role"/>
+    </enum>
+
+    <request name="get_canvas_item">
+      <description summary="place a surface in the canvas">
+        Give the surface the canvas item role and add it to the column, below
+        the items with the same or a lower order. A new item has order 0.
+
+        It is a protocol error (role) to pass a surface that already has
+        another role.
+
+        The compositor answers with a configure event. The client must
+        acknowledge it before it attaches a buffer. From version 5 a
+        max_height event follows the first configure. A visibility event
+        (shown or hidden) comes next.
+      </description>
+      <arg name="id" type="new_id" interface="otto_canvas_item_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the manager object. Items already created are unaffected.
+      </description>
+    </request>
+
+    <event name="drag_mime_type" since="4">
+      <description summary="a type the starting drag offers">
+        Sent once for each mime type the data of a starting drag and drop
+        operation is offered as, right before drag_started. There may be
+        none when the source has not said yet; the client should then treat
+        what the drag carries as unknown.
+      </description>
+      <arg name="mime_type" type="string" summary="a mime type the drag offers"/>
+    </event>
+
+    <event name="drag_started" since="4">
+      <description summary="a drag and drop operation began">
+        A drag and drop operation began somewhere in the session, from any
+        client. The drag_mime_type events sent since the last drag_started
+        or drag_ended list what it offers.
+
+        While it goes on, the compositor opens the canvas when the pointer
+        rests at the right edge of an output, the way show does: the
+        keyboard does not move. A client with nothing in the canvas may add
+        an item now, to be there when it opens. Items take the drop through
+        wl_data_device like any other surface.
+      </description>
+    </event>
+
+    <event name="drag_ended" since="4">
+      <description summary="the drag and drop operation ended">
+        The drag and drop operation announced by drag_started ended, with a
+        drop anywhere or cancelled. A client whose item the drop landed on
+        has had wl_data_device.drop before this event.
+
+        If the drag opened the canvas and the drop did not land on an item,
+        the canvas hides again.
+      </description>
+    </event>
+  </interface>
+
+  <interface name="otto_canvas_item_v1" version="5">
+    <description summary="a surface in the side canvas">
+      One surface in the column. The compositor positions it; the client
+      draws it at the configured width and at whatever height it needs.
+      Content taller than the space left in the column is clipped.
+
+      From version 5 the column's height is shared: the client says how
+      tall its content is with set_content_height, and the compositor
+      answers with max_height, the most the item may be tall. A client that
+      keeps to it is never clipped.
+
+      Destroying the item removes the surface from the canvas. The surface
+      keeps its role and may only be given to a new canvas item.
+
+      An item gets the keyboard when the user presses on it, or when the
+      canvas is shown if it asked for that with set_keyboard_interactivity
+      (version 2). An item that set never (version 3) gets it in neither
+      case.
+      While an item has the keyboard the compositor passes Escape to it
+      rather than hiding the canvas itself, so the item decides what Escape
+      means; an item that has nothing else to do with it should send
+      dismiss. When the canvas hides, the keyboard goes back to whoever had
+      it before an item took it.
+    </description>
+
+    <enum name="error" since="2">
+      <entry name="invalid_keyboard_interactivity" value="0"
+             summary="the keyboard interactivity value is not in the enum"/>
+    </enum>
+
+    <enum name="keyboard_interactivity" since="2">
+      <description summary="when the item takes the keyboard">
+        Whether the item is given the keyboard as the canvas comes on screen.
+      </description>
+      <entry name="none" value="0"
+             summary="the item gets the keyboard only when the user presses on it"/>
+      <entry name="on_show" value="1"
+             summary="the item gets the keyboard when the canvas is shown"/>
+      <entry name="never" value="2" since="3"
+             summary="the item never gets the keyboard, not even when pressed on"/>
+    </enum>
+
+    <event name="configure">
+      <description summary="the width to draw at">
+        The width, in logical points, the item is laid out at. It is the
+        width of the canvas column, and changes when the user changes it.
+
+        The client acknowledges with ack_configure and draws its next
+        buffer at this width. The height is the client's choice.
+      </description>
+      <arg name="serial" type="uint" summary="serial to acknowledge"/>
+      <arg name="width" type="uint" summary="width in logical points"/>
+    </event>
+
+    <event name="shown">
+      <description summary="the canvas is on screen">
+        The canvas is visible, or on its way in. The item receives frame
+        callbacks and should draw current content.
+      </description>
+    </event>
+
+    <event name="hidden">
+      <description summary="the canvas is off screen">
+        The canvas is off screen. The item receives no frame callbacks until
+        the next shown event, and may stop work that only feeds what it
+        draws.
+      </description>
+    </event>
+
+    <request name="ack_configure">
+      <description summary="acknowledge a configure">
+        Acknowledge the configure event with the given serial.
+      </description>
+      <arg name="serial" type="uint" summary="serial of the configure"/>
+    </request>
+
+    <request name="set_keyboard_interactivity" since="2">
+      <description summary="take the keyboard when the canvas is shown">
+        Say whether the item takes the keyboard when the canvas is shown.
+        The default is none.
+
+        With on_show, the compositor gives the item the keyboard once the
+        canvas has settled open, from a toggle or a swipe, unless another
+        item already has it. When several items ask for it, the first one
+        in the column gets it. The change applies from the next time the
+        canvas is shown.
+
+        With never, the item takes no keyboard at all: presses on it reach
+        it as pointer events and the keyboard stays where it was, so the
+        app the user is working in keeps its focus, selection and caret.
+        This applies at once.
+
+        It is a protocol error (invalid_keyboard_interactivity) to pass a
+        value that is not in the keyboard_interactivity enum, or never on an
+        object of version 2.
+      </description>
+      <arg name="interactivity" type="uint" enum="keyboard_interactivity"
+           summary="when the item takes the keyboard"/>
+    </request>
+
+    <request name="dismiss">
+      <description summary="hide the canvas">
+        Ask the compositor to hide the canvas, for example after the user
+        acted on something in the item. Ignored while the canvas is hidden.
+      </description>
+    </request>
+
+    <request name="show" since="3">
+      <description summary="show the canvas">
+        Ask the compositor to show the canvas, sliding it in on the output
+        under the pointer, for example because the item has something new
+        the user should see. Ignored while the canvas is shown or following
+        the user's fingers, while the session is locked and while the
+        compositor has the canvas set aside for another view (such as an
+        overview of the windows); ask again on the next change.
+
+        The keyboard does not move: no item is given it on this show, even
+        one that set on_show, so the app the user is working in keeps it.
+        The canvas then stays open until the user hides it, or an item sends
+        dismiss. Until the user acts on the canvas, a press outside it
+        still reaches what is under the pointer, and the canvas hides when
+        that button is released outside it; Escape goes to the app with the
+        keyboard.
+      </description>
+    </request>
+
+    <request name="set_order" since="3">
+      <description summary="where the item sits in the column">
+        Set the item's place in the column. Items with a lower order sit
+        higher; items with the same order sit in the order they were
+        created. The default is 0, and a negative order puts the item above
+        the items that never set one. The column is laid out again at once.
+      </description>
+      <arg name="order" type="int" summary="lower sits higher"/>
+    </request>
+
+    <request name="set_content_height" since="5">
+      <description summary="how tall the item's content is">
+        Say how tall, in logical points, the item would be with room for
+        all of its content: its natural height, however tall that is, not
+        the height it is drawn at. Send it before the first buffer and
+        again whenever it changes.
+
+        The compositor shares the column's height among the items by what
+        they ask for and answers with max_height. Until an item has sent
+        one, the compositor counts it at the height of its buffer.
+      </description>
+      <arg name="height" type="uint" summary="content height in logical points"/>
+    </request>
+
+    <event name="max_height" since="5">
+      <description summary="the most the item may be tall">
+        The most, in logical points, the item may be tall, so that it and
+        the items around it fit in the column. The client draws its next
+        buffer no taller than the smaller of this and its content's height,
+        and scrolls whatever does not fit.
+
+        An item whose content fits in its share is given its content's
+        height. Items that want more share what is left equally, and every
+        item keeps a share of the column, however tall the others are,
+        unless the column is too short to give each one a useful height.
+
+        Sent after the first configure, before shown, and again whenever
+        the share changes: an item's content height changes, items come,
+        go or move, or the column changes size or moves to another output.
+        The client should resize promptly, since items stack by the height
+        of their buffers.
+      </description>
+      <arg name="height" type="uint" summary="maximum height in logical points"/>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="remove the item">
+        Remove the surface from the canvas. The items below it move up.
+      </description>
+    </request>
+  </interface>
+</protocol>

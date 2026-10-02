@@ -435,7 +435,10 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             && !capture_active
             // A modal overlay layer surface (the portal Access dialog) draws
             // in the overlay layer, which fullscreen scanout drops entirely.
-            && !self.has_modal_overlay_layer();
+            && !self.has_modal_overlay_layer()
+            // Nor may the side canvas, which slides in over fullscreen
+            // windows from the same plane.
+            && !self.canvas_on_screen();
         let fullscreen_window = if allow_fullscreen_scanout {
             this_output
                 .as_ref()
@@ -1261,6 +1264,9 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                 || self.workspaces.osd.is_visible()
                 || self.workspaces.tiling_overlay.is_visible()
                 || self.workspaces.mirrors_active()
+                // The side canvas's items may declare a blur anywhere in the
+                // column, and the column moves; it is transient chrome too.
+                || self.canvas.on_screen()
                 || self
                     .workspaces
                     .is_animating

@@ -435,6 +435,16 @@ pub static SETTINGS: &[SettingSpec] = &[
         "The files in your Desktop folder, behind the windows.",
         Live,
     ),
+    ranged(
+        "canvas.width",
+        Int,
+        "Side canvas width",
+        "Width of the side canvas, in logical points. Everything in it is drawn at this width.",
+        Live,
+        200.0,
+        1200.0,
+        10.0,
+    ),
     spec(
         "background_color",
         Str,

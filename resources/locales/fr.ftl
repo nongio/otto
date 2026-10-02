@@ -970,6 +970,8 @@ schema-font-family-label = Police de l’interface
 schema-font-family-description = Famille de police utilisée par l’interface propre d’Otto.
 schema-desk-enabled-label = Afficher les fichiers sur le bureau
 schema-desk-enabled-description = Les fichiers du dossier Bureau, derrière les fenêtres.
+schema-canvas-width-label = Largeur du canevas latéral
+schema-canvas-width-description = Largeur du canevas latéral, en points logiques. Tout ce qu’il contient est dessiné à cette largeur.
 schema-background-color-label = Couleur d’arrière-plan
 schema-background-color-description = Couleur d’arrière-plan du bureau, sous forme de chaîne hexadécimale.
 schema-background-image-label = Image d’arrière-plan
@@ -1170,6 +1172,9 @@ launcher-agents-working = En cours
 launcher-agents-needs-input = En attente d’une réponse
 launcher-agents-error = Échec
 launcher-agents-none = Aucune session d’agent pour l’instant
+canvas-sessions-heading = Agents
+canvas-sessions-ask = Ask
+stash-drop-invite = Déposez des fichiers ici pour la collecte
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

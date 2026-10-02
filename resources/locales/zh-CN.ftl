@@ -926,6 +926,8 @@ schema-font-family-label = 界面字体
 schema-font-family-description = Otto 自身界面使用的字体族。
 schema-desk-enabled-label = 在桌面上显示文件
 schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
+schema-canvas-width-label = 侧边画布宽度
+schema-canvas-width-description = 侧边画布的宽度，以逻辑点为单位。其中的所有内容都按此宽度绘制。
 schema-background-color-label = 背景颜色
 schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
 schema-background-image-label = 背景图片
@@ -1127,6 +1129,9 @@ launcher-agents-working = 工作中
 launcher-agents-needs-input = 等待回答
 launcher-agents-error = 失败
 launcher-agents-none = 尚无智能体会话
+canvas-sessions-heading = 智能体
+canvas-sessions-ask = Ask
+stash-drop-invite = 将文件拖放到此处以添加到收集
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

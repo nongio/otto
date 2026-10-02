@@ -509,6 +509,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // A drag out of a tree owns Escape, which cancels it.
         let tiling_drag_active = self.tiling_drag_is_active();
+        // So does a shown side canvas, which it hides, unless one of its
+        // items has the keyboard (the item then decides what Escape means)
+        // or a client showed it and the app kept the keyboard.
+        let canvas_owns_escape = self.canvas_owns_escape();
 
         // Assistive technologies are offered the key before anything else in
         // the session sees it. Cloned out of `self` because `keyboard.input`
@@ -591,6 +595,14 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                     {
                         suppressed_keys.push(keysym);
                         return FilterResult::Intercept(KeyAction::TilingDragCancel);
+                    }
+
+                    if canvas_owns_escape
+                        && matches!(state, KeyState::Pressed)
+                        && keysym == Keysym::Escape
+                    {
+                        suppressed_keys.push(keysym);
+                        return FilterResult::Intercept(KeyAction::CanvasToggle);
                     }
 
                     let shortcut_action = Config::with(|config| {

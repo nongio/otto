@@ -199,6 +199,7 @@ impl<Backend: crate::state::Backend> Otto<Backend> {
                     | KeyAction::SceneSnapshot
                     | KeyAction::SkpSnapshot
                     | KeyAction::LockSession
+                    | KeyAction::CanvasToggle
                     | KeyAction::PowerButton => self.process_common_key_action(action),
 
                     _ => tracing::warn!(
@@ -474,6 +475,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
                     | KeyAction::SceneSnapshot
                     | KeyAction::SkpSnapshot
                     | KeyAction::LockSession
+                    | KeyAction::CanvasToggle
                     | KeyAction::PowerButton => self.process_common_key_action(action),
 
                     // A bound action this dispatcher has no arm for must not

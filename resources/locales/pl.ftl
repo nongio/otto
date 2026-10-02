@@ -997,6 +997,8 @@ schema-font-family-label = Czcionka interfejsu
 schema-font-family-description = Rodzina czcionek używana przez własny interfejs Otto.
 schema-desk-enabled-label = Pokazuj pliki na pulpicie
 schema-desk-enabled-description = Pliki z folderu Pulpit, za oknami.
+schema-canvas-width-label = Szerokość bocznego płótna
+schema-canvas-width-description = Szerokość bocznego płótna w punktach logicznych. Wszystko, co się na nim znajduje, jest rysowane w tej szerokości.
 schema-background-color-label = Kolor tła
 schema-background-color-description = Kolor tła pulpitu, jako ciąg szesnastkowy.
 schema-background-image-label = Obraz tła
@@ -1198,6 +1200,9 @@ launcher-agents-working = Pracuje
 launcher-agents-needs-input = Czeka na odpowiedź
 launcher-agents-error = Niepowodzenie
 launcher-agents-none = Brak sesji agentów
+canvas-sessions-heading = Agenci
+canvas-sessions-ask = Ask
+stash-drop-invite = Upuść tutaj pliki, aby dodać je do zbioru
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

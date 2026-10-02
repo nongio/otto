@@ -10,7 +10,8 @@ use std::process::Command;
 
 use freedesktop_desktop_entry::{default_paths, DesktopEntry, Iter};
 
-use crate::source::{Item, Origin, Source};
+use crate::source::Source;
+use otto_agents_kit::item::{Item, Origin};
 
 /// How many recently launched applications the resting list shows.
 const RECENT_SHOWN: usize = 3;

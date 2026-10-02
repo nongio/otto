@@ -103,7 +103,18 @@ impl<BackendData: Backend> Otto<BackendData> {
             self.note_seat_press(&seat, serial, None);
         }
 
-        if !self.workspaces.get_show_all() && wl_pointer::ButtonState::Pressed == state {
+        // A shown side canvas sees the button first: a press outside it hides
+        // it and goes no further, and a press on one of its items keeps the
+        // keyboard on that item.
+        let canvas = self.canvas_pointer_button(button, wl_pointer::ButtonState::Pressed == state);
+        if canvas == crate::otto_canvas::CanvasButton::Consumed {
+            return;
+        }
+
+        if canvas != crate::otto_canvas::CanvasButton::Item
+            && !self.workspaces.get_show_all()
+            && wl_pointer::ButtonState::Pressed == state
+        {
             self.focus_window_under_cursor(serial, RaiseTiming::for_button(button));
         }
         if wl_pointer::ButtonState::Released == state {
@@ -647,6 +658,12 @@ impl<BackendData: Backend> Otto<BackendData> {
                     break;
                 }
             }
+        }
+
+        // The side canvas sits above the layer-shell chrome, the dock and
+        // every window, and below layer-shell popups.
+        if under.is_none() {
+            under = self.canvas_surface_under(pos);
         }
 
         // Check Top/Overlay layer shell surfaces using lay-rs hit testing

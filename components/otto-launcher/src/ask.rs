@@ -44,12 +44,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use ahp::reducers::apply_action_to_chat;
-use ahp::{Client, ClientConfig, SubscriptionEvent};
+use ahp::{Client, SubscriptionEvent};
 use ahp_types::actions::{
     ChatInputAnswerChangedAction, ChatInputCompletedAction, ChatPendingMessageSetAction,
     ChatToolCallConfirmedAction, ChatTurnCancelledAction, StateAction,
 };
-use ahp_types::commands::ListSessionsResult;
 use ahp_types::common::StringOrMarkdown;
 use ahp_types::state::{
     AgentInfo, ChatInputAnswer, ChatInputResponseKind, ChatState, ChildCustomization,
@@ -57,7 +56,7 @@ use ahp_types::state::{
     MessageResourceAttachment, PendingMessageKind, ResponsePart, SessionStatus, SessionSummary,
     SnapshotState, ToolCallConfirmationReason, ToolCallState, ToolInput, TurnState,
 };
-use ahp_types::{PROTOCOL_VERSION, ROOT_RESOURCE_URI};
+use ahp_types::ROOT_RESOURCE_URI;
 use otto_agents_client::default_url;
 use otto_agents_client::session::{self, SESSION_SCHEME};
 use otto_agents_client::uri::{from_path as file_uri, to_path as path_from_uri};
@@ -67,7 +66,8 @@ use tokio::sync::mpsc as async_mpsc;
 
 use crate::input::{self, Change, InputRequest, Outcome};
 use crate::log::Style;
-use crate::source::{Activity, Item, Origin};
+use otto_agents_kit::item::{Item, Origin};
+use otto_agents_kit::sessions::{self, list_sessions, session_items, BoxError};
 
 /// The folder a session starts in when neither the agent nor anyone else
 /// names one: a scratch folder of Ask's own, `$XDG_STATE_HOME/otto/ask`.
@@ -113,9 +113,7 @@ fn folders_from_meta(meta: Option<&serde_json::Map<String, Value>>) -> HashMap<S
 
 /// Connecting is one round trip to a local service. Past this, the service is
 /// not answering, and saying so beats a launcher that looks like it is.
-const TIMEOUT: Duration = Duration::from_secs(3);
-
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
+const TIMEOUT: Duration = sessions::CONNECT_TIMEOUT;
 
 /// What the connection thread reports.
 #[derive(Debug)]
@@ -1069,32 +1067,7 @@ impl Ask {
 
     /// The sessions whose titles contain `query`, as rows.
     pub fn session_rows(&self, source: usize, query: &str) -> Vec<Item> {
-        let query = query.trim().to_lowercase();
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        self.sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, session)| {
-                query.is_empty() || session.title.to_lowercase().contains(&query)
-            })
-            .map(|(index, session)| Item {
-                title: if session.title.is_empty() {
-                    otto_kit::t_owned!("launcher-agents-untitled")
-                } else {
-                    session.title.clone()
-                },
-                subtitle: Some(session_subtitle(
-                    session,
-                    self.agent_name(&session.provider),
-                    home.as_deref(),
-                )),
-                icon: None,
-                activity: Some(session_activity(session)),
-                checked: None,
-                search_terms: Vec::new(),
-                origin: Origin { source, index },
-            })
-            .collect()
+        session_items(&self.sessions, &self.agents, source, query)
     }
 
     /// The socket that becomes readable when there is news.
@@ -1836,57 +1809,6 @@ fn file_label(file: &Path) -> String {
 /// are called.
 /// The dot beside a session in the list. A failed session has stopped, so it
 /// reads as idle; the subtitle says why.
-fn session_activity(session: &SessionSummary) -> Activity {
-    let status = SessionStatus::from_bits(session.status);
-    if status.contains(SessionStatus::InputNeeded) {
-        Activity::Waiting
-    } else if status.contains(SessionStatus::InProgress) {
-        Activity::Working
-    } else {
-        Activity::Idle
-    }
-}
-
-fn session_subtitle(session: &SessionSummary, agent: Option<&str>, home: Option<&Path>) -> String {
-    let status = SessionStatus::from_bits(session.status);
-    let status = if status.contains(SessionStatus::InputNeeded) {
-        otto_kit::t_owned!("launcher-agents-needs-input")
-    } else if status.contains(SessionStatus::InProgress) {
-        otto_kit::t_owned!("launcher-agents-working")
-    } else if status.contains(SessionStatus::Error) {
-        otto_kit::t_owned!("launcher-agents-error")
-    } else {
-        otto_kit::t_owned!("launcher-agents-idle")
-    };
-    let folder = session
-        .working_directories
-        .iter()
-        .flatten()
-        .next()
-        .and_then(|uri| path_from_uri(uri));
-    // The agent leads, as a handle: whose session this is comes before what it
-    // is doing. Unknown providers still name themselves, since the id is what
-    // the configuration calls them.
-    let agent = agent.unwrap_or(session.provider.as_str());
-    let head = if agent.is_empty() {
-        status
-    } else {
-        format!("@{agent} · {status}")
-    };
-    match folder {
-        Some(folder) => format!("{head} · {}", home_relative(&folder, home)),
-        None => head,
-    }
-}
-
-fn home_relative(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
-}
-
 /// Picks the session `query` names: its URI, its id, or the start of its id.
 fn find_session<'a>(
     sessions: &'a [SessionSummary],
@@ -2415,28 +2337,12 @@ async fn serve(
 }
 
 async fn connect(url: &str) -> Result<Client, BoxError> {
-    let transport = otto_agents_client::connect(url).await?;
-    let client = Client::connect(transport, ClientConfig::default()).await?;
-    client
-        .initialize(
-            "otto-launcher".into(),
-            vec![PROTOCOL_VERSION.into()],
-            Vec::new(),
-        )
-        .await?;
-    Ok(client)
+    sessions::connect(url, "otto-launcher").await
 }
 
 /// A followed session: its chat's URI, with the session's and the chat's event
 /// streams.
 type Followed = (String, ahp::SessionSubscription, ahp::SessionSubscription);
-
-async fn list_sessions(client: &Client) -> Result<Vec<SessionSummary>, BoxError> {
-    let listed: ListSessionsResult = client
-        .request("listSessions", json!({ "channel": ROOT_RESOURCE_URI }))
-        .await?;
-    Ok(listed.items)
-}
 
 /// Creates a session in `folder` with `request` and its `attachments` queued
 /// on its chat, and follows it.
@@ -2615,6 +2521,8 @@ mod tests {
         PendingMessage, ReasoningResponsePart, ToolCallCancellationReason, ToolCallCancelledState,
         ToolCallPendingConfirmationState, ToolCallResponsePart, Turn,
     };
+    use otto_agents_kit::item::Activity;
+    use otto_agents_kit::sessions::{session_activity, session_subtitle};
     use std::time::Instant;
 
     #[test]

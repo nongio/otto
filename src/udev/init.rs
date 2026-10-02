@@ -24,6 +24,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::Config,
+    input::edge_swipe::{
+        dispatch::Filtered,
+        evdev::{EvdevFds, TrackingInterface},
+    },
     renderer::active::RendererApi,
     state::{Backend, Otto},
 };
@@ -227,6 +231,7 @@ pub fn run_udev<A: RendererApi>() {
     let gpus = GpuManager::new(A::graphics_api()).unwrap();
 
     // // Context ID will be obtained after devices are initialized
+    let evdev_fds = EvdevFds::default();
     let data = UdevData {
         dh: display_handle.clone(),
         dmabuf_state: None,
@@ -236,6 +241,7 @@ pub fn run_udev<A: RendererApi>() {
         gpus,
         backends: HashMap::new(),
         input_devices: Vec::new(),
+        edge_swipe: crate::input::edge_swipe::dispatch::EdgeSwipeInput::new(evdev_fds.clone()),
         #[cfg(feature = "fps_ticker")]
         fps_texture: None,
 
@@ -262,9 +268,12 @@ pub fn run_udev<A: RendererApi>() {
     /*
      * Initialize libinput backend
      */
-    let mut libinput_context = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(
-        state.backend_data.session.clone().into(),
-    );
+    // The wrapper keeps a duplicate of every evdev descriptor so the edge
+    // swipe can query touchpad slot state (see `input::edge_swipe::evdev`).
+    let mut libinput_context = Libinput::new_with_udev(TrackingInterface::new(
+        LibinputSessionInterface::<LibSeatSession>::from(state.backend_data.session.clone()),
+        evdev_fds,
+    ));
     libinput_context.udev_assign_seat(&state.seat_name).unwrap();
 
     // Configure input devices based on config
@@ -311,7 +320,15 @@ pub fn run_udev<A: RendererApi>() {
             }
 
             let dh = data.backend_data.dh.clone();
-            data.process_input_event(&dh, event);
+            match data.filter_edge_swipe(event) {
+                Filtered::Deliver(event) => data.process_input_event(&dh, event),
+                Filtered::Consumed => data.note_input_activity(),
+                Filtered::Replay(events) => {
+                    for event in events {
+                        data.process_input_event(&dh, event);
+                    }
+                }
+            }
             // Input may move the cursor or trigger visual changes — request a render.
             data.backend_data
                 .redraw_generation

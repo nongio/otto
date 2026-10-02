@@ -990,6 +990,8 @@ schema-font-family-label = Шрифт интерфейса
 schema-font-family-description = Семейство шрифтов, используемое собственным интерфейсом Otto.
 schema-desk-enabled-label = Показывать файлы на рабочем столе
 schema-desk-enabled-description = Файлы из папки «Рабочий стол», за окнами.
+schema-canvas-width-label = Ширина бокового холста
+schema-canvas-width-description = Ширина бокового холста в логических точках. Всё, что на нём есть, рисуется такой ширины.
 schema-background-color-label = Цвет фона
 schema-background-color-description = Цвет фона рабочего стола в виде шестнадцатеричной строки.
 schema-background-image-label = Изображение фона
@@ -1191,6 +1193,9 @@ launcher-agents-working = Работает
 launcher-agents-needs-input = Ждёт ответа
 launcher-agents-error = Ошибка
 launcher-agents-none = Сеансов агентов пока нет
+canvas-sessions-heading = Агенты
+canvas-sessions-ask = Ask
+stash-drop-invite = Перетащите файлы сюда, чтобы добавить в подборку
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

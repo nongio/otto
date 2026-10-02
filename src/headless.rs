@@ -1977,7 +1977,15 @@ impl Otto<HeadlessData> {
         };
 
         // BTN_LEFT = 0x110
-        if refocus && !self.workspaces.get_show_all() && pressed {
+        let canvas = self.canvas_pointer_button(0x110, pressed);
+        if canvas == crate::otto_canvas::CanvasButton::Consumed {
+            return;
+        }
+        if refocus
+            && canvas != crate::otto_canvas::CanvasButton::Item
+            && !self.workspaces.get_show_all()
+            && pressed
+        {
             self.focus_window_under_cursor(serial, crate::input::pointer::RaiseTiming::Release);
         }
         if !pressed {
@@ -2185,6 +2193,9 @@ fn send_frames(state: &mut Otto<HeadlessData>) {
                 Some(output.clone())
             });
         }
+        // The canvas items, while the canvas is on this output; this also
+        // finishes a slide out that has reached its end.
+        state.canvas_frame_presented(&output);
     }
 }
 

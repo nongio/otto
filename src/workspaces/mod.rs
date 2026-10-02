@@ -133,6 +133,11 @@ pub struct OutputWorkspaces {
     /// Above everything else, including the dock and fullscreen windows, and
     /// hidden whenever the session is unlocked. See `src/lock.rs`.
     pub lock_plane: Layer,
+    /// Holds the side canvas column while it is on this output. Lives in
+    /// `overlay_plane`, above the dock and the layer-shell chrome and right
+    /// below the workspace selector and the popups, and is hidden whenever
+    /// the canvas is somewhere else or off screen. Fades out with exposé. See `src/otto_canvas/`.
+    pub canvas_plane: Layer,
     /// Per-output workspace selector strip (expose UI). Each output shows its
     /// own selector so previews reflect that output's content at its own
     /// resolution. Lives in `overlay_plane`.
@@ -1207,6 +1212,7 @@ impl Workspaces {
             ows.switcher_plane.set_size(Size::points(w, h), None);
             ows.dock_plane.set_size(Size::points(w, h), None);
             ows.lock_plane.set_size(Size::points(w, h), None);
+            ows.canvas_plane.set_size(Size::points(w, h), None);
             // The switcher panel sizes itself from its host output — a mode or
             // scale change under it must re-render it at the new geometry.
             if self.app_switcher_output_name().as_deref() == Some(output_name.as_str()) {
@@ -2277,6 +2283,18 @@ impl Workspaces {
                 .map(|ows| ows.expose_layer.clone())
                 .collect();
 
+            // The side canvas fades with the layer shell overlay. It shows over
+            // fullscreen windows too, so it always rests fully opaque.
+            let canvas_planes: Vec<Layer> = self
+                .output_workspaces
+                .values()
+                .map(|ows| ows.canvas_plane.clone())
+                .collect();
+            let canvas_fade_opacity = (1.0_f32 - delta).clamp(0.0, 1.0);
+            for plane in &canvas_planes {
+                plane.set_opacity(canvas_fade_opacity, transition.clone());
+            }
+
             // Collect all output workspaces_layers so the on_finish callback can restore them
             let all_workspaces_layers: Vec<Layer> = self
                 .output_workspaces
@@ -2413,6 +2431,10 @@ impl Workspaces {
                         } else {
                             // Fullscreen: keep layers hidden and transparent
                             layer_shell_top_ref.set_hidden(true);
+                        }
+
+                        for plane in &canvas_planes {
+                            plane.set_opacity(if show_all { 0.0_f32 } else { 1.0_f32 }, None);
                         }
 
                         show_all_ref.store(show_all, std::sync::atomic::Ordering::Relaxed);
@@ -4635,7 +4657,19 @@ impl Workspaces {
             self.label_editing.clone(),
             self.rename_workspace_sender.clone(),
         ));
-        let _ = overlay_plane.add_sublayer(&selector_layer);
+        // The side canvas container. Empty and hidden until the canvas opens
+        // on this output; the column is moved in here when it does. It sits
+        // above the dock and the layer-shell chrome, right below the
+        // workspace selector; both are attached with the rest of the overlay
+        // plane below.
+        let canvas_plane = self.layers_engine.new_layer();
+        canvas_plane.set_key(format!("canvas_plane_{}", output.name()));
+        canvas_plane.set_layout_style(taffy::Style {
+            position: taffy::Position::Absolute,
+            ..Default::default()
+        });
+        canvas_plane.set_pointer_events(false);
+        canvas_plane.set_hidden(true);
 
         let switcher_plane = self.layers_engine.new_layer();
         switcher_plane.set_key(format!("switcher_plane_{}", output.name()));
@@ -4680,6 +4714,8 @@ impl Workspaces {
         lock_plane.set_position(layers::types::Point { x: 0.0, y: 0.0 }, None);
         lock_plane.set_hidden(!self.blank_new_outputs);
 
+        canvas_plane.set_size(layers::types::Size::points(phys_w, phys_h), None);
+
         if is_this_primary {
             // Wire the primary output's expose layer into self.expose_layer so all
             // existing show/hide logic works unchanged.
@@ -4711,6 +4747,11 @@ impl Workspaces {
             // Below the OSD and the popups, above the layer-shell chrome.
             let _ = dock_plane.add_sublayer(&self.dock.wrap_layer.clone());
             let _ = overlay_plane.add_sublayer(&dock_plane.clone());
+            // The side canvas covers the dock and the chrome. The workspace
+            // selector is above it; it only shows in exposé, where the canvas
+            // and the layer-shell chrome have faded out.
+            let _ = overlay_plane.add_sublayer(&canvas_plane);
+            let _ = overlay_plane.add_sublayer(&selector_layer);
             let _ = overlay_plane.add_sublayer(&self.overlay_layer);
             let _ = overlay_plane.add_sublayer(&self.popup_overlay.layer.clone());
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
@@ -4720,6 +4761,8 @@ impl Workspaces {
             let _ = switcher_plane.add_sublayer(&self.app_switcher.wrap_layer.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
         } else {
+            let _ = overlay_plane.add_sublayer(&canvas_plane);
+            let _ = overlay_plane.add_sublayer(&selector_layer);
             let _ = output_layer.add_sublayer(&overlay_plane.clone());
             let _ = output_layer.add_sublayer(&switcher_plane.clone());
             let _ = output_layer.add_sublayer(&dock_plane.clone());
@@ -4784,6 +4827,7 @@ impl Workspaces {
             switcher_plane,
             dock_plane,
             lock_plane,
+            canvas_plane,
             workspace_selector,
         };
         self.output_workspaces.insert(output.name(), ows);
@@ -5935,11 +5979,17 @@ impl Workspaces {
             || self.is_animating.load(std::sync::atomic::Ordering::Relaxed);
         let osd = self.osd.is_visible();
         let tiling = self.tiling_overlay.is_visible();
-        let active = layer_shell_active || popups || selector || osd || tiling;
+        // The side canvas is in this output's plane only while it is on
+        // screen here; its container is hidden the rest of the time.
+        let canvas = self
+            .output_workspaces
+            .get(&output.name())
+            .is_some_and(|ows| !ows.canvas_plane.hidden());
+        let active = layer_shell_active || popups || selector || osd || tiling || canvas;
         if active {
             tracing::debug!(
                 target: "otto::planes",
-                "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling}",
+                "overlay active: shell={layer_shell_active} popups={popups} selector={selector} osd={osd} tiling={tiling} canvas={canvas}",
             );
         }
         active

@@ -60,6 +60,8 @@ pub enum KeyAction {
     MediaStop,
     /// Lock the session by launching the configured locker
     LockSession,
+    /// Show the side canvas, or hide it if it is shown
+    CanvasToggle,
     // ── Tiling ───────────────────────────────────────────────────────────
     TilingToggle,
     TilingFocus(crate::workspaces::tiling::Direction),
@@ -301,6 +303,8 @@ impl<BackendData: Backend> Otto<BackendData> {
                 }
                 self.lock_session();
             }
+
+            KeyAction::CanvasToggle => self.canvas_toggle(),
 
             KeyAction::PowerButton => {
                 use crate::config::PowerButtonAction;
@@ -811,6 +815,7 @@ pub fn resolve_shortcut_action(config: &Config, action: &ShortcutAction) -> Opti
             BuiltinAction::MediaPrev => Some(KeyAction::MediaPrev),
             BuiltinAction::MediaStop => Some(KeyAction::MediaStop),
             BuiltinAction::LockSession => Some(KeyAction::LockSession),
+            BuiltinAction::CanvasToggle => Some(KeyAction::CanvasToggle),
             BuiltinAction::TilingToggle => Some(KeyAction::TilingToggle),
             BuiltinAction::FocusLeft => Some(KeyAction::TilingFocus(Direction::Left)),
             BuiltinAction::FocusRight => Some(KeyAction::TilingFocus(Direction::Right)),

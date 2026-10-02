@@ -965,6 +965,8 @@ schema-font-family-label = Carattere dell'interfaccia
 schema-font-family-description = Famiglia di caratteri usata dall'interfaccia di Otto.
 schema-desk-enabled-label = Mostra i file sulla scrivania
 schema-desk-enabled-description = I file della cartella Scrivania, dietro le finestre.
+schema-canvas-width-label = Larghezza della tela laterale
+schema-canvas-width-description = Larghezza della tela laterale, in punti logici. Tutto ciò che contiene viene disegnato a questa larghezza.
 schema-background-color-label = Colore di sfondo
 schema-background-color-description = Colore di sfondo della scrivania, come stringa esadecimale.
 schema-background-image-label = Immagine di sfondo
@@ -1165,6 +1167,9 @@ launcher-agents-working = In corso
 launcher-agents-needs-input = In attesa di risposta
 launcher-agents-error = Non riuscita
 launcher-agents-none = Ancora nessuna sessione degli agenti
+canvas-sessions-heading = Agenti
+canvas-sessions-ask = Ask
+stash-drop-invite = Rilascia qui i file per la raccolta
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

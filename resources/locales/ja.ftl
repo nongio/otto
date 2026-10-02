@@ -923,6 +923,8 @@ schema-font-family-label = インターフェイスフォント
 schema-font-family-description = Otto自身のインターフェイスが使うフォントファミリー。
 schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
+schema-canvas-width-label = サイドキャンバスの幅
+schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
 schema-background-color-label = 背景色
 schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
 schema-background-image-label = 背景画像
@@ -1124,6 +1126,9 @@ launcher-agents-working = 作業中
 launcher-agents-needs-input = 回答待ち
 launcher-agents-error = 失敗
 launcher-agents-none = エージェントセッションはまだありません
+canvas-sessions-heading = エージェント
+canvas-sessions-ask = Ask
+stash-drop-invite = ここにファイルをドロップして収集に追加
 # Ask mode: the files that go with a request, under it in the log, or above
 # the field before it is sent. { $files } is their names, comma-separated.
 # Ask mode, while an existing session is being opened to continue it.

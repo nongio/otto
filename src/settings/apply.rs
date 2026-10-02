@@ -66,6 +66,7 @@ pub fn is_applied_live(id: &str) -> bool {
             | "icon_theme"
             | "input.show_layout_in_bar"
             | "desk.enabled"
+            | "canvas.width"
             | "search.folders"
             | "search.skip_code_repositories"
             | "search.index_removable_drives"
@@ -368,6 +369,12 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
         // stops it.
         "desk.enabled" => {
             state.apply_desk_setting();
+            Ok(())
+        }
+        // Every canvas item is configured at the new width and the column is
+        // laid out again, on screen or not.
+        "canvas.width" => {
+            state.canvas_config_changed();
             Ok(())
         }
         // LocalSearch's own settings: pushed to it on a thread of its own,
