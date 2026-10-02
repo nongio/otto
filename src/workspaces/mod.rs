@@ -7089,7 +7089,13 @@ impl Workspaces {
 
     /// Name a workspace for as long as it exists, without persisting the name
     /// to its position: an agent's workspace is not there next session.
-    pub fn name_workspace_for_session(&self, output_name: &str, view_index: usize, name: &str) {
+    /// `None` gives it back its ordinary name.
+    pub fn name_workspace_for_session(
+        &self,
+        output_name: &str,
+        view_index: usize,
+        name: Option<&str>,
+    ) {
         let Some(ows) = self.output_workspaces.get(output_name) else {
             return;
         };
@@ -7098,7 +7104,7 @@ impl Workspaces {
             .iter()
             .find(|view| view.index == view_index)
         {
-            view.set_custom_name(Some(name.to_string()));
+            view.set_custom_name(name.map(str::to_string));
             self.refresh_output_selectors();
         }
     }

@@ -116,8 +116,8 @@ islands.
    colour wherever its workspace shows.
 5. Stop, the agent releasing its seat, or the agent leaving the bus ends the
    session: the seat and its connections go, the cursor goes, the workspace
-   and its windows stay for the user. A workspace of the agent's own waits
-   for it to come back under the same name; one the user lent it does not. Stop also suspends the program's
+   and its windows stay for the user, unframed, a workspace Otto made for
+   the agent losing its name. An agent back later asks again. Stop also suspends the program's
    consent for the rest of the login session. The secure attention key
    (Ctrl+Alt+Shift+Esc, delivered by logind) stops every agent at once.
 

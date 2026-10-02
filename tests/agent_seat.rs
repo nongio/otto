@@ -1597,21 +1597,47 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// An agent that reconnects under its name gets its workspace back.
+    /// An agent that leaves gives its workspace to the user: it stays, with
+    /// its windows, but unframed and without the agent's name, and the
+    /// agent back under the same name later gets a new one.
     #[test]
     #[serial]
-    fn a_returning_agent_gets_its_workspace_back() {
+    fn a_leaving_agent_gives_its_workspace_to_the_user() {
         let handle = HeadlessHandle::start(HeadlessConfig::default());
         request_seat(&handle, "Claude", ":1.10").expect("seat");
         request_workspace(&handle, ":1.10").expect("workspace");
-        let count = workspace_names(&handle).len();
+        let names = workspace_names(&handle);
+        assert!(names.iter().any(|name| name == "Claude"));
+        let (output, view) = handle.query(|state| {
+            let grant = state.agent_seat("agent-1").and_then(|a| a.grant.clone());
+            let otto::state::agent_seats::Grant::Workspace {
+                output, workspace, ..
+            } = grant.expect("granted");
+            (output, workspace)
+        });
+
         release_seats(&handle, ":1.10");
+        handle.settle(200);
+        let after = workspace_names(&handle);
+        assert_eq!(
+            after.len(),
+            names.len(),
+            "the workspace went with the agent"
+        );
+        assert!(
+            !after.iter().any(|name| name == "Claude"),
+            "the workspace kept the agent's name"
+        );
+        let framed =
+            handle.query(move |state| state.workspaces.agent_frame_look(&output, view).is_some());
+        assert!(!framed, "the workspace is still framed");
+
         request_seat(&handle, "Claude", ":1.20").expect("seat");
         request_workspace(&handle, ":1.20").expect("workspace");
         assert_eq!(
             workspace_names(&handle).len(),
-            count,
-            "a second workspace was made"
+            names.len() + 1,
+            "the returning agent did not get a new workspace"
         );
         handle.stop();
     }

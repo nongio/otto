@@ -971,7 +971,6 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         // Windows an agent works in are watched too, on screen or not.
         captured_ids.extend(crate::state::agent_seats::agent_workspace_window_ids(
             &self.agent_seats,
-            &self.agent_history,
             &self.workspaces,
         ));
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs

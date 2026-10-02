@@ -28,8 +28,6 @@ pub struct PastAgent {
     /// The `n` in its seat's name, `agent-<n>`.
     pub index: u32,
     pub color: [u8; 3],
-    /// Its grant, held while it has no seat, for when it comes back.
-    pub grant: Option<Grant>,
 }
 
 /// Where an agent may act (`specs/security-model.md`, Agent sessions).
@@ -170,20 +168,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             });
         }
 
-        let past = match self.agent_history.get_mut(agent_name) {
-            // The held grant moves back onto the seat; history no longer
-            // holds it, so one the agent then releases stays released.
-            Some(past) => {
-                let restored = past.clone();
-                past.grant = None;
-                restored
-            }
+        let past = match self.agent_history.get(agent_name) {
+            Some(past) => past.clone(),
             None => {
                 let index = self.agent_history.len() as u32 + 1;
                 let past = PastAgent {
                     index,
                     color: PALETTE[(index as usize - 1) % PALETTE.len()],
-                    grant: None,
                 };
                 self.agent_history
                     .insert(agent_name.to_string(), past.clone());
@@ -199,11 +190,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Some(agent_name.to_string()),
             Some(owner.to_string()),
         );
-        // Back under the same name: its grant, held since it left, is its
-        // again, without asking.
-        if let Some(agent) = self.agent_seat_mut(&seat_name) {
-            agent.grant = past.grant;
-        }
         info!(
             agent = agent_name,
             seat = seat_name,
@@ -277,18 +263,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             return;
         };
         self.release_focus_of(seat_name);
+        // Its grant ends with it: the workspace and its windows are the
+        // user's, unframed, and an agent back later asks again.
         let agent = self.agent_seats.remove(index);
-        // The grant waits for the agent to come back; a workspace the user
-        // lent it is asked for again.
-        if let Some(past) = agent
-            .agent_name
-            .as_ref()
-            .and_then(|name| self.agent_history.get_mut(name))
-        {
-            past.grant = agent
-                .grant
-                .clone()
-                .filter(|grant| !matches!(grant, Grant::Workspace { shared: true, .. }));
+        if let Some(grant) = &agent.grant {
+            self.end_grant(grant);
         }
         if let Some(token) = agent.idle_timer {
             self.handle.remove(token);
@@ -399,7 +378,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .add_workspace_to_output(&output)
             .ok_or(AgentSeatError::NoOutput)?;
         self.workspaces
-            .name_workspace_for_session(&output, view.index, &agent_name);
+            .name_workspace_for_session(&output, view.index, Some(&agent_name));
         info!(
             agent = agent_name,
             output,
@@ -534,11 +513,29 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             return false;
         };
         self.release_focus_of(&seat_name);
-        if let Some(agent) = self.agent_seat_mut(&seat_name) {
-            agent.grant = None;
+        let grant = self
+            .agent_seat_mut(&seat_name)
+            .and_then(|agent| agent.grant.take());
+        if let Some(grant) = grant {
+            self.end_grant(&grant);
         }
         self.backend_data.request_redraw();
         true
+    }
+
+    /// A grant has ended: a workspace Otto made for the agent loses the
+    /// agent's name and is the user's like any other; one the user lent
+    /// never had it.
+    fn end_grant(&self, grant: &Grant) {
+        if let Grant::Workspace {
+            output,
+            workspace,
+            shared: false,
+        } = grant
+        {
+            self.workspaces
+                .name_workspace_for_session(output, *workspace, None);
+        }
     }
 
     fn describe_workspace(&self, output_name: &str) -> Result<OwnWorkspace, AgentSeatError> {
@@ -653,11 +650,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 agent.agent_name.clone(),
             ))
         });
-        // An agent that has gone keeps its frame while its grant waits for it.
-        let held = self.agent_history.iter().filter_map(|(name, past)| {
-            Some((past.grant.as_ref()?, past.color, Some(name.clone())))
-        });
-        for (grant, color, name) in live.chain(held) {
+        for (grant, color, name) in live {
             let (output, workspace) = grant.workspace();
             let Some(space) = self.workspaces.space_of_view(output, workspace) else {
                 continue;
@@ -737,9 +730,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             info!(seat = seat_name, ?program, "Agent stopped by the user");
             self.remove_agent_seat(&seat_name);
         }
-        for past in self.agent_history.values_mut() {
-            past.grant = None;
-        }
         self.backend_data.request_redraw();
     }
 
@@ -767,11 +757,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 "Agent stopped by the user"
             );
             self.remove_agent_seat(&seat_name);
-        }
-        for past in self.agent_history.values_mut() {
-            if on_it(past.grant.as_ref()) {
-                past.grant = None;
-            }
         }
         self.backend_data.request_redraw();
     }
@@ -1041,23 +1026,17 @@ fn agent_hide_after() -> Duration {
     Duration::from_millis(Config::with(|c| c.agent_cursor.hide_after_ms))
 }
 
-/// Every window on a workspace some agent holds a grant on, whether its seat
-/// is connected or waiting for it to come back. Their applications are
-/// watched, so they draw at full rate even while the workspace is hidden.
+/// Every window on a workspace some agent holds a grant on. Their
+/// applications are watched, so they draw at full rate even while the
+/// workspace is hidden.
 #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
 pub fn agent_workspace_window_ids<B: Backend + 'static>(
     agent_seats: &[AgentSeat<B>],
-    agent_history: &std::collections::HashMap<String, PastAgent>,
     workspaces: &crate::workspaces::Workspaces,
 ) -> std::collections::HashSet<smithay::reexports::wayland_server::backend::ObjectId> {
     agent_seats
         .iter()
         .filter_map(|agent| agent.grant.as_ref())
-        .chain(
-            agent_history
-                .values()
-                .filter_map(|past| past.grant.as_ref()),
-        )
         .filter_map(|grant| {
             let (output, workspace) = grant.workspace();
             workspaces.space_of_view(output, workspace)

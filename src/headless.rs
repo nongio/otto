@@ -1890,7 +1890,6 @@ impl HeadlessHandle {
             );
             captured_ids.extend(crate::state::agent_seats::agent_workspace_window_ids(
                 &state.agent_seats,
-                &state.agent_history,
                 &state.workspaces,
             ));
             let windows: Vec<crate::shell::WindowElement> =
