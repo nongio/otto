@@ -439,6 +439,9 @@ outline and handles: drag inside it to move it, drag an edge or a corner to
 resize it. **Done** (or Return, or Escape) keeps the result, **Cancel** puts
 it back. **Reset** makes it fill the screen again.
 
+*Icon size* in the same group makes the desk's icons bigger or smaller, from
+32 to 160 px; the desk follows as you drag.
+
 When there are more files than fit, *When icons don't fit* in the same group
 decides what happens. **Scroll** (the default) lets the grid run on and scroll.
 **Show in overlay** keeps the grid still: the extra icons go into

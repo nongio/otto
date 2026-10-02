@@ -789,6 +789,10 @@ fn apply(id: &str, value: settings_client::Value) {
     if panes::privacy::apply(id, &value) {
         return;
     }
+    // The desk's icon size is in files.toml, not a setting.
+    if panes::desk::apply(id, &value) {
+        return;
+    }
     if settings_client::is_sensitive(id) {
         let owned = id.to_string();
         let spawned = std::thread::Builder::new()

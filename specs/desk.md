@@ -245,7 +245,8 @@ overflow = "scroll"     # scroll | stack
   position and overflow take effect on the next frame.
 - Settings ▸ Appearance ▸ Desk writes `folder` (through the desktop portal's
   folder picker, under the home folder as `~/…`), `overflow` (*When icons
-  don't fit*) and, through Reset, the geometry. It edits the file in place and keeps everything else in it.
+  don't fit*), `icon_size` (*Icon size*, a slider from 32 to 160 points in
+  steps of 4, written once per step while dragging) and, through Reset, the geometry. It edits the file in place and keeps everything else in it.
 - A folder that does not exist shows an empty desk and is watched for being
   created. The desk never creates it.
 

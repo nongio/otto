@@ -9,7 +9,7 @@
 //!
 //! *When icons don't fit* writes `overflow`: the grid scrolls, or its last
 //! cell becomes the overflow tile, which opens the rest in the overflow
-//! panel.
+//! panel. *Icon size* writes `icon_size`, in points.
 //!
 //! The size and position are set on the desk, not here: *Edit…* asks the
 //! running desk for its edit mode over `org.otto.Desk1`, where the panel is
@@ -39,12 +39,25 @@ const OVERFLOW_ID: &str = "files.desk.overflow";
 /// What `overflow` may say, the default first.
 const OVERFLOWS: [&str; 2] = ["scroll", "stack"];
 
+/// The *Icon size* slider. Not a session setting either: `icon_size` in
+/// `files.toml`.
+const ICON_SIZE_ID: &str = "files.desk.icon_size";
+
+/// The icon size when the file sets none, the desk's own default.
+const DEFAULT_ICON_SIZE: f32 = 64.0;
+
+/// The slider's range, in points, inside the 32 to 256 the desk accepts.
+const ICON_SIZES: (f32, f32) = (32.0, 160.0);
+
+/// The slider moves in steps of this many points.
+const ICON_SIZE_STEP: f32 = 4.0;
+
 /// The desk's bus name, path and interface, served by `otto-files --desk`.
 const DESK_NAME: &str = "org.otto.Desk1";
 const DESK_PATH: &str = "/org/otto/Desk1";
 
 /// What this group shows of the `[desk]` section.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct DeskFile {
     /// `folder` as written, `None` for the default.
     folder: Option<String>,
@@ -53,6 +66,8 @@ struct DeskFile {
     /// `overflow`, one of [`OVERFLOWS`]; the default when unset or unknown,
     /// which is what the desk makes of it too.
     overflow: &'static str,
+    /// `icon_size`, in points, kept to [`ICON_SIZES`].
+    icon_size: f32,
 }
 
 impl Default for DeskFile {
@@ -61,6 +76,7 @@ impl Default for DeskFile {
             folder: None,
             placed: false,
             overflow: OVERFLOWS[0],
+            icon_size: DEFAULT_ICON_SIZE,
         }
     }
 }
@@ -119,7 +135,21 @@ fn read_desk(text: &str) -> DeskFile {
                 OVERFLOWS.into_iter().find(|known| *known == value)
             })
             .unwrap_or(OVERFLOWS[0]),
+        icon_size: desk
+            .and_then(|desk| desk.get("icon_size"))
+            .and_then(|item| {
+                item.as_float()
+                    .or_else(|| item.as_integer().map(|size| size as f64))
+            })
+            .filter(|size| *size > 0.0)
+            .map(|size| snap_icon_size(size as f32))
+            .unwrap_or(DEFAULT_ICON_SIZE),
     }
+}
+
+/// `size` on the slider's steps and inside its range.
+fn snap_icon_size(size: f32) -> f32 {
+    ((size / ICON_SIZE_STEP).round() * ICON_SIZE_STEP).clamp(ICON_SIZES.0, ICON_SIZES.1)
 }
 
 /// The `[desk]` section, read again whenever the file has changed.
@@ -173,6 +203,13 @@ fn with_folder(text: &str, folder: &str) -> Result<String, String> {
 fn with_overflow(text: &str, value: &str) -> Result<String, String> {
     edited(text, |desk| {
         desk["overflow"] = toml_edit::value(value);
+    })
+}
+
+/// `text` with the desk's `icon_size` set to `size` points.
+fn with_icon_size(text: &str, size: f32) -> Result<String, String> {
+    edited(text, |desk| {
+        desk["icon_size"] = toml_edit::value(i64::from(size.round() as i32));
     })
 }
 
@@ -300,6 +337,16 @@ pub fn group_rows() -> Group {
             )
             .detail(otto_kit::t!("settings-desk-overflow-detail"))
             .id(OVERFLOW_ID),
+            Row::new(
+                otto_kit::t!("settings-desk-icon-size"),
+                Control::Slider {
+                    value: file.icon_size,
+                    min: ICON_SIZES.0,
+                    max: ICON_SIZES.1,
+                    readout: format!("{} px", file.icon_size as i32),
+                },
+            )
+            .id(ICON_SIZE_ID),
             // Edit mode is the running desk's, so there is nothing to edit
             // while it is off.
             Row::new(layout_label(), Control::Button(layout_buttons()))
@@ -347,6 +394,25 @@ pub fn choose(id: &str, value: &str) -> bool {
     if OVERFLOWS.contains(&value) {
         let value = value.to_string();
         write(move |text| with_overflow(text, &value));
+    }
+    true
+}
+
+/// Take a value from the group's slider into `files.toml`. Returns whether
+/// `id` was the group's. A drag sends a value per motion; only one that
+/// lands on another step is written, so the desk reloads once per step.
+pub fn apply(id: &str, value: &settings_client::Value) -> bool {
+    if id != ICON_SIZE_ID {
+        return false;
+    }
+    let size = match value {
+        Value::Double(size) => *size as f32,
+        Value::Int(size) => *size as f32,
+        _ => return true,
+    };
+    let size = snap_icon_size(size);
+    if size != desk_file().icon_size {
+        write(move |text| with_icon_size(text, size));
     }
     true
 }
@@ -471,6 +537,22 @@ mod tests {
         assert!(menu_choices("desk.enabled").is_none());
         assert!(!choose("desk.enabled", "stack"));
         assert!(display("desk.enabled", "stack").is_none());
+    }
+
+    #[test]
+    fn icon_size_is_read_snapped_and_written_back() {
+        assert_eq!(read_desk("").icon_size, DEFAULT_ICON_SIZE);
+        assert_eq!(read_desk("[desk]\nicon_size = 96\n").icon_size, 96.0);
+        assert_eq!(read_desk("[desk]\nicon_size = 97.5\n").icon_size, 96.0);
+        assert_eq!(read_desk("[desk]\nicon_size = 8\n").icon_size, ICON_SIZES.0);
+        assert_eq!(
+            read_desk("[desk]\nicon_size = \"big\"\n").icon_size,
+            DEFAULT_ICON_SIZE
+        );
+        let next = with_icon_size("# mine\n[desk]\nsort = \"kind\"\n", 80.0).unwrap();
+        assert!(next.starts_with("# mine"));
+        assert!(next.contains("icon_size = 80\n"));
+        assert_eq!(read_desk(&next).icon_size, 80.0);
     }
 
     #[test]
