@@ -81,7 +81,8 @@ pub struct AgentSeat<B: Backend + 'static> {
     /// Where the agent may act, if it was granted anywhere.
     pub grant: Option<crate::state::agent_seats::Grant>,
     /// The Wayland connections Otto made for the agent (see
-    /// `Otto::connect_agent_client`): they go with the seat.
+    /// `Otto::connect_agent_client`): they stay for the user when the seat
+    /// goes.
     pub connections: Vec<smithay::reexports::wayland_server::Client>,
     /// The sockets Otto accepts the agent's clients on, for as long as the
     /// seat lasts.
@@ -90,6 +91,12 @@ pub struct AgentSeat<B: Backend + 'static> {
     /// that shows the seat to the user's programs, so the agent can click
     /// and type in their windows there.
     pub lent_global: Option<smithay::reexports::wayland_server::backend::GlobalId>,
+    /// This session, as its clients are marked with it.
+    pub session: u64,
+    /// The global that shows the user's seat to this session's clients,
+    /// after the agent's own, so a toolkit that takes the first seat takes
+    /// the agent's.
+    pub user_global: smithay::reexports::wayland_server::backend::GlobalId,
 }
 
 impl<B: Backend + 'static> AgentSeat<B> {

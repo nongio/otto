@@ -185,7 +185,7 @@ where
 {
     fn request(
         state: &mut Otto<BackendData>,
-        _client: &Client,
+        client: &Client,
         _resource: &ZwlrVirtualPointerV1,
         request: zwlr_virtual_pointer_v1::Request,
         data: &VirtualPointerUserData,
@@ -335,6 +335,13 @@ where
                 drop(pending);
 
                 if let Some(seat_name) = data.agent.as_deref() {
+                    // An agent's client handed to the user drives nothing,
+                    // not even an agent back under the same seat name.
+                    if crate::state::ClientState::was_agent_client(client)
+                        && crate::state::ClientState::agent_seat_of(client) != Some(seat_name)
+                    {
+                        return;
+                    }
                     agent_frame(state, seat_name, motion_rel, motion_abs, buttons, axis);
                     return;
                 }

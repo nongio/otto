@@ -324,8 +324,12 @@ the agent, with Otto enforcing at its edge. Phase 5 comes in three parts.
   off (screen capture, the clipboard, layer shell, foreign-toplevel control,
   input method, gamma, shortcut inhibition, security contexts, Otto's
   private protocols), except the virtual input it drives its seat with.
-- An agent's connections close when its seat goes: on release, on Stop, or
-  when it leaves the bus.
+- An agent's connections see the agent's seat first and the user's after
+  it, through a global made for that session. When the seat goes (on
+  release, on Stop, or when the agent leaves the bus) its listeners close
+  and its connections stay for the user: they are no longer the agent's,
+  stay confined, keep the user's seat until the last of them closes, and a
+  virtual pointer they made drives nothing.
 - The static `enabled = true` seat of Phase 1 remains an unrestricted,
   explicit opt-in for stock tools, with an "every workspace" border while it
   is in use. The user's seat stays open to the user's own programs (the RDP

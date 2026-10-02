@@ -32,6 +32,12 @@ mod agent_seat_tests {
     const BTN_LEFT: u32 = 0x110;
     /// The seat of the first agent to ask.
     const AGENT: &str = "agent-1";
+    /// The user's seat on the headless backend.
+    const USER: &str = "headless";
+
+    fn seats(names: &[&str]) -> Vec<Option<String>> {
+        names.iter().map(|name| Some(name.to_string())).collect()
+    }
 
     /// Every seat, in the order the compositor advertised them.
     #[derive(Default)]
@@ -387,8 +393,8 @@ mod agent_seat_tests {
 
     /// An agent's seat is advertised on the agent's own connections alone:
     /// every other client sees the user's seat only, and an agent's
-    /// connection sees its own only, so tools that take the first seat land
-    /// on the right one either way.
+    /// connection sees its own first, then the user's, so tools that take
+    /// the first seat land on the right one either way.
     #[test]
     #[serial]
     fn an_agents_seat_is_seen_only_on_its_connection() {
@@ -402,12 +408,7 @@ mod agent_seat_tests {
         assert!(other.seat_index(AGENT).is_none());
 
         let agent = Driver::connect_as_agent(&handle, ":1.10");
-        assert_eq!(
-            agent.state.seats.len(),
-            1,
-            "the agent saw a seat not its own"
-        );
-        assert_eq!(agent.seat_index(AGENT), Some(0));
+        assert_eq!(agent.state.seat_names, seats(&[AGENT, USER]));
 
         drop(other);
         drop(agent);
@@ -607,8 +608,8 @@ mod agent_seat_tests {
 
         let claude = Driver::connect_as_agent(&handle, ":1.10");
         let helper = Driver::connect_as_agent(&handle, ":1.11");
-        assert_eq!(claude.state.seat_names, vec![Some("agent-1".to_string())]);
-        assert_eq!(helper.state.seat_names, vec![Some("agent-2".to_string())]);
+        assert_eq!(claude.state.seat_names, seats(&["agent-1", USER]));
+        assert_eq!(helper.state.seat_names, seats(&["agent-2", USER]));
 
         drop(claude);
         drop(helper);
@@ -686,9 +687,9 @@ mod agent_seat_tests {
         handle.stop();
     }
 
-    /// An agent's connection drives its own seat and no other: it is not
-    /// offered the user's seat or another agent's, and a pointer it creates
-    /// without naming a seat drives its own.
+    /// An agent's connection drives its own seat and no other: it is shown
+    /// the user's seat after its own, and not another agent's, and a pointer
+    /// it creates on the user's seat, or naming none, drives its own.
     #[test]
     #[serial]
     fn an_agents_connection_drives_no_other_seat() {
@@ -697,7 +698,12 @@ mod agent_seat_tests {
         request_seat(&handle, "Helper", ":1.11").expect("seat");
         let mut driver = Driver::connect_as_agent(&handle, ":1.10");
         let before = user_pointer(&handle);
-        assert_eq!(driver.state.seat_names, vec![Some("agent-1".to_string())]);
+        assert_eq!(driver.state.seat_names, seats(&["agent-1", USER]));
+
+        let on_users = driver.pointer_on(driver.seat_index(USER).unwrap());
+        move_to(&handle, &on_users, 100, 100);
+        driver.settle(&handle);
+        assert_eq!(user_pointer(&handle), before, "it drove the user's seat");
 
         let pointer = driver.default_pointer();
         move_to(&handle, &pointer, 250, 250);
@@ -763,7 +769,7 @@ mod agent_seat_tests {
 
         let mut inside =
             Driver::from_stream(std::os::unix::net::UnixStream::connect(&path).expect("connect"));
-        assert_eq!(inside.state.seat_names, vec![Some("agent-1".to_string())]);
+        assert_eq!(inside.state.seat_names, seats(&["agent-1", USER]));
         let pointer = inside.pointer_on(0);
         move_to(&handle, &pointer, 200, 150);
         inside.settle(&handle);
@@ -771,7 +777,10 @@ mod agent_seat_tests {
 
         release_seats(&handle, ":1.10");
         handle.settle(200);
-        assert!(inside.queue.roundtrip(&mut inside.state).is_err());
+        assert!(
+            inside.queue.roundtrip(&mut inside.state).is_ok(),
+            "the agent's client went with the seat"
+        );
         assert!(
             std::os::unix::net::UnixStream::connect(&path).is_err()
                 || Driver::from_stream_checked(
@@ -1358,18 +1367,18 @@ mod agent_seat_tests {
         request_seat(&handle, "Helper", ":1.11").expect("seat");
 
         let mut driver = Driver::connect_as_agent(&handle, ":1.10");
-        let _pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
+        let pointer = driver.pointer_on(driver.seat_index("agent-1").unwrap());
         driver.settle(&handle);
         release_seats(&handle, ":1.10");
         handle.settle(200);
         assert!(handle.query(|state| state.agent_seat("agent-1").is_none()));
 
-        // The agent's connection goes with its seat.
+        // The agent's connection stays, for the user, and its pointer drives
+        // nothing, not even the agent's seat when the agent comes back.
         assert!(
-            driver.queue.roundtrip(&mut driver.state).is_err(),
-            "the agent's connection outlived its seat"
+            driver.queue.roundtrip(&mut driver.state).is_ok(),
+            "the agent's connection went with its seat"
         );
-        drop(driver);
 
         let fresh = Driver::connect(&handle);
         assert_eq!(
@@ -1380,6 +1389,14 @@ mod agent_seat_tests {
         drop(fresh);
 
         assert_eq!(request_seat(&handle, "Claude", ":1.20"), Ok(seat));
+        move_to(&handle, &pointer, 300, 200);
+        driver.settle(&handle);
+        assert_eq!(
+            pointer_of(&handle, "agent-1"),
+            Some((0.0, 0.0)),
+            "a handed-over client drove the returning agent's seat"
+        );
+        drop(driver);
         handle.stop();
     }
 
@@ -1639,6 +1656,67 @@ mod agent_seat_tests {
             names.len() + 1,
             "the returning agent did not get a new workspace"
         );
+        handle.stop();
+    }
+
+    /// An agent that leaves hands its windows to the user: its clients stay
+    /// connected and keep the user's seat, and are no longer the agent's,
+    /// even for the agent back under the same seat name.
+    #[test]
+    #[serial]
+    fn a_leaving_agent_hands_its_windows_to_the_user() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let mut driver = Driver::connect_as_agent(&handle, ":1.10");
+        let stream = handle.query(|state| {
+            state
+                .connect_agent_client(":1.10")
+                .expect("connect the agent")
+        });
+        let mut mine = TestClient::from_stream(stream).expect("agent client");
+        map_window(&handle, &mut mine, "Mine");
+
+        release_seats(&handle, ":1.10");
+        handle.settle(200);
+        driver.settle(&handle);
+        assert!(
+            driver.queue.roundtrip(&mut driver.state).is_ok(),
+            "the agent's client went with the seat"
+        );
+        assert!(mine.roundtrip().is_ok(), "the agent's window went with the seat");
+        let agents = |handle: &HeadlessHandle| {
+            handle.query(|state| {
+                let window = state
+                    .workspaces
+                    .spaces_elements()
+                    .find(|w| w.xdg_title() == "Mine")
+                    .expect("Mine is still mapped");
+                let client = window.wl_surface().and_then(|surface| smithay::reexports::wayland_server::Resource::client(&*surface));
+                client.and_then(|client| {
+                    otto::state::ClientState::agent_seat_of(&client).map(str::to_string)
+                })
+            })
+        };
+        assert_eq!(agents(&handle), None, "the window is still the agent's");
+
+        // The user's seat stays for them: nothing withdrew it.
+        let user_seat = handle.query(|state| {
+            state
+                .handed_over
+                .iter()
+                .map(|(_, clients)| clients.len())
+                .sum::<usize>()
+        });
+        assert_eq!(user_seat, 2, "the user's seat was withdrawn from the agent's clients");
+
+        assert_eq!(request_seat(&handle, "Claude", ":1.20").map(|s| s.0), Ok(AGENT.to_string()));
+        driver.settle(&handle);
+        assert_eq!(driver.state.seats.len(), 2, "the returning agent's seat was announced");
+        assert_eq!(agents(&handle), None, "the returning agent got the window back");
+
+        drop(mine);
+        drop(driver);
         handle.stop();
     }
 

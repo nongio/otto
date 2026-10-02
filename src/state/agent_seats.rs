@@ -14,7 +14,6 @@ use smithay::{
 };
 use tracing::info;
 
-use smithay::reexports::wayland_server::backend::DisconnectReason;
 
 use super::{add_configured_keyboard, Backend, ClientState, Otto};
 use crate::{
@@ -235,6 +234,18 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         );
         let pointer = seat.add_pointer();
         add_configured_keyboard(&mut seat);
+        // The user's seat too, so the user can work in the agent's windows
+        // and they stay usable when the agent leaves. Made after the agent's
+        // seat, it is announced after it.
+        static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let session = NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let user_global = self
+            .seat
+            .create_global_with_filter(&self.display_handle, move |client| {
+                client
+                    .get_data::<ClientState>()
+                    .is_some_and(|state| state.agent_session == session)
+            });
         self.agent_seats.push(AgentSeat {
             seat,
             pointer,
@@ -246,6 +257,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             connections: Vec::new(),
             listeners: Vec::new(),
             lent_global: None,
+            session,
+            user_global,
         });
     }
 
@@ -281,11 +294,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         for token in agent.listeners {
             self.handle.remove(token);
         }
+        // Its clients stay, for the user: they already see the user's seat,
+        // and are no longer the agent's, so an agent back under the same
+        // seat name does not get them back.
         for client in &agent.connections {
-            self.display_handle
-                .backend_handle()
-                .kill_client(client.id(), DisconnectReason::ConnectionClosed);
+            if let Some(state) = client.get_data::<ClientState>() {
+                state
+                    .handed_over
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         }
+        self.handed_over.push((agent.user_global, agent.connections));
         info!(seat = seat_name, "Agent seat removed");
         self.backend_data.request_redraw();
     }
@@ -295,7 +314,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     ///
     /// The client may create virtual input on the agent's seat and no other,
     /// and is kept off the globals a sandboxed client is kept off (see
-    /// [`crate::sandbox`]). It is disconnected when the seat goes. Every
+    /// [`crate::sandbox`]). It sees the user's seat after the agent's, and
+    /// stays for the user when the seat goes. Every
     /// other connection is refused the agent's seat, so this is the only way
     /// to drive it: a `wp_security_context_v1` listener made on such a
     /// connection connects more of the agent's clients
@@ -326,12 +346,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         seat_name: &str,
         stream: std::os::unix::net::UnixStream,
     ) -> Result<(), AgentSeatError> {
+        let session = self
+            .agent_seat(seat_name)
+            .map(|agent| agent.session)
+            .ok_or(AgentSeatError::NoSeat)?;
         let client = self
             .display_handle
             .insert_client(
                 stream,
                 std::sync::Arc::new(ClientState {
                     agent_seat: Some(seat_name.to_string()),
+                    agent_session: session,
                     ..ClientState::default()
                 }),
             )
@@ -601,6 +626,24 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         window.is_some_and(|window| space.elements().any(|candidate| *candidate == window))
     }
 
+    /// Drop the user's-seat global of an agent that left once the last of
+    /// the clients it handed over has closed.
+    fn prune_handed_over(&mut self) {
+        let backend = self.display_handle.backend_handle();
+        let (live, done): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.handed_over)
+                .into_iter()
+                .partition(|(_, clients)| {
+                    clients
+                        .iter()
+                        .any(|client| backend.get_client_data(client.id()).is_ok())
+                });
+        self.handed_over = live;
+        for (global, _) in done {
+            self.display_handle.remove_global::<Self>(global);
+        }
+    }
+
     /// Show an agent's seat to the user's programs while it holds a workspace
     /// the user lent it, and only then: a client cannot be told of the seat's
     /// own global later, so it gets one more for the loan
@@ -641,6 +684,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         use crate::workspaces::agent_frame::AgentFrameLook;
 
         self.sync_lent_seat_globals();
+        self.prune_handed_over();
 
         let mut wanted: Vec<(String, usize, AgentFrameLook)> = Vec::new();
         let live = self.agent_seats.iter().filter_map(|agent| {

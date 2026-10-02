@@ -86,8 +86,8 @@ impl<BackendData: Backend> XdgActivationHandler for Otto<BackendData> {
                 .get_client_data(id.clone())
                 .ok()?
                 .downcast_ref::<super::ClientState>()?
-                .agent_seat
-                .clone()
+                .agent_seat()
+                .map(str::to_string)
         });
         let window_seat = surface
             .client()

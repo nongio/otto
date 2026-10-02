@@ -28,7 +28,7 @@ impl<BackendData: Backend + 'static> SecurityContextHandler for Otto<BackendData
             .ok()
             .and_then(|data| {
                 data.downcast_ref::<ClientState>()
-                    .and_then(|creator| creator.agent_seat.clone())
+                    .and_then(|creator| creator.agent_seat().map(str::to_string))
             });
         let seat_for_source = agent_seat.clone();
         let token = self

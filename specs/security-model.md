@@ -106,18 +106,21 @@ islands.
    programs see the agent's seat too, so it can click and type in their
    windows; the user's cursor and focus stay theirs. One workspace per seat; asking for another moves the seat.
 3. The agent asks for a connection (`ConnectAgent`). Everything on it is
-   the agent's: it sees the agent's seat and no other, and every other
-   client sees the user's seat and not the agent's, but for a workspace the
-   user lent it (step 2). A `wp_security_context_v1`
-   listener made on it connects more of the agent's clients, with the
-   protocol sandboxes speak; they go with the seat.
+   the agent's: it sees the agent's seat first and the user's after it, so
+   the user can work in the agent's windows too; every other client sees
+   the user's seat and not the agent's, but for a workspace the user lent
+   it (step 2). A `wp_security_context_v1` listener made on it connects
+   more of the agent's clients, with the protocol sandboxes speak.
 4. While the seat lasts, its workspace is framed in the agent's colour with
    the agent's name and a Stop chip, and the agent's cursor is drawn in that
    colour wherever its workspace shows.
 5. Stop, the agent releasing its seat, or the agent leaving the bus ends the
-   session: the seat and its connections go, the cursor goes, the workspace
+   session: the seat and its listeners go, the cursor goes, the workspace
    and its windows stay for the user, unframed, a workspace Otto made for
-   the agent losing its name. An agent back later asks again. Stop also suspends the program's
+   the agent losing its name. The agent's own windows stay too, on the
+   user's seat: their clients are no longer the agent's, even for the agent
+   back later under the same seat, and stay kept off what an agent is kept
+   off. An agent back later asks again. Stop also suspends the program's
    consent for the rest of the login session. The secure attention key
    (Ctrl+Alt+Shift+Esc, delivered by logind) stops every agent at once.
 
@@ -125,8 +128,8 @@ On an agent's connection:
 
 | Protocol | What the agent gets |
 |---|---|
-| `wl_seat` | Its own seat alone |
-| Virtual pointer and keyboard | Input on its own seat whichever seat it names; it reaches only windows on its workspace |
+| `wl_seat` | Its own seat, then the user's |
+| Virtual pointer and keyboard | Input on its own seat whichever seat it names, the user's included; it reaches only windows on its workspace |
 | xdg-shell | Its windows open on its workspace and take its keyboard, never the user's |
 | wlr-foreign-toplevel | The windows on its workspace, with titles. Activating gives the agent's keyboard to one; closing closes one; maximize, minimize and fullscreen are ignored |
 | xdg-activation | A window a program launched for the agent opens on the agent's workspace; an existing window never moves |
@@ -178,9 +181,9 @@ The user goes to the agent's workspace when they want to watch.
   protocol does not foresee (wayland-protocols !463 proposes a workspace
   source); a capture of an output also deviates for an agent in that the
   output is its workspace's.
-- **Toolkits and seats.** An app must listen to the seat it is offered. On
-  an agent's connection that is the agent's seat alone, so every toolkit
-  binds the right one; a toolkit that only ever uses the first seat is fine.
+- **Toolkits and seats.** An app must listen to the seat it is offered. On an agent's connection the agent's seat comes first, so a toolkit that
+  only ever uses the first seat takes the agent's; the user's seat comes
+  after, and is what keeps the window usable once the agent has gone.
   On a workspace the user lends, their programs already running are told of
   the agent's seat only then: Qt and plain libwayland apps (foot) take it and
   the agent can type in them; GTK 3 and 4 apps ignore a seat that appears

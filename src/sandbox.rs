@@ -91,11 +91,12 @@ pub fn is_sandboxed_client(client: &Client) -> bool {
 }
 
 /// Whether `client` is kept off the privileged interfaces whatever the
-/// policy says: a sandboxed client, or an agent's own connection. The
+/// policy says: a sandboxed client, or an agent's own connection, also once
+/// handed to the user. The
 /// virtual input globals are offered to agents' connections all the same —
 /// see [`may_drive_seat`].
 pub fn is_confined_client(client: &Client) -> bool {
-    is_sandboxed_client(client) || ClientState::agent_seat_of(client).is_some()
+    is_sandboxed_client(client) || ClientState::was_agent_client(client)
 }
 
 /// Whether the program at `exe` gets the privileged interfaces under the

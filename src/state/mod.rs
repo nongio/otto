@@ -140,11 +140,28 @@ impl ClientState {
             .and_then(|state| state.component)
     }
 
-    /// The agent seat `client` was connected for, if it was.
+    /// The agent seat `client` was connected for, while it is the agent's.
     pub fn agent_seat_of(client: &Client) -> Option<&str> {
         client
             .get_data::<ClientState>()
-            .and_then(|state| state.agent_seat.as_deref())
+            .and_then(ClientState::agent_seat)
+    }
+
+    /// The agent seat this client was connected for, until the agent left
+    /// and the client was handed to the user.
+    pub fn agent_seat(&self) -> Option<&str> {
+        if self.handed_over.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        self.agent_seat.as_deref()
+    }
+
+    /// Whether `client` was connected for an agent, whether or not it has
+    /// been handed to the user since.
+    pub fn was_agent_client(client: &Client) -> bool {
+        client
+            .get_data::<ClientState>()
+            .is_some_and(|state| state.agent_seat.is_some())
     }
 }
 
@@ -188,6 +205,12 @@ pub struct ClientState {
     /// [`Otto::connect_agent_client`]): it may drive that seat and nothing
     /// else, and is kept off the globals a sandboxed client is kept off.
     pub agent_seat: Option<String>,
+    /// Set when the agent left and its client stayed for the user: it is no
+    /// longer the agent's, and stays kept off what an agent is kept off.
+    pub handed_over: std::sync::atomic::AtomicBool,
+    /// The agent session this client was connected for, 0 for none: it is
+    /// shown the user's seat by that session's global.
+    pub agent_session: u64,
     /// The program on the other end, for a client of Otto's public socket
     /// (see [`crate::sandbox`]).
     pub peer: Option<otto_kit::trust::Peer>,
@@ -425,6 +448,12 @@ pub struct Otto<BackendData: Backend + 'static> {
     /// Agents that have had a seat this session, by the name they gave, so
     /// one that comes back gets its seat name and colour again.
     pub agent_history: HashMap<String, agent_seats::PastAgent>,
+    /// What stays of agents that left: the global showing the user's seat
+    /// to their clients, kept until the last of those clients closes.
+    pub handed_over: Vec<(
+        smithay::reexports::wayland_server::backend::GlobalId,
+        Vec<smithay::reexports::wayland_server::Client>,
+    )>,
     /// The button whose press hit an agent chip's Stop: its release is
     /// swallowed too.
     pub agent_stop_button: Option<u32>,
@@ -1056,9 +1085,10 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // init input
         let seat_name = backend_data.seat_name();
-        // An agent's connection sees its own seat alone (`agent_seats`).
+        // An agent's connection is shown the user's seat by a global of its
+        // own, announced after the agent's seat (`agent_seats`).
         let mut seat = seat_state.new_wl_seat_with_filter(&dh, seat_name.clone(), |client| {
-            ClientState::agent_seat_of(client).is_none()
+            !ClientState::was_agent_client(client)
         });
 
         let cursor_status = Arc::new(Mutex::new(CursorImageStatus::default_named()));
@@ -1223,6 +1253,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             seat_last_press: HashMap::new(),
             agent_seats: Vec::new(),
             agent_history: HashMap::new(),
+            handed_over: Vec::new(),
             agent_stop_button: None,
             agent_launch_tokens: HashMap::new(),
             last_pointer_location: (0.0, 0.0),
