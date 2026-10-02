@@ -1434,9 +1434,10 @@ fn render_workspace_selector_view(
                             .build()
                             .unwrap(),
                         ),
-                        // An agent's workspace: a solid ring in its colour,
-                        // inside the accent border so the two never read as
-                        // one, and its cursor as a badge on the corner.
+                        // An agent's workspace: a solid ring in its colour
+                        // along the preview's edge, the same whether or not
+                        // it is selected, and its cursor as a badge on the
+                        // corner.
                         w.agent.clone().map(|(color, _)| -> LayerTree {
                             LayerTreeBuilder::with_key(format!(
                                 "workspace_selector_desktop_agent_{}",
@@ -1451,10 +1452,7 @@ fn render_workspace_selector_view(
                                 layers::types::Size::points(preview_width, preview_height),
                                 None,
                             ))
-                            .content(Some(super::agent_frame::draw_preview_mark(
-                                color,
-                                border_width,
-                            )))
+                            .content(Some(super::agent_frame::draw_preview_mark(color)))
                             .pointer_events(false)
                             .build()
                             .unwrap()

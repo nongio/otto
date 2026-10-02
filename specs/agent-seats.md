@@ -212,8 +212,9 @@ sign that an agent can act there.
 - An "every workspace" grant frames every workspace on every output.
 - Exposé previews and the workspace selector frame the thumbnails of granted
   workspaces in the agent's colour too. The mark must not be mistaken for the
-  accent border of the current workspace: it is a solid ring inside the
-  preview, just within the accent border, with a badge on the top-left corner holding the agent's cursor
+  accent border of the current workspace: it is a solid ring along the
+  preview's edge, in the same place whether or not the workspace is
+  selected, with a badge on the top-left corner holding the agent's cursor
   arrow. Exposé showing a granted workspace keeps its frame, without the
   chip (the workspace strip runs along the top); Stop is not offered in
   exposé.
