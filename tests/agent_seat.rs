@@ -43,6 +43,8 @@ mod agent_seat_tests {
         keyboard_manager: Option<zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1>,
         security_contexts: Option<wp_security_context_manager_v1::WpSecurityContextManagerV1>,
         toplevels: Option<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1>,
+        /// Whether the window manager was ended with `finished`.
+        toplevels_finished: bool,
         /// The windows the compositor told this client of, with their titles.
         windows: Vec<(
             zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
@@ -127,8 +129,14 @@ mod agent_seat_tests {
             _: &Connection,
             _: &QueueHandle<Self>,
         ) {
-            if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
-                state.windows.push((toplevel, String::new()));
+            match event {
+                zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } => {
+                    state.windows.push((toplevel, String::new()));
+                }
+                zwlr_foreign_toplevel_manager_v1::Event::Finished => {
+                    state.toplevels_finished = true
+                }
+                _ => {}
             }
         }
 
@@ -944,6 +952,187 @@ mod agent_seat_tests {
 
         drop(fresh);
         drop(program);
+        handle.stop();
+    }
+
+    /// A probe, not a check: a real app of the user's on a workspace lent to
+    /// an agent, clicked and typed into by stock wlrctl and wtype on the
+    /// agent's connection, printing whether the app took the agent's seat and
+    /// heard its keys (GTK does not; Qt and foot do). Needs the app, wlrctl
+    /// and wtype; run with `--ignored --nocapture`, `OTTO_TEST_APP` to pick
+    /// another app. Leaves its protocol log in `$CARGO_TARGET_TMPDIR`.
+    #[test]
+    #[serial]
+    #[ignore]
+    fn agent_types_into_a_users_gedit_on_a_lent_workspace() {
+        use std::os::fd::IntoRawFd;
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let log_path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("gedit-user.log");
+        let log = std::fs::File::create(&log_path).expect("log");
+        // `OTTO_TEST_APP="command|app_id"` tries another application.
+        let app = std::env::var("OTTO_TEST_APP")
+            .unwrap_or_else(|_| "gedit --standalone|org.gnome.gedit".into());
+        let (command, app_id) = app.split_once('|').expect("command|app_id");
+        let app_id = app_id.to_string();
+        let mut argv = command.split_whitespace();
+        let mut gedit = std::process::Command::new(argv.next().unwrap())
+            .args(argv)
+            .env("WAYLAND_DISPLAY", &handle.socket_name)
+            .env("WAYLAND_DEBUG", "1")
+            .env_remove("DISPLAY")
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            .spawn()
+            .expect("gedit");
+        let mut geometry = None;
+        for _ in 0..50 {
+            handle.wait(Duration::from_millis(100));
+            let app_id = app_id.clone();
+            geometry = handle.query(move |state| {
+                let window = state
+                    .workspaces
+                    .spaces_elements()
+                    .find(|w| w.xdg_app_id() == app_id)
+                    .cloned()?;
+                state.workspaces.element_geometry(&window)
+            });
+            if geometry.is_some() {
+                break;
+            }
+        }
+        let geometry = geometry.expect("gedit mapped");
+        handle.wait(Duration::from_millis(500));
+
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        lend_workspace(&handle, ":1.10", "").expect("lend");
+        handle.settle(500);
+
+        let run = |argv: &[&str]| {
+            let stream =
+                handle.query(|state| state.connect_agent_client(":1.10").expect("connect"));
+            let fd = stream.into_raw_fd();
+            unsafe { libc::fcntl(fd, libc::F_SETFD, 0) };
+            let status = std::process::Command::new(argv[0])
+                .args(&argv[1..])
+                .env("WAYLAND_SOCKET", fd.to_string())
+                .env_remove("WAYLAND_DISPLAY")
+                .status()
+                .expect("run");
+            unsafe { libc::close(fd) };
+            handle.settle(200);
+            status
+        };
+        let (x, y) = (
+            geometry.loc.x + geometry.size.w / 2,
+            geometry.loc.y + geometry.size.h / 2,
+        );
+        run(&["wlrctl", "pointer", "move", "-10000", "-10000"]);
+        run(&["wlrctl", "pointer", "move", &x.to_string(), &y.to_string()]);
+        run(&["wlrctl", "pointer", "click", "left"]);
+        run(&["wtype", "burger"]);
+        handle.wait(Duration::from_millis(500));
+
+        let focus = keyboard_focus_of(&handle, "agent-1");
+        let _ = gedit.kill();
+        let _ = gedit.wait();
+        let text = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let interesting: Vec<&str> = text
+            .lines()
+            .filter(|l| {
+                l.contains("wl_seat")
+                    || l.contains("wl_keyboard")
+                    || l.contains("wl_pointer#") && (l.contains("enter") || l.contains("button"))
+            })
+            .filter(|l| !l.contains("frame"))
+            .take(60)
+            .collect();
+        eprintln!(
+            "agent keyboard focus: {focus:?}\n{}",
+            interesting.join("\n")
+        );
+        handle.stop();
+    }
+
+    /// Stopping the window manager is answered with `finished`, as the
+    /// protocol says; a client listing the windows waits for it to exit.
+    #[test]
+    #[serial]
+    fn stopping_the_window_list_finishes_it() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        for mut client in [
+            Driver::connect(&handle),
+            Driver::connect_as_agent(&handle, ":1.10"),
+        ] {
+            client.settle(&handle);
+            client
+                .state
+                .toplevels
+                .as_ref()
+                .expect("window manager offered")
+                .stop();
+            client.settle(&handle);
+            assert!(client.state.toplevels_finished, "stop was not finished");
+        }
+        handle.stop();
+    }
+
+    /// Stock `wlrctl toplevel list` on an agent's connection, on a workspace
+    /// the user lent it: it lists the user's window there and exits.
+    /// Needs wlrctl; run with `--ignored`.
+    #[test]
+    #[serial]
+    #[ignore]
+    fn wlrctl_lists_the_windows_of_a_lent_workspace() {
+        use std::os::fd::IntoRawFd;
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        lend_workspace(&handle, ":1.10", "").expect("lend");
+        handle.settle(200);
+
+        let wlrctl = |args: &[&str]| {
+            let stream =
+                handle.query(|state| state.connect_agent_client(":1.10").expect("connect"));
+            let fd = stream.into_raw_fd();
+            unsafe { libc::fcntl(fd, libc::F_SETFD, 0) };
+            let child = std::process::Command::new("timeout")
+                .arg("5")
+                .arg("wlrctl")
+                .args(args)
+                .env("WAYLAND_SOCKET", fd.to_string())
+                .env_remove("WAYLAND_DISPLAY")
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .expect("wlrctl");
+            unsafe { libc::close(fd) };
+            // The compositor runs in this process: keep it dispatching while
+            // wlrctl waits on it.
+            std::thread::scope(|scope| {
+                let waiter = scope.spawn(|| child.wait_with_output().expect("wait"));
+                while !waiter.is_finished() {
+                    handle.wait(Duration::from_millis(50));
+                }
+                waiter.join().unwrap()
+            })
+        };
+        let listed = wlrctl(&["toplevel", "list"]);
+        assert!(listed.status.success(), "wlrctl list did not finish");
+        assert!(
+            String::from_utf8_lossy(&listed.stdout).contains("User"),
+            "the user's window was not listed"
+        );
+        let focused = wlrctl(&["toplevel", "focus", "title:User"]);
+        assert!(focused.status.success(), "wlrctl focus did not finish");
+        handle.settle(200);
+        assert_eq!(
+            keyboard_focus_of(&handle, "agent-1").as_deref(),
+            Some("User")
+        );
+        let _ = user.roundtrip();
+        assert!(user.state.keyboard_focused, "the user lost their keyboard");
+        drop(user);
         handle.stop();
     }
 

@@ -181,6 +181,11 @@ The user goes to the agent's workspace when they want to watch.
 - **Toolkits and seats.** An app must listen to the seat it is offered. On
   an agent's connection that is the agent's seat alone, so every toolkit
   binds the right one; a toolkit that only ever uses the first seat is fine.
+  On a workspace the user lends, their programs already running are told of
+  the agent's seat only then: Qt and plain libwayland apps (foot) take it and
+  the agent can type in them; GTK 3 and 4 apps ignore a seat that appears
+  after they started, so the agent sees them but cannot type in them. Apps
+  started during the loan take the seat as they start.
 - **Accessibility.** AT-SPI exposes every app's widget tree to every client
   on the session bus, outside this model.
 

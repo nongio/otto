@@ -299,6 +299,9 @@ impl<BackendData: Backend> Dispatch<ZwlrForeignToplevelManagerV1, (), Otto<Backe
             state
                 .wlr_foreign_toplevel_state
                 .unregister_manager(resource);
+            // The protocol answers stop with finished, which ends the
+            // manager: a client listing the windows waits for it to exit.
+            resource.finished();
         }
     }
 
