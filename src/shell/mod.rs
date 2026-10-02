@@ -1127,6 +1127,29 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
     /// overlap — which puts a small dialog in the top-left corner. Once the
     /// first sized commit arrives we can tell a dialog from a normal window and
     /// center it. Runs at most once per window.
+    /// Where `window`, `size` big, must move to lie inside its output's
+    /// usable area, or `None` when it already does.
+    fn clamped_into_usable(
+        &self,
+        window: &WindowElement,
+        size: smithay::utils::Size<i32, Logical>,
+    ) -> Option<smithay::utils::Point<i32, Logical>> {
+        let output = self.workspaces.output_for_window(window)?;
+        let usable = self.workspaces.usable_geometry(&output)?;
+        let location = self.workspaces.element_location(window)?;
+        let clamped = smithay::utils::Point::<i32, Logical>::from((
+            location
+                .x
+                .min(usable.loc.x + (usable.size.w - size.w).max(0))
+                .max(usable.loc.x),
+            location
+                .y
+                .min(usable.loc.y + (usable.size.h - size.h).max(0))
+                .max(usable.loc.y),
+        ));
+        (clamped != location).then_some(clamped)
+    }
+
     fn settle_initial_placement(&mut self, window: &WindowElement) {
         let id = window.id();
         let size = window.geometry().size;
@@ -1142,12 +1165,10 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
         // of the screen, hanging off the right and bottom edges. So keep
         // re-placing the window until two consecutive commits agree on a size.
         // A window sent off the shown workspace before it was sized (an
-        // agent's launch, put on the agent's workspace) keeps the place it
-        // was given: everything below maps into the shown workspace.
-        if !self.workspaces.is_on_current_workspace(window) {
-            self.pending_initial_placement.remove(&id);
-            return;
-        }
+        // agent's, put on the agent's workspace) is only pulled back inside
+        // its screen, where it is: everything else below maps into the shown
+        // workspace.
+        let hidden = !self.workspaces.is_on_current_workspace(window);
 
         let Some(last_seen) = self.pending_initial_placement.get_mut(&id) else {
             return;
@@ -1160,6 +1181,13 @@ impl<BackendData: crate::state::Backend> crate::state::Otto<BackendData> {
 
         // Fullscreen/maximized windows own their geometry already.
         if window.is_fullscreen() || window.is_maximized() {
+            return;
+        }
+
+        if hidden {
+            if let Some(clamped) = self.clamped_into_usable(window, size) {
+                self.workspaces.relocate_window(window, clamped, None);
+            }
             return;
         }
 
