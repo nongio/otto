@@ -642,6 +642,28 @@ mod agent_seat_tests {
         handle.stop();
     }
 
+    /// A client connected before an agent asks for its seat is not told of
+    /// the new seat, and goes on working: binding every seat it is told of,
+    /// as toolkits do, never binds one it may not see.
+    #[test]
+    #[serial]
+    fn a_seat_appearing_later_is_not_announced_to_other_clients() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let mut before = Driver::connect(&handle);
+        assert_eq!(before.state.seats.len(), 1);
+
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        before.settle(&handle);
+        assert_eq!(before.state.seats.len(), 1, "the new seat was announced");
+        assert!(
+            before.queue.roundtrip(&mut before.state).is_ok(),
+            "the client was disconnected when the seat appeared"
+        );
+
+        drop(before);
+        handle.stop();
+    }
+
     /// A seat an agent asked for is driven through the agent's own
     /// connections only: no other client is even offered it.
     #[test]

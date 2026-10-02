@@ -479,3 +479,9 @@ files = [
 
 [lints]
 workspace = true
+
+# libwayland announces a global to existing clients before wayland-backend
+# filters it; fixed on our fork until it lands upstream.
+[patch.crates-io]
+wayland-backend = { git = "https://github.com/nongio/wayland-rs", branch = "fix/filter-global-under-construction" }
+wayland-sys = { git = "https://github.com/nongio/wayland-rs", branch = "fix/filter-global-under-construction" }
