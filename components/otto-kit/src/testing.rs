@@ -37,6 +37,8 @@ use wayland_protocols::xdg::shell::client::{
     xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 
+use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
+
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
@@ -111,6 +113,10 @@ pub struct TestClientState {
     pub wl_data_device: Option<wl_data_device::WlDataDevice>,
     /// Set when a drag this client started was cancelled by the compositor.
     pub drag_cancelled: bool,
+    /// xdg-activation, when the compositor advertises it.
+    pub xdg_activation: Option<xdg_activation_v1::XdgActivationV1>,
+    /// The last activation token the compositor handed this client.
+    pub activation_token: Option<String>,
 }
 
 impl TestClientState {
@@ -142,6 +148,8 @@ impl TestClientState {
             wl_data_device_manager: None,
             wl_data_device: None,
             drag_cancelled: false,
+            xdg_activation: None,
+            activation_token: None,
         }
     }
 }
@@ -500,6 +508,27 @@ impl TestClient {
             .clone()
             .expect("the parent has an xdg_toplevel");
         self.create_toplevel_inner(title, None, width, height, false, Some(&parent_toplevel))
+    }
+
+    /// Ask for an xdg-activation token for `surface` and activate it with
+    /// that token, the way GTK presents a window it has just opened.
+    /// Returns whether a token came back to use.
+    pub fn activate_self(&mut self, surface: &wl_surface::WlSurface) -> bool {
+        let Some(activation) = self.state.xdg_activation.clone() else {
+            return false;
+        };
+        self.state.activation_token = None;
+        let token = activation.get_activation_token(&self.qh, ());
+        token.set_surface(surface);
+        token.commit();
+        let _ = self.roundtrip();
+        token.destroy();
+        let Some(token) = self.state.activation_token.take() else {
+            return false;
+        };
+        activation.activate(token, surface);
+        let _ = self.roundtrip();
+        true
     }
 
     /// Create a toplevel that also announces an `app_id`, the way a real
@@ -1017,11 +1046,41 @@ impl Dispatch<wl_registry::WlRegistry, ()> for TestClientState {
                     state.wp_cursor_shape_manager =
                         Some(registry.bind(name, version.min(1), qh, ()));
                 }
+                "xdg_activation_v1" => {
+                    state.xdg_activation = Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 "zwp_text_input_manager_v3" => {
                     state.text_input_manager = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+impl Dispatch<xdg_activation_v1::XdgActivationV1, ()> for TestClientState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &xdg_activation_v1::XdgActivationV1,
+        _event: xdg_activation_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for TestClientState {
+    fn event(
+        state: &mut Self,
+        _proxy: &xdg_activation_token_v1::XdgActivationTokenV1,
+        event: xdg_activation_token_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let xdg_activation_token_v1::Event::Done { token } = event {
+            state.activation_token = Some(token);
         }
     }
 }

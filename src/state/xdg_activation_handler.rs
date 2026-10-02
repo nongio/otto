@@ -77,6 +77,25 @@ impl<BackendData: Backend> XdgActivationHandler for Otto<BackendData> {
             }
             return;
         }
+        // Anything an agent's connection asked for, or a window of an agent's,
+        // never comes forward for the user: at most the agent's keyboard
+        // goes to one of its own windows.
+        let requester_seat = token_data.client_id.as_ref().and_then(|id| {
+            self.display_handle
+                .backend_handle()
+                .get_client_data(id.clone())
+                .ok()?
+                .downcast_ref::<super::ClientState>()?
+                .agent_seat
+                .clone()
+        });
+        let window_seat = surface
+            .client()
+            .and_then(|client| super::ClientState::agent_seat_of(&client).map(str::to_string));
+        if let Some(seat_name) = requester_seat.or(window_seat) {
+            self.focus_on_agent_seat(&seat_name, &surface.id());
+            return;
+        }
         if token_data.timestamp.elapsed().as_secs() < 10 {
             self.activate_window(&surface.id());
         }

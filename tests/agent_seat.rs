@@ -828,6 +828,52 @@ mod agent_seat_tests {
         handle.stop();
     }
 
+    /// A window from an agent's connection presenting itself with an
+    /// activation token, as GTK does when it opens, right after the user
+    /// pressed something: it gets the agent's keyboard, and the user's
+    /// workspace and focus stay.
+    #[test]
+    #[serial]
+    fn an_agents_window_presenting_itself_does_not_come_to_the_user() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        request_seat(&handle, "Claude", ":1.10").expect("seat");
+        request_workspace(&handle, ":1.10").expect("workspace");
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        let _ = user.roundtrip();
+        assert!(user.state.keyboard_focused);
+
+        let stream = handle.query(|state| {
+            state
+                .connect_agent_client(":1.10")
+                .expect("connect the agent")
+        });
+        let mut mine = TestClient::from_stream(stream).expect("agent client");
+        let window = mine.create_toplevel_with_app_id("Mine", "org.otto.Mine", 640, 480);
+        handle.settle(200);
+        let surface = window.lock().unwrap().surface.clone();
+
+        // The user just pressed a key: tokens are handed out for a moment.
+        handle.query(|state| state.last_press = Some(std::time::Instant::now()));
+        mine.activate_self(&surface);
+        handle.settle(200);
+        let _ = user.roundtrip();
+
+        assert_eq!(handle.current_workspace_index(), 0, "the user was moved");
+        assert!(
+            user.state.keyboard_focused,
+            "the user's window lost the user's keyboard"
+        );
+        assert_eq!(
+            keyboard_focus_of(&handle, "agent-1").as_deref(),
+            Some("Mine")
+        );
+
+        drop(mine);
+        drop(user);
+        handle.stop();
+    }
+
     /// An agent's connection is told of the windows on its workspace alone,
     /// and activating one gives it the agent's keyboard, not the user's.
     #[test]
