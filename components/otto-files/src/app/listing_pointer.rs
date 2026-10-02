@@ -9,8 +9,8 @@ use super::*;
 /// Where a pointer event landed, and the modifiers held, in window points.
 #[derive(Clone, Copy)]
 pub(super) struct PointerAt {
-    x: f32,
-    y: f32,
+    pub(super) x: f32,
+    pub(super) y: f32,
     ctrl: bool,
     shift: bool,
     /// The window's width.
@@ -70,7 +70,9 @@ impl Browser {
         };
         // Whatever is up over the listing takes the event first, in this
         // order; the first that answers for it keeps it.
-        let layers: [Layer; 9] = [
+        let layers: [Layer; 11] = [
+            Self::desk_edit_pointer,
+            Self::desk_overflow_pointer,
             Self::rename_pointer,
             Self::peek_pointer,
             Self::preview_video_press,
@@ -149,9 +151,16 @@ impl Browser {
                             is_dir,
                         )
                     }
-                    ViewMode::Grid => {
-                        view::grid_rename_rect(width, height, &self.recent_sections, scroll, index)
-                    }
+                    ViewMode::Grid => match self.desk_overflow_entry_rect(index) {
+                        Some(cell) => view::grid_rename_rect_over(cell),
+                        None => view::grid_rename_rect(
+                            width,
+                            height,
+                            &self.recent_sections,
+                            scroll,
+                            index,
+                        ),
+                    },
                     ViewMode::Photos => {
                         view::photos_rename_rect(width, height, &self.photos, scroll, index)
                     }

@@ -127,11 +127,33 @@ args = []
 
 # The desk: the files in your Desktop folder, shown behind the windows. Otto
 # runs it as `otto-files --desk`, restarts it if it crashes and stops it when
-# this is switched off. Off by default. Its folder, size and arrangement are
-# set in ~/.config/otto/files.toml.
+# this is switched off. Off by default. Its folder, size, arrangement and what
+# it does with icons that don't fit are set in ~/.config/otto/files.toml;
+# Settings ▸ Appearance ▸ Desk edits the folder and the overflow, and moves
+# and resizes the panel with the pointer.
 #
 # [desk]
 # enabled = true
+
+# A desktop widget: a full-screen page over the wallpaper, behind the desk and
+# the windows. Needs ewwii, which Otto runs itself and follows changes to live.
+# "none" (the default), "calendar", "cross_pad" or "grid_pad". The
+# themes are in /usr/share/otto/widgets/ewwii; copy them to
+# ~/.config/otto/widgets/ewwii to change them. Settings ▸ Appearance edits it.
+#
+# [desktop]
+# widget = "calendar"
+
+# The top bar's clock. otto-bar reads these from Otto and follows changes live.
+# Settings ▸ Appearance edits them.
+#
+# [topbar]
+# Show the date and time at the right end of the bar (default true).
+# show_clock = true
+# A chrono strftime format (https://docs.rs/chrono/latest/chrono/format/strftime/).
+# Empty (the default) uses clock_format from otto-bar.toml if set, otherwise
+# your language's own format.
+# clock_format = "%a %-d %b  %H:%M"
 
 # File search: the folders LocalSearch, the file indexer, looks in, and what it
 # leaves out. Otto pushes these to LocalSearch's own settings; a key left

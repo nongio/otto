@@ -226,6 +226,7 @@ impl Browser {
             .and_then(|data| self.panel_selection(panel_text::TextPanel::Photos, &data.subject()));
 
         view::Frame {
+            desk_overflow: self.desk_overflow(),
             width: self.size.0,
             // The *file area's* bottom, not the window's — see
             // [`view::Frame::action_row`]. Every piece of geometry the frame

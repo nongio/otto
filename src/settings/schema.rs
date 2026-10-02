@@ -106,6 +106,16 @@ impl SettingSpec {
         out
     }
 
+    /// The values the setting takes in this session: `choices`, plus the
+    /// widgets a customised desktop widget theme adds.
+    pub fn choices_now(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.choices.iter().map(|c| c.to_string()).collect();
+        if self.id == "desktop.widget" {
+            out.extend(crate::desktop_widget::extra_widgets());
+        }
+        out
+    }
+
     /// The configuration section the setting lives in — everything before the
     /// last dot, empty for a top-level key.
     pub fn section(&self) -> &'static str {
@@ -130,11 +140,12 @@ impl SettingSpec {
 
         if self.ty == SettingType::Enum {
             let text = value.as_str().unwrap_or_default();
-            if !self.choices.contains(&text) {
+            let choices = self.choices_now();
+            if !choices.iter().any(|choice| choice == text) {
                 return Err(Invalid::Range(format!(
                     "`{}` must be one of {}, got `{text}`",
                     self.id,
-                    self.choices.join(", ")
+                    choices.join(", ")
                 )));
             }
             if self.unavailable_now().contains(&text) {
@@ -445,6 +456,20 @@ pub static SETTINGS: &[SettingSpec] = &[
         1200.0,
         10.0,
     ),
+    labelled_choice(
+        "desktop.widget",
+        "Background widget",
+        "A full-screen page drawn over the wallpaper, behind the windows. \
+         Needs ewwii.",
+        Live,
+        crate::desktop_widget::WIDGET_CHOICES,
+        &[
+            "settings-choice-widget-none",
+            "settings-choice-widget-calendar",
+            "settings-choice-widget-cross-pad",
+            "settings-choice-widget-grid-pad",
+        ],
+    ),
     spec(
         "background_color",
         Str,
@@ -507,6 +532,22 @@ pub static SETTINGS: &[SettingSpec] = &[
             Restart,
         )
     },
+    // ---- Top bar ---------------------------------------------------------
+    spec(
+        "topbar.show_clock",
+        Bool,
+        "Show date and time",
+        "The clock at the right end of the top bar.",
+        Live,
+    ),
+    spec(
+        "topbar.clock_format",
+        Str,
+        "Clock format",
+        "How the top bar writes the date and time, as a strftime format. \
+         Empty follows your language.",
+        Live,
+    ),
     // ---- Tiling ----------------------------------------------------------
     choice(
         "tiling.decoration",

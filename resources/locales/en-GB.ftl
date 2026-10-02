@@ -63,6 +63,7 @@ dock-quit = Quit
 ## sidebar does not grow to fit them.
 
 settings-pane-general = General
+settings-pane-appearance = Appearance
 settings-pane-displays = Displays
 settings-pane-dock = Dock
 settings-pane-tiling = Tiling
@@ -93,15 +94,42 @@ settings-group-desktop = Desktop
 settings-background-colour = Background colour
 settings-background-image = Background image
 settings-background-image-detail = Chosen through the desktop portal's file picker
+settings-desktop-widget = Background widget
+settings-desktop-widget-needs-ewwii = Needs ewwii, which isn't installed
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Drawn by ewwii. Add your own widgets in { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Cannot be shown
 settings-show-desk = Show files on the desktop
 settings-show-desk-detail = The files in your Desktop folder, behind the windows
 
+settings-group-desk = Desk
+settings-desk-folder = Folder
+settings-desk-folder-default = Your Desktop folder
+settings-desk-choose-folder-title = Choose a Folder for the Desk
+settings-desk-layout = Size and position
+settings-desk-layout-edit = Edit…
+settings-desk-layout-reset = Reset
+settings-desk-layout-fill = Fills the screen. Edit shows handles on the desk to drag it into place
+settings-desk-layout-placed = Placed by hand. Reset makes it fill the screen again
+settings-desk-icon-size = Icon size
+settings-desk-overflow = When icons don’t fit
+settings-desk-overflow-scroll = Scroll
+# A tile in the last cell that opens the rest in a panel above the windows.
+settings-desk-overflow-stack = Show in overlay
+settings-desk-overflow-detail = Scroll moves the grid. Show in overlay keeps the rest in the last cell and opens them above the windows
+
 settings-group-pointer-and-icons = Pointer & icons
 settings-cursor-theme = Cursor theme
 settings-cursor-size = Cursor size
 settings-icon-theme = Icon theme
+
+settings-group-bar-clock = Top bar clock
+settings-show-clock = Show date and time
+settings-show-clock-detail = At the right end of the top bar
+settings-clock-format = Format
+settings-clock-format-detail = Any strftime format works too, as clock_format under [topbar] in the configuration file
+settings-clock-format-automatic = { $preview } (language default)
 
 settings-group-window-switcher = Window switcher
 settings-follow-cursor = Show on the pointer's display
@@ -459,6 +487,11 @@ settings-choice-power-ignore = Do nothing
 settings-choice-power-lock = Lock the screen
 settings-choice-power-suspend = Suspend
 settings-choice-power-shutdown = Shut down
+settings-choice-widget-none = None
+settings-choice-widget-calendar = Calendar
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -502,6 +535,15 @@ files-open-with-not-remembered = Opened, but couldn’t save the choice: { $erro
 files-new-folder = New Folder
 # The desk's background menu: shows the desk's own folder in a Files window.
 files-desk-open-in-files = Open in Files
+files-desk-edit-done = Done
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = More items
+files-desk-overflow =
+    { $count ->
+        [one] 1 more item
+       *[other] { $count } more items
+    }
 files-new-folder-with-selection = New Folder with Selection
 # $count is always two or more; the single-item case uses
 # files-new-folder-with-selection.
@@ -1038,6 +1080,12 @@ schema-desk-enabled-label = Show files on the desktop
 schema-desk-enabled-description = The files in your Desktop folder, behind the windows.
 schema-canvas-width-label = Side canvas width
 schema-canvas-width-description = Width of the side canvas, in logical points. Everything in it is drawn at this width.
+schema-desktop-widget-label = Background widget
+schema-desktop-widget-description = A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii.
+schema-topbar-show-clock-label = Show date and time
+schema-topbar-show-clock-description = The clock at the right end of the top bar.
+schema-topbar-clock-format-label = Clock format
+schema-topbar-clock-format-description = How the top bar writes the date and time, as a strftime format. Empty follows your language.
 schema-background-color-label = Background colour
 schema-background-color-description = Desktop background colour, as a hex string.
 schema-background-image-label = Background image

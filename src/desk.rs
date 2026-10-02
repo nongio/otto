@@ -80,7 +80,7 @@ pub fn failures_after_crash(failures: u32, uptime: Duration) -> u32 {
 }
 
 /// A pidfd for `child`, readable once the process has exited.
-fn pidfd(child: &Child) -> std::io::Result<OwnedFd> {
+pub(crate) fn pidfd(child: &Child) -> std::io::Result<OwnedFd> {
     let pid = libc::pid_t::try_from(child.id())
         .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
     // SAFETY: `pidfd_open` takes a pid and a flags word and returns a new file

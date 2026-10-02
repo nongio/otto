@@ -63,6 +63,7 @@ dock-quit = 終了
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 一般
+settings-pane-appearance = 外観
 settings-pane-displays = ディスプレイ
 settings-pane-dock = Dock
 settings-pane-tiling = タイル表示
@@ -93,14 +94,40 @@ settings-group-desktop = デスクトップ
 settings-background-colour = 背景色
 settings-background-image = 背景画像
 settings-background-image-detail = デスクトップポータルのファイル選択画面から選びます
+settings-desktop-widget = 背景ウィジェット
+settings-desktop-widget-needs-ewwii = ewwii が必要ですが、インストールされていません
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = ewwii で描画されます。独自のウィジェットは { $folder } に追加します
 settings-background-image-unavailable = 表示できません
 settings-show-desk = デスクトップにファイルを表示
 settings-show-desk-detail = 「デスクトップ」フォルダのファイルをウインドウの背後に表示
+
+settings-group-desk = デスク
+settings-desk-folder = フォルダ
+settings-desk-folder-default = 「デスクトップ」フォルダ
+settings-desk-choose-folder-title = デスクに表示するフォルダを選択
+settings-desk-layout = サイズと位置
+settings-desk-layout-edit = 編集…
+settings-desk-layout-reset = リセット
+settings-desk-layout-fill = 画面全体に表示。「編集」でデスクにハンドルが表示され、ドラッグで配置できます
+settings-desk-layout-placed = 手動で配置済み。「リセット」で画面全体に戻ります
+settings-desk-icon-size = アイコンのサイズ
+settings-desk-overflow = アイコンが収まらないとき
+settings-desk-overflow-scroll = スクロール
+settings-desk-overflow-stack = オーバーレイで表示
+settings-desk-overflow-detail = スクロールはグリッドを動かします。オーバーレイで表示は残りを最後のマスに置き、ウィンドウの上で開きます
 
 settings-group-pointer-and-icons = ポインタとアイコン
 settings-cursor-theme = カーソルテーマ
 settings-cursor-size = カーソルサイズ
 settings-icon-theme = アイコンテーマ
+
+settings-group-bar-clock = 上部バーの時計
+settings-show-clock = 日付と時刻を表示
+settings-show-clock-detail = 上部バーの右端に表示
+settings-clock-format = 表示形式
+settings-clock-format-detail = 設定ファイルの [topbar] に clock_format として任意の strftime 形式も書けます
+settings-clock-format-automatic = { $preview }（言語の既定）
 
 settings-group-window-switcher = ウインドウスイッチャー
 settings-follow-cursor = ポインタのあるディスプレイに表示
@@ -451,6 +478,11 @@ settings-choice-power-ignore = 何もしない
 settings-choice-power-lock = 画面をロック
 settings-choice-power-suspend = スリープ
 settings-choice-power-shutdown = システム終了
+settings-choice-widget-none = なし
+settings-choice-widget-calendar = カレンダー
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自動
 
@@ -492,6 +524,14 @@ files-open-with-always = 「{ $kind }」には常にこのAppを使用
 files-open-with-not-remembered = 開きましたが、選択を保存できませんでした：{ $error }
 files-new-folder = 新規フォルダ
 files-desk-open-in-files = ファイルで開く
+files-desk-edit-done = 完了
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = その他
+files-desk-overflow =
+    { $count ->
+       *[other] ほか { $count } 項目
+    }
 files-move-to-trash = ゴミ箱に入れる
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -925,6 +965,12 @@ schema-desk-enabled-label = デスクトップにファイルを表示
 schema-desk-enabled-description = 「デスクトップ」フォルダのファイルをウインドウの背後に表示。
 schema-canvas-width-label = サイドキャンバスの幅
 schema-canvas-width-description = サイドキャンバスの幅（論理ポイント）。中のものはすべてこの幅で描画されます。
+schema-desktop-widget-label = 背景ウィジェット
+schema-desktop-widget-description = 壁紙の上、ウインドウの背後に描く全画面のページ。ewwii が必要です。
+schema-topbar-show-clock-label = 日付と時刻を表示
+schema-topbar-show-clock-description = 上部バーの右端の時計。
+schema-topbar-clock-format-label = 時計の表示形式
+schema-topbar-clock-format-description = 上部バーに表示する日付と時刻の strftime 形式。空なら言語に従います。
 schema-background-color-label = 背景色
 schema-background-color-description = デスクトップの背景色。16進文字列で指定します。
 schema-background-image-label = 背景画像

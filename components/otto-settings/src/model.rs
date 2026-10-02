@@ -63,8 +63,9 @@ pub struct Row {
     /// The `org.otto.Settings` identifier this row edits. `None` means the row
     /// is not wired to the compositor yet and is display-only.
     pub id: Option<&'static str>,
-    /// The row's push buttons have nothing to do right now — Apply with
-    /// nothing to apply — and are drawn dimmed and take no press.
+    /// The row's push buttons or pop-up have nothing to do right now — Apply
+    /// with nothing to apply, a choice nothing can act on — and are drawn
+    /// dimmed and take no press.
     pub inactive: bool,
     /// A pop-up row that can be taken out of its list: a "−" button sits at
     /// its trailing edge, and the pop-up moves in to make room for it.
@@ -102,7 +103,8 @@ impl Row {
         self
     }
 
-    /// Dim the row's push buttons and ignore presses on them while `inactive`.
+    /// Dim the row's push buttons or pop-up and ignore presses on them while
+    /// `inactive`.
     pub(crate) fn inactive(mut self, inactive: bool) -> Self {
         self.inactive = inactive;
         self
@@ -342,6 +344,7 @@ pub struct Pane {
 pub fn panes() -> Vec<Pane> {
     vec![
         panes::general::build(),
+        panes::appearance::build(),
         panes::displays::build(),
         panes::dock::build(),
         panes::tiling::build(),
@@ -358,11 +361,11 @@ pub fn panes() -> Vec<Pane> {
 
 /// Where the Search pane sits in [`panes`], so `main.rs` can tell the pane
 /// when it is on screen without building every pane to find out.
-pub const SEARCH_PANE: usize = 10;
+pub const SEARCH_PANE: usize = 11;
 
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
-pub const PRIVACY_PANE: usize = 9;
+pub const PRIVACY_PANE: usize = 10;
 
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {

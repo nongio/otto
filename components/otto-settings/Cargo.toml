@@ -15,6 +15,9 @@ zbus = "4"
 serde = { version = "1", features = ["derive"] }
 toml_edit = "0.22"
 xcursor = "0.3.3"
+# The clock format pop-up previews each format the way otto-bar renders it;
+# `unstable-locales` gives the day and month names in the user's language.
+chrono = { version = "0.4", default-features = false, features = ["clock", "unstable-locales"] }
 
 [dependencies.skia-safe]
 version = "=0.93"

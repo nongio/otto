@@ -162,8 +162,11 @@ impl Default for TopbarConfig {
 
 static CONFIG: LazyLock<TopbarConfig> = LazyLock::new(load_config);
 
-/// Return the clock format string.
-pub fn clock_format() -> &'static str {
+/// The clock format from `otto-bar.toml`, or the language's own where the
+/// file sets none.
+///
+/// The format chosen in Settings wins over this; see [`crate::clock`].
+pub fn file_clock_format() -> &'static str {
     &CONFIG.clock_format
 }
 

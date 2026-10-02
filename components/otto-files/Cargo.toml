@@ -23,6 +23,9 @@ tokio = { version = "1", features = ["full"] }
 # The sidebar's user configuration; see `places_config`.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+# Writing the desk's size and position back into files.toml without losing
+# the comments and keys around them.
+toml_edit = "0.22"
 serde_json = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

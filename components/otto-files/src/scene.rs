@@ -651,6 +651,7 @@ mod tests {
         };
         let theme = Theme::light();
         let frame = Frame {
+            desk_overflow: None,
             search: None,
             index_available: true,
             search_focused: false,

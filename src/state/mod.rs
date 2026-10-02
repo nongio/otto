@@ -288,6 +288,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub desk: crate::desk::Desk,
     /// The session's polkit authentication agent — see `src/polkit_agent.rs`.
     pub polkit_agent: crate::polkit_agent::PolkitAgent,
+    /// The ewwii daemon behind `desktop.widget` — see `src/desktop_widget.rs`.
+    pub desktop_widget: crate::desktop_widget::DesktopWidget,
     pub workspaces: Workspaces,
 
     // smithay state
@@ -1144,6 +1146,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             auto_lock_timer,
             desk: Default::default(),
             polkit_agent: Default::default(),
+            desktop_widget: Default::default(),
             output_manager_state,
             primary_selection_state,
             data_control_state,
@@ -1367,8 +1370,9 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
     }
 
     /// Bring exclusive zones and the dock's space budget up to date after a
-    /// layer-shell surface on `output` mapped, changed or went away, and refit
-    /// the maximized and tiled windows there if the usable area moved.
+    /// layer-shell surface on `output` mapped, changed or went away, refit
+    /// the maximized and tiled windows there if the usable area moved, and
+    /// bring the desktop widget up to date.
     pub fn layer_zones_changed(&mut self, output: &Output) {
         // Panels are torn down with an output that is going away.
         if self.workspaces.output_geometry(output).is_none() {
@@ -1382,6 +1386,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             // The column's height follows the usable area.
             self.canvas_share_height();
         }
+        // Also when only the widget's own window mapped or moved.
+        self.desktop_widget_area_changed();
     }
 
     /// Refit the maximized and tiled windows if the dock changed the band it
@@ -1393,11 +1399,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
         }
     }
 
-    /// Refit the maximized and tiled windows once the dock has settled after
-    /// a change to its edge, size or autohide. The dock's rect animates to its
-    /// new place, and reading it on the way would size windows to a band the
-    /// dock is only passing through; so the rect is polled until two readings
-    /// agree.
+    /// Refit the maximized and tiled windows, and the desktop widget, once the
+    /// dock has settled after a change to its edge, size or autohide. The
+    /// dock's rect animates to its new place, and reading it on the way would
+    /// size windows to a band the dock is only passing through; so the rect is
+    /// polled until two readings agree.
     fn refit_zoned_windows_when_dock_settles(&mut self) {
         use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
         const POLL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -1417,11 +1423,13 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 }
                 state.dock_refit_pending = false;
                 state.refit_zoned_windows(None);
+                state.desktop_widget_area_changed();
                 TimeoutAction::Drop
             });
         if inserted.is_err() {
             self.dock_refit_pending = false;
             self.refit_zoned_windows(None);
+            self.desktop_widget_area_changed();
         }
     }
 

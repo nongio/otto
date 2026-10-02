@@ -63,6 +63,7 @@ dock-quit = Quitter
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Général
+settings-pane-appearance = Apparence
 settings-pane-displays = Écrans
 settings-pane-dock = Dock
 settings-pane-tiling = Mosaïque
@@ -93,15 +94,41 @@ settings-group-desktop = Bureau
 settings-background-colour = Couleur d’arrière-plan
 settings-background-image = Image d’arrière-plan
 settings-background-image-detail = Choisie via le sélecteur de fichiers du portail de bureau
+settings-desktop-widget = Widget d’arrière-plan
+settings-desktop-widget-needs-ewwii = Nécessite ewwii, qui n’est pas installé
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Dessiné par ewwii. Ajoute tes propres widgets dans { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Impossible à afficher
 settings-show-desk = Afficher les fichiers sur le bureau
 settings-show-desk-detail = Les fichiers du dossier Bureau, derrière les fenêtres
 
+settings-group-desk = Bureau
+settings-desk-folder = Dossier
+settings-desk-folder-default = Votre dossier Bureau
+settings-desk-choose-folder-title = Choisir un dossier pour le bureau
+settings-desk-layout = Taille et position
+settings-desk-layout-edit = Modifier…
+settings-desk-layout-reset = Réinitialiser
+settings-desk-layout-fill = Occupe tout l’écran. Modifier affiche des poignées sur le bureau pour le placer
+settings-desk-layout-placed = Placé à la main. Réinitialiser lui fait de nouveau occuper tout l’écran
+settings-desk-icon-size = Taille des icônes
+settings-desk-overflow = Quand les icônes ne tiennent pas
+settings-desk-overflow-scroll = Faire défiler
+settings-desk-overflow-stack = Afficher en surimpression
+settings-desk-overflow-detail = Faire défiler déplace la grille. Afficher en surimpression garde le reste dans la dernière case et l’ouvre au-dessus des fenêtres
+
 settings-group-pointer-and-icons = Pointeur et icônes
 settings-cursor-theme = Thème du curseur
 settings-cursor-size = Taille du curseur
 settings-icon-theme = Thème d’icônes
+
+settings-group-bar-clock = Horloge de la barre supérieure
+settings-show-clock = Afficher la date et l’heure
+settings-show-clock-detail = À l’extrémité droite de la barre supérieure
+settings-clock-format = Format
+settings-clock-format-detail = Tout format strftime convient aussi, en clock_format sous [topbar] dans le fichier de configuration
+settings-clock-format-automatic = { $preview } (par défaut pour la langue)
 
 settings-group-window-switcher = Alternateur de fenêtres
 settings-follow-cursor = Afficher sur l’écran du pointeur
@@ -458,6 +485,11 @@ settings-choice-power-ignore = Ne rien faire
 settings-choice-power-lock = Verrouiller l’écran
 settings-choice-power-suspend = Mettre en veille
 settings-choice-power-shutdown = Éteindre
+settings-choice-widget-none = Aucun
+settings-choice-widget-calendar = Calendrier
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Auto
 
@@ -501,6 +533,15 @@ files-open-with-always = Toujours utiliser cette application pour « { $kind }
 files-open-with-not-remembered = Ouvert, mais le choix n’a pas été enregistré : { $error }
 files-new-folder = Nouveau dossier
 files-desk-open-in-files = Ouvrir dans Fichiers
+files-desk-edit-done = Terminé
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Autres éléments
+files-desk-overflow =
+    { $count ->
+        [one] 1 autre élément
+       *[other] { $count } autres éléments
+    }
 files-move-to-trash = Mettre à la corbeille
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -972,6 +1013,12 @@ schema-desk-enabled-label = Afficher les fichiers sur le bureau
 schema-desk-enabled-description = Les fichiers du dossier Bureau, derrière les fenêtres.
 schema-canvas-width-label = Largeur du canevas latéral
 schema-canvas-width-description = Largeur du canevas latéral, en points logiques. Tout ce qu’il contient est dessiné à cette largeur.
+schema-desktop-widget-label = Widget d’arrière-plan
+schema-desktop-widget-description = Une page plein écran dessinée sur le fond d’écran, derrière les fenêtres. Nécessite ewwii.
+schema-topbar-show-clock-label = Afficher la date et l’heure
+schema-topbar-show-clock-description = L’horloge à l’extrémité droite de la barre supérieure.
+schema-topbar-clock-format-label = Format de l’horloge
+schema-topbar-clock-format-description = Comment la barre supérieure écrit la date et l’heure, au format strftime. Vide suit la langue.
 schema-background-color-label = Couleur d’arrière-plan
 schema-background-color-description = Couleur d’arrière-plan du bureau, sous forme de chaîne hexadécimale.
 schema-background-image-label = Image d’arrière-plan

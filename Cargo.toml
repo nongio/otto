@@ -294,6 +294,10 @@ assets = [
     ["resources/plugins/otto/skills/otto-help/*.md", "usr/share/otto/plugins/otto/skills/otto-help/", "644"],
     ["resources/plugins/otto/skills/otto-help/references/**/*", "usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
+    # The desktop widgets' ewwii configuration; ewwii itself is optional.
+    ["resources/widgets/ewwii/ewwii.*", "usr/share/otto/widgets/ewwii/", "644"],
+    ["resources/widgets/ewwii/scripts/*", "usr/share/otto/widgets/ewwii/scripts/", "755"],
+    ["resources/widgets/ewwii/generators/*", "usr/share/otto/widgets/ewwii/generators/", "755"],
     ["components/xdg-desktop-portal-otto/portals.conf.example", "usr/share/doc/otto/", "644"],
     # Debian's PAM stack is `common-auth`, not the `system-auth` this file
     # includes, so it ships as an example to copy to /etc/pam.d/otto-lock
@@ -360,6 +364,10 @@ assets = [
     { source = "resources/plugins/otto/skills/otto-help/*.md", dest = "/usr/share/otto/plugins/otto/skills/otto-help/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/references/**/*", dest = "/usr/share/otto/plugins/otto/skills/otto-help/references/", mode = "644" },
     { source = "resources/plugins/otto/skills/otto-help/scripts/*", dest = "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", mode = "755" },
+    # The desktop widgets' ewwii configuration; ewwii itself is optional.
+    { source = "resources/widgets/ewwii/ewwii.*", dest = "/usr/share/otto/widgets/ewwii/", mode = "644" },
+    { source = "resources/widgets/ewwii/scripts/*", dest = "/usr/share/otto/widgets/ewwii/scripts/", mode = "755" },
+    { source = "resources/widgets/ewwii/generators/*", dest = "/usr/share/otto/widgets/ewwii/generators/", mode = "755" },
     { source = "components/xdg-desktop-portal-otto/portals.conf.example", dest = "/usr/share/doc/otto/portals.conf.example", mode = "644", doc = true },
     { source = "components/otto-lock/otto-lock.pam", dest = "/etc/pam.d/otto-lock", mode = "644", config = true },
 ]
@@ -425,6 +433,9 @@ optdepends = [
     "gst-plugins-base: Peek video playback (the playbin element)",
     "gst-plugins-good: Peek playback of MP4 and Matroska",
     "gst-libav: Peek playback of H.264 and AAC",
+    "ewwii: the desktop widgets in Settings ▸ Appearance",
+    "python: the desktop widgets' scripts",
+    "otf-libertinus: the desktop widgets' titles",
 ]
 files = [
     ["target/release/otto", "/usr/bin/otto", "755"],
@@ -453,6 +464,10 @@ files = [
     ["resources/plugins/otto/skills/otto-help/*.md", "/usr/share/otto/plugins/otto/skills/otto-help/", "644"],
     ["resources/plugins/otto/skills/otto-help/references/**/*", "/usr/share/otto/plugins/otto/skills/otto-help/references/", "644"],
     ["resources/plugins/otto/skills/otto-help/scripts/*", "/usr/share/otto/plugins/otto/skills/otto-help/scripts/", "755"],
+    # The desktop widgets' ewwii configuration; ewwii itself is optional.
+    ["resources/widgets/ewwii/ewwii.*", "/usr/share/otto/widgets/ewwii/", "644"],
+    ["resources/widgets/ewwii/scripts/*", "/usr/share/otto/widgets/ewwii/scripts/", "755"],
+    ["resources/widgets/ewwii/generators/*", "/usr/share/otto/widgets/ewwii/generators/", "755"],
     ["target/release/otto-media-worker", "/usr/bin/otto-media-worker", "755"],
     ["resources/bin/otto-look", "/usr/bin/otto-look", "755"],
     ["target/release/xdg-desktop-portal-otto", "/usr/libexec/xdg-desktop-portal-otto", "755"],

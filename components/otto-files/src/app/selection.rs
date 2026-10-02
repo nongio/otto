@@ -143,7 +143,12 @@ impl Browser {
             caught.retain(|&index| index < keys.len());
             caught
         } else {
-            view::grid_cells_in_rect_in(area, &self.recent_sections, keys.len(), 0.0, band)
+            // A band over the desk catches the cells before the overflow
+            // tile; the tile's items are picked in its panel.
+            let count = self
+                .desk_overflow()
+                .map_or(keys.len(), |overflow| overflow.tile.first.min(keys.len()));
+            view::grid_cells_in_rect_in(area, &self.recent_sections, count, 0.0, band)
         };
 
         let last = caught.last().copied();

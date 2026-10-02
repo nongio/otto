@@ -381,7 +381,7 @@ impl FilesApp {
 
 /// Hand the travelling selection to the compositor, which owns the pointer
 /// from here: nothing in the window sees the rest of the gesture.
-fn start_drag(window: &Window, drag: DragStart) {
+pub(super) fn start_drag(window: &Window, drag: DragStart) {
     let DragStart {
         paths,
         items,
@@ -464,6 +464,20 @@ fn show_context_menu(
     state: &Arc<Mutex<Browser>>,
     menu: MenuAt,
 ) {
+    show_context_menu_over(window, None, context_menu, state, menu);
+}
+
+/// [`show_context_menu`], hanging off `layer` rather than the window when
+/// one is given: the desk's overflow panel opens its items' menus off its
+/// own overlay, which is above the windows, at the same coordinates as the
+/// desk's.
+pub(super) fn show_context_menu_over(
+    window: &Window,
+    layer: Option<super::overflow_surface::LayerSurfaceProxy>,
+    context_menu: &ContextMenu,
+    state: &Arc<Mutex<Browser>>,
+    menu: MenuAt,
+) {
     let MenuAt {
         items,
         x,
@@ -474,8 +488,9 @@ fn show_context_menu(
     // surface through the layer shell's own popup request.
     let parent_xdg = window
         .surface()
-        .map(|s| s.xdg_window().xdg_surface().clone());
-    let parent_layer = window.layer_surface().map(|s| s.layer_surface());
+        .map(|s| s.xdg_window().xdg_surface().clone())
+        .filter(|_| layer.is_none());
+    let parent_layer = layer.or_else(|| window.layer_surface().map(|s| s.layer_surface()));
     if parent_xdg.is_none() && parent_layer.is_none() {
         return;
     }

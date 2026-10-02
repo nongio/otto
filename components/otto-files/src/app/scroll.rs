@@ -13,6 +13,10 @@ impl Browser {
     pub(super) fn sync_scroll_metrics(&mut self) {
         self.rebuild_recent_sections();
         self.rebuild_photos_layout();
+        self.settle_overflow_panel();
+        // A desk that stacks is exactly as tall as its cells up to the tile,
+        // which all fit, so it never scrolls.
+        let tile = self.desk_overflow().map(|overflow| overflow.tile);
         let (width, height) = (self.size.0, self.content_h());
         let mode = self.mode;
         let miller = self.miller_widths();
@@ -34,6 +38,10 @@ impl Browser {
         let pan = self.pan.offset();
 
         for (depth, &count) in counts.iter().enumerate() {
+            let count = match tile {
+                Some(tile) if depth + 1 == depth_count => tile.first + 1,
+                _ => count,
+            };
             let viewport = match mode {
                 // Beside the info panel, not under it: the bar, the wheel and
                 // the band all stop at the panel's edge.

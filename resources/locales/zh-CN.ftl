@@ -62,6 +62,7 @@ dock-quit = 退出
 ## sidebar does not grow to fit them.
 
 settings-pane-general = 通用
+settings-pane-appearance = 外观
 settings-pane-displays = 显示器
 settings-pane-dock = Dock
 settings-pane-tiling = 平铺
@@ -92,15 +93,41 @@ settings-group-desktop = 桌面
 settings-background-colour = 背景颜色
 settings-background-image = 背景图片
 settings-background-image-detail = 通过桌面门户的文件选择器选取
+settings-desktop-widget = 背景小组件
+settings-desktop-widget-needs-ewwii = 需要 ewwii，但尚未安装
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = 由 ewwii 绘制。你可以在 { $folder } 中添加自己的小组件
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = 无法显示
 settings-show-desk = 在桌面上显示文件
 settings-show-desk-detail = “桌面”文件夹中的文件，显示在窗口后面
 
+settings-group-desk = 桌面
+settings-desk-folder = 文件夹
+settings-desk-folder-default = 你的“桌面”文件夹
+settings-desk-choose-folder-title = 选择桌面要显示的文件夹
+settings-desk-layout = 大小和位置
+settings-desk-layout-edit = 编辑…
+settings-desk-layout-reset = 重置
+settings-desk-layout-fill = 占满屏幕。“编辑”会在桌面上显示手柄，可拖动调整
+settings-desk-layout-placed = 已手动放置。“重置”可恢复为占满屏幕
+settings-desk-icon-size = 图标大小
+settings-desk-overflow = 图标放不下时
+settings-desk-overflow-scroll = 滚动
+settings-desk-overflow-stack = 以浮层显示
+settings-desk-overflow-detail = 滚动会移动网格。“以浮层显示”会把多出的图标留在最后一格，并在窗口上方打开
+
 settings-group-pointer-and-icons = 指针与图标
 settings-cursor-theme = 光标主题
 settings-cursor-size = 光标大小
 settings-icon-theme = 图标主题
+
+settings-group-bar-clock = 顶部栏时钟
+settings-show-clock = 显示日期和时间
+settings-show-clock-detail = 位于顶部栏的右端
+settings-clock-format = 格式
+settings-clock-format-detail = 也可以在配置文件的 [topbar] 中将任意 strftime 格式写为 clock_format
+settings-clock-format-automatic = { $preview }（语言默认）
 
 settings-group-window-switcher = 窗口切换器
 settings-follow-cursor = 在指针所在的显示器上显示
@@ -452,6 +479,11 @@ settings-choice-power-ignore = 不执行任何操作
 settings-choice-power-lock = 锁定屏幕
 settings-choice-power-suspend = 睡眠
 settings-choice-power-shutdown = 关机
+settings-choice-widget-none = 无
+settings-choice-widget-calendar = 日历
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = 自动
 
@@ -493,6 +525,14 @@ files-open-with-always = 始终使用此应用程序打开“{ $kind }”
 files-open-with-not-remembered = 已打开，但未保存此选择：{ $error }
 files-new-folder = 新建文件夹
 files-desk-open-in-files = 在文件中打开
+files-desk-edit-done = 完成
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = 更多项目
+files-desk-overflow =
+    { $count ->
+       *[other] 另外 { $count } 项
+    }
 files-move-to-trash = 移到废纸篓
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -928,6 +968,12 @@ schema-desk-enabled-label = 在桌面上显示文件
 schema-desk-enabled-description = “桌面”文件夹中的文件，显示在窗口后面。
 schema-canvas-width-label = 侧边画布宽度
 schema-canvas-width-description = 侧边画布的宽度，以逻辑点为单位。其中的所有内容都按此宽度绘制。
+schema-desktop-widget-label = 背景小组件
+schema-desktop-widget-description = 绘制在壁纸之上、窗口后面的全屏页面。需要 ewwii。
+schema-topbar-show-clock-label = 显示日期和时间
+schema-topbar-show-clock-description = 顶部栏右端的时钟。
+schema-topbar-clock-format-label = 时钟格式
+schema-topbar-clock-format-description = 顶部栏显示日期和时间所用的 strftime 格式。留空则跟随语言。
 schema-background-color-label = 背景颜色
 schema-background-color-description = 桌面背景颜色，以十六进制字符串表示。
 schema-background-image-label = 背景图片

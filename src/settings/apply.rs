@@ -67,6 +67,9 @@ pub fn is_applied_live(id: &str) -> bool {
             | "input.show_layout_in_bar"
             | "desk.enabled"
             | "canvas.width"
+            | "desktop.widget"
+            | "topbar.show_clock"
+            | "topbar.clock_format"
             | "search.folders"
             | "search.skip_code_repositories"
             | "search.index_removable_drives"
@@ -377,6 +380,15 @@ pub fn apply_live<B: Backend + 'static>(state: &mut Otto<B>, id: &str) -> Result
             state.canvas_config_changed();
             Ok(())
         }
+        // ewwii is a process the compositor owns too: the setting swaps the
+        // window it shows, or starts or stops it.
+        "desktop.widget" => {
+            state.apply_desktop_widget_setting();
+            Ok(())
+        }
+        // Nothing to do here: otto-bar follows `Changed` and reads the new
+        // value back itself.
+        "topbar.show_clock" | "topbar.clock_format" => Ok(()),
         // LocalSearch's own settings: pushed to it on a thread of its own,
         // since writing them runs `gsettings`.
         "search.folders" => {
@@ -444,6 +456,7 @@ mod tests {
             "cursor_theme",
             "cursor_size",
             "icon_theme",
+            "desktop.widget",
             "appswitcher.follow_cursor",
             "dock.genie_scale",
             "dock.genie_span",
@@ -504,6 +517,8 @@ mod tests {
             "lock.locker_args",
             "lock.auto_lock_timeout",
             "lock.on_suspend",
+            "topbar.show_clock",
+            "topbar.clock_format",
         ] {
             assert_eq!(
                 schema::lookup(id).expect("in schema").apply,

@@ -63,6 +63,7 @@ dock-quit = Завершити
 ## sidebar does not grow to fit them.
 
 settings-pane-general = Загальні
+settings-pane-appearance = Вигляд
 settings-pane-displays = Дисплеї
 settings-pane-dock = Dock
 settings-pane-tiling = Мозаїка
@@ -93,15 +94,41 @@ settings-group-desktop = Робочий стіл
 settings-background-colour = Колір тла
 settings-background-image = Зображення тла
 settings-background-image-detail = Обирається через засіб вибору файлів робочого стола
+settings-desktop-widget = Фоновий віджет
+settings-desktop-widget-needs-ewwii = Потрібен ewwii, а його не встановлено
+# { $folder } is a path such as ~/.config/otto/widgets/ewwii.
+settings-desktop-widget-detail = Малюється ewwii. Додавай власні віджети в { $folder }
 # Stands in for the wallpaper thumbnail when the file cannot be decoded.
 settings-background-image-unavailable = Неможливо показати
 settings-show-desk = Показувати файли на робочому столі
 settings-show-desk-detail = Файли з папки «Стільниця», позаду вікон
 
+settings-group-desk = Стільниця
+settings-desk-folder = Тека
+settings-desk-folder-default = Ваша тека «Стільниця»
+settings-desk-choose-folder-title = Виберіть теку для стільниці
+settings-desk-layout = Розмір і положення
+settings-desk-layout-edit = Змінити…
+settings-desk-layout-reset = Скинути
+settings-desk-layout-fill = На весь екран. «Змінити» показує маркери, щоб перетягнути її на місце
+settings-desk-layout-placed = Розміщено вручну. «Скинути» знову розтягне її на весь екран
+settings-desk-icon-size = Розмір значків
+settings-desk-overflow = Коли значки не вміщаються
+settings-desk-overflow-scroll = Прокручувати
+settings-desk-overflow-stack = Показувати поверх
+settings-desk-overflow-detail = Прокручування зсуває сітку. «Показувати поверх» залишає зайві значки в останній клітинці й відкриває їх над вікнами
+
 settings-group-pointer-and-icons = Вказівник і піктограми
 settings-cursor-theme = Тема курсора
 settings-cursor-size = Розмір курсора
 settings-icon-theme = Тема піктограм
+
+settings-group-bar-clock = Годинник на верхній панелі
+settings-show-clock = Показувати дату й час
+settings-show-clock-detail = Біля правого краю верхньої панелі
+settings-clock-format = Формат
+settings-clock-format-detail = Підійде й будь-який формат strftime: clock_format у розділі [topbar] файлу конфігурації
+settings-clock-format-automatic = { $preview } (типово для мови)
 
 settings-group-window-switcher = Перемикач вікон
 settings-follow-cursor = Показувати на дисплеї з вказівником
@@ -465,6 +492,11 @@ settings-choice-power-ignore = Нічого не робити
 settings-choice-power-lock = Блокувати екран
 settings-choice-power-suspend = Присипляти
 settings-choice-power-shutdown = Вимикати комп'ютер
+settings-choice-widget-none = Немає
+settings-choice-widget-calendar = Календар
+# The next two name pages whose text is in English, so they stay as written.
+settings-choice-widget-cross-pad = Cross pad
+settings-choice-widget-grid-pad = Grid pad
 # The automatic option for a theme that follows the system.
 settings-choice-auto = Авто
 
@@ -509,6 +541,17 @@ files-open-with-always = Завжди використовувати для ти
 files-open-with-not-remembered = Відкрито, але вибір не збережено: { $error }
 files-new-folder = Нова папка
 files-desk-open-in-files = Відкрити у Файлах
+files-desk-edit-done = Готово
+# The desk's overflow tile: the caption under it, and what a screen reader
+# says for it. $count is how many items it holds.
+files-desk-overflow-caption = Ще
+files-desk-overflow =
+    { $count ->
+        [one] Ще { $count } об’єкт
+        [few] Ще { $count } об’єкти
+        [many] Ще { $count } об’єктів
+       *[other] Ще { $count } об’єкта
+    }
 files-move-to-trash = Перемістити в кошик
 # $count is always two or more; the single-item case uses files-move-to-trash.
 files-move-count-to-trash =
@@ -987,6 +1030,12 @@ schema-desk-enabled-label = Показувати файли на робочом�
 schema-desk-enabled-description = Файли з папки «Стільниця», позаду вікон.
 schema-canvas-width-label = Ширина бічного полотна
 schema-canvas-width-description = Ширина бічного полотна в логічних точках. Усе, що на ньому є, малюється такої ширини.
+schema-desktop-widget-label = Фоновий віджет
+schema-desktop-widget-description = Сторінка на весь екран поверх шпалер, позаду вікон. Потрібен ewwii.
+schema-topbar-show-clock-label = Показувати дату й час
+schema-topbar-show-clock-description = Годинник біля правого краю верхньої панелі.
+schema-topbar-clock-format-label = Формат годинника
+schema-topbar-clock-format-description = Як верхня панель пише дату й час, у форматі strftime. Порожньо — за мовою.
 schema-background-color-label = Колір тла
 schema-background-color-description = Колір тла стільниці у вигляді шістнадцяткового рядка.
 schema-background-image-label = Зображення тла

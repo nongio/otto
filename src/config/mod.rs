@@ -101,6 +101,10 @@ pub struct Config {
     #[serde(default)]
     pub canvas: CanvasConfig,
     #[serde(default)]
+    pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub topbar: TopbarConfig,
+    #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
     pub workspaces: WorkspacesConfig,
@@ -182,6 +186,8 @@ impl Default for Config {
             lock: LockConfig::default(),
             desk: DeskConfig::default(),
             canvas: CanvasConfig::default(),
+            desktop: DesktopConfig::default(),
+            topbar: TopbarConfig::default(),
             search: SearchConfig::default(),
             workspaces: WorkspacesConfig::default(),
             tiling: TilingConfig::default(),
@@ -1638,6 +1644,50 @@ impl Default for CanvasConfig {
             width: 400,
             margin: 12,
             gap: 12,
+        }
+    }
+}
+
+/// What the desktop shows behind the windows besides the wallpaper and the
+/// desk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DesktopConfig {
+    /// The desktop widget: `"none"` or one of the themes Otto draws with
+    /// ewwii, `"calendar"`, `"cross_pad"` or `"grid_pad"`. The
+    /// compositor runs ewwii for it and follows changes live (see
+    /// `src/desktop_widget.rs`).
+    pub widget: String,
+}
+
+impl Default for DesktopConfig {
+    fn default() -> Self {
+        Self {
+            widget: "none".to_string(),
+        }
+    }
+}
+
+/// The top bar's clock.
+///
+/// The compositor does not draw the bar: `otto-bar` reads these over
+/// `org.otto.Settings` and follows its `Changed` signal, so they apply live
+/// without anything to reconcile here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TopbarConfig {
+    /// Show the date and time at the bar's right edge.
+    pub show_clock: bool,
+    /// A chrono strftime format for the clock. Empty follows the language's
+    /// own convention, or `clock_format` in `otto-bar.toml` where one is set.
+    pub clock_format: String,
+}
+
+impl Default for TopbarConfig {
+    fn default() -> Self {
+        Self {
+            show_clock: true,
+            clock_format: String::new(),
         }
     }
 }

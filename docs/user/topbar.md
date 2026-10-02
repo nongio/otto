@@ -200,16 +200,31 @@ the layout switch keys.
 
 ## Clock
 
-The clock is on the far right. Its format is a
+The clock is on the far right. **Settings ▸ Appearance ▸ Top bar clock** turns
+it on or off and picks its format from a list, each entry showing the current
+time the way the bar will write it. Both apply at once. With the clock off,
+the battery and tray move up to the edge.
+
+The same two settings live in Otto's configuration file, where any
 [chrono strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)
-string:
+format works:
+
+```toml
+# ~/.config/otto/config.toml
+[topbar]
+show_clock = true
+clock_format = "%a %-d %b  %H:%M"
+```
+
+An empty `clock_format` (the default) falls back to `clock_format` in the
+bar's own file, and then to your language's usual format:
 
 ```toml
 # ~/.config/otto/otto-bar.toml
 clock_format = "%B %-d, %A %H:%M"
 ```
 
-That default renders as `March 23, Thursday 21:16`. Some other useful formats:
+That one renders as `March 23, Thursday 21:16`. Some other useful formats:
 
 | Format | Renders as |
 |--------|------------|
@@ -255,5 +270,6 @@ see errors.
 has an SNI or "AppIndicator" option.
 
 **The clock format is ignored.** A malformed strftime string falls back to the
-default. Verify the file parses as TOML and the key is at the top level, not in
-a table.
+next format in line: the bar's own file, then your language's. In
+`otto-bar.toml` the key sits at the top level, not in a table; in Otto's
+configuration it goes under `[topbar]`.

@@ -24,6 +24,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
 
     match name {
         "settings" => settings(canvas, &paint),
+        "appearance" => appearance(canvas, &paint, color),
         "monitor" => monitor(canvas, &paint),
         "dock" => dock(canvas, &paint),
         "tiling" => tiling(canvas, &paint),
@@ -50,6 +51,16 @@ fn settings(canvas: &Canvas, paint: &Paint) {
         let knob_x = [-2.0, 3.0, -4.0][i];
         canvas.draw_circle(Point::new(knob_x, *y), 2.0, paint);
     }
+}
+
+/// A disc, half light and half dark: the colour scheme.
+fn appearance(canvas: &Canvas, paint: &Paint, color: Color) {
+    canvas.draw_circle(Point::new(0.0, 0.0), 6.5, paint);
+    let mut fill = paint.clone();
+    fill.set_style(PaintStyle::Fill);
+    fill.set_color(color);
+    let disc = Rect::from_ltrb(-6.5, -6.5, 6.5, 6.5);
+    canvas.draw_arc(disc, -90.0, 180.0, true, &fill);
 }
 
 /// A magnifying glass.

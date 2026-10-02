@@ -195,6 +195,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         }
 
         self.apply_desk_setting();
+        self.apply_desktop_widget_setting();
         crate::search_index::sync(None);
 
         if Config::with(|c| c.xdg_autostart) {
