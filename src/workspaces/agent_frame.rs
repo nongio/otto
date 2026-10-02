@@ -161,33 +161,38 @@ pub fn new_frame_layer(engine: &layers::engine::Engine, key: &str) -> Layer {
     layer
 }
 
-/// How far the agent mark on a selector preview reaches outside it: clear
-/// of the accent border, which is drawn inside the preview.
-pub const PREVIEW_MARK_OUTSET: f32 = 9.0;
+/// Logical width of the ring the agent mark draws on a selector preview.
+const PREVIEW_RING: f32 = 5.0;
 
-/// The agent mark on a workspace's selector preview: a dashed ring in the
-/// agent's colour just outside the preview, and a badge on the top-left
-/// corner holding the agent's cursor — the arrow the user sees it with.
+/// The agent mark on a workspace's selector preview: a solid ring in the
+/// agent's colour inside the preview, `inside` from its edge so it clears
+/// the accent border, and a badge on the top-left corner holding the agent's
+/// cursor — the arrow the user sees it with.
 pub fn draw_preview_mark(
     color: [u8; 3],
+    inside: f32,
 ) -> impl Fn(&skia::Canvas, f32, f32) -> skia::Rect + Send + Sync + 'static {
     move |canvas: &skia::Canvas, w: f32, h: f32| {
         let [r, g, b] = color.map(|c| c as f32 / 255.0);
         let tint = skia::Color4f::new(r, g, b, 1.0);
         let bounds = skia::Rect::from_xywh(0.0, 0.0, w, h);
 
+        // Stroked on its centre line, so inset by half the width too; the
+        // corners follow the preview's, shrunk by the same amount.
         let mut ring = skia::Paint::new(tint, None);
         ring.set_anti_alias(true);
         ring.set_style(skia::PaintStyle::Stroke);
-        ring.set_stroke_width(5.0);
-        ring.set_path_effect(skia::PathEffect::dash(&[14.0, 8.0], 0.0));
-        let inset = bounds.with_inset((2.5, 2.5));
-        let radius = otto_kit::corners::radius(20.0) + PREVIEW_MARK_OUTSET;
-        canvas.draw_rrect(skia::RRect::new_rect_xy(inset, radius, radius), &ring);
+        ring.set_stroke_width(PREVIEW_RING);
+        let inset = inside + PREVIEW_RING / 2.0;
+        let radius = (otto_kit::corners::radius(20.0) - inset).max(0.0);
+        canvas.draw_rrect(
+            skia::RRect::new_rect_xy(bounds.with_inset((inset, inset)), radius, radius),
+            &ring,
+        );
 
         // The badge: a white disc rimmed in the colour, with the arrow in it.
         let badge = 21.0;
-        let centre = (badge + 1.0, badge + 1.0);
+        let centre = (inside + badge + 1.0, inside + badge + 1.0);
         let mut disc = skia::Paint::new(skia::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
         disc.set_anti_alias(true);
         canvas.draw_circle(centre, badge, &disc);

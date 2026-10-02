@@ -1434,11 +1434,10 @@ fn render_workspace_selector_view(
                             .build()
                             .unwrap(),
                         ),
-                        // An agent's workspace: a dashed ring in its colour,
-                        // outside the accent border so the two never read as
+                        // An agent's workspace: a solid ring in its colour,
+                        // inside the accent border so the two never read as
                         // one, and its cursor as a badge on the corner.
                         w.agent.clone().map(|(color, _)| -> LayerTree {
-                            let outset = super::agent_frame::PREVIEW_MARK_OUTSET;
                             LayerTreeBuilder::with_key(format!(
                                 "workspace_selector_desktop_agent_{}",
                                 w.index
@@ -1447,15 +1446,15 @@ fn render_workspace_selector_view(
                                 position: taffy::Position::Absolute,
                                 ..Default::default()
                             })
-                            .position(Point::new(-outset, -outset))
+                            .position(Point::new(0.0, 0.0))
                             .size((
-                                layers::types::Size::points(
-                                    preview_width + outset * 2.0,
-                                    preview_height + outset * 2.0,
-                                ),
+                                layers::types::Size::points(preview_width, preview_height),
                                 None,
                             ))
-                            .content(Some(super::agent_frame::draw_preview_mark(color)))
+                            .content(Some(super::agent_frame::draw_preview_mark(
+                                color,
+                                border_width,
+                            )))
                             .pointer_events(false)
                             .build()
                             .unwrap()
