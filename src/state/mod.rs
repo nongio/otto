@@ -156,6 +156,13 @@ impl ClientState {
         self.agent_seat.as_deref()
     }
 
+    /// Whether `client` was an agent's and was handed to the user when the
+    /// agent left: it reaches no window and captures nothing through what
+    /// it bound while it was the agent's.
+    pub fn is_handed_over(client: &Client) -> bool {
+        Self::was_agent_client(client) && Self::agent_seat_of(client).is_none()
+    }
+
     /// Whether `client` was connected for an agent, whether or not it has
     /// been handed to the user since.
     pub fn was_agent_client(client: &Client) -> bool {
@@ -1047,7 +1054,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             });
         foreign_toplevel_list_state.set_toplevel_filter(|client, handle| {
             match ClientState::agent_seat_of(client) {
-                None => true,
+                None => !ClientState::is_handed_over(client),
                 Some(seat) => {
                     handle
                         .user_data()

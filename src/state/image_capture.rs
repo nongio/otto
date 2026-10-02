@@ -222,7 +222,15 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Otto<BackendDat
 
     fn new_session(&mut self, session: Session) {
         // An agent's connection captures its workspace, as the output, and
-        // its own windows; anything else is stopped at once.
+        // its own windows; anything else is stopped at once, and anything of
+        // a client handed to the user.
+        if session
+            .client()
+            .is_some_and(|client| ClientState::is_handed_over(&client))
+        {
+            session.stop();
+            return;
+        }
         let agent = session
             .client()
             .and_then(|client| ClientState::agent_seat_of(&client).map(str::to_string));
@@ -251,6 +259,13 @@ impl<BackendData: Backend + 'static> ImageCopyCaptureHandler for Otto<BackendDat
     fn frame(&mut self, session: &SessionRef, frame: Frame) {
         if self.is_session_locked() {
             frame.fail(CaptureFailureReason::Unknown);
+            return;
+        }
+        if session
+            .client()
+            .is_some_and(|client| ClientState::is_handed_over(&client))
+        {
+            frame.fail(CaptureFailureReason::Stopped);
             return;
         }
         let agent = session

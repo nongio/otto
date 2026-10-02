@@ -234,9 +234,14 @@ impl<BackendData: Backend> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Otto
             .wlr_foreign_toplevel_state
             .register_manager(manager.clone());
 
-        // An agent's connection is told of the windows within its scope.
-        let scope = crate::state::ClientState::agent_seat_of(client)
-            .map(|seat| state.agent_scope_window_ids(seat));
+        // An agent's connection is told of the windows within its scope, and
+        // one handed to the user of none.
+        let scope = if crate::state::ClientState::is_handed_over(client) {
+            Some(Default::default())
+        } else {
+            crate::state::ClientState::agent_seat_of(client)
+                .map(|seat| state.agent_scope_window_ids(seat))
+        };
 
         // Send all existing toplevels to this new manager
         for handles in state.foreign_toplevels.values() {
@@ -335,7 +340,11 @@ impl<BackendData: Backend>
 
         // An agent's connection: activating gives the agent's keyboard to a
         // window within its scope, closing closes one, and the rest is
-        // ignored — nothing an agent holds changes what the user sees.
+        // ignored — nothing an agent holds changes what the user sees. One
+        // handed to the user is ignored altogether.
+        if crate::state::ClientState::is_handed_over(client) {
+            return;
+        }
         if let Some(seat) = crate::state::ClientState::agent_seat_of(client) {
             let seat = seat.to_string();
             match request {

@@ -236,7 +236,7 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
             target_output.as_ref(),
             &|client: &smithay::reexports::wayland_server::Client| {
                 match crate::state::ClientState::agent_seat_of(client) {
-                    None => true,
+                    None => !crate::state::ClientState::is_handed_over(client),
                     Some(seat) => for_agent.as_deref() == Some(seat),
                 }
             },

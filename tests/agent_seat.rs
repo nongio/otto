@@ -1700,6 +1700,29 @@ mod agent_seat_tests {
         };
         assert_eq!(agents(&handle), None, "the window is still the agent's");
 
+        // What it bound as the agent reaches nothing now: its window list is
+        // not told of the user's windows, and closing the window it knows
+        // is ignored.
+        let mine_handle = driver
+            .state
+            .windows
+            .iter()
+            .find(|(_, title)| title == "Mine")
+            .map(|(handle, _)| handle.clone())
+            .expect("the agent was told of its window");
+        let mut user = TestClient::connect(&handle.socket_name).expect("client");
+        map_window(&handle, &mut user, "User");
+        driver.settle(&handle);
+        assert!(
+            !driver.state.windows.iter().any(|(_, title)| title == "User"),
+            "a handed-over client was told of the user's window"
+        );
+        mine_handle.close();
+        driver.settle(&handle);
+        let _ = mine.roundtrip();
+        assert_eq!(agents(&handle), None, "the window was closed through the old list");
+        drop(user);
+
         // The user's seat stays for them: nothing withdrew it.
         let user_seat = handle.query(|state| {
             state
