@@ -1,0 +1,324 @@
+# Moss Gets Otto
+Moss, a plump, fussy little toad in a mustard cardigan, drowns in forty overlapping windows until Otto turns his Linux desktop into something he can't stop playing with, and he ends up dancing to his own music on the island.
+
+[lint] clean
+[timing] 13 shots, about 37.6s at 3.2 words/s (real timing comes from the narration)
+
+[style prefix]
+    Photorealistic macro photograph of a handmade stop-motion claymation miniature. Everything is
+    sculpted from matte plasticine with visible fingerprints, thumb smudges and sculpting-tool
+    marks; fabrics are felt and chunky knitted wool with loose fibres. Characters have big glossy
+    white bead eyes with heavy sculpted clay eyelids. A miniature handmade set on a tabletop:
+    cardboard, balsa wood, felt and painted clay props at doll-house scale. Warm cinematic tungsten
+    light with a soft evening window glow, gentle rim light, rich warm shadows. Shallow depth of
+    field, creamy bokeh, tilt-shift miniature look, vertical 9:16 framing. Everything is clay, felt
+    or wool: no real human skin, no real hands, no real animals. No text, no letters, no numbers, no
+    logos, no writing anywhere, including on screens.
+
+[voice] 9 beats, 622 new characters at $0.3/1k chars
+  b01 $0.024: Moss slams his keyboard, and forty windows pile up on top of each other. Again.
+  b02 $0.022: So he installs Otto, a free, open-source desktop for Linux, built in Rust.
+  b03 $0.023: One lick of the little dot, and the mess funnels into the Dock like a genie.
+  b04 $0.021: Lost something? Three fingers up, and every single window spreads out.
+  b05 $0.022: Swipe sideways with three fingers, and a fresh workspace slides right in.
+  b06 $0.021: Still crowded? Tile them into neat little squares, nothing overlapping.
+  b07 $0.022: Then his favourite song comes on, and the island up top starts to dance.
+  b08 $0.017: So does Moss. Honestly, the work can wait a minute or two.
+  b09 $0.015: Otto. A Wayland desktop that's a pleasure to use.
+[voice] estimated new spend $0.19; already spent $0.00; budget $15.00
+
+[sheet] 3 takes, 3 not cached, $0.039/image
+  moss take 1 $0.039 via fal-ai/nano-banana
+    [STYLE PREFIX]
+
+    Character reference sheet for a stop-motion claymation puppet: Moss, a small plump olive-green
+    clay toad with warty bumpy skin, a pale cream belly, big glossy white bead eyes under heavy
+    droopy clay eyelids, a wide flat mouth, round brass wire glasses perched on his nose, and a
+    lumpy mustard-yellow knitted wool cardigan with three mismatched felt buttons. One single
+    character shown five times on a plain warm-grey seamless paper background, evenly lit: full body
+    front view, three-quarter view, side profile, back view showing the cardigan's knitted texture,
+    and a close-up of his face. Below them a row of four small head close-ups showing expressions:
+    grumpy with eyelids half shut, startled with eyes wide, delighted with a huge grin, eyes closed
+    and blissful. He is about the size of a tea cup, chubby and short-legged, with four-fingered
+    clay hands with round sticky fingertip pads. Consistent proportions, colours and costume in
+    every view. No props, no other creatures, no text, no labels, no captions.
+  moss take 2 $0.039 via fal-ai/nano-banana
+  moss take 3 $0.039 via fal-ai/nano-banana
+[sheet] estimated new spend $0.12; already spent $0.00; budget $15.00
+
+[keyframes] 26 takes, 26 not cached, $0.039/image
+  s01 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Extreme close-up from keyboard height: Moss, a small plump olive-green clay toad with warty
+    bumpy skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay eyelids, a
+    wide flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-yellow
+    knitted wool cardigan with three mismatched felt buttons, both chubby four-fingered clay hands
+    raised high above a knitted wool keyboard, a split second before slamming down, cheeks puffed,
+    eyelids lowered in a grumpy glare, glasses slipping down his nose. Behind him, out of focus, a
+    cream clay monitor crowded with dozens of overlapping pastel clay windows.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s01 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s02 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Over-the-shoulder shot from behind Moss, a small plump olive-green clay toad with warty bumpy
+    skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay eyelids, a wide
+    flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-yellow knitted
+    wool cardigan with three mismatched felt buttons sitting on a stack of matchboxes: the chunky
+    cream clay monitor in front of him is buried under dozens of overlapping rounded pastel clay
+    windows, stacked crooked like a pile of dropped pancakes, several more windows tilting halfway
+    off the edge of the screen. His head is tilted back in disbelief. a tiny cluttered balsa-wood
+    desk by a window at dusk, a chunky cream clay computer monitor, a knitted wool keyboard, a
+    square grey felt touchpad, a stack of matchboxes as a stool, a mug of clay tea and a little
+    brass desk lamp.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s02 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s03 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Medium close-up from beside the monitor: Moss, a small plump olive-green clay toad with warty
+    bumpy skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay eyelids, a
+    wide flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-yellow
+    knitted wool cardigan with three mismatched felt buttons leaning toward the screen with a
+    determined squint, one sticky clay fingertip pressing a big round clay key on the knitted
+    keyboard, his face and glasses lit warm peach by the screen. On the monitor, the monitor glows
+    with a backlit translucent clay desktop: a soft peach-and-teal clay wallpaper, a slim pale top
+    bar along the top edge, rounded pastel clay windows with two tiny coloured dots at the left end
+    of their title strips, and a frosted translucent clay dock floating along the bottom edge
+    holding a row of round glossy clay app icons; every window and icon is blank, with no text; it
+    is calm and tidy, with just three windows open. a tiny cluttered balsa-wood desk by a window at
+    dusk, a chunky cream clay computer monitor, a knitted wool keyboard, a square grey felt
+    touchpad, a stack of matchboxes as a stool, a mug of clay tea and a little brass desk lamp.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s03 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s04 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Side close-up: Moss, a small plump olive-green clay toad with warty bumpy skin, a pale cream
+    belly, big glossy white bead eyes under heavy droopy clay eyelids, a wide flat mouth, round
+    brass wire glasses perched on his nose, and a lumpy mustard-yellow knitted wool cardigan with
+    three mismatched felt buttons with his long pink sticky clay tongue already stretched out in a
+    straight line from his mouth to the monitor, the tongue tip touching a tiny round yellow dot on
+    a pastel clay window's title strip. His eyes are crossed with concentration. Monitor glow lights
+    his face.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s04 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s05 take 1 $0.039 via fal-ai/nano-banana
+    [STYLE PREFIX]
+
+    Close-up of the glowing clay monitor screen: the monitor glows with a backlit translucent clay
+    desktop: a soft peach-and-teal clay wallpaper, a slim pale top bar along the top edge, rounded
+    pastel clay windows with two tiny coloured dots at the left end of their title strips, and a
+    frosted translucent clay dock floating along the bottom edge holding a row of round glossy clay
+    app icons; every window and icon is blank, with no text. One pastel clay window is caught mid-
+    genie-animation, its bottom half squeezed and stretched into a curving funnel of soft clay that
+    pours down into a small slot at the right end of the frosted dock, like toothpaste being sucked
+    back into a tube. No living thing.
+  s05 take 2 $0.039 via fal-ai/nano-banana
+  s06 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Top-down close-up of a square grey felt touchpad: three of Moss, a small plump olive-green clay
+    toad with warty bumpy skin, a pale cream belly, big glossy white bead eyes under heavy droopy
+    clay eyelids, a wide flat mouth, round brass wire glasses perched on his nose, and a lumpy
+    mustard-yellow knitted wool cardigan with three mismatched felt buttons's chubby green clay
+    fingers with round sticky fingertip pads rest flat on it at the bottom edge, ready to swipe
+    upward. The edge of his mustard knitted cardigan sleeve is visible. Warm light.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s06 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s07 take 1 $0.039 via fal-ai/nano-banana
+    [STYLE PREFIX]
+
+    Close-up of the glowing clay monitor screen: the monitor glows with a backlit translucent clay
+    desktop: a soft peach-and-teal clay wallpaper, a slim pale top bar along the top edge, rounded
+    pastel clay windows with two tiny coloured dots at the left end of their title strips, and a
+    frosted translucent clay dock floating along the bottom edge holding a row of round glossy clay
+    app icons; every window and icon is blank, with no text. Every window has shrunk and spread out
+    into a neat, airy grid of small pastel clay cards with gaps between them, none overlapping, over
+    the peach-and-teal clay wallpaper; above them, along the top, a strip of four tiny clay
+    thumbnails of other desktops. No living thing.
+  s07 take 2 $0.039 via fal-ai/nano-banana
+  s08 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Medium shot of Moss, a small plump olive-green clay toad with warty bumpy skin, a pale cream
+    belly, big glossy white bead eyes under heavy droopy clay eyelids, a wide flat mouth, round
+    brass wire glasses perched on his nose, and a lumpy mustard-yellow knitted wool cardigan with
+    three mismatched felt buttons at the desk, three fingers on the felt touchpad, eyebrows raised
+    in delight. On the monitor, the desktop is caught mid-slide: the left half shows the peach-and-
+    teal clay wallpaper with windows, the right half a second clean desktop with a mint-green clay
+    wallpaper sliding in from the right, a clear seam between them. a tiny cluttered balsa-wood desk
+    by a window at dusk, a chunky cream clay computer monitor, a knitted wool keyboard, a square
+    grey felt touchpad, a stack of matchboxes as a stool, a mug of clay tea and a little brass desk
+    lamp.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s08 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s09 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Over-the-shoulder shot from behind Moss, a small plump olive-green clay toad with warty bumpy
+    skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay eyelids, a wide
+    flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-yellow knitted
+    wool cardigan with three mismatched felt buttons, who is pushing his round brass glasses up his
+    nose with one finger: on the glowing clay monitor, the monitor glows with a backlit translucent
+    clay desktop: a soft peach-and-teal clay wallpaper, a slim pale top bar along the top edge,
+    rounded pastel clay windows with two tiny coloured dots at the left end of their title strips,
+    and a frosted translucent clay dock floating along the bottom edge holding a row of round glossy
+    clay app icons; every window and icon is blank, with no text. Four pastel clay windows are tiled
+    edge to edge, filling the screen in a tidy grid of one tall window on the left and three stacked
+    on the right, thin even gaps between them, nothing overlapping, like a neat box of clay
+    chocolates.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s09 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s10 take 1 $0.039 via fal-ai/nano-banana
+    [STYLE PREFIX]
+
+    Extreme close-up of the top centre of the glowing clay monitor screen: a glossy black clay pill
+    shape hangs from the slim pale top bar, holding a tiny square clay album cover with a sunny
+    orange swirl on the left and a row of six little rounded clay bars of different heights on the
+    right, like a tiny equaliser. The peach-and-teal clay wallpaper below is softly out of focus. No
+    living thing.
+  s10 take 2 $0.039 via fal-ai/nano-banana
+  s11 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Medium close-up of Moss, a small plump olive-green clay toad with warty bumpy skin, a pale cream
+    belly, big glossy white bead eyes under heavy droopy clay eyelids, a wide flat mouth, round
+    brass wire glasses perched on his nose, and a lumpy mustard-yellow knitted wool cardigan with
+    three mismatched felt buttons on his matchbox stool, eyes closed blissfully, head tilted mid-
+    bop, mouth in a small happy 'o', one finger raised in the air like he is conducting. Behind him
+    the monitor glows with a black pill shape at the top centre. a tiny cluttered balsa-wood desk by
+    a window at dusk, a chunky cream clay computer monitor, a knitted wool keyboard, a square grey
+    felt touchpad, a stack of matchboxes as a stool, a mug of clay tea and a little brass desk lamp.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s11 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s12 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Wide shot of the whole tiny desk set at dusk: Moss, a small plump olive-green clay toad with
+    warty bumpy skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay
+    eyelids, a wide flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-
+    yellow knitted wool cardigan with three mismatched felt buttons standing on top of the matchbox
+    stool mid-dance, one leg kicked out and both arms up, cardigan flying open, glasses askew, a
+    little clay fly hovering near his head. The monitor glows behind him with the tidy desktop, the
+    frosted dock along the bottom and a black pill at the top. a tiny cluttered balsa-wood desk by a
+    window at dusk, a chunky cream clay computer monitor, a knitted wool keyboard, a square grey
+    felt touchpad, a stack of matchboxes as a stool, a mug of clay tea and a little brass desk lamp.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s12 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+  s13 take 1 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+    [STYLE PREFIX]
+
+    Calm closing shot, slightly low angle: Moss, a small plump olive-green clay toad with warty
+    bumpy skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay eyelids, a
+    wide flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-yellow
+    knitted wool cardigan with three mismatched felt buttons sits contentedly on his matchbox stool
+    in the lower third of the frame, sipping from his tiny clay tea mug with a satisfied grin, the
+    monitor beside him glowing softly with the tidy desktop and frosted dock. The upper half of the
+    frame is a clean, softly lit plain warm-cream felt wall, empty, with plenty of space. a tiny
+    cluttered balsa-wood desk by a window at dusk, a chunky cream clay computer monitor, a knitted
+    wool keyboard, a square grey felt touchpad, a stack of matchboxes as a stool, a mug of clay tea
+    and a little brass desk lamp.
+
+    Match the attached character reference sheet exactly: same face, colours, glasses, cardigan,
+    buttons and proportions. Show each character only once in the scene. Do not copy the sheet's
+    layout, background or multiple poses.
+  s13 take 2 $0.039 via fal-ai/nano-banana/edit + sheets: moss (needs approved sheet)
+[keyframes] estimated new spend $1.01; already spent $0.00; budget $15.00
+
+[motion] 13 clips, 13 not cached, 5s each at $0.112/s
+  s01 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. He slams
+    both hands down on the keyboard, the keyboard bounces and wool fibres puff up, his glasses jolt;
+    camera holds still. Keep every character's face, proportions and costume exactly as in the
+    image.
+  s02 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. More clay
+    windows pop open and stack crookedly on the pile, one tumbles toward the screen edge; Moss
+    slowly sinks his head into his hands. Keep every character's face, proportions and costume
+    exactly as in the image.
+  s03 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. He presses
+    the key firmly, the dock icons on the screen settle into place with a soft bounce, his eyes
+    widen and a slow grin spreads across his face. Keep every character's face, proportions and
+    costume exactly as in the image.
+  s04 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. His tongue
+    taps the tiny dot and snaps back into his mouth, he gulps with satisfaction. Keep every
+    character's face, proportions and costume exactly as in the image.
+  s05 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. The window
+    keeps stretching and funnelling smoothly down into the dock until it disappears, the dock gives
+    a tiny wobble. Keep every character's face, proportions and costume exactly as in the image.
+  s06 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. The three
+    clay fingers slide smoothly upward across the felt touchpad, leaving faint fingerprint smudges.
+    Keep every character's face, proportions and costume exactly as in the image.
+  s07 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. The small
+    window cards drift gently into their grid spots and settle, one card glows with a soft
+    highlight. Keep every character's face, proportions and costume exactly as in the image.
+  s08 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. The mint-
+    green desktop slides all the way across the screen and settles; Moss leans with the motion and
+    grins wide. Keep every character's face, proportions and costume exactly as in the image.
+  s09 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. The tiles
+    nudge into place with a satisfying little squash and settle perfectly flush; Moss gives one
+    slow, approving nod. Keep every character's face, proportions and costume exactly as in the
+    image.
+  s10 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. The little
+    clay bars bounce up and down to a beat, the black pill gently swells wider and back. Keep every
+    character's face, proportions and costume exactly as in the image.
+  s11 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. He bops his
+    head side to side to the beat, his cardigan sways, his raised finger wags in rhythm. Keep every
+    character's face, proportions and costume exactly as in the image.
+  s12 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. He wiggles
+    and stomps happily on the matchboxes, then flicks his tongue out and snaps up the little clay
+    fly mid-dance without missing a beat. Keep every character's face, proportions and costume
+    exactly as in the image.
+  s13 take 1 $0.56 from (needs approved keyframe)
+    Stop-motion claymation, handmade plasticine miniature, subtle frame-to-frame jitter. He takes a
+    slow sip of tea and lets out a content little sigh, the lamp glow flickers softly; camera holds
+    still. Keep every character's face, proportions and costume exactly as in the image.
+[motion] estimated new spend $7.28; already spent $0.00; budget $15.00
+
+[estimate] first pass, nothing cached:
+  voice (ElevenLabs)         $  0.19   622 chars x $0.3/1k
+  transcribe (Whisper)       $  0.00   local Whisper free; fal-ai/whisper fallback about $0.01/beat
+  character sheet            $  0.12   1 x 3 takes x $0.039
+  keyframes (Nano Banana)    $  1.01   13 shots x 2 takes x $0.039
+  motion (Kling 3 Pro)       $  7.28   13 clips x 5s x $0.112/s
+  music, edit, QA            $  0.00   local (synth + ffmpeg)
+  TOTAL                      $  8.60   budget $15.00, leaves $6.40 for retakes (the article lost 20% to rejected takes)
