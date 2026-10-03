@@ -5,7 +5,7 @@ pkgver=1.5.0.r4.g2442bcca
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 url="https://github.com/nongio/otto"
-license=("MIT")
+license=("MIT" "GPL-3.0-only")
 arch=("x86_64")
 provides=("otto")
 conflicts=("otto" "otto-bin")
@@ -69,6 +69,8 @@ build() {
     cargo build --release -p otto-msg
     cargo build --release -p otto-search
     cargo build --release -p otto-agents
+    # The WhiteSur icon theme package() installs as the default.
+    scripts/packaging/fetch-whitesur.sh
 }
 
 package() {
@@ -134,6 +136,14 @@ package() {
             "$pkgdir/usr/share/icons/hicolor/${_px}x${_px}/apps/otto-files.png"
     done
     install -Dm644 components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/otto-files.svg"
+
+    # WhiteSur, the default icon theme (GPL-3.0). Its symlinks come as a list
+    # (see scripts/packaging/fetch-whitesur.sh); extracting it here makes
+    # pacman own them like any other file.
+    install -d "$pkgdir/usr/share/icons"
+    cp -r --no-preserve=ownership target/whitesur/WhiteSur target/whitesur/WhiteSur-light target/whitesur/WhiteSur-dark "$pkgdir/usr/share/icons/"
+    tar -xzf target/whitesur/links.tar.gz -C "$pkgdir/usr/share/icons" --no-same-owner
+    install -Dm644 target/whitesur/COPYING "$pkgdir/usr/share/licenses/$pkgname/WhiteSur-COPYING"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"

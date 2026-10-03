@@ -145,14 +145,20 @@ cursor-shape protocol get themed cursors without shipping their own bitmaps.
 ## Icon theme
 
 ```toml
-icon_theme = "Adwaita"
+icon_theme = "WhiteSur"
 ```
 
 Used for application icons in the dock, the app switcher and notification
 islands. Commented out or absent, Otto auto-detects a reasonable theme from
 what is installed.
 
-Popular choices: `Adwaita`, `Papirus`, `WhiteSur`, `Fluent`. Otto's own
+Otto's packages ship the
+[WhiteSur icon theme](https://github.com/vinceliuice/WhiteSur-icon-theme)
+(`WhiteSur`, `WhiteSur-light` and `WhiteSur-dark`) and the default
+configuration uses it, so a first install has a complete set of icons.
+Any other theme under `/usr/share/icons` works the same way.
+
+Popular choices: `WhiteSur`, `Adwaita`, `Papirus`, `Fluent`. Otto's own
 screenshots use the
 [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme).
 

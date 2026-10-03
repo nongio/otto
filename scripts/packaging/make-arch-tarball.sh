@@ -106,6 +106,13 @@ while IFS= read -r f; do
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/widgets -type f)
 
+# The WhiteSur icon theme, the default: the PKGBUILDs copy the themes and
+# extract their symlinks from links.tar.gz into the package.
+scripts/packaging/fetch-whitesur.sh
+mkdir -p "$tmpdir/$PKGDIR/whitesur"
+cp -a target/whitesur/WhiteSur target/whitesur/WhiteSur-light target/whitesur/WhiteSur-dark \
+      target/whitesur/links.tar.gz target/whitesur/COPYING "$tmpdir/$PKGDIR/whitesur/"
+
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 
 # Which build this is, as the nightly package's pkgver. PKGBUILD-nightly-bin
