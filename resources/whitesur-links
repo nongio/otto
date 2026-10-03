@@ -1,0 +1,31 @@
+#!/bin/sh
+# Create or remove the WhiteSur icon theme's symlinks.
+#
+#   whitesur-links install    after the package's files are in place
+#   whitesur-links remove     before they are erased (not on upgrade)
+#
+# The deb and rpm carry the theme's regular files and this list of its
+# symlinks separately, since neither package tool can package the links
+# themselves (see scripts/packaging/fetch-whitesur.sh). Arch packages own the
+# links directly and do not ship this.
+set -e
+
+LINKS=/usr/share/otto/whitesur-links.tar.gz
+ICONS=/usr/share/icons
+
+case "$1" in
+    install)
+        tar -xzf "$LINKS" -C "$ICONS" --unlink-first --no-same-owner
+        ;;
+    remove)
+        [ -f "$LINKS" ] || exit 0
+        tar -tzf "$LINKS" | (cd "$ICONS" && xargs -d '\n' rm -f)
+        # Directories that held only links, which the package does not own.
+        find "$ICONS/WhiteSur" "$ICONS/WhiteSur-light" "$ICONS/WhiteSur-dark" \
+            -depth -type d -empty -delete 2>/dev/null || true
+        ;;
+    *)
+        echo "usage: $0 install|remove" >&2
+        exit 2
+        ;;
+esac

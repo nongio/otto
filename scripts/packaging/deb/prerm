@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+# Remove the WhiteSur links while their list is still installed, so dpkg
+# finds the theme directories empty. An upgrade keeps them.
+if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
+    /usr/lib/otto/whitesur-links remove
+fi

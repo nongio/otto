@@ -23,6 +23,7 @@ the same licence applies to the screenshot that shows it.
 | Name | Author | Licence |
 |------|--------|---------|
 | [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme) | vinceliuice | GPL-3.0 |
+| [WhiteSur icon theme](https://github.com/vinceliuice/WhiteSur-icon-theme) (ships with Otto) | vinceliuice | GPL-3.0 |
 | [WhiteSur cursors](https://github.com/vinceliuice/WhiteSur-cursors) | vinceliuice | GPL-3.0 |
 | [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) | Papirus Development Team | GPL-3.0 |
 | [Adwaita](https://gitlab.gnome.org/GNOME/adwaita-icon-theme) | The GNOME Project | CC BY-SA 3.0 / LGPL-3.0 |
