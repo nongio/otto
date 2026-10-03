@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
-gtk4 = { version = "0.7.3", package = "gtk4", features = ["v4_4"] }
+gtk4 = { version = "0.11", package = "gtk4", features = ["v4_4"] }
 
 [lints]
 workspace = true
