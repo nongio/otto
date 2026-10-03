@@ -34,7 +34,7 @@ You can try it inside your current session in about a minute — [jump to Try it
 
 ## Try it
 
-Install the package for your distribution:
+One package installs the whole desktop: the compositor and every app that comes with it.
 
 ```sh
 # Debian / Ubuntu
@@ -48,17 +48,21 @@ sudo dnf install https://github.com/nongio/otto/releases/latest/download/otto-x8
 curl -fsSLO https://raw.githubusercontent.com/nongio/otto/main/PKGBUILD && makepkg -si
 ```
 
-**Zero risk:** Otto runs as a window inside the desktop you are using right now.
+Then log out and pick **Otto** in your login manager's session menu.
+
+**What's in the package:** the top bar and dynamic island, the Dock, [Files](https://nongio.github.io/otto/files/) with its Peek panel, [Settings](https://nongio.github.io/otto/settings/), the [launcher](https://nongio.github.io/otto/launcher/), the [emoji picker](https://nongio.github.io/otto/emoji/), the [lock screen](https://nongio.github.io/otto/lock-screen/) and [login greeter](https://nongio.github.io/otto/login-greeter/), a [remote desktop](https://nongio.github.io/otto/remote-desktop/) server, and Otto's desktop portal. It comes configured with the [Inter](https://rsms.me/inter/) font.
+
+On Debian, Ubuntu and Fedora the package manager also installs the recommended extras: the GStreamer plugins for video in Peek and remote desktop, and polkit. On Arch they are optional dependencies; to get the full set:
 
 ```sh
-otto --winit
+sudo pacman -S --asdeps xdg-desktop-portal localsearch gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav gst-plugin-pipewire
 ```
 
-Then open something inside it (`WAYLAND_DISPLAY=wayland-1 <your app>`), minimize a window to the Dock, hit `PageUp` for Exposé, `Ctrl+Tab` for the app switcher.
+Add `vulkan-intel` or `vulkan-radeon` for the Vulkan renderer on your GPU.
 
-**For real:** log out and pick "Otto" in your login manager.
+Want a look before logging out? `otto --winit` runs Otto in a window inside your current session; open apps in it with the `WAYLAND_DISPLAY` socket it prints at startup.
 
-See [Installation](#installation) for nightly builds and post-install notes, [Building Otto](#building-otto) if you would rather compile it yourself, and the [Getting Started guide](https://nongio.github.io/otto/getting-started/) for a walkthrough.
+See [Installation](#installation) for nightly builds and post-install notes, and the [Getting Started guide](https://nongio.github.io/otto/getting-started/) for a walkthrough.
 
 ## What you get
 
