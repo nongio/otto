@@ -24,43 +24,26 @@ const DBUS_NAME: &str = "org.freedesktop.impl.portal.desktop.otto";
 async fn main() -> Result<()> {
     init_tracing();
 
-    let connection = ConnectionBuilder::session()?.build().await?;
-
-    let sc_client = OttoClient::new(connection.clone()).await?;
+    // Otto's own services are reached on a connection of their own, so the
+    // one below can be built with every interface already served.
+    let sc_client = OttoClient::new(ConnectionBuilder::session()?.build().await?).await?;
     info!("Connected to D-Bus session bus");
 
-    let screencast_portal = ScreenCastPortal::new(sc_client.clone());
-    connection
-        .object_server()
-        .at(desktop_path(), screencast_portal)
-        .await?;
-
-    let settings_portal = SettingsPortal::new(sc_client.clone());
-    connection
-        .object_server()
-        .at(desktop_path(), settings_portal)
+    // The frontend starts this backend for a request and hands it over the
+    // moment the name is claimed. The builder returns only once its object
+    // server is reading; interfaces added afterwards (`object_server().at`)
+    // may not be listening yet, and the call is then dropped unanswered.
+    let connection = ConnectionBuilder::session()?
+        .serve_at(desktop_path(), ScreenCastPortal::new(sc_client.clone()))?
+        .serve_at(desktop_path(), SettingsPortal::new(sc_client.clone()))?
+        .serve_at(desktop_path(), AccessPortal::new(sc_client.clone()))?
+        .serve_at(desktop_path(), FileChooserPortal::new(sc_client.clone()))?
+        .serve_at(desktop_path(), ScreenshotPortal::new(sc_client.clone()))?
+        .build()
         .await?;
 
     // Settings changes are pushed to applications rather than polled.
-    spawn_change_relay(connection.clone(), sc_client.clone()).await?;
-
-    let access_portal = AccessPortal::new(sc_client.clone());
-    connection
-        .object_server()
-        .at(desktop_path(), access_portal)
-        .await?;
-
-    let file_chooser_portal = FileChooserPortal::new(sc_client.clone());
-    connection
-        .object_server()
-        .at(desktop_path(), file_chooser_portal)
-        .await?;
-
-    let screenshot_portal = ScreenshotPortal::new(sc_client);
-    connection
-        .object_server()
-        .at(desktop_path(), screenshot_portal)
-        .await?;
+    spawn_change_relay(connection.clone(), sc_client).await?;
 
     // Claim the name only once every interface is exported, and claim it even
     // when someone already holds it. The session bus outlives the graphical

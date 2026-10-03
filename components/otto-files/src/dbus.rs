@@ -195,19 +195,23 @@ impl FilePickerService {
 /// backend records: the session bus outlives the graphical session, so a
 /// picker left over from an earlier login would otherwise hold the name
 /// forever and every later instance would die on startup.
+///
+/// The interface is served through the builder, which returns only once the
+/// object server is reading: the bus starts the picker for a `Present` and
+/// hands that call over the moment the name is claimed, and an interface
+/// added afterwards (`object_server().at`) may not be listening yet, which
+/// drops the call unanswered and leaves the requesting app waiting forever.
 pub async fn serve(queue: SharedQueue) -> zbus::Result<()> {
-    use zbus::fdo::{DBusProxy, RequestNameFlags, RequestNameReply};
+    use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
-    let connection = zbus::ConnectionBuilder::session()?.build().await?;
-    connection
-        .object_server()
-        .at(DBUS_PATH, FilePickerService::new(queue))
+    let connection = zbus::ConnectionBuilder::session()?
+        .serve_at(DBUS_PATH, FilePickerService::new(queue))?
+        .build()
         .await?;
 
-    let dbus = DBusProxy::new(&connection).await?;
-    let reply = dbus
-        .request_name(
-            DBUS_NAME.try_into()?,
+    let reply = connection
+        .request_name_with_flags(
+            DBUS_NAME,
             RequestNameFlags::AllowReplacement
                 | RequestNameFlags::ReplaceExisting
                 | RequestNameFlags::DoNotQueue,
