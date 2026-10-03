@@ -10,7 +10,7 @@ _tag=v1.5.0
 pkgrel=1
 pkgdesc="A visually-focused desktop system designed around smooth animations, thoughtful gestures and careful attention to detail."
 url="https://github.com/nongio/otto"
-license=("MIT")
+license=("MIT" "GPL-3.0-only")
 arch=("x86_64")
 provides=("otto")
 conflicts=("otto")
@@ -91,6 +91,14 @@ package() {
             "$pkgdir/usr/share/icons/hicolor/${_px}x${_px}/apps/otto-files.png"
     done
     install -Dm644 components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/otto-files.svg"
+
+    # WhiteSur, the default icon theme (GPL-3.0). Its symlinks come as a list
+    # (see scripts/packaging/fetch-whitesur.sh); extracting it here makes
+    # pacman own them like any other file.
+    install -d "$pkgdir/usr/share/icons"
+    cp -r --no-preserve=ownership whitesur/WhiteSur whitesur/WhiteSur-light whitesur/WhiteSur-dark "$pkgdir/usr/share/icons/"
+    tar -xzf whitesur/links.tar.gz -C "$pkgdir/usr/share/icons" --no-same-owner
+    install -Dm644 whitesur/COPYING "$pkgdir/usr/share/licenses/$pkgname/WhiteSur-COPYING"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     # The v1.0.0-rc1 tarball shipped without this unit, and the D-Bus service
