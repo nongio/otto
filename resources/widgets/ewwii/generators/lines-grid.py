@@ -45,8 +45,8 @@ NOTE_COLS = 3  # full columns the note spans, ending at the frame
 DATE_ROWS = 2  # rows the date spans, from the top
 # Half the height of the date's 11px line, which turns about its centre.
 DATE_HALF_LINE = 7
-# The note's five 13px lines, about 16px apart, centred in the height of a row.
-NOTE_DROP = (CELL - 5 * 16) // 2
+# The note's four 13px lines, about 16px apart, centred in the height of a row.
+NOTE_DROP = (CELL - 4 * 16) // 2
 
 INK = (244, 239, 232)
 MAJOR_ALPHA = 0.4

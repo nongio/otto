@@ -46,11 +46,11 @@ takes.
   listed with today in bold, and a header with the number of days and
   weekends, the first and last weekday, the ISO week and the year.
 - **Cross pad** — a grid of small crosses filling the usable area, the title
-  "Stay Focused." in the middle, the date reading up the left edge and a short
+  "This, then that." in the middle, the date reading up the left edge and a short
   note in the bottom-right corner.
 - **Grid pad** — a drafting grid with rulers and a diagonal, its rows filling
   the usable area's height and its side columns the rest of the width, the
-  title "Don't be busy." in the middle row, the date up the left side column
+  title "Calm work goes far." in the middle row, the date up the left side column
   and a note in the end of the bottom row.
 - The pages' text is English; the month and weekday names follow the
   session's locale.
