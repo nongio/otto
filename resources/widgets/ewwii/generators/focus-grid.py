@@ -26,10 +26,10 @@ NOTE_RIGHT = X0 + (COLS - 1) * CELL
 NOTE_BOTTOM = Y0 + (ROWS - 1) * CELL
 # Crossless areas behind the text, as (left, top, right, bottom).
 CLEAR = [
-    # "Stay Focused.", centred
-    (WIDTH / 2 - 150, HEIGHT / 2 - 36, WIDTH / 2 + 150, HEIGHT / 2 + 36),
+    # the title, centred
+    (WIDTH / 2 - 190, HEIGHT / 2 - 36, WIDTH / 2 + 190, HEIGHT / 2 + 36),
     # the note
-    (NOTE_RIGHT - 330, NOTE_BOTTOM - 105, NOTE_RIGHT, NOTE_BOTTOM),
+    (NOTE_RIGHT - 330, NOTE_BOTTOM - 88, NOTE_RIGHT, NOTE_BOTTOM),
     # the date, reading up the left edge from 170px down (see .focus-date)
     (0, 160, 36, 480),
 ]

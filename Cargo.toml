@@ -236,6 +236,9 @@ priority = "optional"
 # Recommended, not required: the desktop works without them, but the RDP
 # bridge and Peek's video playback do not.
 recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, polkitd"
+# The background widgets' scripts and their titles' typeface. ewwii, which
+# draws them, is not packaged for Debian.
+suggests = "python3, fonts-libertinus"
 assets = [
     ["target/release/otto", "usr/bin/", "755"],
     ["target/release/otto-bar", "usr/bin/", "755"],
@@ -382,6 +385,11 @@ gstreamer1-plugins-bad-free = "*"
 gstreamer1-libav = "*"
 pipewire-gstreamer = "*"
 polkit = "*"
+
+# The background widgets' scripts. ewwii, which draws them, is not packaged
+# for Fedora.
+[package.metadata.generate-rpm.suggests]
+python3 = "*"
 
 [package.metadata.generate-rpm.requires]
 libdrm = "*"

@@ -89,6 +89,33 @@ else
     echo "  (not packaged for $flavour, skipped)"
 fi
 
+echo "== background widgets =="
+# The ewwii configuration Otto copies to the cache and runs. ewwii and Python
+# are optional, so the files have to be there whatever is installed, and the
+# scripts have to stay executable.
+w=/usr/share/otto/widgets/ewwii
+check "$w/ewwii.nbcl"
+check "$w/ewwii.scss"
+check "$w/scripts/month.py" exec
+check "$w/generators/focus-grid.py" exec
+check "$w/generators/lines-grid.py" exec
+# What Otto does with them at a first login: a copy in a fresh cache, every
+# generator run there with the usable size. Only where Python is installed.
+if command -v python3 >/dev/null; then
+    tmp=$(mktemp -d)
+    cp -r "$w/." "$tmp/"
+    if (cd "$tmp" && for g in generators/*; do "$g" 1440 930 >/dev/null || exit 1; done \
+            && scripts/month.py month >/dev/null) \
+       && [[ -f "$tmp/focus/grid@2x.png" && -f "$tmp/lines/grid@2x.png" ]]; then
+        echo "  ok  the widgets' generators and scripts run"
+    else
+        echo "FAILED: the widgets' generators or scripts"; fail=1
+    fi
+    rm -rf "$tmp"
+else
+    echo "  (no python3, scripts not run)"
+fi
+
 echo "== documentation =="
 check /usr/share/doc/otto/README.md
 check /usr/share/doc/otto/portals.conf.example

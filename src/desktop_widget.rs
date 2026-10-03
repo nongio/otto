@@ -840,7 +840,7 @@ mod tests {
         assert!(stylesheet.starts_with(&format!("$theme-dir: \"{}\";", file_url(&dest))));
         for line in [
             "$lines-note-left: 742px;",
-            "$lines-note-top: 792px;",
+            "$lines-note-top: 800px;",
             "$lines-date-shift-x: -39px;",
             "$focus-note-right: 62px;",
             "$focus-note-bottom: 60px;",
