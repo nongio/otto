@@ -1,0 +1,219 @@
+{
+  "title": "Moss Gets Otto",
+  "logline": "Moss, a plump, fussy little toad in a mustard cardigan, drowns in forty overlapping windows until Otto turns his Linux desktop into something he can't stop playing with, and he ends up dancing to his own music on the island.",
+  "format": {
+    "aspect_ratio": "9:16",
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "clip_seconds": 5,
+    "target_seconds": [30, 45]
+  },
+  "style_prefix": "Photorealistic macro photograph of a handmade stop-motion claymation miniature. Everything is sculpted from matte plasticine with visible fingerprints, thumb smudges and sculpting-tool marks; fabrics are felt and chunky knitted wool with loose fibres. Characters have big glossy white bead eyes with heavy sculpted clay eyelids. A miniature handmade set on a tabletop: cardboard, balsa wood, felt and painted clay props at doll-house scale. Warm cinematic tungsten light with a soft evening window glow, gentle rim light, rich warm shadows. Shallow depth of field, creamy bokeh, tilt-shift miniature look, vertical 9:16 framing. Everything is clay, felt or wool: no real human skin, no real hands, no real animals. No text, no letters, no numbers, no logos, no writing anywhere, including on screens.",
+  "vocab": {
+    "MOSS": "Moss, a small plump olive-green clay toad with warty bumpy skin, a pale cream belly, big glossy white bead eyes under heavy droopy clay eyelids, a wide flat mouth, round brass wire glasses perched on his nose, and a lumpy mustard-yellow knitted wool cardigan with three mismatched felt buttons",
+    "DESK": "a tiny cluttered balsa-wood desk by a window at dusk, a chunky cream clay computer monitor, a knitted wool keyboard, a square grey felt touchpad, a stack of matchboxes as a stool, a mug of clay tea and a little brass desk lamp",
+    "OTTO_SCREEN": "the monitor glows with a backlit translucent clay desktop: a soft peach-and-teal clay wallpaper, a slim pale top bar along the top edge, rounded pastel clay windows with three tiny coloured dots on their title strips, and a frosted translucent clay dock floating along the bottom edge holding a row of round glossy clay app icons; every window and icon is blank, with no text"
+  },
+  "negative_prompt": "text, letters, numbers, logos, watermark, subtitles, real human hands, real human skin, extra limbs, extra eyes, morphing face, melting, flicker, blur, distortion, low quality",
+  "characters": {
+    "moss": {
+      "name": "Moss",
+      "sheet_prompt": "Character reference sheet for a stop-motion claymation puppet: {MOSS}. One single character shown five times on a plain warm-grey seamless paper background, evenly lit: full body front view, three-quarter view, side profile, back view showing the cardigan's knitted texture, and a close-up of his face. Below them a row of four small head close-ups showing expressions: grumpy with eyelids half shut, startled with eyes wide, delighted with a huge grin, eyes closed and blissful. He is about the size of a tea cup, chubby and short-legged, with four-fingered clay hands with round sticky fingertip pads. Consistent proportions, colours and costume in every view. No props, no other creatures, no text, no labels, no captions."
+    }
+  },
+  "beats": [
+    {
+      "id": "b01",
+      "vo": "Moss slams his keyboard, and forty windows pile up on top of each other.",
+      "captions": ["Moss slams", "his keyboard", "forty windows", "pile up"],
+      "shots": [
+        {
+          "id": "s01",
+          "refs": ["moss"],
+          "duration": 2.0,
+          "prompt": "Extreme close-up from keyboard height: {MOSS}, both chubby four-fingered clay hands raised high above a knitted wool keyboard, a split second before slamming down, cheeks puffed, eyelids lowered in a grumpy glare, glasses slipping down his nose. Behind him, out of focus, a cream clay monitor crowded with dozens of overlapping pastel clay windows.",
+          "motion": "he slams both hands down on the keyboard, the keyboard bounces and wool fibres puff up, his glasses jolt; camera holds still"
+        },
+        {
+          "id": "s02",
+          "refs": ["moss"],
+          "duration": 2.4,
+          "prompt": "Over-the-shoulder shot from behind {MOSS} sitting on a stack of matchboxes: the chunky cream clay monitor in front of him is buried under dozens of overlapping rounded pastel clay windows, stacked crooked like a pile of dropped pancakes, several more windows tilting halfway off the edge of the screen. His head is tilted back in disbelief. {DESK}.",
+          "motion": "more clay windows pop open and stack crookedly on the pile, one tumbles toward the screen edge; Moss slowly sinks his head into his hands"
+        }
+      ]
+    },
+    {
+      "id": "b02",
+      "vo": "So he installs Otto, a free, open-source desktop for Linux.",
+      "captions": ["So he installs", "Otto", "free and open source"],
+      "shots": [
+        {
+          "id": "s03",
+          "refs": ["moss"],
+          "duration": 2.0,
+          "prompt": "Medium close-up: {MOSS} leaning toward the screen with a determined squint, one sticky clay fingertip pressing a big round clay key on the knitted keyboard. The monitor is just starting to glow soft peach from the centre, the clutter already gone. {DESK}.",
+          "motion": "he presses the key firmly, the screen glow swells warm peach across his face and glasses, his eyes widen"
+        },
+        {
+          "id": "s04",
+          "refs": [],
+          "duration": 1.6,
+          "prompt": "Straight-on close-up of a chunky cream clay computer monitor on a balsa-wood desk, filling the frame: {OTTO_SCREEN}. The screen is calm and tidy, with just three windows open. Soft warm light, a little clay tea mug in the foreground out of focus. No living thing.",
+          "motion": "the dock icons gently settle into place with a soft bounce, a faint glow pulses across the screen; camera pushes in slowly"
+        }
+      ]
+    },
+    {
+      "id": "b03",
+      "vo": "One click, and the mess funnels into the Dock like a genie.",
+      "captions": ["One click", "into the Dock", "like a genie"],
+      "shots": [
+        {
+          "id": "s05",
+          "refs": ["moss"],
+          "duration": 1.8,
+          "prompt": "Side close-up: {MOSS} with his long pink sticky clay tongue already stretched out in a straight line from his mouth to the monitor, the tongue tip touching a tiny round yellow dot on a pastel clay window's title strip. His eyes are crossed with concentration. Monitor glow lights his face.",
+          "motion": "his tongue taps the tiny dot and snaps back into his mouth, he gulps with satisfaction"
+        },
+        {
+          "id": "s06",
+          "refs": [],
+          "duration": 2.2,
+          "prompt": "Close-up of the glowing clay monitor screen: {OTTO_SCREEN}. One pastel clay window is caught mid-genie-animation, its bottom half squeezed and stretched into a curving funnel of soft clay that pours down into a small slot at the right end of the frosted dock, like toothpaste being sucked back into a tube. No living thing.",
+          "motion": "the window keeps stretching and funnelling smoothly down into the dock until it disappears, the dock gives a tiny wobble"
+        }
+      ]
+    },
+    {
+      "id": "b04",
+      "vo": "Lost something? Three fingers up, and every window spreads out.",
+      "captions": ["Lost something?", "Three fingers up", "everything spreads out"],
+      "shots": [
+        {
+          "id": "s07",
+          "refs": ["moss"],
+          "duration": 1.6,
+          "prompt": "Top-down close-up of a square grey felt touchpad: three of {MOSS}'s chubby green clay fingers with round sticky fingertip pads rest flat on it at the bottom edge, ready to swipe upward. The edge of his mustard knitted cardigan sleeve is visible. Warm light.",
+          "motion": "the three clay fingers slide smoothly upward across the felt touchpad, leaving faint fingerprint smudges"
+        },
+        {
+          "id": "s08",
+          "refs": [],
+          "duration": 2.0,
+          "prompt": "Close-up of the glowing clay monitor screen: {OTTO_SCREEN}. Every window has shrunk and spread out into a neat, airy grid of small pastel clay cards with gaps between them, none overlapping, over the peach-and-teal clay wallpaper; above them, along the top, a strip of four tiny clay thumbnails of other desktops. No living thing.",
+          "motion": "the small window cards drift gently into their grid spots and settle, one card glows with a soft highlight"
+        }
+      ]
+    },
+    {
+      "id": "b05",
+      "vo": "Swipe sideways, and a fresh workspace slides right in.",
+      "captions": ["Swipe sideways", "a fresh workspace"],
+      "shots": [
+        {
+          "id": "s09",
+          "refs": ["moss"],
+          "duration": 2.6,
+          "prompt": "Medium shot of {MOSS} at the desk, three fingers on the felt touchpad, eyebrows raised in delight. On the monitor, the desktop is caught mid-slide: the left half shows the peach-and-teal clay wallpaper with windows, the right half a second clean desktop with a mint-green clay wallpaper sliding in from the right, a clear seam between them. {DESK}.",
+          "motion": "the mint-green desktop slides all the way across the screen and settles; Moss leans with the motion and grins wide"
+        }
+      ]
+    },
+    {
+      "id": "b06",
+      "vo": "Still crowded? Tile them. Neat little squares, nothing overlapping.",
+      "captions": ["Still crowded?", "Tile them", "nothing overlapping"],
+      "shots": [
+        {
+          "id": "s10",
+          "refs": [],
+          "duration": 1.9,
+          "prompt": "Close-up of the glowing clay monitor screen: {OTTO_SCREEN}. Four pastel clay windows are tiled edge to edge, filling the screen in a tidy grid of one tall window on the left and three stacked on the right, thin even gaps between them, nothing overlapping, like a neat box of clay chocolates. No living thing.",
+          "motion": "the tiles nudge into place with a satisfying little squash and settle perfectly flush; camera holds still"
+        },
+        {
+          "id": "s11",
+          "refs": ["moss"],
+          "duration": 1.9,
+          "prompt": "Close-up of {MOSS}'s face lit by the monitor glow, eyes half closed in deep satisfaction, a slow smug smile, one hand pushing his round brass glasses back up his nose.",
+          "motion": "he pushes his glasses up and gives one slow, approving nod"
+        }
+      ]
+    },
+    {
+      "id": "b07",
+      "vo": "Then his song comes on, and the island up top starts to dance.",
+      "captions": ["His song comes on", "the island dances"],
+      "shots": [
+        {
+          "id": "s12",
+          "refs": [],
+          "duration": 2.0,
+          "prompt": "Extreme close-up of the top centre of the glowing clay monitor screen: a glossy black clay pill shape hangs from the slim pale top bar, holding a tiny square clay album cover with a sunny orange swirl on the left and a row of six little rounded clay bars of different heights on the right, like a tiny equaliser. The peach-and-teal clay wallpaper below is softly out of focus. No living thing.",
+          "motion": "the little clay bars bounce up and down to a beat, the black pill gently swells wider and back"
+        },
+        {
+          "id": "s13",
+          "refs": ["moss"],
+          "duration": 2.0,
+          "prompt": "Medium close-up of {MOSS} on his matchbox stool, eyes closed blissfully, head tilted mid-bop, mouth in a small happy 'o', one finger raised in the air like he is conducting. Behind him the monitor glows with a black pill shape at the top centre. {DESK}.",
+          "motion": "he bops his head side to side to the beat, his cardigan sways, his raised finger wags in rhythm"
+        }
+      ]
+    },
+    {
+      "id": "b08",
+      "vo": "So does Moss. Honestly, the work can wait a minute.",
+      "captions": ["So does Moss", "work can wait"],
+      "shots": [
+        {
+          "id": "s14",
+          "refs": ["moss"],
+          "duration": 2.6,
+          "prompt": "Wide shot of the whole tiny desk set at dusk: {MOSS} standing on top of the matchbox stool mid-dance, one leg kicked out and both arms up, cardigan flying open, glasses askew, a little clay fly hovering near his head. The monitor glows behind him with the tidy desktop, the frosted dock along the bottom and a black pill at the top. {DESK}.",
+          "motion": "he wiggles and stomps happily on the matchboxes, then flicks his tongue out and snaps up the little clay fly mid-dance without missing a beat"
+        }
+      ]
+    },
+    {
+      "id": "b09",
+      "vo": "Otto. A Wayland desktop that's a pleasure to use.",
+      "captions": [],
+      "endcard": {
+        "lines": ["Otto", "A Wayland desktop that's a pleasure to use.", "nongio.github.io/otto"],
+        "max_seconds": 4.5
+      },
+      "shots": [
+        {
+          "id": "s15",
+          "refs": ["moss"],
+          "duration": 3.6,
+          "prompt": "Calm closing shot, slightly low angle: {MOSS} sits contentedly on his matchbox stool in the lower third of the frame, sipping from his tiny clay tea mug with a satisfied grin, the monitor beside him glowing softly with the tidy desktop and frosted dock. The upper half of the frame is a clean, softly lit plain warm-cream felt wall, empty, with plenty of space. {DESK}.",
+          "motion": "he takes a slow sip of tea and lets out a content little sigh, the lamp glow flickers softly; camera holds still"
+        }
+      ]
+    }
+  ],
+  "voice": {
+    "provider": "elevenlabs",
+    "voice_id": "JBFqnCBsd6RMkjVDRZzb",
+    "model_id": "eleven_multilingual_v2",
+    "settings": { "stability": 0.45, "similarity_boost": 0.8, "style": 0.35, "use_speaker_boost": true, "speed": 1.08 },
+    "note": "Warm, informal narrator. Swap voice_id for any ElevenLabs voice; the human picks it."
+  },
+  "music": {
+    "source": "generated",
+    "bpm": 104,
+    "key": "C",
+    "note": "Cheerful plucked-string bed synthesised locally by scripts/music.py, so there is no licensing question. The same track is what plays on the island in b07-b08."
+  },
+  "edit": {
+    "gap_between_beats": 0.25,
+    "tail_after_last_word": 0.6,
+    "no_voice_words_per_second": 3.2,
+    "voice_lufs_offset_db": 18,
+    "target_lufs": -14
+  }
+}
