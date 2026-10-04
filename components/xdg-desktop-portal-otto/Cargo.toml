@@ -9,12 +9,11 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-async-io = "2"
 anyhow.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-zbus = { workspace = true, features = ["async-io"] }
+zbus.workspace = true
 
 [lints]
 workspace = true

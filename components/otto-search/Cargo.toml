@@ -13,7 +13,7 @@ description = "Otto's file search: one query language over the desktop's file in
 libc.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
-zbus = { workspace = true, features = ["tokio"] }
+zbus.workspace = true
 
 [lints]
 workspace = true

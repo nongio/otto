@@ -36,7 +36,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 unic-langid.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 # Outbound only: Otto's dialog renderer (otto-islands) for permission prompts.
-zbus = { workspace = true, features = ["tokio"] }
+zbus.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

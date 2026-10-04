@@ -21,7 +21,7 @@ smithay-client-toolkit = { workspace = true, features = ["calloop"] }
 # without it chrono emits English names whatever the locale says.
 chrono = { workspace = true, features = ["default", "unstable-locales"] }
 tokio = { workspace = true, features = ["full"] }
-zbus = { workspace = true, features = ["tokio"] }
+zbus.workspace = true
 futures-util.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

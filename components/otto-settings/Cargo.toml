@@ -11,7 +11,7 @@ description = "Settings application for Otto — see specs/settings-app.md"
 otto-kit = { path = "../otto-kit" }
 otto-search = { path = "../otto-search" }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
-zbus = { workspace = true, features = ["async-io"] }
+zbus.workspace = true
 serde = { workspace = true, features = ["derive"] }
 toml_edit.workspace = true
 xcursor.workspace = true

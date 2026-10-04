@@ -22,7 +22,7 @@ khronos-egl = { workspace = true, features = ["dynamic"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 tokio = { workspace = true, features = ["full"] }
-zbus = { workspace = true, features = ["tokio"] }
+zbus.workspace = true
 futures-util.workspace = true
 freedesktop-icons = "0.2.4"
 resvg = "0.44.0"

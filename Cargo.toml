@@ -41,7 +41,7 @@ toml = "0.8.19"
 # Comment-preserving TOML editing: settings are persisted one key at a time into
 # a hand-editable file (see src/config/file.rs).
 toml_edit.workspace = true
-zbus = { workspace = true, features = ["async-io"] }
+zbus.workspace = true
 pipewire.workspace = true
 brightness = "0.8.0"
 mpris = "2.0"
@@ -249,7 +249,16 @@ wayland-protocols-wlr = "0.3"
 wayland-scanner = "0.31"
 xcursor = "0.3.3"
 xkbcommon = "0.6"
-zbus = { version = "4", default-features = false }
+# One executor for D-Bus across the workspace: tokio. Every member that awaits
+# zbus futures does so on a tokio runtime (the compositor's D-Bus services,
+# the portal's `#[tokio::main]`, the apps' worker runtimes), and the blocking
+# API runs on zbus's own internal tokio runtime, so nothing needs async-io.
+# With both flavours declared, feature unification used to pick tokio for any
+# binary that links otto-kit, or for the whole workspace built at once, and
+# async-io for the rest — the executor depended on how the crate was built.
+# (accesskit_unix and brightness bring their own zbus 5 on async-io; that copy
+# is independent of this one.)
+zbus = { version = "4", default-features = false, features = ["tokio"] }
 zeroize = "1"
 
 [workspace.package]

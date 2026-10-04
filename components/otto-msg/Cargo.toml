@@ -12,7 +12,7 @@ name = "otto-msg"
 path = "src/main.rs"
 
 [dependencies]
-zbus = { workspace = true, features = ["async-io"] }
+zbus.workspace = true
 serde_json.workspace = true
 
 [lints]

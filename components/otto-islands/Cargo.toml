@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
-zbus = { workspace = true, features = ["async-io"] }
+zbus.workspace = true
 tracing.workspace = true
 skia-safe.workspace = true
 smithay-client-toolkit.workspace = true

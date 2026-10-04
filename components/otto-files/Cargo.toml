@@ -18,7 +18,7 @@ smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"]
 wayland-client.workspace = true
 tracing.workspace = true
 libc.workspace = true
-zbus = { workspace = true, features = ["tokio"] }
+zbus.workspace = true
 tokio = { workspace = true, features = ["full"] }
 # The sidebar's user configuration; see `places_config`.
 serde = { workspace = true, features = ["derive"] }
