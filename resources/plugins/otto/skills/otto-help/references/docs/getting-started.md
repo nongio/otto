@@ -9,7 +9,7 @@ Each block below installs the
 [latest release](https://github.com/nongio/otto/releases/latest). Copy it as it
 is: there is no version to fill in and the package manager pulls in the
 dependencies. Packages are built for x86_64 and need Ubuntu 24.04 or newer,
-Debian 13 or newer, Fedora 40 or newer, or Arch; nightly builds too.
+Debian 13 or newer, Fedora 41 or newer, or Arch; nightly builds too.
 
 ### Debian / Ubuntu
 

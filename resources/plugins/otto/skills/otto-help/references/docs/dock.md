@@ -76,6 +76,7 @@ hover, same window cycling.
 
 Right-click any icon (a bookmark, or a running app that is not yet in the dock)
 and pick **Keep in Dock** to pin it; the same entry, ticked, unpins it again.
+An app with no desktop entry cannot be pinned, so its menu has no such entry.
 The menu also offers **Open** (for an app that is not running) and **Quit**
 (for one that is).
 

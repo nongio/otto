@@ -2351,6 +2351,17 @@ impl DockView {
             .any(|e| e.identifier == identifier && e.running)
     }
 
+    /// Whether the running app `match_id` can be pinned: it has a desktop
+    /// entry to launch it from once it has quit.
+    pub(super) fn can_keep_in_dock(&self, match_id: &str) -> bool {
+        self.state
+            .read()
+            .unwrap()
+            .running_apps
+            .iter()
+            .any(|app| app.match_id == match_id && app.has_desktop_entry())
+    }
+
     /// Build context-menu items for the given app `identifier`,
     /// reflecting its current running and bookmarked state.
     pub fn build_context_menu_items(&self, identifier: &str) -> Vec<MenuItem> {
@@ -2401,20 +2412,27 @@ impl DockView {
             return items;
         }
 
-        let keep_label = if bookmarked {
-            otto_kit::t!("dock-keep-in-dock-on")
-        } else {
-            otto_kit::t!("dock-keep-in-dock")
-        };
-        let keep_action = if bookmarked {
-            "remove_from_dock"
-        } else {
-            "keep_in_dock"
-        };
-        items.push(MenuItem::action(keep_label).with_action_id(keep_action));
+        // A pin is a desktop id, and an app with no desktop entry has none to
+        // launch it by: the pin would be dropped on the next start. A pin that
+        // is already there can always be removed.
+        if bookmarked {
+            items.push(
+                MenuItem::action(otto_kit::t!("dock-keep-in-dock-on"))
+                    .with_action_id("remove_from_dock"),
+            );
+        } else if match_id
+            .as_deref()
+            .is_some_and(|mid| self.can_keep_in_dock(mid))
+        {
+            items.push(
+                MenuItem::action(otto_kit::t!("dock-keep-in-dock")).with_action_id("keep_in_dock"),
+            );
+        }
 
         if running {
-            items.push(MenuItem::separator());
+            if !items.last().is_some_and(MenuItem::is_separator) {
+                items.push(MenuItem::separator());
+            }
             items.push(
                 MenuItem::action(otto_kit::t!("dock-quit"))
                     .with_action_id("quit")
@@ -2958,8 +2976,9 @@ impl DockView {
     /// to a bookmark if it is only running, and lift its icon into the drag
     /// overlay.
     ///
-    /// Returns `false` when the app cannot be dragged (it disappeared, or it has
-    /// no icon to lift), leaving the dock untouched.
+    /// Returns `false` when the app cannot be dragged (it disappeared, it has
+    /// no icon to lift, or it is only running and has no desktop entry to pin
+    /// it by), leaving the dock untouched.
     fn activate_icon_drag(&self, drag: &mut IconDrag) -> bool {
         let match_id = drag.match_id.clone();
         let mut state = self.get_state();
@@ -2974,6 +2993,11 @@ impl DockView {
                 else {
                     return false;
                 };
+                // As in the context menu: a pin without a desktop entry would
+                // be dropped on the next start.
+                if !app.has_desktop_entry() {
+                    return false;
+                }
                 self.update_bookmarks(|bookmarks| {
                     if !bookmarks.iter().any(|b| {
                         b.desktop_id

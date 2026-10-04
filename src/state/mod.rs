@@ -1466,7 +1466,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
 
         // XWayland is optional at runtime: when the binary is missing or fails
         // to spawn, run without X11 support. `xwm`, `xdisplay` and
-        // `xwayland_client` stay `None`, so children get no DISPLAY and the
+        // `xwayland_client` stay `None`, so Otto adds no DISPLAY and the
         // scale/XSETTINGS updates are no-ops.
         let (xwayland, client) = match XWayland::spawn(
             &self.display_handle,
@@ -1482,8 +1482,8 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Err(e) => {
                 tracing::error!(
                     "XWayland could not be started ({e}); X11 applications will not run. \
-                     Install xwayland (Debian/Ubuntu: xwayland, Fedora: \
-                     xorg-x11-server-Xwayland, Arch: xorg-xwayland)."
+                     If Xwayland is not installed, install it (Debian/Ubuntu: xwayland, \
+                     Fedora: xorg-x11-server-Xwayland, Arch: xorg-xwayland)."
                 );
                 return;
             }

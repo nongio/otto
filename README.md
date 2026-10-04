@@ -35,7 +35,7 @@ Installing it takes a minute, and you can look at it in a window inside your cur
 ## Try it
 
 One package installs the whole desktop: the compositor and every app that comes with it.
-It needs Ubuntu 24.04 or newer, Debian 13 or newer, Fedora 40 or newer, or Arch.
+It needs Ubuntu 24.04 or newer, Debian 13 or newer, Fedora 41 or newer, or Arch.
 
 ```sh
 # Debian / Ubuntu
@@ -130,7 +130,7 @@ Each block below installs the [latest release](https://github.com/nongio/otto/re
 Copy it as it is: there is no version to fill in and the package manager pulls
 in the dependencies.
 The packages, nightly included, need Ubuntu 24.04 or newer, Debian 13 or newer,
-Fedora 40 or newer, or Arch.
+Fedora 41 or newer, or Arch.
 
 #### Debian / Ubuntu
 
