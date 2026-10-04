@@ -17,7 +17,8 @@ mod session;
 use greetd::{AuthMessageType, Client, Request, Response};
 use otto_auth_ui::power::PowerRequest;
 use otto_auth_ui::{
-    reader, Action, Appearance, Field, Finger, Panel, PowerAction, SecretInput, Status, User, View,
+    frame_in_flight, reader, Action, Appearance, Clock, Field, Finger, Panel, PowerAction,
+    SecretInput, Status, User, View,
 };
 use otto_kit::{surfaces::LayerShellSurface, App, AppContext, AppRunner};
 use session::Session;
@@ -44,12 +45,6 @@ const SESSION_START_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// It is a safety net, not a deadline: the panel finishes well inside it, and
 /// it only has to stay clear of however long the mark takes to settle.
 const MARK_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// How long a painted frame is given to reach the screen before the greeter
-/// paints regardless. Frames are paced by the compositor's frame callbacks —
-/// that is what keeps an animating panel from painting faster than anyone can
-/// see — and this is the bound on trusting it to send them.
-const FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// What greetd was asked, remembered until it answers.
 ///
@@ -150,7 +145,7 @@ struct Greeter {
     /// The minute the clock was last drawn showing. A login screen left up
     /// overnight otherwise keeps the time it appeared at — the clock draws
     /// from a closure the engine records once and replays.
-    clock_minute: Option<i64>,
+    clock: Clock,
     /// A power button's request, until logind has answered it.
     power_request: Option<PowerRequest>,
 }
@@ -197,7 +192,7 @@ impl Greeter {
             submit_when_asked: false,
             sessions,
             session_index,
-            clock_minute: None,
+            clock: Clock::default(),
             power_request: None,
         }
     }
@@ -377,27 +372,16 @@ impl Greeter {
                     // environment is barer than a session's, so they are
                     // usually English. A request for a finger is said again
                     // from the catalogues; the rest keeps its wording.
-                    match reader::finger_request(&auth_message) {
-                        Some(request) => {
-                            self.finger_pending = true;
-                            self.info = Some(reader::request_line(request, "greeter"));
-                        }
-                        None => {
-                            self.finger_pending |= reader::mentions_fingerprint(&auth_message);
-                            self.info = Some(auth_message);
-                        }
-                    }
+                    let (finger, line) = reader::info_line(auth_message, "greeter");
+                    self.finger_pending |= finger;
+                    self.info = Some(line);
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
                     );
                 }
                 AuthMessageType::Error => {
-                    self.error = Some(if reader::is_no_match(&auth_message) {
-                        reader::no_match_line("greeter")
-                    } else {
-                        auth_message
-                    });
+                    self.error = Some(reader::error_line(auth_message, "greeter"));
                     self.send(
                         Asked::Auth,
                         Request::PostAuthMessageResponse { response: None },
@@ -692,21 +676,15 @@ impl Greeter {
     /// Whether the last painted frame is still on its way to the screen, in
     /// which case there is nothing to gain by painting another one yet.
     ///
-    /// Only until [`FRAME_TIMEOUT`], though: a compositor that stops answering
-    /// with frame callbacks must not be able to freeze the login screen, which
-    /// is not something anyone can close and reopen.
+    /// Only until [`otto_auth_ui::FRAME_TIMEOUT`], though: a compositor that
+    /// stops answering with frame callbacks must not be able to freeze the
+    /// login screen, which is not something anyone can close and reopen.
     fn frame_in_flight(&self) -> bool {
-        self.painted_at
-            .is_some_and(|at| at.elapsed() < FRAME_TIMEOUT)
-            && self
-                .surface
+        frame_in_flight(self.painted_at, || {
+            self.surface
                 .as_ref()
                 .is_some_and(|surface| surface.base_surface().frame_in_flight())
-    }
-
-    /// Whether the minute has turned since the clock was last drawn.
-    fn clock_stale(&self) -> bool {
-        self.clock_minute != Some(chrono::Local::now().timestamp() / 60)
+        })
     }
 
     /// Paint the scene as it currently stands, without touching its state.
@@ -717,8 +695,7 @@ impl Greeter {
         }
         self.painted_at = Some(std::time::Instant::now());
 
-        if self.clock_stale() {
-            self.clock_minute = Some(chrono::Local::now().timestamp() / 60);
+        if self.clock.catch_up() {
             if let Some(panel) = self.panel.as_ref() {
                 panel.refresh_clock();
             }
@@ -857,7 +834,7 @@ impl App for Greeter {
         let animating = self
             .animating_until
             .is_some_and(|deadline| std::time::Instant::now() < deadline);
-        if animating || self.panel.as_ref().is_some_and(Panel::frame_due) || self.clock_stale() {
+        if animating || self.panel.as_ref().is_some_and(Panel::frame_due) || self.clock.stale() {
             self.paint();
             return;
         }
@@ -875,7 +852,7 @@ impl App for Greeter {
         // loop for the next one. The timer is only the way out of a callback
         // that never comes — see `frame_in_flight`.
         if self.frame_in_flight() {
-            return Some(FRAME_TIMEOUT);
+            return Some(otto_auth_ui::FRAME_TIMEOUT);
         }
 
         // The Touch ID mark paces itself; sleep exactly up to its next frame.
@@ -892,9 +869,7 @@ impl App for Greeter {
 
         // The clock only changes on the minute, and nothing else needs the
         // loop awake in between.
-        let clock = Some(std::time::Duration::from_secs(
-            60 - (chrono::Local::now().timestamp() % 60).unsigned_abs(),
-        ));
+        let clock = Some(Clock::until_next_minute());
 
         [mark, transition, session, clock]
             .into_iter()

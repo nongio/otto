@@ -252,6 +252,48 @@ impl Attempt {
     }
 }
 
+/// Whoever holds an [`Attempt`] and acts on what it says: otto-lock and
+/// otto-authorize.
+pub trait Conversant {
+    /// The attempt in progress, if any.
+    fn attempt(&mut self) -> &mut Option<Attempt>;
+    /// PAM said something.
+    fn said(&mut self, message: Message);
+    /// The attempt is over, and has already been dropped.
+    fn ended(&mut self, outcome: Outcome);
+
+    /// Collect whatever PAM has said. Returns whether the panel needs
+    /// redrawing.
+    ///
+    /// Called every loop iteration rather than waited on, so a module that
+    /// takes its time — a reader waiting for a finger — leaves the panel live.
+    fn pump(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(event) = self.attempt().as_mut().and_then(Attempt::poll) {
+            changed = true;
+            match event {
+                Event::Said(message) => self.said(message),
+                Event::Ended(outcome) => {
+                    *self.attempt() = None;
+                    self.ended(outcome);
+                }
+            }
+        }
+        changed
+    }
+}
+
+/// PAM prompts are written for a terminal: `"Password: "`. The panel puts the
+/// label above the field, where the punctuation reads as a typo.
+pub fn prompt_label(text: &str) -> String {
+    let label = text.trim().trim_end_matches(':').trim_end().to_string();
+    if label.is_empty() {
+        otto_kit::t_owned!("lock-prompt-password")
+    } else {
+        label
+    }
+}
+
 /// The PAM service to authenticate against.
 ///
 /// The preferred service is what Otto ships and what should be used. Without
@@ -498,6 +540,15 @@ unsafe extern "C" fn conversation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PAM writes its prompts for a terminal. The panel puts the label above
+    /// the field, where a trailing colon reads as a mistake.
+    #[test]
+    fn prompt_labels_lose_their_terminal_punctuation() {
+        assert_eq!(prompt_label("Password: "), "Password");
+        assert_eq!(prompt_label("Verification code:"), "Verification code");
+        assert_eq!(prompt_label("   "), otto_kit::t!("lock-prompt-password"));
+    }
 
     /// otto-authorize without its own file falls back the way otto-lock
     /// does — through the lock screen's stack first, which asks the same
