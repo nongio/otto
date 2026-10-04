@@ -15,9 +15,10 @@ use std::time::SystemTime;
 use otto_kit::filetype::Kind;
 
 use crate::imagesize::{self, Header};
-use crate::model::{self, Entry};
+use crate::model::Entry;
 use crate::recent;
 use crate::view::PhotosSection;
+use otto_search::dates::civil_from_days;
 
 /// Whether an entry is laid out as a picture, at its own proportions, rather
 /// than as a square tile in the trailing "Other Files" section.
@@ -33,7 +34,7 @@ const DAY: i64 = 86_400;
 /// evening, not to the next day in Greenwich.
 pub fn local_day(modified: Option<SystemTime>) -> Option<i64> {
     let secs = recent::epoch_secs(modified?)?;
-    Some((secs + recent::local_utc_offset(secs)).div_euclid(DAY))
+    Some((secs + otto_search::dates::local_offset(secs)).div_euclid(DAY))
 }
 
 /// Today, as [`local_day`] counts days.
@@ -69,8 +70,8 @@ pub fn day_heading(day: i64, today: i64) -> String {
         "files-weekday-fri",
         "files-weekday-sat",
     ];
-    let (year, month, date) = model::civil_from_days(day);
-    let (this_year, ..) = model::civil_from_days(today);
+    let (year, month, date) = civil_from_days(day);
+    let (this_year, ..) = civil_from_days(today);
     // The epoch was a Thursday, which is index 4 counting from Sunday.
     let weekday = otto_kit::t!(WEEKDAYS[(day + 4).rem_euclid(7) as usize]);
     let month = otto_kit::t!(MONTHS[(month as usize).clamp(1, 12) - 1]);
@@ -158,7 +159,7 @@ pub fn group_key(modified: Option<SystemTime>, grouping: Grouping) -> Option<i64
         Grouping::None => Some(0),
         Grouping::Day => local_day(modified),
         Grouping::Month => {
-            let (year, month, _) = model::civil_from_days(local_day(modified)?);
+            let (year, month, _) = civil_from_days(local_day(modified)?);
             Some(year * 12 + month as i64 - 1)
         }
     }
@@ -576,7 +577,7 @@ mod tests {
     /// midnight whatever the time zone.
     fn noon(day: i64) -> SystemTime {
         let guess = day * DAY + DAY / 2;
-        let secs = guess - recent::local_utc_offset(guess);
+        let secs = guess - otto_search::dates::local_offset(guess);
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs as u64)
     }
 
@@ -584,7 +585,7 @@ mod tests {
     fn the_heading_names_the_weekday_and_only_a_past_years_year() {
         // 25 September 2026 was a Friday.
         let day = 20_721;
-        assert_eq!(model::civil_from_days(day), (2026, 9, 25));
+        assert_eq!(civil_from_days(day), (2026, 9, 25));
         assert_eq!(day_heading(day, day + 2), "Friday, 25 September");
         assert_eq!(day_heading(day, day + 400), "Friday, 25 September 2026");
     }

@@ -2293,6 +2293,9 @@ impl App for SettingsApp {
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
         // The Privacy pane reads the permission store when it comes on screen.
         panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
+        // The Agents pane asks systemd about its service only while it is on
+        // screen.
+        agents::set_shown(*self.selected.lock().unwrap() == model::AGENTS_PANE);
 
         if settings_client::take_dirty()
             | agents::take_service_dirty()

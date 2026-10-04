@@ -22,12 +22,14 @@
 //! - [`index`] asks LocalSearch over D-Bus.
 //! - [`find`](mod@find) runs a plan to a ranked list of files that are
 //!   really on disk, paging past the ones the index remembers wrongly.
+//! - [`dates`] is the calendar arithmetic underneath, shared with anything
+//!   else that shows a date without a date crate.
 //! - [`matching`] scores names, and is shared with anything else that ranks
 //!   typed text against names.
 
 // Rust guideline compliant 2026-02-21
 
-mod dates;
+pub mod dates;
 pub mod find;
 pub mod index;
 pub mod matching;

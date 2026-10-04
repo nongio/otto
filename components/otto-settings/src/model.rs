@@ -368,6 +368,10 @@ pub const SEARCH_PANE: usize = 11;
 /// only while it is on screen.
 pub const PRIVACY_PANE: usize = 10;
 
+/// Where the Agents pane sits in [`panes`]: it watches its service only while
+/// it is on screen.
+pub const AGENTS_PANE: usize = 12;
+
 pub(crate) fn group(title: impl Into<Cow<'static, str>>, rows: Vec<Row>) -> Group {
     Group {
         title: Some(title.into()),
@@ -935,7 +939,7 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, PRIVACY_PANE, SEARCH_PANE};
+    use super::{panes, AGENTS_PANE, PRIVACY_PANE, SEARCH_PANE};
 
     #[test]
     fn the_search_pane_sits_where_main_looks_for_it() {
@@ -945,5 +949,10 @@ mod pane_order_tests {
     #[test]
     fn the_privacy_pane_sits_where_main_looks_for_it() {
         assert_eq!(panes()[PRIVACY_PANE].icon, "hand");
+    }
+
+    #[test]
+    fn the_agents_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[AGENTS_PANE].icon, "agent");
     }
 }

@@ -80,28 +80,15 @@ impl FilesApp {
                 Keysym::Down => Some(OpenWithKey::Down),
                 Keysym::Return | Keysym::KP_Enter => Some(OpenWithKey::Enter),
                 Keysym::Escape => Some(OpenWithKey::Escape),
-                Keysym::Left => Some(OpenWithKey::Edit(TextInputKey::Left)),
-                Keysym::Right => Some(OpenWithKey::Edit(TextInputKey::Right)),
-                Keysym::Home => Some(OpenWithKey::Edit(TextInputKey::Home)),
-                Keysym::End => Some(OpenWithKey::Edit(TextInputKey::End)),
-                Keysym::BackSpace => Some(OpenWithKey::Edit(TextInputKey::Backspace)),
-                Keysym::Delete => Some(OpenWithKey::Edit(TextInputKey::Delete)),
-                Keysym::a if ctrl => Some(OpenWithKey::Edit(TextInputKey::SelectAll)),
-                Keysym::c if ctrl => Some(OpenWithKey::Edit(TextInputKey::Copy)),
-                Keysym::x if ctrl => Some(OpenWithKey::Edit(TextInputKey::Cut)),
-                Keysym::v if ctrl => {
-                    clipboard::text().map(|text| OpenWithKey::Edit(TextInputKey::Paste(text)))
-                }
-                _ if ctrl => None,
-                _ => event
-                    .utf8
-                    .as_ref()
-                    .and_then(|s| s.chars().next())
-                    .filter(|ch| !ch.is_control())
-                    .map(|ch| OpenWithKey::Edit(TextInputKey::Char(ch))),
+                _ => None,
             };
             if let Some(key) = key {
                 self.state.lock().unwrap().open_with_key(key, field_mods);
+            } else if let Some((edit, mods)) = field_edit(event, field_mods) {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .open_with_key(OpenWithKey::Edit(edit), mods);
             }
             return;
         }
@@ -151,31 +138,17 @@ impl FilesApp {
                     return;
                 }
                 let key = match event.keysym {
-                    Keysym::Escape => Some(palette::Key::Escape),
-                    Keysym::Return | Keysym::KP_Enter => Some(palette::Key::Enter),
-                    Keysym::Tab | Keysym::ISO_Left_Tab => Some(palette::Key::Tab),
-                    Keysym::Up => Some(palette::Key::Up),
-                    Keysym::Down => Some(palette::Key::Down),
-                    Keysym::Home => Some(palette::Key::Home),
-                    Keysym::End => Some(palette::Key::End),
-                    Keysym::Left => Some(palette::Key::Edit(TextInputKey::Left)),
-                    Keysym::Right => Some(palette::Key::Edit(TextInputKey::Right)),
-                    Keysym::BackSpace => Some(palette::Key::Edit(TextInputKey::Backspace)),
-                    Keysym::Delete => Some(palette::Key::Edit(TextInputKey::Delete)),
-                    Keysym::a if ctrl => Some(palette::Key::Edit(TextInputKey::SelectAll)),
-                    Keysym::c if ctrl => Some(palette::Key::Edit(TextInputKey::Copy)),
-                    Keysym::x if ctrl => Some(palette::Key::Edit(TextInputKey::Cut)),
-                    Keysym::v if ctrl => {
-                        clipboard::text().map(|text| palette::Key::Edit(TextInputKey::Paste(text)))
-                    }
-                    _ => event
-                        .utf8
-                        .as_ref()
-                        .and_then(|s| s.chars().next())
-                        .map(|ch| palette::Key::Edit(TextInputKey::Char(ch))),
+                    Keysym::Escape => Some((palette::Key::Escape, field_mods)),
+                    Keysym::Return | Keysym::KP_Enter => Some((palette::Key::Enter, field_mods)),
+                    Keysym::Tab | Keysym::ISO_Left_Tab => Some((palette::Key::Tab, field_mods)),
+                    Keysym::Up => Some((palette::Key::Up, field_mods)),
+                    Keysym::Down => Some((palette::Key::Down, field_mods)),
+                    Keysym::Home => Some((palette::Key::Home, field_mods)),
+                    Keysym::End => Some((palette::Key::End, field_mods)),
+                    _ => field_edit(event, field_mods)
+                        .map(|(edit, mods)| (palette::Key::Edit(edit), mods)),
                 };
-                if let Some(key) = key {
-                    let mods = field_mods;
+                if let Some((key, mods)) = key {
                     if let Some(outcome) = browser
                         .palette
                         .as_mut()
@@ -190,30 +163,12 @@ impl FilesApp {
 
             // An in-place rename owns the keyboard outright: every key is
             // text-field input, not a browser shortcut.
+            //
+            // Cut, copy and paste edit the *name* here, not the selection in
+            // the listing: the field owns the keyboard. Return and Escape
+            // reach it as the field's own commit and cancel.
             if browser.rename.is_some() {
-                let key = match event.keysym {
-                    Keysym::Return | Keysym::KP_Enter => Some(TextInputKey::Enter),
-                    Keysym::Escape => Some(TextInputKey::Escape),
-                    Keysym::Left => Some(TextInputKey::Left),
-                    Keysym::Right => Some(TextInputKey::Right),
-                    Keysym::Home => Some(TextInputKey::Home),
-                    Keysym::End => Some(TextInputKey::End),
-                    Keysym::BackSpace => Some(TextInputKey::Backspace),
-                    Keysym::Delete => Some(TextInputKey::Delete),
-                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
-                    // Cut, copy and paste edit the *name* here, not the
-                    // selection in the listing: the field owns the keyboard.
-                    Keysym::c if ctrl => Some(TextInputKey::Copy),
-                    Keysym::x if ctrl => Some(TextInputKey::Cut),
-                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
-                    _ => event
-                        .utf8
-                        .as_ref()
-                        .and_then(|s| s.chars().next())
-                        .map(TextInputKey::Char),
-                };
-                if let Some(key) = key {
-                    let mods = field_mods;
+                if let Some((key, mods)) = field_edit(event, field_mods) {
                     let response = browser
                         .rename
                         .as_mut()
@@ -260,24 +215,9 @@ impl FilesApp {
                         drop(browser);
                         return;
                     }
-                    Keysym::Left => Some(TextInputKey::Left),
-                    Keysym::Right => Some(TextInputKey::Right),
-                    Keysym::Home => Some(TextInputKey::Home),
-                    Keysym::End => Some(TextInputKey::End),
-                    Keysym::BackSpace => Some(TextInputKey::Backspace),
-                    Keysym::Delete => Some(TextInputKey::Delete),
-                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
-                    Keysym::c if ctrl => Some(TextInputKey::Copy),
-                    Keysym::x if ctrl => Some(TextInputKey::Cut),
-                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
-                    _ => event
-                        .utf8
-                        .as_ref()
-                        .and_then(|s| s.chars().next())
-                        .map(TextInputKey::Char),
+                    _ => field_edit(event, field_mods),
                 };
-                if let Some(key) = key {
-                    let mods = field_mods;
+                if let Some((key, mods)) = key {
                     let response = browser
                         .path_entry
                         .as_mut()
@@ -357,26 +297,12 @@ impl FilesApp {
                     // means what it means everywhere else: open what is
                     // selected.
                     Keysym::Return | Keysym::KP_Enter => None,
-                    Keysym::Left => Some(TextInputKey::Left),
-                    Keysym::Right => Some(TextInputKey::Right),
-                    Keysym::Home => Some(TextInputKey::Home),
-                    Keysym::End => Some(TextInputKey::End),
-                    Keysym::BackSpace => Some(TextInputKey::Backspace),
-                    Keysym::Delete => Some(TextInputKey::Delete),
-                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
-                    Keysym::c if ctrl => Some(TextInputKey::Copy),
-                    Keysym::x if ctrl => Some(TextInputKey::Cut),
-                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
-                    // Every other chord belongs to the window, not the field.
-                    _ if ctrl => None,
-                    _ => event
-                        .utf8
-                        .as_ref()
-                        .and_then(|s| s.chars().next())
-                        .map(TextInputKey::Char),
+                    // Every other letter chord belongs to the window, not the
+                    // field.
+                    _ if is_window_chord(event.keysym, field_mods) => None,
+                    _ => field_edit(event, field_mods),
                 };
-                if let Some(key) = editing {
-                    let mods = field_mods;
+                if let Some((key, mods)) = editing {
                     let response = browser.search.as_mut().map(|input| input.on_key(key, mods));
                     match response {
                         Some(TextInputResponse::Clipboard(text)) => {
@@ -428,27 +354,13 @@ impl FilesApp {
                     | Keysym::Page_Up
                     | Keysym::Page_Down
                     | Keysym::Tab => None,
-                    Keysym::Left => Some(TextInputKey::Left),
-                    Keysym::Right => Some(TextInputKey::Right),
-                    Keysym::Home => Some(TextInputKey::Home),
-                    Keysym::End => Some(TextInputKey::End),
-                    Keysym::BackSpace => Some(TextInputKey::Backspace),
-                    Keysym::Delete => Some(TextInputKey::Delete),
-                    Keysym::a if ctrl => Some(TextInputKey::SelectAll),
-                    Keysym::c if ctrl => Some(TextInputKey::Copy),
-                    Keysym::x if ctrl => Some(TextInputKey::Cut),
-                    Keysym::v if ctrl => clipboard::text().map(TextInputKey::Paste),
-                    // A chord that is not the field's own is the window's:
-                    // Ctrl+W and friends still reach the shortcuts below.
-                    _ if ctrl => None,
-                    _ => event
-                        .utf8
-                        .as_ref()
-                        .and_then(|s| s.chars().next())
-                        .map(TextInputKey::Char),
+                    // A letter chord that is not the field's own is the
+                    // window's: Ctrl+W and friends still reach the shortcuts
+                    // below.
+                    _ if is_window_chord(event.keysym, field_mods) => None,
+                    _ => field_edit(event, field_mods),
                 };
-                if let Some(key) = editing {
-                    let mods = field_mods;
+                if let Some((key, mods)) = editing {
                     let response = browser
                         .save_name
                         .as_mut()
@@ -740,5 +652,63 @@ impl FilesApp {
                 self.start_peek(&mut browser);
             }
         }
+    }
+}
+
+/// A key press as a text-field edit, with the modifiers to make it with.
+///
+/// Paste arrives with the clipboard already read, since a field owns no
+/// clipboard of its own; every other key is the one all otto-kit fields
+/// share, word movement and Shift-selection included.
+fn field_edit(event: &KeyEvent, mods: KeyMods) -> Option<(TextInputKey, KeyMods)> {
+    use smithay_client_toolkit::seat::keyboard::Keysym;
+    let paste =
+        mods.ctrl && !mods.alt && !mods.logo && matches!(event.keysym, Keysym::v | Keysym::V);
+    if paste {
+        return clipboard::text().map(|text| (TextInputKey::Paste(text), KeyMods::default()));
+    }
+    otto_kit::components::text_input::key_for(event.keysym, event.utf8.as_deref(), mods)
+}
+
+/// Whether a Ctrl chord belongs to the window rather than to a field that
+/// shares the keyboard with the listing (search, the Save name).
+///
+/// Select all, copy, cut and paste are the field's; any other Ctrl+letter is
+/// a window shortcut (Ctrl+W closes, not deletes a word). Ctrl with an arrow
+/// or Backspace is still the field's, as word movement and deletion.
+fn is_window_chord(keysym: smithay_client_toolkit::seat::keyboard::Keysym, mods: KeyMods) -> bool {
+    mods.ctrl
+        && keysym
+            .key_char()
+            .map(|c| c.to_ascii_lowercase())
+            .is_some_and(|c| c.is_ascii_alphabetic() && !matches!(c, 'a' | 'c' | 'x' | 'v'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smithay_client_toolkit::seat::keyboard::Keysym;
+
+    fn ctrl() -> KeyMods {
+        KeyMods {
+            ctrl: true,
+            ..KeyMods::default()
+        }
+    }
+
+    #[test]
+    fn a_shared_field_leaves_window_shortcuts_to_the_window() {
+        // Ctrl+W closes the window rather than deleting a word, and Ctrl+L
+        // opens the path entry, even with the caret in the search field.
+        assert!(is_window_chord(Keysym::w, ctrl()));
+        assert!(is_window_chord(Keysym::L, ctrl()));
+        // The clipboard and select-all are the field's, as are Ctrl+arrow and
+        // Ctrl+Backspace, which move and delete by word.
+        for keysym in [Keysym::a, Keysym::c, Keysym::x, Keysym::v] {
+            assert!(!is_window_chord(keysym, ctrl()), "{keysym:?}");
+        }
+        assert!(!is_window_chord(Keysym::Left, ctrl()));
+        assert!(!is_window_chord(Keysym::BackSpace, ctrl()));
+        assert!(!is_window_chord(Keysym::w, KeyMods::default()));
     }
 }
