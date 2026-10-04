@@ -12,19 +12,19 @@ path = "src/main.rs"
 
 [dependencies]
 otto-kit = { path = "../otto-kit" }
-skia-safe = { version = "=0.93", features = ["gl", "textlayout"] }
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+skia-safe = { workspace = true, features = ["gl", "textlayout"] }
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+smithay-client-toolkit = { workspace = true, features = ["calloop"] }
 # `unstable-locales` is what makes %A and %B render in the user's language;
 # without it chrono emits English names whatever the locale says.
-chrono = { version = "0.4", features = ["unstable-locales"] }
-tokio = { version = "1", features = ["full"] }
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-futures-util = "0.3"
-serde_json = "1"
-tracing = "0.1"
+chrono = { workspace = true, features = ["default", "unstable-locales"] }
+tokio = { workspace = true, features = ["full"] }
+zbus = { workspace = true, features = ["tokio"] }
+futures-util.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 
 [lints]

@@ -10,17 +10,17 @@ description = "An emoji picker for Otto — search or browse, pick one, and it i
 [dependencies]
 laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
-taffy = "0.5"
-tracing = "0.1"
-wayland-client = "0.31"
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-wayland-protocols-misc = { version = "0.3", features = ["client"] }
-memfd = "0.6"
-xkbcommon = "0.6"
+taffy.workspace = true
+tracing.workspace = true
+wayland-client.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+wayland-protocols-misc = { workspace = true, features = ["client"] }
+memfd.workspace = true
+xkbcommon.workspace = true
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]

@@ -9,16 +9,16 @@ publish = false
 
 [dependencies]
 otto-kit = { path = "../otto-kit" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
-zbus = "4"
-tracing = "0.1"
-skia-safe = "=0.93"
-smithay-client-toolkit = { version = "0.19", default-features = false }
-wayland-client = "0.31"
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-pipewire = "0.9"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+zbus = { workspace = true, features = ["async-io"] }
+tracing.workspace = true
+skia-safe.workspace = true
+smithay-client-toolkit.workspace = true
+wayland-client.workspace = true
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+pipewire.workspace = true
 ureq = "3"
-serde_json = "1"
+serde_json.workspace = true
 
 [lints]
 workspace = true

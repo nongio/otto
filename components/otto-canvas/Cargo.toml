@@ -12,9 +12,9 @@ description = "The agent sessions, in a panel in Otto's side canvas"
 # launcher's agents mode, so a session reads the same in either place.
 otto-agents-kit = { path = "../otto-agents-kit" }
 otto-kit = { path = "../otto-kit" }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-tracing = "0.1"
-wayland-client = "0.31"
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+tracing.workspace = true
+wayland-client.workspace = true
 
 [lints]
 workspace = true

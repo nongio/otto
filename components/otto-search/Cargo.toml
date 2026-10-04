@@ -10,10 +10,10 @@ description = "Otto's file search: one query language over the desktop's file in
 # No toolkit, no Wayland: the agents daemon and command-line tools link this
 # as well as the apps, so it carries only what talking to LocalSearch needs.
 [dependencies]
-libc = "0.2"
-tokio = { version = "1", features = ["rt"] }
-tracing = "0.1"
-zbus = { version = "4", default-features = false, features = ["tokio"] }
+libc.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+zbus = { workspace = true, features = ["tokio"] }
 
 [lints]
 workspace = true

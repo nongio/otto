@@ -10,15 +10,15 @@ description = "Otto's polkit authentication agent: the password panel for pkexec
 [dependencies]
 otto-kit = { path = "../otto-kit" }
 otto-auth-ui = { path = "../otto-auth-ui", features = ["pam"] }
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-client = "0.31"
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-libc = "0.2"
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-client.workspace = true
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+libc.workspace = true
 # polkit's own agent library (libpolkit-agent-1): registration, polkitd's
 # requests and the helper conversation.
 polkit-agent-rs = "0.3"
-tokio = { version = "1", features = ["sync"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
 
 [lints]
 workspace = true

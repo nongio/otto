@@ -11,13 +11,13 @@ description = "The agent sessions, their rows and the keys that walk them, share
 otto-kit = { path = "../otto-kit" }
 # The session feed talks to otto-agents over the Agent Host Protocol; the ahp
 # pins match otto-agents-client's.
-ahp = "=0.9.0"
-ahp-types = "=0.9.0"
+ahp.workspace = true
+ahp-types.workspace = true
 otto-agents-client = { path = "../otto-agents-client" }
-serde_json = "1"
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
-tracing = "0.1"
+serde_json.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
 
 [lints]
 workspace = true

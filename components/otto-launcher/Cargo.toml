@@ -13,25 +13,25 @@ otto-agents-kit = { path = "../otto-agents-kit" }
 otto-kit = { path = "../otto-kit" }
 otto-peek = { path = "../otto-peek" }
 otto-md-kit = { path = "../otto-md-kit" }
-taffy = "0.5"
-tracing = "0.1"
-wayland-client = "0.31"
-smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-freedesktop-desktop-entry = "0.7.5"
+taffy.workspace = true
+tracing.workspace = true
+wayland-client.workspace = true
+smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+freedesktop-desktop-entry.workspace = true
 # Ask mode hands requests to otto-agents, the agent service, over the Agent
 # Host Protocol. otto-agents-client carries the transport, the socket's
 # whereabouts and the URI spellings, so both ends cannot drift apart.
-ahp = "=0.9.0"
-ahp-types = "=0.9.0"
+ahp.workspace = true
+ahp-types.workspace = true
 otto-agents-client = { path = "../otto-agents-client" }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-uuid = { version = "1", features = ["v4"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+uuid = { workspace = true, features = ["v4"] }
 
 
 [dependencies.skia-safe]
-version = "=0.93"
+workspace = true
 features = ["gl", "textlayout", "svg", "skottie"]
 
 [lints]
@@ -39,4 +39,4 @@ workspace = true
 
 [dev-dependencies]
 # The picture the ask log draws is a real file on disk; the test needs one.
-tempfile = "3"
+tempfile.workspace = true
