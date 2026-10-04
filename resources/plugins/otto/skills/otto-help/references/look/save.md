@@ -62,11 +62,16 @@ dock.position = "bottom"
   `window_controls_side`, `show_maximize_button`, `dock.position`,
   `dock.size`, `dock.magnification`, `dock.autohide`, `dock.colorize_icons`,
   `dock.colorize_color`, `dock.colorize_intensity`, `dock.genie_scale`,
-  `dock.genie_span`, `appswitcher.colorize_icons`. The desk and the widget are
-  not part of a look file, and looks don't set the font; say so if it
-  matters to this one.
-- A look without `dock.position` puts the dock at the bottom, and one without
-  `dock.colorize_icons` turns the tint off.
+  `dock.genie_span`, `appswitcher.colorize_icons`, `desktop.widget` (a
+  shipped widget: `none`, `calendar`, `cross_pad`, `grid_pad`; it needs
+  ewwii, so the description says so). The desk and a widget theme of one's
+  own are not part of a look file, and looks don't set the font; say so if
+  it matters to this one.
+- A look without `dock.position` puts the dock at the bottom, one without
+  `dock.colorize_icons` turns the tint off, one without `desktop.widget`
+  shows no widget, and one without `[wallpaper]` clears the image so its
+  `background_color` shows. A setting the running Otto is too old to have is
+  skipped.
 - Only put the wallpaper in the folder if its licence allows sharing it.
 
 To share it with everyone, it goes to the otto-looks repository as a pull
