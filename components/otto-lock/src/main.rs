@@ -18,7 +18,7 @@
 
 use otto_auth_ui::pam::{Attempt, Event, Message, Outcome, Service};
 use otto_auth_ui::{
-    reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
+    reader, Action, Appearance, Field, Finger, Panel, PowerAction, SecretInput, Status, User, View,
 };
 use otto_kit::surfaces::{SessionLock, SessionLockSurface};
 use otto_kit::{App, AppContext, AppRunner};
@@ -79,8 +79,8 @@ struct Conversation {
     user: Option<User>,
     /// Label above the field, as PAM phrased it.
     prompt: String,
-    /// The current input buffer.
-    input: String,
+    /// The current input buffer, wiped whenever anything leaves it.
+    input: SecretInput,
     /// Whether what is being typed is a secret. PAM's `ECHO_OFF`, and the only
     /// thing that decides whether the field is masked.
     secret: bool,
@@ -107,7 +107,7 @@ impl Conversation {
             stage: Stage::Authenticating,
             user: User::current(),
             prompt: otto_kit::t_owned!("lock-prompt-password"),
-            input: String::new(),
+            input: SecretInput::new(),
             secret: true,
             question_pending: false,
             error: None,
@@ -163,9 +163,9 @@ impl Conversation {
     fn view(&self) -> View<'_> {
         let field = if self.secret || self.password_requested {
             // The panel is given only the length of a secret, never the secret.
-            Field::Secret(self.input.chars().count())
+            Field::Secret(self.input.chars())
         } else {
-            Field::Text(&self.input)
+            Field::Text(self.input.as_str())
         };
 
         let status = match (&self.stage, self.error.as_deref(), self.info.as_deref()) {
@@ -484,7 +484,7 @@ impl Locker {
             return;
         }
 
-        let answer = std::mem::take(&mut self.session.input);
+        let answer = self.session.input.take();
         self.session.error = None;
         self.session.question_pending = false;
         self.session.password_requested = false;
@@ -863,13 +863,15 @@ impl App for Locker {
             _ => {
                 // Anything the keymap turned into text goes into the buffer;
                 // control characters are handled above.
-                let printable: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
+                let printable: otto_auth_ui::Zeroizing<String> = otto_auth_ui::Zeroizing::new(
+                    event
+                        .utf8
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect(),
+                );
                 if printable.is_empty() {
                     return;
                 }
@@ -1024,7 +1026,7 @@ mod tests {
         let mut locker = Locker::new();
         locker.session.finger_pending = true;
         locker.session.use_password();
-        locker.session.input = "hunter2".to_string();
+        locker.session.input = "hunter2".into();
 
         locker.submit();
         assert!(
@@ -1032,7 +1034,8 @@ mod tests {
             "Enter should be remembered"
         );
         assert_eq!(
-            locker.session.input, "hunter2",
+            locker.session.input.as_str(),
+            "hunter2",
             "the answer must not be lost"
         );
         assert!(matches!(
@@ -1056,7 +1059,7 @@ mod tests {
         let mut locker = Locker::new();
         locker.session.finger_pending = true;
         locker.session.use_password();
-        locker.session.input = "hunter2".to_string();
+        locker.session.input = "hunter2".into();
         locker.submit();
 
         locker.said(Message::Prompt {
@@ -1077,7 +1080,7 @@ mod tests {
         let mut locker = Locker::new();
         locker.locked = true;
         locker.session.question_pending = true;
-        locker.session.input = "wrong".to_string();
+        locker.session.input = "wrong".into();
 
         locker.ended(Outcome::Denied("Authentication failure".to_string()));
         assert!(locker.session.input.is_empty(), "the attempt is over");

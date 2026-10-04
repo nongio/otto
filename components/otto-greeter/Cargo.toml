@@ -16,6 +16,9 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The answer to a secret prompt is wiped once it has been sent, along with the
+# frame it was serialised into.
+zeroize = { version = "1", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

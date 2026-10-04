@@ -26,8 +26,12 @@ mod appearance;
 pub mod pam;
 mod panel;
 pub mod reader;
+mod secret;
 mod user;
 
 pub use appearance::Appearance;
 pub use panel::{Action, Field, Finger, Panel, PowerAction, Status, View};
+pub use secret::SecretInput;
 pub use user::User;
+/// Re-exported so a client can hold a taken answer without naming the crate.
+pub use zeroize::Zeroizing;

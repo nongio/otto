@@ -7,8 +7,10 @@
 
 use std::time::{Duration, Instant};
 
-use otto_auth_ui::pam::{self, Attempt, Event, Message, Outcome};
-use otto_auth_ui::{reader, Action, Appearance, Field, Finger, Panel, Status, User, View};
+use otto_auth_ui::pam::{Attempt, Event, Message, Outcome};
+use otto_auth_ui::{
+    reader, Action, Appearance, Field, Finger, Panel, SecretInput, Status, User, View,
+};
 use otto_kit::{surfaces::LayerShellSurface, AppContext};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -79,7 +81,7 @@ pub struct Dialog {
     /// Label above the field, as PAM phrased it.
     prompt: String,
     /// What has been typed. Wiped whenever it is dropped.
-    input: String,
+    input: SecretInput,
     /// PAM's `ECHO_OFF`: the field is masked.
     secret: bool,
     /// PAM has asked something that Enter would answer.
@@ -119,7 +121,7 @@ impl Dialog {
             stage: Stage::Authenticating,
             user,
             prompt: otto_kit::t_owned!("lock-prompt-password"),
-            input: String::new(),
+            input: SecretInput::new(),
             secret: true,
             question_pending: false,
             error: None,
@@ -202,7 +204,7 @@ impl Dialog {
     }
 
     fn clear_input(&mut self) {
-        pam::wipe(&mut self.input);
+        self.input.clear();
     }
 
     fn use_password(&mut self) {
@@ -220,9 +222,9 @@ impl Dialog {
 
     fn view(&self) -> View<'_> {
         let field = if self.secret || self.password_requested {
-            Field::Secret(self.input.chars().count())
+            Field::Secret(self.input.chars())
         } else {
-            Field::Text(&self.input)
+            Field::Text(self.input.as_str())
         };
 
         let status = match (self.stage, self.error.as_deref(), self.info.as_deref()) {
@@ -394,7 +396,7 @@ impl Dialog {
         if !self.question_pending {
             return;
         }
-        let answer = std::mem::take(&mut self.input);
+        let answer = self.input.take();
         self.error = None;
         self.question_pending = false;
         self.password_requested = false;
@@ -562,13 +564,15 @@ impl Dialog {
                 self.error = None;
             }
             _ => {
-                let printable: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
+                let printable: otto_auth_ui::Zeroizing<String> = otto_auth_ui::Zeroizing::new(
+                    event
+                        .utf8
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect(),
+                );
                 if printable.is_empty() {
                     return;
                 }

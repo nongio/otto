@@ -16,7 +16,7 @@ mod session;
 
 use greetd::{AuthMessageType, Client, Request, Response};
 use otto_auth_ui::{
-    reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
+    reader, Action, Appearance, Field, Finger, Panel, PowerAction, SecretInput, Status, User, View,
 };
 use otto_kit::{surfaces::LayerShellSurface, App, AppContext, AppRunner};
 use session::Session;
@@ -116,7 +116,8 @@ struct Greeter {
     /// real name and avatar without re-reading the password database to draw.
     user: Option<User>,
     /// The current input buffer — username or auth answer depending on stage.
-    input: String,
+    /// Wiped whenever anything leaves it.
+    input: SecretInput,
     /// The buffer holds a suggested username nobody has typed, so the first
     /// edit replaces it rather than adding to it. A field cannot show a
     /// selection, so this stands in for one: the offer is either taken with
@@ -181,7 +182,7 @@ impl Greeter {
             username: String::new(),
             input: suggested
                 .as_ref()
-                .map(|user| user.name.clone())
+                .map(|user| SecretInput::from(user.name.as_str()))
                 .unwrap_or_default(),
             input_is_a_suggestion: suggested.is_some(),
             user: suggested,
@@ -570,7 +571,7 @@ impl Greeter {
 
         match self.stage {
             Stage::Username => {
-                let username = self.input.trim().to_string();
+                let username = self.input.as_str().trim().to_string();
                 if username.is_empty() {
                     return;
                 }
@@ -592,7 +593,7 @@ impl Greeter {
                 self.send(Asked::Auth, Request::CreateSession { username });
             }
             Stage::Prompt { .. } => {
-                let answer = std::mem::take(&mut self.input);
+                let answer = self.input.take();
                 self.error = None;
                 // Whatever was queued has now gone out as this answer.
                 self.password_requested = false;
@@ -612,11 +613,11 @@ impl Greeter {
     fn view(&self) -> View<'_> {
         let field = match self.stage {
             // The panel is given only the length of a secret, never the secret.
-            Stage::Prompt { secret: true } => Field::Secret(self.input.chars().count()),
+            Stage::Prompt { secret: true } => Field::Secret(self.input.chars()),
             // A password typed before PAM has asked for it is a secret too,
             // and must not be echoed while it waits.
-            _ if self.password_requested => Field::Secret(self.input.chars().count()),
-            _ => Field::Text(&self.input),
+            _ if self.password_requested => Field::Secret(self.input.chars()),
+            _ => Field::Text(self.input.as_str()),
         };
 
         let status = match (&self.stage, self.error.as_deref(), self.info.as_deref()) {
@@ -985,13 +986,15 @@ impl App for Greeter {
             _ => {
                 // Anything the keymap turned into text goes into the buffer;
                 // control characters (Enter, Tab, …) are handled above.
-                let printable: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
+                let printable: otto_auth_ui::Zeroizing<String> = otto_auth_ui::Zeroizing::new(
+                    event
+                        .utf8
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect(),
+                );
                 if printable.is_empty() {
                     return;
                 }
@@ -1061,7 +1064,7 @@ mod tests {
     /// database of the machine running the test happens to hold.
     fn greeter_offering(name: &str) -> Greeter {
         let mut greeter = greeter();
-        greeter.input = name.to_string();
+        greeter.input = name.into();
         greeter.input_is_a_suggestion = true;
         greeter.user = Some(User::lookup(name));
         greeter
@@ -1077,7 +1080,7 @@ mod tests {
 
         assert!(greeter.take_over_the_suggestion());
         greeter.input.push('a');
-        assert_eq!(greeter.input, "a");
+        assert_eq!(greeter.input.as_str(), "a");
         assert!(
             greeter.user.is_none(),
             "the card must stop showing an account that is being typed over"
@@ -1086,7 +1089,7 @@ mod tests {
         // Only the first edit; after that the field is an ordinary one.
         assert!(!greeter.take_over_the_suggestion());
         greeter.input.push_str("da");
-        assert_eq!(greeter.input, "ada");
+        assert_eq!(greeter.input.as_str(), "ada");
     }
 
     /// Backspace over a suggestion clears the whole thing, as it would over a
@@ -1146,7 +1149,7 @@ mod tests {
             "the abandoned request and the cancellation are both still owed"
         );
 
-        greeter.input = "riccardo".to_string();
+        greeter.input = "riccardo".into();
         greeter.submit();
 
         assert_eq!(greeter.username, "riccardo", "Enter has to start the login");
@@ -1258,7 +1261,7 @@ mod tests {
     #[test]
     fn the_username_step_ends_when_the_username_is_taken() {
         let mut greeter = greeter();
-        greeter.input = "riccardo".to_string();
+        greeter.input = "riccardo".into();
 
         greeter.submit();
         assert!(greeter.conversation, "greetd is holding a session now");
@@ -1422,7 +1425,7 @@ mod tests {
     fn a_password_typed_before_the_prompt_is_sent_when_it_arrives() {
         let mut greeter = waiting_for_a_finger();
         greeter.use_password();
-        greeter.input = "hunter2".to_string();
+        greeter.input = "hunter2".into();
 
         greeter.submit();
         assert!(greeter.submit_when_asked, "Enter should be remembered");
@@ -1431,7 +1434,11 @@ mod tests {
             1,
             "nothing may be sent while the reader still owns the conversation"
         );
-        assert_eq!(greeter.input, "hunter2", "the answer must not be lost");
+        assert_eq!(
+            greeter.input.as_str(),
+            "hunter2",
+            "the answer must not be lost"
+        );
         assert!(matches!(greeter.view().status, Some(Status::Info(_))));
 
         // The reader gives up and `pam_unix` asks its question.
@@ -1458,7 +1465,7 @@ mod tests {
     fn a_queued_password_is_not_given_to_a_visible_prompt() {
         let mut greeter = waiting_for_a_finger();
         greeter.use_password();
-        greeter.input = "hunter2".to_string();
+        greeter.input = "hunter2".into();
         greeter.submit();
 
         greeter.outstanding.pop_front();

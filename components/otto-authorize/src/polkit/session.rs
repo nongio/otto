@@ -10,7 +10,8 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
-use otto_auth_ui::pam::{self, Event, Message, Outcome};
+use otto_auth_ui::pam::{Event, Message, Outcome};
+use otto_auth_ui::Zeroizing;
 use polkit_agent_rs::gio::glib;
 use polkit_agent_rs::polkit;
 use polkit_agent_rs::Session;
@@ -25,7 +26,7 @@ pub fn converse(
     user: &str,
     cookie: &str,
     events: &Sender<Event>,
-    answers: &Receiver<String>,
+    answers: &Receiver<Zeroizing<String>>,
 ) -> Outcome {
     let context = glib::MainContext::new();
     let ran = context.with_thread_default(|| run(&context, user, cookie, events, answers));
@@ -40,7 +41,7 @@ fn run(
     user: &str,
     cookie: &str,
     events: &Sender<Event>,
-    answers: &Receiver<String>,
+    answers: &Receiver<Zeroizing<String>>,
 ) -> Outcome {
     let identity = match polkit::UnixUser::new_for_name(user) {
         Ok(identity) => identity,
@@ -85,10 +86,8 @@ fn run(
             };
         }
         match answers.recv_timeout(POLL) {
-            Ok(mut answer) => {
-                session.response(&answer);
-                pam::wipe(&mut answer);
-            }
+            // Wiped as it drops, once the helper has its copy.
+            Ok(answer) => session.response(&answer),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 tracing::info!("the dialog ended first; cancelling the polkit session");
