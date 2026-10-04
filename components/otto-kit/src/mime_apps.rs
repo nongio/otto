@@ -637,8 +637,8 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
                 }
             }
             // `%%` still means a percent sign inside quotes; nothing else
-            // is expanded there.
-            tokens.push(Token::Text(arg.replace('%', "%%")));
+            // is expanded there, so any other `%` is kept as written.
+            tokens.push(Token::Text(escape_quoted(&arg)));
             continue;
         }
         let mut arg = String::new();
@@ -652,6 +652,22 @@ fn tokenize(exec: &str) -> Result<Vec<Token>, OpenError> {
             _ => Token::Text(arg),
         });
     }
+}
+
+/// Escape a quoted argument so [`expand`] turns `%%` into `%` and leaves
+/// every other `%` (a field code is not one inside quotes) as it is.
+fn escape_quoted(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len());
+    let mut chars = arg.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == '%' {
+            // `%%` stays `%%` (one percent sign); a lone `%` becomes `%%`.
+            chars.next_if_eq(&'%');
+            out.push('%');
+        }
+    }
+    out
 }
 
 /// The command lines that open `paths` with an `Exec=` value.
@@ -1043,5 +1059,13 @@ mod tests {
             ]]
         );
         assert!(matches!(tokenize("\"open"), Err(OpenError::BadCommand(_))));
+    }
+
+    #[test]
+    fn percent_signs_inside_quotes() {
+        assert_eq!(
+            lines(r#"app "100%% done" "50% %f""#, &["/f"]),
+            [["app", "100% done", "50% %f"]]
+        );
     }
 }
