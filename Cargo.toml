@@ -248,7 +248,7 @@ wayland-protocols-misc = "0.3"
 wayland-protocols-wlr = "0.3"
 wayland-scanner = "0.31"
 xcursor = "0.3.3"
-xkbcommon = "0.6"
+xkbcommon = "0.9"
 # One executor for D-Bus across the workspace: tokio. Every member that awaits
 # zbus futures does so on a tokio runtime (the compositor's D-Bus services,
 # the portal's `#[tokio::main]`, the apps' worker runtimes), and the blocking
