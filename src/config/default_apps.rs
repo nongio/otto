@@ -9,14 +9,14 @@
 use std::path::Path;
 
 use freedesktop_desktop_entry::{self as desktop_entry, DesktopEntry, ExecError};
-use once_cell::sync::Lazy;
 use otto_kit::mime_apps::Associations;
+use std::sync::LazyLock;
 
 use super::Config;
 
 /// Read once, on the first shortcut that needs it: loading walks every
 /// application directory, which is too slow to repeat on each key press.
-static ASSOCIATIONS: Lazy<Associations> = Lazy::new(Associations::load);
+static ASSOCIATIONS: LazyLock<Associations> = LazyLock::new(Associations::load);
 
 pub fn resolve(
     role: &str,
