@@ -439,7 +439,14 @@ are:
 - **Keyboard** — repeat delay and rate, the input sources (see below), then
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
-- **Sound** — enabled, theme.
+- **Sound** — output and input device, volume and mute for each, then
+  interface sounds enabled and theme. The devices, volumes and mutes are not
+  settings: they belong to the sound server, which remembers them itself. The
+  pane reads and writes them through `pactl`, which speaks to PulseAudio or to
+  PipeWire through pipewire-pulse alike, and follows `pactl subscribe` while
+  it is on screen, so a headset plugged in or a volume key pressed shows up
+  without reopening it. With no server answering, the pane says so and keeps
+  the interface-sound rows.
 - **Power** — lid switch handling, power button action.
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
   which greeter runs the login screen.

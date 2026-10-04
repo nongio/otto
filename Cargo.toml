@@ -240,7 +240,7 @@ maintainer-scripts = "scripts/packaging/deb/"
 # Recommended, not required: the desktop works without them, but the RDP
 # bridge and Peek's video playback do not. Without a colour emoji font the
 # emoji picker falls back to outline glyphs and tofu.
-recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, polkitd, fonts-noto-color-emoji"
+recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, polkitd, fonts-noto-color-emoji, pipewire-pulse, pulseaudio-utils"
 # The background widgets' scripts and their titles' typeface. ewwii, which
 # draws them, is not packaged for Debian.
 suggests = "python3, fonts-libertinus"
@@ -427,6 +427,9 @@ gstreamer1-plugins-bad-free = "*"
 gstreamer1-libav = "*"
 pipewire-gstreamer = "*"
 polkit = "*"
+# Settings ▸ Sound drives the sound server with pactl.
+pipewire-pulseaudio = "*"
+pulseaudio-utils = "*"
 # Colour emoji in the emoji picker.
 google-noto-color-emoji-fonts = "*"
 
@@ -496,6 +499,8 @@ optdepends = [
     "ewwii: the desktop widgets in Settings ▸ Appearance",
     "python: the desktop widgets' scripts",
     "otf-libertinus: the desktop widgets' titles",
+    "pipewire-pulse: output and input devices in Settings ▸ Sound",
+    "libpulse: pactl, which Settings ▸ Sound drives",
 ]
 files = [
     ["target/release/otto", "/usr/bin/otto", "755"],

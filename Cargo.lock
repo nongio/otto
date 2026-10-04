@@ -5522,6 +5522,7 @@ dependencies = [
  "otto-kit",
  "otto-search",
  "serde",
+ "serde_json",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "toml_edit 0.22.27",

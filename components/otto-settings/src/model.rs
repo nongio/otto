@@ -364,6 +364,10 @@ pub fn panes() -> Vec<Pane> {
 /// when it is on screen without building every pane to find out.
 pub const SEARCH_PANE: usize = 11;
 
+/// Where the Sound pane sits in [`panes`]: it reads the sound server only
+/// while it is on screen.
+pub const SOUND_PANE: usize = 7;
+
 /// Where the Privacy pane sits in [`panes`]: it reads the permission store
 /// only while it is on screen.
 pub const PRIVACY_PANE: usize = 10;
@@ -935,7 +939,7 @@ mod readout_tests {
 
 #[cfg(test)]
 mod pane_order_tests {
-    use super::{panes, PRIVACY_PANE, SEARCH_PANE};
+    use super::{panes, PRIVACY_PANE, SEARCH_PANE, SOUND_PANE};
 
     #[test]
     fn the_search_pane_sits_where_main_looks_for_it() {
@@ -945,5 +949,10 @@ mod pane_order_tests {
     #[test]
     fn the_privacy_pane_sits_where_main_looks_for_it() {
         assert_eq!(panes()[PRIVACY_PANE].icon, "hand");
+    }
+
+    #[test]
+    fn the_sound_pane_sits_where_main_looks_for_it() {
+        assert_eq!(panes()[SOUND_PANE].icon, "sound");
     }
 }

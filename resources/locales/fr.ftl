@@ -274,6 +274,15 @@ settings-scrolling-speed = Vitesse de défilement
 
 settings-interface-sounds = Sons de l’interface
 settings-sound-theme = Thème sonore
+settings-group-sound-output = Sortie
+settings-group-sound-input = Entrée
+settings-sound-output-device = Périphérique de sortie
+settings-sound-input-device = Périphérique d’entrée
+settings-sound-volume = Volume
+settings-sound-mute = Couper le son
+settings-sound-no-outputs = Aucun périphérique de sortie
+settings-sound-no-inputs = Aucun périphérique d’entrée
+settings-sound-unavailable = Aucun serveur son ne répond. Le son nécessite PipeWire avec pipewire-pulse, ou PulseAudio, ainsi que pactl.
 
 
 ## Settings — Power

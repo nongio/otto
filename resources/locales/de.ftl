@@ -273,6 +273,15 @@ settings-scrolling-speed = Scrollgeschwindigkeit
 
 settings-interface-sounds = Oberflächenklänge
 settings-sound-theme = Klangschema
+settings-group-sound-output = Ausgabe
+settings-group-sound-input = Eingabe
+settings-sound-output-device = Ausgabegerät
+settings-sound-input-device = Eingabegerät
+settings-sound-volume = Lautstärke
+settings-sound-mute = Stummschalten
+settings-sound-no-outputs = Keine Ausgabegeräte
+settings-sound-no-inputs = Keine Eingabegeräte
+settings-sound-unavailable = Kein Soundserver antwortet. Ton benötigt PipeWire mit pipewire-pulse oder PulseAudio sowie pactl.
 
 
 ## Settings — Power

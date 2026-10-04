@@ -23,7 +23,7 @@ Launch **Settings** from the Dock or the launcher, or run `otto-settings`.
 | Dock | Size, position, auto-hide, magnification, icon colorization |
 | Keyboard | Layout and options, repeat rate, and the shortcut list |
 | Trackpad & Mouse | Tap to click, drag lock, natural scrolling, click method, scroll and pointer speed |
-| Sound | Interface sounds on or off, and which sound theme to use |
+| Sound | Which speakers and microphone to use, their volume and mute, interface sounds on or off, and which sound theme to use |
 | Power | What the lid switch and the power button do |
 | Lock & Login | Auto-lock timeout, and which lock screen and greeter to run |
 | Search | What the file index is doing, which folders it covers, whether it skips code repositories and removable drives |
