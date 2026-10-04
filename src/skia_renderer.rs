@@ -1124,37 +1124,6 @@ impl SkiaRenderer {
             .and_then(|target| self.buffers.get(target))
             .ok_or(GlesError::FramebufferBindingError)
     }
-
-    /// Blit between two framebuffers
-    #[profiling::function]
-    pub fn blit_fbo_to_fbo(
-        &self,
-        src_fbo: u32,
-        dst_fbo: u32,
-        size: Size<i32, Buffer>,
-    ) -> Result<(), GlesError> {
-        unsafe {
-            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, src_fbo);
-            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, dst_fbo);
-
-            self.gl.BlitFramebuffer(
-                0,
-                0,
-                size.w,
-                size.h,
-                0,
-                0,
-                size.w,
-                size.h,
-                ffi::COLOR_BUFFER_BIT,
-                ffi::LINEAR,
-            );
-
-            self.gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
-            self.gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
-        }
-        Ok(())
-    }
 }
 impl ImportMemWl for SkiaRenderer {
     #[profiling::function]

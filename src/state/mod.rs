@@ -1672,65 +1672,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             .into()
     }
 
-    pub fn get_render_elements(
-        &self,
-        surface: &WlSurface,
-        scale_factor: f64,
-    ) -> VecDeque<WindowViewSurface> {
-        let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
-            (0.0, 0.0).into();
-        let mut render_elements = VecDeque::new();
-
-        // Track parent through traversal context: (absolute_location, parent_location, parent_id)
-        // parent_location is used to compute relative offsets for child surfaces
-        let initial_context = (initial_location, initial_location, None);
-
-        smithay::wayland::compositor::with_surface_tree_downward(
-            surface,
-            initial_context,
-            |surface, states, (location, _parent_location, _parent_id)| {
-                let mut location = *location;
-                let data = states.data_map.get::<RendererSurfaceStateUserData>();
-                let geometry_loc = crate::shell::xdg_geometry_loc(states);
-
-                if let Some(data) = data {
-                    let data = data.lock().unwrap();
-
-                    if let Some(view) = data.view() {
-                        location += view.offset.to_f64().to_physical(scale_factor);
-                        location -= geometry_loc.to_f64().to_physical(scale_factor);
-                        // Pass current location as parent location for children, and current surface as parent ID
-                        TraversalAction::DoChildren((location, location, Some(surface.id())))
-                    } else {
-                        TraversalAction::SkipChildren
-                    }
-                } else {
-                    TraversalAction::SkipChildren
-                }
-            },
-            |surface, states, (location, parent_location, parent_id)| {
-                // Compute relative offset from parent for child surfaces
-                let relative_offset = if parent_id.is_some() {
-                    *location - *parent_location
-                } else {
-                    *location
-                };
-
-                if let Some(window_view) = self.window_view_for_surface(
-                    surface,
-                    states,
-                    &relative_offset,
-                    scale_factor,
-                    parent_id.clone(),
-                ) {
-                    render_elements.push_front(window_view);
-                }
-            },
-            |_, _, _| true,
-        );
-        render_elements
-    }
-
     pub fn update_dnd(&mut self) {
         let dnd_surface = self.dnd_icon.as_ref().cloned();
         if let Some(dnd_surface) = dnd_surface {
@@ -2761,130 +2702,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             }
         }
     }
-    // Commented out - update_layer_surface is no longer used
-    // pub fn update_layer_surface(&mut self, surface_id: &ObjectId) {
-    //     let Some(layer_shell_surface) = self.layer_surfaces.get(surface_id) else {
-    //         return;
-    //     };
-
-    //     let scale_factor = Config::with(|c| c.screen_scale);
-    //     let wl_surface = layer_shell_surface.layer_surface().wl_surface();
-
-    //     // Get the output geometry to compute surface placement
-    //     let output_geometry = self
-    //         .workspaces
-    //         .output_geometry(layer_shell_surface.output())
-    //         .unwrap_or_default();
-
-    //     // Compute the layer surface geometry based on anchors/margins
-    //     let geometry = layer_shell_surface.compute_geometry(output_geometry);
-
-    //     // Collect render elements from the surface tree
-    //     let mut render_elements: Vec<WindowViewSurface> = Vec::new();
-    //     let initial_location: smithay::utils::Point<f64, smithay::utils::Physical> =
-    //         (0.0, 0.0).into();
-
-    //     smithay::wayland::compositor::with_surface_tree_downward(
-    //         wl_surface,
-    //         initial_location,
-    //         |_, states, location| {
-    //             let mut location = *location;
-    //             let data = states
-    //                 .data_map
-    //                 .get::<smithay::backend::renderer::utils::RendererSurfaceStateUserData>(
-    //             );
-    //             let mut cached_state = states.cached_state.get::<SurfaceCachedState>();
-    //             let cached_state = cached_state.current();
-    //             let surface_geometry = cached_state.geometry.unwrap_or_default();
-
-    //             if let Some(data) = data {
-    //                 let data = data.lock().unwrap();
-    //                 if let Some(view) = data.view() {
-    //                     location += view.offset.to_f64().to_physical(scale_factor);
-    //                     location -= surface_geometry.loc.to_f64().to_physical(scale_factor);
-    //                     TraversalAction::DoChildren(location)
-    //                 } else {
-    //                     TraversalAction::SkipChildren
-    //                 }
-    //             } else {
-    //                 TraversalAction::SkipChildren
-    //             }
-    //         },
-    //         |surface, states, location| {
-    //             if let Some(wvs) =
-    //                 self.window_view_for_surface(surface, states, location, scale_factor)
-    //             {
-    //                 render_elements.push(wvs);
-    //             }
-    //         },
-    //         |_, _, _| true,
-    //     );
-
-    //     // Update the lay_rs layer position and size
-    //     let layer = &layer_shell_surface.layer;
-    //     layer.set_position(
-    //         layers::types::Point {
-    //             x: (geometry.loc.x as f64 * scale_factor) as f32,
-    //             y: (geometry.loc.y as f64 * scale_factor) as f32,
-    //         },
-    //         None,
-    //     );
-    //     layer.set_size(
-    //         layers::types::Size::points(
-    //             (geometry.size.w as f64 * scale_factor) as f32,
-    //             (geometry.size.h as f64 * scale_factor) as f32,
-    //         ),
-    //         None,
-    //     );
-
-    //     // If we have render elements, set up the drawing
-    //     if !render_elements.is_empty() {
-    //         // Clone what we need for the draw closure
-    //         let elements = render_elements.clone();
-    //         let width = (geometry.size.w as f64 * scale_factor) as f32;
-    //         let height = (geometry.size.h as f64 * scale_factor) as f32;
-
-    //         layer.set_draw_content(move |canvas: &layers::skia::Canvas, _w, _h| {
-    //             for wvs in &elements {
-    //                 if wvs.phy_dst_w <= 0.0 || wvs.phy_dst_h <= 0.0 {
-    //                     continue;
-    //                 }
-    //                 let tex = crate::textures_storage::get(&wvs.id);
-    //                 if let Some(tex) = tex {
-    //                     let src_h = (wvs.phy_src_h - wvs.phy_src_y).max(1.0);
-    //                     let src_w = (wvs.phy_src_w - wvs.phy_src_x).max(1.0);
-    //                     let scale_y = wvs.phy_dst_h / src_h;
-    //                     let scale_x = wvs.phy_dst_w / src_w;
-    //                     let mut matrix = layers::skia::Matrix::new_identity();
-    //                     matrix.pre_translate((-wvs.phy_src_x, -wvs.phy_src_y));
-    //                     matrix.pre_scale((scale_x, scale_y), None);
-
-    //                     let sampling = layers::skia::SamplingOptions::from(
-    //                         layers::skia::CubicResampler::catmull_rom(),
-    //                     );
-    //                     let mut paint = layers::skia::Paint::new(
-    //                         layers::skia::Color4f::new(1.0, 1.0, 1.0, 1.0),
-    //                         None,
-    //                     );
-    //                     paint.set_shader(tex.image.to_shader(
-    //                         (layers::skia::TileMode::Clamp, layers::skia::TileMode::Clamp),
-    //                         sampling,
-    //                         &matrix,
-    //                     ));
-
-    //                     let dst_rect = layers::skia::Rect::from_xywh(
-    //                         wvs.phy_dst_x,
-    //                         wvs.phy_dst_y,
-    //                         wvs.phy_dst_w,
-    //                         wvs.phy_dst_h,
-    //                     );
-    //                     canvas.draw_rect(dst_rect, &paint);
-    //                 }
-    //             }
-    //             layers::skia::Rect::from_xywh(0.0, 0.0, width, height)
-    //         });
-    //     }
-    // }
 
     pub fn send_foreign_toplevel_state(&self, wid: &ObjectId, activated: bool) {
         if let Some(handles) = self.foreign_toplevels.get(wid) {
@@ -2900,32 +2717,6 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 handles.send_state(activated, minimized, maximized, fullscreen);
             }
         }
-    }
-
-    /// Inject pre-created surface layers into a View's cache
-    /// This allows the View builder to find existing layers instead of creating new ones
-    pub fn inject_surface_layers_into_view<S: std::hash::Hash + Clone>(
-        &self,
-        surface: &WlSurface,
-        view: &layers::prelude::View<S>,
-    ) {
-        use smithay::wayland::compositor::with_surface_tree_downward;
-        use smithay::wayland::compositor::TraversalAction;
-
-        with_surface_tree_downward(
-            surface,
-            (),
-            |_, _, _| TraversalAction::DoChildren(()),
-            |sub_surface, _, _| {
-                let sub_id = sub_surface.id();
-                if let Some(layer) = self.surface_layers.get(&sub_id) {
-                    let key = format!("surface_{:?}", sub_id);
-                    view.viewlayer_node_map_insert(key, layer.id);
-                    tracing::debug!("Injected layer into view cache for {:?}", sub_id);
-                }
-            },
-            |_, _, _| true,
-        );
     }
 
     /// Dismiss all active popups and release any pointer/keyboard grabs.
@@ -3313,28 +3104,7 @@ pub fn take_presentation_feedback<'a>(
         );
     });
 
-    // space.elements().for_each(|window| {
-    //     if space.outputs_for_element(window).contains(output) {
-    //         window.take_presentation_feedback(
-    //             &mut output_presentation_feedback,
-    //             surface_primary_scanout_output,
-    //             |surface, _| {
-    //                 surface_presentation_feedback_flags_from_states(surface, render_element_states)
-    //             },
-    //         );
-    //     }
-    // });
-    // TODO layers presentation feedback
-    // let map = smithay::desktop::layer_map_for_output(output);
-    // for layer_surface in map.layers() {
-    //     layer_surface.take_presentation_feedback(
-    //         &mut output_presentation_feedback,
-    //         surface_primary_scanout_output,
-    //         |surface, _| {
-    //             surface_presentation_feedback_flags_from_states(surface, render_element_states)
-    //         },
-    //     );
-    // }
+    // TODO: layer-shell surfaces do not send presentation feedback yet.
 
     output_presentation_feedback
 }
