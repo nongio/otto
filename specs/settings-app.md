@@ -602,7 +602,8 @@ no route at all. An agent on a command the pane does not recognise has no
 route it knows, and the pick is ignored. When the named file exists, an
 Instructions file row shows its path with Open; when it does not, the pop-up's
 note says where agent files go. A Configuration file row opens `agents.toml` the same way, handing
-both to `xdg-open`.
+both to the application their type opens with by default, resolved through the
+same associations Files uses.
 
 The harness is recognised from the command (Claude Code, Codex, OpenCode,
 Hermes, pi, or Custom for anything else). Picking another one sets the whole
@@ -617,8 +618,9 @@ one shell-quoted line.
 The pane opens with an Agent service row saying whether the service is
 running, stopped, stopped after an error, or not installed, with Start when it
 is down and Restart when it is up. The state comes from `systemctl --user
-show`, asked every five seconds on a thread of its own so the draw path never
-runs a process, and the window is woken when it changes. Without `systemctl`
+show`, asked every five seconds while the pane is on screen, on a thread of
+its own so the draw path never runs a process, and the window is woken when it
+changes; a hidden pane asks nothing. Without `systemctl`
 the row says it cannot tell, and nothing is asked again; neither that nor a
 missing `otto-agents` stops the pane working.
 

@@ -119,11 +119,6 @@ pub fn press(row: &str, button: &str) {
         return;
     };
     // Handed to the desktop rather than to a named editor: which application
-    // opens a TOML file is the user's choice, and `xdg-open` is where that
-    // choice is recorded. Spawned and forgotten — the editor outlives this
-    // app, and waiting on it would freeze the pane.
-    match std::process::Command::new("xdg-open").arg(&path).spawn() {
-        Ok(_) => {}
-        Err(err) => eprintln!("could not open {path}: {err}"),
-    }
+    // opens a TOML file is the user's choice, recorded in its associations.
+    super::open_in_default_app(std::path::Path::new(&path));
 }

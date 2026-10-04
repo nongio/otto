@@ -5,7 +5,7 @@
 //! and greeter commands) are `string` on the wire because the compositor
 //! should not have to know what fonts a given machine has installed.
 //!
-//! Every lookup here touches the filesystem or spawns a process, so results
+//! Every lookup here touches the filesystem or the font manager, so results
 //! are cached for the lifetime of the app: `open_menu` runs on a pointer
 //! press and must not block visibly, and re-scanning `/usr/share/icons` on
 //! every click would be a needless stat storm.
@@ -13,7 +13,6 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
 /// One entry in a discovered dropdown: what the field shows, and what gets
@@ -82,49 +81,26 @@ fn merge_with_current(discovered: &[String], current: &str) -> Vec<Choice> {
 }
 
 // ---------------------------------------------------------------------
-// Fonts, via fontconfig's `fc-list`. The project deliberately keeps its
-// dependency count low, and fontconfig's own crate pulls in a build-time
-// bindgen dependency for what is, from here, one command's output — so this
-// shells out instead of linking it.
+// Fonts, from the font manager Skia renders with — on Linux that is
+// fontconfig's view of the machine, the same one the compositor draws text
+// from, without spawning `fc-list` for it.
 // ---------------------------------------------------------------------
 
 static FONT_FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
 
 fn font_families() -> &'static [String] {
-    FONT_FAMILIES.get_or_init(|| {
-        let output = match Command::new("fc-list").arg(":").arg("family").output() {
-            Ok(output) if output.status.success() => output,
-            Ok(output) => {
-                eprintln!(
-                    "settings: fc-list exited with {}; font list unavailable",
-                    output.status
-                );
-                return Vec::new();
-            }
-            Err(err) => {
-                eprintln!("settings: fc-list not available ({err}); font list unavailable");
-                return Vec::new();
-            }
-        };
-        parse_fc_list(&String::from_utf8_lossy(&output.stdout))
-    })
+    FONT_FAMILIES.get_or_init(|| sorted_families(otto_kit::skia::FontMgr::new().family_names()))
 }
 
-/// Parse `fc-list : family` output: one family (or comma-separated aliases,
-/// commonly a Latin name and a localised one) per line. Only the first alias
-/// is kept — good enough for a picker, and it keeps the list from doubling
-/// up on every CJK font.
-fn parse_fc_list(text: &str) -> Vec<String> {
-    let mut names = BTreeSet::new();
-    for line in text.lines() {
-        if let Some(first) = line.split(',').next() {
-            let name = first.trim();
-            if !name.is_empty() {
-                names.insert(name.to_string());
-            }
-        }
-    }
-    names.into_iter().collect()
+/// Family names, sorted for a picker: blanks dropped, each name once.
+fn sorted_families(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -348,17 +324,19 @@ mod tests {
     }
 
     #[test]
-    fn parses_fc_list_output_taking_first_alias_and_dedup_sorting() {
-        let text =
-            "DejaVu Sans,DejaVu Sans\nNoto Sans CJK JP,Noto Sans CJK JP\nDejaVu Sans\nInter\n";
-        let names = parse_fc_list(text);
+    fn font_families_are_sorted_once_each_without_blanks() {
+        let names = sorted_families(
+            [
+                "Inter",
+                "DejaVu Sans",
+                "",
+                " ",
+                "DejaVu Sans",
+                "Noto Sans CJK JP",
+            ]
+            .map(String::from),
+        );
         assert_eq!(names, vec!["DejaVu Sans", "Inter", "Noto Sans CJK JP"]);
-    }
-
-    #[test]
-    fn parses_fc_list_output_ignoring_blank_lines() {
-        let names = parse_fc_list("\n\nMono\n");
-        assert_eq!(names, vec!["Mono"]);
     }
 
     #[test]
