@@ -182,6 +182,6 @@ Attach `scene.json` — it describes exactly what Otto thought it was drawing.
 
 ## Getting help
 
-Chat is on [Discord](https://discord.gg/AdXkrYKuz) and Matrix
+Chat is on [Discord](https://discord.gg/Mp7cBfaACD) and Matrix
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
 Questions and "is this expected?" are welcome in either.
