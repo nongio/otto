@@ -13,7 +13,6 @@ use std::time::SystemTime;
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
 use otto_kit::fs::{copy_entry, first_free_name, move_entry, remove_entry, unique_name};
-use otto_kit::trash::percent_decode;
 use skia_safe::Rect;
 
 /// One entry in a directory.
@@ -1735,7 +1734,7 @@ fn read_trash_origins() -> std::collections::HashMap<String, PathBuf> {
 fn parse_trashinfo(body: &str) -> Option<PathBuf> {
     body.lines()
         .find_map(|line| line.strip_prefix("Path="))
-        .map(|encoded| PathBuf::from(percent_decode(encoded.trim())))
+        .map(|encoded| otto_kit::uri::decode_path(encoded.trim()))
 }
 
 /// Put trashed items back where they came from.
@@ -1887,7 +1886,7 @@ mod places_tests {
 #[cfg(test)]
 mod paste_tests {
     use super::*;
-    use otto_kit::trash::percent_encode_path;
+    use otto_kit::uri::{decode_path, encode_path};
 
     struct Tmp(PathBuf);
     impl Tmp {
@@ -2318,9 +2317,9 @@ mod paste_tests {
     #[test]
     fn a_path_survives_the_round_trip_through_percent_encoding() {
         let path = Path::new("/home/u/Documents/a b&c%d — é.txt");
-        let encoded = percent_encode_path(path);
+        let encoded = encode_path(path);
         assert!(!encoded.contains(' '), "spaces are encoded: {encoded}");
-        assert_eq!(PathBuf::from(percent_decode(&encoded)), path);
+        assert_eq!(decode_path(&encoded), path);
     }
 
     #[test]

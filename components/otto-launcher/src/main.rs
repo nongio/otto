@@ -1402,7 +1402,7 @@ impl Launcher {
                 _ => None,
             };
             if let Some(path) = path {
-                let uri = otto_kit::clipboard::path_to_uri(&path);
+                let uri = otto_kit::uri::path_to_uri(&path);
                 if let Err(err) = input::open_link(&uri) {
                     tracing::warn!(%err, path = %path.display(), "could not open the attachment");
                 }

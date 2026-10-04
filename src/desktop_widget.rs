@@ -277,21 +277,6 @@ fn prepared_dir() -> Option<PathBuf> {
         .map(|dir| dir.join(THEME_DIR))
 }
 
-/// `path` as a `file://` URL, with everything but unreserved characters and
-/// separators percent-encoded.
-fn file_url(path: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    let mut url = String::from("file://");
-    for &byte in path.as_os_str().as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
-            url.push(char::from(byte));
-        } else {
-            url.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    url
-}
-
 /// Whether the files at `a` and `b` both exist and hold the same bytes.
 fn same_contents(a: &Path, b: &Path) -> bool {
     matches!((fs::read(a), fs::read(b)), (Ok(a), Ok(b)) if a == b)
@@ -342,7 +327,7 @@ fn copy_theme(source: &Path, dest: &Path, top: bool) -> io::Result<()> {
 pub fn prepare_theme(source: &Path, dest: &Path, size: Option<(i32, i32)>) -> io::Result<()> {
     copy_theme(source, dest, true)?;
 
-    let mut stylesheet = format!("$theme-dir: \"{}\";\n", file_url(dest));
+    let mut stylesheet = format!("$theme-dir: \"{}\";\n", otto_kit::uri::path_to_uri(dest));
     // Also makes the stylesheet differ for every size, so ewwii reloads, and
     // GTK loads the redrawn backdrops, even when no generator's variables
     // changed.
@@ -808,7 +793,7 @@ mod tests {
     #[test]
     fn a_file_url_escapes_what_css_would_misread() {
         assert_eq!(
-            file_url(Path::new("/home/a b/.cache/otto#1")),
+            otto_kit::uri::path_to_uri(Path::new("/home/a b/.cache/otto#1")),
             "file:///home/a%20b/.cache/otto%231"
         );
     }
@@ -855,7 +840,10 @@ mod tests {
         prepare_theme(&source, &dest, Some((1440, 960))).expect("theme prepares");
 
         let stylesheet = fs::read_to_string(dest.join(STYLESHEET)).expect("stylesheet");
-        assert!(stylesheet.starts_with(&format!("$theme-dir: \"{}\";", file_url(&dest))));
+        assert!(stylesheet.starts_with(&format!(
+            "$theme-dir: \"{}\";",
+            otto_kit::uri::path_to_uri(&dest)
+        )));
         for line in [
             "$lines-note-left: 742px;",
             "$lines-note-top: 800px;",

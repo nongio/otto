@@ -44,6 +44,7 @@ pub mod theme;
 pub mod tile_decoration;
 pub mod trash;
 pub mod typography;
+pub mod uri;
 pub mod utils;
 
 // Re-export commonly used items

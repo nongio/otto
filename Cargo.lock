@@ -5355,6 +5355,7 @@ dependencies = [
  "laye-rs",
  "libc",
  "otto-search",
+ "percent-encoding",
  "resvg",
  "rustix 0.38.44",
  "skia-safe",

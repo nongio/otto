@@ -27,6 +27,7 @@ freedesktop-icons = "0.2.4"
 resvg = "0.44.0"
 usvg = "0.44.0"
 libc = "0.2"
+percent-encoding = "2.3"
 freedesktop-desktop-entry = "0.7.5"
 # Localisation. fluent-bundle carries the .ftl parser, the selector runtime and
 # the CLDR plural rules; unic-langid does BCP 47 parsing and negotiation.

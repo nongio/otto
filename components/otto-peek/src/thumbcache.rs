@@ -115,33 +115,12 @@ fn cache_root() -> Option<PathBuf> {
     Some(base.join("thumbnails"))
 }
 
-/// A file's canonical URI, as the standard hashes it.
-///
-/// Percent-encoding follows RFC 3986's unreserved set, with `/` left alone so
-/// the path stays a path. This must agree byte for byte with what every other
-/// implementation produces — a URI that differs by one escape hashes to a
-/// different name and silently misses a cache entry that is right there — so
-/// the escaping is spelled out rather than delegated.
+/// A file's canonical URI, as the standard hashes it: GLib's
+/// `g_filename_to_uri`, byte for byte. A URI that differs by one escape hashes
+/// to a different name and silently misses a cache entry that is right
+/// there. See [`otto_kit::uri::path_to_glib_uri`].
 pub fn uri_for(path: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-
-    let mut uri = String::from("file://");
-    for &byte in path.as_os_str().as_bytes() {
-        match byte {
-            // Unreserved, per RFC 3986 §2.3, plus the separators that make a
-            // path a path. GLib's `g_filename_to_uri` leaves exactly these.
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                uri.push(byte as char)
-            }
-            // Sub-delims GLib also passes through unescaped. Kept because a
-            // file named `a&b.png` must hash the way the rest of the desktop
-            // hashes it, not the way a stricter reading would.
-            b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':'
-            | b'@' => uri.push(byte as char),
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    uri
+    otto_kit::uri::path_to_glib_uri(path)
 }
 
 /// The file name a thumbnail of `path` has, in any size directory.
@@ -489,6 +468,21 @@ mod tests {
         );
     }
 
+    /// Hashes checked against GLib (`GLib.filename_to_uri` then MD5), the
+    /// way Nautilus names the same thumbnails. `;` is the one sub-delimiter
+    /// GLib escapes.
+    #[test]
+    fn thumbnail_names_match_glib() {
+        assert_eq!(
+            key_for(Path::new("/home/user/photo.png")),
+            "6a24f7556d0ea4de5b81d0349cef0444"
+        );
+        assert_eq!(
+            key_for(Path::new("/tmp/a b&c;d(1)é.png")),
+            "43a0f01a7f0f7ea77e0b145804dbda3a"
+        );
+    }
+
     /// The name is the hash of the URI, so a known URI has a known name.
     /// This is the one value that must never drift: it is the contract with
     /// every other file manager on the system.
@@ -616,7 +610,7 @@ mod real_cache {
                 let Some(uri) = png_text(&bytes, "Thumb::URI") else {
                     continue;
                 };
-                let Some(path) = path_from_uri(&uri) else {
+                let Some(path) = otto_kit::uri::uri_to_path(&uri) else {
                     continue;
                 };
 
@@ -667,7 +661,7 @@ mod real_cache {
                 let Some(uri) = png_text(&bytes, "Thumb::URI") else {
                     continue;
                 };
-                let Some(source) = path_from_uri(&uri) else {
+                let Some(source) = otto_kit::uri::uri_to_path(&uri) else {
                     continue;
                 };
                 // Only files still on disk and still unmodified can be
@@ -701,28 +695,5 @@ mod real_cache {
 
         eprintln!("served {served} of {looked_at} live files from the shared cache");
         assert!(looked_at > 0, "no live source files to check against");
-    }
-
-    /// The inverse of [`uri_for`], for the test's own use: percent-decode a
-    /// `file://` URI back to a path.
-    fn path_from_uri(uri: &str) -> Option<PathBuf> {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-
-        let rest = uri.strip_prefix("file://")?;
-        let bytes = rest.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == b'%' && i + 2 < bytes.len() {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
-                out.push(u8::from_str_radix(hex, 16).ok()?);
-                i += 3;
-            } else {
-                out.push(bytes[i]);
-                i += 1;
-            }
-        }
-        Some(PathBuf::from(OsString::from_vec(out)))
     }
 }

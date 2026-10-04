@@ -711,11 +711,7 @@ fn command_lines(
         for token in &tokens {
             match token {
                 Token::Files => argv.extend(files.iter().map(|p| p.clone().into_os_string())),
-                Token::Uris => argv.extend(
-                    files
-                        .iter()
-                        .map(|p| crate::clipboard::path_to_uri(p).into()),
-                ),
+                Token::Uris => argv.extend(files.iter().map(|p| crate::uri::path_to_uri(p).into())),
                 Token::Icon => {
                     if let Some(icon) = &app.icon_name {
                         argv.push("--icon".into());
@@ -779,7 +775,7 @@ fn expand(text: &str, file: Option<&Path>, app: &App) -> OsString {
             }
             Some('u') => {
                 if let Some(file) = file {
-                    out.push(crate::clipboard::path_to_uri(file));
+                    out.push(crate::uri::path_to_uri(file));
                 }
             }
             Some('c') => out.push(&app.name),
@@ -1035,7 +1031,7 @@ mod tests {
             lines("app %f", &["./report.pdf"]),
             [["app", expected.to_str().unwrap()]]
         );
-        let uri = crate::clipboard::path_to_uri(&expected);
+        let uri = crate::uri::path_to_uri(&expected);
         assert_eq!(lines("app %U", &["report.pdf"]), [["app", uri.as_str()]]);
     }
 
