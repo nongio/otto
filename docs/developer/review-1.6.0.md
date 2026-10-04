@@ -13,61 +13,62 @@ god-objects, and kit widgets the apps never adopted.
 
 ## 1. Bugs found along the way
 
-- [ ] **x11 backend does not compile** *(verified)*. `src/x11.rs:475` calls
+- [x] **x11 backend does not compile** *(verified)*. `src/x11.rs:475` calls
   `classify_windows` with 4 arguments; `src/state/window_throttle.rs:196`
   takes 6. CI never builds `--features x11`. Delete the backend (CLAUDE.md
-  already calls it unmaintained) or add a clippy step for it. **S**
-- [ ] **otto-files shows modification times in UTC** *(verified)*.
+  already calls it unmaintained) or add a clippy step for it. **S** Fixed in #259.
+- [x] **otto-files shows modification times in UTC** *(verified)*.
   `components/otto-files/src/model.rs:901` turns epoch seconds into a date with
   no timezone offset. `otto-search/src/dates.rs` already has `local_offset`;
-  or use `chrono` (already in the workspace). **S**
+  or use `chrono` (already in the workspace). **S** Fixed in #258.
 - [ ] **Same hex colour, different colours** *(verified)*. otto-bar reads
   8 digits as `#AARRGGBB` (`components/otto-bar/src/config.rs:180`),
   otto-input-overlay as `#RRGGBBAA` (`components/otto-input-overlay/src/main.rs:252`),
   otto-auth-ui likewise. Six parsers in total, see §3. **S**
-- [ ] **otto-bar logs nothing by default** *(verified)*. Fallback filter is
+  - *Partly done in #261: one `otto_kit::color::parse_hex` (alpha last); otto-bar keeps `#AARRGGBB` via `parse_hex_argb` because its README documents it. Switching it is a breaking change to decide.*
+- [x] **otto-bar logs nothing by default** *(verified)*. Fallback filter is
   `otto_topbar=info` (`components/otto-bar/src/main.rs:21`); the crate is
-  `otto_bar`. **S**
-- [ ] **Screencopy writes through a read-only pointer** *(verified)*.
+  `otto_bar`. **S** Fixed in #261.
+- [x] **Screencopy writes through a read-only pointer** *(verified)*.
   `src/state/screencopy.rs:489` casts the `*const u8` from
-  `shm::with_buffer_contents` to `*mut`. Use `with_buffer_contents_mut`. **S**
-- [ ] **Passwords are not consistently wiped.** otto-greeter never wipes
+  `shm::with_buffer_contents` to `*mut`. Use `with_buffer_contents_mut`. **S** Fixed in #259.
+- [x] **Passwords are not consistently wiped.** otto-greeter never wipes
   (`otto-greeter/src/main.rs:595`, greetd payload at `greetd.rs:188`);
   otto-lock uses plain `.clear()` (`otto-lock/src/main.rs:154,394,423,860`).
   Adopt `zeroize` and a `SecretInput` in otto-auth-ui outside the `pam`
-  feature. **S**
-- [ ] **Greeter and lock run `systemctl` on the UI thread**
+  feature. **S** Fixed in #260.
+- [x] **Greeter and lock run `systemctl` on the UI thread**
   (`otto-greeter/src/main.rs:780`, `otto-lock/src/main.rs:580`). One async
-  logind proxy in otto-auth-ui. **S**
-- [ ] **XWayland errors panic the compositor**: 32 `unwrap`/`expect` in
-  `src/shell/x11.rs` on `ConnectionError`-returning calls. Log and return. **S**
-- [ ] **Launcher corrupts quoted Exec arguments**: `split_whitespace().join(" ")`
+  logind proxy in otto-auth-ui. **S** Fixed in #260.
+- [x] **XWayland errors panic the compositor**: 32 `unwrap`/`expect` in
+  `src/shell/x11.rs` on `ConnectionError`-returning calls. Log and return. **S** Fixed in #259.
+- [x] **Launcher corrupts quoted Exec arguments**: `split_whitespace().join(" ")`
   before shell-splitting (`otto-launcher/src/apps.rs:229-290`). Launch via
-  `otto_kit::mime_apps` instead. **S**
-- [ ] **otto-files text fields lack word movement / shift-selection**: four
+  `otto_kit::mime_apps` instead. **S** Fixed in #258.
+- [x] **otto-files text fields lack word movement / shift-selection**: four
   hand-written Keysym maps (`otto-files/src/app/keys.rs:197,263,360,431`)
-  instead of `otto_kit::components::text_input::keymap::key_for`. **S**
+  instead of `otto_kit::components::text_input::keymap::key_for`. **S** Fixed in #258.
 - [ ] **Trash is incomplete vs the freedesktop spec** (`otto-kit/src/trash.rs`,
   `otto-files/src/model.rs:1667-1900`): no `$topdir/.Trash-$uid` (cross-fs
   trash copies the tree home), `.trashinfo` written after the move instead of
   reserved first with `O_EXCL`, no `directorysizes`. Fix, or adopt the `trash`
   crate. **M**
-- [ ] **Size formatting differs between Files and Peek**: four formatters,
+- [x] **Size formatting differs between Files and Peek**: four formatters,
   base 1000 vs 1024 (`otto-kit/src/components/attachments.rs:317`,
   `otto-kit/src/preview/mod.rs:1430`, `otto-peek/src/decode/mod.rs:370`,
-  `otto-files/src/model.rs:867`). One localized helper in otto-kit. **S**
-- [ ] **Compositor default app can differ from the apps'**:
+  `otto-files/src/model.rs:867`). One localized helper in otto-kit. **S** Fixed in #261.
+- [x] **Compositor default app can differ from the apps'**:
   `src/config/default_apps.rs:146-217` re-parses mimeapps.list and ignores
   `otto-mimeapps.list` and `[Added/Removed Associations]`. Call
-  `otto_kit::mime_apps`. **S**
+  `otto_kit::mime_apps`. **S** Fixed in #259.
 
 ## 2. Dependencies
 
 - [x] Remove unused `gl-rs` and `paste` (otto); add `cargo machete` to CI.
   *(this branch; otto-kit's `wayland-backend` looked unused but is needed by
   `wayland_scanner` macro output, so it is on machete's ignore list)*
-- [ ] `once_cell::sync::Lazy` → `std::sync::LazyLock` (4 uses:
-  `src/theme/mod.rs`, `src/winit.rs`, `src/config/default_apps.rs`). **S**
+- [x] `once_cell::sync::Lazy` → `std::sync::LazyLock` (4 uses:
+  `src/theme/mod.rs`, `src/winit.rs`, `src/config/default_apps.rs`). **S** Fixed in #259.
 - [ ] Hoist shared deps into `[workspace.dependencies]` (today only laye-rs):
   tracing ×21, tokio ×18, wayland-client ×18, smithay-client-toolkit ×16,
   tracing-subscriber ×16, zbus ×13, wayland-protocols-wlr ×12,
@@ -94,6 +95,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   is already complete — promote it. `user-dirs.dirs` parsed twice with
   different validation (`otto-files/src/model.rs:810`,
   `otto-settings/src/panes/search.rs:444`). **M**
+  - *Partly done in #261: `otto_kit::xdg` added and the listed helpers migrated; other ad-hoc `HOME`/`XDG_*` readers remain (listed in the PR).*
 - [ ] **`dbus`**: one client proxy per `org.otto.*` interface.
   `org.otto.Dialog1` ×3, `org.otto.Settings` ×3 plus raw calls,
   `org.otto.ScreenCast` raw in otto-rdp, `org.otto.Shell1` raw in otto-msg,
@@ -102,11 +104,13 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] **`uri`**: percent-encoding hand-written ~9× (otto-kit trash/clipboard,
   otto-peek, otto-agents-client, otto-search, `src/desktop_widget.rs`); use
   `percent-encoding`/`url` (in Cargo.lock). **S**
-- [ ] **hex colours**: one `otto_kit::theme::parse_hex` (see §1). **S**
-- [ ] **`logging`**: the same `tracing_subscriber` block in 14–15 `main.rs`,
-  with inconsistent default filters; `otto_kit::init()` doing logging + i18n. **S**
+  - *Partly done in #261: `otto_kit::uri` added; thumbnail URIs now match GLib. otto-search `file_url` and otto-agents-client `uri.rs` remain (no otto-kit dependency).*
+- [x] **hex colours**: one `otto_kit::theme::parse_hex` (see §1). **S** Fixed in #261.
+- [x] **`logging`**: the same `tracing_subscriber` block in 14–15 `main.rs`,
+  with inconsistent default filters; `otto_kit::init()` doing logging + i18n. **S** Fixed in #261.
 - [ ] **Colour palette exists twice**: `src/theme/colors_{light,dark}.rs` and
   `otto-kit/src/theme.rs:169-230`. Make otto-kit the only table. **S**
+  - *Not done: the values differ (table in #261), and the compositor light/dark menu colours look swapped. Decide the palette first.*
 - [ ] **`toplevels`**: three zwlr-foreign-toplevel trackers
   (`otto-kit/src/utils/focus_watcher.rs`, `otto-launcher/src/windows.rs`,
   `otto-emoji/src/target.rs`). **S–M**
@@ -122,6 +126,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] **Auth session**: greeter/lock/authorize re-implement input,
   fingerprint→password switch, queued submit and clock tick (~300 lines, tests
   copied too). `AuthSession` in otto-auth-ui. **M**
+  - *Partly done in #260: `pump`, `prompt_label`, frame and clock helpers live in otto-auth-ui; the `AuthSession` state machine remains.*
 - [ ] **Chrono locale** static copied (`otto-bar/src/clock.rs:72`,
   `otto-auth-ui/src/panel.rs:42`) → `otto_kit::i18n`. **S**
 - [ ] **Text elide/wrap** ×5 next to `typography::ellipsize`. **S**
@@ -135,6 +140,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 
 - [ ] otto-kit depends on otto-search (a binary with zbus+tokio) only for the
   103-line `matching.rs`. Move it into otto-kit. **S**
+  - *Not done: otto-search is deliberately toolkit-free (the agents daemon and CLI link it); only a tiny `otto-matching` crate would fix the direction.*
 - [ ] otto-preview depends on the otto-files *app* and reaches into its
   internals. Extract the shared browser model/view into a library. **M**
 - [ ] otto-peek is both app and library (4 consumers of thumbnailer,
@@ -172,8 +178,8 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] Key-action dispatch duplicated in `src/input_handler.rs` (windowed vs
   udev); swipe gesture copied as the synthetic variant
   (`src/input/gestures.rs:46-126` ≈ `:285-355`). **S**
-- [ ] `PointerGrab` forwarding boilerplate ×3 in `src/shell/grabs.rs` (~250
-  lines); a macro. **S**
+- [x] `PointerGrab` forwarding boilerplate ×3 in `src/shell/grabs.rs` (~250
+  lines); a macro. **S** Fixed in #259.
 - [ ] `Arc<RwLock<…>>` around plain scalars in views (`dock/view.rs:121-157`)
   because of `tokio::spawn` timers; use calloop timers / lay-rs callbacks,
   then `Rc<RefCell>` or fields. Drives most of the unwrap counts. **M**
@@ -192,6 +198,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   newtype. 15 local `too_many_arguments` allows already covered workspace-wide. **S**
 - [ ] 29 dead `pub fn`s (e.g. `state/mod.rs:1675 get_render_elements`,
   `inject_surface_layers_into_view`, `skia_renderer.rs:1130 blit_fbo_to_fbo`). **S**
+  - *Partly done in #259: the 11 named ones are removed; the other ~18 are unchecked.*
 - [ ] Config: 49 `default_*` fns duplicating `impl Default`; `#[serde(default)]`
   on the structs. Stringly `match id` in `src/settings/apply.rs:117`. **S**
 - [ ] Open stubs: `GetPipeWireFd` always errors (`src/screenshare/mod.rs:709`);
@@ -213,6 +220,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] otto-settings polls `systemctl` every 5 s forever
   (`panes/agents.rs:536`), spawns `fc-list` (Skia `FontMgr` is linked) and
   `xdg-open` (use `mime_apps::open`). **S–M**
+  - *Partly done in #258: polls only while the pane is visible, `xdg-open` and `fc-list` are gone; a systemd `PropertiesChanged` subscription remains.*
 - [ ] otto-peek: hand-rolled MD5 (`thumbcache.rs:361`, `md-5` is in the lock),
   PNG text-chunk parser, 3 XML-unescape copies; `imagesize.rs` (367 lines)
   duplicates the `imagesize` crate already in the lock. **S**
@@ -221,6 +229,19 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   shell out to `grim` instead of the compositor's capture (also otto-stash). **M**
 - [ ] otto-emoji search matches names only — no CLDR keywords/shortcodes. **S–M**
 - [ ] otto-islands `main.rs` 2.5k and `dialog.rs` 2.7k: split. **M**
+
+## Follow-ups found while fixing
+
+- [ ] `otto_kit::mime_apps::tokenize` keeps `%%` inside a quoted Exec
+  argument as two characters instead of one `%` (found in #258). **S**
+- [ ] `otto-search/src/query.rs:472` says size queries use powers of 1024
+  "matching how Files shows sizes"; Files now uses 1000 everywhere (#261). **S**
+- [ ] otto-files `paste_tests` put_back tests and one `scripts` test share
+  environment variables and fail when run in parallel. **S**
+- [ ] otto-files' own `open_in_default_app` still spawns `xdg-open`. **S**
+- [ ] Clippy without XWayland and the x11 backend at runtime were not
+  exercised after #259; the x11 CI step builds `default,x11`, since
+  `--no-default-features --features x11` needs `udev` code paths. **S**
 
 ## Checked and fine
 
