@@ -19,7 +19,7 @@ use smithay::{
         allocator::{
             dmabuf::{Dmabuf, DmabufAllocator},
             gbm::{GbmAllocator, GbmBufferFlags},
-            vulkan::{ImageUsageFlags, VulkanAllocator},
+            vulkan::VulkanAllocator,
         },
         egl::{EGLContext, EGLDisplay},
         renderer::{damage::OutputDamageTracker, Bind, ImportDma, ImportMemWl},
@@ -29,7 +29,7 @@ use smithay::{
     input::pointer::{CursorImageAttributes, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        ash::ext,
+        ash::{ext, vk::ImageUsageFlags},
         calloop::EventLoop,
         gbm,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
@@ -58,12 +58,6 @@ impl OldGeometry {
     #[allow(dead_code)]
     pub fn restore(&self) -> Option<Rectangle<i32, Logical>> {
         self.0.borrow_mut().take()
-    }
-}
-#[cfg(feature = "xwayland")]
-impl<BackendData: Backend> XWaylandShellHandler for Otto<BackendData> {
-    fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
-        &mut self.xwayland_shell_state
     }
 }
 
@@ -273,7 +267,7 @@ pub fn run_x11() {
             subpixel: Subpixel::Unknown,
             make: "Smithay".into(),
             model: "X11".into(),
-            serial_number: None,
+            serial_number: String::new(),
         },
     );
     let _global = output.create_global::<Otto<X11Data>>(&display.handle());
@@ -371,15 +365,18 @@ pub fn run_x11() {
             #[cfg(feature = "fps_ticker")]
             fps_element.update_fps(fps);
 
-            let (buffer, age) = backend_data
+            let (mut buffer, age) = backend_data
                 .surface
                 .buffer()
                 .expect("gbm device was destroyed");
-            if let Err(err) = backend_data.renderer.bind(buffer) {
-                error!("Error while binding buffer: {}", err);
-                profiling::finish_frame!();
-                continue;
-            }
+            let mut framebuffer = match backend_data.renderer.bind(&mut buffer) {
+                Ok(framebuffer) => framebuffer,
+                Err(err) => {
+                    error!("Error while binding buffer: {}", err);
+                    profiling::finish_frame!();
+                    continue;
+                }
+            };
 
             #[cfg(feature = "debug")]
             if let Some(renderdoc) = state.renderdoc.as_mut() {
@@ -448,6 +445,7 @@ pub fn run_x11() {
                 elements,
                 state.dnd_icon.as_ref(),
                 &mut backend_data.renderer,
+                &mut framebuffer,
                 &mut backend_data.damage_tracker,
                 age.into(),
             );
@@ -469,14 +467,33 @@ pub fn run_x11() {
                         state.workspaces.spaces_elements().collect();
                     #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
                     {
-                        let expose_active = state.workspaces.is_expose_transitioning()
-                            || state.workspaces.get_show_all();
+                        let expose_active = state.workspaces.mirrors_active();
+                        let interacting_ids = crate::state::window_throttle::interacting_ids(
+                            &state.pointer_interaction,
+                        );
                         let window_throttle_states =
                             crate::state::window_throttle::classify_windows(
                                 &state.workspaces,
                                 &all_window_elements,
                                 &std::collections::HashSet::new(),
                                 expose_active,
+                                // X11 has no per-frame screenshare tap,
+                                // so nothing is ever capture-pinned here.
+                                &std::collections::HashSet::new(),
+                                &interacting_ids,
+                            );
+                        let effect_surfaces: std::collections::HashSet<_> =
+                            state.background_effects.keys().cloned().collect();
+                        let translucent_ids = crate::state::window_throttle::translucent_window_ids(
+                            &all_window_elements,
+                            &effect_surfaces,
+                        );
+                        let occluded_layer_ids =
+                            crate::state::window_throttle::occluded_layer_surface_ids(
+                                &state.workspaces,
+                                &output,
+                                expose_active,
+                                &translucent_ids,
                             );
                         post_repaint(
                             &output,
@@ -485,7 +502,7 @@ pub fn run_x11() {
                             None,
                             time,
                             &window_throttle_states,
-                            &std::collections::HashSet::new(),
+                            &occluded_layer_ids,
                         );
                     }
 

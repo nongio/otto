@@ -1621,15 +1621,6 @@ impl Workspaces {
         }
     }
 
-    /// Reset the accumulated expose gesture value.
-    /// Called when starting a new expose gesture to prevent accumulation.
-    pub fn reset_expose_gesture(&self) {
-        let current_state = self.show_all.load(std::sync::atomic::Ordering::Relaxed);
-        let reset_value = if current_state { 1000 } else { 0 };
-        self.show_all_gesture
-            .store(reset_value, std::sync::atomic::Ordering::Relaxed);
-    }
-
     /// Reset the accumulated show desktop gesture value.
     /// Called when starting a new show desktop gesture to prevent accumulation.
     pub fn reset_show_desktop_gesture(&self) {
@@ -2897,13 +2888,6 @@ impl Workspaces {
         }
     }
 
-    /// Close all the windows of the current focused App
-    pub fn quit_current_app(&self) {
-        if let Some(app_id) = self.get_current_app_id() {
-            self.quit_app(&app_id);
-        }
-    }
-
     /// Close all the windows of the current focused App in th app switcher
     pub fn quit_appswitcher_app(&self) {
         if let Some(app_id) = self.app_switcher.get_current_app_id() {
@@ -3628,17 +3612,6 @@ impl Workspaces {
             || self.dock.has_menu_open()
     }
 
-    /// Return the actual rendered height of the dock in logical pixels
-    pub fn get_dock_height(&self) -> i32 {
-        if self.dock.alive() {
-            let bounds = self.dock.bar_layer.render_bounds_transformed();
-            let scale = Config::with(|c| c.screen_scale);
-            (bounds.height() / scale as f32).ceil() as i32
-        } else {
-            0
-        }
-    }
-
     /// Return the actual rendered geometry of the dock in logical coordinates
     pub fn get_dock_geometry(&self) -> Rectangle<i32, smithay::utils::Logical> {
         // Where the dock sits at rest, not where it is right now: exposé,
@@ -3677,36 +3650,6 @@ impl Workspaces {
             .get(app_id)
             .cloned()
             .unwrap_or_default()
-    }
-
-    /// Return the list of Spaces where an app has windows by its id
-    pub fn get_app_spaces(&self, app_id: &str) -> Vec<&Space<WindowElement>> {
-        let model = self.model.read().unwrap();
-        let mut spaces = Vec::new();
-
-        model
-            .app_windows_map
-            .get(app_id)
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .for_each(|id| {
-                let window = self.get_window_for_surface(id);
-                if let Some(we) = window {
-                    for space in self
-                        .output_workspaces
-                        .values()
-                        .flat_map(|ows| ows.spaces.iter())
-                    {
-                        if space.elements().any(|e| e == we) {
-                            spaces.push(space);
-                            break;
-                        }
-                    }
-                }
-            });
-
-        spaces
     }
 
     /// Return the current focused Application
@@ -4006,10 +3949,6 @@ impl Workspaces {
 
     pub fn raise_next_app_window(&mut self) -> Option<ObjectId> {
         self.cycle_app_window(1)
-    }
-
-    pub fn raise_prev_app_window(&mut self) -> Option<ObjectId> {
-        self.cycle_app_window(-1)
     }
 
     /// Scroll the output owning `wid` to the workspace that holds it, so a

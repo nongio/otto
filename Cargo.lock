@@ -5097,7 +5097,6 @@ dependencies = [
  "laye-rs",
  "libc",
  "mpris",
- "once_cell",
  "otto-emoji",
  "otto-kit",
  "pipewire",

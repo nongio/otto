@@ -47,16 +47,32 @@ impl OldGeometry {
     }
 }
 
+/// Log a failed request to the X server instead of panicking.
+///
+/// These requests fail with a `ConnectionError` once XWayland has exited or
+/// crashed, which must never take the compositor down with it. The
+/// compositor-side state is still updated by the caller, so the window ends
+/// up consistent once it is cleaned up.
+fn warn_on_x11_err<E: std::fmt::Debug>(result: Result<(), E>, request: &str) {
+    if let Err(err) = result {
+        tracing::warn!(?err, request, "XWayland request failed");
+    }
+}
+
 impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
-        self.xwm.as_mut().unwrap()
+        // Invariant: smithay only calls XwmHandler methods from the X11Wm
+        // event source, which exists only while `self.xwm` holds it.
+        self.xwm
+            .as_mut()
+            .expect("XwmHandler called without an X11Wm")
     }
 
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        window.set_mapped(true).unwrap();
+        warn_on_x11_err(window.set_mapped(true), "set_mapped(true)");
         // Actual mapping deferred to XWaylandShellHandler::surface_associated,
         // which fires once the wl_surface association is committed and wl_surface() is valid.
     }
@@ -132,7 +148,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             }
         }
         if !window.is_override_redirect() {
-            window.set_mapped(false).unwrap();
+            warn_on_x11_err(window.set_mapped(false), "set_mapped(false)");
         }
     }
 
@@ -280,7 +296,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         }
 
         elem.set_fullscreen(false, 0);
-        window.set_fullscreen(false).unwrap();
+        warn_on_x11_err(window.set_fullscreen(false), "set_fullscreen(false)");
 
         let restore_loc = self
             .workspaces
@@ -378,7 +394,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
 
         // Tell X11 app its restored size
         let bbox = self.workspaces.space().and_then(|s| s.element_bbox(&elem));
-        window.configure(bbox).unwrap();
+        warn_on_x11_err(window.configure(bbox), "configure");
 
         trace!("Unfullscreening X11: {:?}", elem);
     }
@@ -390,7 +406,9 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         _button: u32,
         edges: X11ResizeEdge,
     ) {
-        let start_data = self.pointer.grab_start_data().unwrap();
+        let Some(start_data) = self.pointer.grab_start_data() else {
+            return;
+        };
 
         let Some(element) = self
             .workspaces
@@ -403,20 +421,23 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
         };
 
         let geometry = element.geometry();
-        let loc = self.workspaces.element_location(&element).unwrap();
+        // Both are gone once the window was unmapped in the meantime.
+        let Some(loc) = self.workspaces.element_location(&element) else {
+            return;
+        };
+        let Some(surface) = element.wl_surface() else {
+            return;
+        };
         let (initial_window_location, initial_window_size) = (loc, geometry.size);
 
-        with_states(&element.wl_surface().unwrap(), move |states| {
-            states
-                .data_map
-                .get::<RefCell<SurfaceData>>()
-                .unwrap()
-                .borrow_mut()
-                .resize_state = ResizeState::Resizing(ResizeData {
-                edges: edges.into(),
-                initial_window_location,
-                initial_window_size,
-            });
+        with_states(&surface, move |states| {
+            if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                data.borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
+                    edges: edges.into(),
+                    initial_window_location,
+                    initial_window_size,
+                });
+            }
         });
 
         let grab = PointerResizeSurfaceGrab {
@@ -441,7 +462,7 @@ impl<BackendData: Backend> XwmHandler for Otto<BackendData> {
             // check that an X11 window is focused
             if let Some(KeyboardFocusTarget::Window(w)) = keyboard.current_focus() {
                 if let WindowSurface::X11(surface) = w.underlying_surface() {
-                    if surface.xwm_id().unwrap() == xwm {
+                    if surface.xwm_id() == Some(xwm) {
                         return true;
                     }
                 }
@@ -541,12 +562,21 @@ impl<BackendData: Backend> Otto<BackendData> {
         window: &X11Surface,
     ) {
         let outputs_for_window = self.workspaces.outputs_for_element(elem);
-        let output = outputs_for_window
+        let Some(output) = outputs_for_window
             .first()
             .or_else(|| self.workspaces.outputs().next())
-            .expect("No outputs found")
-            .clone();
-        let geometry = self.workspaces.output_geometry(&output).unwrap();
+            .cloned()
+        else {
+            tracing::warn!("x11 fullscreen: no output to fullscreen on");
+            return;
+        };
+        let Some(geometry) = self.workspaces.output_geometry(&output) else {
+            tracing::warn!(
+                output = output.name(),
+                "x11 fullscreen: output has no geometry"
+            );
+            return;
+        };
 
         let id = elem.id();
 
@@ -573,7 +603,7 @@ impl<BackendData: Backend> Otto<BackendData> {
         output
             .user_data()
             .get::<FullscreenSurface>()
-            .unwrap()
+            .expect("inserted above")
             .set(elem.clone());
 
         self.backend_data.reset_buffers(&output);
@@ -654,8 +684,8 @@ impl<BackendData: Backend> Otto<BackendData> {
         // re-trigger the same wait/hang. The initial pre-map `_NET_WM_STATE` is already
         // seeded into smithay's net_state (X11Surface::update_net_wm_state at map time),
         // so this is usually a no-op; it covers runtime fullscreen toggles too.
-        window.set_fullscreen(true).unwrap();
-        window.configure(geometry).unwrap();
+        warn_on_x11_err(window.set_fullscreen(true), "set_fullscreen(true)");
+        warn_on_x11_err(window.configure(geometry), "configure");
     }
 
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
@@ -669,20 +699,21 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
-        let old_geo = self
-            .workspaces
-            .space()
-            .and_then(|s| s.element_bbox(&elem))
-            .unwrap();
+        let Some(old_geo) = self.workspaces.space().and_then(|s| s.element_bbox(&elem)) else {
+            return;
+        };
         // The space the window is mapped in is authoritative — a window on a
         // virtual (RDP) output maximizes there, not on the physical screen.
         let outputs_for_window = self.workspaces.outputs_for_element(&elem);
-        let output = self
+        let Some(output) = self
             .workspaces
             .output_for_window(&elem)
             .or_else(|| outputs_for_window.first().cloned())
             .or_else(|| self.workspaces.outputs().next().cloned())
-            .expect("No outputs found");
+        else {
+            tracing::warn!("x11 maximize: no output to maximize on");
+            return;
+        };
         // Refresh the exclusive zones before reading them, as the xdg path
         // does: a layer surface may have changed its reservation since the
         // last recalculation.
@@ -701,9 +732,9 @@ impl<BackendData: Backend> Otto<BackendData> {
 
         let was_maximized = window.is_maximized();
 
-        window.set_maximized(true).unwrap();
+        warn_on_x11_err(window.set_maximized(true), "set_maximized(true)");
         elem.set_is_maximized(true);
-        window.configure(geometry).unwrap();
+        warn_on_x11_err(window.configure(geometry), "configure");
         // A tiled window keeps the rect it had before it was tiled — saving
         // here would overwrite the floating rect with the tile, and untiling
         // later would restore the half-screen the window already has.
@@ -716,7 +747,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             window
                 .user_data()
                 .get::<OldGeometry>()
-                .unwrap()
+                .expect("inserted above")
                 .save(old_geo);
         }
         self.workspaces.map_window_on_output(
@@ -762,17 +793,14 @@ impl<BackendData: Backend> Otto<BackendData> {
         // Only the first snap records the floating rect: re-tiling to another
         // zone, or tiling a window that is already maximized, must not lose it.
         if !self.is_tiled(&elem) && !window.is_maximized() {
-            let old_geo = self
-                .workspaces
-                .space()
-                .and_then(|s| s.element_bbox(&elem))
-                .unwrap();
-            window.user_data().insert_if_missing(OldGeometry::default);
-            window
-                .user_data()
-                .get::<OldGeometry>()
-                .unwrap()
-                .save(old_geo);
+            if let Some(old_geo) = self.workspaces.space().and_then(|s| s.element_bbox(&elem)) {
+                window.user_data().insert_if_missing(OldGeometry::default);
+                window
+                    .user_data()
+                    .get::<OldGeometry>()
+                    .expect("inserted above")
+                    .save(old_geo);
+            }
         }
 
         let _ = window.set_maximized(maximize);
@@ -800,7 +828,7 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
-        window.set_maximized(false).unwrap();
+        warn_on_x11_err(window.set_maximized(false), "set_maximized(false)");
         elem.set_is_maximized(false);
 
         // Unmaximizing is the inverse of maximizing: a window that was tiled
@@ -825,7 +853,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 old_geo,
                 window.title()
             );
-            window.configure(old_geo).unwrap();
+            warn_on_x11_err(window.configure(old_geo), "configure");
             self.workspaces
                 .map_window(&elem, old_geo.loc, false, Some(Transition::ease_out(0.3)));
         }
@@ -844,8 +872,11 @@ impl<BackendData: Backend> Otto<BackendData> {
                     });
 
                 if let Some(element) = element {
-                    let mut initial_window_location =
-                        self.workspaces.element_location(&element).unwrap();
+                    let Some(mut initial_window_location) =
+                        self.workspaces.element_location(&element)
+                    else {
+                        return;
+                    };
 
                     let is_tiled = self
                         .workspaces
@@ -857,11 +888,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                             view.tiled_zone = None;
                             self.workspaces.set_window_view(&element.id(), view);
                         }
-                        let maximized_geometry = self
+                        let Some(maximized_geometry) = self
                             .workspaces
                             .space()
                             .and_then(|s| s.element_bbox(&element))
-                            .unwrap();
+                        else {
+                            return;
+                        };
                         let touch_location = start_data.location;
 
                         let grab_offset_x = touch_location.x - maximized_geometry.loc.x as f64;
@@ -878,7 +911,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                             0.5
                         };
 
-                        window.set_maximized(false).unwrap();
+                        warn_on_x11_err(window.set_maximized(false), "set_maximized(false)");
 
                         if let Some(old_geo) = window
                             .user_data()
@@ -893,9 +926,13 @@ impl<BackendData: Backend> Otto<BackendData> {
 
                             initial_window_location = (new_x as i32, new_y as i32).into();
 
-                            window
-                                .configure(Rectangle::new(initial_window_location, old_geo.size))
-                                .unwrap();
+                            warn_on_x11_err(
+                                window.configure(Rectangle::new(
+                                    initial_window_location,
+                                    old_geo.size,
+                                )),
+                                "configure",
+                            );
                         } else {
                             let pos = start_data.location;
                             initial_window_location = (pos.x as i32, pos.y as i32).into();
@@ -932,7 +969,9 @@ impl<BackendData: Backend> Otto<BackendData> {
             return;
         };
 
-        let mut initial_window_location = self.workspaces.element_location(&element).unwrap();
+        let Some(mut initial_window_location) = self.workspaces.element_location(&element) else {
+            return;
+        };
 
         let is_tiled = self
             .workspaces
@@ -944,11 +983,13 @@ impl<BackendData: Backend> Otto<BackendData> {
                 view.tiled_zone = None;
                 self.workspaces.set_window_view(&element.id(), view);
             }
-            let maximized_geometry = self
+            let Some(maximized_geometry) = self
                 .workspaces
                 .space()
                 .and_then(|s| s.element_bbox(&element))
-                .unwrap();
+            else {
+                return;
+            };
             let pointer_location = self.pointer.current_location();
 
             let grab_offset_x = pointer_location.x - maximized_geometry.loc.x as f64;
@@ -965,7 +1006,7 @@ impl<BackendData: Backend> Otto<BackendData> {
                 0.5
             };
 
-            window.set_maximized(false).unwrap();
+            warn_on_x11_err(window.set_maximized(false), "set_maximized(false)");
 
             if let Some(old_geo) = window
                 .user_data()
@@ -980,9 +1021,10 @@ impl<BackendData: Backend> Otto<BackendData> {
 
                 initial_window_location = (new_x as i32, new_y as i32).into();
 
-                window
-                    .configure(Rectangle::new(initial_window_location, old_geo.size))
-                    .unwrap();
+                warn_on_x11_err(
+                    window.configure(Rectangle::new(initial_window_location, old_geo.size)),
+                    "configure",
+                );
             } else {
                 let pos = self.pointer.current_location();
                 initial_window_location = (pos.x as i32, pos.y as i32).into();
