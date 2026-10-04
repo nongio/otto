@@ -982,12 +982,7 @@ impl App for Greeter {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // Before the first string is looked up and before anything is drawn: the
     // catalogue is fixed by the first lookup, and the greeter draws at once.

@@ -113,12 +113,7 @@ fn main() -> anyhow::Result<()> {
     // Thumbnails are decoded by this same executable, started as a sandboxed
     // worker; that start ends here.
     otto_peek::run_worker_if_requested();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "otto_stash=info".into()),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)

@@ -78,12 +78,7 @@ async fn main() {
     // identical whether it was re-executed from here or from a file browser.
     otto_peek::run_worker_if_requested();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // Before the first string is looked up and before anything is drawn.
     otto_kit::i18n::init_from_desktop();

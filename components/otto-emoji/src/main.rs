@@ -1634,12 +1634,7 @@ impl App for Picker {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     STARTED.get_or_init(Instant::now);
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
     otto_kit::i18n::init_from_desktop();
 
     let mut deliver = Deliver::Auto;

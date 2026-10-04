@@ -82,12 +82,7 @@ fn path_from_args() -> Option<PathBuf> {
 }
 
 async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
     // Needs the runtime: without the icon theme every lookup searches hicolor
     // alone, and a card or a listing draws with no icons.
     otto_kit::icon_theme::spawn_icon_theme_watcher();

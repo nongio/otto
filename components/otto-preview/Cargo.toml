@@ -24,7 +24,6 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 wayland-client = "0.31"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]
 workspace = true

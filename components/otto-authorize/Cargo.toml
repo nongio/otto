@@ -19,7 +19,6 @@ libc = "0.2"
 polkit-agent-rs = "0.3"
 tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]
 workspace = true

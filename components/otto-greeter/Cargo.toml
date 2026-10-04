@@ -19,7 +19,6 @@ serde_json = "1"
 # frame it was serialised into.
 zeroize = { version = "1", features = ["serde"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[example]]
 name = "fake_greetd"
