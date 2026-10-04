@@ -12,8 +12,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-# The WhiteSur icon theme the package ships as its default.
-scripts/packaging/fetch-whitesur.sh
+# The MacTahoe icon theme the package ships as its default.
+scripts/packaging/fetch-icon-theme.sh
 
 args=()
 if [ "${OTTO_NIGHTLY:-1}" = 1 ]; then

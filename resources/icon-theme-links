@@ -1,16 +1,16 @@
 #!/bin/sh
-# Create or remove the WhiteSur icon theme's symlinks.
+# Create or remove the default icon theme's symlinks.
 #
-#   whitesur-links install    after the package's files are in place
-#   whitesur-links remove     before they are erased (not on upgrade)
+#   icon-theme-links install    after the package's files are in place
+#   icon-theme-links remove     before they are erased (not on upgrade)
 #
 # The deb and rpm carry the theme's regular files and this list of its
 # symlinks separately, since neither package tool can package the links
-# themselves (see scripts/packaging/fetch-whitesur.sh). Arch packages own the
-# links directly and do not ship this.
+# themselves (see scripts/packaging/fetch-icon-theme.sh). Arch packages own
+# the links directly and do not ship this.
 set -e
 
-LINKS=/usr/share/otto/whitesur-links.tar.gz
+LINKS=/usr/share/otto/icon-theme-links.tar.gz
 ICONS=/usr/share/icons
 
 case "$1" in
@@ -21,7 +21,7 @@ case "$1" in
         [ -f "$LINKS" ] || exit 0
         tar -tzf "$LINKS" | (cd "$ICONS" && xargs -d '\n' rm -f)
         # Directories that held only links, which the package does not own.
-        find "$ICONS/WhiteSur" "$ICONS/WhiteSur-light" "$ICONS/WhiteSur-dark" \
+        find "$ICONS/MacTahoe" "$ICONS/MacTahoe-light" "$ICONS/MacTahoe-dark" \
             -depth -type d -empty -delete 2>/dev/null || true
         ;;
     *)

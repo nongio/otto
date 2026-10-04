@@ -140,14 +140,14 @@ echo "== wallpaper =="
 # The shipped config names it as background_image.
 check /usr/share/otto/wallpaper.jpg
 
-echo "== WhiteSur icon theme =="
-for theme in WhiteSur WhiteSur-light WhiteSur-dark; do
+echo "== MacTahoe icon theme =="
+for theme in MacTahoe MacTahoe-light MacTahoe-dark; do
     check "/usr/share/icons/$theme/index.theme"
 done
 # Through a link to a file and through a link to a directory: the deb and
 # rpm create these on install from a list rather than shipping them.
-check /usr/share/icons/WhiteSur/apps/scalable/org.mozilla.firefox.svg
-check /usr/share/icons/WhiteSur-light/apps/scalable/firefox.svg
+check /usr/share/icons/MacTahoe/apps/scalable/org.mozilla.firefox.svg
+check /usr/share/icons/MacTahoe-light/apps/scalable/firefox.svg
 
 echo "== PAM =="
 if [[ "$flavour" == deb ]]; then

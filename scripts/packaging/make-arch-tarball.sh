@@ -107,12 +107,12 @@ while IFS= read -r f; do
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/widgets -type f)
 
-# The WhiteSur icon theme, the default: the PKGBUILDs copy the themes and
+# The MacTahoe icon theme, the default: the PKGBUILDs copy the themes and
 # extract their symlinks from links.tar.gz into the package.
-scripts/packaging/fetch-whitesur.sh
-mkdir -p "$tmpdir/$PKGDIR/whitesur"
-cp -a target/whitesur/WhiteSur target/whitesur/WhiteSur-light target/whitesur/WhiteSur-dark \
-      target/whitesur/links.tar.gz target/whitesur/COPYING "$tmpdir/$PKGDIR/whitesur/"
+scripts/packaging/fetch-icon-theme.sh
+mkdir -p "$tmpdir/$PKGDIR/icon-theme"
+cp -a target/icon-theme/MacTahoe target/icon-theme/MacTahoe-light target/icon-theme/MacTahoe-dark \
+      target/icon-theme/links.tar.gz target/icon-theme/COPYING "$tmpdir/$PKGDIR/icon-theme/"
 
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 

@@ -114,13 +114,13 @@ package() {
     # The default wallpaper, which the shipped config names.
     install -Dm644 resources/wallpaper.jpg "$pkgdir/usr/share/otto/wallpaper.jpg"
 
-    # WhiteSur, the default icon theme (GPL-3.0). Its symlinks come as a list
-    # (see scripts/packaging/fetch-whitesur.sh); extracting it here makes
+    # MacTahoe, the default icon theme (GPL-3.0). Its symlinks come as a list
+    # (see scripts/packaging/fetch-icon-theme.sh); extracting it here makes
     # pacman own them like any other file.
     install -d "$pkgdir/usr/share/icons"
-    cp -r --no-preserve=ownership whitesur/WhiteSur whitesur/WhiteSur-light whitesur/WhiteSur-dark "$pkgdir/usr/share/icons/"
-    tar -xzf whitesur/links.tar.gz -C "$pkgdir/usr/share/icons" --no-same-owner
-    install -Dm644 whitesur/COPYING "$pkgdir/usr/share/licenses/$pkgname/WhiteSur-COPYING"
+    cp -r --no-preserve=ownership icon-theme/MacTahoe icon-theme/MacTahoe-light icon-theme/MacTahoe-dark "$pkgdir/usr/share/icons/"
+    tar -xzf icon-theme/links.tar.gz -C "$pkgdir/usr/share/icons" --no-same-owner
+    install -Dm644 icon-theme/COPYING "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-COPYING"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"

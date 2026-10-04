@@ -23,7 +23,7 @@ the same licence applies to the screenshot that shows it.
 | Name | Author | Licence |
 |------|--------|---------|
 | [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme) | vinceliuice | GPL-3.0 |
-| [WhiteSur icon theme](https://github.com/vinceliuice/WhiteSur-icon-theme) (ships with Otto) | vinceliuice | GPL-3.0 |
+| [MacTahoe icon theme and cursors](https://github.com/vinceliuice/MacTahoe-icon-theme) (ships with Otto) | vinceliuice | GPL-3.0 |
 | [WhiteSur cursors](https://github.com/vinceliuice/WhiteSur-cursors) | vinceliuice | GPL-3.0 |
 | [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) | Papirus Development Team | GPL-3.0 |
 | [Adwaita](https://gitlab.gnome.org/GNOME/adwaita-icon-theme) | The GNOME Project | CC BY-SA 3.0 / LGPL-3.0 |
@@ -41,5 +41,5 @@ desktop. Their names and icons belong to their projects, and nothing here
 implies they endorse Otto.
 
 Otto's own wallpaper, `/usr/share/otto/wallpaper.jpg`, and everything else
-the project ships are covered by Otto's own licence, except the WhiteSur icon
+the project ships are covered by Otto's own licence, except the MacTahoe icon
 theme, which keeps its own (GPL-3.0).

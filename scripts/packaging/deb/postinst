@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-# The WhiteSur icon theme's symlinks; see resources/whitesur-links.
+# The MacTahoe icon theme's symlinks; see resources/icon-theme-links.
 if [ "$1" = configure ]; then
-    /usr/lib/otto/whitesur-links install
+    /usr/lib/otto/icon-theme-links install
 fi

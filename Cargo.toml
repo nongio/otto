@@ -230,7 +230,7 @@ multi-workspace support, and integrated screen sharing capabilities."""
 depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-client0, libwayland-egl1, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
 section = "x11"
 priority = "optional"
-# postinst/prerm create and remove the WhiteSur icon theme's symlinks.
+# postinst/prerm create and remove the MacTahoe icon theme's symlinks.
 maintainer-scripts = "scripts/packaging/deb/"
 # GStreamer loads these at runtime — otto-rdp's pipewiresrc and the VA-API
 # H.264 encoder it falls back from, and the decoders otto-media-worker needs
@@ -310,30 +310,30 @@ assets = [
     ["components/otto-lock/otto-lock.pam", "usr/share/doc/otto/otto-lock.pam.example", "644"],
     # The default wallpaper, which the shipped config names.
     ["resources/wallpaper.jpg", "usr/share/otto/wallpaper.jpg", "644"],
-    # WhiteSur, the default icon theme (GPL-3.0), staged by
-    # scripts/packaging/fetch-whitesur.sh: its regular files here, its
+    # MacTahoe, the default icon theme (GPL-3.0), staged by
+    # scripts/packaging/fetch-icon-theme.sh: its regular files here, its
     # symlinks as a tar that postinst extracts (see that script for why).
-    ["target/whitesur/WhiteSur/**/*", "usr/share/icons/WhiteSur/", "644"],
-    ["target/whitesur/WhiteSur-light/**/*", "usr/share/icons/WhiteSur-light/", "644"],
-    ["target/whitesur/WhiteSur-dark/**/*", "usr/share/icons/WhiteSur-dark/", "644"],
-    ["target/whitesur/links.tar.gz", "usr/share/otto/whitesur-links.tar.gz", "644"],
-    ["resources/whitesur-links", "usr/lib/otto/whitesur-links", "755"],
-    ["target/whitesur/COPYING", "usr/share/doc/otto/WhiteSur-COPYING", "644"],
+    ["target/icon-theme/MacTahoe/**/*", "usr/share/icons/MacTahoe/", "644"],
+    ["target/icon-theme/MacTahoe-light/**/*", "usr/share/icons/MacTahoe-light/", "644"],
+    ["target/icon-theme/MacTahoe-dark/**/*", "usr/share/icons/MacTahoe-dark/", "644"],
+    ["target/icon-theme/links.tar.gz", "usr/share/otto/icon-theme-links.tar.gz", "644"],
+    ["resources/icon-theme-links", "usr/lib/otto/icon-theme-links", "755"],
+    ["target/icon-theme/COPYING", "usr/share/doc/otto/MacTahoe-COPYING", "644"],
 ]
 
 [package.metadata.generate-rpm]
 # generate-rpm cannot package a symlink, so the launcher alias (otto-ask) is
 # made on install and removed on erase, not on upgrade.
-# The same goes for the WhiteSur icon theme's symlinks, which
-# resources/whitesur-links creates from a list (see
-# scripts/packaging/fetch-whitesur.sh); they go before erase, while the list
+# The same goes for the MacTahoe icon theme's symlinks, which
+# resources/icon-theme-links creates from a list (see
+# scripts/packaging/fetch-icon-theme.sh); they go before erase, while the list
 # is still there.
-post_install_script = "ln -sf otto-launcher /usr/bin/otto-ask; /usr/lib/otto/whitesur-links install"
-pre_uninstall_script = "if [ \"$1\" -eq 0 ]; then /usr/lib/otto/whitesur-links remove; fi"
-# generate-rpm packages no directories either, so erase leaves WhiteSur's
+post_install_script = "ln -sf otto-launcher /usr/bin/otto-ask; /usr/lib/otto/icon-theme-links install"
+pre_uninstall_script = "if [ \"$1\" -eq 0 ]; then /usr/lib/otto/icon-theme-links remove; fi"
+# generate-rpm packages no directories either, so erase leaves MacTahoe's
 # behind, empty, unless they are removed here.
-post_uninstall_script = "if [ \"$1\" -eq 0 ]; then rm -f /usr/bin/otto-ask; find /usr/share/icons/WhiteSur /usr/share/icons/WhiteSur-light /usr/share/icons/WhiteSur-dark -depth -type d -empty -delete 2>/dev/null || true; fi"
-# Otto is MIT; the WhiteSur icon theme it ships is GPL-3.0.
+post_uninstall_script = "if [ \"$1\" -eq 0 ]; then rm -f /usr/bin/otto-ask; find /usr/share/icons/MacTahoe /usr/share/icons/MacTahoe-light /usr/share/icons/MacTahoe-dark -depth -type d -empty -delete 2>/dev/null || true; fi"
+# Otto is MIT; the MacTahoe icon theme it ships is GPL-3.0.
 license = "MIT AND GPL-3.0-only"
 # RPM forbids a hyphen in Version; "~rc1" is the RPM idiom and sorts
 # before 1.0.0, which "1.0.0-rc.1" would not.
@@ -379,14 +379,14 @@ assets = [
     { source = "LICENSE", dest = "/usr/share/doc/otto/LICENSE", mode = "644", doc = true },
     # The default wallpaper, which the shipped config names.
     { source = "resources/wallpaper.jpg", dest = "/usr/share/otto/wallpaper.jpg", mode = "644" },
-    # WhiteSur, the default icon theme (GPL-3.0): regular files here, the
+    # MacTahoe, the default icon theme (GPL-3.0): regular files here, the
     # symlinks as a list post_install_script extracts.
-    { source = "target/whitesur/WhiteSur/**/*", dest = "/usr/share/icons/WhiteSur/", mode = "644" },
-    { source = "target/whitesur/WhiteSur-light/**/*", dest = "/usr/share/icons/WhiteSur-light/", mode = "644" },
-    { source = "target/whitesur/WhiteSur-dark/**/*", dest = "/usr/share/icons/WhiteSur-dark/", mode = "644" },
-    { source = "target/whitesur/links.tar.gz", dest = "/usr/share/otto/whitesur-links.tar.gz", mode = "644" },
-    { source = "resources/whitesur-links", dest = "/usr/lib/otto/whitesur-links", mode = "755" },
-    { source = "target/whitesur/COPYING", dest = "/usr/share/doc/otto/WhiteSur-COPYING", mode = "644", doc = true },
+    { source = "target/icon-theme/MacTahoe/**/*", dest = "/usr/share/icons/MacTahoe/", mode = "644" },
+    { source = "target/icon-theme/MacTahoe-light/**/*", dest = "/usr/share/icons/MacTahoe-light/", mode = "644" },
+    { source = "target/icon-theme/MacTahoe-dark/**/*", dest = "/usr/share/icons/MacTahoe-dark/", mode = "644" },
+    { source = "target/icon-theme/links.tar.gz", dest = "/usr/share/otto/icon-theme-links.tar.gz", mode = "644" },
+    { source = "resources/icon-theme-links", dest = "/usr/lib/otto/icon-theme-links", mode = "755" },
+    { source = "target/icon-theme/COPYING", dest = "/usr/share/doc/otto/MacTahoe-COPYING", mode = "644", doc = true },
     { source = "otto_config.example.toml", dest = "/etc/otto/config.toml", mode = "644", config = true },
     { source = "resources/otto.desktop", dest = "/usr/share/wayland-sessions/otto.desktop", mode = "644" },
     { source = "components/xdg-desktop-portal-otto/otto.portal", dest = "/usr/share/xdg-desktop-portal/portals/otto.portal", mode = "644" },
@@ -439,7 +439,7 @@ freetype = "*"
 fontconfig = "*"
 pixman = "*"
 polkit-libs = "*"
-# post_install_script extracts the WhiteSur icon links with it.
+# post_install_script extracts the MacTahoe icon links with it.
 tar = "*"
 google-noto-sans-fonts = "*"
 rsms-inter-fonts = "*"
