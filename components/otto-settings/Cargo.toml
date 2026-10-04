@@ -12,6 +12,8 @@ otto-kit = { path = "../otto-kit" }
 otto-search = { path = "../otto-search" }
 smithay-client-toolkit = { workspace = true, features = ["calloop", "xkbcommon"] }
 zbus.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 toml_edit.workspace = true
 xcursor.workspace = true
 # The clock format pop-up previews each format the way otto-bar renders it;

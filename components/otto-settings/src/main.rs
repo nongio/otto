@@ -18,6 +18,7 @@ mod glyphs;
 mod model;
 mod panes;
 mod preview;
+mod pulse;
 mod settings_client;
 mod sheet;
 mod theme_preview;
@@ -378,6 +379,9 @@ fn select_ids() -> Vec<&'static str> {
     // The Privacy pane's Ask / Allow / Don't Allow pop-ups, one per row it
     // can hold.
     ids.extend_from_slice(panes::privacy::slot_ids());
+    // The Sound pane's device pop-ups, whose rows only appear once the sound
+    // server has answered.
+    ids.extend_from_slice(panes::sound::slot_ids());
     ids
 }
 
@@ -568,6 +572,7 @@ fn open_menu(
         if let Some(choices) = panes::privacy::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::account::menu_choices(select.id) {
+        } else if let Some(choices) = panes::sound::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
@@ -646,6 +651,7 @@ fn open_menu(
             if let Some(value) = values.get(index) {
                 if panes::privacy::choose(id, value)
                     || panes::account::choose(id, value)
+                    || panes::sound::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
                 {
@@ -815,6 +821,10 @@ fn apply(id: &str, value: settings_client::Value) {
     }
     // The account picture goes to AccountsService, not to a setting.
     if panes::account::apply(id, &value) {
+        return;
+    }
+    // The Sound pane's devices, volumes and mutes belong to the sound server.
+    if panes::sound::apply(id, &value) {
         return;
     }
     // The desk's icon size is in files.toml, not a setting.
@@ -1023,6 +1033,7 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
                 Some(id) => panes::keyboard_layouts::display(id, current)
                     .or_else(|| panes::top_bar::display(id, current))
                     .or_else(|| panes::desk::display(id, current))
+                    .or_else(|| panes::sound::display(id, current))
                     .unwrap_or_else(|| settings_client::display_choice(id, current)),
                 None => current.clone(),
             };
@@ -2526,6 +2537,8 @@ impl App for SettingsApp {
         panes::search::set_shown(*self.selected.lock().unwrap() == model::SEARCH_PANE);
         // The Privacy pane reads the permission store when it comes on screen.
         panes::privacy::set_shown(*self.selected.lock().unwrap() == model::PRIVACY_PANE);
+        // The Sound pane reads the sound server when it comes on screen.
+        panes::sound::set_shown(*self.selected.lock().unwrap() == model::SOUND_PANE);
         // The Agents pane asks systemd about its service only while it is on
         // screen.
         agents::set_shown(*self.selected.lock().unwrap() == model::AGENTS_PANE);

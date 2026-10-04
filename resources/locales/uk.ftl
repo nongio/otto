@@ -280,6 +280,15 @@ settings-scrolling-speed = Швидкість прокручування
 
 settings-interface-sounds = Звуки інтерфейсу
 settings-sound-theme = Тема звуків
+settings-group-sound-output = Виведення
+settings-group-sound-input = Введення
+settings-sound-output-device = Пристрій виведення
+settings-sound-input-device = Пристрій введення
+settings-sound-volume = Гучність
+settings-sound-mute = Вимкнути звук
+settings-sound-no-outputs = Немає пристроїв виведення
+settings-sound-no-inputs = Немає пристроїв введення
+settings-sound-unavailable = Звуковий сервер не відповідає. Для звуку потрібен PipeWire з pipewire-pulse або PulseAudio, а також pactl.
 
 
 ## Settings — Power
