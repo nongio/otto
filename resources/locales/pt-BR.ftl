@@ -74,6 +74,15 @@ settings-pane-power = Energia
 settings-pane-lock-and-login = Bloqueio e login
 settings-pane-search = Pesquisa
 settings-pane-agents = Agentes
+settings-pane-about = Sobre
+settings-group-about-machine = Sobre este computador
+settings-about-version-line = Versão { $version }
+settings-about-computer-name = Nome do computador
+settings-about-os = Sistema operacional
+settings-about-kernel = Kernel
+settings-about-processor = Processador
+settings-about-memory = Memória
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -951,6 +960,10 @@ bar-power-performance = Desempenho
 bar-power-settings = Configurações de energia…
 bar-keyboard-settings = Configurações do teclado…
 bar-keyboard-layout-label = Layout do teclado: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Sobre o Otto
+bar-otto-settings = Configurações…
+bar-otto-log-out = Encerrar sessão
 
 
 ## Settings — widgets

@@ -31,6 +31,8 @@ const CLOCK: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA5
 const BATTERY: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0002);
 /// The keyboard layout indicator's.
 const KEYBOARD_LAYOUT: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0003);
+/// The Otto mark's, which opens the Otto menu.
+const OTTO_MENU: otto_kit::focus::FocusId = otto_kit::focus::FocusId::from_raw(0xBA51_0004);
 
 /// One menu's, by its place on the bar.
 fn menu_focus(index: usize) -> otto_kit::focus::FocusId {
@@ -111,6 +113,8 @@ pub struct TopBarApp {
     open_power_menu: Option<PowerMenu>,
     /// The keyboard layout menu, while it is open.
     open_layout_menu: Option<ContextMenu>,
+    /// The Otto menu, hanging from the mark at the left end, while it is open.
+    open_otto_menu: Option<ContextMenu>,
 }
 
 impl TopBarApp {
@@ -135,6 +139,7 @@ impl TopBarApp {
             pending_app_menu_index: None,
             open_power_menu: None,
             open_layout_menu: None,
+            open_otto_menu: None,
         }
     }
 
@@ -266,6 +271,74 @@ impl TopBarApp {
         if let Some(ref surface) = self.left_surface {
             surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         }
+        self.redraw_left();
+    }
+
+    fn close_otto_menu(&mut self) {
+        if let Some(menu) = self.open_otto_menu.take() {
+            menu.hide_animated();
+        }
+        if let Some(ref surface) = self.left_surface {
+            surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        }
+        if self.left.logo_active {
+            self.left.logo_active = false;
+            self.redraw_left();
+        }
+    }
+
+    /// Open the Otto menu, or close it when it is already open: the same
+    /// toggle for a pointer and for a screen reader.
+    fn toggle_otto_menu(&mut self) {
+        let was_open = self.open_otto_menu.is_some();
+        self.close_app_menu();
+        self.close_otto_menu();
+        if !was_open {
+            self.show_otto_menu();
+        }
+    }
+
+    /// Show the Otto menu under the mark: About, Settings, Log Out.
+    fn show_otto_menu(&mut self) {
+        let Some(ref surface) = self.left_surface else {
+            return;
+        };
+
+        let menu = ContextMenu::new(otto_menu_items()).on_item_click(|action_id| match action_id {
+            "about" => open_settings(&["--pane", "about"]),
+            "settings" => open_settings(&[]),
+            "logout" => crate::keyboard_layout::run_shell_command("exit".to_string()),
+            _ => {}
+        });
+
+        let Ok(positioner) = XdgPositioner::new(AppContext::xdg_shell_state()) else {
+            return;
+        };
+        let style = otto_kit::components::context_menu::ContextMenuStyle::default();
+        let state = menu.state();
+        let menu_items = state.borrow().items_at_depth(0).to_vec();
+        let (menu_w, menu_h) =
+            otto_kit::components::context_menu::ContextMenuRenderer::measure_items(
+                &menu_items,
+                &style,
+            );
+        positioner.set_size(menu_w as i32, menu_h as i32);
+        let (ix, iy, iw, ih) = self.left.logo_rect();
+        positioner.set_anchor_rect(ix as i32, iy as i32, iw as i32, ih as i32);
+        positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+        positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+        positioner.set_offset(0, 1);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::SlideY
+                | xdg_positioner::ConstraintAdjustment::FlipX
+                | xdg_positioner::ConstraintAdjustment::FlipY,
+        );
+
+        menu.show_for_layer(&surface.layer_surface(), &positioner);
+        surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        self.open_otto_menu = Some(menu);
+        self.left.logo_active = true;
         self.redraw_left();
     }
 
@@ -698,6 +771,11 @@ impl TopBarApp {
     /// Handle a click on the left panel (app menu items).
     fn handle_left_click(&mut self, event: &PointerEvent) {
         let x = event.position.0 as f32;
+        if self.left.logo_at(x) {
+            self.toggle_otto_menu();
+            return;
+        }
+        self.close_otto_menu();
         let hit = self.left.menu_item_at(x);
         let Some(index) = hit else {
             self.close_app_menu();
@@ -713,7 +791,8 @@ impl TopBarApp {
     /// pointer's are the same thing, down to the toggle when the menu already
     /// open is clicked again.
     fn open_menu_at(&mut self, index: usize) {
-        // Index 0 is the app name — skip it (or could open "about" in future)
+        self.close_otto_menu();
+        // Index 0 is the app name, which has no menu of its own.
         if index == 0 {
             self.close_app_menu();
             return;
@@ -872,6 +951,14 @@ impl App for TopBarApp {
             return;
         }
 
+        if let Some(ref mut menu) = self.open_otto_menu {
+            menu.handle_key(key, state);
+            if !menu.is_visible() {
+                self.close_otto_menu();
+            }
+            return;
+        }
+
         // Forward to open app menu
         if let Some(ref mut open) = self.open_app_menu {
             open.menu.handle_key(key, state);
@@ -913,6 +1000,9 @@ impl App for TopBarApp {
         if self.open_layout_menu.is_some() {
             self.close_layout_menu();
         }
+        if self.open_otto_menu.is_some() {
+            self.close_otto_menu();
+        }
     }
 
     /// The bar, described. Which panel is asked for decides what is in it:
@@ -945,6 +1035,19 @@ impl App for TopBarApp {
                 Role::MenuBar,
                 otto_kit::t!("a11y-menu-bar"),
                 |tree| {
+                    let (x, y, w, h) = self.left.logo_rect();
+                    tree.control(
+                        OTTO_MENU,
+                        Rect::from_xywh(x, y, w, h),
+                        Role::MenuItem,
+                        true,
+                        |node| {
+                            node.set_label(otto_kit::t!("bar-otto-menu"));
+                            node.set_expanded(self.open_otto_menu.is_some());
+                            node.set_has_popup(otto_kit::accessibility::HasPopup::Menu);
+                            node.add_action(Action::Click);
+                        },
+                    );
                     for (index, label, x, width) in items {
                         let bounds = Rect::from_xywh(x, 0.0, width, height);
                         tree.control(menu_focus(index), bounds, Role::MenuItem, true, |node| {
@@ -1082,6 +1185,10 @@ impl App for TopBarApp {
             .unwrap_or(false);
 
         if left {
+            if node == otto_kit::accessibility::node_id(OTTO_MENU) {
+                self.toggle_otto_menu();
+                return;
+            }
             let count = self.left.menu_state.items().len();
             if let Some(index) =
                 (0..count).find(|i| otto_kit::accessibility::node_id(menu_focus(*i)) == node)
@@ -1149,6 +1256,13 @@ impl App for TopBarApp {
         if layout_menu_gone {
             self.close_layout_menu();
             dirty = true;
+        }
+        let otto_menu_gone = self
+            .open_otto_menu
+            .as_ref()
+            .is_some_and(|m| !m.is_visible());
+        if otto_menu_gone {
+            self.close_otto_menu();
         }
 
         // A layout switch, or the layouts or the setting changed.
@@ -1452,6 +1566,27 @@ fn open_settings(extra: &[&str]) {
         }
         Err(e) => tracing::warn!("battery.settings_command: {e}"),
     }
+}
+
+/// The Otto menu's items. About and Settings both open the settings app,
+/// so they go only where it is configured; Log Out is always there.
+fn otto_menu_items() -> Vec<KitMenuItem> {
+    let mut items = Vec::new();
+    if !battery_config().settings_command.is_empty() {
+        items.push(
+            KitMenuItem::action(otto_kit::t!("bar-otto-about")).with_action_id("about".to_string()),
+        );
+        items.push(KitMenuItem::separator());
+        items.push(
+            KitMenuItem::action(otto_kit::t!("bar-otto-settings"))
+                .with_action_id("settings".to_string()),
+        );
+        items.push(KitMenuItem::separator());
+    }
+    items.push(
+        KitMenuItem::action(otto_kit::t!("bar-otto-log-out")).with_action_id("logout".to_string()),
+    );
+    items
 }
 
 /// The keyboard layout menu's items: every layout by its full name, the

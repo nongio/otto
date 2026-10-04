@@ -36,6 +36,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
         "search" => search(canvas, &paint),
         "agent" => agent(canvas, &paint),
         "hand" => hand(canvas, &paint),
+        "about" => about(canvas, &paint),
         _ => {
             canvas.draw_circle(Point::new(0.0, 0.0), 2.5, &paint);
         }
@@ -178,6 +179,19 @@ fn agent(canvas: &Canvas, paint: &Paint) {
 }
 
 /// A raised open hand, palm out: four fingers, a thumb and the palm.
+/// The Otto mark: two dots side by side, inside a rounded square.
+fn about(canvas: &Canvas, paint: &Paint) {
+    canvas.draw_rrect(
+        RRect::new_rect_xy(skia_safe::Rect::from_xywh(-7.0, -7.0, 14.0, 14.0), 3.5, 3.5),
+        paint,
+    );
+    let mut fill = paint.clone();
+    fill.set_style(PaintStyle::Fill);
+    for x in [-2.5_f32, 2.5] {
+        canvas.draw_circle(Point::new(x, 0.0), 1.5, &fill);
+    }
+}
+
 fn hand(canvas: &Canvas, paint: &Paint) {
     // Fingers, tallest in the middle.
     for (x, top) in [(-3.6_f32, -3.5_f32), (-1.2, -6.0), (1.2, -6.5), (3.6, -4.5)] {

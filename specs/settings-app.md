@@ -443,6 +443,14 @@ are:
 - **Power** — lid switch handling, power button action.
 - **Lock & Login** — automatic lock timeout, which locker runs the lock screen,
   which greeter runs the login screen.
+- **About** — the last pane, and not settings. It opens on a centred band:
+  the Otto mark large (the logo's rounded square in the text colour, its two
+  dots in the opposite one), "Otto" in large type, and the version under it.
+  Below, a card *About this computer* lists the computer's name, operating
+  system (`PRETTY_NAME` from `/etc/os-release`), kernel, processor and
+  memory, each value on its row's detail line, read from `/proc` when the
+  pane is built. A line whose source cannot be read is left out. otto-bar's *About Otto* opens
+  the app on it with `--pane about` ([topbar.md](./topbar.md)).
 
 Settings outside these panes are not shown. The schema may describe settings
 the app does not present; the app must ignore them rather than render them

@@ -74,6 +74,7 @@ and Otto has not built it. Commands that parse and are refused at run time
 | `focus mode_toggle\|floating\|tiling` | move focus between the two layers |
 | `fullscreen [toggle]` | the same path a client's own request takes |
 | `kill` | closes the focused window |
+| `exit` | ends the session, as the `Quit` shortcut does. otto-bar's Log Out runs it |
 | `tiling toggle\|enable\|disable` | Otto's own: the workspace's mode |
 | `expose [show\|hide\|toggle]` | Otto's own: the window overview. Show and hide are idempotent |
 | `gaps inner\|outer <n> [current\|all]` | see below |

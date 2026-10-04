@@ -81,6 +81,12 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
                 self.close_focused_window();
                 Ok(())
             }
+            Command::Exit => {
+                tracing::info!("Quitting: exit command.");
+                self.running
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
             Command::Tiling(toggle) => self.command_tiling(toggle),
             Command::Expose(toggle) => self.command_expose(toggle),
             Command::Gaps {

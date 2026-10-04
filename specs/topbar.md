@@ -47,13 +47,14 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  [App Name]  [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
+│ [••] [App Name] [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
 └──────────────────────────────────────────────────────────────────────────────┘
   ◄── Left zone ──────────────────►         ◄── Right zone ──────────────────►
                                    ◄Center►
 ```
 
-5. **Left zone** (left-aligned): application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
+5. **Left zone** (left-aligned): the Otto mark, then the application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
+5a. **The Otto mark** is the logo's two dots, side by side, in the bar's text colour. It is always there, whatever has focus, and the bar's padding before it counts as part of it, so a click in the screen corner lands on it. Clicking it opens the Otto menu: *About Otto*, a separator, *Settings…*, a separator, *Log Out*. About and Settings start the settings command (`battery.settings_command`), About with `--pane about`; both are left out when no settings command is configured. Log Out runs `exit` over `org.otto.Shell1`, which ends the session the way the `Quit` shortcut does, without asking first. While the menu is open the mark wears the open-menu pill. To an assistive technology it is the menu bar's first item, labelled "Otto", with a popup.
 6. **Center zone**: reserved empty space. No content is rendered here to leave visual room for the Dynamic Island.
 7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then the keyboard layout indicator, then the battery indicator, then the clock.
 

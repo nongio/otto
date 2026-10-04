@@ -192,11 +192,18 @@ async fn run_watcher() -> zbus::Result<()> {
 /// Make layout `index` the active one. The indicator follows when the
 /// compositor announces the switch.
 pub fn switch_to(index: usize) {
+    run_shell_command(format!("input type:keyboard xkb_switch_layout {index}"));
+}
+
+/// Run an i3-syntax command through the compositor's `org.otto.Shell1`, on
+/// the connection the layout watcher keeps. Failures are logged: nothing on
+/// the bar waits for the answer.
+pub fn run_shell_command(command: String) {
     let Some(conn) = SESSION_BUS.lock().unwrap().clone() else {
+        tracing::warn!("{command}: no session bus");
         return;
     };
     tokio::spawn(async move {
-        let command = format!("input type:keyboard xkb_switch_layout {index}");
         let result = match ShellProxy::new(&conn).await {
             Ok(proxy) => proxy.run_command(&command).await,
             Err(e) => Err(e),
