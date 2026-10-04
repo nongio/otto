@@ -5386,7 +5386,6 @@ dependencies = [
  "otto-md-kit",
  "otto-peek",
  "serde_json",
- "shell-words",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "taffy",

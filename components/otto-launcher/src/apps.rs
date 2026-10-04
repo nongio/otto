@@ -6,7 +6,6 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
 
 use freedesktop_desktop_entry::{default_paths, DesktopEntry, Iter};
 
@@ -31,6 +30,8 @@ struct Entry {
     /// `Path=` — the directory the entry asks to be started in.
     working_dir: Option<String>,
     keywords: Vec<String>,
+    /// The desktop file itself, for the `%k` field code.
+    path: PathBuf,
 }
 
 pub struct Apps {
@@ -61,7 +62,7 @@ impl Apps {
                 continue;
             }
 
-            let Ok(entry) = DesktopEntry::from_path(path, Some(&locale_refs)) else {
+            let Ok(entry) = DesktopEntry::from_path(path.clone(), Some(&locale_refs)) else {
                 continue;
             };
             if entry.no_display() || entry.type_() != Some("Application") {
@@ -88,6 +89,7 @@ impl Apps {
                     .keywords(&locale_refs)
                     .map(|words| words.iter().map(|w| w.to_string()).collect())
                     .unwrap_or_default(),
+                path,
             });
         }
 
@@ -223,41 +225,33 @@ fn remember(id: &str) {
 
 /// Start the app, detached.
 ///
-/// The launcher exits immediately afterwards, so the child is put in its own
-/// process group: a session that reaps the launcher must not take the app with
-/// it, and a terminal app must not end up sharing our controlling terminal.
+/// Through otto-kit's desktop-entry launcher, so the `Exec=` line is split
+/// and its field codes expanded the way the specification says — a quoted
+/// argument keeps its spaces — and the way Files opens things. The child gets
+/// a process group of its own: a session that reaps the launcher must not
+/// take the app with it, and a terminal app must not end up sharing our
+/// controlling terminal.
 fn spawn(entry: &Entry) -> Result<(), String> {
-    let line = strip_field_codes(&entry.exec);
-    let mut parts = shell_words::split(&line).map_err(|err| err.to_string())?;
-    if parts.is_empty() {
-        return Err("nothing to run".to_string());
-    }
-
-    if entry.terminal {
-        let mut wrapped = otto_kit::mime_apps::terminal_command();
-        wrapped.append(&mut parts);
-        parts = wrapped;
-    }
-
-    let mut command = Command::new(&parts[0]);
-    command.args(&parts[1..]);
-    if let Some(dir) = &entry.working_dir {
-        command.current_dir(dir);
-    }
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("could not start {}: {err}", parts[0]))
+    let app = otto_kit::mime_apps::App {
+        id: format!("{}.desktop", entry.id),
+        name: entry.name.clone(),
+        icon_name: entry.icon.clone(),
+        exec: Some(entry.exec.clone()),
+        terminal: entry.terminal,
+        working_dir: entry.working_dir.as_ref().map(PathBuf::from),
+        mime_types: Vec::new(),
+        no_display: false,
+        entry_path: entry.path.clone(),
+    };
+    // No files: the launcher starts applications, it does not open things
+    // with them, so every file code expands to nothing.
+    otto_kit::mime_apps::open(&app, &[])
+        .map_err(|err| format!("could not start {}: {err}", entry.name))
 }
 
-/// Drop the `%f`/`%U`/… placeholders. The launcher opens applications with no
-/// arguments, so every field code expands to nothing — except `%%`, which is a
-/// literal percent sign.
+/// Drop the `%f`/`%U`/… placeholders, for reading the program's name off an
+/// `Exec=` line — `%%` is a literal percent sign. Not for running it: spaces
+/// are collapsed, quoted or not.
 fn strip_field_codes(exec: &str) -> String {
     let mut out = String::with_capacity(exec.len());
     let mut chars = exec.chars().peekable();
@@ -339,6 +333,42 @@ mod tests {
         assert_eq!(strip_field_codes("gimp %U"), "gimp");
         assert_eq!(strip_field_codes("app -f %f --x %i"), "app -f --x");
         assert_eq!(strip_field_codes("printf 100%%"), "printf 100%");
+    }
+
+    /// A quoted argument is one argument, spaces and all — even two in a row,
+    /// which splitting on whitespace first used to fold into one.
+    #[test]
+    fn a_quoted_argument_keeps_its_spaces() {
+        let dir = std::env::temp_dir().join(format!("otto-launcher-exec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("argument");
+        let entry = Entry {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            comment: None,
+            icon: None,
+            exec: format!(
+                r#"sh -c "echo \"\$1\" > '{}'" sh "one  two""#,
+                out.display()
+            ),
+            terminal: false,
+            working_dir: None,
+            keywords: Vec::new(),
+            path: dir.join("test.desktop"),
+        };
+        spawn(&entry).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let written = loop {
+            match std::fs::read_to_string(&out) {
+                Ok(text) if !text.is_empty() => break text,
+                _ if std::time::Instant::now() > deadline => panic!("the app never ran"),
+                _ => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(written, "one  two\n");
     }
 
     #[test]

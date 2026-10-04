@@ -20,7 +20,6 @@ wayland-client = "0.31"
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 freedesktop-desktop-entry = "0.7.5"
-shell-words = "1.1"
 # Ask mode hands requests to otto-agents, the agent service, over the Agent
 # Host Protocol. otto-agents-client carries the transport, the socket's
 # whereabouts and the URI spellings, so both ends cannot drift apart.
