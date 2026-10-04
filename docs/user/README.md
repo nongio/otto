@@ -94,5 +94,5 @@ filing a bug, writing a page of documentation, picking up a feature. Start at
 the [issue tracker](https://github.com/nongio/otto/issues), or say hello first
 in one of the rooms below.
 
-Questions and feedback are welcome on [Discord](https://discord.gg/AdXkrYKuz) or in the Matrix room
+Questions and feedback are welcome on [Discord](https://discord.gg/Mp7cBfaACD) or in the Matrix room
 [`#otto-compositor:matrix.org`](https://matrix.to/#/#otto-compositor:matrix.org).
