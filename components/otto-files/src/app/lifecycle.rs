@@ -1182,7 +1182,9 @@ impl FilesApp {
         // connection, and the bus starts a fresh one when it is next needed.
         match queue.next_session() {
             Some(session) => {
-                let start = session.request.starting_directory(None);
+                let start = session
+                    .request
+                    .starting_directory(crate::picker_dirs::remembered(&session.request.app_id));
                 let mut browser = self.state.lock().unwrap();
                 let size = browser.size;
                 *browser = Browser::for_picker(session, start);

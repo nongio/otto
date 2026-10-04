@@ -369,6 +369,9 @@ impl FilesApp {
                     After::GroupMenu { rect, serial } => {
                         show_group_menu(&window_for_events, &group_menu, &state, rect, serial)
                     }
+                    After::LocationMenu { rect, serial } => {
+                        show_location_menu(&window_for_events, &group_menu, &state, rect, serial)
+                    }
                 }
             }
             // Nothing is presented from here. What the batch changed is on
@@ -449,6 +452,51 @@ fn show_group_menu(
         move || {
             let mut browser = dismissed.lock().unwrap();
             browser.photos_group_open = false;
+            browser.dirty = true;
+            drop(browser);
+            AppContext::request_wakeup();
+        },
+    );
+}
+
+/// Open the picker's location menu under its capsule: the directory being
+/// viewed, then each one above it. Shares the grouping menu's popup — the two
+/// live in different windows and are never up together.
+fn show_location_menu(
+    window: &Window,
+    menu: &otto_kit::components::dropdown::DropdownMenu,
+    state: &Arc<Mutex<Browser>>,
+    rect: Rect,
+    serial: u32,
+) {
+    let Some(parent_xdg) = window
+        .surface()
+        .map(|s| s.xdg_window().xdg_surface().clone())
+    else {
+        return;
+    };
+    let options: Vec<String> = state
+        .lock()
+        .unwrap()
+        .location_ancestors()
+        .iter()
+        .map(|path| super::picking::location_label(path))
+        .collect();
+    let chosen = Arc::clone(state);
+    let dismissed = Arc::clone(state);
+    menu.open(
+        &parent_xdg,
+        rect,
+        serial,
+        &options,
+        Some(0),
+        move |index| {
+            chosen.lock().unwrap().location_choose(index);
+            AppContext::request_wakeup();
+        },
+        move || {
+            let mut browser = dismissed.lock().unwrap();
+            browser.location_open = false;
             browser.dirty = true;
             drop(browser);
             AppContext::request_wakeup();

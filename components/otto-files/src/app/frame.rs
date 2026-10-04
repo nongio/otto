@@ -304,6 +304,7 @@ impl Browser {
                 filters: &session.filter_labels,
                 current_filter: session.current_filter,
                 filter_open: session.filter_open,
+                location_open: self.location_open,
                 hovered: self.footer_hover,
                 pressed: self.footer_pressed,
             }),

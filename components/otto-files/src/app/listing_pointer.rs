@@ -37,6 +37,9 @@ pub(super) enum After {
     Menu(MenuAt),
     /// The Photos view's grouping button was pressed: its menu, under it.
     GroupMenu { rect: Rect, serial: u32 },
+    /// The picker's location control was pressed: the directories above the
+    /// one being viewed, under it.
+    LocationMenu { rect: Rect, serial: u32 },
 }
 
 pub(super) struct DragStart {
@@ -828,6 +831,18 @@ impl Browser {
         // band, so they are asked before it is taken for a window move.
         if let Some(after) = self.photos_controls_press(x, y, serial) {
             return after;
+        }
+
+        // The picker's toolbar sits in the header band for the same reason.
+        if self.picker.is_some() {
+            match view::picker_toolbar_at(x, y, width) {
+                Some(view::ToolbarButton::Location) => return self.location_press(serial),
+                Some(view::ToolbarButton::NewFolder) => {
+                    self.picker_new_folder();
+                    return After::Stop;
+                }
+                None => {}
+            }
         }
 
         // Dragging the header moves the window, in every view. The

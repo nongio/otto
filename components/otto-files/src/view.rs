@@ -648,6 +648,37 @@ pub fn location_rect(width: f32) -> Rect {
         toolbar_cy() + 15.0,
     )
 }
+
+/// The picker's New Folder button, just after the location control: the
+/// folder it makes goes where that control says you are.
+pub fn new_folder_rect(width: f32) -> Rect {
+    let location = location_rect(width);
+    Rect::from_xywh(
+        location.right + 8.0,
+        location.top,
+        NEW_FOLDER_W,
+        location.height(),
+    )
+}
+const NEW_FOLDER_W: f32 = 36.0;
+
+/// What the picker's toolbar row has under `(x, y)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarButton {
+    Location,
+    NewFolder,
+}
+
+pub fn picker_toolbar_at(x: f32, y: f32, width: f32) -> Option<ToolbarButton> {
+    let point = Point::new(x, y);
+    if location_rect(width).contains(point) {
+        Some(ToolbarButton::Location)
+    } else if new_folder_rect(width).contains(point) {
+        Some(ToolbarButton::NewFolder)
+    } else {
+        None
+    }
+}
 /// Half the height of the band a click on the subtitle lands in: its line of
 /// text with a little slack, so a click just above or below still counts.
 const SUBTITLE_HIT_HALF_H: f32 = 10.0;
@@ -4254,6 +4285,8 @@ pub struct FooterData<'a> {
     /// The filter menu is open, so the control draws as pressed and its
     /// options are listed above it.
     pub filter_open: bool,
+    /// The toolbar's location menu is up, so its capsule draws held.
+    pub location_open: bool,
     pub hovered: Option<FooterButton>,
     pub pressed: Option<FooterButton>,
     /// Save mode: draw the name row above the buttons. The field's own text
@@ -5572,17 +5605,61 @@ pub fn draw_search_band(canvas: &Canvas, f: &Frame) {
 /// name in a soft capsule, centred on the toolbar row between the navigation
 /// arrows and the view switcher.
 ///
-/// It does not open a menu yet — it says where you are. The popup of ancestor
-/// directories the reference layout has is the next thing it grows.
+/// A press opens the menu of the directories above this one; the chevron at
+/// its end says so.
 fn draw_location_button(canvas: &Canvas, f: &Frame) {
     let theme = f.theme;
     let cy = toolbar_cy();
     let rect = location_rect(f.width);
+    let open = f.action_row.as_ref().is_some_and(|row| row.location_open);
 
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_color(theme.fill_tertiary);
+    paint.set_color(if open {
+        theme.fill_secondary
+    } else {
+        theme.fill_tertiary
+    });
     canvas.draw_rrect(RRect::new_rect_xy(rect, NAV_RADIUS, NAV_RADIUS), &paint);
+
+    // Glyphs drawn rather than themed, like the switcher's: the bundled icon
+    // set has neither a downward chevron nor a new-folder sign.
+    let mut glyph = Paint::default();
+    glyph.set_anti_alias(true);
+    glyph.set_color(theme.text_secondary);
+    glyph.set_style(skia_safe::paint::Style::Stroke);
+    glyph.set_stroke_width(1.6);
+    glyph.set_stroke_cap(skia_safe::paint::Cap::Round);
+    glyph.set_stroke_join(skia_safe::paint::Join::Round);
+
+    let cx = rect.right - 14.0;
+    let mut chevron = skia_safe::PathBuilder::new();
+    chevron.move_to((cx - 4.0, cy - 2.0));
+    chevron.line_to((cx, cy + 2.5));
+    chevron.line_to((cx + 4.0, cy - 2.0));
+    canvas.draw_path(&chevron.detach(), &glyph);
+
+    // New Folder, beside it: a plain capsule, the same family as the nav pair.
+    let button = new_folder_rect(f.width);
+    paint.set_color(theme.fill_tertiary);
+    canvas.draw_rrect(RRect::new_rect_xy(button, NAV_RADIUS, NAV_RADIUS), &paint);
+    let (bx, by) = (button.center_x(), button.center_y());
+    // A folder: tab on the top left, body below it.
+    let mut folder = skia_safe::PathBuilder::new();
+    folder.move_to((bx - 8.0, by + 5.5));
+    folder.line_to((bx - 8.0, by - 5.5));
+    folder.line_to((bx - 3.5, by - 5.5));
+    folder.line_to((bx - 1.5, by - 3.5));
+    folder.line_to((bx + 8.0, by - 3.5));
+    folder.line_to((bx + 8.0, by + 5.5));
+    folder.close();
+    canvas.draw_path(&folder.detach(), &glyph);
+    let mut plus = skia_safe::PathBuilder::new();
+    plus.move_to((bx, by - 1.0));
+    plus.line_to((bx, by + 4.0));
+    plus.move_to((bx - 2.5, by + 1.5));
+    plus.line_to((bx + 2.5, by + 1.5));
+    canvas.draw_path(&plus.detach(), &glyph);
 
     let mut text_x = rect.left + 10.0;
     if let Some(image) = icons::cached_icon_chain(&["folder"], 16) {

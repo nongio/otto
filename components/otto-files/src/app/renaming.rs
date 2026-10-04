@@ -44,6 +44,7 @@ impl Browser {
         let Some(session) = self.rename.take() else {
             return;
         };
+        let enter = std::mem::take(&mut self.enter_after_rename);
         let new_name = session.input.value().trim().to_string();
         let old_name = session
             .original
@@ -51,14 +52,21 @@ impl Browser {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         if new_name.is_empty() || new_name == old_name {
+            if enter {
+                self.navigate_to(&session.original);
+            }
             self.dirty = true;
             return;
         }
         // The failure is reported in the status line rather than raised: the
         // field is already gone, so there is nothing left to fix in place.
-        if let Err(error) = self.rename_path(session.depth, &session.original, &new_name) {
-            self.status = Some(error);
-            self.dirty = true;
+        match self.rename_path(session.depth, &session.original, &new_name) {
+            Ok(()) if enter => self.navigate_to(&session.original.with_file_name(new_name)),
+            Ok(()) => {}
+            Err(error) => {
+                self.status = Some(error);
+                self.dirty = true;
+            }
         }
     }
 
@@ -112,6 +120,9 @@ impl Browser {
 
     /// Discard the field's text and leave the file as it was.
     pub(super) fn cancel_rename(&mut self) {
+        // Escape keeps the folder under the name it was made with; it does
+        // not take the user into it.
+        self.enter_after_rename = false;
         if self.rename.take().is_some() {
             self.dirty = true;
         }

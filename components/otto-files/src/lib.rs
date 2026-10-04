@@ -36,6 +36,7 @@ pub mod peek;
 pub mod perf;
 pub mod photos;
 pub mod picker;
+pub mod picker_dirs;
 pub mod places_config;
 pub mod recent;
 pub mod remembered;
