@@ -5296,7 +5296,6 @@ dependencies = [
 name = "otto-greeter"
 version = "1.6.0"
 dependencies = [
- "chrono",
  "otto-auth-ui",
  "otto-kit",
  "serde",
@@ -5404,7 +5403,6 @@ dependencies = [
 name = "otto-lock"
 version = "1.6.0"
 dependencies = [
- "chrono",
  "otto-auth-ui",
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
