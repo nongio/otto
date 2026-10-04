@@ -21,11 +21,11 @@ god-objects, and kit widgets the apps never adopted.
   `components/otto-files/src/model.rs:901` turns epoch seconds into a date with
   no timezone offset. `otto-search/src/dates.rs` already has `local_offset`;
   or use `chrono` (already in the workspace). **S** Fixed in #258.
-- [ ] **Same hex colour, different colours** *(verified)*. otto-bar reads
+- [x] **Same hex colour, different colours** *(verified)*. otto-bar reads
   8 digits as `#AARRGGBB` (`components/otto-bar/src/config.rs:180`),
   otto-input-overlay as `#RRGGBBAA` (`components/otto-input-overlay/src/main.rs:252`),
   otto-auth-ui likewise. Six parsers in total, see §3. **S**
-  - *Partly done in #261: one `otto_kit::color::parse_hex` (alpha last); otto-bar keeps `#AARRGGBB` via `parse_hex_argb` because its README documents it. Switching it is a breaking change to decide.*
+  - *Done: #261 added one `otto_kit::color::parse_hex` (alpha last); otto-bar switched to it too (breaking for 8-digit bar colours) and `parse_hex_argb` is gone.*
 - [x] **otto-bar logs nothing by default** *(verified)*. Fallback filter is
   `otto_topbar=info` (`components/otto-bar/src/main.rs:21`); the crate is
   `otto_bar`. **S** Fixed in #261.

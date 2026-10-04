@@ -38,7 +38,7 @@ otto-bar looks for a TOML config file in this order:
 | `low_level`         | `20`           | Below this, the fill turns amber                    |
 | `critical_level`    | `10`           | Below this, red                                     |
 | `width` / `height`  | `28` / `13`    | Glyph size in points                                |
-| `color_normal`      | `"#34C759"`    | `#RGB`, `#RRGGBB` or `#AARRGGBB`                    |
+| `color_normal`      | `"#34C759"`    | `#RGB`, `#RRGGBB` or `#RRGGBBAA` (alpha last)       |
 | `color_low`         | `"#FF9F0A"`    |                                                     |
 | `color_critical`    | `"#FF3B30"`    |                                                     |
 | `color_charging`    | `"#34C759"`    |                                                     |
