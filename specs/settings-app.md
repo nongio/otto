@@ -378,18 +378,28 @@ are:
   shown round, as the login card shows it. Removing it clears both. Where
   AccountsService is not running, the name and picture are shown but not
   editable, and the name row says why.
-  The password is changed by running `passwd` on a thread of its own and
-  answering its prompts over a pipe — current password, then the new one
-  twice. A prompt is recognised by shape (output ending in a colon with no line
+  The Password row's **Change Password…** button opens a sheet: a card over
+  the dimmed window with Current password, New password and Confirm new
+  password, and Cancel / Change Password. It is modal — the sidebar, the pane
+  and the scroll wheel do nothing behind it. It is drawn on a subsurface
+  stacked above the pane's, with an empty input region, so the pointer and
+  keyboard stay on the window and its fields use the app's ordinary text
+  editor in password mode (dots, no copy, no value given to assistive
+  technologies). The keyboard starts in the first field; Tab and Shift-Tab
+  walk the fields, Enter moves to the next one and from the last one presses
+  Change Password, Escape cancels.
+  Change Password checks that all are filled, that the new ones match and
+  differ from the current one, then runs `passwd` on a thread of its own and
+  answers its prompts over a pipe — current password, then the new one twice.
+  A prompt is recognised by shape (output ending in a colon with no line
   break), not wording, so the user's locale is kept and a refusal comes back
-  in their language. The three fields are masked, edited in password mode and
-  described to assistive technologies without a value. Change checks that all
-  are filled, that the new ones match and differ from the current one, before
-  running anything; the passwords leave the pane when the attempt starts and
-  are never passed as arguments. `passwd` stopping after the first answer is
-  reported as a wrong current password; any other refusal shows the quality
-  module's reason (`BAD PASSWORD: …`) or `passwd`'s own line. A fourth prompt —
-  a quality module asking again — is not answered.
+  in their language. The passwords leave the sheet when the attempt starts and
+  are never passed as arguments. On success the sheet closes and the row says
+  so; otherwise it stays up with the reason under the fields: a wrong current
+  password (`passwd` stopping after the first answer), the quality module's
+  `BAD PASSWORD: …`, or `passwd`'s own line. A fourth prompt — a quality
+  module asking again — is not answered. Cancel and Escape do nothing while
+  the change is underway.
 - **General** — the app switcher's display, the display language, which is
   what every part of Otto localises itself against, the renderer (see below)
   and where the configuration file is. The language requires a restart to take

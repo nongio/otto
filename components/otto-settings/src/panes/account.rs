@@ -32,6 +32,9 @@ const CURRENT_ID: &str = "account.password.current";
 const NEW_ID: &str = "account.password.new";
 const CONFIRM_ID: &str = "account.password.confirm";
 
+/// The password sheet's fields, in the order Tab and Enter walk them.
+pub const SHEET_FIELDS: [&str; 3] = [CURRENT_ID, NEW_ID, CONFIRM_ID];
+
 const BUS_NAME: &str = "org.freedesktop.Accounts";
 const USER_INTERFACE: &str = "org.freedesktop.Accounts.User";
 
@@ -58,6 +61,8 @@ struct State {
     looked_up: bool,
     /// Why the last change to the name or picture did not take.
     profile_error: Option<String>,
+    /// Whether the Change Password sheet is up.
+    sheet_open: bool,
     current: String,
     new: String,
     confirm: String,
@@ -85,6 +90,10 @@ fn state() -> &'static Mutex<State> {
 }
 
 static DIRTY: AtomicBool = AtomicBool::new(false);
+
+/// Set when the sheet opens, so `main.rs` can put the keyboard in its first
+/// field — the toolkit's editor lives there, not here.
+static SHEET_OPENED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the pane changed since the last call; `main.rs` polls this to
 /// repaint.
@@ -139,12 +148,11 @@ pub fn build() -> Pane {
         otto_kit::t!("settings-account-type-standard")
     };
 
-    let changing = state.password == PasswordStatus::Changing;
+    // The row reports how the last change went; the sheet reports a change
+    // still being made, or refused, while it is up.
     let status = match &state.password {
-        PasswordStatus::Idle => otto_kit::t_owned!("settings-account-password-detail"),
-        PasswordStatus::Changing => otto_kit::t_owned!("settings-account-password-changing"),
-        PasswordStatus::Changed => otto_kit::t_owned!("settings-account-password-changed"),
-        PasswordStatus::Failed(why) => why.clone(),
+        PasswordStatus::Changed => otto_kit::t!("settings-account-password-changed"),
+        _ => otto_kit::t!("settings-account-password-detail"),
     };
 
     Pane {
@@ -166,46 +174,20 @@ pub fn build() -> Pane {
             ]),
             group(
                 otto_kit::t!("settings-group-password"),
-                vec![
-                    secret_row(
-                        otto_kit::t!("settings-account-current-password"),
-                        &state.current,
-                        CURRENT_ID,
-                    ),
-                    secret_row(
-                        otto_kit::t!("settings-account-new-password"),
-                        &state.new,
-                        NEW_ID,
-                    ),
-                    secret_row(
-                        otto_kit::t!("settings-account-confirm-password"),
-                        &state.confirm,
-                        CONFIRM_ID,
-                    ),
-                    Row::new(change_label(), Control::Button(change_buttons()))
-                        .detail(status)
-                        .inactive(changing),
-                ],
+                vec![Row::new(password_label(), Control::Button(change_buttons())).detail(status)],
             ),
         ],
     }
 }
 
-fn secret_row(label: &'static str, value: &str, id: &'static str) -> Row {
-    Row::new(label, Control::Text(value.to_string()))
-        .id(id)
-        .secret(true)
-}
-
-/// The Change Password row's label, which is also its button's — the row does
-/// one thing and says so once on each side.
-fn change_label() -> &'static str {
-    otto_kit::t!("settings-account-change-password")
+/// The Password row's label.
+fn password_label() -> &'static str {
+    otto_kit::t!("settings-group-password")
 }
 
 fn change_buttons() -> &'static [&'static str] {
     static BUTTONS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    BUTTONS.get_or_init(|| vec![otto_kit::t!("settings-account-change")])
+    BUTTONS.get_or_init(|| vec![otto_kit::t!("settings-account-change-password-ellipsis")])
 }
 
 /// Whether `id` is one of this pane's rows rather than a compositor setting.
@@ -285,13 +267,112 @@ fn settle(outcome: Result<(), String>) {
     refresh();
 }
 
-/// A press on this pane's push buttons.
+/// A press on this pane's push buttons: Change Password… opens the sheet.
 pub fn press(row: &str, _button: &str) {
-    if row != change_label() {
+    if row != password_label() {
         return;
     }
     let mut held = state().lock().unwrap();
-    if held.password == PasswordStatus::Changing {
+    held.sheet_open = true;
+    held.current.clear();
+    held.new.clear();
+    held.confirm.clear();
+    held.password = PasswordStatus::Idle;
+    drop(held);
+    SHEET_OPENED.store(true, Ordering::Relaxed);
+    changed();
+}
+
+/// Whether the sheet has just opened, once: `main.rs` then puts the keyboard
+/// in its first field.
+pub fn take_sheet_opened() -> bool {
+    SHEET_OPENED.swap(false, Ordering::Relaxed)
+}
+
+/// What the Change Password sheet shows.
+pub struct SheetView {
+    /// Each field's identifier, label and how many characters it holds — the
+    /// sheet draws dots, never the text.
+    pub fields: [(&'static str, &'static str, usize); 3],
+    /// A line under the fields: the change underway, or why it was refused.
+    pub message: Option<(String, bool)>,
+    /// A change is underway, so neither button does anything.
+    pub busy: bool,
+}
+
+/// The sheet, while it is up.
+pub fn sheet() -> Option<SheetView> {
+    let state = state().lock().unwrap();
+    if !state.sheet_open {
+        return None;
+    }
+    let count = |text: &String| text.chars().count();
+    Some(SheetView {
+        fields: [
+            (
+                CURRENT_ID,
+                otto_kit::t!("settings-account-current-password"),
+                count(&state.current),
+            ),
+            (
+                NEW_ID,
+                otto_kit::t!("settings-account-new-password"),
+                count(&state.new),
+            ),
+            (
+                CONFIRM_ID,
+                otto_kit::t!("settings-account-confirm-password"),
+                count(&state.confirm),
+            ),
+        ],
+        message: match &state.password {
+            PasswordStatus::Changing => Some((
+                otto_kit::t_owned!("settings-account-password-changing"),
+                false,
+            )),
+            PasswordStatus::Failed(why) => Some((why.clone(), true)),
+            _ => None,
+        },
+        busy: state.password == PasswordStatus::Changing,
+    })
+}
+
+/// What a sheet field holds, for the editor to start from.
+pub fn field_value(id: &str) -> String {
+    let state = state().lock().unwrap();
+    match id {
+        CURRENT_ID => state.current.clone(),
+        NEW_ID => state.new.clone(),
+        CONFIRM_ID => state.confirm.clone(),
+        _ => String::new(),
+    }
+}
+
+/// Close the sheet without changing anything — Cancel, or Escape. Ignored
+/// while a change is underway: `passwd` is already answering, and closing
+/// would hide how it ends.
+pub fn close_sheet() {
+    let mut state = state().lock().unwrap();
+    if state.password == PasswordStatus::Changing {
+        return;
+    }
+    state.sheet_open = false;
+    state.current.clear();
+    state.new.clear();
+    state.confirm.clear();
+    if matches!(state.password, PasswordStatus::Failed(_)) {
+        state.password = PasswordStatus::Idle;
+    }
+    drop(state);
+    changed();
+}
+
+/// Change Password in the sheet: check what was typed, then hand it to
+/// `passwd`. The sheet closes when the change is made, and stays up saying
+/// why when it is not.
+pub fn submit() {
+    let mut held = state().lock().unwrap();
+    if !held.sheet_open || held.password == PasswordStatus::Changing {
         return;
     }
     let problem = if held.current.is_empty() || held.new.is_empty() {
@@ -310,7 +391,7 @@ pub fn press(row: &str, _button: &str) {
         return;
     }
 
-    // Taken out of the pane as the attempt starts: they live on only in the
+    // Taken out of the sheet as the attempt starts: they live on only in the
     // thread that answers `passwd`, and go when it does.
     let current = std::mem::take(&mut held.current);
     let new = std::mem::take(&mut held.new);
@@ -327,7 +408,12 @@ pub fn press(row: &str, _button: &str) {
             ),
             Err(PasswdError::Refused(why)) => PasswordStatus::Failed(why),
         };
-        state().lock().unwrap().password = status;
+        let mut state = state().lock().unwrap();
+        if status == PasswordStatus::Changed {
+            state.sheet_open = false;
+        }
+        state.password = status;
+        drop(state);
         changed();
     });
 }

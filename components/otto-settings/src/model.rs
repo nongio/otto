@@ -74,10 +74,6 @@ pub struct Row {
     /// "−": the Privacy pane's rows forget an answer or reset one, which a
     /// minus sign does not tell apart. `None` keeps the "−".
     pub remove_label: Option<Cow<'static, str>>,
-    /// A text field whose contents are never shown or announced — the
-    /// Account pane's password fields. Drawn masked, edited in password
-    /// mode, and described to assistive technologies without a value.
-    pub secret: bool,
 }
 
 impl Row {
@@ -91,14 +87,7 @@ impl Row {
             inactive: false,
             removable: false,
             remove_label: None,
-            secret: false,
         }
-    }
-
-    /// Mask the field's contents. See [`Row::secret`].
-    pub(crate) fn secret(mut self, secret: bool) -> Self {
-        self.secret = secret;
-        self
     }
 
     /// Give the row a "−" button that removes it. See [`Row::removable`].

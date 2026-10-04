@@ -2393,13 +2393,6 @@ impl Settings {
                         input.render_at(canvas, field.width(), field.height());
                         canvas.restore();
                     }
-                    // A password field shows how much is in it, not what.
-                    None if row.secret => widgets::text_field(
-                        canvas,
-                        field,
-                        &"\u{2022}".repeat(value.chars().count()),
-                        &self.theme,
-                    ),
                     None => widgets::text_field(canvas, field, value, &self.theme),
                 }
             }
