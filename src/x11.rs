@@ -9,7 +9,10 @@ use crate::{
     render_elements::workspace_render_elements::WorkspaceRenderElements,
     shell::WindowElement,
     skia_renderer::{SkiaRenderer, SkiaTextureImage},
-    state::{post_repaint, take_presentation_feedback, Backend, Otto},
+    state::{
+        frame::{frame_done, FramePacing, Presentation},
+        Backend, Otto,
+    },
 };
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
@@ -32,11 +35,9 @@ use smithay::{
         ash::{ext, vk::ImageUsageFlags},
         calloop::EventLoop,
         gbm,
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{protocol::wl_surface, Display},
     },
     utils::{DeviceFd, IsAlive, Logical, Physical, Point, Rectangle, Scale},
-    wayland::presentation::Refresh,
     wayland::{
         compositor,
         dmabuf::{
@@ -462,72 +463,29 @@ pub fn run_x11() {
                     };
 
                     // Send frame events so that client start drawing their next frame
-                    let time = state.clock.now();
                     let all_window_elements: Vec<&WindowElement> =
                         state.workspaces.spaces_elements().collect();
-                    #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-                    {
-                        let expose_active = state.workspaces.mirrors_active();
-                        let interacting_ids = crate::state::window_throttle::interacting_ids(
-                            &state.pointer_interaction,
-                        );
-                        let window_throttle_states =
-                            crate::state::window_throttle::classify_windows(
-                                &state.workspaces,
-                                &all_window_elements,
-                                &std::collections::HashSet::new(),
-                                expose_active,
-                                // X11 has no per-frame screenshare tap,
-                                // so nothing is ever capture-pinned here.
-                                &std::collections::HashSet::new(),
-                                &interacting_ids,
-                            );
-                        let effect_surfaces: std::collections::HashSet<_> =
-                            state.background_effects.keys().cloned().collect();
-                        let translucent_ids = crate::state::window_throttle::translucent_window_ids(
-                            &all_window_elements,
-                            &effect_surfaces,
-                        );
-                        let occluded_layer_ids =
-                            crate::state::window_throttle::occluded_layer_surface_ids(
-                                &state.workspaces,
-                                &output,
-                                expose_active,
-                                &translucent_ids,
-                            );
-                        post_repaint(
-                            &output,
-                            &render_output_result.states,
-                            &all_window_elements,
-                            None,
-                            time,
-                            &window_throttle_states,
-                            &occluded_layer_ids,
-                        );
-                    }
-
-                    if render_output_result.damage.is_some() {
-                        let all_window_elements: Vec<&WindowElement> =
-                            state.workspaces.spaces_elements().collect();
-                        let mut output_presentation_feedback = take_presentation_feedback(
-                            &output,
-                            &all_window_elements,
-                            &render_output_result.states,
-                        );
-                        output_presentation_feedback.presented(
-                            time,
-                            output
-                                .current_mode()
-                                .map(|mode| {
-                                    Refresh::fixed(Duration::from_nanos(
-                                        1_000_000_000_000 / mode.refresh as u64,
-                                    ))
-                                })
-                                .unwrap_or(Refresh::Unknown),
-                            0,
-                            wp_presentation_feedback::Kind::Vsync,
-                        )
-                    }
+                    let pacing = FramePacing::classify(
+                        &state.workspaces,
+                        &output,
+                        &all_window_elements,
+                        &state.background_effects,
+                        &state.pointer_interaction,
+                        false,
+                        // X11 has no per-frame screenshare tap,
+                        // so nothing is ever capture-pinned here.
+                        &std::collections::HashSet::new(),
+                    );
+                    frame_done(
+                        &output,
+                        &render_output_result.states,
+                        &all_window_elements,
+                        None,
+                        state.clock.now(),
+                        &pacing,
+                        render_output_result.damage.is_some(),
+                        Presentation::Immediate,
+                    );
 
                     #[cfg(feature = "debug")]
                     if render_output_result.damage.is_some() {

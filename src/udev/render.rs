@@ -20,7 +20,7 @@ use crate::{
     render_elements::output_render_elements::OutputRenderElements,
     render_elements::workspace_render_elements::WorkspaceRenderElements,
     shell::{WindowElement, WindowRenderElement},
-    state::{post_repaint, take_presentation_feedback, SurfaceDmabufFeedback},
+    state::frame::{frame_done, FramePacing, Presentation, SurfaceDmabufFeedback},
 };
 
 use smithay::{
@@ -956,39 +956,19 @@ impl<A: RendererApi> Otto<UdevData<A>> {
         crate::render_phase_stats::log_if_due();
 
         #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let effect_surfaces: std::collections::HashSet<_> =
-            self.background_effects.keys().cloned().collect();
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let translucent_ids = crate::state::window_throttle::translucent_window_ids(
-            &all_window_elements,
-            &effect_surfaces,
-        );
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let occluded_ids = self.workspaces.occluded_window_ids(&translucent_ids);
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
         let captured_ids = crate::screenshare::screencast_window_ids(
             &self.screenshare_sessions,
             &self.workspaces,
             &self.foreign_toplevels,
         );
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let interacting_ids =
-            crate::state::window_throttle::interacting_ids(&self.pointer_interaction);
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let window_throttle_states = crate::state::window_throttle::classify_windows(
-            &self.workspaces,
-            &all_window_elements,
-            &occluded_ids,
-            expose_active,
-            &captured_ids,
-            &interacting_ids,
-        );
-        #[allow(clippy::mutable_key_type)] // ObjectId as key — see window_throttle.rs
-        let occluded_layer_ids = crate::state::window_throttle::occluded_layer_surface_ids(
+        let frame_pacing = FramePacing::classify(
             &self.workspaces,
             &output,
-            expose_active,
-            &translucent_ids,
+            &all_window_elements,
+            &self.background_effects,
+            &self.pointer_interaction,
+            true,
+            &captured_ids,
         );
 
         // ── Shadow-only / direct scanout window selection ─────────────────────
@@ -1355,8 +1335,7 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             self.dnd_icon.as_ref(),
             &self.clock,
             scene_has_damage,
-            &window_throttle_states,
-            &occluded_layer_ids,
+            &frame_pacing,
             &mut self.pending_screencopy_frames,
             expose_active,
             fullscreen_window.as_ref(),
@@ -2422,13 +2401,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     dnd_icon: Option<&wl_surface::WlSurface>,
     clock: &Clock<Monotonic>,
     scene_has_damage: bool,
-    window_throttle_states: &std::collections::HashMap<
-        smithay::reexports::wayland_server::backend::ObjectId,
-        crate::state::window_throttle::WindowThrottleState,
-    >,
-    occluded_layer_ids: &std::collections::HashSet<
-        smithay::reexports::wayland_server::backend::ObjectId,
-    >,
+    frame_pacing: &FramePacing,
     pending_screencopy: &mut Vec<crate::state::screencopy::PendingScreencopy>,
     expose_active: bool,
     fullscreen_window: Option<&WindowElement>,
@@ -3143,7 +3116,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
     // demotes everything behind a fullscreen window to the 2 Hz Occluded
     // bucket, and dropping below that starves Chromium's buffer-eviction
     // heuristic (blank canvas on restore).
-    post_repaint(
+    let output_presentation_feedback = frame_done(
         output,
         &states,
         window_elements,
@@ -3155,8 +3128,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
                 scanout_feedback: &feedback.scanout_feedback,
             }),
         clock.now(),
-        window_throttle_states,
-        occluded_layer_ids,
+        frame_pacing,
+        rendered,
+        Presentation::OnPageFlip,
     );
 
     if rendered {
@@ -3171,11 +3145,9 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
             );
         }
 
-        let output_presentation_feedback =
-            take_presentation_feedback(output, window_elements, &states);
         surface
             .compositor
-            .queue_frame(Some(output_presentation_feedback))?;
+            .queue_frame(output_presentation_feedback)?;
     }
 
     Ok(RenderOutcome {
