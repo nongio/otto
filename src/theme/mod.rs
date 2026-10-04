@@ -40,10 +40,8 @@ macro_rules! define_text_styles {
         use layers::skia::textlayout::TextStyle;
         use crate::theme::text_style_with_size_and_weight;
 
-        paste::paste! {
         $(#[allow(dead_code)]
-        pub fn [<$name>]() -> TextStyle {text_style_with_size_and_weight($size, $weight)})*
-        }
+        pub fn $name() -> TextStyle {text_style_with_size_and_weight($size, $weight)})*
     };
 }
 #[allow(unused)]

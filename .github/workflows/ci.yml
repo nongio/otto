@@ -160,6 +160,22 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+  # Cheap and early: a dependency no crate imports any more. cargo-machete
+  # reads the source rather than compiling it, so it needs no system libraries.
+  # A false positive (a crate imported under another name) goes in the
+  # `cargo-machete` metadata in Cargo.toml.
+  unused-deps:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - name: Unused dependencies
+        run: cargo machete
+
   # Cheap and early: a locale missing keys otherwise only surfaces in the
   # otto-kit unit tests, after the compositor has been built and linted.
   locales:
