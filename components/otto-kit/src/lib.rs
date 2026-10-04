@@ -36,6 +36,7 @@ pub mod maximize_button;
 pub mod mime_apps;
 pub mod permission_store;
 mod portal_runtime;
+mod portal_settings;
 pub mod preview;
 pub mod protocols;
 pub mod rendering;

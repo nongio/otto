@@ -42,6 +42,15 @@ const WINDOW_CONTROLS_SIDE: &str = "window-controls-side";
 const MAXIMIZE_BUTTON: &str = "maximize-button";
 const TILING_DECORATION: &str = "tiling-decoration";
 
+/// The keys followed on the portal, all under [`NAMESPACE`].
+const PORTAL_KEYS: &[(&str, &str)] = &[
+    (NAMESPACE, ROUNDED_CORNERS),
+    (NAMESPACE, FROSTING),
+    (NAMESPACE, WINDOW_CONTROLS_SIDE),
+    (NAMESPACE, MAXIMIZE_BUTTON),
+    (NAMESPACE, TILING_DECORATION),
+];
+
 /// Spawn the watcher. Safe to call repeatedly — only one is ever active.
 pub fn spawn_desktop_appearance_watcher() {
     static STARTED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
@@ -49,11 +58,16 @@ pub fn spawn_desktop_appearance_watcher() {
         return;
     }
 
-    crate::portal_runtime::spawn("desktop-appearance-watcher", async move {
-        if let Err(e) = run_watcher().await {
-            tracing::warn!("desktop-appearance watcher stopped: {e}");
-        }
-    });
+    crate::portal_settings::watch(
+        "desktop-appearance-watcher",
+        PORTAL_KEYS,
+        |_, key, value| {
+            if apply(key, value) {
+                tracing::debug!("{NAMESPACE} {key} changed");
+                crate::portal_runtime::theme_changed();
+            }
+        },
+    );
     crate::portal_runtime::spawn("otto-settings-watcher", async move {
         if let Err(e) = run_compositor_watcher().await {
             tracing::warn!("otto-settings watcher stopped: {e}");
@@ -184,60 +198,6 @@ fn apply(key: &str, value: Value<'_>) -> bool {
     }
 }
 
-async fn run_watcher() -> Result<(), zbus::Error> {
-    use zbus::{proxy, Connection};
-
-    #[proxy(
-        interface = "org.freedesktop.portal.Settings",
-        default_service = "org.freedesktop.portal.Desktop",
-        default_path = "/org/freedesktop/portal/desktop"
-    )]
-    trait Settings {
-        fn read(&self, namespace: &str, key: &str) -> zbus::Result<OwnedValue>;
-        #[zbus(signal)]
-        fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>)
-            -> zbus::Result<()>;
-    }
-
-    let conn = Connection::session().await?;
-    let proxy = SettingsProxy::new(&conn).await?;
-
-    let mut changed = false;
-    for key in [
-        ROUNDED_CORNERS,
-        FROSTING,
-        WINDOW_CONTROLS_SIDE,
-        MAXIMIZE_BUTTON,
-        TILING_DECORATION,
-    ] {
-        match proxy.read(NAMESPACE, key).await {
-            Ok(owned) => changed |= apply(key, owned.into()),
-            Err(e) => tracing::debug!("{NAMESPACE} {key} read failed (portal absent?): {e}"),
-        }
-    }
-    if changed {
-        crate::portal_runtime::theme_changed();
-    }
-
-    let mut stream = proxy.receive_setting_changed().await?;
-    loop {
-        use futures_util::StreamExt as _;
-        let Some(signal) = stream.next().await else {
-            break;
-        };
-        let args = signal.args()?;
-        if args.namespace != NAMESPACE {
-            continue;
-        }
-        if apply(args.key, args.value) {
-            tracing::debug!("{NAMESPACE} {} changed", args.key);
-            crate::portal_runtime::theme_changed();
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,13 +228,7 @@ mod tests {
     fn both_channels_follow_the_same_settings() {
         let mut direct: Vec<_> = OTTO_IDS.iter().map(|(_, key)| *key).collect();
         direct.sort_unstable();
-        let mut portal = vec![
-            ROUNDED_CORNERS,
-            FROSTING,
-            WINDOW_CONTROLS_SIDE,
-            MAXIMIZE_BUTTON,
-            TILING_DECORATION,
-        ];
+        let mut portal: Vec<_> = PORTAL_KEYS.iter().map(|(_, key)| *key).collect();
         portal.sort_unstable();
         assert_eq!(direct, portal);
     }
