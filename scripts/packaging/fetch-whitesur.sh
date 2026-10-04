@@ -46,13 +46,24 @@ tar -xzf "$tmpdir/whitesur.tar.gz" -C "$tmpdir"
 rm -rf "$outdir"
 mkdir -p "$outdir"
 outdir=$(cd "$outdir" && pwd)
-# The installer only copies, seds and links. It also runs
-# gtk-update-icon-cache, which may be missing here; the cache it writes is
-# dropped below either way, since each distribution rebuilds icon caches
-# itself when a package adds files under /usr/share/icons.
-(cd "$tmpdir/WhiteSur-icon-theme-$TAG" && bash install.sh -d "$outdir") >/dev/null 2>&1 || true
+# The installer only copies, seds and links, then runs gtk-update-icon-cache
+# under `set -e` after each theme. That is missing from a minimal build
+# environment (the Arch container in CI), which stopped the installer after
+# the first theme. The packages want no cache anyway — each distribution
+# rebuilds icon caches when a package adds files under /usr/share/icons — so
+# a no-op stands in for it everywhere.
+mkdir "$tmpdir/bin"
+printf '#!/bin/sh\nexit 0\n' > "$tmpdir/bin/gtk-update-icon-cache"
+chmod 755 "$tmpdir/bin/gtk-update-icon-cache"
+if ! (cd "$tmpdir/WhiteSur-icon-theme-$TAG" &&
+      PATH="$tmpdir/bin:$PATH" bash install.sh -d "$outdir") > "$tmpdir/install.log" 2>&1; then
+    cat "$tmpdir/install.log" >&2
+    echo "fetch-whitesur: WhiteSur's install.sh failed" >&2
+    exit 1
+fi
 for theme in WhiteSur WhiteSur-light WhiteSur-dark; do
     if [ ! -f "$outdir/$theme/index.theme" ]; then
+        cat "$tmpdir/install.log" >&2
         echo "fetch-whitesur: $theme was not installed" >&2
         exit 1
     fi
