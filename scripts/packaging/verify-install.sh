@@ -140,14 +140,16 @@ echo "== wallpaper =="
 # The shipped config names it as background_image.
 check /usr/share/otto/wallpaper.jpg
 
-echo "== MacTahoe icon theme =="
-for theme in MacTahoe MacTahoe-light MacTahoe-dark; do
+echo "== icon theme (Otto-MacTahoe) =="
+for theme in Otto-MacTahoe Otto-MacTahoe-light Otto-MacTahoe-dark; do
     check "/usr/share/icons/$theme/index.theme"
 done
-# Through a link to a file and through a link to a directory: the deb and
-# rpm create these on install from a list rather than shipping them.
-check /usr/share/icons/MacTahoe/apps/scalable/org.mozilla.firefox.svg
-check /usr/share/icons/MacTahoe-light/apps/scalable/firefox.svg
+# Through a link to a file, through a link to a directory, and the cursor the
+# config names (left_ptr is a link): the deb and rpm create these on install
+# from a list rather than shipping them.
+check /usr/share/icons/Otto-MacTahoe/apps/scalable/org.mozilla.firefox.svg
+check /usr/share/icons/Otto-MacTahoe-light/apps/scalable/firefox.svg
+check /usr/share/icons/Otto-MacTahoe/cursors/left_ptr
 
 echo "== PAM =="
 if [[ "$flavour" == deb ]]; then

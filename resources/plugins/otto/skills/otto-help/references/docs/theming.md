@@ -132,12 +132,12 @@ installed on the system works.
 ## Cursor
 
 ```toml
-cursor_theme = "MacTahoe"
+cursor_theme = "Otto-MacTahoe"
 cursor_size = 24
 ```
 
-The MacTahoe icon theme Otto ships carries its own cursors, so the default
-configuration uses it for both.
+The icon theme Otto ships, `Otto-MacTahoe`, carries its own cursors, so the
+default configuration uses it for both.
 
 Cursor theme names are the directory names under `/usr/share/icons/` and
 `~/.local/share/icons/`, and they are **case-sensitive**. Check what you have:
@@ -152,7 +152,7 @@ cursor-shape protocol get themed cursors without shipping their own bitmaps.
 ## Icon theme
 
 ```toml
-icon_theme = "MacTahoe"
+icon_theme = "Otto-MacTahoe"
 ```
 
 Used for application icons in the dock, the app switcher and notification
@@ -161,11 +161,14 @@ what is installed.
 
 Otto's packages ship the
 [MacTahoe icon theme](https://github.com/vinceliuice/MacTahoe-icon-theme)
-(`MacTahoe`, `MacTahoe-light` and `MacTahoe-dark`) and the default
-configuration uses it, so a first install has a complete set of icons.
+under Otto's own name — `Otto-MacTahoe`, `Otto-MacTahoe-light` and
+`Otto-MacTahoe-dark` — and the default configuration uses it, so a first
+install has a complete set of icons. The separate name keeps it from
+clashing with a MacTahoe you install yourself, which you can select by its
+own name, `MacTahoe`.
 Any other theme under `/usr/share/icons` works the same way.
 
-Popular choices: `MacTahoe`, `WhiteSur`, `Adwaita`, `Papirus`, `Fluent`. Otto's own
+Popular choices: `Otto-MacTahoe`, `MacTahoe`, `WhiteSur`, `Adwaita`, `Papirus`, `Fluent`. Otto's own
 screenshots use the
 [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme).
 

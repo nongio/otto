@@ -4,7 +4,7 @@
 
 Otto is a Wayland compositor and stacking window manager. Parts of the desktop are handed straight to hardware display planes instead of being composited into one buffer.
 
-You can try it inside your current session in about a minute — [jump to Try it](#try-it).
+Installing it takes a minute, and you can look at it in a window inside your current session before you log out — [jump to Try it](#try-it).
 
 **Documentation:** [User Guide](https://nongio.github.io/otto/) · [Developer Guide](https://nongio.github.io/otto/developer/)
 
@@ -52,10 +52,10 @@ Then log out and pick **Otto** in your login manager's session menu.
 
 **What's in the package:** the top bar and dynamic island, the Dock, [Files](https://nongio.github.io/otto/files/) with its Peek panel, [Settings](https://nongio.github.io/otto/settings/), the [launcher](https://nongio.github.io/otto/launcher/), the [emoji picker](https://nongio.github.io/otto/emoji/), the [lock screen](https://nongio.github.io/otto/lock-screen/) and [login greeter](https://nongio.github.io/otto/login-greeter/), a [remote desktop](https://nongio.github.io/otto/remote-desktop/) server, and Otto's desktop portal. It comes configured with Otto's wallpaper, the [Inter](https://rsms.me/inter/) font and the [MacTahoe](https://github.com/vinceliuice/MacTahoe-icon-theme) icons and cursors.
 
-On Debian, Ubuntu and Fedora the package manager also installs the recommended extras: the GStreamer plugins for video in Peek and remote desktop, and polkit. On Arch they are optional dependencies; to get the full set:
+On Debian, Ubuntu and Fedora the package manager also installs the recommended extras: the GStreamer plugins for video in Peek and remote desktop, and polkit. On Arch, the GStreamer plugins, the desktop portal and file search are optional dependencies; to get the full set:
 
 ```sh
-sudo pacman -S --asdeps xdg-desktop-portal localsearch gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav gst-plugin-pipewire
+sudo pacman -S --needed --asdeps xdg-desktop-portal localsearch gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav gst-plugin-pipewire
 ```
 
 Add `vulkan-intel` or `vulkan-radeon` for the Vulkan renderer on your GPU.
@@ -351,10 +351,11 @@ The repository ships [AGENTS.md](AGENTS.md), automated code review instructions 
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The packages also ship the [MacTahoe icon theme](https://github.com/vinceliuice/MacTahoe-icon-theme), installed as `Otto-MacTahoe`, which keeps its own licence, GPL-3.0.
 
 ### Credits
 
-- Icons used: [Fluent Icon Theme](https://github.com/vinceliuice/Fluent-icon-theme)
-- Font used: [Inter Font](https://rsms.me/inter/)
-- Background used: Zach Lieberman Soft Circle Study #6 2024 [zach.li](http://zach.li/)
+- Icons and cursors: [MacTahoe](https://github.com/vinceliuice/MacTahoe-icon-theme) by Vince Liuice (GPL-3.0)
+- Font: [Inter](https://rsms.me/inter/) by Rasmus Andersson (SIL Open Font License 1.1)
+- Wallpaper: Otto's own, under Otto's licence
+- Screenshots use the [Fluent icon theme](https://github.com/vinceliuice/Fluent-icon-theme); see [Credits](https://nongio.github.io/otto/credits/) for everything else in them

@@ -9,8 +9,8 @@ locales = []  # Language preferences, most specific first. Empty — the default
 # Theme
 cursor_size = 24
 font_family = "Inter"
-cursor_theme = "MacTahoe"  # MacTahoe ships with Otto and carries its own cursors
-icon_theme = "MacTahoe"  # Icon theme under /usr/share/icons (e.g. "Adwaita", "Papirus"); lookups fall back to hicolor. MacTahoe ships with Otto
+cursor_theme = "Otto-MacTahoe"  # Ships with Otto (the MacTahoe theme, under Otto's name) and carries its own cursors
+icon_theme = "Otto-MacTahoe"  # Icon theme under /usr/share/icons (e.g. "Adwaita", "Papirus"); lookups fall back to hicolor. Otto-MacTahoe ships with Otto
 theme_scheme = "Light"  # "Light" or "Dark" - exposed via XDG Desktop Portal Settings
 # gtk_theme = "Adwaita"  # Optional: for documentation/reference only
 background_image = "/usr/share/otto/wallpaper.jpg"  # Ships with Otto; any absolute path to an image works

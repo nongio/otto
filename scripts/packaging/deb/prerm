@@ -1,7 +1,12 @@
 #!/bin/sh
 set -e
-# Remove the MacTahoe links while their list is still installed, so dpkg
-# finds the theme directories empty. An upgrade keeps them.
-if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
-    /usr/lib/otto/icon-theme-links remove
-fi
+# Remove the default icon theme's symlinks while their lists are still
+# installed — on upgrade too, so that the incoming package never writes a
+# file through one and a downgrade to a package without these scripts does
+# not inherit them dangling. postinst makes them again. See
+# resources/icon-theme-links.
+case "$1" in
+    remove|upgrade|deconfigure|failed-upgrade)
+        /usr/lib/otto/icon-theme-links remove
+        ;;
+esac

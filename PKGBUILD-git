@@ -140,13 +140,16 @@ package() {
     # The default wallpaper, which the shipped config names.
     install -Dm644 resources/wallpaper.jpg "$pkgdir/usr/share/otto/wallpaper.jpg"
 
-    # MacTahoe, the default icon theme (GPL-3.0). Its symlinks come as a list
-    # (see scripts/packaging/fetch-icon-theme.sh); extracting it here makes
-    # pacman own them like any other file.
+    # Otto-MacTahoe, the default icon theme (MacTahoe, GPL-3.0). Its symlinks
+    # come as a list (see scripts/packaging/fetch-icon-theme.sh); extracting
+    # it here makes pacman own them like any other file.
     install -d "$pkgdir/usr/share/icons"
-    cp -r --no-preserve=ownership target/icon-theme/MacTahoe target/icon-theme/MacTahoe-light target/icon-theme/MacTahoe-dark "$pkgdir/usr/share/icons/"
-    tar -xzf target/icon-theme/links.tar.gz -C "$pkgdir/usr/share/icons" --no-same-owner
+    cp -r --no-preserve=ownership target/icon-theme/Otto-MacTahoe target/icon-theme/Otto-MacTahoe-light target/icon-theme/Otto-MacTahoe-dark "$pkgdir/usr/share/icons/"
+    for _links in target/icon-theme/links-*.tar.gz; do
+        tar -xzf "$_links" -C "$pkgdir/usr/share/icons" --no-same-owner
+    done
     install -Dm644 target/icon-theme/COPYING "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-COPYING"
+    install -Dm644 target/icon-theme/SOURCE "$pkgdir/usr/share/licenses/$pkgname/MacTahoe-SOURCE"
     install -Dm644 components/xdg-desktop-portal-otto/otto.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/otto.portal"
     install -Dm644 components/xdg-desktop-portal-otto/org.freedesktop.impl.portal.desktop.otto.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.otto.service"
     install -Dm644 components/xdg-desktop-portal-otto/xdg-desktop-portal-otto.service "$pkgdir/usr/lib/systemd/user/xdg-desktop-portal-otto.service"
