@@ -18,6 +18,7 @@ pub mod dnd;
 pub mod filetype;
 pub mod focus;
 pub mod foreign;
+pub mod format;
 pub mod frosted;
 pub mod frosting;
 pub mod fs;

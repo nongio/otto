@@ -778,16 +778,16 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
         [one] { $count } octet
         [many] { $count } octets
        *[other] { $count } octets
     }
-files-size-kb = { $value } Ko
-files-size-mb = { $value } Mo
-files-size-gb = { $value } Go
-files-size-tb = { $value } To
+size-kb = { $value } Ko
+size-mb = { $value } Mo
+size-gb = { $value } Go
+size-tb = { $value } To
 
 
 ## Files — dates
@@ -1660,23 +1660,6 @@ peek-item-count =
        *[other] { $count } éléments
     }
 peek-archive-summary = { $items } — { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-        [one] { $count } octet
-        [many] { $count } octets
-       *[other] { $count } octets
-    }
-peek-size-kb = { $value } Ko
-peek-size-mb = { $value } Mo
-peek-size-gb = { $value } Go
-peek-size-tb = { $value } To
 
 
 ## Peek — nothing to show

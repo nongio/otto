@@ -349,7 +349,7 @@ fn print_payload(path: &std::path::Path, payload: &PreviewPayload) {
                     if row.is_dir { "📁" } else { "  " },
                     row.name,
                     if row.size > 0 {
-                        format!("  ({})", otto_kit::preview::human_size(row.size))
+                        format!("  ({})", otto_kit::format::file_size(row.size))
                     } else {
                         String::new()
                     }
