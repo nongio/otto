@@ -440,7 +440,10 @@ are:
   shortcuts.
 - **Trackpad & Mouse** — the pointer and touchpad settings.
 - **Sound** — output and input device, volume and mute for each, then
-  interface sounds enabled and theme. The devices, volumes and mutes are not
+  interface sounds enabled and theme. Each device pop-up lists ports, not
+  only devices — a laptop's one analog device carries its speakers and its
+  headphone jack — and leaves out a jack with nothing plugged in; picking one
+  makes its device the default and switches it to that port. The devices, volumes and mutes are not
   settings: they belong to the sound server, which remembers them itself. The
   pane reads and writes them through `pactl`, which speaks to PulseAudio or to
   PipeWire through pipewire-pulse alike, and follows `pactl subscribe` while
