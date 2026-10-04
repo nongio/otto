@@ -18,6 +18,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
 libc = { version = "0.2", optional = true }
+# Wipes what was typed into the field, and every copy of it on the way out.
+zeroize = "1"
+# The power buttons ask logind directly. The tokio flavour, as otto-kit links.
+zbus = { version = "4", default-features = false, features = ["tokio"] }
 
 [features]
 # The PAM conversation otto-lock and otto-authorize share. Off by default so

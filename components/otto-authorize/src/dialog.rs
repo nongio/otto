@@ -7,8 +7,11 @@
 
 use std::time::{Duration, Instant};
 
-use otto_auth_ui::pam::{self, Attempt, Event, Message, Outcome};
-use otto_auth_ui::{reader, Action, Appearance, Field, Finger, Panel, Status, User, View};
+use otto_auth_ui::pam::{prompt_label, Attempt, Conversant, Message, Outcome};
+use otto_auth_ui::{
+    frame_in_flight, reader, Action, Appearance, Field, Finger, Panel, SecretInput, Status, User,
+    View,
+};
 use otto_kit::{surfaces::LayerShellSurface, AppContext};
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Keysym};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind};
@@ -43,11 +46,6 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(500);
 /// How long to let a recognised fingerprint's mark finish before reporting.
 const MARK_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// How long a painted frame is given to reach the screen before painting
-/// again, so a compositor that stops sending frame callbacks cannot freeze
-/// the panel.
-const FRAME_TIMEOUT: Duration = Duration::from_millis(100);
-
 /// Who checks the answers: polkit's helper, which runs PAM for the user and
 /// reports to polkitd under `cookie` ([`crate::polkit::session`]).
 #[derive(Debug, Clone)]
@@ -79,7 +77,7 @@ pub struct Dialog {
     /// Label above the field, as PAM phrased it.
     prompt: String,
     /// What has been typed. Wiped whenever it is dropped.
-    input: String,
+    input: SecretInput,
     /// PAM's `ECHO_OFF`: the field is masked.
     secret: bool,
     /// PAM has asked something that Enter would answer.
@@ -119,7 +117,7 @@ impl Dialog {
             stage: Stage::Authenticating,
             user,
             prompt: otto_kit::t_owned!("lock-prompt-password"),
-            input: String::new(),
+            input: SecretInput::new(),
             secret: true,
             question_pending: false,
             error: None,
@@ -202,7 +200,7 @@ impl Dialog {
     }
 
     fn clear_input(&mut self) {
-        pam::wipe(&mut self.input);
+        self.input.clear();
     }
 
     fn use_password(&mut self) {
@@ -220,9 +218,9 @@ impl Dialog {
 
     fn view(&self) -> View<'_> {
         let field = if self.secret || self.password_requested {
-            Field::Secret(self.input.chars().count())
+            Field::Secret(self.input.chars())
         } else {
-            Field::Text(&self.input)
+            Field::Text(self.input.as_str())
         };
 
         let status = match (self.stage, self.error.as_deref(), self.info.as_deref()) {
@@ -291,98 +289,10 @@ impl Dialog {
         self.question_pending = false;
     }
 
-    fn pump(&mut self) -> bool {
-        let mut changed = false;
-        while let Some(event) = self.attempt.as_mut().and_then(Attempt::poll) {
-            changed = true;
-            match event {
-                Event::Said(message) => self.said(message),
-                Event::Ended(outcome) => {
-                    self.attempt = None;
-                    self.ended(outcome);
-                }
-            }
-        }
-        changed
-    }
-
     /// Someone is still at it: the minute starts again. polkit's fingerprint
     /// step alone can take half of it before the password is even asked for.
     fn still_going(&mut self) {
         self.deadline = self.deadline.max(Instant::now() + TIMEOUT);
-    }
-
-    fn said(&mut self, message: Message) {
-        match message {
-            Message::Prompt { text, secret } => {
-                self.still_going();
-                self.prompt = prompt_label(&text);
-                self.secret = secret;
-                self.question_pending = true;
-                self.info = None;
-                self.finger_pending = false;
-                if self.password_requested && secret {
-                    self.password_requested = false;
-                    if std::mem::take(&mut self.submit_when_asked) {
-                        self.submit();
-                    }
-                } else {
-                    self.password_requested = false;
-                    self.submit_when_asked = false;
-                    self.clear_input();
-                }
-            }
-            Message::Info(text) => match reader::finger_request(&text) {
-                Some(request) => {
-                    self.finger_pending = true;
-                    self.info = Some(reader::request_line(request, "lock"));
-                }
-                None => {
-                    self.finger_pending |= reader::mentions_fingerprint(&text);
-                    self.info = Some(text);
-                }
-            },
-            Message::Error(text) => {
-                self.error = Some(if reader::is_no_match(&text) {
-                    reader::no_match_line("lock")
-                } else {
-                    text
-                });
-            }
-        }
-    }
-
-    fn ended(&mut self, outcome: Outcome) {
-        self.question_pending = false;
-        self.clear_input();
-        self.password_requested = false;
-        self.submit_when_asked = false;
-
-        match outcome {
-            Outcome::Authenticated => {
-                self.error = None;
-                if self.awaiting_finger() {
-                    self.stage = Stage::Accepted {
-                        since: Instant::now(),
-                    };
-                    return;
-                }
-                tracing::info!("Confirmed");
-                self.finish(Verdict::Confirmed);
-            }
-            Outcome::Denied(reason) => {
-                self.failures += 1;
-                tracing::info!(%reason, failures = self.failures, "Authentication failed");
-                if self.failures >= MAX_FAILURES {
-                    self.finish(Verdict::Failed);
-                    return;
-                }
-                self.error = Some(reason);
-                self.info = None;
-                self.finger_pending = false;
-                self.retry_at = Some(Instant::now() + RETRY_INTERVAL);
-            }
-        }
     }
 
     fn submit(&mut self) {
@@ -394,7 +304,7 @@ impl Dialog {
         if !self.question_pending {
             return;
         }
-        let answer = std::mem::take(&mut self.input);
+        let answer = self.input.take();
         self.error = None;
         self.question_pending = false;
         self.password_requested = false;
@@ -448,12 +358,11 @@ impl Dialog {
     }
 
     fn frame_in_flight(&self) -> bool {
-        self.painted_at
-            .is_some_and(|at| at.elapsed() < FRAME_TIMEOUT)
-            && self
-                .surface
+        frame_in_flight(self.painted_at, || {
+            self.surface
                 .as_ref()
                 .is_some_and(|surface| surface.base_surface().frame_in_flight())
+        })
     }
 
     fn paint(&mut self) {
@@ -505,7 +414,7 @@ impl Dialog {
 
     pub fn idle_timeout(&self) -> Option<Duration> {
         if self.frame_in_flight() {
-            return Some(FRAME_TIMEOUT);
+            return Some(otto_auth_ui::FRAME_TIMEOUT);
         }
         let mark = self.panel.as_ref().and_then(Panel::next_frame_in);
         let transition = self.animating_until.map(|_| Duration::from_millis(16));
@@ -562,13 +471,15 @@ impl Dialog {
                 self.error = None;
             }
             _ => {
-                let printable: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
+                let printable: otto_auth_ui::Zeroizing<String> = otto_auth_ui::Zeroizing::new(
+                    event
+                        .utf8
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect(),
+                );
                 if printable.is_empty() {
                     return;
                 }
@@ -585,13 +496,73 @@ impl Dialog {
     }
 }
 
-/// PAM prompts are written for a terminal: `"Password: "`.
-fn prompt_label(text: &str) -> String {
-    let label = text.trim().trim_end_matches(':').trim_end().to_string();
-    if label.is_empty() {
-        otto_kit::t_owned!("lock-prompt-password")
-    } else {
-        label
+impl Conversant for Dialog {
+    fn attempt(&mut self) -> &mut Option<Attempt> {
+        &mut self.attempt
+    }
+
+    fn said(&mut self, message: Message) {
+        match message {
+            Message::Prompt { text, secret } => {
+                self.still_going();
+                self.prompt = prompt_label(&text);
+                self.secret = secret;
+                self.question_pending = true;
+                self.info = None;
+                self.finger_pending = false;
+                if self.password_requested && secret {
+                    self.password_requested = false;
+                    if std::mem::take(&mut self.submit_when_asked) {
+                        self.submit();
+                    }
+                } else {
+                    self.password_requested = false;
+                    self.submit_when_asked = false;
+                    self.clear_input();
+                }
+            }
+            Message::Info(text) => {
+                let (finger, line) = reader::info_line(text, "lock");
+                self.finger_pending |= finger;
+                self.info = Some(line);
+            }
+            Message::Error(text) => {
+                self.error = Some(reader::error_line(text, "lock"));
+            }
+        }
+    }
+
+    fn ended(&mut self, outcome: Outcome) {
+        self.question_pending = false;
+        self.clear_input();
+        self.password_requested = false;
+        self.submit_when_asked = false;
+
+        match outcome {
+            Outcome::Authenticated => {
+                self.error = None;
+                if self.awaiting_finger() {
+                    self.stage = Stage::Accepted {
+                        since: Instant::now(),
+                    };
+                    return;
+                }
+                tracing::info!("Confirmed");
+                self.finish(Verdict::Confirmed);
+            }
+            Outcome::Denied(reason) => {
+                self.failures += 1;
+                tracing::info!(%reason, failures = self.failures, "Authentication failed");
+                if self.failures >= MAX_FAILURES {
+                    self.finish(Verdict::Failed);
+                    return;
+                }
+                self.error = Some(reason);
+                self.info = None;
+                self.finger_pending = false;
+                self.retry_at = Some(Instant::now() + RETRY_INTERVAL);
+            }
+        }
     }
 }
 

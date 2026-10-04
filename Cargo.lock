@@ -5197,6 +5197,8 @@ dependencies = [
  "taffy",
  "toml 0.8.23",
  "tracing",
+ "zbus 4.4.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -5294,7 +5296,6 @@ dependencies = [
 name = "otto-greeter"
 version = "1.6.0"
 dependencies = [
- "chrono",
  "otto-auth-ui",
  "otto-kit",
  "serde",
@@ -5304,6 +5305,7 @@ dependencies = [
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols-wlr",
+ "zeroize",
 ]
 
 [[package]]
@@ -5401,7 +5403,6 @@ dependencies = [
 name = "otto-lock"
 version = "1.6.0"
 dependencies = [
- "chrono",
  "otto-auth-ui",
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
@@ -10362,6 +10363,7 @@ version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
+ "serde",
  "zeroize_derive",
 ]
 

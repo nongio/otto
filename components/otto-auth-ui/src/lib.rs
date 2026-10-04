@@ -22,12 +22,19 @@
 //! Sizes are logical points, on a canvas the caller has already scaled.
 
 mod appearance;
+mod pacing;
 #[cfg(feature = "pam")]
 pub mod pam;
 mod panel;
+pub mod power;
 pub mod reader;
+mod secret;
 mod user;
 
 pub use appearance::Appearance;
+pub use pacing::{frame_in_flight, Clock, FRAME_TIMEOUT};
 pub use panel::{Action, Field, Finger, Panel, PowerAction, Status, View};
+pub use secret::SecretInput;
 pub use user::User;
+/// Re-exported so a client can hold a taken answer without naming the crate.
+pub use zeroize::Zeroizing;

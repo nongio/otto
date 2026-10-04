@@ -16,9 +16,11 @@
 //! OTTO_LOCKER_COMMAND=target/release/otto-lock   # test an uninstalled build (dev builds of otto only)
 //! ```
 
-use otto_auth_ui::pam::{Attempt, Event, Message, Outcome, Service};
+use otto_auth_ui::pam::{prompt_label, Attempt, Conversant, Message, Outcome, Service};
+use otto_auth_ui::power::PowerRequest;
 use otto_auth_ui::{
-    reader, Action, Appearance, Field, Finger, Panel, PowerAction, Status, User, View,
+    frame_in_flight, reader, Action, Appearance, Clock, Field, Finger, Panel, PowerAction,
+    SecretInput, Status, User, View,
 };
 use otto_kit::surfaces::{SessionLock, SessionLockSurface};
 use otto_kit::{App, AppContext, AppRunner};
@@ -32,12 +34,6 @@ use wayland_client::Proxy;
 /// unlocking regardless. The mark settles well inside this; it is only here so
 /// a panel that never stops asking for frames cannot hold the session shut.
 const MARK_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// How long a painted frame is given to reach the screen before painting
-/// again. Frames are paced by the compositor's callbacks — this is the bound
-/// on trusting it to send them, since a lock screen is not something anyone
-/// can close and reopen.
-const FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The least time between one attempt ending and the next beginning.
 ///
@@ -79,8 +75,8 @@ struct Conversation {
     user: Option<User>,
     /// Label above the field, as PAM phrased it.
     prompt: String,
-    /// The current input buffer.
-    input: String,
+    /// The current input buffer, wiped whenever anything leaves it.
+    input: SecretInput,
     /// Whether what is being typed is a secret. PAM's `ECHO_OFF`, and the only
     /// thing that decides whether the field is masked.
     secret: bool,
@@ -107,7 +103,7 @@ impl Conversation {
             stage: Stage::Authenticating,
             user: User::current(),
             prompt: otto_kit::t_owned!("lock-prompt-password"),
-            input: String::new(),
+            input: SecretInput::new(),
             secret: true,
             question_pending: false,
             error: None,
@@ -163,9 +159,9 @@ impl Conversation {
     fn view(&self) -> View<'_> {
         let field = if self.secret || self.password_requested {
             // The panel is given only the length of a secret, never the secret.
-            Field::Secret(self.input.chars().count())
+            Field::Secret(self.input.chars())
         } else {
-            Field::Text(&self.input)
+            Field::Text(self.input.as_str())
         };
 
         let status = match (&self.stage, self.error.as_deref(), self.info.as_deref()) {
@@ -231,6 +227,8 @@ struct Locker {
     attempt: Option<Attempt>,
     /// When the next attempt may start. See [`RETRY_INTERVAL`].
     retry_at: Option<std::time::Instant>,
+    /// A power button's request, until logind has answered it.
+    power_request: Option<PowerRequest>,
     /// Repaint until this instant, so the panel's transitions are seen through
     /// rather than left frozen at their first step.
     animating_until: Option<std::time::Instant>,
@@ -239,7 +237,7 @@ struct Locker {
     painted_at: Option<std::time::Instant>,
     /// The minute the clock was last drawn showing. A session can be locked for
     /// hours; a clock that stopped when it was locked is worse than none.
-    clock_minute: Option<i64>,
+    clock: Clock,
 }
 
 impl Locker {
@@ -252,9 +250,10 @@ impl Locker {
             appearance: Appearance::load(),
             attempt: None,
             retry_at: None,
+            power_request: None,
             animating_until: None,
             painted_at: None,
-            clock_minute: None,
+            clock: Clock::default(),
         }
     }
 
@@ -344,117 +343,6 @@ impl Locker {
         self.session.prompt = otto_kit::t_owned!("lock-prompt-password");
     }
 
-    /// Collect whatever PAM has said. Returns whether the panel needs
-    /// redrawing.
-    ///
-    /// Called every loop iteration rather than waited on, so a module that
-    /// takes its time — a reader waiting for a finger — leaves the panel live.
-    fn pump(&mut self) -> bool {
-        let mut changed = false;
-        while let Some(event) = self.attempt.as_mut().and_then(Attempt::poll) {
-            changed = true;
-            match event {
-                Event::Said(message) => self.said(message),
-                Event::Ended(outcome) => {
-                    self.attempt = None;
-                    self.ended(outcome);
-                }
-            }
-        }
-        changed
-    }
-
-    fn said(&mut self, message: Message) {
-        // What the stack asked, in its own words. The only way to tell why a
-        // reader is not being offered is to see whether the module announced
-        // one at all — and the wording varies by module, locale and reader.
-        tracing::debug!(?message, "PAM");
-        match message {
-            Message::Prompt { text, secret } => {
-                self.session.prompt = prompt_label(&text);
-                self.session.secret = secret;
-                self.session.question_pending = true;
-                // A prompt supersedes whatever hint preceded it: the reader is
-                // no longer what is being waited on.
-                self.session.info = None;
-                self.session.finger_pending = false;
-
-                // The question the user answered ahead of time has arrived.
-                // Only a secret one, though: a password typed for a password
-                // prompt must not be handed to a one-time-code prompt that
-                // happens to come first.
-                if self.session.password_requested && secret {
-                    self.session.password_requested = false;
-                    if std::mem::take(&mut self.session.submit_when_asked) {
-                        self.submit();
-                    }
-                } else {
-                    self.session.password_requested = false;
-                    self.session.submit_when_asked = false;
-                    self.session.input.clear();
-                }
-            }
-            Message::Info(text) => {
-                // A request for a finger is said again in the panel's language;
-                // anything else the module volunteers keeps its own words.
-                match reader::finger_request(&text) {
-                    Some(request) => {
-                        self.session.finger_pending = true;
-                        self.session.info = Some(reader::request_line(request, "lock"));
-                    }
-                    None => {
-                        self.session.finger_pending |= reader::mentions_fingerprint(&text);
-                        self.session.info = Some(text);
-                    }
-                }
-            }
-            Message::Error(text) => {
-                self.session.error = Some(if reader::is_no_match(&text) {
-                    reader::no_match_line("lock")
-                } else {
-                    text
-                });
-            }
-        }
-    }
-
-    fn ended(&mut self, outcome: Outcome) {
-        self.session.question_pending = false;
-        self.session.input.clear();
-        self.session.password_requested = false;
-        self.session.submit_when_asked = false;
-
-        match outcome {
-            Outcome::Authenticated => {
-                self.session.error = None;
-                // If it ended on a fingerprint, the mark is mid-animation and
-                // cutting it off here is the last thing anyone sees of the lock
-                // screen. Give it its moment; `tick` unlocks after it.
-                if self.session.awaiting_finger() {
-                    tracing::info!("Fingerprint accepted; holding the mark");
-                    self.session.stage = Stage::Accepted {
-                        since: std::time::Instant::now(),
-                    };
-                    return;
-                }
-                tracing::info!("Authenticated; nothing to show first");
-                self.session.info = None;
-                self.session.finger_pending = false;
-                self.unlock();
-            }
-            Outcome::Denied(reason) => {
-                tracing::info!(%reason, "Authentication failed");
-                self.session.error = Some(reason);
-                self.session.info = None;
-                self.session.finger_pending = false;
-                // Straight into another attempt, so the field — or the reader —
-                // is there to try again with. PAM's own stack is what makes a
-                // wrong password cost time.
-                self.retry_at = Some(std::time::Instant::now() + RETRY_INTERVAL);
-            }
-        }
-    }
-
     /// Hand the session back and leave.
     ///
     /// The unlock request goes out first and the process exits after the run
@@ -484,7 +372,7 @@ impl Locker {
             return;
         }
 
-        let answer = std::mem::take(&mut self.session.input);
+        let answer = self.session.input.take();
         self.session.error = None;
         self.session.question_pending = false;
         self.session.password_requested = false;
@@ -530,12 +418,6 @@ impl Locker {
         changed
     }
 
-    /// Whether the minute has turned since the clock was last drawn.
-    fn clock_stale(&self) -> bool {
-        let minute = chrono::Local::now().timestamp() / 60;
-        self.clock_minute != Some(minute)
-    }
-
     /// Act on a click on one of the panel's controls.
     fn activate(&mut self, action: Action) {
         match action {
@@ -548,56 +430,28 @@ impl Locker {
         }
     }
 
-    /// Suspend, restart or shut down through systemd.
+    /// Suspend, restart or shut down, through logind.
     ///
     /// Whether this is allowed from a locked session is polkit's call, not the
-    /// locker's; if it refuses, say so on the panel rather than failing mute.
+    /// locker's. The answer arrives in [`Locker::power_answered`]; a refusal
+    /// is said on the panel rather than failing mute.
     fn power(&mut self, action: PowerAction) {
-        // The verb is systemctl's, not the user's: it goes on the command
-        // line, and the panel gets a message keyed by the action instead.
-        let (verb, denied, failed) = match action {
-            PowerAction::Suspend => (
-                "suspend",
-                "lock-power-suspend-denied",
-                "lock-power-suspend-failed",
-            ),
-            PowerAction::Restart => (
-                "reboot",
-                "lock-power-restart-denied",
-                "lock-power-restart-failed",
-            ),
-            PowerAction::Shutdown => (
-                "poweroff",
-                "lock-power-shutdown-denied",
-                "lock-power-shutdown-failed",
-            ),
-        };
-        tracing::info!(verb, "power action requested");
-
-        // Captured rather than inherited: what systemd has to say about a
-        // refusal is the whole diagnosis, and on a lock screen there is no
-        // terminal for it to land in.
-        match std::process::Command::new("systemctl").arg(verb).output() {
-            Ok(output) if output.status.success() => {
-                tracing::info!(verb, "systemctl accepted");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let reason = stderr.lines().next().unwrap_or("").trim().to_string();
-                tracing::warn!(verb, status = ?output.status, %stderr, "systemctl refused");
-                self.session.error = Some(if reason.is_empty() {
-                    otto_kit::t_owned!(denied)
-                } else {
-                    // systemd's own diagnosis, which says more than anything
-                    // here could; it comes back in the system's language.
-                    reason
-                });
-            }
-            Err(err) => {
-                tracing::warn!(verb, %err, "could not run systemctl");
-                self.session.error = Some(otto_kit::t_owned!(failed, error = err.to_string()));
-            }
+        if self.power_request.is_none() {
+            self.power_request = Some(PowerRequest::start(action));
         }
+    }
+
+    /// Take logind's answer to a power button, if it has given one. Returns
+    /// whether the panel needs redrawing.
+    fn power_answered(&mut self) -> bool {
+        let Some(answer) = self.power_request.as_ref().and_then(PowerRequest::poll) else {
+            return false;
+        };
+        let action = self.power_request.take().expect("polled above").action();
+        if let Err(err) = answer {
+            self.session.error = Some(err.line(action, "lock"));
+        }
+        true
     }
 
     /// Push the current state into every panel and paint.
@@ -619,15 +473,15 @@ impl Locker {
 
     /// Whether the last painted frame is still on its way to the screen.
     ///
-    /// Only until [`FRAME_TIMEOUT`]: a compositor that stops answering with
-    /// frame callbacks must not be able to freeze the lock screen.
+    /// Only until [`otto_auth_ui::FRAME_TIMEOUT`]: a compositor that stops
+    /// answering with frame callbacks must not be able to freeze the lock
+    /// screen.
     fn frame_in_flight(&self) -> bool {
-        self.painted_at
-            .is_some_and(|at| at.elapsed() < FRAME_TIMEOUT)
-            && self
-                .screens
+        frame_in_flight(self.painted_at, || {
+            self.screens
                 .iter()
                 .any(|screen| screen.surface.base_surface().frame_in_flight())
+        })
     }
 
     /// Paint every configured screen as its scene currently stands.
@@ -643,8 +497,7 @@ impl Locker {
         }
         self.painted_at = Some(std::time::Instant::now());
 
-        if self.clock_stale() {
-            self.clock_minute = Some(chrono::Local::now().timestamp() / 60);
+        if self.clock.catch_up() {
             for screen in &self.screens {
                 screen.panel.refresh_clock();
             }
@@ -670,14 +523,89 @@ impl Locker {
     }
 }
 
-/// PAM prompts are written for a terminal: `"Password: "`. The panel puts the
-/// label above the field, where the punctuation reads as a typo.
-fn prompt_label(text: &str) -> String {
-    let label = text.trim().trim_end_matches(':').trim_end().to_string();
-    if label.is_empty() {
-        otto_kit::t_owned!("lock-prompt-password")
-    } else {
-        label
+impl Conversant for Locker {
+    fn attempt(&mut self) -> &mut Option<Attempt> {
+        &mut self.attempt
+    }
+
+    fn said(&mut self, message: Message) {
+        // What the stack asked, in its own words. The only way to tell why a
+        // reader is not being offered is to see whether the module announced
+        // one at all — and the wording varies by module, locale and reader.
+        tracing::debug!(?message, "PAM");
+        match message {
+            Message::Prompt { text, secret } => {
+                self.session.prompt = prompt_label(&text);
+                self.session.secret = secret;
+                self.session.question_pending = true;
+                // A prompt supersedes whatever hint preceded it: the reader is
+                // no longer what is being waited on.
+                self.session.info = None;
+                self.session.finger_pending = false;
+
+                // The question the user answered ahead of time has arrived.
+                // Only a secret one, though: a password typed for a password
+                // prompt must not be handed to a one-time-code prompt that
+                // happens to come first.
+                if self.session.password_requested && secret {
+                    self.session.password_requested = false;
+                    if std::mem::take(&mut self.session.submit_when_asked) {
+                        self.submit();
+                    }
+                } else {
+                    self.session.password_requested = false;
+                    self.session.submit_when_asked = false;
+                    self.session.input.clear();
+                }
+            }
+            Message::Info(text) => {
+                // A request for a finger is said again in the panel's language;
+                // anything else the module volunteers keeps its own words.
+                let (finger, line) = reader::info_line(text, "lock");
+                self.session.finger_pending |= finger;
+                self.session.info = Some(line);
+            }
+            Message::Error(text) => {
+                self.session.error = Some(reader::error_line(text, "lock"));
+            }
+        }
+    }
+
+    fn ended(&mut self, outcome: Outcome) {
+        self.session.question_pending = false;
+        self.session.input.clear();
+        self.session.password_requested = false;
+        self.session.submit_when_asked = false;
+
+        match outcome {
+            Outcome::Authenticated => {
+                self.session.error = None;
+                // If it ended on a fingerprint, the mark is mid-animation and
+                // cutting it off here is the last thing anyone sees of the lock
+                // screen. Give it its moment; `tick` unlocks after it.
+                if self.session.awaiting_finger() {
+                    tracing::info!("Fingerprint accepted; holding the mark");
+                    self.session.stage = Stage::Accepted {
+                        since: std::time::Instant::now(),
+                    };
+                    return;
+                }
+                tracing::info!("Authenticated; nothing to show first");
+                self.session.info = None;
+                self.session.finger_pending = false;
+                self.unlock();
+            }
+            Outcome::Denied(reason) => {
+                tracing::info!(%reason, "Authentication failed");
+                self.session.error = Some(reason);
+                self.session.info = None;
+                self.session.finger_pending = false;
+                // Straight into another attempt, so the field — or the reader —
+                // is there to try again with. PAM's own stack is what makes a
+                // wrong password cost time.
+                self.retry_at = Some(std::time::Instant::now() + RETRY_INTERVAL);
+            }
+        }
     }
 }
 
@@ -739,7 +667,7 @@ impl App for Locker {
     fn on_update(&mut self, ctx: &AppContext) {
         self.track_outputs(ctx);
 
-        if self.pump() || self.tick() {
+        if self.pump() | self.power_answered() || self.tick() {
             self.draw();
             return;
         }
@@ -757,7 +685,7 @@ impl App for Locker {
             .animating_until
             .is_some_and(|deadline| std::time::Instant::now() < deadline);
         let mark_due = self.screens.iter().any(|screen| screen.panel.frame_due());
-        if animating || mark_due || self.clock_stale() {
+        if animating || mark_due || self.clock.stale() {
             self.paint();
             return;
         }
@@ -773,7 +701,7 @@ impl App for Locker {
     /// a key is pressed — both of which wake it on their own.
     fn idle_timeout(&self) -> Option<std::time::Duration> {
         if self.frame_in_flight() {
-            return Some(FRAME_TIMEOUT);
+            return Some(otto_auth_ui::FRAME_TIMEOUT);
         }
 
         // The Touch ID mark paces itself; sleep exactly up to its next frame.
@@ -792,9 +720,7 @@ impl App for Locker {
             .map(|at| at.saturating_duration_since(std::time::Instant::now()));
         // The clock only changes on the minute, and nothing else needs the loop
         // awake in between.
-        let clock = Some(std::time::Duration::from_secs(
-            60 - (chrono::Local::now().timestamp() % 60).unsigned_abs(),
-        ));
+        let clock = Some(Clock::until_next_minute());
 
         [mark, transition, retry, clock].into_iter().flatten().min()
     }
@@ -863,13 +789,15 @@ impl App for Locker {
             _ => {
                 // Anything the keymap turned into text goes into the buffer;
                 // control characters are handled above.
-                let printable: String = event
-                    .utf8
-                    .as_deref()
-                    .unwrap_or_default()
-                    .chars()
-                    .filter(|c| !c.is_control())
-                    .collect();
+                let printable: otto_auth_ui::Zeroizing<String> = otto_auth_ui::Zeroizing::new(
+                    event
+                        .utf8
+                        .as_deref()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect(),
+                );
                 if printable.is_empty() {
                     return;
                 }
@@ -912,15 +840,6 @@ mod tests {
 
     fn conversation() -> Conversation {
         Conversation::new()
-    }
-
-    /// PAM writes its prompts for a terminal. The panel puts the label above
-    /// the field, where a trailing colon reads as a mistake.
-    #[test]
-    fn prompt_labels_lose_their_terminal_punctuation() {
-        assert_eq!(prompt_label("Password: "), "Password");
-        assert_eq!(prompt_label("Verification code:"), "Verification code");
-        assert_eq!(prompt_label("   "), otto_kit::t!("lock-prompt-password"));
     }
 
     /// A lock screen authenticates the user it runs as, so there is no name to
@@ -1024,7 +943,7 @@ mod tests {
         let mut locker = Locker::new();
         locker.session.finger_pending = true;
         locker.session.use_password();
-        locker.session.input = "hunter2".to_string();
+        locker.session.input = "hunter2".into();
 
         locker.submit();
         assert!(
@@ -1032,7 +951,8 @@ mod tests {
             "Enter should be remembered"
         );
         assert_eq!(
-            locker.session.input, "hunter2",
+            locker.session.input.as_str(),
+            "hunter2",
             "the answer must not be lost"
         );
         assert!(matches!(
@@ -1056,7 +976,7 @@ mod tests {
         let mut locker = Locker::new();
         locker.session.finger_pending = true;
         locker.session.use_password();
-        locker.session.input = "hunter2".to_string();
+        locker.session.input = "hunter2".into();
         locker.submit();
 
         locker.said(Message::Prompt {
@@ -1077,7 +997,7 @@ mod tests {
         let mut locker = Locker::new();
         locker.locked = true;
         locker.session.question_pending = true;
-        locker.session.input = "wrong".to_string();
+        locker.session.input = "wrong".into();
 
         locker.ended(Outcome::Denied("Authentication failure".to_string()));
         assert!(locker.session.input.is_empty(), "the attempt is over");
