@@ -98,6 +98,11 @@ const ARRANGEMENT_CANVAS_H: f32 = 168.0;
 /// constant, alongside that function, so [`Settings::pane_content_height`]
 /// cannot drift from what it actually draws.
 const ARRANGEMENT_HEIGHT: f32 = ARRANGEMENT_CANVAS_H + 30.0;
+/// The About pane's mark: the side of its rounded square.
+const ABOUT_MARK: f32 = 96.0;
+/// Height of the About pane's opening band: the mark, the name under it and
+/// the version under that, with room above and below.
+const ABOUT_HERO_HEIGHT: f32 = 24.0 + ABOUT_MARK + 20.0 + 36.0 + 22.0 + 30.0;
 /// One line of a pane's opening paragraph, and the space between the
 /// paragraph and the first group below it.
 const INTRO_LINE_H: f32 = 19.0;
@@ -703,6 +708,8 @@ impl GroupLayout<'_> {
 struct PaneLayout<'a> {
     /// The displays arrangement canvas, on the pane that has one.
     arrangement: Option<Rect>,
+    /// The About pane's opening band: the Otto mark, name and version.
+    hero: Option<Rect>,
     /// The opening paragraph, on the pane that has one: the wrapped lines and
     /// the band they occupy, laid out once so drawing and the content height
     /// cannot disagree about how tall it is.
@@ -1131,6 +1138,12 @@ impl Settings {
             area
         });
 
+        let hero = (pane.icon == "about").then(|| {
+            let area = Rect::from_ltrb(x0, y, x1, y + ABOUT_HERO_HEIGHT);
+            y += ABOUT_HERO_HEIGHT;
+            area
+        });
+
         let intro = pane.intro.map(|text| {
             let lines = widgets::wrap(text, styles::SUBHEADLINE, x1 - x0);
             let height = lines.len() as f32 * INTRO_LINE_H + INTRO_GAP;
@@ -1171,6 +1184,7 @@ impl Settings {
 
         PaneLayout {
             arrangement,
+            hero,
             intro,
             groups,
             height: y,
@@ -1812,6 +1826,12 @@ impl Settings {
         if let Some(area) = layout.arrangement {
             if intersects_band(area, content) {
                 self.render_arrangement(canvas, x0, x1, area.top);
+            }
+        }
+
+        if let Some(area) = layout.hero {
+            if intersects_band(area, content) {
+                self.render_about_hero(canvas, area);
             }
         }
 
@@ -2516,6 +2536,75 @@ impl Settings {
 
     /// Displays arrangement canvas, drawn from `y` down. It occupies
     /// [`ARRANGEMENT_HEIGHT`], which is what the pane walk reserves for it.
+    /// The About pane's opening band, centred: the Otto mark, the name in
+    /// large type, and the version under it.
+    fn render_about_hero(&self, canvas: &Canvas, area: Rect) {
+        let cx = area.center_x();
+        let top = area.top + 24.0;
+
+        // The logo as the website draws it: a rounded square in the text
+        // colour, and two dots in the opposite one — black on white in dark
+        // mode, white on black in light.
+        let square = Rect::from_xywh(cx - ABOUT_MARK / 2.0, top, ABOUT_MARK, ABOUT_MARK);
+        let mut shadow = Paint::default();
+        shadow.set_anti_alias(true);
+        shadow.set_color(self.theme.shadow);
+        shadow.set_mask_filter(skia_safe::MaskFilter::blur(
+            skia_safe::BlurStyle::Normal,
+            8.0,
+            false,
+        ));
+        let corner = ABOUT_MARK * 0.24;
+        canvas.draw_round_rect(square.with_offset((0.0, 4.0)), corner, corner, &shadow);
+
+        let mut fill = Paint::default();
+        fill.set_anti_alias(true);
+        fill.set_color(self.theme.text_primary);
+        canvas.draw_round_rect(square, corner, corner, &fill);
+        let mut dot = Paint::default();
+        dot.set_anti_alias(true);
+        dot.set_color(if self.dark {
+            Color::BLACK
+        } else {
+            Color::WHITE
+        });
+        // The logo's proportions: each dot 18% of the square across, their
+        // centres 30% of it apart.
+        let radius = ABOUT_MARK * 0.09;
+        let spacing = ABOUT_MARK * 0.305;
+        for dx in [-spacing / 2.0, spacing / 2.0] {
+            canvas.draw_circle(Point::new(cx + dx, square.center_y()), radius, &dot);
+        }
+
+        let name = "Otto";
+        let name_style = styles::LARGE_TITLE_EMPHASIZED;
+        let name_cy = square.bottom + 20.0 + 18.0;
+        let name_w = name_style.font().measure_str(name, None).0;
+        widgets::text_centered_y(
+            canvas,
+            name,
+            cx - name_w / 2.0,
+            name_cy,
+            name_style,
+            self.theme.text_primary,
+        );
+
+        let version = otto_kit::t_owned!(
+            "settings-about-version-line",
+            version = env!("CARGO_PKG_VERSION")
+        );
+        let version_style = styles::SUBHEADLINE;
+        let version_w = version_style.font().measure_str(&version, None).0;
+        widgets::text_centered_y(
+            canvas,
+            &version,
+            cx - version_w / 2.0,
+            name_cy + 18.0 + 11.0,
+            version_style,
+            self.theme.text_secondary,
+        );
+    }
+
     fn render_arrangement(&self, canvas: &Canvas, x0: f32, x1: f32, y: f32) {
         let area = arrangement_canvas(Rect::from_ltrb(x0, y, x1, y + ARRANGEMENT_HEIGHT));
         let rrect = RRect::new_rect_xy(area, 9.0, 9.0);

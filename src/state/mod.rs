@@ -218,6 +218,8 @@ pub struct Otto<BackendData: Backend + 'static> {
     pub socket_name: Option<String>,
     pub display_handle: DisplayHandle,
     pub running: Arc<AtomicBool>,
+    /// A logout is waiting for the windows to close; see [`logout`].
+    pub logout_pending: bool,
     pub handle: LoopHandle<'static, Otto<BackendData>>,
     pub loop_wakeup_sender: ChannelSender<()>,
     pub loop_wakeup_pending: Arc<AtomicBool>,
@@ -550,6 +552,7 @@ pub mod foreign_toplevel_shared;
 pub mod fractional_scale_handler;
 pub mod gamma_control;
 pub mod input_method_handler;
+pub mod logout;
 pub mod screencopy;
 pub mod seat_handler;
 pub mod security_context_handler;
@@ -1114,6 +1117,7 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             display_handle: dh,
             socket_name,
             running: Arc::new(AtomicBool::new(true)),
+            logout_pending: false,
             handle,
             loop_wakeup_sender,
             loop_wakeup_pending,

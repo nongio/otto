@@ -74,6 +74,15 @@ settings-pane-power = 電源
 settings-pane-lock-and-login = ロックとログイン
 settings-pane-search = 検索
 settings-pane-agents = エージェント
+settings-pane-about = 情報
+settings-group-about-machine = このコンピュータについて
+settings-about-version-line = バージョン { $version }
+settings-about-computer-name = コンピュータ名
+settings-about-os = オペレーティングシステム
+settings-about-kernel = カーネル
+settings-about-processor = プロセッサ
+settings-about-memory = メモリ
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -913,6 +922,12 @@ bar-power-performance = パフォーマンス
 bar-power-settings = 電源設定…
 bar-keyboard-settings = キーボード設定…
 bar-keyboard-layout-label = キーボードレイアウト: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Otto について
+bar-otto-settings = 設定…
+bar-otto-log-out = ログアウト
+bar-logout-title = 今すぐログアウトしますか?
+bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
 
 ## Settings — widgets

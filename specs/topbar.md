@@ -47,13 +47,14 @@ The Top Bar is a persistent, full-width panel anchored to the top edge of the pr
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  [App Name]  [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
+│ [••] [App Name] [File] [Edit] [View] [Help] ··· [island] ··· [icons] [🔋] [clock]│
 └──────────────────────────────────────────────────────────────────────────────┘
   ◄── Left zone ──────────────────►         ◄── Right zone ──────────────────►
                                    ◄Center►
 ```
 
-5. **Left zone** (left-aligned): application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
+5. **Left zone** (left-aligned): the Otto mark, then the application name (bold), followed by top-level menu entries (File, Edit, …). Clicking a top-level entry opens the corresponding submenu as a popup.
+5a. **The Otto mark** is the logo's two dots, side by side, in the bar's text colour. It is always there, whatever has focus, and the bar's padding before it counts as part of it, so a click in the screen corner lands on it. Clicking it opens the Otto menu: *About Otto*, a separator, *Settings…*, a separator, *Log Out*. About and Settings start the settings command (`battery.settings_command`), About with `--pane about`; both are left out when no settings command is configured. Log Out asks first, through otto-islands' system dialog (`org.otto.Dialog1.PresentAccess`, modal): "Log out now?", saying apps will be asked to close first, with *Log Out* and *Cancel*. On *Log Out* the bar runs `logout` over `org.otto.Shell1`. The compositor asks every window to close, as its close button does, and ends the session once all are gone. A window that opens meanwhile is an application asking something, usually whether to save, and the logout waits for as long as it stays open. When the last such prompt goes, the application either closes and the logout carries on, or is still open 3 seconds later, which means the person cancelled, and the logout stands down and leaves the session as it is. Without any prompt, windows still open after 10 seconds stand it down too. Logging out again starts over. Without otto-islands there is nobody to ask, and the bar runs `logout` straight away, which still lets every application close the polite way. While the menu is open the mark wears the open-menu pill. To an assistive technology it is the menu bar's first item, labelled "Otto", with a popup.
 6. **Center zone**: reserved empty space. No content is rendered here to leave visual room for the Dynamic Island.
 7. **Right zone** (right-aligned): SNI tray icons (rightmost first), then the keyboard layout indicator, then the battery indicator, then the clock.
 

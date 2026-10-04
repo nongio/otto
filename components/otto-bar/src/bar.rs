@@ -7,11 +7,13 @@ use crate::clock::Clock;
 use crate::config::*;
 use crate::tray;
 
-/// Left panel: app name + menus.
+/// Left panel: the Otto mark, then the app name and its menus.
 pub struct LeftPanel {
     pub app_name: String,
     pub menu_state: MenuBarState,
     pub style: MenuBarStyle,
+    /// The Otto menu is open: the mark wears the open-menu pill.
+    pub logo_active: bool,
     pub width: f32,
     pub height: f32,
 }
@@ -41,6 +43,14 @@ pub struct RightPanel {
     pub width: f32,
     pub height: f32,
 }
+
+/// How wide the Otto mark's pill is. The app menus start where it ends.
+const LOGO_PILL_WIDTH: f32 = 30.0;
+/// Radius of each of the mark's two dots.
+const LOGO_DOT_RADIUS: f32 = 3.25;
+/// Distance between the two dots' centres: the logo's proportions, where
+/// the gap between the dots is about two thirds of a dot.
+const LOGO_DOT_SPACING: f32 = 11.0;
 
 /// How far the open-menu pill reaches past the battery glyph on each side.
 /// Inside `TRAY_CLOCK_GAP`, so it never meets the tray's own pill.
@@ -163,6 +173,7 @@ impl LeftPanel {
             app_name: "Otto".to_string(),
             menu_state: build_left_menu_state(),
             style: left_menu_style(),
+            logo_active: false,
             width: LEFT_WIDTH as f32,
             height: BAR_HEIGHT as f32,
         }
@@ -213,7 +224,7 @@ impl LeftPanel {
             self.style.font_style(),
             self.style.font_size,
         );
-        let mut offset = self.style.bar_padding_horizontal;
+        let mut offset = LOGO_PILL_WIDTH + self.style.bar_padding_horizontal;
         self.menu_state
             .items()
             .iter()
@@ -245,17 +256,75 @@ impl LeftPanel {
             None => placed
                 .last()
                 .map(|(left, width)| left + width + self.style.item_spacing)
-                .unwrap_or(self.style.bar_padding_horizontal),
+                .unwrap_or(LOGO_PILL_WIDTH + self.style.bar_padding_horizontal),
         }
     }
 
+    /// The Otto mark's pill, in panel coordinates: what a click on the mark
+    /// lands on, and what the Otto menu hangs from.
+    pub fn logo_rect(&self) -> (f32, f32, f32, f32) {
+        (
+            self.style.bar_padding_horizontal,
+            0.0,
+            LOGO_PILL_WIDTH,
+            self.height,
+        )
+    }
+
+    /// Whether `x` (in panel coords) is on the Otto mark. The bar's own
+    /// padding before it counts, so the screen corner opens the menu.
+    pub fn logo_at(&self, x: f32) -> bool {
+        let (left, _, width, _) = self.logo_rect();
+        x >= 0.0 && x <= left + width
+    }
+
     pub fn draw(&self, canvas: &Canvas) {
-        MenuBarRenderer::render(canvas, &self.menu_state, &self.style, self.width);
+        self.draw_logo(canvas);
+        canvas.save();
+        canvas.translate((LOGO_PILL_WIDTH, 0.0));
+        MenuBarRenderer::render(
+            canvas,
+            &self.menu_state,
+            &self.style,
+            self.width - LOGO_PILL_WIDTH,
+        );
+        canvas.restore();
+    }
+
+    /// The Otto mark: the logo's two dots, in the bar's text colour.
+    fn draw_logo(&self, canvas: &Canvas) {
+        let (x, y, w, h) = self.logo_rect();
+        let color = if self.logo_active {
+            // The pill the app menus wear when open, so every open menu on
+            // the bar looks the same.
+            let hl = highlight_colors();
+            let mut pill = Paint::default();
+            pill.set_anti_alias(true);
+            pill.set_color(hl.active);
+            let radius = self.style.item_corner_radius;
+            canvas.draw_round_rect(
+                skia_safe::Rect::from_xywh(x, y, w, h),
+                radius,
+                radius,
+                &pill,
+            );
+            hl.on_active
+        } else {
+            self.style.text_color
+        };
+
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(color);
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        for dx in [-LOGO_DOT_SPACING / 2.0, LOGO_DOT_SPACING / 2.0] {
+            canvas.draw_circle((cx + dx, cy), LOGO_DOT_RADIUS, &paint);
+        }
     }
 
     /// Compute the ideal panel width.
     pub fn target_width(&self) -> f32 {
-        let w = MenuBarRenderer::measure_width(&self.menu_state, &self.style);
+        let w = MenuBarRenderer::measure_width(&self.menu_state, &self.style) + LOGO_PILL_WIDTH;
         w.max(LEFT_WIDTH as f32)
     }
 }

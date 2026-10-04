@@ -6,6 +6,7 @@ mod clock;
 mod config;
 mod dbusmenu;
 mod keyboard_layout;
+mod logout;
 mod power;
 mod tray;
 

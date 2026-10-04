@@ -73,6 +73,15 @@ settings-pane-power = Питание
 settings-pane-lock-and-login = Блокировка и вход
 settings-pane-search = Поиск
 settings-pane-agents = Агенты
+settings-pane-about = Об Otto
+settings-group-about-machine = Этот компьютер
+settings-about-version-line = Версия { $version }
+settings-about-computer-name = Имя компьютера
+settings-about-os = Операционная система
+settings-about-kernel = Ядро
+settings-about-processor = Процессор
+settings-about-memory = Память
+settings-about-memory-gb = { $size } ГБ
 
 
 ## Settings — General
@@ -984,6 +993,12 @@ bar-power-performance = Производительность
 bar-power-settings = Настройки питания…
 bar-keyboard-settings = Настройки клавиатуры…
 bar-keyboard-layout-label = Раскладка клавиатуры: { $layout }
+bar-otto-menu = Otto
+bar-otto-about = Об Otto
+bar-otto-settings = Настройки…
+bar-otto-log-out = Выйти
+bar-logout-title = Выйти сейчас?
+bar-logout-body = Сначала приложения получат запрос на закрытие, чтобы несохранённое можно было сохранить.
 
 
 ## Settings — widgets

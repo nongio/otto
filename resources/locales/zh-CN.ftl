@@ -73,6 +73,15 @@ settings-pane-power = 电源
 settings-pane-lock-and-login = 锁定与登录
 settings-pane-search = 搜索
 settings-pane-agents = 智能体
+settings-pane-about = 关于
+settings-group-about-machine = 关于本机
+settings-about-version-line = 版本 { $version }
+settings-about-computer-name = 计算机名称
+settings-about-os = 操作系统
+settings-about-kernel = 内核
+settings-about-processor = 处理器
+settings-about-memory = 内存
+settings-about-memory-gb = { $size } GB
 
 
 ## Settings — General
@@ -916,6 +925,12 @@ bar-power-performance = 性能
 bar-power-settings = 电源设置…
 bar-keyboard-settings = 键盘设置…
 bar-keyboard-layout-label = 键盘布局：{ $layout }
+bar-otto-menu = Otto
+bar-otto-about = 关于 Otto
+bar-otto-settings = 设置…
+bar-otto-log-out = 注销
+bar-logout-title = 现在注销?
+bar-logout-body = 会先请各个应用关闭,让未保存的内容有机会保存。
 
 
 ## Settings — widgets

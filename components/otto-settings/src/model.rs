@@ -356,6 +356,7 @@ pub fn panes() -> Vec<Pane> {
         panes::privacy::build(),
         panes::search::build(),
         panes::agents::build(),
+        panes::about::build(),
     ]
 }
 

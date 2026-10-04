@@ -74,6 +74,15 @@ settings-pane-power = Énergie
 settings-pane-lock-and-login = Verrouillage et connexion
 settings-pane-search = Recherche
 settings-pane-agents = Agents
+settings-pane-about = À propos
+settings-group-about-machine = À propos de cet ordinateur
+settings-about-version-line = Version { $version }
+settings-about-computer-name = Nom de l’ordinateur
+settings-about-os = Système d’exploitation
+settings-about-kernel = Noyau
+settings-about-processor = Processeur
+settings-about-memory = Mémoire
+settings-about-memory-gb = { $size } Go
 
 
 ## Settings — General
@@ -961,6 +970,12 @@ bar-power-performance = Performances
 bar-power-settings = Réglages d’énergie…
 bar-keyboard-settings = Réglages du clavier…
 bar-keyboard-layout-label = Disposition du clavier : { $layout }
+bar-otto-menu = Otto
+bar-otto-about = À propos d’Otto
+bar-otto-settings = Réglages…
+bar-otto-log-out = Fermer la session
+bar-logout-title = Fermer la session maintenant ?
+bar-logout-body = Vos apps seront d’abord invitées à se fermer, pour que rien de non enregistré ne se perde.
 
 
 ## Settings — widgets
