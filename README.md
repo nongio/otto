@@ -1,5 +1,9 @@
 # Otto
 
+[![CI](https://github.com/nongio/otto/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nongio/otto/actions/workflows/ci.yml)
+[![Matrix](https://img.shields.io/matrix/otto-compositor%3Amatrix.org?logo=matrix&label=matrix)](https://matrix.to/#/#otto-compositor:matrix.org)
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/Mp7cBfaACD)
+
 **A Wayland desktop that feels like someone cared.** Smooth animations, thoughtful gestures, and the kind of details you notice only when they're missing — built from scratch in Rust on [Smithay](https://github.com/Smithay/smithay), with a Skia renderer and the [lay-rs](https://github.com/nongio/layers) scene graph.
 
 Otto is a Wayland compositor and stacking window manager. Parts of the desktop are handed straight to hardware display planes instead of being composited into one buffer.
