@@ -65,9 +65,17 @@ fetch() {
     [ -z "$2" ] || echo "$2  $3" | sha256sum -c --status - || die "$1 does not match its sha256"
 }
 
+# set_setting <key> <type> <value>. A setting this Otto is too old to have
+# is skipped, so a look made on a newer Otto still installs; any other
+# refusal stops the install.
 set_setting() {
-    status=$(busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
-        Set sv "$1" "$2" "$3") || die "Otto refused $1"
+    if ! status=$(busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings \
+            Set sv "$1" "$2" "$3" 2>&1); then
+        case $status in
+            *"no such setting"*) echo "  $1 skipped: this Otto doesn't have it"; return 0 ;;
+        esac
+        die "Otto refused $1: $status"
+    fi
     case $status in *pending-restart*) echo "  $1 (after a restart)" ;; *) echo "  $1" ;; esac
 }
 
@@ -148,7 +156,7 @@ check_settings() {
             dock.position | dock.size | dock.magnification | dock.autohide | \
             dock.colorize_icons | dock.colorize_color | dock.colorize_intensity | \
             dock.genie_scale | dock.genie_span | \
-            appswitcher.colorize_icons) ;;
+            appswitcher.colorize_icons | desktop.widget) ;;
             *) die "[settings] $key is not a look's to change" ;;
         esac
     done
@@ -257,13 +265,28 @@ install() {
     echo "Applying:"
     [ -f "$work/icons.theme" ] && set_setting icon_theme s "$(cat "$work/icons.theme")"
     [ -f "$work/cursors.theme" ] && set_setting cursor_theme s "$(cat "$work/cursors.theme")"
-    [ -n "$url" ] && set_setting background_image s "$file"
+    # A look without a wallpaper is a plain colour: the last look's image
+    # would hide it.
+    if [ -n "$url" ]; then
+        set_setting background_image s "$file"
+    else
+        set_setting background_image s ""
+    fi
     # A look that doesn't say where the dock goes or how it's tinted gets the
-    # plain dock, at the bottom and untinted, not whatever the last look left.
+    # plain dock, at the bottom and untinted, and one that names no widget
+    # gets none, not whatever the last look left.
     grep -q "^settings	dock.position	" "$work/def" ||
         set_setting dock.position s bottom
     grep -q "^settings	dock.colorize_icons	" "$work/def" ||
         set_setting dock.colorize_icons b false
+    grep -q "^settings	desktop.widget	" "$work/def" ||
+        set_setting desktop.widget s none
+    # Otto draws the background widgets with ewwii, which it doesn't need,
+    # so a look that picks one says when nothing will show.
+    widget=$(get settings desktop.widget)
+    if [ -n "$widget" ] && [ "$widget" != none ] && ! command -v ewwii >/dev/null; then
+        echo "Note: this look shows a background widget, which needs ewwii; it isn't installed."
+    fi
     awk -F '\t' '$1 == "settings" { print $2 "\t" $3 "\t" $4 }' "$work/def" |
         while IFS="$(printf '\t')" read -r key type value; do
             set_setting "$key" "$type" "$value"

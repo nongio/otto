@@ -189,8 +189,8 @@ component LinesPage () {
             space_evenly = false
             halign = "center"
             valign = "center"
-            Label { class = "lines-title" text = "Don't be busy." }
-            Label { class = "lines-title" text = "Be productive." }
+            Label { class = "lines-title" text = "Calm work" }
+            Label { class = "lines-title" text = "goes far." }
         }
         Label { class = "lines-date" xalign = 1 halign = "start" valign = "start" text = global("long_date") }
         Box {
@@ -199,11 +199,10 @@ component LinesPage () {
             space_evenly = false
             halign = "start"
             valign = "start"
-            Label { class = "lines-note" xalign = 0 text = "Don't be busy merely for the sake of activity." }
-            Label { class = "lines-note" xalign = 0 text = "Instead, channel your energy into purposeful" }
-            Label { class = "lines-note" xalign = 0 text = "action that moves you closer to your goals," }
-            Label { class = "lines-note" xalign = 0 text = "transforms aspirations into achievements," }
-            Label { class = "lines-note" xalign = 0 text = "and enriches your life with meaning." }
+            Label { class = "lines-note" xalign = 0 text = "There's no prize for looking busy." }
+            Label { class = "lines-note" xalign = 0 text = "Pick what matters today, do it properly," }
+            Label { class = "lines-note" xalign = 0 text = "and let the small things stay small." }
+            Label { class = "lines-note" xalign = 0 text = "A clear head gets through more than a full one." }
         }
     }
 }
@@ -229,7 +228,7 @@ Window "grid_pad" {
 component FocusPage () {
     OverLay {
         Box { class = "focus-grid" hexpand = true vexpand = true }
-        Label { class = "focus-title" halign = "center" valign = "center" text = "Stay Focused." }
+        Label { class = "focus-title" halign = "center" valign = "center" text = "This, then that." }
         Label { class = "focus-date" xalign = 1 halign = "start" valign = "start" text = global("long_date") }
         Box {
             class = "focus-note-box"
@@ -237,11 +236,10 @@ component FocusPage () {
             space_evenly = false
             halign = "end"
             valign = "end"
-            Label { class = "focus-note" xalign = 0 text = "Don't let distractions dilute your potential." }
-            Label { class = "focus-note" xalign = 0 text = "Instead, direct your attention toward what truly" }
-            Label { class = "focus-note" xalign = 0 text = "matters, silence the noise that surrounds you," }
-            Label { class = "focus-note" xalign = 0 text = "pursue your priorities with intention, and watch" }
-            Label { class = "focus-note" xalign = 0 text = "clarity transform into extraordinary results." }
+            Label { class = "focus-note" xalign = 0 text = "The next step is usually small." }
+            Label { class = "focus-note" xalign = 0 text = "Do that one well, then the one after it." }
+            Label { class = "focus-note" xalign = 0 text = "Everything else can sit quietly" }
+            Label { class = "focus-note" xalign = 0 text = "until it's its turn." }
         }
     }
 }
