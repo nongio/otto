@@ -47,7 +47,6 @@ use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Logical, Rectangle};
 use tracing::{info, warn};
 
-use crate::config::default_apps::{xdg_config_home, xdg_data_dirs};
 use crate::config::Config;
 use crate::desk::{failures_after_crash, pidfd, restart_delay};
 use crate::shell::layer::drawn_geometry;
@@ -248,6 +247,25 @@ fn theme_source() -> Option<PathBuf> {
         .chain(xdg_data_dirs())
         .map(|dir| dir.join(THEME_DIR))
         .find(|dir| dir.join("ewwii.nbcl").is_file())
+}
+
+/// `$XDG_CONFIG_HOME`, or `~/.config`.
+fn xdg_config_home() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config")))
+}
+
+/// `$XDG_DATA_DIRS`, or the specification's default.
+fn xdg_data_dirs() -> Vec<PathBuf> {
+    std::env::var("XDG_DATA_DIRS")
+        .map(|dirs| dirs.split(':').map(PathBuf::from).collect())
+        .unwrap_or_else(|_| {
+            vec![
+                PathBuf::from("/usr/local/share"),
+                PathBuf::from("/usr/share"),
+            ]
+        })
 }
 
 /// Where the prepared theme goes: `$XDG_CACHE_HOME/otto/widgets/ewwii`.

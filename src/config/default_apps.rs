@@ -1,16 +1,22 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+//! Resolving `open_default_app` shortcut roles to a command.
+//!
+//! The association lookup is `otto_kit::mime_apps`, the same one otto-files
+//! and the launcher use, so a shortcut opens what a double-click would: it
+//! honours `otto-mimeapps.list`, `[Added Associations]` and
+//! `[Removed Associations]`, and falls back to installed entries that declare
+//! the type.
+
+use std::path::Path;
 
 use freedesktop_desktop_entry::{self as desktop_entry, DesktopEntry, ExecError};
 use once_cell::sync::Lazy;
+use otto_kit::mime_apps::Associations;
 
 use super::Config;
 
-static MIMEAPPS_CACHE: Lazy<MimeAppsCache> = Lazy::new(MimeAppsCache::load);
+/// Read once, on the first shortcut that needs it: loading walks every
+/// application directory, which is too slow to repeat on each key press.
+static ASSOCIATIONS: Lazy<Associations> = Lazy::new(Associations::load);
 
 pub fn resolve(
     role: &str,
@@ -30,41 +36,31 @@ pub fn resolve(
     None
 }
 
+/// The MIME types (or scheme handlers) a role stands for, most specific first.
+fn role_mime_types(role: &str) -> Vec<String> {
+    match role {
+        "browser" => vec![
+            "x-scheme-handler/https".to_string(),
+            "x-scheme-handler/http".to_string(),
+            "text/html".to_string(),
+        ],
+        "file_manager" | "files" => vec!["inode/directory".to_string()],
+        "terminal" | "shell" => vec![
+            "x-scheme-handler/terminal".to_string(),
+            "application/x-terminal".to_string(),
+        ],
+        other if other.contains('/') => vec![other.to_string()],
+        other => vec![format!("x-scheme-handler/{other}")],
+    }
+}
+
 fn resolve_role(role: &str, config: &Config) -> Option<(String, Vec<String>)> {
     if role.ends_with(".desktop") {
         return desktop_id_to_command(role, &config.locales);
     }
 
-    let mut attempts = Vec::new();
-
-    match role {
-        "browser" => {
-            attempts.push("x-scheme-handler/https".to_string());
-            attempts.push("x-scheme-handler/http".to_string());
-            attempts.push("text/html".to_string());
-        }
-        "file_manager" | "files" => {
-            attempts.push("inode/directory".to_string());
-        }
-        "terminal" | "shell" => {
-            attempts.push("x-scheme-handler/terminal".to_string());
-            attempts.push("application/x-terminal".to_string());
-        }
-        other if other.contains('/') => attempts.push(other.to_string()),
-        other => attempts.push(format!("x-scheme-handler/{}", other)),
-    }
-
-    for mime in attempts {
-        if let Some(desktops) = MIMEAPPS_CACHE.query(&mime) {
-            for desktop in desktops {
-                if let Some(command) = desktop_id_to_command(&desktop, &config.locales) {
-                    return Some(command);
-                }
-            }
-        }
-    }
-
-    None
+    let app = ASSOCIATIONS.default_for(&role_mime_types(role))?;
+    entry_to_command(&app.entry_path, &config.locales)
 }
 
 fn resolve_spec(spec: &str, config: &Config) -> Option<(String, Vec<String>)> {
@@ -99,6 +95,11 @@ fn desktop_id_to_command(desktop_id: &str, locales: &[String]) -> Option<(String
             .unwrap_or(false)
     })?;
 
+    entry_to_command(&path, locales)
+}
+
+/// The command line a desktop entry's `Exec=` runs, field codes dropped.
+fn entry_to_command(path: &Path, locales: &[String]) -> Option<(String, Vec<String>)> {
     let locale_refs: Vec<&str> = locales.iter().map(|s| s.as_str()).collect();
     let entry = DesktopEntry::from_path(path, Some(&locale_refs)).ok()?;
     match entry.parse_exec() {
@@ -112,140 +113,6 @@ fn desktop_id_to_command(desktop_id: &str, locales: &[String]) -> Option<(String
         Err(ExecError::ExecFieldNotFound) | Err(ExecError::ExecFieldIsEmpty) => None,
         Err(ExecError::WrongFormat(_)) => None,
     }
-}
-
-struct MimeAppsCache {
-    defaults: HashMap<String, Vec<String>>,
-    raw: Mutex<HashMap<String, Option<Vec<String>>>>,
-}
-
-impl MimeAppsCache {
-    fn load() -> Self {
-        let defaults = load_mimeapps_defaults();
-        Self {
-            defaults,
-            raw: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn query(&self, mime: &str) -> Option<Vec<String>> {
-        if let Ok(cache) = self.raw.lock() {
-            if let Some(value) = cache.get(mime) {
-                return value.clone();
-            }
-        }
-
-        let result = self.defaults.get(mime).cloned();
-        if let Ok(mut cache) = self.raw.lock() {
-            cache.insert(mime.to_string(), result.clone());
-        }
-        result
-    }
-}
-
-fn load_mimeapps_defaults() -> HashMap<String, Vec<String>> {
-    let mut map = HashMap::new();
-    for path in mimeapps_paths() {
-        parse_mimeapps(&path, &mut map);
-    }
-    map
-}
-
-fn mimeapps_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    if let Some(config_home) = xdg_config_home() {
-        paths.push(config_home.join("mimeapps.list"));
-        paths.push(config_home.join("applications/mimeapps.list"));
-    }
-
-    if let Some(data_home) = xdg_data_home() {
-        paths.push(data_home.join("applications/mimeapps.list"));
-        paths.push(data_home.join("applications/defaults.list"));
-    }
-
-    for dir in xdg_config_dirs() {
-        paths.push(dir.join("mimeapps.list"));
-    }
-
-    for dir in xdg_data_dirs() {
-        paths.push(dir.join("applications/mimeapps.list"));
-        paths.push(dir.join("applications/defaults.list"));
-    }
-
-    paths
-}
-
-fn parse_mimeapps(path: &Path, map: &mut HashMap<String, Vec<String>>) {
-    let Ok(content) = fs::read_to_string(path) else {
-        return;
-    };
-
-    let mut in_default_section = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_default_section = trimmed.eq_ignore_ascii_case("[Default Applications]");
-            continue;
-        }
-
-        if !in_default_section {
-            continue;
-        }
-
-        let Some((mime, handlers)) = trimmed.split_once('=') else {
-            continue;
-        };
-
-        if map.contains_key(mime) {
-            continue;
-        }
-
-        let handlers = handlers
-            .split(';')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(|entry| entry.to_string())
-            .collect::<Vec<_>>();
-
-        if !handlers.is_empty() {
-            map.insert(mime.to_string(), handlers);
-        }
-    }
-}
-
-pub(crate) fn xdg_config_home() -> Option<PathBuf> {
-    env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| Path::new(&home).join(".config")))
-}
-
-fn xdg_data_home() -> Option<PathBuf> {
-    env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| Path::new(&home).join(".local/share")))
-}
-
-fn xdg_config_dirs() -> Vec<PathBuf> {
-    env::var("XDG_CONFIG_DIRS")
-        .map(|dirs| dirs.split(':').map(PathBuf::from).collect())
-        .unwrap_or_else(|_| vec![PathBuf::from("/etc/xdg")])
-}
-
-pub(crate) fn xdg_data_dirs() -> Vec<PathBuf> {
-    env::var("XDG_DATA_DIRS")
-        .map(|dirs| dirs.split(':').map(PathBuf::from).collect())
-        .unwrap_or_else(|_| {
-            vec![
-                PathBuf::from("/usr/local/share"),
-                PathBuf::from("/usr/share"),
-            ]
-        })
 }
 
 #[cfg(test)]
