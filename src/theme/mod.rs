@@ -177,31 +177,10 @@ pub fn accent_by_name(name: &str) -> Option<Color> {
     })
 }
 
-/// Read a `#RGB` or `#RRGGBB` literal.
-///
-/// The leading `#` is required: it is what tells a colour apart from a palette
-/// name, and without it `abc` would be a valid colour as well as an unknown
-/// name. Three digits expand the way CSS expands them, each digit doubled, so
-/// `#f0a` and `#ff00aa` are the same colour.
+/// Read a `#RGB`, `#RRGGBB` or `#RRGGBBAA` literal; see
+/// [`otto_kit::color::parse_hex`].
 pub fn parse_hex(text: &str) -> Option<Color> {
-    let digits = text.trim().strip_prefix('#')?;
-    if !digits.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let byte = |s: &str| u8::from_str_radix(s, 16).ok();
-    let (r, g, b) = match digits.len() {
-        3 => {
-            let d = |i: usize| byte(&digits[i..i + 1]).map(|v| v * 17);
-            (d(0)?, d(1)?, d(2)?)
-        }
-        6 => (
-            byte(&digits[0..2])?,
-            byte(&digits[2..4])?,
-            byte(&digits[4..6])?,
-        ),
-        _ => return None,
-    };
-    Some(Color::new_rgba255(r, g, b, 255))
+    otto_kit::color::parse_hex(text).map(|c| Color::new_rgba255(c.r(), c.g(), c.b(), c.a()))
 }
 
 /// Resolve whatever the `accent_color` setting holds: a palette name, or a
@@ -304,24 +283,6 @@ mod tests {
         let c = color.c4f();
         let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
         (byte(c.r), byte(c.g), byte(c.b))
-    }
-
-    /// Three digits expand the way CSS expands them, so the short form of a
-    /// colour is the same colour.
-    #[test]
-    fn short_hex_expands_by_doubling_each_digit() {
-        assert_eq!(rgb255(parse_hex("#f0a").unwrap()), (0xFF, 0x00, 0xAA));
-        assert_eq!(parse_hex("#f0a"), parse_hex("#ff00aa"));
-        assert_eq!(rgb255(parse_hex("#FF00AA").unwrap()), (0xFF, 0x00, 0xAA));
-    }
-
-    /// The `#` is what tells a colour apart from a palette name; without it a
-    /// name of six hex letters would parse as a colour.
-    #[test]
-    fn only_a_hash_prefixed_literal_parses() {
-        for text in ["", "#", "ff00aa", "#ff00a", "#ff00aaa", "#gggggg", "blue"] {
-            assert!(parse_hex(text).is_none(), "`{text}` parsed as a colour");
-        }
     }
 
     /// A name wins over the parser, and a colour the palette cannot name is

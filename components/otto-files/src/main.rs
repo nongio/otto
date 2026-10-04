@@ -29,12 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // `--recognise <path>…` reads the words out of pictures and remembers
     // them, then exits: the background pass's work asked for directly, so a

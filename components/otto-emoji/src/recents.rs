@@ -13,12 +13,7 @@ use crate::data::Tone;
 pub const KEPT: usize = 30;
 
 fn state_dir() -> Option<PathBuf> {
-    let dir = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    Some(dir.join("otto"))
+    Some(otto_kit::xdg::state_home()?.join("otto"))
 }
 
 fn recent_path() -> Option<PathBuf> {

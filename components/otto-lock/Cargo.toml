@@ -14,7 +14,6 @@ smithay-client-toolkit = { version = "0.19", default-features = false, features 
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Locks and unlocks with no PAM in the way, to exercise the protocol lifecycle.
 [[example]]

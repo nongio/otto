@@ -1402,7 +1402,7 @@ impl Launcher {
                 _ => None,
             };
             if let Some(path) = path {
-                let uri = otto_kit::clipboard::path_to_uri(&path);
+                let uri = otto_kit::uri::path_to_uri(&path);
                 if let Err(err) = input::open_link(&uri) {
                     tracing::warn!(%err, path = %path.display(), "could not open the attachment");
                 }
@@ -2877,12 +2877,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // worker; that start ends here.
     otto_peek::run_worker_if_requested();
     STARTED.get_or_init(Instant::now);
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // Before the first string is looked up, and before the window is drawn: a
     // launcher is judged on how fast it appears, and this is one round trip

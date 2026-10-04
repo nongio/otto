@@ -5212,7 +5212,6 @@ dependencies = [
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols-wlr",
 ]
@@ -5230,7 +5229,6 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
@@ -5245,7 +5243,6 @@ dependencies = [
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
 ]
 
@@ -5260,7 +5257,6 @@ dependencies = [
  "smithay-client-toolkit 0.19.2",
  "taffy",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
@@ -5286,7 +5282,6 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-egl",
  "zbus 4.4.0",
@@ -5302,7 +5297,6 @@ dependencies = [
  "serde_json",
  "smithay-client-toolkit 0.19.2",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols-wlr",
  "zeroize",
@@ -5332,7 +5326,6 @@ dependencies = [
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "ureq",
  "wayland-client",
  "wayland-protocols-wlr",
@@ -5355,12 +5348,14 @@ dependencies = [
  "laye-rs",
  "libc",
  "otto-search",
+ "percent-encoding",
  "resvg",
  "rustix 0.38.44",
  "skia-safe",
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "unic-langid",
  "usvg",
  "wayland-backend",
@@ -5392,7 +5387,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uuid",
  "wayland-client",
  "wayland-protocols-wlr",
@@ -5406,7 +5400,6 @@ dependencies = [
  "otto-kit",
  "smithay-client-toolkit 0.19.2",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
 ]
@@ -5451,7 +5444,6 @@ dependencies = [
  "skia-safe",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -5465,7 +5457,6 @@ dependencies = [
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
 ]
 
@@ -5537,7 +5528,6 @@ dependencies = [
  "smithay-client-toolkit 0.19.2",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-misc",

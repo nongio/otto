@@ -2393,12 +2393,7 @@ fn emit_notification_closed(notification_id: u32, reason: u32) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    otto_kit::logging::init("info");
 
     // Before any surface is drawn: every label below is looked up once and
     // the catalogue is chosen once, for the life of the process.

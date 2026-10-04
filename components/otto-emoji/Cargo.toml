@@ -12,7 +12,6 @@ laye-rs.workspace = true
 otto-kit = { path = "../otto-kit" }
 taffy = "0.5"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wayland-client = "0.31"
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop", "xkbcommon"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }

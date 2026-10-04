@@ -1241,7 +1241,7 @@ fn draw_rows(
             .render(canvas);
 
         if !row.is_dir && row.size > 0 {
-            Label::new(human_size(row.size))
+            Label::new(crate::format::file_size(row.size))
                 .with_style(styles::CAPTION_1)
                 .with_color(theme.text_secondary)
                 .with_width(SIZE_COLUMN)
@@ -1424,21 +1424,6 @@ fn mono() -> TextStyle {
     let mut style = styles::FOOTNOTE;
     style.family = "monospace";
     style
-}
-
-/// Human-readable byte count.
-pub fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
-    if bytes < 1024 {
-        return format!("{bytes} bytes");
-    }
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
-        value /= 1024.0;
-        unit += 1;
-    }
-    format!("{value:.1} {}", UNITS[unit])
 }
 
 /// The material a preview sits on. Exposed so the compositor and an

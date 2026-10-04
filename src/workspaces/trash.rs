@@ -38,26 +38,18 @@ pub fn files_dir() -> Option<PathBuf> {
     let configured = crate::config::Config::with(|config| config.dock.trash_path.clone());
     let configured = configured.trim();
     if configured.is_empty() {
-        return Some(data_home()?.join("Trash/files"));
+        return Some(otto_kit::xdg::data_home()?.join("Trash/files"));
     }
     expand(configured)
-}
-
-/// `$XDG_DATA_HOME`, or the `~/.local/share` it defaults to.
-fn data_home() -> Option<PathBuf> {
-    match std::env::var_os("XDG_DATA_HOME") {
-        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => Some(PathBuf::from(std::env::var_os("HOME")?).join(".local/share")),
-    }
 }
 
 /// Expand the handful of things a path in the config may start with: `~`,
 /// `$HOME` and `$XDG_DATA_HOME` — the last of which is what the default is
 /// written in terms of, so the setting says where it actually looks.
 fn expand(path: &str) -> Option<PathBuf> {
-    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let home = otto_kit::xdg::home;
     for (prefix, base) in [
-        ("$XDG_DATA_HOME", data_home()),
+        ("$XDG_DATA_HOME", otto_kit::xdg::data_home()),
         ("$HOME", home()),
         ("~", home()),
     ] {

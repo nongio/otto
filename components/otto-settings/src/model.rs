@@ -315,10 +315,7 @@ pub fn named_argb(name: &str) -> Option<u32> {
 }
 
 fn parse_hex(text: &str) -> Option<u32> {
-    let digits = text.strip_prefix('#')?;
-    u32::from_str_radix(digits, 16)
-        .ok()
-        .map(|rgb| 0xFF00_0000 | rgb)
+    otto_kit::color::parse_hex(text).map(|c| u32::from_be_bytes([c.a(), c.r(), c.g(), c.b()]))
 }
 
 /// A titled run of rows inside a pane.

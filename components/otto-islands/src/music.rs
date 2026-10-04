@@ -913,7 +913,7 @@ fn load_album_art(url: &str) -> Option<Image> {
 }
 
 fn read_art_file(url: &str) -> Option<Vec<u8>> {
-    let path = otto_kit::clipboard::uri_to_path(url)?;
+    let path = otto_kit::uri::uri_to_path(url)?;
     // Only a regular file: a FIFO or a device would block or never end.
     let file = std::fs::File::open(&path).ok()?;
     if !file.metadata().ok()?.is_file() {

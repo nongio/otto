@@ -794,17 +794,17 @@ files-empty-trash-detail =
 ## not KiB. Most languages keep the symbols as they are; translate only the
 ## spelled-out "bytes".
 
-files-size-bytes =
+size-bytes =
     { $count ->
         [one] { $count } байт
         [few] { $count } байти
         [many] { $count } байтів
        *[other] { $count } байта
     }
-files-size-kb = { $value } КБ
-files-size-mb = { $value } МБ
-files-size-gb = { $value } ГБ
-files-size-tb = { $value } ТБ
+size-kb = { $value } КБ
+size-mb = { $value } МБ
+size-gb = { $value } ГБ
+size-tb = { $value } ТБ
 
 
 ## Files — dates
@@ -1698,24 +1698,6 @@ peek-item-count =
 # size on disk. $items is peek-item-count, $size is a formatted byte
 # count. The dash is an em dash.
 peek-archive-summary = { $items } — { $size }
-
-
-## Peek — sizes
-##
-## Byte units. Peek counts in powers of 1024, so the symbols are the
-## conventional binary-rounded ones. Translate only the spelled-out "bytes".
-
-peek-size-bytes =
-    { $count ->
-        [one] { $count } байт
-        [few] { $count } байти
-        [many] { $count } байтів
-       *[other] { $count } байта
-    }
-peek-size-kb = { $value } КБ
-peek-size-mb = { $value } МБ
-peek-size-gb = { $value } ГБ
-peek-size-tb = { $value } ТБ
 
 
 ## Peek — nothing to show

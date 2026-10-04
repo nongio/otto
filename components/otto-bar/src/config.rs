@@ -177,39 +177,12 @@ pub fn battery_config() -> &'static BatteryConfig {
 
 /// Parse `#RGB`, `#RRGGBB` or `#AARRGGBB`. Returns None for anything else,
 /// so a typo leaves the default colour rather than painting the glyph black.
+///
+/// Alpha first, unlike every other colour setting (`#RRGGBBAA`): the
+/// battery colours were documented that way before the desktop settled on
+/// CSS's order, and existing configs keep meaning what they meant.
 fn parse_color(raw: &str) -> Option<skia_safe::Color> {
-    let hex = raw.trim().strip_prefix('#')?;
-    let digits = |s: &str| u32::from_str_radix(s, 16).ok();
-    match hex.len() {
-        3 => {
-            let v = digits(hex)?;
-            // #abc means #aabbcc.
-            let (r, g, b) = ((v >> 8) & 0xF, (v >> 4) & 0xF, v & 0xF);
-            Some(skia_safe::Color::from_rgb(
-                (r * 17) as u8,
-                (g * 17) as u8,
-                (b * 17) as u8,
-            ))
-        }
-        6 => {
-            let v = digits(hex)?;
-            Some(skia_safe::Color::from_rgb(
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ))
-        }
-        8 => {
-            let v = digits(hex)?;
-            Some(skia_safe::Color::from_argb(
-                ((v >> 24) & 0xFF) as u8,
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ))
-        }
-        _ => None,
-    }
+    otto_kit::color::parse_hex_argb(raw)
 }
 
 /// Read a command as either a bare string or an argv array, so both
@@ -351,20 +324,8 @@ fn number(value: &toml::Value) -> Option<f64> {
 
 fn load_config() -> TopbarConfig {
     // Search order: /etc/otto/otto-bar.toml → ~/.config/otto/otto-bar.toml → ./otto-bar.toml
-    let candidates: Vec<std::path::PathBuf> = {
-        let mut v = Vec::new();
-        v.push(std::path::PathBuf::from("/etc/otto/otto-bar.toml"));
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-            })
-        {
-            v.push(xdg.join("otto").join("otto-bar.toml"));
-        }
-        v.push(std::path::PathBuf::from("otto-bar.toml"));
-        v
-    };
+    let mut candidates = otto_kit::xdg::otto_config_paths("otto-bar.toml");
+    candidates.push(std::path::PathBuf::from("otto-bar.toml"));
 
     let mut cfg = TopbarConfig::default();
 

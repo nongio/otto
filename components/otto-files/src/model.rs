@@ -13,7 +13,6 @@ use std::time::SystemTime;
 use otto_kit::components::scroll::ScrollView;
 use otto_kit::filetype::{self, Kind};
 use otto_kit::fs::{copy_entry, first_free_name, move_entry, remove_entry, unique_name};
-use otto_kit::trash::percent_decode;
 use skia_safe::Rect;
 
 /// One entry in a directory.
@@ -864,37 +863,7 @@ pub fn home_dir() -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Human-readable size, the way a file manager writes it.
-pub fn format_size(bytes: u64) -> String {
-    // Under a kilobyte the count is exact and needs a plural rule — one byte,
-    // two bytes, and whatever the local grammar does with 2 and 5.
-    if bytes < 1000 {
-        return otto_kit::t_owned!("files-size-bytes", count = bytes as f64);
-    }
-
-    const UNITS: &[&str] = &[
-        "files-size-kb",
-        "files-size-mb",
-        "files-size-gb",
-        "files-size-tb",
-    ];
-    // Divided once up front: anything reaching here is at least a kilobyte,
-    // and UNITS starts at KB rather than at bytes, so the counter and the unit
-    // it names stay in step.
-    let mut value = bytes as f64 / 1000.0;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    // One decimal below ten, none above: the extra digit stops a 1 GB file and
-    // a 9 GB file from looking the same, and is noise once the number is wide.
-    let rendered = if value < 10.0 {
-        format!("{value:.1}")
-    } else {
-        format!("{value:.0}")
-    };
-    otto_kit::t_owned!(UNITS[unit], value = rendered)
-}
+pub use otto_kit::format::file_size as format_size;
 
 /// Date, as a listing shows it, in local time. Deliberately plain: no locale
 /// formatting, and no relative "yesterday" — both need more than the standard
@@ -966,37 +935,6 @@ mod tests {
         // Leading zeros must not make two different names compare equal, or
         // the sort becomes unstable in a way the user sees as flicker.
         assert_ne!(natural_cmp("file007", "file7"), std::cmp::Ordering::Equal);
-    }
-
-    /// Compared against the catalogue rather than against English prose.
-    ///
-    /// What this guards is the threshold each size crosses and how many
-    /// decimals survive it — 1.5 KB rather than 1.5 kB, 15 KB rather than
-    /// 15.0. The words around the number are the catalogue's business, and
-    /// spelling them out here would fail the test on a developer whose own
-    /// session is not English, which is not a bug in `format_size`.
-    #[test]
-    fn sizes_read_the_way_a_file_manager_writes_them() {
-        assert_eq!(
-            format_size(0),
-            otto_kit::t_owned!("files-size-bytes", count = 0.0)
-        );
-        assert_eq!(
-            format_size(999),
-            otto_kit::t_owned!("files-size-bytes", count = 999.0)
-        );
-        assert_eq!(
-            format_size(1_500),
-            otto_kit::t_owned!("files-size-kb", value = "1.5")
-        );
-        assert_eq!(
-            format_size(15_000),
-            otto_kit::t_owned!("files-size-kb", value = "15")
-        );
-        assert_eq!(
-            format_size(2_000_000),
-            otto_kit::t_owned!("files-size-mb", value = "2.0")
-        );
     }
 
     #[test]
@@ -1796,7 +1734,7 @@ fn read_trash_origins() -> std::collections::HashMap<String, PathBuf> {
 fn parse_trashinfo(body: &str) -> Option<PathBuf> {
     body.lines()
         .find_map(|line| line.strip_prefix("Path="))
-        .map(|encoded| PathBuf::from(percent_decode(encoded.trim())))
+        .map(|encoded| otto_kit::uri::decode_path(encoded.trim()))
 }
 
 /// Put trashed items back where they came from.
@@ -1948,7 +1886,7 @@ mod places_tests {
 #[cfg(test)]
 mod paste_tests {
     use super::*;
-    use otto_kit::trash::percent_encode_path;
+    use otto_kit::uri::{decode_path, encode_path};
 
     struct Tmp(PathBuf);
     impl Tmp {
@@ -2379,9 +2317,9 @@ mod paste_tests {
     #[test]
     fn a_path_survives_the_round_trip_through_percent_encoding() {
         let path = Path::new("/home/u/Documents/a b&c%d — é.txt");
-        let encoded = percent_encode_path(path);
+        let encoded = encode_path(path);
         assert!(!encoded.contains(' '), "spaces are encoded: {encoded}");
-        assert_eq!(PathBuf::from(percent_decode(&encoded)), path);
+        assert_eq!(decode_path(&encoded), path);
     }
 
     #[test]
