@@ -35,6 +35,7 @@ use otto_kit::clipboard;
 use otto_kit::components::color_picker::{ColorPickerPopup, Swatch};
 use otto_kit::components::dropdown::DropdownMenu;
 use otto_kit::components::scroll::{Axis, ScrollContent, ScrollPane};
+use otto_kit::components::selection_list::SelectionListHit;
 use otto_kit::components::text_input::{self, KeyMods, TextInput, TextInputKey, TextInputResponse};
 use otto_kit::components::titlebar::{WindowControl, WindowControlsState};
 use otto_kit::components::window::resize;
@@ -566,6 +567,8 @@ fn open_menu(
     let choices: Vec<discovery::Choice> =
         if let Some(choices) = panes::privacy::menu_choices(select.id) {
             choices
+        } else if let Some(choices) = panes::account::menu_choices(select.id) {
+            choices
         } else if let Some(choices) = panes::keyboard_layouts::menu_choices(select.id) {
             choices
         } else if let Some(choices) = panes::desk::menu_choices(select.id) {
@@ -642,6 +645,7 @@ fn open_menu(
         move |index| {
             if let Some(value) = values.get(index) {
                 if panes::privacy::choose(id, value)
+                    || panes::account::choose(id, value)
                     || panes::keyboard_layouts::choose(id, value)
                     || panes::desk::choose(id, value)
                 {
@@ -692,6 +696,7 @@ fn released_on(settings: &Settings, held: view::Pressed, x: f32, y: f32, offset:
             Some(view::ShortcutHit::Remove(hit)) if hit == index
         ),
         view::Pressed::RemoveRow(id) => settings.row_remove_hit(x, y, offset) == Some(id),
+        view::Pressed::User(hit) => settings.users_hit(x, y, offset) == Some(hit),
         view::Pressed::Add => matches!(
             settings.shortcut_hit(x, y, offset),
             Some(view::ShortcutHit::Add)
@@ -748,6 +753,14 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
             keyboard::remove(index);
         }
         view::Pressed::Add => keyboard::add(),
+        // The users list's + and −: their sheets take the keyboard straight
+        // away, as Change Password…'s does.
+        view::Pressed::User(hit) => {
+            panes::account::activate(hit);
+            if panes::account::take_sheet_opened() {
+                focus_sheet_field(editing, 0);
+            }
+        }
         view::Pressed::RemoveRow(id) => {
             panes::keyboard_layouts::remove(id);
             panes::search::remove(id);
@@ -1149,10 +1162,12 @@ fn text_input_style(dark: bool) -> TextInputStyle {
     style
 }
 
-/// Put the keyboard in the password sheet's `index`th field, committing the
-/// one it was in.
+/// Put the keyboard in the sheet's `index`th field, committing the one it
+/// was in.
 fn focus_sheet_field(editing: &Arc<Mutex<Option<Editing>>>, index: usize) {
-    let id = panes::account::SHEET_FIELDS[index];
+    let Some(&id) = panes::account::sheet_fields().get(index) else {
+        return;
+    };
     commit_edit(editing);
     start_edit(
         editing,
@@ -1164,10 +1179,10 @@ fn focus_sheet_field(editing: &Arc<Mutex<Option<Editing>>>, index: usize) {
     );
 }
 
-/// Which of the password sheet's fields has the keyboard, if one does.
+/// Which of the sheet's fields has the keyboard, if one does.
 fn sheet_field_index(editing: &Arc<Mutex<Option<Editing>>>) -> Option<usize> {
     match editing.lock().unwrap().as_ref()?.target {
-        EditTarget::Setting(id) => panes::account::SHEET_FIELDS
+        EditTarget::Setting(id) => panes::account::sheet_fields()
             .iter()
             .position(|field| *field == id),
         _ => None,
@@ -1212,7 +1227,7 @@ fn press_sheet(
             cancel_edit(editing);
             panes::account::close_sheet();
         }
-        sheet::SheetHit::Change => {
+        sheet::SheetHit::Action => {
             commit_edit(editing);
             panes::account::submit();
         }
@@ -1350,7 +1365,7 @@ impl SettingsApp {
         let dark = current_color_scheme() == ColorScheme::Dark;
         let editing = self.editing.lock().unwrap();
         let editor = editing.as_ref().and_then(|edit| match edit.target {
-            EditTarget::Setting(id) if panes::account::SHEET_FIELDS.contains(&id) => {
+            EditTarget::Setting(id) if panes::account::sheet_fields().contains(&id) => {
                 Some((id, &edit.input))
             }
             _ => None,
@@ -2167,6 +2182,17 @@ impl App for SettingsApp {
                                 settings.dark,
                             );
                             mark_pane_dirty(&pane_dirty);
+                        } else if let Some(hit) = settings.users_hit(x, y, offset) {
+                            // Picking someone in the users list shows them at
+                            // once, as the sidebar does; + and − act on
+                            // release, like every other push button.
+                            if matches!(hit, SelectionListHit::Item(_)) {
+                                commit_edit(&editing_hit);
+                                panes::account::press_list(hit);
+                            } else {
+                                *pressed_hit.lock().unwrap() = Some(view::Pressed::User(hit));
+                            }
+                            mark_pane_dirty(&pane_dirty);
                         } else if let Some(id) = settings.row_remove_hit(x, y, offset) {
                             // Acts on release, like every other push button.
                             *pressed_hit.lock().unwrap() = Some(view::Pressed::RemoveRow(id));
@@ -2675,7 +2701,7 @@ impl App for SettingsApp {
         // the password. Anything else is typing for the field that has the
         // keyboard, and nothing reaches the pane behind.
         if panes::account::sheet().is_some() {
-            let fields = panes::account::SHEET_FIELDS.len();
+            let fields = panes::account::sheet_fields().len();
             let at = sheet_field_index(&self.editing);
             let back = self.modifiers.lock().unwrap().shift || event.keysym == Keysym::ISO_Left_Tab;
             let handled = match event.keysym {
@@ -2684,7 +2710,7 @@ impl App for SettingsApp {
                     panes::account::close_sheet();
                     true
                 }
-                Keysym::Tab | Keysym::ISO_Left_Tab => {
+                Keysym::Tab | Keysym::ISO_Left_Tab if fields > 0 => {
                     let next = match at {
                         Some(i) if back => (i + fields - 1) % fields,
                         Some(i) => (i + 1) % fields,

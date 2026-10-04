@@ -1,5 +1,6 @@
-//! The Change Password sheet: a card over the dimmed window with the three
-//! password fields and the two buttons that end it.
+//! The users pane's sheets: a card over the dimmed window with a title, a
+//! paragraph or a few fields, and the two buttons that end it — Change
+//! Password, Reset Password, Add User and Delete User all take this shape.
 //!
 //! Drawn on a subsurface of its own above the pane (see `main.rs`), because
 //! the pane already scrolls in subsurfaces stacked over the window's buffer —
@@ -25,6 +26,8 @@ const TITLE_H: f32 = 24.0;
 const ROW_H: f32 = 36.0;
 /// Room for the message line, two lines of footnote text.
 const MESSAGE_H: f32 = 40.0;
+/// Line height of the body paragraph.
+const BODY_LINE_H: f32 = 19.0;
 const RADIUS: f32 = 12.0;
 /// Width of each password field, which is also what the editor scrolls in.
 pub const FIELD_W: f32 = widgets::TEXT_W;
@@ -38,7 +41,8 @@ pub enum SheetHit {
         local_x: f32,
     },
     Cancel,
-    Change,
+    /// The default button.
+    Action,
     /// Somewhere else on the card.
     Card,
     /// The scrim: the window behind the sheet, which takes no press while it
@@ -49,23 +53,34 @@ pub enum SheetHit {
 struct Layout {
     card: Rect,
     title_cy: f32,
-    fields: [Rect; 3],
-    labels_cy: [f32; 3],
+    /// The body paragraph's wrapped lines, and the top of the first.
+    body: Vec<String>,
+    body_top: f32,
+    fields: Vec<Rect>,
+    labels_cy: Vec<f32>,
     message: Rect,
     cancel: Rect,
-    change: Rect,
+    action: Rect,
 }
 
 fn cancel_label() -> &'static str {
     otto_kit::t!("common-cancel")
 }
 
-fn change_label() -> &'static str {
-    otto_kit::t!("settings-account-change-password")
-}
-
-fn layout(width: f32, height: f32) -> Layout {
-    let card_h = PAD + TITLE_H + 8.0 + ROW_H * 3.0 + MESSAGE_H + widgets::CONTROL_H + PAD;
+fn layout(width: f32, height: f32, view: &SheetView) -> Layout {
+    let body = view
+        .body
+        .as_deref()
+        .map(|text| widgets::wrap(text, styles::BODY, CARD_W - PAD * 2.0))
+        .unwrap_or_default();
+    let body_h = if body.is_empty() {
+        0.0
+    } else {
+        body.len() as f32 * BODY_LINE_H + 8.0
+    };
+    let count = view.fields.len();
+    let card_h =
+        PAD + TITLE_H + 8.0 + body_h + ROW_H * count as f32 + MESSAGE_H + widgets::CONTROL_H + PAD;
     let card = Rect::from_xywh(
         (width - CARD_W) / 2.0,
         ((height - card_h) / 2.0).max(PAD),
@@ -73,7 +88,8 @@ fn layout(width: f32, height: f32) -> Layout {
         card_h,
     );
     let title_cy = card.top + PAD + TITLE_H / 2.0;
-    let rows_top = card.top + PAD + TITLE_H + 8.0;
+    let body_top = card.top + PAD + TITLE_H + 8.0;
+    let rows_top = body_top + body_h;
     let row_cy = |i: usize| rows_top + ROW_H * i as f32 + ROW_H / 2.0;
     let field = |i: usize| {
         Rect::from_xywh(
@@ -83,27 +99,26 @@ fn layout(width: f32, height: f32) -> Layout {
             widgets::CONTROL_H,
         )
     };
-    let message_top = rows_top + ROW_H * 3.0;
+    let message_top = rows_top + ROW_H * count as f32;
     let buttons_cy = card.bottom - PAD - widgets::CONTROL_H / 2.0;
-    let buttons = widgets::button_rects(
-        card.right - PAD,
-        buttons_cy,
-        &[cancel_label(), change_label()],
-    );
+    let buttons =
+        widgets::button_rects(card.right - PAD, buttons_cy, &[cancel_label(), view.action]);
     Layout {
         card,
         title_cy,
-        fields: [field(0), field(1), field(2)],
-        labels_cy: [row_cy(0), row_cy(1), row_cy(2)],
+        body,
+        body_top,
+        fields: (0..count).map(field).collect(),
+        labels_cy: (0..count).map(row_cy).collect(),
         message: Rect::from_xywh(card.left + PAD, message_top, CARD_W - PAD * 2.0, MESSAGE_H),
         cancel: buttons[0],
-        change: buttons[1],
+        action: buttons[1],
     }
 }
 
 /// What a press at (`x`, `y`) in window coordinates lands on.
 pub fn hit(width: f32, height: f32, view: &SheetView, x: f32, y: f32) -> SheetHit {
-    let layout = layout(width, height);
+    let layout = layout(width, height, view);
     let point = Point::new(x, y);
     if !layout.card.contains(point) {
         return SheetHit::Outside;
@@ -111,13 +126,13 @@ pub fn hit(width: f32, height: f32, view: &SheetView, x: f32, y: f32) -> SheetHi
     if layout.cancel.contains(point) {
         return SheetHit::Cancel;
     }
-    if layout.change.contains(point) {
-        return SheetHit::Change;
+    if layout.action.contains(point) {
+        return SheetHit::Action;
     }
-    for (rect, (id, _, _)) in layout.fields.iter().zip(view.fields.iter()) {
+    for (rect, field) in layout.fields.iter().zip(view.fields.iter()) {
         if rect.contains(point) {
             return SheetHit::Field {
-                id,
+                id: field.id,
                 local_x: x - rect.left,
             };
         }
@@ -135,7 +150,7 @@ fn fill(color: Color) -> Paint {
 /// Paint the sheet over a transparent buffer the size of the window.
 ///
 /// `editing` is the field that has the keyboard and its live editor, which is
-/// drawn in place of that field's dots.
+/// drawn in place of what that field shows at rest.
 pub fn paint(
     canvas: &Canvas,
     width: f32,
@@ -145,7 +160,7 @@ pub fn paint(
     editing: Option<(&'static str, &TextInput)>,
 ) {
     let theme = if dark { Theme::dark() } else { Theme::light() };
-    let layout = layout(width, height);
+    let layout = layout(width, height, view);
     canvas.clear(Color::TRANSPARENT);
 
     // The window steps back behind the sheet.
@@ -167,35 +182,48 @@ pub fn paint(
     canvas.save();
     canvas.clip_rrect(card, ClipOp::Intersect, true);
 
+    let title = widgets::elide_tail(&view.title, styles::HEADLINE, CARD_W - PAD * 2.0);
     widgets::text_centered_y(
         canvas,
-        change_label(),
+        &title,
         layout.card.left + PAD,
         layout.title_cy,
         styles::HEADLINE,
         theme.text_primary,
     );
 
-    for (i, (id, label, count)) in view.fields.iter().enumerate() {
+    for (i, line) in layout.body.iter().enumerate() {
         widgets::text_centered_y(
             canvas,
-            label,
+            line,
+            layout.card.left + PAD,
+            layout.body_top + i as f32 * BODY_LINE_H + BODY_LINE_H / 2.0,
+            styles::BODY,
+            theme.text_secondary,
+        );
+    }
+
+    for (i, field) in view.fields.iter().enumerate() {
+        widgets::text_centered_y(
+            canvas,
+            field.label,
             layout.card.left + PAD,
             layout.labels_cy[i],
             styles::BODY,
             theme.text_primary,
         );
         let rect = layout.fields[i];
-        match editing.filter(|(editing, _)| editing == id) {
+        match editing.filter(|(editing, _)| *editing == field.id) {
             Some((_, input)) => {
                 canvas.save();
                 canvas.translate((rect.left, rect.top));
                 input.render_at(canvas, rect.width(), rect.height());
                 canvas.restore();
             }
-            // Dots for what is there, never the text — and no placeholder: an
-            // empty password field is just empty.
-            None => widgets::field_box(canvas, rect, &"\u{2022}".repeat(*count), "", &theme),
+            // A password field shows dots for what is there, never the text
+            // — the view has already made them — and no placeholder: an
+            // empty field is just empty.
+            None => widgets::field_box(canvas, rect, &field.shown, "", &theme),
         }
     }
 
@@ -218,8 +246,8 @@ pub fn paint(
         }
     }
 
-    // Cancel is an ordinary button; Change Password is the default one, in
-    // the accent, since Enter in the last field presses it.
+    // Cancel is an ordinary button; the action is the default one, in the
+    // accent — or in red when it destroys something — since Enter presses it.
     let enabled = !view.busy;
     let text = |enabled: bool, color: Color| {
         if enabled {
@@ -249,12 +277,14 @@ pub fn paint(
         text(enabled, theme.text_primary),
     );
     button(
-        layout.change,
-        change_label(),
-        if enabled {
-            theme.accent
-        } else {
+        layout.action,
+        view.action,
+        if !enabled {
             theme.fill_tertiary
+        } else if view.destructive {
+            theme.accent_red
+        } else {
+            theme.accent
         },
         text(enabled, Color::WHITE),
     );
@@ -265,10 +295,23 @@ pub fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::panes::account::SheetField;
 
-    fn view() -> SheetView {
+    fn view(fields: usize, body: Option<&str>) -> SheetView {
+        let ids = ["a", "b", "c", "d"];
         SheetView {
-            fields: [("a", "A", 0), ("b", "B", 0), ("c", "C", 0)],
+            title: "Title".into(),
+            body: body.map(str::to_string),
+            fields: ids[..fields]
+                .iter()
+                .map(|id| SheetField {
+                    id,
+                    label: "Label",
+                    shown: String::new(),
+                })
+                .collect(),
+            action: "Do It",
+            destructive: false,
             message: None,
             busy: false,
         }
@@ -277,21 +320,31 @@ mod tests {
     #[test]
     fn every_part_of_the_card_is_found_where_it_is_drawn() {
         let (w, h) = (900.0, 600.0);
-        let l = layout(w, h);
-        let at = |r: Rect| hit(w, h, &view(), r.center_x(), r.center_y());
+        let v = view(3, None);
+        let l = layout(w, h, &v);
+        let at = |r: Rect| hit(w, h, &v, r.center_x(), r.center_y());
         assert_eq!(at(l.cancel), SheetHit::Cancel);
-        assert_eq!(at(l.change), SheetHit::Change);
+        assert_eq!(at(l.action), SheetHit::Action);
         assert!(matches!(at(l.fields[1]), SheetHit::Field { id: "b", .. }));
-        assert_eq!(hit(w, h, &view(), 2.0, 2.0), SheetHit::Outside);
+        assert_eq!(hit(w, h, &v, 2.0, 2.0), SheetHit::Outside);
         assert_eq!(
-            hit(w, h, &view(), l.card.left + 4.0, l.card.top + 4.0),
+            hit(w, h, &v, l.card.left + 4.0, l.card.top + 4.0),
             SheetHit::Card
         );
     }
 
     #[test]
+    fn a_body_pushes_the_fields_down_and_no_fields_shrinks_the_card() {
+        let plain = layout(900.0, 600.0, &view(2, None));
+        let with_body = layout(900.0, 600.0, &view(2, Some("A paragraph.")));
+        assert!(with_body.fields[0].top > plain.fields[0].top);
+        let empty = layout(900.0, 600.0, &view(0, Some("Sure?")));
+        assert!(empty.card.height() < plain.card.height());
+    }
+
+    #[test]
     fn the_card_stays_on_a_window_shorter_than_it() {
-        let l = layout(500.0, 100.0);
+        let l = layout(500.0, 100.0, &view(4, None));
         assert!(l.card.top >= PAD);
     }
 }

@@ -1962,9 +1962,9 @@ settings-pane-privacy = Privacy
 # A checkbox in the screen-sharing picker. { $app } is the app asking.
 screencast-picker-remember = Remember for { $app }
 
-## Account pane
+## Users pane
 
-settings-pane-account = Account
+settings-pane-account = Users
 settings-account-picture = Picture
 settings-account-picture-detail = Shown on the login and lock screens
 settings-account-choose-picture = Choose a Picture
@@ -1990,3 +1990,17 @@ settings-account-password-mismatch = The new passwords don't match
 settings-account-password-same = The new password is the same as the current one
 settings-account-password-wrong-current = The current password is wrong
 settings-account-password-failed = The password couldn't be changed
+settings-account-reset-password-ellipsis = Reset Password…
+settings-account-reset-detail = Set a new password for this account
+settings-account-working = Waiting for the system…
+settings-users-you = { $kind } · You
+settings-users-reset-title = Reset Password for { $name }
+settings-users-reset-action = Reset Password
+settings-users-add-title = Add User
+settings-users-add-action = Add User
+settings-users-delete-title = Delete { $name }?
+settings-users-delete-body = They will no longer be able to log in. Their home folder is kept.
+settings-users-delete-action = Delete User
+settings-users-invalid-name = Account names start with a lower-case letter and use only a–z, 0–9, - and _
+settings-users-name-taken = There's already an account with that name
+settings-users-password-missing = Type a password for the account

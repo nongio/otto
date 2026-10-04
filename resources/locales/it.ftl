@@ -1906,9 +1906,9 @@ settings-pane-privacy = Privacy
 
 screencast-picker-remember = Ricorda per { $app }
 
-## Account pane
+## Users pane
 
-settings-pane-account = Account
+settings-pane-account = Utenti
 settings-account-picture = Immagine
 settings-account-picture-detail = Mostrata nelle schermate di accesso e di blocco
 settings-account-choose-picture = Scegli un'immagine
@@ -1934,3 +1934,17 @@ settings-account-password-mismatch = Le nuove password non coincidono
 settings-account-password-same = La nuova password è uguale a quella attuale
 settings-account-password-wrong-current = La password attuale non è corretta
 settings-account-password-failed = Non è stato possibile cambiare la password
+settings-account-reset-password-ellipsis = Reimposta password…
+settings-account-reset-detail = Imposta una nuova password per questo account
+settings-account-working = In attesa del sistema…
+settings-users-you = { $kind } · Tu
+settings-users-reset-title = Reimposta la password di { $name }
+settings-users-reset-action = Reimposta password
+settings-users-add-title = Aggiungi utente
+settings-users-add-action = Aggiungi utente
+settings-users-delete-title = Eliminare { $name }?
+settings-users-delete-body = Non potrà più accedere. La sua cartella home viene conservata.
+settings-users-delete-action = Elimina utente
+settings-users-invalid-name = I nomi account iniziano con una lettera minuscola e usano solo a–z, 0–9, - e _
+settings-users-name-taken = Esiste già un account con questo nome
+settings-users-password-missing = Inserisci una password per l'account
