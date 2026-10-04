@@ -897,34 +897,25 @@ fn add_user_account(user: &str, full_name: &str, password: &str) -> Result<(), S
     } else {
         full_name.trim()
     };
-    let connection = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
-    let reply = connection
-        .call_method(
-            Some(BUS_NAME),
-            MANAGER_PATH,
-            Some(BUS_NAME),
-            "CreateUser",
-            &(user, full_name, 0_i32),
-        )
-        .map_err(denied)?;
-    let object: zbus::zvariant::OwnedObjectPath =
-        reply.body().deserialize().map_err(|e| e.to_string())?;
+    let object: zbus::zvariant::OwnedObjectPath = administer(
+        MANAGER_PATH,
+        BUS_NAME,
+        "CreateUser",
+        &(user, full_name, 0_i32),
+    )?
+    .ok_or_else(|| otto_kit::t!("settings-account-not-permitted").to_string())?;
     set_password(object.as_str(), password)
 }
 
 /// Delete an account, keeping its home folder.
 fn delete_user_account(uid: u32) -> Result<(), String> {
-    let connection = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
-    connection
-        .call_method(
-            Some(BUS_NAME),
-            MANAGER_PATH,
-            Some(BUS_NAME),
-            "DeleteUser",
-            &(i64::from(uid), false),
-        )
-        .map(|_| ())
-        .map_err(denied)
+    administer::<_, ()>(
+        MANAGER_PATH,
+        BUS_NAME,
+        "DeleteUser",
+        &(i64::from(uid), false),
+    )
+    .map(|_| ())
 }
 
 /// What `passwd` said no to.
@@ -1130,10 +1121,42 @@ fn call<B>(object: &str, method: &str, body: &B) -> Result<(), String>
 where
     B: serde::ser::Serialize + zbus::zvariant::DynamicType,
 {
+    administer::<_, ()>(object, USER_INTERFACE, method, body).map(|_| ())
+}
+
+/// Call `method` on an AccountsService object, letting polkit ask for a
+/// password.
+///
+/// The call carries D-Bus's allow-interactive-authorization flag. Without it
+/// AccountsService tells polkit not to ask, and anything needing an
+/// administrator — adding, deleting or changing another account — is refused
+/// at once instead of prompting through the session's agent. The reply can
+/// take as long as the person at the prompt does, which is why every caller
+/// is on a thread of its own.
+fn administer<B, R>(
+    object: &str,
+    interface: &str,
+    method: &str,
+    body: &B,
+) -> Result<Option<R>, String>
+where
+    B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
+{
     let connection = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
-    connection
-        .call_method(Some(BUS_NAME), object, Some(USER_INTERFACE), method, body)
-        .map(|_| ())
+    let proxy = zbus::blocking::proxy::Builder::<zbus::blocking::Proxy<'_>>::new(&connection)
+        .destination(BUS_NAME)
+        .and_then(|b| b.path(object))
+        .and_then(|b| b.interface(interface))
+        .map(|b| b.cache_properties(zbus::proxy::CacheProperties::No))
+        .and_then(|b| b.build())
+        .map_err(|e| e.to_string())?;
+    proxy
+        .call_with_flags(
+            method,
+            zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
+            body,
+        )
         .map_err(denied)
 }
 
