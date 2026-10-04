@@ -177,39 +177,12 @@ pub fn battery_config() -> &'static BatteryConfig {
 
 /// Parse `#RGB`, `#RRGGBB` or `#AARRGGBB`. Returns None for anything else,
 /// so a typo leaves the default colour rather than painting the glyph black.
+///
+/// Alpha first, unlike every other colour setting (`#RRGGBBAA`): the
+/// battery colours were documented that way before the desktop settled on
+/// CSS's order, and existing configs keep meaning what they meant.
 fn parse_color(raw: &str) -> Option<skia_safe::Color> {
-    let hex = raw.trim().strip_prefix('#')?;
-    let digits = |s: &str| u32::from_str_radix(s, 16).ok();
-    match hex.len() {
-        3 => {
-            let v = digits(hex)?;
-            // #abc means #aabbcc.
-            let (r, g, b) = ((v >> 8) & 0xF, (v >> 4) & 0xF, v & 0xF);
-            Some(skia_safe::Color::from_rgb(
-                (r * 17) as u8,
-                (g * 17) as u8,
-                (b * 17) as u8,
-            ))
-        }
-        6 => {
-            let v = digits(hex)?;
-            Some(skia_safe::Color::from_rgb(
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ))
-        }
-        8 => {
-            let v = digits(hex)?;
-            Some(skia_safe::Color::from_argb(
-                ((v >> 24) & 0xFF) as u8,
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ))
-        }
-        _ => None,
-    }
+    otto_kit::color::parse_hex_argb(raw)
 }
 
 /// Read a command as either a bare string or an argv array, so both
