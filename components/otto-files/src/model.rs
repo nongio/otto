@@ -896,16 +896,26 @@ pub fn format_size(bytes: u64) -> String {
     otto_kit::t_owned!(UNITS[unit], value = rendered)
 }
 
-/// Date, as a listing shows it. Deliberately plain: no locale formatting, and
-/// no relative "yesterday" — both need more than the standard library gives.
+/// Date, as a listing shows it, in local time. Deliberately plain: no locale
+/// formatting, and no relative "yesterday" — both need more than the standard
+/// library gives.
 pub fn format_time(time: SystemTime) -> String {
     let Ok(elapsed) = time.duration_since(SystemTime::UNIX_EPOCH) else {
         return String::new();
     };
     let secs = elapsed.as_secs() as i64;
-    let days = secs.div_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let time_of_day = secs.rem_euclid(86_400);
+    // The offset in force at the file's own moment, not now's: a file saved
+    // in summer reads in summer time even when listed in winter.
+    format_time_at(secs, otto_search::dates::local_offset(secs))
+}
+
+/// [`format_time`] for `secs` since the epoch, shifted `offset` seconds east
+/// of UTC.
+fn format_time_at(secs: i64, offset: i64) -> String {
+    use otto_search::dates::{civil_from_days, DAY};
+    let local = secs + offset;
+    let (year, month, day) = civil_from_days(local.div_euclid(DAY));
+    let time_of_day = local.rem_euclid(DAY);
     let (hour, minute) = (time_of_day / 3600, (time_of_day % 3600) / 60);
     // Assembled from parts rather than formatted from a pattern, because the
     // month names have to be translated too — and the order of the parts is
@@ -932,21 +942,6 @@ pub fn format_time(time: SystemTime) -> String {
         year = year.to_string(),
         time = format!("{hour:02}:{minute:02}")
     )
-}
-
-/// Days since the Unix epoch to a civil date. Howard Hinnant's algorithm —
-/// exact, branch-light, and shorter than taking on a date crate.
-pub(crate) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 #[cfg(test)]
@@ -1012,7 +1007,7 @@ mod tests {
         // month and year is now the locale's business — en-GB puts the day
         // first, en-US the month — and pinning one ordering here would make
         // this test fail on a correctly translated desktop. What it is
-        // actually guarding is `civil_from_days`, and that shows up in the
+        // actually guarding is the date arithmetic, and that shows up in the
         // parts whatever order they are printed in.
         //
         // The month comes from the catalogue for the same reason: its name is
@@ -1027,12 +1022,33 @@ mod tests {
                 "22:13",
             ),
         ] {
-            let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-            let rendered = format_time(at);
+            // Pinned to UTC: the local zone is the next test's business.
+            let rendered = format_time_at(secs as i64, 0);
             for part in [day, month, year, time] {
                 assert!(rendered.contains(part), "{rendered:?} is missing {part:?}");
             }
         }
+    }
+
+    #[test]
+    fn times_read_in_the_local_zone() {
+        // 23:30 UTC on 31 December 2023. An hour east it is already the new
+        // year; five hours west it is still the evening of the 31st.
+        let secs = 1_704_065_400;
+        let east = format_time_at(secs, 3_600);
+        for part in ["1", otto_kit::t!("files-month-jan"), "2024", "00:30"] {
+            assert!(east.contains(part), "{east:?} is missing {part:?}");
+        }
+        let west = format_time_at(secs, -5 * 3_600);
+        for part in ["31", otto_kit::t!("files-month-dec"), "2023", "18:30"] {
+            assert!(west.contains(part), "{west:?} is missing {part:?}");
+        }
+        // And the public entry point takes the offset in force at that time.
+        let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+        assert_eq!(
+            format_time(at),
+            format_time_at(secs, otto_search::dates::local_offset(secs))
+        );
     }
 }
 
