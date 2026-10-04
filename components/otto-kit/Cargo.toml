@@ -75,3 +75,8 @@ harness = false
 
 [lints]
 workspace = true
+
+# wayland-backend is only referenced by the code `wayland_scanner::generate_interfaces!`
+# expands to (src/protocols/mod.rs), which cargo-machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["laye-rs", "wayland-backend"]
