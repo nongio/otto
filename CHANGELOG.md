@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-10-04
+
+### 🚀 Features
+
+- *(peek)* Open on an overlay above all windows (#229)
+- *(keyboard)* Layouts in Settings and the bar (#230)
+- *(files)* Show a folder on the desktop (#231)
+- *(search)* One query language over LocalSearch (#234)
+- *(files)* Photos view (#236)
+- Preview, a windowed file viewer (#238)
+- *(render)* Vulkan by default, NV12 and sync fixes (#239)
+- *(islands)* Music bars from real bands, focus the player by process (#242)
+- *(auth)* Otto's polkit agent and password-confirmed lock settings (#244)
+- *(privacy)* Settings › Privacy lists what apps were allowed (#245)
+- Side canvas (#248)
+- Appearance pane, desk edit mode and background widgets (#250)
+- *(packaging)* Full desktop on first install (#252)
+- Otto menu in the bar, About pane, graceful logout (#253)
+
+### 🐛 Bug Fixes
+
+- Fade out windows of disconnecting clients (#232)
+- Fade a closing window's shadow first (#235)
+- Keep Flatpak apps off privileged globals, and make the lock reliable (#243)
+- *(files)* Resize one column, not all (#249)
+- First-run crash, dock placeholders and bar sizing (#254)
+
+### 📚 Documentation
+
+- Developer guide for the Vulkan renderer (#233)
+- Discord invite and README badges (#255)
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove unused dependencies, dead code and low-value tests (#240)
+- Widget install check and dependency alerts (#251)
+
 ## [1.5.0] - 2026-09-25
 
 ### 🚀 Features
