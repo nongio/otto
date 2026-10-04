@@ -974,6 +974,8 @@ bar-otto-menu = Otto
 bar-otto-about = À propos d’Otto
 bar-otto-settings = Réglages…
 bar-otto-log-out = Fermer la session
+bar-logout-title = Fermer la session maintenant ?
+bar-logout-body = Vos apps seront d’abord invitées à se fermer, pour que rien de non enregistré ne se perde.
 
 
 ## Settings — widgets

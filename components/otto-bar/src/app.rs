@@ -307,7 +307,7 @@ impl TopBarApp {
         let menu = ContextMenu::new(otto_menu_items()).on_item_click(|action_id| match action_id {
             "about" => open_settings(&["--pane", "about"]),
             "settings" => open_settings(&[]),
-            "logout" => crate::keyboard_layout::run_shell_command("exit".to_string()),
+            "logout" => crate::logout::confirm_and_log_out(),
             _ => {}
         });
 

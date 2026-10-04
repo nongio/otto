@@ -951,6 +951,8 @@ bar-otto-menu = Otto
 bar-otto-about = Über Otto
 bar-otto-settings = Einstellungen…
 bar-otto-log-out = Abmelden
+bar-logout-title = Jetzt abmelden?
+bar-logout-body = Deine Apps werden zuerst gebeten, sich zu schließen, damit Ungespeichertes noch gesichert werden kann.
 
 
 ## Settings — widgets

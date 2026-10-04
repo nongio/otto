@@ -114,6 +114,9 @@ pub enum Command {
     Kill,
     /// `exit` — end the session, as the `Quit` shortcut does.
     Exit,
+    /// `logout` — Otto's own: ask every window to close, and end the session
+    /// once they have. Stands down if an application asks something first.
+    Logout,
     /// `tiling toggle|enable|disable`
     Tiling(Toggle),
     /// `expose [show|hide|toggle]` — the window overview, as `Ctrl+Up` opens
@@ -458,6 +461,7 @@ fn parse_one(cursor: &mut Cursor<'_>) -> Result<Command, ParseError> {
         "fullscreen" => parse_fullscreen(cursor, offset)?,
         "kill" => Command::Kill,
         "exit" => Command::Exit,
+        "logout" => Command::Logout,
         "tiling" => Command::Tiling(parse_toggle(cursor, "tiling")?),
         "expose" => Command::Expose(parse_expose_arg(cursor)?),
         "gaps" => parse_gaps(cursor)?,
@@ -1104,6 +1108,7 @@ mod tests {
     fn the_standalone_commands_parse() {
         assert_eq!(one("kill"), Command::Kill);
         assert_eq!(one("exit"), Command::Exit);
+        assert_eq!(one("logout"), Command::Logout);
         assert_eq!(one("fullscreen"), Command::Fullscreen);
         assert_eq!(one("fullscreen toggle"), Command::Fullscreen);
         assert_eq!(one("tiling toggle"), Command::Tiling(Toggle::Toggle));

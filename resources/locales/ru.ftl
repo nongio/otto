@@ -997,6 +997,8 @@ bar-otto-menu = Otto
 bar-otto-about = Об Otto
 bar-otto-settings = Настройки…
 bar-otto-log-out = Выйти
+bar-logout-title = Выйти сейчас?
+bar-logout-body = Сначала приложения получат запрос на закрытие, чтобы несохранённое можно было сохранить.
 
 
 ## Settings — widgets

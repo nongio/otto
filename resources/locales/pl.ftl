@@ -1003,6 +1003,8 @@ bar-otto-menu = Otto
 bar-otto-about = O Otto
 bar-otto-settings = Ustawienia…
 bar-otto-log-out = Wyloguj
+bar-logout-title = Wylogować się teraz?
+bar-logout-body = Aplikacje zostaną najpierw poproszone o zamknięcie, więc niezapisane zmiany można jeszcze zapisać.
 
 
 ## Settings — widgets

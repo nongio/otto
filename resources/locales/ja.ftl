@@ -926,6 +926,8 @@ bar-otto-menu = Otto
 bar-otto-about = Otto について
 bar-otto-settings = 設定…
 bar-otto-log-out = ログアウト
+bar-logout-title = 今すぐログアウトしますか?
+bar-logout-body = 先にアプリに終了を求めるので、保存していない内容を保存できます。
 
 
 ## Settings — widgets

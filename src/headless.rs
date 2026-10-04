@@ -232,6 +232,12 @@ impl HeadlessHandle {
         }
     }
 
+    /// Whether the compositor is still running: false once something inside
+    /// it (a logout, the `exit` command) has ended the session.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
     /// Stop the compositor and join the background thread.
     pub fn stop(mut self) {
         self.running.store(false, Ordering::SeqCst);

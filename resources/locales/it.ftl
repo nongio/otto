@@ -970,6 +970,8 @@ bar-otto-menu = Otto
 bar-otto-about = Informazioni su Otto
 bar-otto-settings = Impostazioni…
 bar-otto-log-out = Esci
+bar-logout-title = Uscire adesso?
+bar-logout-body = Prima verrà chiesto alle app di chiudersi, così potrai salvare quello che non è ancora salvato.
 
 
 ## Settings — widgets

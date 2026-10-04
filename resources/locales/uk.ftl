@@ -992,6 +992,8 @@ bar-otto-menu = Otto
 bar-otto-about = Про Otto
 bar-otto-settings = Налаштування…
 bar-otto-log-out = Вийти
+bar-logout-title = Вийти зараз?
+bar-logout-body = Спершу застосунки отримають запит на закриття, щоб незбережене можна було зберегти.
 
 
 ## Settings — widgets
