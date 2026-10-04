@@ -104,8 +104,8 @@ command. This is how the Trash's Empty Trash gets there — it is data in
   second icon appended to the applications.
 - **A place does not reorder.** Dragging one does not start a reorder: the
   launcher order it would be counted against is not the strip it is in.
-- **A missing desktop entry** is a warning in the log and a place that is not
-  drawn, exactly as a missing bookmark is.
+- **A missing desktop entry** is a place that is not drawn, exactly as a
+  missing bookmark is; one info line in the log lists the skipped ids.
 - **A drop needs files.** A drag carrying only text, or a source that offers
   neither move nor copy, is refused over the Trash as everywhere else on the
   dock. A source that never finishes writing its list is given up on after

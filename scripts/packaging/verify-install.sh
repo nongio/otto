@@ -205,6 +205,19 @@ for d in /usr/share/wayland-sessions/otto.desktop \
     echo "  ok  $d -> $exe"
 done
 
+echo "== runtime dependencies =="
+# Otto spawns Xwayland at startup for X11 applications; every package
+# declares it, so its absence means the dependency was dropped. A locally
+# built package (OTTO_SKIP_RUN) may be installed without its dependencies —
+# the rpm test uses `--nodeps` — so there it proves nothing.
+if [[ "${OTTO_SKIP_RUN:-0}" == 1 ]]; then
+    echo "  (skipped: locally built package, installed without dependencies)"
+elif command -v Xwayland >/dev/null; then
+    echo "  ok  Xwayland"
+else
+    echo "MISSING: Xwayland not on PATH (declared dependency not installed)"; fail=1
+fi
+
 echo "== shared libraries resolve =="
 # The real dependency test. A package can declare every dependency it likes;
 # what matters is whether the dynamic loader finds them on a machine that has

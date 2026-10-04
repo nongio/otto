@@ -6,6 +6,7 @@
 pub mod context;
 mod handlers;
 mod key_repeat;
+mod output_scale;
 
 pub use context::AppContext;
 pub use smithay_client_toolkit::seat::keyboard::Modifiers;
@@ -599,6 +600,11 @@ impl<A: App + 'static> AppRunnerWithType<A> {
         let background_effect =
             crate::backdrop::init(&conn, &globals, surface_style_manager.is_some());
         crate::key_capture::init(&conn, &globals);
+        // Before the app makes anything — see [`output_scale`].
+        if let Some(scale_120) = output_scale::probe(&conn, &globals) {
+            tracing::debug!("output scale at startup: {scale_120}/120");
+            AppContext::seed_output_scale_120(scale_120);
+        }
 
         // Get display pointer for creating surfaces
         let display_ptr = conn.backend().display_ptr() as *mut std::ffi::c_void;

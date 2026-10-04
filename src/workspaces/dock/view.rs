@@ -578,9 +578,23 @@ impl DockView {
         resolved
     }
 
+    /// The application a configured bookmark or place names, if its desktop
+    /// entry is installed.
+    ///
+    /// [`ApplicationsInfo::get_app_info_by_id`] never says no: an id without a
+    /// desktop entry comes back as a placeholder with a generic icon, which is
+    /// right for a running window — it is there whatever its app is called —
+    /// and wrong for a bookmark, where it is a gear that launches nothing.
+    async fn resolve_configured(desktop_id: &str) -> Option<Application> {
+        let id = desktop_id.strip_suffix(".desktop").unwrap_or(desktop_id);
+        ApplicationsInfo::get_app_info_by_id(id)
+            .await
+            .filter(Application::has_desktop_entry)
+    }
+
     /// Load `[dock] places` into the places strip. Same shape as
     /// [`Self::load_configured_bookmarks`]: a place is a desktop entry, and a
-    /// missing one is a warning rather than a hole in the strip.
+    /// missing one is skipped rather than left as a hole in the strip.
     fn load_configured_places(&self) {
         let places = Config::with(|c| c.dock.places.clone());
         if places.is_empty() {
@@ -593,18 +607,17 @@ impl DockView {
         let dock = self.clone();
         tokio::spawn(async move {
             let mut loaded = Vec::new();
+            let mut missing = Vec::new();
             for place in places {
-                let id = place
-                    .desktop_id
-                    .strip_suffix(".desktop")
-                    .unwrap_or(&place.desktop_id)
-                    .to_string();
-                if let Some(mut app) = ApplicationsInfo::get_app_info_by_id(id).await {
+                if let Some(mut app) = Self::resolve_configured(&place.desktop_id).await {
                     app.override_name = place.label.clone();
                     loaded.push(app);
                 } else {
-                    tracing::warn!("dock place not found: {}", place.desktop_id);
+                    missing.push(place.desktop_id);
                 }
+            }
+            if !missing.is_empty() {
+                tracing::info!("dock places not installed, skipped: {}", missing.join(", "));
             }
 
             let mut state = dock.get_state();
@@ -625,19 +638,24 @@ impl DockView {
         let dock = self.clone();
         tokio::spawn(async move {
             let mut launchers = Vec::new();
+            let mut missing = Vec::new();
 
             for bookmark in bookmarks {
-                let id = bookmark
-                    .desktop_id
-                    .strip_suffix(".desktop")
-                    .unwrap_or(&bookmark.desktop_id)
-                    .to_string();
-                if let Some(mut app) = ApplicationsInfo::get_app_info_by_id(id).await {
+                if let Some(mut app) = Self::resolve_configured(&bookmark.desktop_id).await {
                     app.override_name = bookmark.label.clone();
                     launchers.push(app);
                 } else {
-                    tracing::warn!("dock bookmark not found: {}", bookmark.desktop_id);
+                    missing.push(bookmark.desktop_id);
                 }
+            }
+            // `info`, not `warn`: the shipped list names the GNOME and the KDE
+            // app for each job on purpose, so most of a default dock is ids a
+            // given system does not have. One line still shows a typo.
+            if !missing.is_empty() {
+                tracing::info!(
+                    "dock bookmarks not installed, skipped: {}",
+                    missing.join(", ")
+                );
             }
 
             let mut state = dock.get_state();
@@ -2333,6 +2351,17 @@ impl DockView {
             .any(|e| e.identifier == identifier && e.running)
     }
 
+    /// Whether the running app `match_id` can be pinned: it has a desktop
+    /// entry to launch it from once it has quit.
+    pub(super) fn can_keep_in_dock(&self, match_id: &str) -> bool {
+        self.state
+            .read()
+            .unwrap()
+            .running_apps
+            .iter()
+            .any(|app| app.match_id == match_id && app.has_desktop_entry())
+    }
+
     /// Build context-menu items for the given app `identifier`,
     /// reflecting its current running and bookmarked state.
     pub fn build_context_menu_items(&self, identifier: &str) -> Vec<MenuItem> {
@@ -2383,20 +2412,27 @@ impl DockView {
             return items;
         }
 
-        let keep_label = if bookmarked {
-            otto_kit::t!("dock-keep-in-dock-on")
-        } else {
-            otto_kit::t!("dock-keep-in-dock")
-        };
-        let keep_action = if bookmarked {
-            "remove_from_dock"
-        } else {
-            "keep_in_dock"
-        };
-        items.push(MenuItem::action(keep_label).with_action_id(keep_action));
+        // A pin is a desktop id, and an app with no desktop entry has none to
+        // launch it by: the pin would be dropped on the next start. A pin that
+        // is already there can always be removed.
+        if bookmarked {
+            items.push(
+                MenuItem::action(otto_kit::t!("dock-keep-in-dock-on"))
+                    .with_action_id("remove_from_dock"),
+            );
+        } else if match_id
+            .as_deref()
+            .is_some_and(|mid| self.can_keep_in_dock(mid))
+        {
+            items.push(
+                MenuItem::action(otto_kit::t!("dock-keep-in-dock")).with_action_id("keep_in_dock"),
+            );
+        }
 
         if running {
-            items.push(MenuItem::separator());
+            if !items.last().is_some_and(MenuItem::is_separator) {
+                items.push(MenuItem::separator());
+            }
             items.push(
                 MenuItem::action(otto_kit::t!("dock-quit"))
                     .with_action_id("quit")
@@ -2940,8 +2976,9 @@ impl DockView {
     /// to a bookmark if it is only running, and lift its icon into the drag
     /// overlay.
     ///
-    /// Returns `false` when the app cannot be dragged (it disappeared, or it has
-    /// no icon to lift), leaving the dock untouched.
+    /// Returns `false` when the app cannot be dragged (it disappeared, it has
+    /// no icon to lift, or it is only running and has no desktop entry to pin
+    /// it by), leaving the dock untouched.
     fn activate_icon_drag(&self, drag: &mut IconDrag) -> bool {
         let match_id = drag.match_id.clone();
         let mut state = self.get_state();
@@ -2956,6 +2993,11 @@ impl DockView {
                 else {
                     return false;
                 };
+                // As in the context menu: a pin without a desktop entry would
+                // be dropped on the next start.
+                if !app.has_desktop_entry() {
+                    return false;
+                }
                 self.update_bookmarks(|bookmarks| {
                     if !bookmarks.iter().any(|b| {
                         b.desktop_id
@@ -4575,5 +4617,20 @@ mod tests {
                  apps {apps:?} handle {handle:?} places {places:?}"
             );
         }
+    }
+
+    /// The default bookmarks name apps a system may not have. One that is not
+    /// installed is left out of the dock, while a window running under the
+    /// same id still gets the placeholder that lets the dock show it.
+    #[test]
+    fn a_bookmark_with_no_desktop_entry_is_skipped() {
+        let id = "otto-test-no-such-app";
+        runtime().block_on(async {
+            assert!(DockView::resolve_configured(&format!("{id}.desktop"))
+                .await
+                .is_none());
+            let running = ApplicationsInfo::get_app_info_by_id(id).await;
+            assert!(running.is_some_and(|app| !app.has_desktop_entry()));
+        });
     }
 }

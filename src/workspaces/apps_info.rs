@@ -35,6 +35,12 @@ impl Application {
         }
     }
 
+    /// Whether this came from a desktop entry, rather than being the
+    /// placeholder made up for an app id that has none.
+    pub fn has_desktop_entry(&self) -> bool {
+        self.app_info.is_some()
+    }
+
     pub fn desktop_name(&self) -> Option<String> {
         if let Some(name) = &self.override_name {
             return Some(name.clone());

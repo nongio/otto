@@ -1464,7 +1464,11 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             ),
         ];
 
-        let (xwayland, client) = XWayland::spawn(
+        // XWayland is optional at runtime: when the binary is missing or fails
+        // to spawn, run without X11 support. `xwm`, `xdisplay` and
+        // `xwayland_client` stay `None`, so Otto adds no DISPLAY and the
+        // scale/XSETTINGS updates are no-ops.
+        let (xwayland, client) = match XWayland::spawn(
             &self.display_handle,
             None,
             cursor_env,
@@ -1473,8 +1477,17 @@ impl<BackendData: Backend + 'static> Otto<BackendData> {
             Stdio::null(),
             Stdio::null(),
             |_| (),
-        )
-        .expect("failed to start XWayland");
+        ) {
+            Ok(spawned) => spawned,
+            Err(e) => {
+                tracing::error!(
+                    "XWayland could not be started ({e}); X11 applications will not run. \
+                     If Xwayland is not installed, install it (Debian/Ubuntu: xwayland, \
+                     Fedora: xorg-x11-server-Xwayland, Arch: xorg-xwayland)."
+                );
+                return;
+            }
+        };
 
         // Seed the XWayland client's `client_scale` from the primary output's
         // integer scale, BEFORE XWayland binds wl_output. smithay sends

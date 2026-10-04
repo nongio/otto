@@ -80,7 +80,9 @@ is stored in.
    drag is an ordinary reorder, and the app stays in the dock after it quits —
    the same outcome as the context menu's *Keep in Dock*.
 10. This happens only for a real drag. Clicking such an icon, or pressing it and
-    releasing without moving, does not add it to the dock.
+    releasing without moving, does not add it to the dock. An app with no
+    desktop entry cannot be pinned, so it does not drag at all; the release
+    counts as a click.
 
 ### Ending
 

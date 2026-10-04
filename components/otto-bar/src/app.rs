@@ -95,6 +95,12 @@ pub struct TopBarApp {
     right: RightPanel,
     last_left_width: f32,
     last_right_width: f32,
+    /// Width and fractional scale each panel's surface-style size was last set
+    /// for. The scale starts as the output's, read at startup, and can still
+    /// change once when the surface's preferred scale lands a few frames in,
+    /// so a change in either re-applies the size.
+    left_style_size: Option<(f32, f64)>,
+    right_style_size: Option<(f32, f64)>,
     last_tray_gen: u64,
     last_focus_gen: u64,
     last_appmenu_gen: u64,
@@ -127,6 +133,8 @@ impl TopBarApp {
             right: RightPanel::new(),
             last_left_width: 0.0,
             last_right_width: 0.0,
+            left_style_size: None,
+            right_style_size: None,
             last_tray_gen: 0,
             last_focus_gen: 0,
             last_appmenu_gen: 0,
@@ -187,12 +195,19 @@ impl TopBarApp {
         style.set_contents_gravity(gravity);
     }
 
-    fn animate_right_size(surface: &LayerShellSurface, width: f32, height: f32) {
+    /// Animate the panel's surface-style size; false when there is no style
+    /// to set it on yet.
+    fn animate_right_size(
+        surface: &LayerShellSurface,
+        width: f32,
+        height: f32,
+        scale: f64,
+    ) -> bool {
         let Some(style) = surface.base_surface().surface_style() else {
-            return;
+            return false;
         };
         let Some(scene) = AppContext::surface_style_manager() else {
-            return;
+            return false;
         };
         let qh = AppContext::queue_handle();
 
@@ -206,10 +221,10 @@ impl TopBarApp {
         // output's fractional scale — the integer buffer scale is 2 on a 1.5x
         // output and would size the panel past its exclusive zone, over the
         // maximized window below.
-        let scale = AppContext::fractional_scale();
         style.set_size(width as f64 * scale, height as f64 * scale);
 
         txn.commit();
+        true
     }
 
     fn update_left_panel(&mut self, animate: bool) {
@@ -221,8 +236,11 @@ impl TopBarApp {
         if (target - self.last_left_width).abs() >= 1.0 {
             self.last_left_width = target;
             surface.set_size(target.ceil() as u32, self.left.height as u32);
-            if animate {
-                Self::animate_right_size(surface, target, self.left.height);
+        }
+        if animate && style_size_stale(self.left_style_size, target) {
+            let scale = AppContext::fractional_scale();
+            if Self::animate_right_size(surface, target, self.left.height, scale) {
+                self.left_style_size = Some((target, scale));
             }
         }
         self.left.width = target;
@@ -238,8 +256,11 @@ impl TopBarApp {
         if (target - self.last_right_width).abs() >= 1.0 {
             self.last_right_width = target;
             surface.set_size(target.ceil() as u32, self.right.height as u32);
-            if animate {
-                Self::animate_right_size(surface, target, self.right.height);
+        }
+        if animate && style_size_stale(self.right_style_size, target) {
+            let scale = AppContext::fractional_scale();
+            if Self::animate_right_size(surface, target, self.right.height, scale) {
+                self.right_style_size = Some((target, scale));
             }
         }
         self.right.width = target;
@@ -1338,8 +1359,22 @@ impl App for TopBarApp {
             }
         }
 
+        // The compositor's preferred scale can arrive after the panels were
+        // first sized, and a size that could not be set yet (no surface style)
+        // is still owed, so either is redone here. Only once there is a style
+        // to set it on: without one this would redraw every pass.
+        if has_surface_style(&self.right_surface)
+            && style_size_stale(self.right_style_size, self.last_right_width)
+        {
+            dirty = true;
+        }
         if dirty {
             self.update_right_panel(true);
+        }
+        if has_surface_style(&self.left_surface)
+            && style_size_stale(self.left_style_size, self.last_left_width)
+        {
+            self.update_left_panel(true);
         }
 
         // Check if focused app changed
@@ -1435,6 +1470,22 @@ impl App for TopBarApp {
             }
         }
     }
+}
+
+/// Whether a panel has a surface style its size can be set on.
+fn has_surface_style(surface: &Option<LayerShellSurface>) -> bool {
+    AppContext::surface_style_manager().is_some()
+        && surface
+            .as_ref()
+            .is_some_and(|surface| surface.base_surface().surface_style().is_some())
+}
+
+/// Whether a panel's surface-style size, last set for `applied` (width and
+/// scale), needs setting again for `width` at the current fractional scale.
+fn style_size_stale(applied: Option<(f32, f64)>, width: f32) -> bool {
+    applied.is_none_or(|(w, scale)| {
+        (width - w).abs() >= 1.0 || scale != AppContext::fractional_scale()
+    })
 }
 
 /// The battery's state in words: the menu's first line and what a screen

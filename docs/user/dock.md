@@ -58,7 +58,16 @@ bookmarks = [
 | `label` | Override the application's display name; the hover label, the app switcher and menus all use it. Optional. |
 | `exec_args` | Extra arguments appended to the entry's `Exec` line. Optional. |
 
-Find desktop ids with `ls /usr/share/applications ~/.local/share/applications`.
+Find desktop ids with `ls /usr/share/applications ~/.local/share/applications`;
+Snap apps keep theirs in `/var/lib/snapd/desktop/applications`, named
+`<snap>_<app>.desktop` (Snap Firefox is `firefox_firefox.desktop`), and Flatpak
+apps in `/var/lib/flatpak/exports/share/applications`.
+
+A bookmark whose desktop file is not installed is left out of the dock, and the
+log names it once at startup, so a list can name apps a system may not have.
+The default list relies on that: it names the GNOME and the KDE app for each
+job, and each packaging of a browser. A window of an app that is not
+bookmarked still shows in the dock while it runs.
 
 Bookmarks behave exactly like running apps once launched: same icon, same
 hover, same window cycling.
@@ -67,6 +76,7 @@ hover, same window cycling.
 
 Right-click any icon (a bookmark, or a running app that is not yet in the dock)
 and pick **Keep in Dock** to pin it; the same entry, ticked, unpins it again.
+An app with no desktop entry cannot be pinned, so its menu has no such entry.
 The menu also offers **Open** (for an app that is not running) and **Quit**
 (for one that is).
 

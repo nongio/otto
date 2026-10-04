@@ -154,7 +154,7 @@ impl Default for Config {
             // the cursor and every panel twice the size it should be.
             screen_scale: 1.0,
             displays: DisplaysConfig::default(),
-            cursor_theme: "Notwaita-Black".to_string(),
+            cursor_theme: "Otto-MacTahoe".to_string(),
             icon_theme: None,
             cursor_size: 24,
             input: InputConfig::default(),
@@ -2642,7 +2642,7 @@ mod tests {
         let config: Config = base.try_into().unwrap();
         assert_eq!(config.screen_scale, 1.5);
         // Other defaults should remain
-        assert_eq!(config.cursor_theme, "Notwaita-Black");
+        assert_eq!(config.cursor_theme, "Otto-MacTahoe");
     }
 
     #[test]

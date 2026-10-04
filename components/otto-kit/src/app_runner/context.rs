@@ -220,8 +220,11 @@ static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
 /// iteration, after flushing whatever the app asked for last.
 static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// -- Display scale factor (updated by compositor, default 1) --
+// -- Display scale factor (updated by compositor, default 2) --
 
+/// Starts at 2, the buffer scale every otto-kit surface renders at, so icons
+/// and images rasterised by it stay crisp in those buffers. SCTK only reports
+/// a scale that differs from 1, so on a 1x output this is never updated.
 static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
 
 /// Whether [`AppContext::set_scale_factor`] has already taken a value. The
@@ -231,10 +234,16 @@ static SCALE_FACTOR_LATCHED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Preferred fractional scale in 120ths, as sent by `wp_fractional_scale_v1`.
-/// 0 means the compositor has not sent one yet — callers fall back to the
-/// integer `wl_surface` scale.
+/// 0 means the compositor has not sent one yet — callers fall back to
+/// [`OUTPUT_SCALE_SEED_120`], then to the integer `wl_surface` scale.
 static DISPLAY_FRACTIONAL_SCALE_120: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
+
+/// The first output's scale in 120ths, read from `wl_output` and
+/// `xdg_output` during startup, before the app makes a surface. Kept apart
+/// from the preferred scale so it never blocks that one from landing. 0 means
+/// no output reported one.
+static OUTPUT_SCALE_SEED_120: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 // -- Wakeup pipe (cross-thread) --
 
@@ -393,7 +402,11 @@ impl<'a> AppContext<'a> {
     }
 
     /// Returns the current display scale factor (updated by the compositor).
-    /// Defaults to 1 if no scale_factor_changed event has been received yet.
+    ///
+    /// A rasterisation hint, not geometry: it is 2 — the buffer scale otto-kit
+    /// surfaces render at — until a `scale_factor_changed` event arrives, and
+    /// SCTK never sends one on a 1x output. Geometry in physical pixels uses
+    /// [`Self::fractional_scale`].
     pub fn scale_factor() -> i32 {
         DISPLAY_SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -421,11 +434,34 @@ impl<'a> AppContext<'a> {
     /// move the geometry out from under a buffer that stayed put — the panel
     /// keeps its old pixels at a new size. A scale change takes effect on the
     /// next restart, which is how the compositor-side chrome treats it too.
+    ///
+    /// The preferred scale only lands after a surface's first frames, so
+    /// until then this is the scale of the first output the compositor
+    /// advertised, read at startup — before the app made anything, so code
+    /// that sizes a surface or rasterises an atlas up front gets the real
+    /// value. Which output a surface will map on is not known that early; on
+    /// a mixed-scale setup it may be another one, and geometry set before the
+    /// preferred scale arrives must be re-applied once this changes. With no
+    /// output scale either, it is the latched integer scale if there is one,
+    /// else 1 — not the integer default of 2, which is a buffer scale and
+    /// would double every panel on a 1x output.
     pub fn fractional_scale() -> f64 {
-        match DISPLAY_FRACTIONAL_SCALE_120.load(std::sync::atomic::Ordering::Relaxed) {
-            0 => Self::scale_factor().max(1) as f64,
+        use std::sync::atomic::Ordering::Relaxed;
+        match DISPLAY_FRACTIONAL_SCALE_120.load(Relaxed) {
+            0 => match OUTPUT_SCALE_SEED_120.load(Relaxed) {
+                0 if SCALE_FACTOR_LATCHED.load(Relaxed) => Self::scale_factor().max(1) as f64,
+                0 => 1.0,
+                n => n as f64 / 120.0,
+            },
             n => n as f64 / 120.0,
         }
+    }
+
+    /// Record the output scale read at startup (in 120ths). A stand-in until
+    /// the surface's own `preferred_scale` arrives, which still replaces it —
+    /// see [`Self::fractional_scale`].
+    pub(crate) fn seed_output_scale_120(scale_120: u32) {
+        OUTPUT_SCALE_SEED_120.store(scale_120, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Store the preferred scale from `wp_fractional_scale_v1` (in 120ths).
@@ -2079,11 +2115,21 @@ mod frame_in_flight_tests {
 mod scale_latch_tests {
     use super::*;
 
+    /// The scale lives in process-wide statics; tests that set it take turns.
+    static SCALE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn reset() -> std::sync::MutexGuard<'static, ()> {
+        let guard = SCALE.lock().unwrap_or_else(|e| e.into_inner());
+        DISPLAY_FRACTIONAL_SCALE_120.store(0, std::sync::atomic::Ordering::Relaxed);
+        OUTPUT_SCALE_SEED_120.store(0, std::sync::atomic::Ordering::Relaxed);
+        guard
+    }
+
     /// The compositor's opening `preferred_scale` is the one the process keeps:
     /// a later change must not move geometry under buffers that never re-raster.
     #[test]
     fn fractional_scale_ignores_later_changes() {
-        DISPLAY_FRACTIONAL_SCALE_120.store(0, std::sync::atomic::Ordering::Relaxed);
+        let _guard = reset();
 
         AppContext::set_fractional_scale_120(180); // 1.5x
         assert_eq!(AppContext::fractional_scale(), 1.5);
@@ -2094,5 +2140,19 @@ mod scale_latch_tests {
             1.5,
             "scale change should wait for a restart"
         );
+    }
+
+    /// The startup output scale stands in until the surface's preferred scale
+    /// arrives, and does not stop that one landing: on a 1.5x output the
+    /// integer `wl_output` scale is 2, and the preferred 1.5 must win.
+    #[test]
+    fn output_scale_seed_yields_to_preferred_scale() {
+        let _guard = reset();
+
+        AppContext::seed_output_scale_120(240);
+        assert_eq!(AppContext::fractional_scale(), 2.0);
+
+        AppContext::set_fractional_scale_120(180);
+        assert_eq!(AppContext::fractional_scale(), 1.5);
     }
 }

@@ -229,7 +229,7 @@ extended-description = """\
 Otto is a modern Wayland compositor built with Smithay and Skia.\
 Featuring a custom scene graph engine (laye-rs) for layout management,\
 multi-workspace support, and integrated screen sharing capabilities."""
-depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-client0, libwayland-egl1, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber"
+depends = "$auto, libdrm2, libudev1, libgbm1, libxkbcommon0, libegl1, libwayland-client0, libwayland-egl1, libinput10, libdbus-1-3, libsystemd0, libseat1, libpipewire-0.3-0, libfreetype6, libfontconfig1, libpixman-1-0, fonts-inter, wireplumber, xwayland"
 section = "x11"
 priority = "optional"
 # postinst/prerm create and remove the default icon theme's symlinks.
@@ -238,8 +238,9 @@ maintainer-scripts = "scripts/packaging/deb/"
 # H.264 encoder it falls back from, and the decoders otto-media-worker needs
 # to play a file in Peek — so dpkg-shlibdeps cannot see them.
 # Recommended, not required: the desktop works without them, but the RDP
-# bridge and Peek's video playback do not.
-recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, polkitd"
+# bridge and Peek's video playback do not. Without a colour emoji font the
+# emoji picker falls back to outline glyphs and tofu.
+recommends = "gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, polkitd, fonts-noto-color-emoji"
 # The background widgets' scripts and their titles' typeface. ewwii, which
 # draws them, is not packaged for Debian.
 suggests = "python3, fonts-libertinus"
@@ -426,6 +427,8 @@ gstreamer1-plugins-bad-free = "*"
 gstreamer1-libav = "*"
 pipewire-gstreamer = "*"
 polkit = "*"
+# Colour emoji in the emoji picker.
+google-noto-color-emoji-fonts = "*"
 
 # The background widgets' scripts. ewwii, which draws them, is not packaged
 # for Fedora.
@@ -455,6 +458,8 @@ findutils = "*"
 google-noto-sans-fonts = "*"
 rsms-inter-fonts = "*"
 wireplumber = "*"
+# X11 applications run through XWayland; Otto spawns it at startup.
+xorg-x11-server-Xwayland = "*"
 
 [package.metadata.aur]
 depends = [
@@ -476,9 +481,11 @@ depends = [
     "gstreamer",
     "gst-plugins-base-libs",
     "polkit",
+    "xorg-xwayland",
 ]
 optdepends = [
     "xdg-desktop-portal: Desktop integration",
+    "noto-fonts-emoji: colour emoji in the emoji picker",
     "fprintd: fingerprint unlock for otto-lock, otto-greeter and otto-authorize",
     "greetd: login manager otto --login hosts a greeter for",
     "gst-plugin-pipewire: otto-rdp video capture",
