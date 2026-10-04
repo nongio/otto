@@ -45,6 +45,20 @@ pub struct Device {
     /// something boosted it past normal.
     pub volume: u32,
     pub muted: bool,
+    /// Where on the device the sound goes or comes from — a laptop's one
+    /// analog device has its speakers and its headphone jack — leaving out
+    /// the ones with nothing plugged in.
+    pub ports: Vec<Port>,
+    /// The port in use, if the device has any.
+    pub active_port: Option<String>,
+}
+
+/// One connector or transducer on a device: "Speakers", "Headphones",
+/// "Internal Microphone".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Port {
+    pub name: String,
+    pub description: String,
 }
 
 /// Every device the server offers, and which one is the default each way.
@@ -144,6 +158,21 @@ struct RawDevice {
     volume: HashMap<String, RawVolume>,
     #[serde(default)]
     properties: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    ports: Vec<RawPort>,
+    #[serde(default)]
+    active_port: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawPort {
+    name: String,
+    #[serde(default)]
+    description: String,
+    /// "available", "not available" or "availability unknown". A jack that
+    /// cannot sense a plug says the last, and is kept.
+    #[serde(default)]
+    availability: String,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +212,23 @@ fn parse_devices(json: &str) -> Result<Vec<Device>, String> {
                 name: device.name,
                 volume: (sum / channels / NORM * 100.0).round() as u32,
                 muted: device.mute,
+                ports: device
+                    .ports
+                    .into_iter()
+                    .filter(|port| {
+                        port.availability != "not available"
+                            || device.active_port.as_ref() == Some(&port.name)
+                    })
+                    .map(|port| Port {
+                        description: if port.description.is_empty() {
+                            port.name.clone()
+                        } else {
+                            port.description
+                        },
+                        name: port.name,
+                    })
+                    .collect(),
+                active_port: device.active_port,
             }
         })
         .collect())
@@ -202,6 +248,11 @@ pub fn set_volume(direction: Direction, name: &str, percent: u32) -> Result<(), 
         &format!("{percent}%"),
     ])
     .map(drop)
+}
+
+/// Send `name`'s sound through `port`, or take it from there.
+pub fn set_port(direction: Direction, name: &str, port: &str) -> Result<(), String> {
+    run(&[&format!("set-{}-port", direction.noun()), name, port]).map(drop)
 }
 
 pub fn set_mute(direction: Direction, name: &str, muted: bool) -> Result<(), String> {
@@ -256,7 +307,12 @@ mod tests {
          "properties":{"device.class":"monitor"}},
         {"index":56,"name":"alsa_input.pci.analog-stereo","description":"Built-in Audio Analog Stereo","mute":true,
          "volume":{"front-left":{"value":26214},"front-right":{"value":39322}},
-         "properties":{"device.class":"sound","alsa.card":"0"}}
+         "properties":{"device.class":"sound","alsa.card":"0"},
+         "active_port":"analog-input-internal-mic",
+         "ports":[
+            {"name":"analog-input-internal-mic","description":"Internal Microphone","availability":"availability unknown"},
+            {"name":"analog-input-mic","description":"Microphone","availability":"not available"},
+            {"name":"analog-input-dock","description":"Dock Microphone","availability":"available"}]}
     ]"#;
 
     #[test]
@@ -272,6 +328,21 @@ mod tests {
     fn volume_is_the_mean_of_the_channels() {
         // 40 % and 60 %.
         assert_eq!(parse_devices(SOURCES).unwrap()[0].volume, 50);
+    }
+
+    #[test]
+    fn unplugged_ports_are_left_out() {
+        let device = &parse_devices(SOURCES).unwrap()[0];
+        let ports: Vec<_> = device
+            .ports
+            .iter()
+            .map(|p| p.description.as_str())
+            .collect();
+        assert_eq!(ports, ["Internal Microphone", "Dock Microphone"]);
+        assert_eq!(
+            device.active_port.as_deref(),
+            Some("analog-input-internal-mic")
+        );
     }
 
     #[test]

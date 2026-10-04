@@ -140,6 +140,7 @@ pub fn set_shown(shown: bool) {
 /// One change for the server.
 enum Write {
     Default(Direction, String),
+    Port(Direction, String, String),
     Volume(Direction, String, u32),
     Mute(Direction, String, bool),
 }
@@ -149,14 +150,16 @@ impl Write {
     fn key(&self) -> (u8, Direction) {
         match self {
             Write::Default(d, _) => (0, *d),
-            Write::Volume(d, _, _) => (1, *d),
-            Write::Mute(d, _, _) => (2, *d),
+            Write::Port(d, _, _) => (1, *d),
+            Write::Volume(d, _, _) => (2, *d),
+            Write::Mute(d, _, _) => (3, *d),
         }
     }
 
     fn run(self) -> Result<(), String> {
         match self {
             Write::Default(d, name) => pulse::set_default(d, &name),
+            Write::Port(d, name, port) => pulse::set_port(d, &name, &port),
             Write::Volume(d, name, percent) => pulse::set_volume(d, &name, percent),
             Write::Mute(d, name, muted) => pulse::set_mute(d, &name, muted),
         }
@@ -206,49 +209,127 @@ pub fn slot_ids() -> &'static [&'static str] {
     &[OUTPUT_DEVICE, INPUT_DEVICE]
 }
 
-/// The devices one of this module's pop-ups offers. `None` for any other.
+/// One thing a device pop-up offers: a device, and the port on it where it
+/// has more than one place for the sound to go.
+struct Endpoint {
+    device: String,
+    port: Option<String>,
+    label: String,
+}
+
+impl Endpoint {
+    /// The pop-up's value for it. A tab never appears in a device or port
+    /// name, which are identifiers.
+    fn value(&self) -> String {
+        match &self.port {
+            Some(port) => format!("{}\t{port}", self.device),
+            None => self.device.clone(),
+        }
+    }
+}
+
+/// Split a pop-up value back into device and port.
+fn parse_value(value: &str) -> (&str, Option<&str>) {
+    match value.split_once('\t') {
+        Some((device, port)) => (device, Some(port)),
+        None => (value, None),
+    }
+}
+
+/// Everything one direction's pop-up offers, in the server's order.
+///
+/// A port is named after itself — "Speakers", "Headphones" — and after its
+/// device too once there is more than one device to tell apart: a USB
+/// headset's "Headphones" is not the laptop's.
+fn endpoints(graph: &Graph, direction: Direction) -> Vec<Endpoint> {
+    let devices = graph.devices(direction);
+    let several = devices.len() > 1;
+    devices
+        .iter()
+        .flat_map(|device| {
+            if device.ports.is_empty() {
+                return vec![Endpoint {
+                    device: device.name.clone(),
+                    port: None,
+                    label: device.description.clone(),
+                }];
+            }
+            device
+                .ports
+                .iter()
+                .map(|port| Endpoint {
+                    device: device.name.clone(),
+                    port: Some(port.name.clone()),
+                    label: if several {
+                        format!("{} – {}", port.description, device.description)
+                    } else {
+                        port.description.clone()
+                    },
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The pop-up value for what plays or records now.
+fn current_value(graph: &Graph, direction: Direction) -> String {
+    match graph.default_device(direction) {
+        Some(device) => match &device.active_port {
+            Some(port) if !device.ports.is_empty() => format!("{}\t{port}", device.name),
+            _ => device.name.clone(),
+        },
+        None => String::new(),
+    }
+}
+
+/// The choices one of this module's pop-ups offers. `None` for any other.
 pub fn menu_choices(id: &str) -> Option<Vec<Choice>> {
     let direction = direction_of_device(id)?;
     let Snapshot::Ready(graph) = &*SNAPSHOT.read().unwrap() else {
         return Some(Vec::new());
     };
     Some(
-        graph
-            .devices(direction)
-            .iter()
-            .map(|device| Choice {
-                label: device.description.clone(),
-                value: device.name.clone(),
+        endpoints(graph, direction)
+            .into_iter()
+            .map(|endpoint| Choice {
+                value: endpoint.value(),
+                label: endpoint.label,
             })
             .collect(),
     )
 }
 
-/// What a device pop-up shows for the device `value` names.
+/// What a device pop-up shows for `value`.
 pub fn display(id: &str, value: &str) -> Option<String> {
     let direction = direction_of_device(id)?;
     let Snapshot::Ready(graph) = &*SNAPSHOT.read().unwrap() else {
-        return Some(value.to_string());
+        return Some(String::new());
     };
     Some(
-        graph
-            .devices(direction)
-            .iter()
-            .find(|device| device.name == value)
-            .map_or_else(|| value.to_string(), |device| device.description.clone()),
+        endpoints(graph, direction)
+            .into_iter()
+            .find(|endpoint| endpoint.value() == value)
+            .map_or_else(String::new, |endpoint| endpoint.label),
     )
 }
 
-/// A device was picked in one of this module's pop-ups. Whether `id` is one
-/// of them.
+/// A choice was picked in one of this module's pop-ups. Whether `id` is one
+/// of them. The device becomes the default, and the port the one it uses.
 pub fn choose(id: &str, value: &str) -> bool {
     let Some(direction) = direction_of_device(id) else {
         return false;
     };
+    let (device, port) = parse_value(value);
     if let Snapshot::Ready(graph) = &mut *SNAPSHOT.write().unwrap() {
-        graph.set_default_name(direction, value);
+        graph.set_default_name(direction, device);
+        if let (Some(port), Some(shown)) = (port, graph.default_device_mut(direction)) {
+            shown.active_port = Some(port.to_string());
+        }
     }
-    write(Write::Default(direction, value.to_string()));
+    write(Write::Default(direction, device.to_string()));
+    if let Some(port) = port {
+        write(Write::Port(direction, device.to_string(), port.to_string()));
+    }
     true
 }
 
@@ -311,12 +392,8 @@ fn device_rows(graph: &Graph, direction: Direction) -> Vec<Row> {
         Direction::Output => otto_kit::t!("settings-sound-output-device"),
         Direction::Input => otto_kit::t!("settings-sound-input-device"),
     };
-    let current = graph
-        .default_device(direction)
-        .map(|device| device.name.clone())
-        .unwrap_or_default();
     let mut rows = vec![bound(
-        Row::new(label, Control::Select(current)).inactive(devices.len() < 2),
+        Row::new(label, Control::Select(current_value(graph, direction))),
         device_id(direction),
     )];
 
@@ -393,7 +470,7 @@ pub fn build() -> Pane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pulse::Device;
+    use crate::pulse::{Device, Port};
 
     fn device(name: &str, volume: u32, muted: bool) -> Device {
         Device {
@@ -401,6 +478,8 @@ mod tests {
             description: format!("{name} speakers"),
             volume,
             muted,
+            ports: Vec::new(),
+            active_port: None,
         }
     }
 
@@ -413,22 +492,60 @@ mod tests {
         };
         let rows = device_rows(&graph, Direction::Output);
         assert!(matches!(&rows[0].control, Control::Select(name) if name == "b"));
-        assert!(!rows[0].inactive);
         // Boosted past normal, the slider sits at its end.
         assert!(matches!(&rows[1].control, Control::Slider { value, .. } if *value == 100.0));
         assert!(matches!(rows[2].control, Control::Toggle(true)));
     }
 
+    fn port(name: &str) -> Port {
+        Port {
+            name: name.to_lowercase(),
+            description: name.into(),
+        }
+    }
+
     #[test]
-    fn one_device_leaves_nothing_to_pick() {
+    fn one_device_offers_its_ports() {
+        let mut laptop = device("laptop", 40, false);
+        laptop.ports = vec![port("Speakers"), port("Headphones")];
+        laptop.active_port = Some("speakers".into());
         let graph = Graph {
-            inputs: vec![device("mic", 50, false)],
-            default_input: "mic".into(),
+            outputs: vec![laptop],
+            default_output: "laptop".into(),
             ..Default::default()
         };
-        let rows = device_rows(&graph, Direction::Input);
-        assert!(rows[0].inactive);
-        assert_eq!(rows[0].id, Some(INPUT_DEVICE));
+        let labels: Vec<_> = endpoints(&graph, Direction::Output)
+            .into_iter()
+            .map(|e| e.label)
+            .collect();
+        assert_eq!(labels, ["Speakers", "Headphones"]);
+        let rows = device_rows(&graph, Direction::Output);
+        assert!(!rows[0].inactive);
+        assert!(matches!(&rows[0].control, Control::Select(v) if v == "laptop\tspeakers"));
+    }
+
+    #[test]
+    fn several_devices_name_the_device_too() {
+        let mut laptop = device("laptop", 40, false);
+        laptop.ports = vec![port("Speakers")];
+        let graph = Graph {
+            outputs: vec![laptop, device("usb", 40, false)],
+            ..Default::default()
+        };
+        let labels: Vec<_> = endpoints(&graph, Direction::Output)
+            .into_iter()
+            .map(|e| e.label)
+            .collect();
+        assert_eq!(labels, ["Speakers – laptop speakers", "usb speakers"]);
+    }
+
+    #[test]
+    fn a_value_names_device_and_port() {
+        assert_eq!(
+            parse_value("laptop\tspeakers"),
+            ("laptop", Some("speakers"))
+        );
+        assert_eq!(parse_value("usb"), ("usb", None));
     }
 
     #[test]
