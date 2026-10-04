@@ -136,6 +136,10 @@ if [[ "$flavour" != rpm ]]; then
     done
 fi
 
+echo "== wallpaper =="
+# The shipped config names it as background_image.
+check /usr/share/otto/wallpaper.jpg
+
 echo "== WhiteSur icon theme =="
 for theme in WhiteSur WhiteSur-light WhiteSur-dark; do
     check "/usr/share/icons/$theme/index.theme"

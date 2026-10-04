@@ -89,9 +89,13 @@ and the bar and the launcher are told through the portal's
 ## Wallpaper
 
 ```toml
-background_image = "/usr/share/otto/background.jpg"
-background_color = "#2c2ca0"
+background_image = "/usr/share/otto/wallpaper.jpg"
+background_color = "#102E95"
 ```
+
+Otto's packages ship a wallpaper at `/usr/share/otto/wallpaper.jpg`, and the
+default configuration uses it. Point `background_image` at any other image to
+replace it.
 
 `background_image` is an absolute path to the image shown on the desktop.
 It is scaled to cover the screen, and decoded at the resolution of the largest

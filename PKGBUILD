@@ -92,6 +92,9 @@ package() {
     done
     install -Dm644 components/otto-files/resources/icons/hicolor/scalable/apps/otto-files.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/otto-files.svg"
 
+    # The default wallpaper, which the shipped config names.
+    install -Dm644 resources/wallpaper.jpg "$pkgdir/usr/share/otto/wallpaper.jpg"
+
     # WhiteSur, the default icon theme (GPL-3.0). Its symlinks come as a list
     # (see scripts/packaging/fetch-whitesur.sh); extracting it here makes
     # pacman own them like any other file.

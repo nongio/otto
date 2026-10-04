@@ -308,6 +308,8 @@ assets = [
     # includes, so it ships as an example to copy to /etc/pam.d/otto-lock
     # rather than as a config that would deny every unlock as installed.
     ["components/otto-lock/otto-lock.pam", "usr/share/doc/otto/otto-lock.pam.example", "644"],
+    # The default wallpaper, which the shipped config names.
+    ["resources/wallpaper.jpg", "usr/share/otto/wallpaper.jpg", "644"],
     # WhiteSur, the default icon theme (GPL-3.0), staged by
     # scripts/packaging/fetch-whitesur.sh: its regular files here, its
     # symlinks as a tar that postinst extracts (see that script for why).
@@ -375,6 +377,8 @@ assets = [
     { source = "target/release/xdg-desktop-portal-otto", dest = "/usr/libexec/xdg-desktop-portal-otto", mode = "755" },
     { source = "README.md", dest = "/usr/share/doc/otto/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/doc/otto/LICENSE", mode = "644", doc = true },
+    # The default wallpaper, which the shipped config names.
+    { source = "resources/wallpaper.jpg", dest = "/usr/share/otto/wallpaper.jpg", mode = "644" },
     # WhiteSur, the default icon theme (GPL-3.0): regular files here, the
     # symlinks as a list post_install_script extracts.
     { source = "target/whitesur/WhiteSur/**/*", dest = "/usr/share/icons/WhiteSur/", mode = "644" },

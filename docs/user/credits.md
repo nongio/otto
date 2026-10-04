@@ -40,5 +40,6 @@ Third-party applications appear in some images to show real windows on a real
 desktop. Their names and icons belong to their projects, and nothing here
 implies they endorse Otto.
 
-Otto's own wallpaper, `resources/background.jpg`, and everything else the
-project ships are covered by Otto's own licence.
+Otto's own wallpaper, `/usr/share/otto/wallpaper.jpg`, and everything else
+the project ships are covered by Otto's own licence, except the WhiteSur icon
+theme, which keeps its own (GPL-3.0).
