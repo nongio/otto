@@ -368,6 +368,28 @@ caused it.
 The window presents a list of panes and the selected pane's contents. The panes
 are:
 
+- **Account** — the first pane, and not Otto settings: who is logged in.
+  Picture, full name, account name and account type (Administrator or
+  Standard), then a Password group. The name and picture are the system's, and
+  are written through AccountsService (`SetRealName`, `SetIconFile`) — where
+  the greeter and the lock screen read them back from. A chosen picture is cut
+  to a centred 256-pixel square, written to `~/.face` and handed to the
+  service from there, so display managers that read `~/.face` agree; it is
+  shown round, as the login card shows it. Removing it clears both. Where
+  AccountsService is not running, the name and picture are shown but not
+  editable, and the name row says why.
+  The password is changed by running `passwd` on a thread of its own and
+  answering its prompts over a pipe — current password, then the new one
+  twice. A prompt is recognised by shape (output ending in a colon with no line
+  break), not wording, so the user's locale is kept and a refusal comes back
+  in their language. The three fields are masked, edited in password mode and
+  described to assistive technologies without a value. Change checks that all
+  are filled, that the new ones match and differ from the current one, before
+  running anything; the passwords leave the pane when the attempt starts and
+  are never passed as arguments. `passwd` stopping after the first answer is
+  reported as a wrong current password; any other refusal shows the quality
+  module's reason (`BAD PASSWORD: …`) or `passwd`'s own line. A fourth prompt —
+  a quality module asking again — is not answered.
 - **General** — the app switcher's display, the display language, which is
   what every part of Otto localises itself against, the renderer (see below)
   and where the configuration file is. The language requires a restart to take

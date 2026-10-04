@@ -23,6 +23,7 @@ pub fn draw(canvas: &Canvas, name: &str, cx: f32, cy: f32, size: f32, color: Col
     canvas.scale((size / 16.0, size / 16.0));
 
     match name {
+        "person" => person(canvas, &paint),
         "settings" => settings(canvas, &paint),
         "appearance" => appearance(canvas, &paint, color),
         "monitor" => monitor(canvas, &paint),
@@ -164,6 +165,14 @@ fn lock(canvas: &Canvas, paint: &Paint) {
     canvas.draw_rrect(RRect::new_rect_xy(body, 2.0, 2.0), paint);
     let shackle = Rect::from_ltrb(-3.5, -6.5, 3.5, 0.5);
     canvas.draw_arc(shackle, 180.0, 180.0, false, paint);
+}
+
+/// A head and shoulders inside a circle — the account.
+fn person(canvas: &Canvas, paint: &Paint) {
+    canvas.draw_circle((0.0, 0.0), 7.0, paint);
+    canvas.draw_circle((0.0, -2.0), 2.5, paint);
+    let shoulders = Rect::from_ltrb(-4.5, 2.0, 4.5, 10.0);
+    canvas.draw_arc(shoulders, 200.0, 140.0, false, paint);
 }
 
 /// A four-pointed spark.

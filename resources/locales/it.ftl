@@ -1905,3 +1905,32 @@ privacy-store-unavailable-detail = L’archivio dei permessi (xdg-permission-sto
 settings-pane-privacy = Privacy
 
 screencast-picker-remember = Ricorda per { $app }
+
+## Account pane
+
+settings-pane-account = Account
+settings-account-picture = Immagine
+settings-account-picture-detail = Mostrata nelle schermate di accesso e di blocco
+settings-account-choose-picture = Scegli un'immagine
+settings-account-picture-unreadable = Otto non riesce a leggere questo file come immagine
+settings-account-full-name = Nome completo
+settings-account-name = Nome account
+settings-account-type = Tipo di account
+settings-account-type-administrator = Amministratore
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Non modificabile qui: AccountsService non è in esecuzione
+settings-account-not-permitted = Il sistema non ha consentito questa modifica
+settings-group-password = Password
+settings-account-current-password = Password attuale
+settings-account-new-password = Nuova password
+settings-account-confirm-password = Conferma nuova password
+settings-account-change-password = Cambia password
+settings-account-change = Cambia
+settings-account-password-detail = Serve per accedere, sbloccare lo schermo e approvare le modifiche
+settings-account-password-changing = Modifica della password…
+settings-account-password-changed = Password modificata
+settings-account-password-missing = Inserisci la password attuale e una nuova
+settings-account-password-mismatch = Le nuove password non coincidono
+settings-account-password-same = La nuova password è uguale a quella attuale
+settings-account-password-wrong-current = La password attuale non è corretta
+settings-account-password-failed = Non è stato possibile cambiare la password

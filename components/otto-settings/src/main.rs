@@ -710,6 +710,7 @@ fn activate(held: view::Pressed, editing: &Arc<Mutex<Option<Editing>>>) {
         view::Pressed::Button { row, button } => {
             panes::displays::press(row, button);
             panes::general::press(row, button);
+            panes::account::press(row, button);
             panes::agents::press(row, button);
             panes::search::press(row, button);
             panes::desk::press(row, button);
@@ -790,6 +791,10 @@ fn apply(id: &str, value: settings_client::Value) {
     if panes::privacy::apply(id, &value) {
         return;
     }
+    // The account picture goes to AccountsService, not to a setting.
+    if panes::account::apply(id, &value) {
+        return;
+    }
     // The desk's icon size is in files.toml, not a setting.
     if panes::desk::apply(id, &value) {
         return;
@@ -835,8 +840,8 @@ fn open_file_picker(id: &'static str) {
     let spawned = std::thread::Builder::new()
         .name("file-picker".into())
         .spawn(move || {
-            // Wallpapers are the only file setting so far, so the filter is
-            // written here. When a second one appears this belongs on the row.
+            // Both file rows — the wallpaper and the account picture — take an
+            // image, so the filter is written here rather than on the row.
             let filters: &[(&str, &[&str])] = &[
                 (
                     "Images",
@@ -845,8 +850,12 @@ fn open_file_picker(id: &'static str) {
                 ("All Files", &["*"]),
             ];
 
-            match file_picker::open_file(otto_kit::t!("settings-choose-background-image"), filters)
-            {
+            let title = if id == panes::account::PICTURE_ID {
+                otto_kit::t!("settings-account-choose-picture")
+            } else {
+                otto_kit::t!("settings-choose-background-image")
+            };
+            match file_picker::open_file(title, filters) {
                 file_picker::Outcome::Chosen(paths) => {
                     if let Some(path) = paths.first() {
                         apply(
@@ -998,9 +1007,17 @@ fn describe_row(tree: &mut A11yTree, row: &model::Row, bounds: Rect) {
             tree.combo_box(focus, bounds, label, shown, false, true);
         }
         model::Control::Text(text) => {
-            tree.control(focus, bounds, Role::TextInput, true, |node| {
+            let role = if row.secret {
+                Role::PasswordInput
+            } else {
+                Role::TextInput
+            };
+            tree.control(focus, bounds, role, true, |node| {
                 node.set_label(label);
-                node.set_value(text.clone());
+                // A password field says it is one and never what it holds.
+                if !row.secret {
+                    node.set_value(text.clone());
+                }
                 describe(node);
             });
         }
@@ -1141,6 +1158,9 @@ fn commit_edit(editing: &Arc<Mutex<Option<Editing>>>) -> bool {
     };
     match edit.target {
         EditTarget::Setting(id) if agents::owns(id) => agents::commit_text(id, edit.input.value()),
+        EditTarget::Setting(id) if panes::account::owns(id) => {
+            panes::account::commit_text(id, edit.input.value())
+        }
         EditTarget::Setting(id) => apply(id, settings_client::text_for(id, edit.input.value())),
         // Trimmed because the compositor's trigger parser splits on `+` and
         // trims each part, so surrounding space is noise either way — better
@@ -1167,6 +1187,8 @@ fn start_edit(
 ) {
     let mut input =
         TextInput::new(value, text_input_style(dark)).with_size(width, widgets::CONTROL_H);
+    input.state.password =
+        matches!(target, EditTarget::Setting(id) if panes::account::is_secret(id));
     input.state.set_focused(true);
     input.on_pointer_down(offset_x, 1, false);
     *editing.lock().unwrap() = Some(Editing { target, input });
@@ -2302,6 +2324,7 @@ impl App for SettingsApp {
             | agents::take_service_dirty()
             | panes::search::take_dirty()
             | panes::desk::take_dirty()
+            | panes::account::take_dirty()
         {
             // Values, not chrome: only the pane has to be repainted.
             mark_pane_dirty(&self.pane_dirty);

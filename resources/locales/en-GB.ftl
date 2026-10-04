@@ -1961,3 +1961,32 @@ settings-pane-privacy = Privacy
 
 # A checkbox in the screen-sharing picker. { $app } is the app asking.
 screencast-picker-remember = Remember for { $app }
+
+## Account pane
+
+settings-pane-account = Account
+settings-account-picture = Picture
+settings-account-picture-detail = Shown on the login and lock screens
+settings-account-choose-picture = Choose a Picture
+settings-account-picture-unreadable = That file isn't an image Otto can read
+settings-account-full-name = Full name
+settings-account-name = Account name
+settings-account-type = Account type
+settings-account-type-administrator = Administrator
+settings-account-type-standard = Standard
+settings-account-no-accountsservice = Can't be changed here: AccountsService isn't running
+settings-account-not-permitted = The system didn't allow this change
+settings-group-password = Password
+settings-account-current-password = Current password
+settings-account-new-password = New password
+settings-account-confirm-password = Confirm new password
+settings-account-change-password = Change password
+settings-account-change = Change
+settings-account-password-detail = Used to log in, unlock the screen and approve changes
+settings-account-password-changing = Changing password…
+settings-account-password-changed = Password changed
+settings-account-password-missing = Type your current password and a new one
+settings-account-password-mismatch = The new passwords don't match
+settings-account-password-same = The new password is the same as the current one
+settings-account-password-wrong-current = The current password is wrong
+settings-account-password-failed = The password couldn't be changed

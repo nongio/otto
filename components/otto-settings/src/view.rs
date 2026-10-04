@@ -735,12 +735,17 @@ fn preview_image(path: &str) -> Option<skia_safe::Image> {
             std::cell::RefCell::new(HashMap::new());
     }
 
+    // Keyed by when the file last changed as well as where it is: a new
+    // account picture is written over the old one at the same path, and a
+    // cache keyed by path alone would keep showing the old face.
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let key = format!("{path}@{modified:?}");
     CACHE.with(|cache| {
-        if let Some(cached) = cache.borrow().get(path) {
+        if let Some(cached) = cache.borrow().get(&key) {
             return cached.clone();
         }
         let decoded = decode_preview(path);
-        cache.borrow_mut().insert(path.to_string(), decoded.clone());
+        cache.borrow_mut().insert(key, decoded.clone());
         decoded
     })
 }
@@ -1945,7 +1950,14 @@ impl Settings {
     fn render_preview(&self, canvas: &Canvas, row: &Row, path: &str, cx: f32, y: f32) {
         let image = preview_image(path);
         let box_rect = preview_box(path, cx, y);
-        let rrect = RRect::new_rect_xy(box_rect, 6.0, 6.0);
+        // A person's picture is shown the way the greeter and the lock screen
+        // show it: round.
+        let radius = if row.id == Some(crate::panes::account::PICTURE_ID) {
+            box_rect.width().min(box_rect.height()) / 2.0
+        } else {
+            6.0
+        };
+        let rrect = RRect::new_rect_xy(box_rect, radius, radius);
 
         canvas.save();
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
@@ -2381,6 +2393,13 @@ impl Settings {
                         input.render_at(canvas, field.width(), field.height());
                         canvas.restore();
                     }
+                    // A password field shows how much is in it, not what.
+                    None if row.secret => widgets::text_field(
+                        canvas,
+                        field,
+                        &"\u{2022}".repeat(value.chars().count()),
+                        &self.theme,
+                    ),
                     None => widgets::text_field(canvas, field, value, &self.theme),
                 }
             }
