@@ -25,6 +25,7 @@ mod appearance;
 #[cfg(feature = "pam")]
 pub mod pam;
 mod panel;
+pub mod power;
 pub mod reader;
 mod secret;
 mod user;

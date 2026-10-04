@@ -17,6 +17,7 @@
 //! ```
 
 use otto_auth_ui::pam::{Attempt, Event, Message, Outcome, Service};
+use otto_auth_ui::power::PowerRequest;
 use otto_auth_ui::{
     reader, Action, Appearance, Field, Finger, Panel, PowerAction, SecretInput, Status, User, View,
 };
@@ -231,6 +232,8 @@ struct Locker {
     attempt: Option<Attempt>,
     /// When the next attempt may start. See [`RETRY_INTERVAL`].
     retry_at: Option<std::time::Instant>,
+    /// A power button's request, until logind has answered it.
+    power_request: Option<PowerRequest>,
     /// Repaint until this instant, so the panel's transitions are seen through
     /// rather than left frozen at their first step.
     animating_until: Option<std::time::Instant>,
@@ -252,6 +255,7 @@ impl Locker {
             appearance: Appearance::load(),
             attempt: None,
             retry_at: None,
+            power_request: None,
             animating_until: None,
             painted_at: None,
             clock_minute: None,
@@ -548,56 +552,28 @@ impl Locker {
         }
     }
 
-    /// Suspend, restart or shut down through systemd.
+    /// Suspend, restart or shut down, through logind.
     ///
     /// Whether this is allowed from a locked session is polkit's call, not the
-    /// locker's; if it refuses, say so on the panel rather than failing mute.
+    /// locker's. The answer arrives in [`Locker::power_answered`]; a refusal
+    /// is said on the panel rather than failing mute.
     fn power(&mut self, action: PowerAction) {
-        // The verb is systemctl's, not the user's: it goes on the command
-        // line, and the panel gets a message keyed by the action instead.
-        let (verb, denied, failed) = match action {
-            PowerAction::Suspend => (
-                "suspend",
-                "lock-power-suspend-denied",
-                "lock-power-suspend-failed",
-            ),
-            PowerAction::Restart => (
-                "reboot",
-                "lock-power-restart-denied",
-                "lock-power-restart-failed",
-            ),
-            PowerAction::Shutdown => (
-                "poweroff",
-                "lock-power-shutdown-denied",
-                "lock-power-shutdown-failed",
-            ),
-        };
-        tracing::info!(verb, "power action requested");
-
-        // Captured rather than inherited: what systemd has to say about a
-        // refusal is the whole diagnosis, and on a lock screen there is no
-        // terminal for it to land in.
-        match std::process::Command::new("systemctl").arg(verb).output() {
-            Ok(output) if output.status.success() => {
-                tracing::info!(verb, "systemctl accepted");
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let reason = stderr.lines().next().unwrap_or("").trim().to_string();
-                tracing::warn!(verb, status = ?output.status, %stderr, "systemctl refused");
-                self.session.error = Some(if reason.is_empty() {
-                    otto_kit::t_owned!(denied)
-                } else {
-                    // systemd's own diagnosis, which says more than anything
-                    // here could; it comes back in the system's language.
-                    reason
-                });
-            }
-            Err(err) => {
-                tracing::warn!(verb, %err, "could not run systemctl");
-                self.session.error = Some(otto_kit::t_owned!(failed, error = err.to_string()));
-            }
+        if self.power_request.is_none() {
+            self.power_request = Some(PowerRequest::start(action));
         }
+    }
+
+    /// Take logind's answer to a power button, if it has given one. Returns
+    /// whether the panel needs redrawing.
+    fn power_answered(&mut self) -> bool {
+        let Some(answer) = self.power_request.as_ref().and_then(PowerRequest::poll) else {
+            return false;
+        };
+        let action = self.power_request.take().expect("polled above").action();
+        if let Err(err) = answer {
+            self.session.error = Some(err.line(action, "lock"));
+        }
+        true
     }
 
     /// Push the current state into every panel and paint.
@@ -739,7 +715,7 @@ impl App for Locker {
     fn on_update(&mut self, ctx: &AppContext) {
         self.track_outputs(ctx);
 
-        if self.pump() || self.tick() {
+        if self.pump() | self.power_answered() || self.tick() {
             self.draw();
             return;
         }

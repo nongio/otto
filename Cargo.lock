@@ -5197,6 +5197,7 @@ dependencies = [
  "taffy",
  "toml 0.8.23",
  "tracing",
+ "zbus 4.4.0",
  "zeroize",
 ]
 

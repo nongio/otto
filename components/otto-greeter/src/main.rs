@@ -15,6 +15,7 @@ mod greetd;
 mod session;
 
 use greetd::{AuthMessageType, Client, Request, Response};
+use otto_auth_ui::power::PowerRequest;
 use otto_auth_ui::{
     reader, Action, Appearance, Field, Finger, Panel, PowerAction, SecretInput, Status, User, View,
 };
@@ -150,6 +151,8 @@ struct Greeter {
     /// overnight otherwise keeps the time it appeared at — the clock draws
     /// from a closure the engine records once and replays.
     clock_minute: Option<i64>,
+    /// A power button's request, until logind has answered it.
+    power_request: Option<PowerRequest>,
 }
 
 impl Greeter {
@@ -195,6 +198,7 @@ impl Greeter {
             sessions,
             session_index,
             clock_minute: None,
+            power_request: None,
         }
     }
 
@@ -753,42 +757,28 @@ impl Greeter {
         }
     }
 
-    /// Suspend, restart or shut down through systemd.
+    /// Suspend, restart or shut down, through logind.
     ///
     /// Whether an unprivileged greeter may do this is polkit's call, not the
-    /// greeter's; if it refuses, say so on the panel rather than failing mute.
+    /// greeter's. The answer arrives in [`Greeter::power_answered`]; a refusal
+    /// is said on the panel rather than failing mute.
     fn power(&mut self, action: PowerAction) {
-        // The verb is systemctl's, not the user's: it goes on the command
-        // line, and the panel gets a message keyed by the action instead.
-        let (verb, denied, failed) = match action {
-            PowerAction::Suspend => (
-                "suspend",
-                "greeter-power-suspend-denied",
-                "greeter-power-suspend-failed",
-            ),
-            PowerAction::Restart => (
-                "reboot",
-                "greeter-power-restart-denied",
-                "greeter-power-restart-failed",
-            ),
-            PowerAction::Shutdown => (
-                "poweroff",
-                "greeter-power-shutdown-denied",
-                "greeter-power-shutdown-failed",
-            ),
-        };
-
-        match std::process::Command::new("systemctl").arg(verb).status() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                tracing::warn!(verb, ?status, "systemctl refused");
-                self.error = Some(otto_kit::t_owned!(denied));
-            }
-            Err(err) => {
-                tracing::warn!(verb, %err, "could not run systemctl");
-                self.error = Some(otto_kit::t_owned!(failed));
-            }
+        if self.power_request.is_none() {
+            self.power_request = Some(PowerRequest::start(action));
         }
+    }
+
+    /// Take logind's answer to a power button, if it has given one. Returns
+    /// whether the panel needs redrawing.
+    fn power_answered(&mut self) -> bool {
+        let Some(answer) = self.power_request.as_ref().and_then(PowerRequest::poll) else {
+            return false;
+        };
+        let action = self.power_request.take().expect("polled above").action();
+        if let Err(err) = answer {
+            self.error = Some(err.line(action, "greeter"));
+        }
+        true
     }
 }
 
@@ -849,7 +839,7 @@ impl App for Greeter {
     fn on_update(&mut self, _ctx: &AppContext) {
         // Collect anything greetd has said since the last pass. The socket is
         // in the loop's poll set, so this runs when it has something to say.
-        if self.pump() || self.tick() {
+        if self.pump() | self.power_answered() || self.tick() {
             self.draw();
             return;
         }
