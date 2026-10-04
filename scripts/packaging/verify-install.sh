@@ -205,6 +205,15 @@ for d in /usr/share/wayland-sessions/otto.desktop \
     echo "  ok  $d -> $exe"
 done
 
+echo "== runtime dependencies =="
+# Otto spawns Xwayland at startup for X11 applications; every package
+# declares it, so its absence means the dependency was dropped.
+if command -v Xwayland >/dev/null; then
+    echo "  ok  Xwayland"
+else
+    echo "MISSING: Xwayland not on PATH (declared dependency not installed)"; fail=1
+fi
+
 echo "== shared libraries resolve =="
 # The real dependency test. A package can declare every dependency it likes;
 # what matters is whether the dynamic loader finds them on a machine that has

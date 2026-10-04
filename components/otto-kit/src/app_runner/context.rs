@@ -220,8 +220,11 @@ static RENDERER_EXIT_FLAG: LazyLock<std::sync::atomic::AtomicBool> =
 /// iteration, after flushing whatever the app asked for last.
 static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// -- Display scale factor (updated by compositor, default 1) --
+// -- Display scale factor (updated by compositor, default 2) --
 
+/// Starts at 2, the buffer scale every otto-kit surface renders at, so icons
+/// and images rasterised by it stay crisp in those buffers. SCTK only reports
+/// a scale that differs from 1, so on a 1x output this is never updated.
 static DISPLAY_SCALE_FACTOR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2);
 
 /// Whether [`AppContext::set_scale_factor`] has already taken a value. The
@@ -393,7 +396,11 @@ impl<'a> AppContext<'a> {
     }
 
     /// Returns the current display scale factor (updated by the compositor).
-    /// Defaults to 1 if no scale_factor_changed event has been received yet.
+    ///
+    /// A rasterisation hint, not geometry: it is 2 — the buffer scale otto-kit
+    /// surfaces render at — until a `scale_factor_changed` event arrives, and
+    /// SCTK never sends one on a 1x output. Geometry in physical pixels uses
+    /// [`Self::fractional_scale`].
     pub fn scale_factor() -> i32 {
         DISPLAY_SCALE_FACTOR.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -421,9 +428,18 @@ impl<'a> AppContext<'a> {
     /// move the geometry out from under a buffer that stayed put — the panel
     /// keeps its old pixels at a new size. A scale change takes effect on the
     /// next restart, which is how the compositor-side chrome treats it too.
+    ///
+    /// Until the compositor has reported a scale this is 1, not the integer
+    /// default of 2: that one is a buffer scale, and sizing geometry by it
+    /// doubles every panel on a 1x output. The preferred scale lands after a
+    /// surface's first frames, so geometry set before then must be re-applied
+    /// once this changes.
     pub fn fractional_scale() -> f64 {
         match DISPLAY_FRACTIONAL_SCALE_120.load(std::sync::atomic::Ordering::Relaxed) {
-            0 => Self::scale_factor().max(1) as f64,
+            0 if SCALE_FACTOR_LATCHED.load(std::sync::atomic::Ordering::Relaxed) => {
+                Self::scale_factor().max(1) as f64
+            }
+            0 => 1.0,
             n => n as f64 / 120.0,
         }
     }

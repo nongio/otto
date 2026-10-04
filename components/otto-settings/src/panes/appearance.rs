@@ -116,7 +116,7 @@ pub fn build() -> Pane {
                 vec![
                     Row::new(
                         otto_kit::t!("settings-cursor-theme"),
-                        Control::Select("Notwaita-Black".into()),
+                        Control::Select("Otto-MacTahoe".into()),
                     )
                     .id("cursor_theme"),
                     Row::new(

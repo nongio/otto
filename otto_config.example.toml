@@ -437,10 +437,11 @@ autohide = false
 # The effect intensity is controlled by genie_scale and genie_span above.
 magnification = true
 
-# Pinned apps, by desktop file id. An id with no desktop file installed is
-# skipped with a warning, so listing apps you may not have is harmless. The
-# default names the usual GNOME and KDE apps for each job, so a system shows
-# whichever of them it has.
+# Pinned apps, by desktop file id, in dock order. An id with no desktop file
+# installed is skipped (one info line in the log names them), so listing apps
+# you may not have is harmless. The default names the usual GNOME and KDE apps
+# for each job, and each packaging of a browser (a Snap's id is
+# `<snap>_<app>.desktop`), so a system shows whichever of them it has.
 bookmarks = [
   { desktop_id = "otto-files.desktop" },
   { desktop_id = "otto-settings.desktop" },
@@ -449,8 +450,11 @@ bookmarks = [
   { desktop_id = "com.mitchellh.ghostty.desktop" },
   { desktop_id = "terminator.desktop" },
   { desktop_id = "firefox.desktop" },
+  { desktop_id = "firefox_firefox.desktop" },
   { desktop_id = "firefox-esr.desktop" },
   { desktop_id = "chromium.desktop" },
+  { desktop_id = "chromium_chromium.desktop" },
+  { desktop_id = "google-chrome.desktop" },
   { desktop_id = "org.gnome.TextEditor.desktop" },
   { desktop_id = "gvim.desktop" },
   { desktop_id = "org.gnome.Calculator.desktop" },

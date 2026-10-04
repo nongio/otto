@@ -64,7 +64,7 @@ busctl --user call org.otto.Settings /org/otto/Settings org.otto.Settings Set sv
 | `desk.enabled` | bool | live | `false` | `true`, `false` | `b true` | The files in your Desktop folder, behind the windows. |
 | `desktop.widget` | enum | live | `none` | `none`, `calendar`, `cross_pad`, `grid_pad`, plus the theme's own windows | `s "calendar"` | A full-screen page drawn over the wallpaper, behind the windows. Needs ewwii. |
 | `font_family` | string | restart | `Inter` | free text | `s "Cantarell"` | Font family used by Otto's own interface. |
-| `cursor_theme` | string | live | `Notwaita-Black` | free text | `s "Adwaita"` | Name of the XCursor theme. |
+| `cursor_theme` | string | live | `Otto-MacTahoe` | free text | `s "Adwaita"` | Name of the XCursor theme. |
 | `cursor_size` | int | live | `24` | 16 – 96, step 8 | `i 32` | Cursor size in logical pixels. |
 | `icon_theme` | string | live | `""` (empty) | free text | `s "Papirus"` | Name of the icon theme. Empty auto-detects. |
 | `gtk_theme` | string | restart | `""` (empty) | free text | `s "Adwaita-dark"` | GTK theme name handed to clients. Empty auto-detects. |

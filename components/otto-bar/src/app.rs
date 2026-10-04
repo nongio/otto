@@ -95,6 +95,11 @@ pub struct TopBarApp {
     right: RightPanel,
     last_left_width: f32,
     last_right_width: f32,
+    /// Width and fractional scale each panel's surface-style size was last set
+    /// for. The scale is a guess until the compositor's preferred scale lands,
+    /// a few frames in, so a change in either re-applies the size.
+    left_style_size: Option<(f32, f64)>,
+    right_style_size: Option<(f32, f64)>,
     last_tray_gen: u64,
     last_focus_gen: u64,
     last_appmenu_gen: u64,
@@ -127,6 +132,8 @@ impl TopBarApp {
             right: RightPanel::new(),
             last_left_width: 0.0,
             last_right_width: 0.0,
+            left_style_size: None,
+            right_style_size: None,
             last_tray_gen: 0,
             last_focus_gen: 0,
             last_appmenu_gen: 0,
@@ -187,7 +194,7 @@ impl TopBarApp {
         style.set_contents_gravity(gravity);
     }
 
-    fn animate_right_size(surface: &LayerShellSurface, width: f32, height: f32) {
+    fn animate_right_size(surface: &LayerShellSurface, width: f32, height: f32, scale: f64) {
         let Some(style) = surface.base_surface().surface_style() else {
             return;
         };
@@ -206,7 +213,6 @@ impl TopBarApp {
         // output's fractional scale — the integer buffer scale is 2 on a 1.5x
         // output and would size the panel past its exclusive zone, over the
         // maximized window below.
-        let scale = AppContext::fractional_scale();
         style.set_size(width as f64 * scale, height as f64 * scale);
 
         txn.commit();
@@ -221,9 +227,11 @@ impl TopBarApp {
         if (target - self.last_left_width).abs() >= 1.0 {
             self.last_left_width = target;
             surface.set_size(target.ceil() as u32, self.left.height as u32);
-            if animate {
-                Self::animate_right_size(surface, target, self.left.height);
-            }
+        }
+        if animate && style_size_stale(self.left_style_size, target) {
+            let scale = AppContext::fractional_scale();
+            Self::animate_right_size(surface, target, self.left.height, scale);
+            self.left_style_size = Some((target, scale));
         }
         self.left.width = target;
         self.redraw_left();
@@ -238,9 +246,11 @@ impl TopBarApp {
         if (target - self.last_right_width).abs() >= 1.0 {
             self.last_right_width = target;
             surface.set_size(target.ceil() as u32, self.right.height as u32);
-            if animate {
-                Self::animate_right_size(surface, target, self.right.height);
-            }
+        }
+        if animate && style_size_stale(self.right_style_size, target) {
+            let scale = AppContext::fractional_scale();
+            Self::animate_right_size(surface, target, self.right.height, scale);
+            self.right_style_size = Some((target, scale));
         }
         self.right.width = target;
         self.redraw_right();
@@ -1338,8 +1348,20 @@ impl App for TopBarApp {
             }
         }
 
+        // The compositor's preferred scale arrives after the panels were first
+        // sized, so a size set on the guess has to be redone in its terms.
+        if self.right_surface.is_some()
+            && style_size_stale(self.right_style_size, self.last_right_width)
+        {
+            dirty = true;
+        }
         if dirty {
             self.update_right_panel(true);
+        }
+        if self.left_surface.is_some()
+            && style_size_stale(self.left_style_size, self.last_left_width)
+        {
+            self.update_left_panel(true);
         }
 
         // Check if focused app changed
@@ -1439,6 +1461,14 @@ impl App for TopBarApp {
 
 /// The battery's state in words: the menu's first line and what a screen
 /// reader calls the indicator.
+/// Whether a panel's surface-style size, last set for `applied` (width and
+/// scale), needs setting again for `width` at the current fractional scale.
+fn style_size_stale(applied: Option<(f32, f64)>, width: f32) -> bool {
+    applied.is_none_or(|(w, scale)| {
+        (width - w).abs() >= 1.0 || scale != AppContext::fractional_scale()
+    })
+}
+
 fn battery_label() -> String {
     let battery = crate::power::battery();
     let percent = battery.percentage.round();
