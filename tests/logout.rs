@@ -73,27 +73,63 @@ mod logout_tests {
         handle.stop();
     }
 
-    #[test]
-    #[serial]
-    fn a_save_prompt_stops_the_logout() {
-        let handle = HeadlessHandle::start(HeadlessConfig::default());
-        let mut editor = connect(&handle);
+    /// A session with one editor window, the logout under way, and the
+    /// editor's "save changes?" prompt open in answer to the close. The
+    /// prompt comes from its own connection so the test can close it alone,
+    /// as the editor does when the person answers it.
+    fn editor_asking_to_save(handle: &HeadlessHandle) -> (TestClient, TestClient) {
+        let mut editor = connect(handle);
         let document = editor.create_toplevel("document", 400, 300);
         let _ = editor.roundtrip();
         handle.settle(300);
 
-        logout(&handle);
+        logout(handle);
         let _ = editor.roundtrip();
         assert!(document.lock().unwrap().closed);
 
-        // The editor answers the close with a "save changes?" dialog.
-        let _prompt = editor.create_child_toplevel("Save changes?", &document, 300, 120);
-        let _ = editor.roundtrip();
+        let mut prompt = connect(handle);
+        let _ = prompt.create_toplevel("Save changes?", 300, 120);
+        let _ = prompt.roundtrip();
         handle.wait(DECIDED);
-        assert!(handle.is_running(), "the logout stands down for the prompt");
+        (editor, prompt)
+    }
 
-        // The prompt is answered and the editor quits. Nothing ends the
-        // session until the person logs out again, and then it does.
+    #[test]
+    #[serial]
+    fn saving_at_the_prompt_finishes_the_logout() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let (editor, prompt) = editor_asking_to_save(&handle);
+
+        // However long the person takes to answer, the logout waits.
+        handle.wait(DECIDED * 2);
+        assert!(handle.is_running(), "the logout waits for the answer");
+
+        // Saved: the prompt goes, then the editor.
+        drop(prompt);
+        handle.wait(DECIDED);
+        assert!(handle.is_running(), "the editor is still closing");
+        drop(editor);
+        handle.wait(DECIDED);
+        assert!(
+            !handle.is_running(),
+            "every window closed, so the session ends"
+        );
+        handle.stop();
+    }
+
+    #[test]
+    #[serial]
+    fn cancelling_at_the_prompt_stands_the_logout_down() {
+        let handle = HeadlessHandle::start(HeadlessConfig::default());
+        let (editor, prompt) = editor_asking_to_save(&handle);
+
+        // Cancelled: the prompt goes and the editor stays.
+        drop(prompt);
+        handle.wait(Duration::from_secs(4));
+        assert!(handle.is_running());
+
+        // Stood down, so the editor quitting later does not end the session;
+        // logging out again does.
         drop(editor);
         handle.wait(DECIDED);
         assert!(handle.is_running(), "a stood-down logout does not resume");
