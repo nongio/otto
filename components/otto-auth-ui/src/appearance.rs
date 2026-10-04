@@ -65,16 +65,7 @@ impl Appearance {
 
     /// System config first, so the user's overrides it.
     fn config_paths() -> Vec<PathBuf> {
-        let mut paths = vec![PathBuf::from("/etc/otto/config.toml")];
-
-        let config_home = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-        if let Some(dir) = config_home {
-            paths.push(dir.join("otto").join("config.toml"));
-        }
-
-        paths
+        otto_kit::xdg::otto_config_paths("config.toml")
     }
 
     fn apply(&mut self, config: ConfigFile) {

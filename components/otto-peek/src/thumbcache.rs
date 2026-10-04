@@ -108,11 +108,7 @@ impl Size {
 
 /// Where the shared cache lives, honouring `XDG_CACHE_HOME`.
 fn cache_root() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_CACHE_HOME") {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(std::env::var_os("HOME")?).join(".cache"),
-    };
-    Some(base.join("thumbnails"))
+    Some(otto_kit::xdg::cache_home()?.join("thumbnails"))
 }
 
 /// A file's canonical URI, as the standard hashes it: GLib's

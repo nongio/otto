@@ -329,45 +329,20 @@ fn list_paths(desktops: &[String]) -> Vec<PathBuf> {
         .collect();
 
     let mut paths = Vec::new();
-    let mut config_dirs: Vec<PathBuf> = config_home().into_iter().collect();
-    config_dirs.extend(split_dirs("XDG_CONFIG_DIRS", "/etc/xdg"));
+    let mut config_dirs: Vec<PathBuf> = crate::xdg::config_home().into_iter().collect();
+    config_dirs.extend(crate::xdg::config_dirs());
     for dir in &config_dirs {
         paths.extend(names.iter().map(|name| dir.join(name)));
     }
 
-    let mut data_dirs: Vec<PathBuf> = data_home().into_iter().collect();
-    data_dirs.extend(split_dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
+    let mut data_dirs: Vec<PathBuf> = crate::xdg::data_home().into_iter().collect();
+    data_dirs.extend(crate::xdg::data_dirs());
     for dir in &data_dirs {
         let dir = dir.join("applications");
         paths.extend(names.iter().map(|name| dir.join(name)));
         paths.push(dir.join("defaults.list"));
     }
     paths
-}
-
-fn config_home() -> Option<PathBuf> {
-    non_empty_var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| non_empty_var("HOME").map(|home| Path::new(&home).join(".config")))
-}
-
-fn data_home() -> Option<PathBuf> {
-    non_empty_var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| non_empty_var("HOME").map(|home| Path::new(&home).join(".local/share")))
-}
-
-fn split_dirs(var: &str, fallback: &str) -> Vec<PathBuf> {
-    non_empty_var(var)
-        .unwrap_or_else(|| fallback.to_string())
-        .split(':')
-        .filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
-        .collect()
-}
-
-fn non_empty_var(var: &str) -> Option<String> {
-    std::env::var(var).ok().filter(|value| !value.is_empty())
 }
 
 /// Parse one `mimeapps.list` (or `defaults.list`) body.
@@ -421,7 +396,7 @@ fn parse_list(text: &str) -> ListFile {
 /// (a dotfiles manager's), the file it points to is the one rewritten, so the
 /// link survives.
 pub fn set_default(mime: &str, app_id: &str) -> io::Result<()> {
-    let dir = config_home()
+    let dir = crate::xdg::config_home()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no config directory"))?;
     std::fs::create_dir_all(&dir)?;
     let link = dir.join("mimeapps.list");
@@ -602,7 +577,7 @@ pub fn open(app: &App, paths: &[PathBuf]) -> Result<(), OpenError> {
 /// `$TERMINAL` if the session names one, then the freedesktop terminal
 /// launcher, then the first common terminal installed.
 pub fn terminal_command() -> Vec<String> {
-    if let Some(terminal) = non_empty_var("TERMINAL") {
+    if let Some(terminal) = std::env::var("TERMINAL").ok().filter(|t| !t.is_empty()) {
         return vec![terminal, "-e".to_string()];
     }
     if program_exists("xdg-terminal-exec") {

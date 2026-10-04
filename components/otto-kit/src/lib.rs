@@ -46,6 +46,7 @@ pub mod trash;
 pub mod typography;
 pub mod uri;
 pub mod utils;
+pub mod xdg;
 
 // Re-export commonly used items
 pub use common::Renderable;

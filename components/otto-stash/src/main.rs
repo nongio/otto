@@ -1024,7 +1024,7 @@ impl State {
 
 /// Where stashed things are written: the user's runtime directory.
 fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from)
+    otto_kit::xdg::runtime_dir().unwrap_or_else(std::env::temp_dir)
 }
 
 /// Open Ask. It shows what is stashed, following it over the bus;

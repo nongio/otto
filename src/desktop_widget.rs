@@ -270,11 +270,7 @@ fn xdg_data_dirs() -> Vec<PathBuf> {
 
 /// Where the prepared theme goes: `$XDG_CACHE_HOME/otto/widgets/ewwii`.
 fn prepared_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_CACHE_HOME")
-        .filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
-        .map(|dir| dir.join(THEME_DIR))
+    Some(otto_kit::xdg::cache_home()?.join(THEME_DIR))
 }
 
 /// Whether the files at `a` and `b` both exist and hold the same bytes.

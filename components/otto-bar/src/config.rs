@@ -324,20 +324,8 @@ fn number(value: &toml::Value) -> Option<f64> {
 
 fn load_config() -> TopbarConfig {
     // Search order: /etc/otto/otto-bar.toml → ~/.config/otto/otto-bar.toml → ./otto-bar.toml
-    let candidates: Vec<std::path::PathBuf> = {
-        let mut v = Vec::new();
-        v.push(std::path::PathBuf::from("/etc/otto/otto-bar.toml"));
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
-            })
-        {
-            v.push(xdg.join("otto").join("otto-bar.toml"));
-        }
-        v.push(std::path::PathBuf::from("otto-bar.toml"));
-        v
-    };
+    let mut candidates = otto_kit::xdg::otto_config_paths("otto-bar.toml");
+    candidates.push(std::path::PathBuf::from("otto-bar.toml"));
 
     let mut cfg = TopbarConfig::default();
 

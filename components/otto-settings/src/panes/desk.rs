@@ -100,20 +100,13 @@ pub fn take_dirty() -> bool {
     DIRTY.swap(false, Ordering::Relaxed)
 }
 
-/// `~/.config/otto/files.toml`, where the desk reads its own settings.
+/// `~/.config/otto/files.toml`, where the desk reads its own settings —
+/// the file otto-files' `places_config::config_path` names.
 fn config_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home().map(|home| home.join(".config")))?;
-    Some(base.join("otto").join("files.toml"))
+    otto_kit::xdg::otto_config_file("files.toml")
 }
 
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-}
+use otto_kit::xdg::home;
 
 /// Read the parts of `text`'s `[desk]` section this group shows.
 fn read_desk(text: &str) -> DeskFile {

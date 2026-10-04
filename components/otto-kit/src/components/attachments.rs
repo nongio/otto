@@ -120,7 +120,7 @@ impl Attachment {
 
 /// otto-stash's directory: [`STASH_DIR`] in the runtime directory.
 pub fn stash_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR").map(|runtime| PathBuf::from(runtime).join(STASH_DIR))
+    crate::xdg::runtime_dir().map(|runtime| runtime.join(STASH_DIR))
 }
 
 /// How a list is laid out.

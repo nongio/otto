@@ -214,20 +214,14 @@ impl SidebarConfig {
     }
 }
 
+/// `~/.config/otto/files.toml`. otto-settings' desk pane edits the same
+/// file.
 pub(crate) fn config_path() -> Option<PathBuf> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home_dir().map(|home| home.join(".config")))?;
-    Some(base.join("otto").join("files.toml"))
+    otto_kit::xdg::otto_config_file("files.toml")
 }
 
 pub(crate) fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
+    otto_kit::xdg::home()
 }
 
 /// `~/dev` and `$HOME/dev` both mean the same folder to the person writing

@@ -17,7 +17,7 @@
 //! A theme is only taken if it is actually installed. Any otto-kit app gets the
 //! result through `current_icon_theme()`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 use zbus::zvariant::{OwnedValue, Value};
 
@@ -161,7 +161,7 @@ async fn run_watcher() -> Result<(), zbus::Error> {
 
 /// The theme the running desktop wrote down for itself, if it did.
 fn desktop_file_theme() -> Option<String> {
-    let config = config_home()?;
+    let config = crate::xdg::config_home()?;
     let kde = std::env::var("XDG_CURRENT_DESKTOP")
         .map(|desktops| desktops.split(':').any(|d| d.eq_ignore_ascii_case("KDE")))
         .unwrap_or(false);
@@ -195,13 +195,6 @@ fn installed_default_theme() -> Option<String> {
         .map(str::to_string)
 }
 
-fn config_home() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-}
-
 /// Whether a theme called `name` has an `index.theme` anywhere icons are
 /// looked for.
 fn is_installed(name: &str) -> bool {
@@ -209,24 +202,11 @@ fn is_installed(name: &str) -> bool {
         return false;
     }
     let mut roots: Vec<PathBuf> = Vec::new();
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = crate::xdg::home() {
         roots.push(home.join(".icons"));
     }
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    roots.extend(data_home.map(|d| d.join("icons")));
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .ok()
-        .filter(|dirs| !dirs.is_empty())
-        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
-    roots.extend(
-        data_dirs
-            .split(':')
-            .filter(|d| !d.is_empty())
-            .map(|d| Path::new(d).join("icons")),
-    );
+    roots.extend(crate::xdg::data_home().map(|d| d.join("icons")));
+    roots.extend(crate::xdg::data_dirs().iter().map(|d| d.join("icons")));
     roots
         .iter()
         .any(|root| root.join(name).join("index.theme").is_file())

@@ -11,12 +11,7 @@ use crate::fs::{first_free_name, move_entry};
 /// `$XDG_DATA_HOME/Trash`, falling back to `~/.local/share/Trash`: the
 /// "home trashcan" the freedesktop Trash spec describes.
 pub fn home_trash_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(dir).join("Trash"));
-    }
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(|h| PathBuf::from(h).join(".local/share/Trash"))
+    Some(crate::xdg::data_home()?.join("Trash"))
 }
 
 /// Move `source` into the trash can at `trash`, with its sidecar.
