@@ -61,6 +61,7 @@ install -m644 LICENSE                  "$tmpdir/$PKGDIR/LICENSE"
 install -m644 README.md                "$tmpdir/$PKGDIR/README.md"
 install -m644 otto_config.example.toml "$tmpdir/$PKGDIR/otto_config.example.toml"
 install -Dm755 resources/bin/otto-look "$tmpdir/$PKGDIR/resources/bin/otto-look"
+install -Dm644 resources/wallpaper.jpg  "$tmpdir/$PKGDIR/resources/wallpaper.jpg"
 
 # Desktop entries. otto-trash.desktop is the Trash window — otto-files behind
 # its own entry, so it gets its own icon in the dock and the applications
@@ -105,6 +106,14 @@ while IFS= read -r f; do
     if [ -x "$f" ]; then m=755; else m=644; fi
     install -D -m$m "$f" "$tmpdir/$PKGDIR/$f"
 done < <(find resources/widgets -type f)
+
+# The default icon theme, Otto-MacTahoe: the PKGBUILDs copy the themes and
+# extract their symlinks from the links list into the package.
+scripts/packaging/fetch-icon-theme.sh
+mkdir -p "$tmpdir/$PKGDIR/icon-theme"
+cp -a target/icon-theme/Otto-MacTahoe target/icon-theme/Otto-MacTahoe-light \
+      target/icon-theme/Otto-MacTahoe-dark target/icon-theme/links-*.tar.gz \
+      target/icon-theme/COPYING target/icon-theme/SOURCE "$tmpdir/$PKGDIR/icon-theme/"
 
 install -m644 PKGBUILD-git "$tmpdir/$PKGDIR/PKGBUILD-git"
 

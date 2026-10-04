@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+# The default icon theme's symlinks; see resources/icon-theme-links. The
+# abort-* cases are dpkg rolling back a removal or upgrade that failed after
+# prerm had already removed them.
+case "$1" in
+    configure|abort-remove|abort-deconfigure|abort-upgrade)
+        /usr/lib/otto/icon-theme-links install
+        ;;
+esac
