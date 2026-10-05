@@ -557,7 +557,12 @@ impl DockView {
             });
             // The Trash's icon is an override rather than the desktop entry's
             // own, so it is not in the model and has to be re-read separately.
-            dock.set_trash_full(crate::workspaces::trash::has_content());
+            // Off the runtime's workers: it reads the mount table and looks
+            // into every can.
+            let full = tokio::task::spawn_blocking(crate::workspaces::trash::has_content)
+                .await
+                .unwrap_or(false);
+            dock.set_trash_full(full);
         });
     }
 

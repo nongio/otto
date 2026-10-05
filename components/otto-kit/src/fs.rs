@@ -83,6 +83,12 @@ pub fn copy_entry(source: &Path, target: &Path) -> Result<(), String> {
 
 /// Remove a file, a symlink or a whole directory tree.
 ///
+/// Only the last component of `path` is checked for being a symlink: a
+/// directory on the way that is one is followed. That is fine for a path the
+/// user chose, and wrong for one under a directory somebody else could have
+/// planted — the trash deletes through [`crate::trash::delete_forever`]
+/// instead, which walks by descriptor.
+///
 /// # Errors
 ///
 /// The removal that failed, as text.

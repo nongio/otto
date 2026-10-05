@@ -91,8 +91,16 @@ fn watched_dirs() -> Vec<PathBuf> {
 /// Whether the trash holds anything. A directory that does not exist is an
 /// empty trash, not an error: it is what a session that has never deleted
 /// anything looks like.
+///
+/// This reads the mount table and looks into every can, so it is not for the
+/// compositor's main thread.
 pub fn has_content() -> bool {
-    watched_dirs().iter().any(|dir| {
+    any_content(&watched_dirs())
+}
+
+/// Whether any of `dirs` has an entry.
+fn any_content(dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|dir| {
         std::fs::read_dir(dir)
             .map(|mut entries| entries.next().is_some())
             .unwrap_or(false)
@@ -102,19 +110,25 @@ pub fn has_content() -> bool {
 /// Call `on_change` with the trash's state now, and again every time it
 /// changes, until the process ends.
 ///
-/// One thread, blocking in `read(2)` on an inotify descriptor. If inotify is
-/// unavailable the state is still reported once — the icon is right until
-/// something changes it, which is better than no icon at all.
+/// One thread, blocking in `read(2)` on an inotify descriptor. The first look
+/// is made there too, not on the caller's thread: it stats every can, and the
+/// caller is the compositor. If inotify is unavailable the state is still
+/// reported once — the icon is right until something changes it, which is
+/// better than no icon at all.
 pub fn watch(on_change: impl Fn(bool) + Send + 'static) {
-    on_change(has_content());
-
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("otto-trash-watch".into())
-        .spawn(move || run(on_change))
-        .ok();
+        .spawn(move || run(on_change));
+    if let Err(err) = spawned {
+        tracing::warn!(error = %err, "trash watch: no thread, the dock icon will not follow the can");
+    }
 }
 
 fn run(on_change: impl Fn(bool)) {
+    let mut dirs = watched_dirs();
+    let mut last = any_content(&dirs);
+    on_change(last);
+
     // SAFETY: inotify_init1 takes flags and returns a descriptor or -1.
     let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
     if fd < 0 {
@@ -122,11 +136,12 @@ fn run(on_change: impl Fn(bool)) {
         return;
     }
 
-    let (tx, rx) = mpsc::channel::<()>();
-    watch_mounts(tx.clone());
+    let (tx, rx) = mpsc::channel::<Wake>();
+    // Held for as long as this function runs; dropped, it stops the thread.
+    let _mounts = watch_mounts(tx.clone());
     // The read blocks, so it lives on its own thread and pokes this one; this
     // one owns the debounce and the re-arming.
-    std::thread::Builder::new()
+    let reader = std::thread::Builder::new()
         .name("otto-trash-inotify".into())
         .spawn(move || {
             let mut buffer = [0u8; 4096];
@@ -141,29 +156,36 @@ fn run(on_change: impl Fn(bool)) {
                 };
                 if read <= 0 {
                     // EINTR is worth retrying; anything else means the
-                    // descriptor is gone and so is the watch.
+                    // descriptor is gone and so is the watch. Said out loud:
+                    // the mount watcher holds a sender too, so the channel
+                    // alone would never tell.
                     if read < 0
                         && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
                     {
                         continue;
                     }
+                    tx.send(Wake::ReaderGone).ok();
                     return;
                 }
-                if tx.send(()).is_err() {
+                if tx.send(Wake::Changed).is_err() {
                     return;
                 }
             }
-        })
-        .ok();
+        });
+    if let Err(err) = reader {
+        tracing::warn!(error = %err, "trash watch: no reader thread, the dock icon will not follow the can");
+        // SAFETY: the descriptor this function opened, used by nobody else.
+        unsafe { libc::close(fd) };
+        return;
+    }
 
     let mut armed: HashMap<PathBuf, i32> = HashMap::new();
-    let mut last = has_content();
     loop {
         // Watch the deepest directory that exists for each can: `files/` once
         // it is there, its parent while it is not, so its creation is itself
         // an event. Recomputed after every event, since a mount may have
         // brought a can or taken one away.
-        let targets: HashSet<PathBuf> = watched_dirs()
+        let targets: HashSet<PathBuf> = dirs
             .iter()
             .filter_map(|dir| deepest_existing(dir))
             .collect();
@@ -189,55 +211,98 @@ fn run(on_change: impl Fn(bool)) {
         }
 
         match rx.recv() {
-            Ok(()) => {}
+            Ok(Wake::Changed) => {}
             // The reader thread is gone: the descriptor died with it.
-            Err(_) => return,
+            Ok(Wake::ReaderGone) | Err(_) => break,
         }
         // Drain the burst rather than looking once per file: keep waiting
         // until DEBOUNCE passes with nothing new.
+        let mut reader_gone = false;
         loop {
             match rx.recv_timeout(DEBOUNCE) {
-                Ok(()) => continue,
+                Ok(Wake::Changed) => continue,
                 Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => return,
+                Ok(Wake::ReaderGone) | Err(RecvTimeoutError::Disconnected) => {
+                    reader_gone = true;
+                    break;
+                }
             }
         }
+        if reader_gone {
+            break;
+        }
 
-        let now = has_content();
+        // One read of the mount table per burst, for both the look and the
+        // re-arming at the top of the loop.
+        dirs = watched_dirs();
+        let now = any_content(&dirs);
         if now != last {
             last = now;
             on_change(now);
         }
     }
+    tracing::warn!("trash watch: inotify reader stopped, the dock icon will not follow the can");
+    // SAFETY: the descriptor this function opened; its reader has returned.
+    unsafe { libc::close(fd) };
+}
+
+/// What wakes the watcher.
+enum Wake {
+    /// Something under a watched directory, or the mount table, changed.
+    Changed,
+    /// The inotify reader has stopped, and with it every watch.
+    ReaderGone,
 }
 
 /// Poke `tx` whenever something is mounted or unmounted: the kernel flags
 /// `/proc/self/mountinfo` with `POLLPRI` on every change to the mount table.
-fn watch_mounts(tx: mpsc::Sender<()>) {
-    let Ok(mounts) = std::fs::File::open("/proc/self/mountinfo") else {
-        return;
-    };
+///
+/// Returns the write end of a pipe the thread also polls: dropping it (when
+/// the watcher stops) hangs the pipe up, and the thread returns rather than
+/// waiting for the next mount to notice nobody is listening.
+fn watch_mounts(tx: mpsc::Sender<Wake>) -> Option<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let mounts = std::fs::File::open("/proc/self/mountinfo").ok()?;
+    let mut ends = [0; 2];
+    // SAFETY: `ends` has room for the two descriptors pipe2 writes.
+    if unsafe { libc::pipe2(ends.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return None;
+    }
+    // SAFETY: both descriptors were just opened by pipe2 and are owned here.
+    let (stop_read, stop_write) =
+        unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
     std::thread::Builder::new()
         .name("otto-trash-mounts".into())
         .spawn(move || loop {
-            let mut poll = libc::pollfd {
-                fd: std::os::fd::AsRawFd::as_raw_fd(&mounts),
-                events: libc::POLLPRI,
-                revents: 0,
-            };
-            // SAFETY: one pollfd we own, for the file this closure keeps open.
-            let ready = unsafe { libc::poll(&mut poll, 1, -1) };
+            let mut polls = [
+                libc::pollfd {
+                    fd: mounts.as_raw_fd(),
+                    events: libc::POLLPRI,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: stop_read.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            // SAFETY: two pollfds we own, for descriptors this closure keeps open.
+            let ready = unsafe { libc::poll(polls.as_mut_ptr(), 2, -1) };
             if ready < 0 {
                 if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
                 return;
             }
-            if poll.revents & libc::POLLPRI != 0 && tx.send(()).is_err() {
+            if polls[1].revents != 0 {
+                return;
+            }
+            if polls[0].revents & libc::POLLPRI != 0 && tx.send(Wake::Changed).is_err() {
                 return;
             }
         })
-        .ok();
+        .ok()?;
+    Some(stop_write)
 }
 
 /// `files`, or the nearest ancestor of it that exists.

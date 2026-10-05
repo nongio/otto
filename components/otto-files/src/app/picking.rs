@@ -267,11 +267,7 @@ impl Browser {
         match sheet.action {
             ConfirmAction::Answer(paths) => self.answer_with(paths),
             ConfirmAction::DeleteForever(paths) => self.destroy(paths),
-            ConfirmAction::EmptyTrash => {
-                let result = model::empty_trash();
-                self.report(&result);
-                self.reload_all();
-            }
+            ConfirmAction::EmptyTrash => self.start_empty_trash(),
         }
         self.dirty = true;
     }

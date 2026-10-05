@@ -305,6 +305,53 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
   unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
   - *zbus 5 done in #271; smithay-client-toolkit 0.21 still open.*
+- [x] **Topdir trash cans trusted as found** (after #272): a planted
+  `.Trash-$uid/files -> /home/victim` symlink (hostile stick, or another user
+  on `/tmp`) let Empty Trash delete outside the can, and the
+  `.directorysizes` temporary was written through any symlink at its name.
+  **M**
+  - *One check (real dir, owned by the user, not group/other-writable;
+    `files/`, `info/`, `directorysizes` likewise) gates trashing, listing,
+    emptying and restoring; deletes and the temp file go through
+    `O_NOFOLLOW` descriptors and `O_EXCL`.*
+- [x] The dock's first trash look ran on the compositor thread and stat'ed
+  every mount, network ones included. **S**
+  - *Done on the watcher thread (and `reload_icons` in a blocking task);
+    network and FUSE-daemon filesystems are not searched; one mountinfo read
+    per inotify burst.*
+- [x] Put Back trusted an absolute or `..` `Path=` from a topdir can, and
+  replaced a dangling symlink at the origin. **S**
+  - *Topdir origins must be relative plain names, refused with a message
+    otherwise; the origin is checked with `symlink_metadata`.*
+- [x] The topdir was the highest ancestor on the file's `st_dev`, which on
+  btrfs can be an unmounted subvolume whose can is never listed. **S**
+  - *Taken from the longest mountinfo mount point instead.*
+- [x] `otto-files` trash window tests still carried the `first_free_name`
+  race comment and unique-name workaround. **S**
+- [x] The Trash window watched only the home can's `files/`. **S**
+  - *Every listed can's `files/` is watched.*
+- [x] Put Back from a topdir can still followed symlinks the stick carried
+  on the way to the origin (`a -> ~/.config`, `Path=a/autostart/x`) and fell
+  back to copying (#274 review). **S**
+  - *Restored by descriptor from the topdir down, `RENAME_NOREPLACE`, no
+    copy fallback.*
+- [x] Sidecars and `directorysizes` were read through symlinks and FIFOs
+  with no size cap; the Trash column listed cans on the UI thread; a sticky
+  `.Trash` of anybody's was accepted; deleting forever could cross into a
+  mount inside the trash; the dock's mount thread outlived its watcher (#274
+  review). **S**
+  - *`O_NOFOLLOW | O_NONBLOCK`, regular files under 64 KiB / 4 MiB; can list
+    from the loader thread; `.Trash` must be root's or the user's; no device
+    crossing, depth capped at 512; a hang-up pipe stops the mount thread.*
+- [x] Undo of a trash through a symlinked folder (`~/USB` -> the stick) was
+  refused as outside the disk; Empty Trash ran on Files' UI thread (#274
+  re-review). **S**
+  - *`trash()` returns the origin it recorded and undo uses it; emptying is
+    a worker job.*
+- [x] Trash can hygiene: cans deduplicated by `(dev, ino)` for bind mounts,
+  the can list injectable so `otto-files` tests never reach real mounts, the
+  dock's watcher stops when its inotify reader dies, structured tracing
+  fields, `trash_into` private. **S**
 
 Found by the post-merge review of #264-#270; fixed in this PR:
 
