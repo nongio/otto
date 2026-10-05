@@ -75,21 +75,20 @@ impl FilesService {
 }
 
 /// Serve the interface and queue for the name until the connection dies.
+///
+/// Served through the builder, so the interface is listening before the
+/// name is claimed and a call that arrives with it is not dropped.
 pub async fn serve(queue: SharedQueue) -> zbus::Result<()> {
-    use zbus::fdo::DBusProxy;
-
-    let connection = zbus::ConnectionBuilder::session()?.build().await?;
-    connection
-        .object_server()
-        .at(DBUS_PATH, FilesService { queue })
+    let connection = zbus::ConnectionBuilder::session()?
+        .serve_at(DBUS_PATH, FilesService { queue })?
+        .build()
         .await?;
 
     // No flags: queued, never replacing — see the module docs. Owning the
     // name and waiting for it are equally fine, as callers reach us by
     // unique name.
-    DBusProxy::new(&connection)
-        .await?
-        .request_name(DBUS_NAME.try_into()?, Default::default())
+    connection
+        .request_name_with_flags(DBUS_NAME, Default::default())
         .await?;
 
     std::future::pending::<()>().await;
