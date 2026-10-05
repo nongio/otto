@@ -306,38 +306,46 @@ impl Browser {
     ///
     /// Resolved here, with the same associations and the same reading of the
     /// file's type that Open With shows, so the app marked Default there is
-    /// the one a double-click starts. A type nothing installed claims goes to
-    /// `xdg-open`, which may still know a fallback.
+    /// the one a double-click starts.
     pub(super) fn open_file(&mut self, path: &std::path::Path) {
         let associations = otto_kit::mime_apps::Associations::load();
         let chain = otto_kit::filetype::ancestors(otto_kit::filetype::for_file(path));
-        let Some(app) = associations.default_for(&chain) else {
-            self.open_in_default_app(path);
-            return;
+        let result = match associations.default_for(&chain) {
+            Some(app) => otto_kit::mime_apps::open(app, &[path.to_path_buf()]).map_err(Some),
+            None => Err(None),
         };
-        if let Err(err) = otto_kit::mime_apps::open(app, &[path.to_path_buf()]) {
-            self.status = Some(otto_kit::t_owned!(
-                "files-open-failed",
-                error = super::open_with::open_error_text(&err)
-            ));
-            self.dirty = true;
-        }
+        self.report_open(result);
     }
 
-    /// Hand a URL, or a file nothing here knows how to open, to `xdg-open`.
-    ///
-    /// Detached, like a new window: stdio closed and reaped on a thread of its
-    /// own, so the application outlives the browser that started it.
-    pub(super) fn open_in_default_app(&mut self, target: impl AsRef<std::ffi::OsStr>) {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(target);
-        if let Err(err) = spawn_detached(command) {
-            self.status = Some(otto_kit::t_owned!(
-                "files-open-failed",
-                error = err.to_string()
-            ));
-            self.dirty = true;
-        }
+    /// Open a link from a preview: a URL in the application that handles its
+    /// scheme (`x-scheme-handler/https`, say), anything else as a file.
+    pub(super) fn open_link(&mut self, target: &std::ffi::OsStr) {
+        let uri = target.to_str().filter(|t| !t.starts_with('/'));
+        let mime = uri.and_then(otto_kit::mime_apps::scheme_handler_type);
+        let (Some(uri), Some(mime)) = (uri, mime) else {
+            self.open_file(std::path::Path::new(target));
+            return;
+        };
+        let associations = otto_kit::mime_apps::Associations::load();
+        let result = match associations.default_for(&[mime]) {
+            Some(app) => otto_kit::mime_apps::open_uris(app, &[uri.to_owned()]).map_err(Some),
+            None => Err(None),
+        };
+        self.report_open(result);
+    }
+
+    /// Say why something did not open, if it did not. `Err(None)`: nothing
+    /// installed opens it.
+    fn report_open(&mut self, result: Result<(), Option<otto_kit::mime_apps::OpenError>>) {
+        let Err(err) = result else {
+            return;
+        };
+        let error = match err {
+            Some(err) => super::open_with::open_error_text(&err),
+            None => otto_kit::t_owned!("files-open-no-app"),
+        };
+        self.status = Some(otto_kit::t_owned!("files-open-failed", error = error));
+        self.dirty = true;
     }
 
     /// Open Settings on its Search pane, where the file indexer is looked

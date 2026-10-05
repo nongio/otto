@@ -667,6 +667,7 @@ files-rename-failed = 名称変更できません：{ $error }
 files-new-folder-failed = フォルダを作成できません：{ $error }
 files-open-failed = そのファイルを開けません：{ $error }
 files-open-app-broken = アプリの起動コマンドが正しくありません
+files-open-no-app = この種類のファイルを開けるアプリがインストールされていません
 files-new-window-failed = 新しいウインドウを開けません：{ $error }
 files-settings-open-failed = 設定を開けません：{ $error }
 

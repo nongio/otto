@@ -700,6 +700,7 @@ files-rename-failed = Не удалось переименовать: { $error }
 files-new-folder-failed = Не удалось создать папку: { $error }
 files-open-failed = Не удалось открыть файл: { $error }
 files-open-app-broken = команда запуска приложения повреждена
+files-open-no-app = нет установленного приложения, которое открывает файлы этого типа
 files-new-window-failed = Не удалось открыть новое окно: { $error }
 files-settings-open-failed = Не удалось открыть Настройки: { $error }
 

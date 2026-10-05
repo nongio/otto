@@ -799,6 +799,7 @@ files-rename-failed = Couldn’t rename: { $error }
 files-new-folder-failed = Couldn’t create folder: { $error }
 files-open-failed = Couldn’t open that file: { $error }
 files-open-app-broken = the app’s launch command is broken
+files-open-no-app = no app installed opens this kind of file
 files-new-window-failed = Couldn’t open a new window: { $error }
 files-settings-open-failed = Couldn’t open Settings: { $error }
 

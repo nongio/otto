@@ -687,6 +687,7 @@ files-rename-failed = No se pudo cambiar el nombre: { $error }
 files-new-folder-failed = No se pudo crear la carpeta: { $error }
 files-open-failed = No se pudo abrir ese archivo: { $error }
 files-open-app-broken = el comando de inicio de la app no es válido
+files-open-no-app = ninguna app instalada abre este tipo de archivo
 files-new-window-failed = No se pudo abrir una nueva ventana: { $error }
 files-settings-open-failed = No se pudo abrir Configuración: { $error }
 
