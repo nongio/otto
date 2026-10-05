@@ -1043,12 +1043,14 @@ progress, and can cancel it.
 - **Move to trash** — the freedesktop trash specification: the file is moved to
   `$XDG_DATA_HOME/Trash/files/`, with a `.trashinfo` recording its original
   path and the deletion time, both under a name disambiguated against what is
-  already there. **v1 trashes only files on the same filesystem as the home
-  trash.** Trashing on another mount requires a `.Trash-$uid` directory at that
-  mount's root, with its own rules about creation and stickiness; until that
-  exists, the browser says plainly that the file is on another volume and
-  offers permanent deletion instead. It never silently copies a file across
-  filesystems in the name of trashing it.
+  already there. The `.trashinfo` is created first, with `O_EXCL`, so two
+  trashes of one name at once each get their own. **A file on another
+  filesystem goes to that filesystem's own can**, `$topdir/.Trash/$uid` when an
+  administrator made a sticky `$topdir/.Trash`, `$topdir/.Trash-$uid`
+  otherwise, with the path recorded relative to `$topdir` — a rename, not a
+  copy. Only when neither can could be made does it fall back to the home
+  trash, which is a copy across filesystems. A trashed folder gets a line in
+  the can's `directorysizes`.
 - **Delete permanently** — always confirmed, always says it cannot be undone,
   and is not undoable. Reachable only from the Trash window, where Delete
   means this because there is nowhere further to send a file.
@@ -1718,11 +1720,12 @@ the same action, and Right arrow (or a double-click) opens.
 malware delivery mechanism, and the convenience it buys is a keystroke in a
 terminal.
 
-**Trash is home-filesystem-only in v1, and says so.** The alternative that looks
-like it works — copy the file to the home trash — moves gigabytes across a bus
-to "delete" something and breaks restore. The alternative that is correct
-requires `.Trash-$uid` handling with its own security rules. Refusing clearly is
-better than either, and it is a small, self-contained thing to add later.
+**Each filesystem's trash is its own.** Copying a file to the home trash moves
+gigabytes across a bus to "delete" something. The can at the top of the file's
+own filesystem makes trashing a rename there too; the Trash window, Empty Trash
+and the dock's icon list the home can together with the cans of every mounted
+filesystem, so where an item went is not something the user has to know. A can
+on a drive that is not plugged in is not listed until it is.
 
 **Drag and drop moves by default and copies when asked.** A drag between two
 directories on one filesystem is a move — what every other file manager does —

@@ -48,11 +48,14 @@ god-objects, and kit widgets the apps never adopted.
 - [x] **otto-files text fields lack word movement / shift-selection**: four
   hand-written Keysym maps (`otto-files/src/app/keys.rs:197,263,360,431`)
   instead of `otto_kit::components::text_input::keymap::key_for`. **S** Fixed in #258.
-- [ ] **Trash is incomplete vs the freedesktop spec** (`otto-kit/src/trash.rs`,
+- [x] **Trash is incomplete vs the freedesktop spec** (`otto-kit/src/trash.rs`,
   `otto-files/src/model.rs:1667-1900`): no `$topdir/.Trash-$uid` (cross-fs
   trash copies the tree home), `.trashinfo` written after the move instead of
   reserved first with `O_EXCL`, no `directorysizes`. Fix, or adopt the `trash`
   crate. **M**
+  - *Fixed in otto-kit: `O_EXCL` sidecar first, topdir cans with relative
+    `Path`, `directorysizes`. Files, Empty Trash and the dock list every
+    mounted filesystem's can.*
 - [x] **Size formatting differs between Files and Peek**: four formatters,
   base 1000 vs 1024 (`otto-kit/src/components/attachments.rs:317`,
   `otto-kit/src/preview/mod.rs:1430`, `otto-peek/src/decode/mod.rs:370`,
@@ -258,10 +261,11 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] Clippy without XWayland and the x11 backend at runtime were not
   exercised after #259; the x11 CI step builds `default,x11`, since
   `--no-default-features --features x11` needs `udev` code paths. **S**
-- [ ] **Trash name race**: `otto_kit::trash::trash_into` checks for a free
+- [x] **Trash name race**: `otto_kit::trash::trash_into` checks for a free
   name, then moves; two concurrent trashes of the same name collide. The
   otto-files tests work around it with unique names (#267). Part of the
   §1 trash-spec item (reserve the `.trashinfo` with `O_EXCL` first). **S**
+  - *Fixed with the §1 item; the workaround is reverted.*
 - [x] **Screencast `BufferPool` looks unsound**
   (`src/screenshare/pipewire_stream.rs`, FIXME added in #268): a buffer
   popped for rendering can be freed by `remove_buffer` during renegotiation,

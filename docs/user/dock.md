@@ -124,7 +124,8 @@ trash_path = "$XDG_DATA_HOME/Trash/files"
 `trash_desktop_id` says which place is the wastebasket, so its icon follows the
 can. `trash_path` says which directory that icon watches. It expands `~`,
 `$HOME` and `$XDG_DATA_HOME`, and only affects the icon: Otto itself always
-throws files away to the freedesktop location.
+throws files away to the freedesktop trash. At the default, the icon also counts
+the trash at the top of every mounted drive, where files from that drive go.
 
 If the entry you point at has no *Empty Trash* of its own, write a small
 desktop file in `~/.local/share/applications` with the `Exec=` and `Actions=`

@@ -5,7 +5,8 @@
 //! `wl_data_offer`: it takes `text/uri-list` and asks for a move, but only
 //! while the pointer is over the Trash. On the drop it reads the list down a
 //! pipe, tells the source it is done, and moves the files into the trash can
-//! on a thread of their own, since a folder on another disk is a copy.
+//! on a thread of their own, since a move into the home trash from another
+//! disk is a copy.
 //!
 //! The move is the target's job. Otto's own file drags leave their files
 //! where they are when a move finishes, as other file managers do, so nobody
@@ -146,12 +147,6 @@ impl<B: Backend + 'static> Otto<B> {
     /// Ask the source for its file list and read it without blocking the
     /// compositor. The source hears it is finished once the list is in.
     fn receive_trash_drop<S: Source>(&mut self, source: Arc<S>, mime: &'static str) {
-        // Otto's own can, the one Files trashes into. `[dock] trash_path`
-        // only says which directory the icon watches.
-        let Some(trash) = otto_kit::trash::home_trash_dir() else {
-            source.finished();
-            return;
-        };
         let (reader, writer) = match std::io::pipe() {
             Ok(pipe) => pipe,
             Err(err) => {
@@ -194,7 +189,7 @@ impl<B: Backend + 'static> Otto<B> {
                 }
                 finished_source.finished();
                 let (paths, _) = parse_file_payload(mime, &payload);
-                throw_away(paths, trash.clone());
+                throw_away(paths);
                 Ok(PostAction::Remove)
             },
         );
@@ -219,8 +214,10 @@ impl<B: Backend + 'static> Otto<B> {
     }
 }
 
-/// Move `paths` into the trash can at `trash`, off the compositor's thread.
-fn throw_away(paths: Vec<PathBuf>, trash: PathBuf) {
+/// Move `paths` into the trash, off the compositor's thread: the same cans
+/// Files trashes into, the home one or the one at the top of each file's own
+/// filesystem. `[dock] trash_path` only says which directory the icon watches.
+fn throw_away(paths: Vec<PathBuf>) {
     if paths.is_empty() {
         return;
     }
@@ -228,7 +225,7 @@ fn throw_away(paths: Vec<PathBuf>, trash: PathBuf) {
         .name("otto-trash-drop".into())
         .spawn(move || {
             for path in paths {
-                if let Err(err) = otto_kit::trash::trash_into(&path, &trash) {
+                if let Err(err) = otto_kit::trash::trash(&path) {
                     tracing::warn!("trash drop: {}: {err}", path.display());
                 }
             }

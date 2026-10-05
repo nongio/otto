@@ -66,8 +66,9 @@ what it throws away.
 **Dropping files on it** throws them away. A drag of files (`text/uri-list`)
 that crosses the dock magnifies it as the pointer does, and the Trash darkens
 and shows its label while the drag is over it; only there does the dock
-accept the drop. The files are moved into the freedesktop home trash, each
-with its `.trashinfo`, exactly as Files trashes them, so they can be put back
+accept the drop. The files are moved into the freedesktop trash (the home
+can, or the can of the drive they are on), each with its `.trashinfo`,
+exactly as Files trashes them, so they can be put back
 from the Trash window. The compositor does the move itself, off its own
 thread, after reading the list from the source: a source is never asked to
 delete anything. Dropped anywhere else on the dock, the drag is refused.
