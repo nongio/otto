@@ -355,11 +355,13 @@ impl SkiaRenderer {
     /// Call once per frame, after the last plane render and before handing the
     /// buffers to the DRM compositor.
     pub fn flush_planes_for_scanout(&mut self) {
-        // Carry on if this fails: the context is most likely still current
-        // from the plane renders, and skipping the fence and the CPU-wait
-        // fallback would let the planes flip unsynchronised for sure.
+        // `ensure_current` only fails when the context was not current, so
+        // the fence, the flush and the texture release below would land on
+        // another (or no) context. Skip them; the pending writes and plane
+        // textures stay queued for the next frame.
         if let Err(err) = self.ensure_current() {
             tracing::warn!("cannot make the renderer current to flush planes: {err:?}");
+            return;
         }
         let writes = std::mem::take(&mut self.scanout_writes);
         if !self.fence_scanout_writes(&writes) {

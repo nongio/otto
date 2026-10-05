@@ -314,8 +314,9 @@ Found by the post-merge review of #264-#270; fixed in this PR:
   no changelog entry (unconventional squash subject). **S**
   - *Noted in CHANGELOG, the bar docs, and a `cliff.toml` preprocessor.*
 - [x] Renderer: `wait`/`map_texture` skipped `ensure_current`; a failed
-  Skia import leaked its EGLImage, the cached path `unwrap`ped; plane flush
-  skipped its fence when `ensure_current` failed (#270). **S**
+  Skia import leaked its EGLImage, the cached path `unwrap`ped (#270). **S**
+  - *Plane flush still skips its GL work when `ensure_current` fails: the
+    context is then known not to be current.*
 - [x] Ticker code was gated on `fps_ticker`, not `ticker`; CI's ticker
   clippy now builds `default,x11,ticker`. **S**
 - [x] Stale docs: size powers in the search spec, scanout rustdoc,
