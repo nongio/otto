@@ -2181,17 +2181,17 @@ impl<A: RendererApi> Otto<UdevData<A>> {
             // Deferred-fence model: keep the GPU fence wait off the main loop so
             // it never stalls input dispatch (calloop is single-threaded).
             //  1. Resolve the frame rendered last cycle: if its GPU fence has
-            //     signaled (non-blocking `is_reached()`), move its buffer from
-            //     the pool's `pending` holding area into `to_queue` so
+            //     signaled (non-blocking `is_reached()`), `release_pending()`
+            //     moves its buffer from `Pending` to `ToQueue` so
             //     `trigger_frame()` hands it to the consumer. If not signaled,
             //     keep it pending — never block.
-            //  2. `trigger_frame()` every cycle queues fence-ready buffers and
-            //     pumps buffer dequeues back into `available`.
+            //  2. `trigger_frame()` every cycle queues `ToQueue` buffers and
+            //     pumps buffer dequeues back to `Available`.
             //  3. Render a new frame only when nothing is pending, into a spare
             //     buffer, and stash its `SyncPoint` for next cycle. The buffer
-            //     enters `pending` (NOT `to_queue`) only after a successful
-            //     render, so the async process callback can't queue a
-            //     still-rendering buffer (the black/torn band 757a6f7 fixed).
+            //     goes `Rendering` → `Pending` (NOT `ToQueue`) only after a
+            //     successful render, so the async process callback can't queue
+            //     a still-rendering buffer (the black/torn band 757a6f7 fixed).
             let pool_arc = self.virtual_outputs[i].pipewire_stream.buffer_pool();
 
             if let Some(sync) = self.virtual_outputs[i].pending_frame.take() {

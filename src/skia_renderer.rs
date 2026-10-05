@@ -355,9 +355,11 @@ impl SkiaRenderer {
     /// Call once per frame, after the last plane render and before handing the
     /// buffers to the DRM compositor.
     pub fn flush_planes_for_scanout(&mut self) {
+        // Carry on if this fails: the context is most likely still current
+        // from the plane renders, and skipping the fence and the CPU-wait
+        // fallback would let the planes flip unsynchronised for sure.
         if let Err(err) = self.ensure_current() {
             tracing::warn!("cannot make the renderer current to flush planes: {err:?}");
-            return;
         }
         let writes = std::mem::take(&mut self.scanout_writes);
         if !self.fence_scanout_writes(&writes) {
@@ -762,10 +764,19 @@ impl SkiaRenderer {
                         dmabuf.size(),
                     )
                 };
-                let image = self
-                    .import_skia_image_from_texture(&gles_texture, skia_external_flag)
-                    .ok_or("")
-                    .map_err(|_| GlesError::MappingError)?;
+                let Some(image) =
+                    self.import_skia_image_from_texture(&gles_texture, skia_external_flag)
+                else {
+                    // SAFETY: as above, the image is not stored anywhere yet;
+                    // `gles_texture` deletes `tex_id` as it drops.
+                    unsafe {
+                        smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                            **self.egl_context().display().get_display_handle(),
+                            egl_image,
+                        );
+                    }
+                    return Err(GlesError::MappingError);
+                };
 
                 let texture = SkiaTexture {
                     texture: gles_texture,
@@ -783,13 +794,12 @@ impl SkiaRenderer {
                 self.dmabuf_cache.insert(dmabuf.weak(), texture.clone());
                 Ok(texture)
             });
-        texture.map(|mut tex| {
+        texture.and_then(|mut tex| {
             tex.image = self
                 .import_skia_image_from_texture(&tex.texture, false)
-                .unwrap();
+                .ok_or(GlesError::MappingError)?;
             tex.damage = damage.clone();
-            // println!("SkiaRenderer: import_dmabuf_internal END");
-            tex
+            Ok(tex)
         })
     }
     /// Forget the imports of client dmabufs that no longer exist.
@@ -1045,6 +1055,7 @@ impl Renderer for SkiaRenderer {
         &mut self,
         sync: &smithay::backend::renderer::sync::SyncPoint,
     ) -> Result<(), Self::Error> {
+        self.ensure_current()?;
         let display = self.egl_context().display();
 
         // if the sync point holds a EGLFence we can try
@@ -1464,6 +1475,7 @@ impl ExportMem for SkiaRenderer {
         &mut self,
         texture_mapping: &'a Self::TextureMapping,
     ) -> Result<&'a [u8], <Self as RendererSuper>::Error> {
+        self.ensure_current()?;
         // Lazy-load the pixel data if not already loaded
         let mut data_opt = texture_mapping.data.borrow_mut();
 
