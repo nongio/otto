@@ -1425,26 +1425,9 @@ fn parse_negotiated_format(
                 // use. Guessing anything else here means we allocate one
                 // layout and the consumer reads another (tiled-vs-linear
                 // garbage on screen), so a wrong value is worse than failing.
-                // SAFETY: `value` is a Choice pod (checked above), so its body
-                // is a `spa_pod_choice_body` whose child header is followed
-                // by the choice's values; reading one i64 assumes the choice
-                // holds at least one value, which `(*child).size` would
-                // confirm but is not checked. The read is unaligned-safe.
-                let modifier = unsafe {
-                    use pipewire::spa::sys::{spa_pod, spa_pod_choice, SPA_TYPE_Long};
-                    let choice = value.as_raw_ptr() as *const spa_pod_choice;
-                    let child = &(*choice).body.child as *const spa_pod;
-                    if (*child).type_ == SPA_TYPE_Long {
-                        let first =
-                            (child as *const u8).add(std::mem::size_of::<spa_pod>()) as *const i64;
-                        Some(first.read_unaligned())
-                    } else {
-                        None
-                    }
-                };
-                let Some(modifier) = modifier else {
+                let Some(modifier) = choice_default_long(value.as_bytes()) else {
                     return Err(PipeWireError::InitFailed(
-                        "VideoModifier choice is not of type Long".to_string(),
+                        "VideoModifier choice holds no Long value".to_string(),
                     ));
                 };
                 tracing::debug!("Read modifier from Choice default: 0x{:x}", modifier);
@@ -1487,6 +1470,43 @@ fn parse_negotiated_format(
         is_dmabuf,
         modifier,
     })
+}
+
+/// The default (first) value of a `Choice` pod of `Long`s, given the pod's
+/// bytes, header included.
+///
+/// `None` when the pod is not a choice, its values are not `Long`s, or it is
+/// too short to hold one: every size is checked against the bytes before
+/// anything is read, so a malformed pod cannot cause a read past its end.
+fn choice_default_long(pod: &[u8]) -> Option<i64> {
+    use pipewire::spa::sys::{spa_pod, spa_pod_choice_body, SPA_TYPE_Choice, SPA_TYPE_Long};
+    use std::mem::{offset_of, size_of};
+
+    const HEADER: usize = size_of::<spa_pod>();
+    const BODY: usize = size_of::<spa_pod_choice_body>();
+    const CHILD: usize = offset_of!(spa_pod_choice_body, child);
+
+    let read_u32 = |bytes: &[u8], at: usize| {
+        let bytes = bytes.get(at..at + 4)?;
+        Some(u32::from_ne_bytes(bytes.try_into().ok()?))
+    };
+
+    // spa_pod { size, type }: `size` counts the body only.
+    let size = read_u32(pod, offset_of!(spa_pod, size))? as usize;
+    if read_u32(pod, offset_of!(spa_pod, type_))? != SPA_TYPE_Choice {
+        return None;
+    }
+    let body = pod.get(HEADER..HEADER.checked_add(size)?)?;
+
+    // spa_pod_choice_body { type, flags, child: spa_pod }, then the values,
+    // each `child.size` bytes long.
+    let child_size = read_u32(body, CHILD + offset_of!(spa_pod, size))? as usize;
+    let child_type = read_u32(body, CHILD + offset_of!(spa_pod, type_))?;
+    if child_type != SPA_TYPE_Long || child_size != size_of::<i64>() {
+        return None;
+    }
+    let value = body.get(BODY..BODY + size_of::<i64>())?;
+    Some(i64::from_ne_bytes(value.try_into().ok()?))
 }
 
 /// Convert PipeWire VideoFormat to Smithay Fourcc.
@@ -1541,6 +1561,71 @@ mod tests {
     /// A stand-in `pw_buffer` address; the pool never dereferences it.
     fn pw_buffer(n: usize) -> *mut pipewire::sys::pw_buffer {
         (n * 64) as *mut _
+    }
+
+    fn serialize(value: pipewire::spa::pod::Value) -> Vec<u8> {
+        use pipewire::spa::pod::serialize::PodSerializer;
+        PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &value)
+            .unwrap()
+            .0
+            .into_inner()
+    }
+
+    fn long_choice(default: i64, alternatives: Vec<i64>) -> Vec<u8> {
+        use pipewire::spa::pod::{ChoiceValue, Value};
+        use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags};
+        serialize(Value::Choice(ChoiceValue::Long(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Enum {
+                default,
+                alternatives,
+            },
+        ))))
+    }
+
+    /// Overwrite the pod header's body size.
+    fn with_size(mut pod: Vec<u8>, size: u32) -> Vec<u8> {
+        pod[..4].copy_from_slice(&size.to_ne_bytes());
+        pod
+    }
+
+    #[test]
+    fn choice_default_is_its_first_value() {
+        let pod = long_choice(0x0100_0000_0000_0002, vec![0, 0x0100_0000_0000_0002]);
+        assert_eq!(choice_default_long(&pod), Some(0x0100_0000_0000_0002));
+    }
+
+    #[test]
+    fn choice_of_other_types_has_no_long_default() {
+        use pipewire::spa::pod::{ChoiceValue, Value};
+        use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags};
+        let ints = serialize(Value::Choice(ChoiceValue::Int(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Enum {
+                default: 1,
+                alternatives: vec![1, 2],
+            },
+        ))));
+        assert_eq!(choice_default_long(&ints), None);
+        assert_eq!(choice_default_long(&serialize(Value::Long(5))), None);
+    }
+
+    #[test]
+    fn short_choice_pod_is_not_read() {
+        use pipewire::spa::sys::spa_pod_choice_body;
+        let pod = long_choice(7, vec![7]);
+        // A choice with a Long child but no value after it.
+        let empty = with_size(
+            pod.clone(),
+            std::mem::size_of::<spa_pod_choice_body>() as u32,
+        );
+        assert_eq!(choice_default_long(&empty), None);
+        // A header claiming more bytes than there are.
+        let overlong = with_size(pod.clone(), u32::MAX);
+        assert_eq!(choice_default_long(&overlong), None);
+        // Bytes cut off before the value.
+        assert_eq!(choice_default_long(&pod[..20]), None);
+        assert_eq!(choice_default_long(&[]), None);
     }
 
     #[test]
