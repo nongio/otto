@@ -343,6 +343,11 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   - *`O_NOFOLLOW | O_NONBLOCK`, regular files under 64 KiB / 4 MiB; can list
     from the loader thread; `.Trash` must be root's or the user's; no device
     crossing, depth capped at 512; a hang-up pipe stops the mount thread.*
+- [x] Undo of a trash through a symlinked folder (`~/USB` -> the stick) was
+  refused as outside the disk; Empty Trash ran on Files' UI thread (#274
+  re-review). **S**
+  - *`trash()` returns the origin it recorded and undo uses it; emptying is
+    a worker job.*
 - [x] Trash can hygiene: cans deduplicated by `(dev, ino)` for bind mounts,
   the can list injectable so `otto-files` tests never reach real mounts, the
   dock's watcher stops when its inotify reader dies, structured tracing
