@@ -64,6 +64,15 @@ pub struct SkiaTexture {
     pub damage: Option<Vec<Rectangle<i32, Buffer>>>,
 }
 
+// SAFETY: the one field that is not `Send` on its own is `egl_images`, raw
+// `EGLImage` handles. An EGLImage is a display-wide handle, not bound to a
+// thread, and this type never dereferences or frees it: the renderer destroys
+// the images of its import cache explicitly, on its own thread (see
+// `SkiaRenderer::evict_dead_dmabuf_imports`). `GlesTexture` is `Send` (its
+// drop posts the deletion to the renderer's cleanup queue) and so is
+// `skia::Image`. Smithay makes the same argument for the `EGLImage`s inside
+// `GlesTextureInternal`. Send is needed because textures travel in smithay's
+// `MultiTexture` and in `Backend::hold_surface_texture`'s `Box<dyn Any + Send>`.
 unsafe impl Send for SkiaTexture {}
 
 impl Texture for SkiaTexture {
