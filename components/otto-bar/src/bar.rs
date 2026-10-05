@@ -131,7 +131,7 @@ fn left_menu_style() -> MenuBarStyle {
         icon_active_tint: hl.on_active,
         font_size: 13.0,
         // The menu titles; the application's name ahead of them is bold.
-        font_weight: skia_safe::font_style::Weight::NORMAL,
+        font_weight: skia_safe::font_style::Weight::MEDIUM,
         first_item_font_weight: Some(skia_safe::font_style::Weight::BOLD),
         item_corner_radius: 4.0,
     }
