@@ -69,16 +69,16 @@ god-objects, and kit widgets the apps never adopted.
   `wayland_scanner` macro output, so it is on machete's ignore list)*
 - [x] `once_cell::sync::Lazy` → `std::sync::LazyLock` (4 uses:
   `src/theme/mod.rs`, `src/winit.rs`, `src/config/default_apps.rs`). **S** Fixed in #259.
-- [ ] Hoist shared deps into `[workspace.dependencies]` (today only laye-rs):
+- [x] Hoist shared deps into `[workspace.dependencies]` (today only laye-rs):
   tracing ×21, tokio ×18, wayland-client ×18, smithay-client-toolkit ×16,
   tracing-subscriber ×16, zbus ×13, wayland-protocols-wlr ×12,
-  skia-safe ×11 (`=0.93`), serde_json ×11, … **S**
-- [ ] Settle zbus features: five crates use default (async-io), eight use
-  `tokio`; unification builds both runtimes into otto. **S**
-- [ ] xkbcommon 0.6 → 0.9 (otto, otto-emoji, otto-rdp). **S**
-- [ ] toml 0.8 → 1.x with matching toml_edit (otto, auth-ui, bar, files;
-  otto-agents already on 1.1). **S–M**
-- [ ] image 0.24 → 0.25; thiserror 1 → 2 (ours only; v1 stays transitively). **S**
+  skia-safe ×11 (`=0.93`), serde_json ×11, … **S** Fixed in #265.
+- [x] Settle zbus features: five crates use default (async-io), eight use
+  `tokio`; unification builds both runtimes into otto. **S** Fixed in #265.
+- [x] xkbcommon 0.6 → 0.9 (otto, otto-emoji, otto-rdp). **S** Fixed in #265.
+- [x] toml 0.8 → 1.x with matching toml_edit (otto, auth-ui, bar, files;
+  otto-agents already on 1.1). **S–M** Fixed in #265.
+- [x] image 0.24 → 0.25; thiserror 1 → 2 (ours only; v1 stays transitively). **S** Fixed in #265.
 - [ ] smithay-client-toolkit 0.19 → 0.21 (drops calloop 0.13, xkbcommon 0.7). **M**
 - [ ] zbus 4 → 5 (accesskit_unix and brightness already pull 5; drops zbus 4
   and nix 0.29). **M**
@@ -102,6 +102,7 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   `org.otto.Island` raw in otto-files. The portal `Settings` proxy is declared
   6× inside otto-kit itself, each opening its own connection. **S–M**
   - *Done in the otto-dbus PR: one shared portal client in otto-kit, and the `components/otto-dbus` crate (re-exported as `otto_kit::dbus`) with every `org.otto.*` proxy; see [otto-dbus](otto-dbus.md). `org.otto.Stash1` clients (otto-files, otto-kit `stashed`) still call by name.*
+  - *Done in #266 for every interface listed (new `otto-dbus` crate, re-exported as `otto_kit::dbus`, plus one shared portal Settings client); `org.otto.Stash1` callers (otto-files `stash.rs`, otto-kit `components/stashed.rs`) still call by name.*
 - [ ] **`uri`**: percent-encoding hand-written ~9× (otto-kit trash/clipboard,
   otto-peek, otto-agents-client, otto-search, `src/desktop_widget.rs`); use
   `percent-encoding`/`url` (in Cargo.lock). **S**
@@ -164,10 +165,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 
 ## 4. Compositor (`src/`)
 
-- [ ] **Per-frame repaint/throttle step copied into every backend and
+- [x] **Per-frame repaint/throttle step copied into every backend and
   drifted** (`src/winit.rs:705-780`, `src/x11.rs:465-510`,
   `src/udev/render.rs:955-995,3146-3180`, `src/headless.rs:2184`). One
-  `Otto::frame_done(output, states, opts)`. **M**
+  `Otto::frame_done(output, states, opts)`. **M** Fixed in #268.
 - [ ] **Giant functions**: `render_surface` 1,544 lines
   (`src/udev/render.rs:361`), `render_output_frame` 772, `run_udev` 700,
   `update_backdrop_and_upper_planes` 678, `run_winit` 632, surface-style
@@ -177,9 +178,9 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
   2765-2887, 3317-3337), `config/mod.rs` 3.3k, `udev/render.rs` 3.2k. **L**
 - [ ] xdg/X11 window lifecycle duplicated (destroy, unfullscreen, move; the
   1.4 s fullscreen transition ×5). Move onto `WindowElement`. **M**
-- [ ] Key-action dispatch duplicated in `src/input_handler.rs` (windowed vs
+- [x] Key-action dispatch duplicated in `src/input_handler.rs` (windowed vs
   udev); swipe gesture copied as the synthetic variant
-  (`src/input/gestures.rs:46-126` ≈ `:285-355`). **S**
+  (`src/input/gestures.rs:46-126` ≈ `:285-355`). **S** Fixed in #268.
 - [x] `PointerGrab` forwarding boilerplate ×3 in `src/shell/grabs.rs` (~250
   lines); a macro. **S** Fixed in #259.
 - [ ] `Arc<RwLock<…>>` around plain scalars in views (`dock/view.rs:121-157`)
@@ -188,16 +189,16 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] Global state behind `try_lock` that silently drops writes
   (`src/textures_storage.rs:9`, `surface_config_cache.rs:55`,
   `config/mod.rs:138,455`, `settings/mod.rs:125`). **M**
-- [ ] 41 of 116 `unsafe` blocks lack SAFETY comments (21 in
+- [x] 41 of 116 `unsafe` blocks lack SAFETY comments (21 in
   `src/skia_renderer.rs`); unjustified `unsafe impl Send`
-  (`renderer/textures.rs:67`, `screenshare/pipewire_stream.rs:46,154`). **S**
+  (`renderer/textures.rs:67`, `screenshare/pipewire_stream.rs:46,154`). **S** Fixed in #268.
 - [ ] Five overlapping instrumentation systems (render_metrics,
   render_phase_stats, fps_ticker, `FrameLogState`, a static FPS counter) plus
   ~25 `/tmp/otto-*` debug toggles stat'ed per frame under `dev`, one of which
   executes command files from a world-writable path. **M**
 - [ ] ~120 inline animation durations/curves; a `theme::motion` module. **S**
-- [ ] `clippy::mutable_key_type` allowed 47× for `ObjectId` keys; one
-  newtype. 15 local `too_many_arguments` allows already covered workspace-wide. **S**
+- [x] `clippy::mutable_key_type` allowed 47× for `ObjectId` keys; one
+  newtype. 15 local `too_many_arguments` allows already covered workspace-wide. **S** Fixed in #268.
 - [ ] 29 dead `pub fn`s (e.g. `state/mod.rs:1675 get_render_elements`,
   `inject_surface_layers_into_view`, `skia_renderer.rs:1130 blit_fbo_to_fbo`). **S**
   - *Partly done in #259: the 11 named ones are removed; the other ~18 are unchecked.*
@@ -231,9 +232,10 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
     entities xkb data carries). otto-files keeps its own JPEG (EXIF
     orientation) and BMP (top-down, OS/2 headers) readers, which the crate gets
     wrong; everything else goes through `imagesize`.*
-- [ ] otto-greeter: hand-written greetd IPC (567 lines) → `greetd_ipc`. **S**
+- [x] otto-greeter: hand-written greetd IPC (567 lines) → `greetd_ipc`. **S**
   - *Won't do: `greetd_ipc` is GPL-3.0-only (Otto is MIT), and its request type
     holds the password in a plain `String`, which would undo the zeroizing.*
+  - *Won't do: `greetd_ipc` is GPL-3.0-only (Otto is MIT) and keeps the password in a plain `String`, undoing #260's wiping (#267).*
 - [ ] Portal hand-writes its D-Bus interfaces (`Request` twice); screenshots
   shell out to `grim` instead of the compositor's capture (also otto-stash). **M**
 - [ ] otto-emoji search matches names only — no CLDR keywords/shortcodes. **S–M**
@@ -256,6 +258,35 @@ otto-kit, so the portal and otto-agents need not link Skia): `xdg`, `dbus`,
 - [ ] Clippy without XWayland and the x11 backend at runtime were not
   exercised after #259; the x11 CI step builds `default,x11`, since
   `--no-default-features --features x11` needs `udev` code paths. **S**
+- [ ] **Trash name race**: `otto_kit::trash::trash_into` checks for a free
+  name, then moves; two concurrent trashes of the same name collide. The
+  otto-files tests work around it with unique names (#267). Part of the
+  §1 trash-spec item (reserve the `.trashinfo` with `O_EXCL` first). **S**
+- [ ] **Screencast `BufferPool` looks unsound**
+  (`src/screenshare/pipewire_stream.rs`, FIXME added in #268): a buffer
+  popped for rendering can be freed by `remove_buffer` during renegotiation,
+  then the PipeWire thread dereferences the dangling pointer. **M**
+- [ ] External-format dmabuf import leaks an FBO (`src/skia_renderer.rs`,
+  noted in #268). **S**
+- [ ] VideoModifier Choice parse reads a value without checking the pod size
+  (`src/screenshare/pipewire_stream.rs`, #268). **S**
+- [ ] GL-current invariant in `skia_renderer.rs` is assumed, not enforced;
+  matters with several renderers (multi-GPU) (#268). **M**
+- [ ] winit and x11 never classify covered windows as occluded (only udev
+  does); now an explicit `classify_occlusion` parameter in
+  `src/state/frame.rs` (#268). Decide whether that is intended. **S**
+- [ ] `ticker` / `fps_ticker` feature does not build on main: missing imports
+  in `src/drawing.rs`, `FPS_NUMBERS_PNG`, `FpsElement`, `Fourcc` undefined
+  (found in #265). Fix or drop the feature. **S**
+- [ ] `headless_basic::pinch_show_desktop` fails locally on main
+  (tests/headless_basic.rs:237, "clicking a window should dismiss show
+  desktop"); check whether CI runs it. **S**
+- [ ] About 11 otto-kit doctests fail (`stack.rs`, `window/mod.rs`, …); CI
+  runs `--lib` only, so they rot unseen. **S**
+- [ ] otto-settings' hard-coded accent swatch list (`main.rs` ~217-227) is a
+  third palette; its Teal `#40C8E0` is in neither (#264). **S**
+- [ ] zbus 4 → 5 and smithay-client-toolkit 0.19 → 0.21 (§2) are now
+  unblocked: every org.otto proxy lives in `otto-dbus`. **M each**
 
 ## Checked and fine
 
