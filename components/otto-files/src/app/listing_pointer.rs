@@ -40,6 +40,9 @@ pub(super) enum After {
     /// The picker's location control was pressed: the directories above the
     /// one being viewed, under it.
     LocationMenu { rect: Rect, serial: u32 },
+    /// The picker's filter control was pressed: the request's filters, over
+    /// it.
+    FilterMenu { rect: Rect, serial: u32 },
 }
 
 pub(super) struct DragStart {
@@ -437,20 +440,8 @@ impl Browser {
         // bottom, which is exactly where this strip begins.
         if self.picker.is_some() {
             let window_h = self.size.1;
-            let (filter_count, menu_open) = self
-                .picker
-                .as_ref()
-                .map(|p| (p.filters.len(), p.filter_open))
-                .unwrap_or((0, false));
-            let hit = view::footer_at(x, y, width, window_h, filter_count, menu_open);
-            // A click anywhere outside the open menu closes it, the
-            // way clicking away from any menu does — including a
-            // click on the listing, which is then swallowed.
-            let dismissing_menu = menu_open
-                && !matches!(
-                    hit,
-                    Some(view::FooterButton::FilterOption(_)) | Some(view::FooterButton::Filter)
-                );
+            let filter_count = self.picker.as_ref().map_or(0, |p| p.filters.len());
+            let hit = view::footer_at(x, y, width, window_h, filter_count);
 
             match event.kind {
                 PointerEventKind::Motion { .. } => {
@@ -468,13 +459,9 @@ impl Browser {
                         self.dirty = true;
                     }
                 }
-                PointerEventKind::Press { button, .. } if button != BTN_RIGHT => {
-                    if dismissing_menu {
-                        if let Some(session) = self.picker.as_mut() {
-                            session.filter_open = false;
-                        }
-                        self.dirty = true;
-                        return Some(After::Next);
+                PointerEventKind::Press { button, serial, .. } if button != BTN_RIGHT => {
+                    if hit == Some(view::FooterButton::Filter) {
+                        return Some(self.filter_press(serial));
                     }
                     if let Some(button) = hit {
                         self.footer_press(button);

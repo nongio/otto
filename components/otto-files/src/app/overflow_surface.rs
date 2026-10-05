@@ -363,7 +363,8 @@ impl FilesApp {
                     After::Next
                     | After::Stop
                     | After::GroupMenu { .. }
-                    | After::LocationMenu { .. } => {}
+                    | After::LocationMenu { .. }
+                    | After::FilterMenu { .. } => {}
                     After::Drag(drag) => {
                         // An item carried out of the panel goes wherever it
                         // is dropped; the panel goes back into its tile and

@@ -3476,8 +3476,6 @@ const FOOTER_BTN_H: f32 = 30.0;
 const FOOTER_BTN_MIN_W: f32 = 92.0;
 const FOOTER_BTN_RADIUS: f32 = 8.0;
 const FOOTER_FILTER_W: f32 = 220.0;
-/// One row of the open filter menu.
-const FOOTER_MENU_ROW_H: f32 = 26.0;
 
 /// The action row's own strip, below the file area.
 pub fn footer_rect(width: f32, window_height: f32) -> Rect {
@@ -3517,39 +3515,20 @@ pub fn footer_filter_rect(window_height: f32) -> Rect {
     )
 }
 
-/// One row of the filter menu, which opens *upwards* out of the control —
-/// there is nothing below the action row to open into.
-pub fn footer_filter_option_rect(window_height: f32, index: usize, count: usize) -> Rect {
-    let control = footer_filter_rect(window_height);
-    let height = count as f32 * FOOTER_MENU_ROW_H + 8.0;
-    let top = control.top - 6.0 - height + 4.0 + index as f32 * FOOTER_MENU_ROW_H;
-    Rect::from_ltrb(control.left, top, control.right, top + FOOTER_MENU_ROW_H)
-}
-
 /// What the action row has under `(x, y)`, if anything.
 ///
-/// `window_height` is the whole window, not the file area. Takes the two
-/// facts it needs rather than a [`FooterData`], so a caller can hit-test
-/// without holding a borrow of the state it is about to mutate.
+/// `window_height` is the whole window, not the file area. Takes the facts
+/// it needs rather than a [`FooterData`], so a caller can hit-test without
+/// holding a borrow of the state it is about to mutate.
 pub fn footer_at(
     x: f32,
     y: f32,
     width: f32,
     window_height: f32,
     filter_count: usize,
-    filter_open: bool,
 ) -> Option<FooterButton> {
     let point = Point::new(x, y);
 
-    // The open menu floats above the row and takes the pointer first,
-    // exactly as a context menu would.
-    if filter_open {
-        for index in 0..filter_count {
-            if footer_filter_option_rect(window_height, index, filter_count).contains(point) {
-                return Some(FooterButton::FilterOption(index));
-            }
-        }
-    }
     if footer_accept_rect(width, window_height).contains(point) {
         return Some(FooterButton::Accept);
     }
@@ -3799,63 +3778,6 @@ fn draw_filter_control(canvas: &Canvas, f: &Frame, footer: &FooterData<'_>, wind
     path.line_to((cx, cy - 2.5));
     path.line_to((cx + 4.0, cy + 2.0));
     canvas.draw_path(&path.detach(), &chevron);
-
-    if !footer.filter_open {
-        return;
-    }
-
-    let count = footer.filters.len();
-    let first = footer_filter_option_rect(window_h, 0, count);
-    let last = footer_filter_option_rect(window_h, count - 1, count);
-    let panel = Rect::from_ltrb(rect.left, first.top - 4.0, rect.right, last.bottom + 4.0);
-
-    let mut menu = Paint::default();
-    menu.set_anti_alias(true);
-    menu.set_color(theme.material_popup);
-    canvas.draw_rrect(RRect::new_rect_xy(panel, 8.0, 8.0), &menu);
-
-    for (index, name) in footer.filters.iter().enumerate() {
-        let row = footer_filter_option_rect(window_h, index, count);
-        let hovered = footer.hovered == Some(FooterButton::FilterOption(index));
-        if hovered {
-            let mut hl = Paint::default();
-            hl.set_anti_alias(true);
-            hl.set_color(accent(theme));
-            canvas.draw_rrect(
-                RRect::new_rect_xy(row.with_inset((4.0, 0.0)), 5.0, 5.0),
-                &hl,
-            );
-        }
-        Label::new(name.as_str())
-            .with_style(styles::BODY)
-            .with_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            })
-            .centered_on(row.left + 24.0, row.center_y())
-            .render(canvas);
-
-        if index == footer.current_filter {
-            let mut tick = Paint::default();
-            tick.set_anti_alias(true);
-            tick.set_color(if hovered {
-                Color::WHITE
-            } else {
-                theme.text_primary
-            });
-            tick.set_style(skia_safe::paint::Style::Stroke);
-            tick.set_stroke_width(1.8);
-            tick.set_stroke_cap(skia_safe::paint::Cap::Round);
-            let mx = row.left + 13.0;
-            let my = row.center_y();
-            let mut p = skia_safe::PathBuilder::new();
-            p.move_to((mx - 4.0, my));
-            p.line_to((mx - 1.0, my + 3.5));
-            p.line_to((mx + 4.5, my - 4.0));
-            canvas.draw_path(&p.detach(), &tick);
-        }
-    }
 }
 
 /// Whether the current colour scheme is the dark one — what the materials
@@ -4282,8 +4204,9 @@ pub struct FooterData<'a> {
     /// The filter control's labels. Empty hides the control entirely.
     pub filters: &'a [String],
     pub current_filter: usize,
-    /// The filter menu is open, so the control draws as pressed and its
-    /// options are listed above it.
+    /// The filter menu is open, so the control draws as pressed. The menu
+    /// itself is a popup — see `show_filter_menu` — above the window and
+    /// everything painted into it, the save field included.
     pub filter_open: bool,
     /// The toolbar's location menu is up, so its capsule draws held.
     pub location_open: bool,
@@ -4308,8 +4231,6 @@ pub enum FooterButton {
     Accept,
     Cancel,
     Filter,
-    /// One option of the open filter menu.
-    FilterOption(usize),
 }
 
 /// What the preview pane shows for the current selection.

@@ -372,6 +372,9 @@ impl FilesApp {
                     After::LocationMenu { rect, serial } => {
                         show_location_menu(&window_for_events, &group_menu, &state, rect, serial)
                     }
+                    After::FilterMenu { rect, serial } => {
+                        show_filter_menu(&window_for_events, &group_menu, &state, rect, serial)
+                    }
                 }
             }
             // Nothing is presented from here. What the batch changed is on
@@ -508,6 +511,54 @@ fn show_location_menu(
         move || {
             let mut browser = dismissed.lock().unwrap();
             browser.location_open = false;
+            browser.dirty = true;
+            drop(browser);
+            AppContext::request_wakeup();
+        },
+    );
+}
+
+/// Open the picker's filter menu over its control, the current filter
+/// ticked. Shares the grouping menu's popup, like the location menu.
+fn show_filter_menu(
+    window: &Window,
+    menu: &otto_kit::components::dropdown::DropdownMenu,
+    state: &Arc<Mutex<Browser>>,
+    rect: Rect,
+    serial: u32,
+) {
+    let Some(parent_xdg) = window
+        .surface()
+        .map(|s| s.xdg_window().xdg_surface().clone())
+    else {
+        return;
+    };
+    let Some((options, current)) = state
+        .lock()
+        .unwrap()
+        .picker
+        .as_ref()
+        .map(|session| (session.filter_labels.clone(), session.current_filter))
+    else {
+        return;
+    };
+    let chosen = Arc::clone(state);
+    let dismissed = Arc::clone(state);
+    menu.open(
+        &parent_xdg,
+        rect,
+        serial,
+        &options,
+        Some(current),
+        move |index| {
+            chosen.lock().unwrap().set_filter(index);
+            AppContext::request_wakeup();
+        },
+        move || {
+            let mut browser = dismissed.lock().unwrap();
+            if let Some(session) = browser.picker.as_mut() {
+                session.filter_open = false;
+            }
             browser.dirty = true;
             drop(browser);
             AppContext::request_wakeup();

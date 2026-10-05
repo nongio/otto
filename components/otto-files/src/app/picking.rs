@@ -346,13 +346,22 @@ impl Browser {
         match armed {
             Some(view::FooterButton::Accept) => self.picker_accept(),
             Some(view::FooterButton::Cancel) => self.picker_cancel(),
-            Some(view::FooterButton::Filter) => {
-                if let Some(session) = self.picker.as_mut() {
-                    session.filter_open = !session.filter_open;
-                }
-            }
-            Some(view::FooterButton::FilterOption(index)) => self.set_filter(index),
-            None => {}
+            // Opened on the press, like every menu — see `filter_press`.
+            Some(view::FooterButton::Filter) | None => {}
+        }
+    }
+
+    /// Open the filter menu over its control: a popup, so it sits above the
+    /// window and everything painted into it — the save field is painted
+    /// after the action row, and an in-window menu ended up underneath it.
+    pub(super) fn filter_press(&mut self, serial: u32) -> listing_pointer::After {
+        if let Some(session) = self.picker.as_mut() {
+            session.filter_open = true;
+        }
+        self.dirty = true;
+        listing_pointer::After::FilterMenu {
+            rect: view::footer_filter_rect(self.size.1),
+            serial,
         }
     }
 
