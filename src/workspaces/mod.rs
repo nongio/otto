@@ -4228,8 +4228,16 @@ impl Workspaces {
                 .collect()
         };
 
-        let all_windows: Vec<&(ObjectId, WindowElement)> =
-            minimized.iter().chain(windows.iter()).collect();
+        // A dialog is part of the window it belongs to, not an app of its
+        // own: the portal's file picker would otherwise put the file manager
+        // in the dock and the switcher every time another app asks for a
+        // file. Raising the parent brings it along — see
+        // `raise_element_with_children`.
+        let all_windows: Vec<&(ObjectId, WindowElement)> = minimized
+            .iter()
+            .chain(windows.iter())
+            .filter(|(_, we)| !we.has_parent())
+            .collect();
 
         {
             // reset the model
@@ -4345,9 +4353,12 @@ impl Workspaces {
                 // update minimized windows — keep entries that are either still
                 // mapped in a Space *or* still tracked in windows_map (minimized
                 // windows are unmapped from Space but remain in windows_map).
-                model
-                    .minimized_windows
-                    .retain(|(id, _)| all_windows.iter().any(|(wid, _)| wid == id));
+                model.minimized_windows.retain(|(id, _)| {
+                    minimized
+                        .iter()
+                        .chain(windows.iter())
+                        .any(|(wid, _)| wid == id)
+                });
             }
         }
 

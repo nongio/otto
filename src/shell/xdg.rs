@@ -239,6 +239,13 @@ impl<BackendData: Backend> XdgShellHandler for Otto<BackendData> {
         self.send_foreign_toplevel_state(&surface_id, true);
     }
 
+    /// A parent can arrive after the window is mapped — the portal's file
+    /// picker is adopted through xdg-foreign once it is up — and a dialog
+    /// is left out of the dock and the switcher, so they are rebuilt.
+    fn parent_changed(&mut self, _toplevel: ToplevelSurface) {
+        self.workspaces.update_workspace_model();
+    }
+
     fn toplevel_destroyed(&mut self, toplevel: ToplevelSurface) {
         let id = toplevel.wl_surface().id();
 
