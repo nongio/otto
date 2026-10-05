@@ -16,10 +16,10 @@ use crate::{
 };
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 use smithay::backend::{allocator::Fourcc, renderer::ImportMem};
 
-#[cfg(feature = "fps_ticker")]
+#[cfg(feature = "ticker")]
 use crate::drawing::{FpsElement, FPS_NUMBERS_PNG};
 
 use smithay::{
@@ -80,7 +80,7 @@ pub struct X11Data {
     dmabuf_state: DmabufState,
     _dmabuf_global: DmabufGlobal,
     _dmabuf_default_feedback: DmabufFeedback,
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     fps: fps_ticker::Fps,
 }
 
@@ -248,14 +248,14 @@ pub fn run_x11() {
         refresh: 60_000,
     };
 
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let fps_image = image::ImageReader::with_format(
         std::io::Cursor::new(FPS_NUMBERS_PNG),
         image::ImageFormat::Png,
     )
     .decode()
     .unwrap();
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let fps_texture = renderer
         .import_memory(
             &fps_image.to_rgba8(),
@@ -264,7 +264,7 @@ pub fn run_x11() {
             false,
         )
         .expect("Unable to upload FPS texture");
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     let mut fps_element = FpsElement::new(fps_texture);
     let output = Output::new(
         OUTPUT_NAME.to_string(),
@@ -291,7 +291,7 @@ pub fn run_x11() {
         dmabuf_state,
         _dmabuf_global: dmabuf_global,
         _dmabuf_default_feedback: dmabuf_default_feedback,
-        #[cfg(feature = "fps_ticker")]
+        #[cfg(feature = "ticker")]
         fps: fps_ticker::Fps::default(),
     };
 
@@ -366,9 +366,9 @@ pub fn run_x11() {
             let backend_data = &mut state.backend_data;
             // We need to borrow everything we want to refer to inside the renderer callback otherwise rustc is unhappy.
             let cursor_status = &state.cursor_status;
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             let fps = backend_data.fps.avg().round() as u32;
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             fps_element.update_fps(fps);
 
             let (mut buffer, age) = backend_data
@@ -393,7 +393,7 @@ pub fn run_x11() {
             }
 
             let mut cursor_guard = cursor_status.lock().unwrap();
-            #[cfg_attr(not(feature = "fps_ticker"), allow(unused_mut))]
+            #[cfg_attr(not(feature = "ticker"), allow(unused_mut))]
             let mut elements: Vec<WorkspaceRenderElements<'_, SkiaRenderer>> = Vec::new();
 
             // draw the cursor as relevant
@@ -441,7 +441,7 @@ pub fn run_x11() {
             //     }
             // }
 
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             elements.push(WorkspaceRenderElements::Fps(fps_element.clone()));
 
             let all_window_elements: Vec<&WindowElement> =
@@ -533,7 +533,7 @@ pub fn run_x11() {
                 }
             }
 
-            #[cfg(feature = "fps_ticker")]
+            #[cfg(feature = "ticker")]
             state.backend_data.fps.tick();
             window.set_cursor_visible(cursor_visible);
             profiling::finish_frame!();

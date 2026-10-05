@@ -2479,7 +2479,7 @@ pub(super) fn render_output_frame<'a, A: RendererApi>(
         }
     }
 
-    #[cfg(feature = "fps_ticker")]
+    #[cfg(feature = "ticker")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
         surface.fps.tick();
